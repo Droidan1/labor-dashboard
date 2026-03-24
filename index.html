@@ -557,7 +557,27 @@
     el("splash").classList.add("hidden");
     el("app").classList.remove("hidden");
   }
+// ═══════════════════════════════════════════════════════════════
+  //  CLOVER TEST FUNCTION (Temporary)
+  // ═══════════════════════════════════════════════════════════════
+  async function testCloverConnection() {
+    // Replace this URL with your actual Cloudflare Worker URL
+    const workerUrl = "https://YOUR-WORKER-NAME.YOUR-USERNAME.workers.dev/?store=bl4"; 
+    
+    console.log("Asking Cloudflare for Dupont's live data...");
+    
+    try {
+      const response = await fetch(workerUrl);
+      const data = await response.json();
+      
+      console.log("✅ SUCCESS! Here is the live data from Clover:", data);
+    } catch (error) {
+      console.error("❌ ERROR connecting to Cloudflare:", error);
+    }
+  }
 
+  // Run the test as soon as the page loads
+  testCloverConnection();
   // ═══════════════════════════════════════════════════════════════
   //  INIT
   // ═══════════════════════════════════════════════════════════════
