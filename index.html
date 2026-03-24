@@ -388,10 +388,12 @@
   // ═══════════════════════════════════════════════════════════════
   function openStoreModal(storeName) {
     const data = allStoreData[storeName] || [];
-    // Sort all rows by date, newest first
-    const sorted = [...data].sort((a, b) => b.date - a.date);
+    // Filter to only the selected week, then sort by date newest first
+    const weekRows = data.filter(r => r.week === selectedWeek);
+    const sorted = [...weekRows].sort((a, b) => b.date - a.date);
     
     el("modal-title").textContent = shortName(storeName);
+    document.querySelector("#store-modal p.text-xs").textContent = `Week ${selectedWeek} Daily Breakdown`;
     
     let html = `<table class="w-full text-left">
       <thead class="bg-gray-50 sticky top-0">
@@ -403,8 +405,7 @@
       </thead>
       <tbody class="text-sm divide-y divide-gray-100">`;
       
-    // Loop through the 14 most recent days for this store
-    for (const r of sorted.slice(0, 14)) {
+    for (const r of sorted) {
       const dateStr = r.date.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'});
       
       let dailyLabor = null;
@@ -424,7 +425,7 @@
     }
     
     html += `</tbody></table>`;
-    if (sorted.length === 0) html = `<div class="p-8 text-center text-gray-400">No historical data found.</div>`;
+    if (sorted.length === 0) html = `<div class="p-8 text-center text-gray-400">No data for Week ${selectedWeek}.</div>`;
     
     el("modal-content").innerHTML = html;
     
