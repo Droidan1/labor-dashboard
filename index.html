@@ -457,7 +457,8 @@
 
       if (data && data.elements) {
         for (const order of data.elements) {
-          if (order.total && order.paymentState === "PAID") {
+          // NEW RULE: Check if the order has money, and isn't a blank/open ticket
+          if (order.total && order.total > 0 && order.state === "locked") {
             const totalCents = order.total || 0;
             const taxCents = order.taxAmount || 0;
             liveNetSales += (totalCents - taxCents);
@@ -473,6 +474,9 @@
       return null;
     }
   }
+
+  // Run a quick test for Dupont (BL4)
+  fetchLiveCloverSales("bl4");
 
   // ═══════════════════════════════════════════════════════════════
   //  INIT
