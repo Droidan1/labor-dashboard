@@ -222,24 +222,35 @@
   }
 
   async function fetchLiveCloverSales(storeKey) {
-    const workerUrl = `https://clover-sales-api.howardbrian86.workers.dev/?store=${storeKey}`; 
+    const baseUrl = `https://clover-sales-api.howardbrian86.workers.dev/?store=${storeKey}`;
     try {
-      const response = await fetch(workerUrl);
-      const data = await response.json();
       let liveNetSales = 0;
+      let offset = 0;
+      const limit = 100;
 
-      if (data && data.elements) {
+      while (true) {
+        const url = `${baseUrl}&offset=${offset}&limit=${limit}`;
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (!data || !data.elements || data.elements.length === 0) break;
+
         for (const order of data.elements) {
-          if (order.total && order.total > 0 && order.state === "locked") {
+          if (order.total && order.total > 0) {
             const totalCents = order.total || 0;
             const taxCents = order.taxAmount || 0;
             liveNetSales += (totalCents - taxCents);
           }
         }
+
+        // If we got fewer than the limit, we've reached the last page
+        if (data.elements.length < limit) break;
+        offset += limit;
       }
+
       return liveNetSales / 100;
     } catch (error) {
-      return null; // Return null safely if the store isn't setup in Cloudflare yet
+      return null;
     }
   }
 
