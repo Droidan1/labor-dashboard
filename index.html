@@ -228,9 +228,13 @@
       const data = await response.json();
       let liveNetSales = 0;
 
+      // Calculate the start of today in milliseconds
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
       if (data && data.elements) {
         for (const order of data.elements) {
-          if (order.total && order.total > 0 && order.state === "locked") {
+          if (order.total && order.total > 0 && order.state === "locked" && order.createdTime >= startOfToday) {
             const totalCents = order.total || 0;
             const taxCents = order.taxAmount || 0;
             liveNetSales += (totalCents - taxCents);
