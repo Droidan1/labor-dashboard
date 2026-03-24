@@ -2,8 +2,7 @@ const CACHE_NAME = 'dashboard-cache-v1';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
-  'https://cdn.tailwindcss.com',
-  'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js'
+ 
 ];
 
 self.addEventListener('install', event => {
