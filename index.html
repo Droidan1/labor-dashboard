@@ -445,7 +445,7 @@
     el("app").classList.remove("hidden");
   }
 
-  // ═══════════════════════════════════════════════════════════════
+ // ═══════════════════════════════════════════════════════════════
   //  LIVE CLOVER FETCH & MATH
   // ═══════════════════════════════════════════════════════════════
   async function fetchLiveCloverSales(storeKey) {
@@ -457,8 +457,12 @@
 
       if (data && data.elements) {
         for (const order of data.elements) {
-          // NEW RULE: Check if the order has money, and isn't a blank/open ticket
-          if (order.total && order.total > 0 && order.state === "locked") {
+          // WIDE OPEN TEST: If it has money attached, add it up!
+          if (order.total && order.total > 0) {
+            
+            // Print the secret states to the console so we can see them
+            console.log(`Found Order - State: ${order.state} | PaymentState: ${order.paymentState} | Total: ${order.total}`);
+
             const totalCents = order.total || 0;
             const taxCents = order.taxAmount || 0;
             liveNetSales += (totalCents - taxCents);
@@ -467,7 +471,7 @@
       }
 
       liveNetSales = liveNetSales / 100;
-      console.log(`Live Net Sales for ${storeKey}: $${liveNetSales.toFixed(2)}`);
+      console.log(`Wide Open Net Sales for ${storeKey}: $${liveNetSales.toFixed(2)}`);
       return liveNetSales;
     } catch (error) {
       console.error(`Could not reach Clover for ${storeKey}:`, error);
@@ -477,7 +481,6 @@
 
   // Run a quick test for Dupont (BL4)
   fetchLiveCloverSales("bl4");
-
   // ═══════════════════════════════════════════════════════════════
   //  INIT
   // ═══════════════════════════════════════════════════════════════
