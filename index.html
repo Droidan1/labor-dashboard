@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Labor &amp; Sales Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+  <style>
+    .card { transition: border-color .15s; }
+    .week-btn { cursor: pointer; }
+    .loading-dot { animation: pulse 1.2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
+  </style>
+</head>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Labor &amp; Sales Dashboard</title>
+  
+  <link rel="manifest" href="manifest.json">
+  
+  <meta name="theme-color" content="#4f46e5">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 font-sans">
+
+  <div id="splash" class="flex flex-col items-center justify-center min-h-screen">
+    <div class="text-2xl font-bold text-gray-700 mb-2">Labor &amp; Sales Dashboard</div>
+    <div id="splash-msg" class="text-gray-400 text-sm loading-dot">Connecting to Google Sheets…</div>
+  </div>
+
+  <div id="error-banner" class="hidden bg-red-50 border border-red-200 text-red-700 text-sm px-6 py-3 rounded-lg mx-6 mt-4"></div>
+
+  <div id="app" class="hidden min-h-screen">
+
+    <div class="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
+      <div class="flex items-center justify-between max-w-7xl mx-auto">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">Labor &amp; Sales Dashboard</h1>
+          <p class="text-sm text-gray-400 mt-0.5" id="last-updated"></p>
+        </div>
+        <button id="refresh-btn"
+          class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 flex items-center gap-2">
+          ↻ Refresh
+        </button>
+      </div>
+    </div>
+
+    <div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Week:</span>
+        <div id="week-buttons" class="flex gap-2 flex-wrap"></div>
+      </div>
+
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Total Net Sales</div>
+          <div id="c-total" class="text-2xl font-bold text-gray-900">—</div>
+          <div id="c-budget" class="text-xs text-gray-400 mt-1"></div>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">vs Budget</div>
+          <div id="c-variance" class="text-2xl font-bold text-gray-900">—</div>
+          <div id="c-variance-sub" class="text-xs text-gray-400 mt-1"></div>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Overall Labor %</div>
+          <div id="c-labor" class="text-2xl font-bold text-gray-900">—</div>
+          <div class="text-xs text-gray-400 mt-1">Target: 14%</div>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Stores Over Target</div>
+          <div id="c-over" class="text-2xl font-bold text-gray-900">—</div>
+          <div class="text-xs text-gray-400 mt-1">of 6 stores</div>
+        </div>
+      </div>
+
+      <div id="store-cards" class="grid grid-cols-2 lg:grid-cols-3 gap-4"></div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+          <h3 class="font-semibold text-gray-800 mb-4" id="labor-chart-title">Labor % by Store</h3>
+          <div style="height:240px"><canvas id="labor-chart"></canvas></div>
+        </div>
+        <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+          <h3 class="font-semibold text-gray-800 mb-4" id="budget-chart-title">Actual vs Budget — Net Sales</h3>
+          <div style="height:240px"><canvas id="budget-chart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+        <h3 class="font-semibold text-gray-800 mb-4">Weekly Sales Trend — All Stores</h3>
+        <div style="height:280px"><canvas id="trend-chart"></canvas></div>
+      </div>
+
+      <p class="text-center text-xs text-gray-400 pb-4">
+        Data sourced live from Google Sheets · 6 stores · Labor target 14%
+      </p>
+    </div>
+  </div>
+
+  <script>
+  // ═══════════════════════════════════════════════════════════════
+  //  CONFIG — edit here if anything changes
+  // ═══════════════════════════════════════════════════════════════
+  const SHEET_ID     = "17byTs8k0CjH5gPOuBncq3RS3rL4PJR0PamdnbkKPss8";
+  const LABOR_TARGET = 14;
+  const STORES = [
+    "BL1/BL6 Coliseum",
+    "BL2/BL7 South Bend",
+    "BL4/BL5 Dupont",
+    "BL8/BL9 Holland",
+    "BL12/BL13 Wyoming",
+    "BL14/B15 Battle Creek",
+  ];
+  const COLORS = ["#6366f1","#0ea5e9","#10b981","#f59e0b","#ef4444","#ec4899"];
+
+  // Column indices (0-based, matches your sheet layout)
+  const C = {
+    MONTH:1, WEEK:2, DATE:3,
+    B_TOTAL:8,  B_LABOR:10,
+    A_RETAIL:17, A_BINS:18, A_AUCTION:19,
+    A_TOTAL:20,  A_HOURS:21, A_LABOR:22,
+    V_TOTAL:26,
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  //  STATE
+  // ═══════════════════════════════════════════════════════════════
+  let allStoreData = {};
+  let selectedWeek = null;
+  let allWeeks     = [];
+  let laborChart   = null;
+  let budgetChart  = null;
+  let trendChart   = null;
+
+  // ═══════════════════════════════════════════════════════════════
+  //  HELPERS
+  // ═══════════════════════════════════════════════════════════════
+  function shortName(s) {
+    const m = s.match(/\/\w+\s+(.+)$/);
+    return m ? m[1] : s;
+  }
+
+  function fmtK(n) {
+    if (n == null) return "—";
+    const abs = Math.abs(n), sign = n < 0 ? "-" : "";
+    if (abs >= 1e6) return `${sign}$${(abs/1e6).toFixed(2)}M`;
+    if (abs >= 1e3) return `${sign}$${(abs/1e3).toFixed(1)}K`;
+    return `${sign}$${abs.toFixed(0)}`;
+  }
+
+  function fmtPct(n, d=1) {
+    return n != null ? `${n.toFixed(d)}%` : "—";
+  }
+
+  function el(id) { return document.getElementById(id); }
+
+  function sumRows(rows) {
+    let aTotal = null, bTotal = null, laborNum = 0, laborDen = 0;
+
+    for (const r of rows) {
+      if (r.aTotal != null) aTotal = (aTotal || 0) + r.aTotal;
+      if (r.bTotal != null) bTotal = (bTotal || 0) + r.bTotal;
+
+      if (r.aLabor != null && r.aTotal != null) {
+        laborNum += (r.aLabor * r.aTotal);
+        laborDen += r.aTotal;
+      }
+    }
+
+    let laborPct = laborDen > 0 ? (laborNum / laborDen) : null;
+
+    if (laborPct != null && laborPct < 5) { 
+      laborPct = laborPct * 100;
+    }
+
+    return {
+      aTotal,
+      bTotal,
+      variance: (aTotal != null && bTotal != null) ? aTotal - bTotal : null,
+      laborPct
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  FETCH ONE STORE TAB (JSONP VERSION)
+  // ═══════════════════════════════════════════════════════════════
+  function fetchJSONP(url) {
+    return new Promise((resolve, reject) => {
+      const callbackName = 'gvizCallback_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+
+      window[callbackName] = function(data) {
+        delete window[callbackName];
+        document.body.removeChild(script);
+        resolve(data); 
+      };
+
+      const script = document.createElement('script');
+      script.src = url + `&tqx=responseHandler:${callbackName}`;
+      
+      script.onerror = () => {
+        delete window[callbackName];
+        document.body.removeChild(script);
+        reject(new Error("JSONP script load failed"));
+      };
+
+      document.body.appendChild(script);
+    });
+  }
+
+  async function loadStore(storeName) {
+    const url =
+      `https://docs.google.com/spreadsheets/d/${SHEET_ID}` +
+      `/gviz/tq?headers=0&sheet=${encodeURIComponent(storeName)}`;
+
+    const response = await fetchJSONP(url);
+
+    if (response.status !== "ok") throw new Error("Sheet returned error status");
+
+    const rows = [];
+    for (const row of (response.table.rows || [])) {
+      const c = row.c || [];
+      const dv = c[C.DATE]?.v;
+      if (dv == null) continue;
+
+      let date;
+      if (typeof dv === "string") {
+        const dm = dv.match(/Date\((\d+),(\d+),(\d+)\)/);
+        date = dm ? new Date(+dm[1], +dm[2], +dm[3]) : new Date(dv);
+      } else if (typeof dv === "number") {
+        date = new Date(Math.round((dv - 25569) * 86400000));
+      }
+      if (!date || isNaN(date.getTime())) continue;
+
+      const n = (i) => {
+        const v = c[i]?.v;
+        if (v == null || v === "") return null;
+        if (typeof v === "number") return v;
+        const p = parseFloat(String(v).replace(/[,$%\s]/g, ""));
+        return isNaN(p) ? null : p;
+      };
+
+      rows.push({
+        date,
+        week:  c[C.WEEK]?.v  != null ? String(c[C.WEEK].v)  : null,
+        month: c[C.MONTH]?.v != null ? String(c[C.MONTH].v) : null,
+        bTotal:   n(C.B_TOTAL),
+        aRetail:  n(C.A_RETAIL),
+        aBins:    n(C.A_BINS),
+        aAuction: n(C.A_AUCTION),
+        aTotal:   n(C.A_TOTAL),
+        aHours:   n(C.A_HOURS),
+        aLabor:   n(C.A_LABOR),
+        vTotal:   n(C.V_TOTAL),
+      });
+    }
+    return rows;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  RENDER
+  // ═══════════════════════════════════════════════════════════════
+  function renderDashboard() {
+    if (!selectedWeek) return;
+
+    const metrics = STORES.map((s, i) => ({
+      store: s,
+      name:  shortName(s),
+      color: COLORS[i],
+      ...sumRows((allStoreData[s] || []).filter(r => r.week === selectedWeek)),
+    }));
+
+    let tA=0, tB=0, lNum=0, lDen=0, hasA=false, hasB=false;
+    for (const m of metrics) {
+      if (m.aTotal != null) { tA += m.aTotal; hasA = true; }
+      if (m.bTotal != null) { tB += m.bTotal; hasB = true; }
+      if (m.laborPct != null && m.aTotal != null) { lNum += (m.laborPct / 100) * m.aTotal; lDen += m.aTotal; }
+    }
+    const tot = {
+      aTotal:    hasA ? tA : null,
+      bTotal:    hasB ? tB : null,
+      variance:  hasA && hasB ? tA - tB : null,
+      laborPct:  lDen > 0 ? (lNum / lDen) * 100 : null,
+      storesOver: metrics.filter(m => m.laborPct != null && m.laborPct > LABOR_TARGET).length,
+    };
+
+    el("c-total").textContent   = fmtK(tot.aTotal);
+    el("c-budget").textContent  = `Budget: ${fmtK(tot.bTotal)}`;
+
+    const vEl = el("c-variance");
+    vEl.textContent = tot.variance != null
+      ? `${tot.variance >= 0 ? "+" : ""}${fmtK(tot.variance)}` : "—";
+    vEl.className = `text-2xl font-bold ${
+      tot.variance == null ? "text-gray-900" : tot.variance >= 0 ? "text-green-600" : "text-red-600"}`;
+    el("c-variance-sub").textContent = tot.variance != null
+      ? (tot.variance >= 0 ? "↑ Ahead of plan" : "↓ Behind plan") : "";
+
+    const lEl = el("c-labor");
+    lEl.textContent = fmtPct(tot.laborPct);
+    lEl.className = `text-2xl font-bold ${
+      tot.laborPct == null ? "text-gray-900" : tot.laborPct <= LABOR_TARGET ? "text-green-600" : "text-red-600"}`;
+
+    const oEl = el("c-over");
+    oEl.textContent = String(tot.storesOver);
+    oEl.className = `text-2xl font-bold ${tot.storesOver === 0 ? "text-green-600" : "text-red-600"}`;
+
+    el("labor-chart-title").textContent  = `Labor % by Store — Week ${selectedWeek}`;
+    el("budget-chart-title").textContent = `Actual vs Budget — Net Sales, Week ${selectedWeek}`;
+
+    document.querySelectorAll(".week-btn").forEach(b => {
+      const active = b.dataset.week === selectedWeek;
+      b.className = `week-btn px-3 py-1 rounded-full text-sm font-medium ${
+        active
+          ? "bg-indigo-600 text-white shadow"
+          : "bg-white text-gray-600 border border-gray-200 hover:border-indigo-400"}`;
+    });
+
+    renderCards(metrics);
+    renderCharts(metrics);
+  }
+
+  function renderCards(metrics) {
+    const container = el("store-cards");
+    container.innerHTML = "";
+    const maxLab = Math.max(25, ...metrics.map(m => m.laborPct ?? 0)) + 2;
+
+    for (const m of metrics) {
+      const over = m.laborPct != null && m.laborPct > LABOR_TARGET;
+      const barW  = m.laborPct != null ? Math.min(100, (m.laborPct / maxLab) * 100).toFixed(1) : 0;
+      const targW = ((LABOR_TARGET / maxLab) * 100).toFixed(1);
+
+      const div = document.createElement("div");
+      div.className = `card bg-white rounded-xl p-4 shadow-sm border-2 ${
+        over ? "border-red-300" : "border-transparent"}`;
+      div.innerHTML = `
+        <div class="flex items-start justify-between mb-3">
+          <div>
+            <div class="font-bold text-gray-900">${m.name}</div>
+            <div class="text-xs text-gray-400 mt-0.5">${m.store.split("/")[0]}</div>
+          </div>
+          <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${
+            over ? "bg-red-100 text-red-700"
+            : m.laborPct != null ? "bg-green-100 text-green-700"
+            : "bg-gray-100 text-gray-500"}">
+            ${fmtPct(m.laborPct)} labor
+          </span>
+        </div>
+        <div class="text-xl font-bold text-gray-900">${fmtK(m.aTotal)}</div>
+        <div class="flex items-center justify-between mt-1 mb-3">
+          <span class="text-xs text-gray-400">Budget: ${fmtK(m.bTotal)}</span>
+          <span class="text-xs font-semibold ${m.variance != null && m.variance < 0 ? "text-red-600" : "text-green-600"}">
+            ${m.variance != null ? (m.variance >= 0 ? "+" : "") + fmtK(m.variance) : ""}
+          </span>
+        </div>
+        <div class="flex justify-between text-xs text-gray-400 mb-1">
+          <span>Labor %</span><span>Target ${LABOR_TARGET}%</span>
+        </div>
+        <div class="relative w-full h-2.5 bg-gray-100 rounded-full">
+          ${m.laborPct != null ? `
+          <div class="absolute top-0 left-0 h-full rounded-full ${over ? "bg-red-500" : "bg-green-500"}"
+               style="width:${barW}%"></div>` : ""}
+          <div class="absolute top-0 h-full w-0.5 bg-gray-400"
+               style="left:${targW}%"></div>
+        </div>`;
+      container.appendChild(div);
+    }
+  }
+
+  const targetLinePlugin = {
+    id: "targetLine",
+    afterDraw(chart) {
+      if (!chart.config.options._showTarget) return;
+      const { ctx, chartArea, scales } = chart;
+      const isHoriz = chart.config.options.indexAxis === "y";
+      const scale   = isHoriz ? scales.x : scales.y;
+      const px      = scale.getPixelForValue(LABOR_TARGET);
+      ctx.save();
+      ctx.strokeStyle = "#ef4444";
+      ctx.setLineDash([5, 5]);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      if (isHoriz) {
+        ctx.moveTo(px, chartArea.top);
+        ctx.lineTo(px, chartArea.bottom);
+      } else {
+        ctx.moveTo(chartArea.left,  px);
+        ctx.lineTo(chartArea.right, px);
+      }
+      ctx.stroke();
+      ctx.fillStyle = "#ef4444";
+      ctx.font = "11px sans-serif";
+      ctx.fillText(`${LABOR_TARGET}%`, px + 3, chartArea.top + 12);
+      ctx.restore();
+    }
+  };
+  Chart.register(targetLinePlugin);
+
+  function renderCharts(metrics) {
+    const names    = metrics.map(m => m.name);
+    const laborPct = metrics.map(m => m.laborPct);
+    const actuals  = metrics.map(m => m.aTotal);
+    const budgets  = metrics.map(m => m.bTotal);
+    const barColors = metrics.map(m =>
+      m.laborPct != null && m.laborPct > LABOR_TARGET ? "#ef4444" : "#10b981");
+    const maxLab = Math.max(25, ...laborPct.filter(Boolean)) + 3;
+
+    if (laborChart) laborChart.destroy();
+    laborChart = new Chart(el("labor-chart"), {
+      type: "bar",
+      data: {
+        labels: names,
+        datasets: [{
+          label: "Labor %",
+          data: laborPct,
+          backgroundColor: barColors,
+          borderRadius: 4,
+        }]
+      },
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false,
+        _showTarget: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => fmtPct(ctx.raw) } }
+        },
+        scales: {
+          x: { min: 0, max: maxLab, ticks: { callback: v => `${v}%` } }
+        }
+      }
+    });
+
+    if (budgetChart) budgetChart.destroy();
+    budgetChart = new Chart(el("budget-chart"), {
+      type: "bar",
+      data: {
+        labels: names,
+        datasets: [
+          { label: "Budget", data: budgets, backgroundColor: "#cbd5e1", borderRadius: 4 },
+          { label: "Actual", data: actuals, backgroundColor: metrics.map(m => m.color), borderRadius: 4 },
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtK(ctx.raw)}` } }
+        },
+        scales: {
+          x: { ticks: { maxRotation: 20, font: { size: 11 } } },
+          y: { ticks: { callback: v => fmtK(v) } }
+        }
+      }
+    });
+
+    const trendDatasets = STORES.map((s, i) => ({
+      label: shortName(s),
+      data: allWeeks.map(w => sumRows((allStoreData[s] || []).filter(r => r.week === w)).aTotal),
+      borderColor: COLORS[i],
+      backgroundColor: COLORS[i] + "22",
+      borderWidth: 2,
+      pointRadius: 3,
+      tension: 0.3,
+      spanGaps: true,
+    }));
+
+    if (trendChart) trendChart.destroy();
+    trendChart = new Chart(el("trend-chart"), {
+      type: "line",
+      data: {
+        labels: allWeeks.map(w => `Wk ${w}`),
+        datasets: trendDatasets,
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtK(ctx.raw)}` } }
+        },
+        scales: {
+          y: { ticks: { callback: v => fmtK(v) } }
+        }
+      }
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  WEEK BUTTONS
+  // ═══════════════════════════════════════════════════════════════
+  function renderWeekButtons() {
+    const container = el("week-buttons");
+    container.innerHTML = "";
+    for (const w of allWeeks) {
+      const btn = document.createElement("button");
+      btn.className = "week-btn px-3 py-1 rounded-full text-sm font-medium bg-white text-gray-600 border border-gray-200 hover:border-indigo-400";
+      btn.dataset.week = w;
+      btn.textContent  = w;
+      btn.onclick = () => { selectedWeek = w; renderDashboard(); };
+      container.appendChild(btn);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  LOAD ALL STORES
+  // ═══════════════════════════════════════════════════════════════
+  async function loadAll() {
+    el("splash").classList.remove("hidden");
+    el("app").classList.add("hidden");
+    el("error-banner").classList.add("hidden");
+    el("splash-msg").textContent = "Connecting to Google Sheets…";
+
+    const results = {}, errors = {};
+    let loaded = 0;
+
+    await Promise.all(STORES.map(async (s) => {
+      try   { results[s] = await loadStore(s); }
+      catch (e) { errors[s] = e.message; results[s] = []; }
+      loaded++;
+      el("splash-msg").textContent = `Loaded ${loaded} of ${STORES.length} stores…`;
+    }));
+
+    allStoreData = results;
+
+    const weekSet = new Set();
+    for (const rows of Object.values(allStoreData))
+      for (const r of rows) if (r.week != null) weekSet.add(r.week);
+    allWeeks = [...weekSet].sort((a, b) => {
+      const na = parseFloat(a), nb = parseFloat(b);
+      return (!isNaN(na) && !isNaN(nb)) ? na - nb : String(a).localeCompare(String(b));
+    });
+
+    let best = null;
+    for (const rows of Object.values(allStoreData))
+      for (const r of rows)
+        if (r.aTotal != null && r.aTotal > 0 && r.week != null)
+          if (best == null || parseFloat(r.week) > parseFloat(best)) best = r.week;
+    selectedWeek = best ?? allWeeks[allWeeks.length - 1] ?? null;
+
+    const errList = Object.entries(errors).filter(([, v]) => v);
+    if (errList.length > 0) {
+      el("error-banner").textContent =
+        "⚠️ Could not load: " + errList.map(([k, v]) => `${shortName(k)} (${v})`).join(" · ");
+      el("error-banner").classList.remove("hidden");
+    }
+
+    el("last-updated").textContent =
+      `Updated ${new Date().toLocaleTimeString()} · Labor target: ${LABOR_TARGET}%`;
+
+    renderWeekButtons();
+    if (selectedWeek) renderDashboard();
+
+    el("splash").classList.add("hidden");
+    el("app").classList.remove("hidden");
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  INIT
+  // ═══════════════════════════════════════════════════════════════
+  document.addEventListener("DOMContentLoaded", () => {
+    el("refresh-btn").onclick = loadAll;
+    loadAll();
+  });
+  </script>
+</body>
+<script>
+    // Register the Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+          .then(registration => console.log('ServiceWorker registered'))
+          .catch(err => console.log('ServiceWorker registration failed: ', err));
+      });
+    }
+  </script>
+</body>
+</html>
+</html>
