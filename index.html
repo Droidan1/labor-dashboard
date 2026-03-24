@@ -558,26 +558,47 @@
     el("app").classList.remove("hidden");
   }
 // ═══════════════════════════════════════════════════════════════
-  //  CLOVER TEST FUNCTION (Temporary)
+  //  LIVE CLOVER FETCH & MATH
   // ═══════════════════════════════════════════════════════════════
-  async function testCloverConnection() {
-    // Make sure to keep the /?store=bl4 at the very end!
-const workerUrl = "https://clover-sales-api.howardbrian86.workers.dev/?store=bl4";
-    
-    console.log("Asking Cloudflare for Dupont's live data...");
+  async function fetchLiveCloverSales(storeKey) {
+    // We attach ?store=bl4 (or whatever store) to your worker URL
+    const workerUrl = `https://clover-sales-api.howardbrian86.workers.dev/?store=${storeKey}`; 
     
     try {
       const response = await fetch(workerUrl);
       const data = await response.json();
       
-      console.log("✅ SUCCESS! Here is the live data from Clover:", data);
+      let liveNetSales = 0;
+
+      // Loop through every single order in the list
+      for (const order of data.elements) {
+        
+        // RULE 1: Only count orders that have actually been PAID
+        if (order.paymentState === "PAID") {
+          
+          // Grab the total and the tax (default to 0 if no tax was charged)
+          const totalCents = order.total || 0;
+          const taxCents = order.taxAmount || 0;
+          
+          // RULE 2: Net Sales = Total minus Tax
+          liveNetSales += (totalCents - taxCents);
+        }
+      }
+
+      // RULE 3: Convert the final number from pennies to actual dollars
+      liveNetSales = liveNetSales / 100;
+      
+      console.log(`Live Net Sales for ${storeKey}: $${liveNetSales.toFixed(2)}`);
+      return liveNetSales;
+      
     } catch (error) {
-      console.error("❌ ERROR connecting to Cloudflare:", error);
+      console.error(`Could not reach Clover for ${storeKey}:`, error);
+      return null;
     }
   }
 
-  // Run the test as soon as the page loads
-  testCloverConnection();
+  // Run a quick test for Dupont (BL4)
+  fetchLiveCloverSales("bl4");
   // ═══════════════════════════════════════════════════════════════
   //  INIT
   // ═══════════════════════════════════════════════════════════════
