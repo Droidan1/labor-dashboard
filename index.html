@@ -270,23 +270,26 @@
 
     // Generate week list
     const weekSet = new Set();
-    let latestDate = 0;
-    let latestWeek = null;
+    let currentWeekDate = 0;
+    let currentWeek = null;
+    const now = new Date().getTime();
+
     for (const rows of Object.values(allStoreData)) {
       for (const r of rows) {
         if (r.week != null) {
           weekSet.add(r.week);
           const t = r.date ? r.date.getTime() : 0;
-          if (t > latestDate) {
-            latestDate = t;
-            latestWeek = r.week;
+          // Find the most recent week up to today
+          if (t <= now && t > currentWeekDate) {
+            currentWeekDate = t;
+            currentWeek = r.week;
           }
         }
       }
     }
     allWeeks = [...weekSet].sort((a, b) => parseFloat(a) - parseFloat(b));
     
-    selectedWeek = latestWeek ?? (allWeeks[allWeeks.length - 1] ?? null);
+    selectedWeek = currentWeek ?? (allWeeks[allWeeks.length - 1] ?? null);
 
     el("last-updated").textContent = `Updated ${new Date().toLocaleTimeString()} · Target: ${LABOR_TARGET}%`;
 
