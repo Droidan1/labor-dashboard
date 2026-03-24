@@ -236,7 +236,7 @@
         if (!data || !data.elements || data.elements.length === 0) break;
 
         for (const order of data.elements) {
-          if (order.total && order.total > 0) {
+          if (order.total && order.total > 0 && order.state === "locked") {
             const totalCents = order.total || 0;
             const taxCents = order.taxAmount || 0;
             liveNetSales += (totalCents - taxCents);
