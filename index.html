@@ -349,6 +349,8 @@
 
     for (const m of metrics) {
       const liveSales = liveCloverData[m.store];
+      // Add live sales to the historical weekly total
+      const combinedTotal = (m.aTotal || 0) + (liveSales != null && liveSales > 0 ? liveSales : 0);
       
       const div = document.createElement("div");
       // The onclick event is added right here!
@@ -376,7 +378,7 @@
         <div class="h-px bg-gray-100 w-full mb-3"></div>
 
         <div class="flex justify-between items-center text-sm text-gray-500">
-          <span>Wk ${selectedWeek} Hist: <strong class="text-gray-700">${fmtK(m.aTotal)}</strong></span>
+          <span>Wk ${selectedWeek}: <strong class="text-gray-700">${fmtK(combinedTotal)}</strong></span>
           <span class="text-indigo-600 font-medium group-hover:translate-x-1 transition-transform">History &rarr;</span>
         </div>`;
       container.appendChild(div);
