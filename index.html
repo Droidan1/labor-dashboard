@@ -573,34 +573,15 @@
       if (data && data.elements) {
         for (const order of data.elements) {
           // Check if the order has a total, AND if it's marked as PAID
-          // (If an order is OPEN or voided, we ignore it)
           if (order.total && order.paymentState === "PAID") {
-            
-            // Grab the total pennies, subtract any tax pennies
             const totalCents = order.total || 0;
             const taxCents = order.taxAmount || 0;
-            
             liveNetSales += (totalCents - taxCents);
           }
-
-
-      // Convert pennies to dollars
-      liveNetSales = liveNetSales / 100;
-      
-      console.log(`Live Net Sales for ${storeKey}: $${liveNetSales.toFixed(2)}`);
-      return liveNetSales;
-      
-    } catch (error) {
-      console.error(`Could not reach Clover for ${storeKey}:`, error);
-      return null;
-    }
-  }
-
-  // Run a quick test for Dupont (BL4)
-  fetchLiveCloverSales("bl4");}
+        }
       }
 
-      // RULE 3: Convert the final number from pennies to actual dollars
+      // Convert pennies to dollars
       liveNetSales = liveNetSales / 100;
       
       console.log(`Live Net Sales for ${storeKey}: $${liveNetSales.toFixed(2)}`);
