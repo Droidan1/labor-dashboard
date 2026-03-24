@@ -457,12 +457,8 @@
 
       if (data && data.elements) {
         for (const order of data.elements) {
-          // WIDE OPEN TEST: If it has money attached, add it up!
-          if (order.total && order.total > 0) {
-            
-            // Print the secret states to the console so we can see them
-            console.log(`Found Order - State: ${order.state} | PaymentState: ${order.paymentState} | Total: ${order.total}`);
-
+          // FINAL RULE: Add up orders that are "locked" (finalized by the cashier)
+          if (order.total && order.total > 0 && order.state === "locked") {
             const totalCents = order.total || 0;
             const taxCents = order.taxAmount || 0;
             liveNetSales += (totalCents - taxCents);
@@ -471,8 +467,9 @@
       }
 
       liveNetSales = liveNetSales / 100;
-      console.log(`Wide Open Net Sales for ${storeKey}: $${liveNetSales.toFixed(2)}`);
+      console.log(`Live Net Sales for ${storeKey}: $${liveNetSales.toFixed(2)}`);
       return liveNetSales;
+      
     } catch (error) {
       console.error(`Could not reach Clover for ${storeKey}:`, error);
       return null;
