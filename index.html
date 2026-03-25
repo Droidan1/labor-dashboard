@@ -273,24 +273,26 @@
     el("error-banner").classList.add("hidden");
     el("splash-msg").textContent = "Connecting to Google Sheets…";
 
-    // 1. Fetch Google Sheets Data
     const results = {}, errors = {};
     let loaded = 0;
-    await Promise.all(STORES.map(async (s) => {
+
+    // Start loading Sheets data
+    const sheetsPromise = Promise.all(STORES.map(async (s) => {
       try   { results[s] = await loadStore(s); }
       catch (e) { errors[s] = e.message; results[s] = []; }
       loaded++;
-      el("splash-msg").textContent = `Loaded ${loaded} of ${STORES.length} stores…`;
+      el("splash-msg").textContent = `Loading data… (${loaded}/${STORES.length} stores ready)`;
     }));
-    allStoreData = results;
 
-    // 2. Fetch Live Clover Data
-    el("splash-msg").textContent = "Connecting to Clover Live POS…";
-    await Promise.all(STORES.map(async (s) => {
-      // Extract just "bl4" from "BL4/BL5 Dupont" to use as the API key
+    // Start loading Clover API data concurrently
+    const cloverPromise = Promise.all(STORES.map(async (s) => {
       const storeKey = s.split('/')[0].toLowerCase();
       liveCloverData[s] = await fetchLiveCloverSales(storeKey);
     }));
+
+    // Wait for both sources to complete
+    await Promise.all([sheetsPromise, cloverPromise]);
+    allStoreData = results;
 
     // Generate week list
     const weekSet = new Set();
