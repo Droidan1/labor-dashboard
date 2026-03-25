@@ -52,10 +52,19 @@
       </div>
 
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div id="today-total-card" class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-          <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Today's Total Net Sales</div>
-          <div id="c-today-total" class="text-2xl font-bold text-gray-900">—</div>
-          <div id="c-today-sub" class="text-xs text-gray-400 mt-1">All stores combined</div>
+        <div id="today-total-card" class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex flex-col justify-between">
+          <div class="flex justify-between items-start">
+            <div>
+              <div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Today's Net Sales</div>
+              <div id="c-today-total" class="text-xl font-bold text-gray-900 leading-none mb-1">—</div>
+              <div id="c-today-sub" class="text-[10px] text-gray-400">All stores</div>
+            </div>
+            <div class="text-right">
+              <div class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Total Budget</div>
+              <div id="c-today-budget" class="text-lg font-bold text-gray-500 leading-none">—</div>
+              <div id="c-today-diff" class="text-[10px] font-semibold mt-1"></div>
+            </div>
+          </div>
         </div>
         <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
           <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Weekly Net Sales</div>
@@ -351,12 +360,21 @@
     // Today's total live sales across all stores
     const isCurrentWeek = selectedWeek === currentWeek;
     let todayTotal = 0;
+    let todayTotalBudget = 0;
     let storesWithData = 0;
     
     if (isCurrentWeek) {
+      const today = new Date();
+      const todayStr = today.toDateString();
       for (const s of STORES) {
         const live = liveCloverData[s];
         if (live != null && live > 0) { todayTotal += live; storesWithData++; }
+        
+        const storeRows = allStoreData[s] || [];
+        const todayRow = storeRows.find(r => r.date && r.date.toDateString() === todayStr);
+        if (todayRow && todayRow.bTotal != null) {
+          todayTotalBudget += todayRow.bTotal;
+        }
       }
       el("today-total-card").classList.remove("hidden");
     } else {
@@ -364,7 +382,19 @@
     }
     
     el("c-today-total").textContent = storesWithData > 0 ? '$' + todayTotal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—';
-    el("c-today-sub").textContent = storesWithData > 0 ? `${storesWithData} of ${STORES.length} stores reporting` : 'All stores combined';
+    el("c-today-sub").textContent = storesWithData > 0 ? `${storesWithData} of ${STORES.length} reporting` : 'All stores';
+    
+    el("c-today-budget").innerHTML = todayTotalBudget > 0 ? '$' + todayTotalBudget.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '<span class="text-gray-300 font-medium">—</span>';
+    
+    const diffEl = el("c-today-diff");
+    if (todayTotal > 0 && todayTotalBudget > 0) {
+      const diff = todayTotal - todayTotalBudget;
+      const isPositive = diff >= 0;
+      diffEl.className = `text-[10px] font-semibold mt-1 ${isPositive ? 'text-green-600' : 'text-red-500'}`;
+      diffEl.textContent = `${isPositive ? '+' : ''}$${Math.abs(diff).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    } else {
+      diffEl.textContent = '';
+    }
 
     el("c-total").textContent = fmtK(tA);
     el("c-budget").textContent = `Budget: ${fmtK(tB)}`;
