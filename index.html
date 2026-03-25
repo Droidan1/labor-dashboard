@@ -401,6 +401,13 @@
             <div class="text-2xl font-bold text-gray-500">
               ${todayBudget != null ? '$' + todayBudget.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '<span class="text-gray-300 text-lg font-medium">—</span>'}
             </div>
+            ${todayBudget != null && liveSales != null && liveSales > 0 ? (() => {
+              const diff = liveSales - todayBudget;
+              const isPositive = diff >= 0;
+              return `<div class="text-xs font-semibold mt-1 ${isPositive ? 'text-green-600' : 'text-red-500'}">
+                ${isPositive ? '+' : ''}$${Math.abs(diff).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+              </div>`;
+            })() : ''}
           </div>
         </div>
 
