@@ -474,7 +474,13 @@
   //  INIT
   // ═══════════════════════════════════════════════════════════════
   document.addEventListener("DOMContentLoaded", () => {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+    // Unregister any old service workers and clear caches
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        for (const reg of regs) reg.unregister();
+      });
+      caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
+    }
     el("refresh-btn").onclick = loadAll;
     loadAll();
   });
