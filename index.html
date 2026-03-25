@@ -236,12 +236,18 @@
         for (const order of data.elements) {
           if (order.total && order.total > 0 && order.state === "locked" && order.createdTime >= startOfToday) {
             const totalCents = order.total || 0;
-            const taxCents = order.taxAmount || 0;
+            // Use actual tax from payment data if available
+            let taxCents = 0;
+            if (order.payments && order.payments.elements) {
+              for (const pmt of order.payments.elements) {
+                taxCents += (pmt.taxAmount || 0);
+              }
+            }
             liveNetSales += (totalCents - taxCents);
           }
         }
       }
-      return (liveNetSales / 100) / 1.07;
+      return liveNetSales / 100;
     } catch (error) {
       return null;
     }
