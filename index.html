@@ -307,29 +307,39 @@
       const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 
       if (data && data.elements) {
+        // Two-pass approach: first compute tax rate from orders with payments,
+        // then apply it to manual refund orders that lack payment records
+        let grossWithPayments = 0, taxWithPayments = 0;
+        const manualRefunds = [];
+
         for (const order of data.elements) {
-          // Worker filters to today + locked, but keep client guard as safety net
           if (order.total == null || order.total === 0) continue;
           if (order.state !== "locked") continue;
           if (order.createdTime < startOfToday) continue;
 
           const totalCents = order.total;
 
-          // Subtract tax (available via expand=payments in Worker)
-          let taxCents = 0;
-          if (order.payments?.elements) {
+          if (order.payments?.elements?.length) {
+            let taxCents = 0;
             for (const pmt of order.payments.elements) {
               taxCents += (pmt.taxAmount || 0);
             }
+            grossWithPayments += totalCents;
+            taxWithPayments += taxCents;
+            liveNetSales += (totalCents - taxCents);
+          } else {
+            // Manual refund/adjustment — no payment records to extract tax from
+            manualRefunds.push(totalCents);
           }
+        }
 
-          // Subtract service charge if present
-          let serviceChargeCents = 0;
-          if (order.serviceCharge?.amount) {
-            serviceChargeCents = order.serviceCharge.amount;
+        // Back out estimated tax from manual refunds using observed tax rate
+        if (manualRefunds.length > 0) {
+          const taxRate = grossWithPayments > 0 ? taxWithPayments / grossWithPayments : 0;
+          for (const refundCents of manualRefunds) {
+            const estimatedTax = Math.round(refundCents * taxRate);
+            liveNetSales += (refundCents - estimatedTax);
           }
-
-          liveNetSales += (totalCents - taxCents - serviceChargeCents);
         }
       }
       return liveNetSales / 100;
