@@ -308,17 +308,28 @@
 
       if (data && data.elements) {
         for (const order of data.elements) {
-          if (order.total && order.total > 0 && order.state === "locked" && order.createdTime >= startOfToday) {
-            const totalCents = order.total || 0;
-            // Use actual tax from payment data if available
-            let taxCents = 0;
-            if (order.payments && order.payments.elements) {
-              for (const pmt of order.payments.elements) {
-                taxCents += (pmt.taxAmount || 0);
-              }
+          // Worker filters to today + locked, but keep client guard as safety net
+          if (!order.total || order.total <= 0) continue;
+          if (order.state !== "locked") continue;
+          if (order.createdTime < startOfToday) continue;
+
+          const totalCents = order.total;
+
+          // Subtract tax (available via expand=payments in Worker)
+          let taxCents = 0;
+          if (order.payments?.elements) {
+            for (const pmt of order.payments.elements) {
+              taxCents += (pmt.taxAmount || 0);
             }
-            liveNetSales += (totalCents - taxCents);
           }
+
+          // Subtract service charge if present
+          let serviceChargeCents = 0;
+          if (order.serviceCharge?.amount) {
+            serviceChargeCents = order.serviceCharge.amount;
+          }
+
+          liveNetSales += (totalCents - taxCents - serviceChargeCents);
         }
       }
       return liveNetSales / 100;
