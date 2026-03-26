@@ -309,7 +309,7 @@
       if (data && data.elements) {
         for (const order of data.elements) {
           // Worker filters to today + locked, but keep client guard as safety net
-          if (!order.total || order.total <= 0) continue;
+          if (order.total == null || order.total === 0) continue;
           if (order.state !== "locked") continue;
           if (order.createdTime < startOfToday) continue;
 
