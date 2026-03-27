@@ -29,9 +29,10 @@ export default {
       });
     }
 
-    // Filter to today's locked orders only, and expand payments for tax data
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    // Use client-provided "since" timestamp for correct timezone handling,
+    // or fall back to UTC midnight if not provided
+    const since = url.searchParams.get("since");
+    const startOfToday = since ? Number(since) : new Date(new Date().toISOString().slice(0, 10)).getTime();
 
     const limit = 1000;
     let offset = 0;

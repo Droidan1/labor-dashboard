@@ -300,14 +300,13 @@
   function isBinItem(name) { return BIN_PATTERNS.some(p => p.test(name)); }
 
   async function fetchLiveCloverSales(storeKey) {
-    const workerUrl = `https://clover-sales-api.howardbrian86.workers.dev/?store=${storeKey}`;
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const workerUrl = `https://clover-sales-api.howardbrian86.workers.dev/?store=${storeKey}&since=${startOfToday}`;
     try {
       const response = await fetch(workerUrl);
       const data = await response.json();
       let totalNet = 0, binNet = 0, retailNet = 0;
-
-      const now = new Date();
-      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 
       if (data && data.elements) {
         for (const order of data.elements) {
