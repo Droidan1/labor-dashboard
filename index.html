@@ -613,8 +613,27 @@
         </div>` : ''}
         <div class="h-px bg-gray-100 dark:bg-gray-700 w-full mb-3"></div>` : ''}
 
+        ${!isCurrentWeek ? `<div class="mt-4 mb-3 flex justify-between items-start">
+          <div>
+            <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Week ${selectedWeek} Total</div>
+            <div class="text-3xl font-bold text-gray-900 dark:text-white">${fmtDollar(combinedTotal)}</div>
+          </div>
+          <div class="text-right">
+            <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Week Budget</div>
+            <div class="text-2xl font-bold text-gray-500 dark:text-gray-300">${m.bTotal != null ? fmtDollar(m.bTotal) : '<span class="text-gray-300 dark:text-gray-600 text-lg font-medium">—</span>'}</div>
+            ${(() => {
+              if (m.bTotal == null || m.aTotal == null) return '';
+              const diff = combinedTotal - m.bTotal;
+              const cls = diff >= 0 ? 'text-green-600' : 'text-red-500';
+              const sign = diff >= 0 ? '+' : '-';
+              return `<div class="text-xs font-semibold mt-1 ${cls}">${sign}${fmtDollar(Math.abs(diff))}</div>`;
+            })()}
+          </div>
+        </div>
+        <div class="h-px bg-gray-100 dark:bg-gray-700 w-full mb-3"></div>` : ''}
+
         <div class="flex justify-between items-center text-sm text-gray-500 dark:text-gray-400">
-          <span>Wk ${selectedWeek}: <strong class="text-gray-700 dark:text-gray-200">${fmtK(combinedTotal)}</strong></span>
+          ${isCurrentWeek ? `<span>Wk ${selectedWeek}: <strong class="text-gray-700 dark:text-gray-200">${fmtK(combinedTotal)}</strong></span>` : '<span></span>'}
           <span class="text-indigo-600 dark:text-indigo-400 font-medium group-hover:translate-x-1 transition-transform">History &rarr;</span>
         </div>`;
       container.appendChild(div);
