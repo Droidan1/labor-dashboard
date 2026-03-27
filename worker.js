@@ -42,7 +42,7 @@ export default {
         const cloverUrl = `https://api.clover.com/v3/merchants/${merchantId}/orders`
           + `?filter=createdTime>=${startOfToday}`
           + `&filter=state=locked`
-          + `&expand=payments`
+          + `&expand=payments,lineItems`
           + `&limit=${limit}&offset=${offset}`;
 
         const cloverResponse = await fetch(cloverUrl, {

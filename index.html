@@ -106,6 +106,7 @@
               <div id="c-today-diff" class="text-[10px] font-semibold mt-1"></div>
             </div>
           </div>
+          <div id="c-today-breakdown"></div>
         </div>
         <div class="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors">
           <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">Weekly Net Sales</div>
@@ -180,7 +181,7 @@
   //  STATE
   // ═══════════════════════════════════════════════════════════════
   let allStoreData   = {};
-  let liveCloverData = {}; // Stores our live API numbers
+  let liveCloverData = {}; // Stores our live API numbers: { total, retail, bin }
   let selectedWeek   = null;
   let currentWeek    = null;
   let allWeeks       = [];
@@ -295,14 +296,16 @@
     return rows;
   }
 
+  const BIN_PATTERNS = [/\bbin\b/i, /\bfill a bag\b/i, /\bglass case\b/i];
+  function isBinItem(name) { return BIN_PATTERNS.some(p => p.test(name)); }
+
   async function fetchLiveCloverSales(storeKey) {
     const workerUrl = `https://clover-sales-api.howardbrian86.workers.dev/?store=${storeKey}`;
     try {
       const response = await fetch(workerUrl);
       const data = await response.json();
-      let liveNetSales = 0;
+      let totalNet = 0, binNet = 0, retailNet = 0;
 
-      // Calculate the start of today in milliseconds
       const now = new Date();
       const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 
@@ -321,12 +324,34 @@
               taxCents += (pmt.taxAmount || 0);
             }
           }
-          // Manual refunds have no payments, so taxCents stays 0
-          // and the full negative total is applied (within ~$2 of Clover)
-          liveNetSales += (totalCents - taxCents);
+          const orderNet = totalCents - taxCents;
+          totalNet += orderNet;
+
+          // Classify line items as bin vs retail
+          let binItemTotal = 0, retailItemTotal = 0;
+          if (order.lineItems?.elements) {
+            for (const item of order.lineItems.elements) {
+              const price = (item.price || 0) * (item.unitQty != null ? item.unitQty / 1000 : 1);
+              if (isBinItem(item.name || '')) {
+                binItemTotal += price;
+              } else {
+                retailItemTotal += price;
+              }
+            }
+          }
+
+          // Distribute order's net sales proportionally between bin and retail
+          const itemGross = binItemTotal + retailItemTotal;
+          if (itemGross > 0) {
+            binNet += orderNet * (binItemTotal / itemGross);
+            retailNet += orderNet * (retailItemTotal / itemGross);
+          } else {
+            // No line items (manual refund/adjustment) — attribute to retail
+            retailNet += orderNet;
+          }
         }
       }
-      return liveNetSales / 100;
+      return { total: totalNet / 100, retail: Math.round(retailNet) / 100, bin: Math.round(binNet) / 100 };
     } catch (error) {
       console.warn(`Clover API error for ${storeKey}:`, error.message);
       return null;
@@ -449,14 +474,19 @@
 
     // Today's total live sales across all stores
     const isCurrentWeek = selectedWeek === currentWeek;
-    let todayTotal = 0;
+    let todayTotal = 0, todayRetail = 0, todayBin = 0;
     let todayTotalBudget = 0;
     let storesWithData = 0;
-    
+
     if (isCurrentWeek) {
       for (const s of STORES) {
         const live = liveCloverData[s];
-        if (live != null && live > 0) { todayTotal += live; storesWithData++; }
+        if (live != null && live.total > 0) {
+          todayTotal += live.total;
+          todayRetail += live.retail;
+          todayBin += live.bin;
+          storesWithData++;
+        }
 
         const todayRow = getTodayRow(s);
         if (todayRow && todayRow.bTotal != null) {
@@ -467,17 +497,27 @@
     } else {
       el("today-total-card").classList.add("hidden");
     }
-    
+
     if (liveDataLoading) {
       el("c-today-total").innerHTML = '<span class="loading-dot text-indigo-400 text-lg">Loading...</span>';
       el("c-today-sub").textContent = 'Fetching live data';
+      el("c-today-breakdown").innerHTML = '';
     } else {
       el("c-today-total").textContent = storesWithData > 0 ? fmtDollar(todayTotal) : '—';
       el("c-today-sub").textContent = storesWithData > 0 ? `${storesWithData} of ${STORES.length} reporting` : 'All stores';
+      if (storesWithData > 0) {
+        el("c-today-breakdown").innerHTML = `
+          <div class="flex gap-4 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
+            <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayRetail)}</div></div>
+            <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayBin)}</div></div>
+          </div>`;
+      } else {
+        el("c-today-breakdown").innerHTML = '';
+      }
     }
-    
+
     el("c-today-budget").innerHTML = todayTotalBudget > 0 ? fmtDollar(todayTotalBudget) : '<span class="text-gray-300 font-medium">—</span>';
-    
+
     const diffEl = el("c-today-diff");
     if (!liveDataLoading && todayTotal > 0 && todayTotalBudget > 0) {
       const diff = todayTotal - todayTotalBudget;
@@ -504,7 +544,10 @@
     const isCurrentWeek = selectedWeek === currentWeek;
 
     for (const m of metrics) {
-      const liveSales = isCurrentWeek ? liveCloverData[m.store] : null;
+      const liveData = isCurrentWeek ? liveCloverData[m.store] : null;
+      const liveSales = liveData?.total ?? null;
+      const liveRetail = liveData?.retail ?? null;
+      const liveBin = liveData?.bin ?? null;
       // Add live sales to the historical weekly total only for current week
       const combinedTotal = (m.aTotal || 0) + (liveSales != null && liveSales > 0 ? liveSales : 0);
 
@@ -526,7 +569,7 @@
           </span>` : ''}
         </div>
         
-        ${isCurrentWeek ? `<div class="mt-4 mb-4 flex justify-between items-start">
+        ${isCurrentWeek ? `<div class="mt-4 mb-3 flex justify-between items-start">
           <div>
             <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Today's Net Sales</div>
             <div class="text-3xl font-bold text-gray-900 dark:text-white">
@@ -548,7 +591,17 @@
             })()}
           </div>
         </div>
-
+        ${!liveDataLoading && liveSales != null && liveSales > 0 ? `
+        <div class="flex gap-4 mb-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
+          <div>
+            <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div>
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(liveRetail)}</div>
+          </div>
+          <div>
+            <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(liveBin)}</div>
+          </div>
+        </div>` : ''}
         <div class="h-px bg-gray-100 dark:bg-gray-700 w-full mb-3"></div>` : ''}
 
         <div class="flex justify-between items-center text-sm text-gray-500 dark:text-gray-400">
