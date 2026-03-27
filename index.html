@@ -152,7 +152,7 @@
       </div>
       <div class="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors">
         <h3 class="font-semibold text-gray-800 dark:text-gray-200 mb-4">Weekly Sales Trend — All Stores</h3>
-        <div style="height:280px"><canvas id="trend-chart" role="img" aria-label="Line chart showing weekly sales trend across all stores"></canvas></div>
+        <div style="height:340px"><canvas id="trend-chart" role="img" aria-label="Line chart showing weekly sales trend across all stores"></canvas></div>
       </div>
     </div>
   </div>
@@ -804,19 +804,44 @@
     });
 
     if (trendChart) trendChart.destroy();
+    const trendWeeks = allWeeks.filter(w => w !== currentWeek);
     trendChart = new Chart(el("trend-chart"), {
       type: "line",
       data: {
-        labels: allWeeks.map(w => `Wk ${w}`),
+        labels: trendWeeks.map(w => `Wk ${w}`),
         datasets: STORES.map((s, i) => ({
           label: shortName(s),
-          data: allWeeks.map(w => (weeklyTotalsCache[s] && weeklyTotalsCache[s][w]) || null),
-          borderColor: COLORS[i]
+          data: trendWeeks.map(w => (weeklyTotalsCache[s] && weeklyTotalsCache[s][w]) || null),
+          borderColor: COLORS[i],
+          backgroundColor: COLORS[i] + '20',
+          borderWidth: 2.5,
+          pointRadius: 3,
+          pointHoverRadius: 6,
+          tension: 0.3,
+          fill: false
         }))
       },
       options: {
-        scales: { x: scaleDefaults, y: scaleDefaults },
-        plugins: { legend: { labels: { color: textColor } } }
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: { ...scaleDefaults, ticks: { ...scaleDefaults.ticks, maxRotation: 0 } },
+          y: {
+            ...scaleDefaults,
+            ticks: { ...scaleDefaults.ticks, callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(0) + 'K' : v) }
+          }
+        },
+        plugins: {
+          legend: {
+            labels: { color: textColor, usePointStyle: true, pointStyle: 'circle', padding: 16 }
+          },
+          tooltip: {
+            callbacks: {
+              label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y != null ? fmtDollar(ctx.parsed.y) : '—'}`
+            }
+          }
+        }
       }
     });
   }
