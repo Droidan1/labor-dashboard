@@ -290,7 +290,8 @@
         week:  c[C.WEEK]?.v  != null ? String(c[C.WEEK].v)  : null,
         bTotal:   n(C.B_TOTAL),
         aTotal:   n(C.A_TOTAL),
-        aLabor:   n(C.A_LABOR)
+        aLabor:   n(C.A_LABOR),
+        aAuction: n(C.A_AUCTION)
       });
     }
     return rows;
@@ -473,7 +474,7 @@
 
     // Today's total live sales across all stores
     const isCurrentWeek = selectedWeek === currentWeek;
-    let todayTotal = 0, todayRetail = 0, todayBin = 0;
+    let todayTotal = 0, todayRetail = 0, todayBin = 0, todayAuction = 0;
     let todayTotalBudget = 0;
     let storesWithData = 0;
 
@@ -490,6 +491,9 @@
         const todayRow = getTodayRow(s);
         if (todayRow && todayRow.bTotal != null) {
           todayTotalBudget += todayRow.bTotal;
+        }
+        if (todayRow && todayRow.aAuction != null) {
+          todayAuction += todayRow.aAuction;
         }
       }
       el("today-total-card").classList.remove("hidden");
@@ -509,6 +513,7 @@
           <div class="flex gap-4 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
             <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayRetail)}</div></div>
             <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayBin)}</div></div>
+            ${todayAuction > 0 ? `<div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayAuction)}</div></div>` : ''}
           </div>`;
       } else {
         el("c-today-breakdown").innerHTML = '';
@@ -552,6 +557,7 @@
 
       // Find today's budget from the store data (only for current week)
       const todayBudget = isCurrentWeek ? (getTodayRow(m.store)?.bTotal ?? null) : null;
+      const storeAuction = isCurrentWeek ? (getTodayRow(m.store)?.aAuction ?? null) : null;
       
       const div = document.createElement("div");
       div.className = `bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700 hover:border-indigo-400 hover:shadow-md transition-all cursor-pointer group`;
@@ -600,6 +606,10 @@
             <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(liveBin)}</div>
           </div>
+          ${storeAuction != null && storeAuction > 0 ? `<div>
+            <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div>
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(storeAuction)}</div>
+          </div>` : ''}
         </div>` : ''}
         <div class="h-px bg-gray-100 dark:bg-gray-700 w-full mb-3"></div>` : ''}
 
