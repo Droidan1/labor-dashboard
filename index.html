@@ -513,7 +513,7 @@
           <div class="flex gap-4 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
             <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayRetail)}</div></div>
             <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayBin)}</div></div>
-            ${todayAuction > 0 ? `<div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayAuction)}</div></div>` : ''}
+            <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayAuction)}</div></div>
           </div>`;
       } else {
         el("c-today-breakdown").innerHTML = '';
@@ -606,10 +606,10 @@
             <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(liveBin)}</div>
           </div>
-          ${storeAuction != null && storeAuction > 0 ? `<div>
+          <div>
             <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div>
-            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(storeAuction)}</div>
-          </div>` : ''}
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(storeAuction || 0)}</div>
+          </div>
         </div>` : ''}
         <div class="h-px bg-gray-100 dark:bg-gray-700 w-full mb-3"></div>` : ''}
 
