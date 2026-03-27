@@ -742,7 +742,34 @@
         </tr>`;
     }
     
-    html += `</tbody></table>`;
+    // Weekly totals
+    let wkSales = 0, wkBudget = 0, wkLaborNum = 0, wkLaborDen = 0;
+    for (const r of sorted) {
+      if (r.aTotal != null) wkSales += r.aTotal;
+      if (r.bTotal != null) wkBudget += r.bTotal;
+      if (r.aLabor != null && r.aTotal != null) {
+        const lp = normalizeLaborPct(r.aLabor);
+        if (lp != null) { wkLaborNum += (lp / 100) * r.aTotal; wkLaborDen += r.aTotal; }
+      }
+    }
+    const wkDiff = wkSales - wkBudget;
+    const wkDiffPos = wkDiff >= 0;
+    const wkLabor = wkLaborDen > 0 ? (wkLaborNum / wkLaborDen) * 100 : null;
+
+    if (sorted.length > 0) {
+      html += `</tbody>
+        <tfoot class="border-t-2 border-gray-300 dark:border-gray-600">
+          <tr class="font-bold text-sm">
+            <td class="py-3 px-4 text-gray-900 dark:text-white">Week ${selectedWeek} Total</td>
+            <td class="py-3 px-4 text-right text-gray-500 dark:text-gray-400">${fmtDollar(wkBudget)}</td>
+            <td class="py-3 px-4 text-right text-gray-900 dark:text-white">${fmtDollar(wkSales)}</td>
+            <td class="py-3 px-4 text-right ${wkDiffPos ? 'text-green-600' : 'text-red-500'}">${wkDiffPos ? '+' : '-'}${fmtDollar(Math.abs(wkDiff))}</td>
+            <td class="py-3 px-4 text-right ${wkLabor != null && wkLabor > LABOR_TARGET ? 'text-red-500' : 'text-green-500'}">${fmtPct(wkLabor)}</td>
+          </tr>
+        </tfoot></table>`;
+    } else {
+      html += `</tbody></table>`;
+    }
     if (sorted.length === 0) html = `<div class="p-8 text-center text-gray-400 dark:text-gray-500">No data for Week ${selectedWeek}.</div>`;
     
     el("modal-content").innerHTML = html;
