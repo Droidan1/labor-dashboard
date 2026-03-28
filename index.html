@@ -534,6 +534,7 @@
     let todayTotal = 0, todayRetail = 0, todayBin = 0, todayAuction = 0;
     let todayTotalBudget = 0;
     let storesWithData = 0;
+    let allOrderCount = 0, allTxnTimeTotal = 0, allTxnTimeCount = 0, allItemCount = 0, allCartTotal = 0;
 
     if (isCurrentWeek) {
       for (const s of STORES) {
@@ -542,6 +543,17 @@
           todayTotal += live.total;
           todayRetail += live.retail;
           todayBin += live.bin;
+          allOrderCount += live.orderCount || 0;
+          if (live.avgTxnSec != null && live.orderCount > 0) {
+            allTxnTimeTotal += live.avgTxnSec * live.orderCount;
+            allTxnTimeCount += live.orderCount;
+          }
+          if (live.avgItems != null && live.orderCount > 0) {
+            allItemCount += live.avgItems * live.orderCount;
+          }
+          if (live.avgCart != null && live.orderCount > 0) {
+            allCartTotal += live.avgCart * live.orderCount;
+          }
           storesWithData++;
         }
 
@@ -558,6 +570,10 @@
       el("today-total-card").classList.add("hidden");
     }
 
+    const totalAvgCart = allOrderCount > 0 ? allCartTotal / allOrderCount : 0;
+    const totalAvgItems = allOrderCount > 0 ? allItemCount / allOrderCount : 0;
+    const totalAvgTxnSec = allTxnTimeCount > 0 ? Math.round(allTxnTimeTotal / allTxnTimeCount) : null;
+
     if (liveDataLoading) {
       el("c-today-total").innerHTML = '<span class="loading-dot text-indigo-400 text-lg">Loading...</span>';
       el("c-today-sub").textContent = 'Fetching live data';
@@ -571,6 +587,24 @@
             <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayRetail)}</div></div>
             <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayBin)}</div></div>
             <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayAuction)}</div></div>
+          </div>
+          <div class="flex gap-3 mt-3 text-center">
+            <div class="flex-1 py-2 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
+              <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider">Avg Cart</div>
+              <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">${fmtDollar(totalAvgCart)}</div>
+            </div>
+            <div class="flex-1 py-2 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
+              <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider">Avg Items</div>
+              <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">${totalAvgItems.toFixed(1)}</div>
+            </div>
+            <div class="flex-1 py-2 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
+              <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider">Orders</div>
+              <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">${allOrderCount}</div>
+            </div>
+            <div class="flex-1 py-2 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
+              <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider">Avg Time</div>
+              <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">${fmtTime(totalAvgTxnSec)}</div>
+            </div>
           </div>`;
       } else {
         el("c-today-breakdown").innerHTML = '';
