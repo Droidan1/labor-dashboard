@@ -244,6 +244,7 @@
     return '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
   }
   function fmtPct(n, d=1) { return n != null ? `${n.toFixed(d)}%` : "—"; }
+  function fmtTime(sec) { if (sec == null) return '—'; const m = Math.floor(sec / 60); const s = sec % 60; return m > 0 ? `${m}m ${s}s` : `${s}s`; }
   function normalizeLaborPct(n) {
     if (n == null) return null;
     return n < 5 ? n * 100 : n;
@@ -340,7 +341,7 @@
     try {
       const response = await fetch(workerUrl);
       const data = await response.json();
-      let totalNet = 0, binNet = 0, retailNet = 0, orderCount = 0, totalItemCount = 0;
+      let totalNet = 0, binNet = 0, retailNet = 0, orderCount = 0, totalItemCount = 0, totalTxnTimeMs = 0, txnTimeCount = 0;
 
       if (data && data.elements) {
         for (const order of data.elements) {
@@ -360,6 +361,22 @@
           const orderNet = totalCents - taxCents;
           totalNet += orderNet;
           if (orderNet > 0) orderCount++;
+
+          // Transaction time: order created → last payment
+          if (orderNet > 0 && order.createdTime && order.payments?.elements?.length) {
+            let lastPaymentTime = 0;
+            for (const pmt of order.payments.elements) {
+              if (pmt.createdTime > lastPaymentTime) lastPaymentTime = pmt.createdTime;
+            }
+            if (lastPaymentTime > order.createdTime) {
+              const duration = lastPaymentTime - order.createdTime;
+              // Only count reasonable durations (under 30 minutes) to filter out tabs/holds
+              if (duration < 30 * 60 * 1000) {
+                totalTxnTimeMs += duration;
+                txnTimeCount++;
+              }
+            }
+          }
 
           // Count line items and classify as bin vs retail
           let binItemTotal = 0, retailItemTotal = 0, orderItemCount = 0;
@@ -390,7 +407,8 @@
       }
       const avgCart = orderCount > 0 ? (totalNet / orderCount) / 100 : 0;
       const avgItems = orderCount > 0 ? totalItemCount / orderCount : 0;
-      return { total: totalNet / 100, retail: Math.round(retailNet) / 100, bin: Math.round(binNet) / 100, avgCart, avgItems, orderCount };
+      const avgTxnSec = txnTimeCount > 0 ? Math.round(totalTxnTimeMs / txnTimeCount / 1000) : null;
+      return { total: totalNet / 100, retail: Math.round(retailNet) / 100, bin: Math.round(binNet) / 100, avgCart, avgItems, orderCount, avgTxnSec };
     } catch (error) {
       console.warn(`Clover API error for ${storeKey}:`, error.message);
       return null;
@@ -628,6 +646,7 @@
       const liveAvgCart = liveData?.avgCart ?? null;
       const liveAvgItems = liveData?.avgItems ?? null;
       const liveOrderCount = liveData?.orderCount ?? null;
+      const liveAvgTxnSec = liveData?.avgTxnSec ?? null;
       // Add live sales to the historical weekly total only for current week
       const combinedTotal = (m.aTotal || 0) + (liveSales != null && liveSales > 0 ? liveSales : 0);
 
@@ -721,6 +740,10 @@
           <div class="flex-1 py-2 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
             <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider">Orders</div>
             <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">${liveOrderCount}</div>
+          </div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
+            <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider">Avg Time</div>
+            <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">${fmtTime(liveAvgTxnSec)}</div>
           </div>
         </div>` : ''}
 
