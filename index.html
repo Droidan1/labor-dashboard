@@ -340,7 +340,7 @@
     try {
       const response = await fetch(workerUrl);
       const data = await response.json();
-      let totalNet = 0, binNet = 0, retailNet = 0;
+      let totalNet = 0, binNet = 0, retailNet = 0, orderCount = 0, totalItemCount = 0;
 
       if (data && data.elements) {
         for (const order of data.elements) {
@@ -359,12 +359,15 @@
           }
           const orderNet = totalCents - taxCents;
           totalNet += orderNet;
+          if (orderNet > 0) orderCount++;
 
-          // Classify line items as bin vs retail
-          let binItemTotal = 0, retailItemTotal = 0;
+          // Count line items and classify as bin vs retail
+          let binItemTotal = 0, retailItemTotal = 0, orderItemCount = 0;
           if (order.lineItems?.elements) {
             for (const item of order.lineItems.elements) {
-              const price = (item.price || 0) * (item.unitQty != null ? item.unitQty / 1000 : 1);
+              const qty = item.unitQty != null ? item.unitQty / 1000 : 1;
+              const price = (item.price || 0) * qty;
+              orderItemCount += qty;
               if (isBinItem(item.name || '')) {
                 binItemTotal += price;
               } else {
@@ -372,6 +375,7 @@
               }
             }
           }
+          if (orderNet > 0) totalItemCount += orderItemCount;
 
           // Distribute order's net sales proportionally between bin and retail
           const itemGross = binItemTotal + retailItemTotal;
@@ -384,7 +388,9 @@
           }
         }
       }
-      return { total: totalNet / 100, retail: Math.round(retailNet) / 100, bin: Math.round(binNet) / 100 };
+      const avgCart = orderCount > 0 ? (totalNet / orderCount) / 100 : 0;
+      const avgItems = orderCount > 0 ? totalItemCount / orderCount : 0;
+      return { total: totalNet / 100, retail: Math.round(retailNet) / 100, bin: Math.round(binNet) / 100, avgCart, avgItems, orderCount };
     } catch (error) {
       console.warn(`Clover API error for ${storeKey}:`, error.message);
       return null;
@@ -619,6 +625,9 @@
       const liveSales = liveData?.total ?? null;
       const liveRetail = liveData?.retail ?? null;
       const liveBin = liveData?.bin ?? null;
+      const liveAvgCart = liveData?.avgCart ?? null;
+      const liveAvgItems = liveData?.avgItems ?? null;
+      const liveOrderCount = liveData?.orderCount ?? null;
       // Add live sales to the historical weekly total only for current week
       const combinedTotal = (m.aTotal || 0) + (liveSales != null && liveSales > 0 ? liveSales : 0);
 
@@ -698,6 +707,22 @@
           </div>
         </div>
         <div class="h-px bg-gray-100 dark:bg-gray-700 w-full mb-3"></div>` : ''}
+
+        ${isCurrentWeek && !liveDataLoading && liveSales != null && liveSales > 0 ? `
+        <div class="flex gap-4 mb-3 text-center">
+          <div class="flex-1 py-2 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
+            <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider">Avg Cart</div>
+            <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">${fmtDollar(liveAvgCart)}</div>
+          </div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
+            <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider">Avg Items</div>
+            <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">${liveAvgItems.toFixed(1)}</div>
+          </div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
+            <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider">Orders</div>
+            <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">${liveOrderCount}</div>
+          </div>
+        </div>` : ''}
 
         <div class="flex justify-between items-center text-sm text-gray-500 dark:text-gray-400">
           ${isCurrentWeek ? `<span>Wk ${selectedWeek}: <strong class="text-gray-700 dark:text-gray-200">${fmtK(combinedTotal)}</strong></span>` : '<span></span>'}
