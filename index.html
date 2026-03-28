@@ -6,10 +6,24 @@
   <title>Bargain Lane Dashboard</title>
   
   <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#4f46e5">
+  <meta name="theme-color" content="#3BB54A">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
   <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = { darkMode: 'class' }</script>
+  <script>tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        fontFamily: {
+          display: ['"Luckiest Guy"', 'cursive'],
+          body: ['Poppins', 'sans-serif'],
+        }
+      }
+    }
+  }</script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
@@ -21,12 +35,12 @@
     /* Dark mode toggle switch */
     .toggle-track {
       width: 56px; height: 28px; border-radius: 14px; position: relative; cursor: pointer;
-      background: linear-gradient(135deg, #93c5fd, #60a5fa);
+      background: linear-gradient(135deg, #3BB54A, #2d9a3b);
       transition: background 0.5s cubic-bezier(0.4, 0, 0.2, 1);
       overflow: hidden;
     }
     .toggle-track.active {
-      background: linear-gradient(135deg, #312e81, #1e1b4b);
+      background: linear-gradient(135deg, #194975, #0f2d47);
     }
     .toggle-knob {
       width: 22px; height: 22px; border-radius: 50%; position: absolute; top: 3px; left: 3px;
@@ -53,10 +67,10 @@
     if (localStorage.getItem('darkMode') === 'true') document.documentElement.classList.add('dark');
   </script>
 </head>
-<body class="bg-gray-50 dark:bg-gray-900 font-sans relative transition-colors">
+<body class="bg-[#F6F6F6] dark:bg-gray-900 font-body relative transition-colors">
 
-  <div id="splash" class="flex flex-col items-center justify-center min-h-screen absolute inset-0 bg-gray-50 dark:bg-gray-900 z-50">
-    <div class="text-2xl font-bold text-gray-700 dark:text-gray-200 mb-2">Bargain Lane Dashboard</div>
+  <div id="splash" class="flex flex-col items-center justify-center min-h-screen absolute inset-0 bg-[#F6F6F6] dark:bg-gray-900 z-50">
+    <div class="text-3xl font-display text-[#3BB54A] dark:text-[#3BB54A] mb-2">Bargain Lane Dashboard</div>
     <div id="splash-msg" class="text-gray-500 dark:text-gray-400 text-sm loading-dot">Connecting to Google Sheets…</div>
   </div>
 
@@ -66,7 +80,7 @@
     <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
       <div class="flex items-center justify-between max-w-7xl mx-auto">
         <div>
-          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Bargain Lane Dashboard</h1>
+          <h1 class="text-2xl font-display text-[#3BB54A]">Bargain Lane Dashboard</h1>
           <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5" id="last-updated"></p>
         </div>
         <div class="flex items-center gap-3">
@@ -77,7 +91,7 @@
             </div>
           </div>
           <button id="refresh-btn" aria-label="Refresh dashboard data"
-            class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 flex items-center gap-2 transition-colors">
+            class="bg-[#3BB54A] text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-[#2d9a3b] flex items-center gap-2 transition-colors">
             ↻ Refresh
           </button>
         </div>
@@ -89,14 +103,14 @@
       <div class="flex items-center gap-3">
         <label for="week-select" class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Viewing Week:</label>
         <select id="week-select"
-          class="px-4 py-2 rounded-lg text-sm font-medium bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-600 shadow-sm hover:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors cursor-pointer appearance-none"
+          class="px-4 py-2 rounded-lg text-sm font-medium bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-600 shadow-sm hover:border-[#3BB54A] focus:outline-none focus:ring-2 focus:ring-[#3BB54A] focus:border-[#3BB54A] transition-colors cursor-pointer appearance-none"
           style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 20 20%22 fill=%22%236b7280%22%3E%3Cpath fill-rule=%22evenodd%22 d=%22M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z%22 clip-rule=%22evenodd%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 0.5rem center; background-size: 1.25rem; padding-right: 2rem;">
         </select>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div class="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors order-1">
-          <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">All Stores Budget</div>
+          <div class="text-xs font-display text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">All Stores Budget</div>
           <div class="grid grid-cols-2 gap-4">
             <div>
               <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Weekly</div>
@@ -139,17 +153,17 @@
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div class="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors">
-          <h3 class="font-semibold text-gray-800 dark:text-gray-200 mb-4" id="labor-chart-title">Labor % by Store</h3>
+          <h3 class="font-display text-gray-800 dark:text-gray-200 mb-4" id="labor-chart-title">Labor % by Store</h3>
           <div style="height:240px"><canvas id="labor-chart" role="img" aria-label="Horizontal bar chart showing labor percentage by store"></canvas></div>
         </div>
         <div class="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors">
-          <h3 class="font-semibold text-gray-800 dark:text-gray-200 mb-4" id="budget-chart-title">Actual vs Budget — Net Sales</h3>
+          <h3 class="font-display text-gray-800 dark:text-gray-200 mb-4" id="budget-chart-title">Actual vs Budget — Net Sales</h3>
           <div style="height:240px"><canvas id="budget-chart" role="img" aria-label="Bar chart comparing actual vs budget net sales by store"></canvas></div>
         </div>
       </div>
       <div class="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors">
         <div class="flex justify-between items-center mb-4">
-          <h3 class="font-semibold text-gray-800 dark:text-gray-200">Weekly Sales Trend — All Stores</h3>
+          <h3 class="font-display text-gray-800 dark:text-gray-200">Weekly Sales Trend — All Stores</h3>
           <div class="flex gap-1">
             <button onclick="if(trendChart) { trendChart.zoom(1.3); el('reset-zoom-btn').classList.remove('hidden'); }" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" title="Zoom In">+</button>
             <button onclick="if(trendChart) { trendChart.zoom(0.7); }" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" title="Zoom Out">−</button>
@@ -165,13 +179,13 @@
     <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden transform transition-all">
       <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80 flex justify-between items-center">
         <div>
-          <h2 id="modal-title" class="text-xl font-bold text-gray-900 dark:text-white">Store Name</h2>
+          <h2 id="modal-title" class="text-xl font-display text-gray-900 dark:text-white">Store Name</h2>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Previous 14 Days History</p>
         </div>
         <button onclick="closeStoreModal()" aria-label="Close" class="text-gray-400 hover:text-gray-800 dark:hover:text-white text-3xl leading-none font-light">&times;</button>
       </div>
       <div class="flex border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-        <button id="tab-weekly" onclick="switchModalTab('weekly')" class="px-5 py-2.5 text-sm font-semibold border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400 transition-colors">Weekly</button>
+        <button id="tab-weekly" onclick="switchModalTab('weekly')" class="px-5 py-2.5 text-sm font-semibold border-b-2 border-[#3BB54A] text-[#194975] dark:text-[#3BB54A] transition-colors">Weekly</button>
         <button id="tab-items" onclick="switchModalTab('items')" class="px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Item Sales</button>
       </div>
       <div class="p-0 overflow-y-auto" id="modal-content"></div>
@@ -202,7 +216,7 @@
     "BL12/BL13 Wyoming",
     "BL14/B15 Battle Creek",
   ];
-  const COLORS = ["#6366f1","#0ea5e9","#10b981","#f59e0b","#ef4444","#ec4899"];
+  const COLORS = ["#3BB54A","#194975","#00B8FF","#f59e0b","#ef4444","#ec4899"];
   const C = { MONTH:1, WEEK:2, DATE:3, B_TOTAL:8, B_LABOR:10, A_RETAIL:17, A_BINS:18, A_AUCTION:19, A_TOTAL:20, A_HOURS:21, A_LABOR:22, V_TOTAL:26 };
 
   // ═══════════════════════════════════════════════════════════════
@@ -570,7 +584,7 @@
     const totalAvgTxnSec = allTxnTimeCount > 0 ? Math.round(allTxnTimeTotal / allTxnTimeCount) : null;
 
     if (liveDataLoading) {
-      el("c-today-total").innerHTML = '<span class="loading-dot text-indigo-400 text-lg">Loading...</span>';
+      el("c-today-total").innerHTML = '<span class="loading-dot text-[#3BB54A] text-lg">Loading...</span>';
       el("c-today-sub").textContent = 'Fetching live data';
       el("c-today-breakdown").innerHTML = '';
     } else {
@@ -584,21 +598,21 @@
             <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayAuction)}</div></div>
           </div>
           <div class="flex gap-4 mt-3 text-center">
-            <div class="flex-1 py-2.5 px-3 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
-              <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider mb-1">Avg Cart</div>
-              <div class="text-base font-bold text-indigo-600 dark:text-indigo-300">${fmtDollar(totalAvgCart)}</div>
+            <div class="flex-1 py-2.5 px-3 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
+              <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Avg Cart</div>
+              <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(totalAvgCart)}</div>
             </div>
-            <div class="flex-1 py-2.5 px-3 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
-              <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider mb-1">Avg Items</div>
-              <div class="text-base font-bold text-indigo-600 dark:text-indigo-300">${totalAvgItems.toFixed(1)}</div>
+            <div class="flex-1 py-2.5 px-3 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
+              <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Avg Items</div>
+              <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${totalAvgItems.toFixed(1)}</div>
             </div>
-            <div class="flex-1 py-2.5 px-3 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
-              <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider mb-1">Orders</div>
-              <div class="text-base font-bold text-indigo-600 dark:text-indigo-300">${allOrderCount}</div>
+            <div class="flex-1 py-2.5 px-3 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
+              <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Orders</div>
+              <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${allOrderCount}</div>
             </div>
-            <div class="flex-1 py-2.5 px-3 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
-              <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider mb-1">Avg Time</div>
-              <div class="text-base font-bold text-indigo-600 dark:text-indigo-300">${fmtTime(totalAvgTxnSec)}</div>
+            <div class="flex-1 py-2.5 px-3 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
+              <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Avg Time</div>
+              <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(totalAvgTxnSec)}</div>
             </div>
           </div>`;
       } else {
@@ -683,13 +697,13 @@
       const storeAuction = isCurrentWeek ? (getTodayRow(m.store)?.aAuction ?? null) : null;
       
       const div = document.createElement("div");
-      div.className = `bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700 hover:border-indigo-400 hover:shadow-md transition-all cursor-pointer group`;
+      div.className = `bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700 hover:border-[#3BB54A] hover:shadow-md transition-all cursor-pointer group`;
       div.onclick = () => openStoreModal(m.store);
       
       div.innerHTML = `
         <div class="flex items-start justify-between mb-2">
           <div>
-            <div class="font-bold text-gray-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">${escapeHtml(m.name)}</div>
+            <div class="font-display text-gray-900 dark:text-white group-hover:text-[#194975] dark:group-hover:text-[#3BB54A] transition-colors">${escapeHtml(m.name)}</div>
             <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">${escapeHtml(m.store.split("/")[0])}</div>
           </div>
           ${isCurrentWeek ? `<span class="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-100 dark:border-green-800 flex items-center gap-1">
@@ -701,7 +715,7 @@
           <div>
             <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Today's Net Sales</div>
             <div class="text-3xl font-bold text-gray-900 dark:text-white">
-              ${liveDataLoading ? '<span class="loading-dot text-indigo-400 text-lg">Loading...</span>' :
+              ${liveDataLoading ? '<span class="loading-dot text-[#3BB54A] text-lg">Loading...</span>' :
                 (liveSales != null && liveSales > 0 ? fmtDollar(liveSales) : '<span class="text-gray-300 dark:text-gray-600 text-xl font-medium">No Live Data</span>')}
             </div>
           </div>
@@ -757,27 +771,27 @@
 
         ${isCurrentWeek && !liveDataLoading && liveSales != null && liveSales > 0 ? `
         <div class="flex gap-4 mb-3 text-center">
-          <div class="flex-1 py-2 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
-            <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider">Avg Cart</div>
-            <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">${fmtDollar(liveAvgCart)}</div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
+            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Cart</div>
+            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(liveAvgCart)}</div>
           </div>
-          <div class="flex-1 py-2 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
-            <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider">Avg Items</div>
-            <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">${liveAvgItems.toFixed(1)}</div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
+            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Items</div>
+            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${liveAvgItems.toFixed(1)}</div>
           </div>
-          <div class="flex-1 py-2 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
-            <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider">Orders</div>
-            <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">${liveOrderCount}</div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
+            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Orders</div>
+            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${liveOrderCount}</div>
           </div>
-          <div class="flex-1 py-2 px-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40">
-            <div class="text-[9px] font-semibold text-indigo-400 dark:text-indigo-500 uppercase tracking-wider">Avg Time</div>
-            <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">${fmtTime(liveAvgTxnSec)}</div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
+            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Time</div>
+            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(liveAvgTxnSec)}</div>
           </div>
         </div>` : ''}
 
         <div class="flex justify-between items-center text-sm text-gray-500 dark:text-gray-400">
           ${isCurrentWeek ? `<span>Wk${selectedWeek} WTD: <strong class="text-gray-700 dark:text-gray-200">${fmtK(combinedTotal)}</strong>${m.bTotal != null ? ` <span class="text-gray-400 dark:text-gray-500">/ ${fmtK(m.bTotal)}</span> ${(() => { const d = combinedTotal - m.bTotal; const cls = d >= 0 ? 'text-green-600' : 'text-red-500'; const sign = d >= 0 ? '+' : '-'; return `<span class="${cls} font-semibold">${sign}${fmtK(Math.abs(d))}</span>`; })()}` : ''}</span>` : '<span></span>'}
-          <span class="text-indigo-600 dark:text-indigo-400 font-medium group-hover:translate-x-1 transition-transform">History &rarr;</span>
+          <span class="text-[#194975] dark:text-[#3BB54A] font-medium group-hover:translate-x-1 transition-transform">History &rarr;</span>
         </div>`;
       container.appendChild(div);
     }
@@ -874,7 +888,7 @@
   function switchModalTab(tab) {
     const weeklyTab = el('tab-weekly'), itemsTab = el('tab-items');
     const weeklyContent = el('modal-content'), itemsContent = el('modal-content-items');
-    const active = 'px-5 py-2.5 text-sm font-semibold border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400 transition-colors';
+    const active = 'px-5 py-2.5 text-sm font-semibold border-b-2 border-[#3BB54A] text-[#194975] dark:text-[#3BB54A] transition-colors';
     const inactive = 'px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors';
     if (tab === 'weekly') {
       weeklyTab.className = active; itemsTab.className = inactive;
