@@ -119,6 +119,7 @@
       transition: transform 0.3s; width: 48px; display: grid; place-content: center;
     }
     .sidebar:not(.collapsed) .sidebar-toggle-bottom .chevron { transform: rotate(180deg); }
+    .sidebar.collapsed #sidebar-dark-toggle { display: none; }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -159,7 +160,7 @@
       </nav>
 
       <!-- Bottom Section -->
-      <div class="px-2 pb-2 space-y-1">
+      <div id="sidebar-dark-toggle" class="px-2 pb-2 space-y-1">
         <div class="flex items-center gap-3 px-3 py-2.5">
           <div id="dark-toggle" class="toggle-track flex-shrink-0" role="switch" aria-checked="false" aria-label="Toggle dark mode" tabindex="0" style="transform: scale(0.8);">
             <div class="toggle-knob"></div>
