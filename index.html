@@ -80,6 +80,45 @@
       transition: opacity 0.2s 0.1s;
     }
     .refresh-btn:hover .refresh-label { opacity: 1; }
+    /* Sidebar */
+    .sidebar {
+      width: 256px; min-width: 256px;
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .sidebar.collapsed { width: 64px; min-width: 64px; }
+    .sidebar .nav-label { opacity: 1; transition: opacity 0.2s 0.1s; white-space: nowrap; }
+    .sidebar.collapsed .nav-label { opacity: 0; transition: opacity 0.1s; pointer-events: none; }
+    .sidebar .logo-text { opacity: 1; transition: opacity 0.2s 0.1s; white-space: nowrap; }
+    .sidebar.collapsed .logo-text { opacity: 0; transition: opacity 0.1s; }
+    .sidebar .nav-item {
+      display: flex; align-items: center; height: 44px; width: 100%;
+      border-radius: 8px; cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+      color: #4b5563; font-size: 0.875rem; font-weight: 500;
+      border-left: 2px solid transparent; padding: 0;
+    }
+    .dark .sidebar .nav-item { color: #9ca3af; }
+    .sidebar .nav-item:hover { background: #f9fafb; color: #111827; }
+    .dark .sidebar .nav-item:hover { background: #1f2937; color: #e5e7eb; }
+    .sidebar .nav-item.active {
+      background: rgba(59,181,74,0.08); color: #194975;
+      border-left-color: #3BB54A; font-weight: 600;
+    }
+    .dark .sidebar .nav-item.active { background: rgba(59,181,74,0.15); color: #3BB54A; }
+    .sidebar.collapsed .nav-item { justify-content: center; border-left-color: transparent; }
+    .sidebar .nav-icon { flex-shrink: 0; width: 48px; display: grid; place-content: center; }
+    .sidebar .nav-icon svg { width: 18px; height: 18px; }
+    .sidebar-toggle-bottom {
+      border-top: 1px solid #e5e7eb; transition: background 0.15s;
+      cursor: pointer; display: flex; align-items: center; padding: 12px;
+    }
+    .dark .sidebar-toggle-bottom { border-top-color: #1f2937; }
+    .sidebar-toggle-bottom:hover { background: #f9fafb; }
+    .dark .sidebar-toggle-bottom:hover { background: #1f2937; }
+    .sidebar-toggle-bottom .chevron {
+      transition: transform 0.3s; width: 48px; display: grid; place-content: center;
+    }
+    .sidebar:not(.collapsed) .sidebar-toggle-bottom .chevron { transform: rotate(180deg); }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -95,29 +134,69 @@
 
   <div id="error-banner" class="hidden bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm px-6 py-3 rounded-lg mx-6 mt-4"></div>
 
-  <div id="app" class="hidden min-h-screen">
-    <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
-      <div class="flex items-center justify-between max-w-7xl mx-auto">
-        <div>
-          <h1 class="text-2xl font-display text-[#3BB54A]">Bargain Lane Dashboard</h1>
-          <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5" id="last-updated"></p>
-        </div>
-        <div class="flex items-center gap-3">
-          <div class="flex items-center gap-2.5">
-            <span id="dark-label" class="text-xs font-medium text-gray-400 dark:text-gray-500 hidden sm:inline select-none">Dark mode <span id="dark-state">off</span></span>
-            <div id="dark-toggle" class="toggle-track" role="switch" aria-checked="false" aria-label="Toggle dark mode" tabindex="0">
-              <div class="toggle-knob"></div>
-            </div>
+  <div id="app" class="hidden min-h-screen flex">
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col h-screen sticky top-0 z-20 overflow-hidden transition-colors shadow-sm">
+      <!-- Title Section -->
+      <div class="px-2 pt-4 pb-4 mb-2 border-b border-gray-200 dark:border-gray-800">
+        <div class="flex items-center gap-3 p-2 rounded-lg">
+          <div class="grid w-10 h-10 shrink-0 place-content-center rounded-lg bg-gradient-to-br from-[#3BB54A] to-[#2d9a3b] shadow-sm">
+            <span class="text-white font-display text-lg leading-none">BL</span>
           </div>
-          <button id="refresh-btn" aria-label="Refresh dashboard data" class="refresh-btn">
-            <span class="refresh-icon">↻</span>
-            <span class="refresh-label">↻ Refresh</span>
-          </button>
+          <div class="logo-text overflow-hidden">
+            <span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">Bargain Lane</span>
+            <span class="block text-xs text-gray-500 dark:text-gray-400">Dashboard</span>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+      <!-- Nav Items -->
+      <nav class="flex-1 px-2 space-y-1">
+        <div class="nav-item active" data-page="dashboard">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></span>
+          <span class="nav-label">Dashboard</span>
+        </div>
+      </nav>
+
+      <!-- Bottom Section -->
+      <div class="px-2 pb-2 space-y-1">
+        <div class="flex items-center gap-3 px-3 py-2.5">
+          <div id="dark-toggle" class="toggle-track flex-shrink-0" role="switch" aria-checked="false" aria-label="Toggle dark mode" tabindex="0" style="transform: scale(0.8);">
+            <div class="toggle-knob"></div>
+          </div>
+          <span id="dark-label" class="nav-label text-xs text-gray-500 dark:text-gray-400 select-none">Dark mode <span id="dark-state">off</span></span>
+        </div>
+      </div>
+
+      <!-- Collapse Toggle -->
+      <div id="sidebar-toggle" class="sidebar-toggle-bottom" aria-label="Toggle sidebar">
+        <span class="chevron">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 dark:text-gray-400">
+            <polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/>
+          </svg>
+        </span>
+        <span class="nav-label text-sm font-medium text-gray-600 dark:text-gray-300">Hide</span>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <div class="flex-1 min-w-0">
+      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+        <div class="flex items-center justify-between max-w-7xl mx-auto">
+          <div>
+            <h1 class="text-2xl font-display text-[#3BB54A]">Dashboard</h1>
+            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5" id="last-updated"></p>
+          </div>
+          <div class="flex items-center gap-3">
+            <button id="refresh-btn" aria-label="Refresh dashboard data" class="refresh-btn">
+              <span class="refresh-icon">↻</span>
+              <span class="refresh-label">↻ Refresh</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
       
       <div class="flex items-center gap-3">
         <label for="week-select" class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Viewing Week:</label>
@@ -192,6 +271,7 @@
         <div style="height:340px"><canvas id="trend-chart" role="img" aria-label="Line chart showing weekly sales trend across all stores"></canvas></div>
       </div>
     </div>
+    </div><!-- end main content -->
   </div>
 
   <div id="store-modal" class="fixed inset-0 bg-gray-900/60 hidden items-center justify-center z-50 px-4 backdrop-blur-sm">
@@ -1030,6 +1110,20 @@
   }
 
   // ═══════════════════════════════════════════════════════════════
+  //  SIDEBAR
+  // ═══════════════════════════════════════════════════════════════
+  function initSidebar() {
+    const sidebar = el("sidebar");
+    const btn = el("sidebar-toggle");
+    const collapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+    if (collapsed) sidebar.classList.add('collapsed');
+    btn.onclick = () => {
+      sidebar.classList.toggle('collapsed');
+      localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   //  DARK MODE
   // ═══════════════════════════════════════════════════════════════
   function initDarkMode() {
@@ -1064,6 +1158,7 @@
       });
       caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
+    initSidebar();
     initDarkMode();
     el("refresh-btn").onclick = loadAll;
     loadAll();
