@@ -1133,6 +1133,8 @@
     btn.onclick = () => {
       sidebar.classList.toggle('collapsed');
       localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+      const overlay = el("sidebar-overlay");
+      if (overlay) overlay.style.display = sidebar.classList.contains('collapsed') ? 'none' : '';
     };
   }
 
