@@ -1117,8 +1117,7 @@
   function initSidebar() {
     const sidebar = el("sidebar");
     const btn = el("sidebar-toggle");
-    const collapsed = localStorage.getItem('sidebarCollapsed') === 'true';
-    if (collapsed) sidebar.classList.add('collapsed');
+    sidebar.classList.add('collapsed');
     btn.onclick = () => {
       sidebar.classList.toggle('collapsed');
       localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
