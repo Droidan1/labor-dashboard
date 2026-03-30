@@ -60,9 +60,7 @@ export default {
           break;
         }
 
-        for (let i = 0; i < data.elements.length; i++) {
-          allElements.push(data.elements[i]);
-        }
+        allElements.push(...data.elements);
 
         if (data.elements.length < limit) {
           break;
