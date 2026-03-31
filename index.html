@@ -330,7 +330,14 @@
     "BL14/B15 Battle Creek",
   ];
   const COLORS = ["#3BB54A","#194975","#00B8FF","#f59e0b","#ef4444","#ec4899"];
-  const C = { MONTH:1, WEEK:2, DATE:3, B_TOTAL:8, B_LABOR:10, A_RETAIL:17, A_BINS:18, A_AUCTION:19, A_TOTAL:20, A_HOURS:21, A_LABOR:22, V_TOTAL:26 };
+  const MAX_TXN_DURATION_MS = 30 * 60 * 1000; // 30 min – filter out tabs/holds
+  const C = {
+    MONTH:1, WEEK:2, DATE:3,         // A–C: date identifiers
+    B_TOTAL:8, B_LABOR:10,           // I,K: budgeted total & labor %
+    A_RETAIL:17, A_BINS:18,          // R,S: actual retail & bins sales
+    A_AUCTION:19, A_TOTAL:20,        // T,U: actual auction & total sales
+    A_HOURS:21, A_LABOR:22,          // V,W: actual hours & labor %
+  };
 
   // ═══════════════════════════════════════════════════════════════
   //  STATE
@@ -462,6 +469,7 @@
     const workerUrl = `https://clover-sales-api.howardbrian86.workers.dev/?store=${storeKey}&since=${startOfToday}`;
     try {
       const response = await fetch(workerUrl);
+      if (!response.ok) throw new Error(`Worker returned ${response.status}`);
       const data = await response.json();
       let totalNet = 0, binNet = 0, retailNet = 0, orderCount = 0, totalItemCount = 0, totalTxnTimeMs = 0, txnTimeCount = 0;
 
@@ -492,8 +500,7 @@
             }
             if (lastPaymentTime > order.createdTime) {
               const duration = lastPaymentTime - order.createdTime;
-              // Only count reasonable durations (under 30 minutes) to filter out tabs/holds
-              if (duration < 30 * 60 * 1000) {
+              if (duration < MAX_TXN_DURATION_MS) {
                 totalTxnTimeMs += duration;
                 txnTimeCount++;
               }
@@ -561,6 +568,10 @@
       const storeKey = s.split('/')[0].toLowerCase();
       liveCloverData[s] = await fetchLiveCloverSales(storeKey);
     })).then(() => {
+      liveDataLoading = false;
+      if (selectedWeek === currentWeek) renderDashboard();
+    }).catch(error => {
+      console.error("Clover data load failed:", error);
       liveDataLoading = false;
       if (selectedWeek === currentWeek) renderDashboard();
     });
@@ -1037,90 +1048,110 @@
       grid: { color: gridColor }
     };
 
-    if (laborChart) laborChart.destroy();
-    laborChart = new Chart(el("labor-chart"), {
-      type: "bar",
-      data: {
-        labels: names,
-        datasets: [{
-          data: metrics.map(m => m.laborPct),
-          backgroundColor: metrics.map(m => m.laborPct > LABOR_TARGET ? "#ef4444" : "#10b981")
-        }]
-      },
-      options: {
-        indexAxis: "y",
-        plugins: { legend: { display: false } },
-        scales: { x: scaleDefaults, y: scaleDefaults }
-      }
-    });
+    // --- Labor chart ---
+    const laborData = metrics.map(m => m.laborPct);
+    const laborColors = metrics.map(m => m.laborPct > LABOR_TARGET ? "#ef4444" : "#10b981");
+    if (laborChart) {
+      laborChart.data.labels = names;
+      laborChart.data.datasets[0].data = laborData;
+      laborChart.data.datasets[0].backgroundColor = laborColors;
+      laborChart.options.scales.x = scaleDefaults;
+      laborChart.options.scales.y = scaleDefaults;
+      laborChart.update();
+    } else {
+      laborChart = new Chart(el("labor-chart"), {
+        type: "bar",
+        data: { labels: names, datasets: [{ data: laborData, backgroundColor: laborColors }] },
+        options: {
+          indexAxis: "y",
+          plugins: { legend: { display: false } },
+          scales: { x: scaleDefaults, y: scaleDefaults }
+        }
+      });
+    }
 
-    if (budgetChart) budgetChart.destroy();
-    budgetChart = new Chart(el("budget-chart"), {
-      type: "bar",
-      data: {
-        labels: names,
-        datasets: [{
-          label: "Actual",
-          data: metrics.map(m => m.aTotal),
-          backgroundColor: metrics.map(m => m.color)
-        }]
-      },
-      options: {
-        plugins: { legend: { display: false } },
-        scales: { x: scaleDefaults, y: scaleDefaults }
-      }
-    });
+    // --- Budget chart ---
+    const budgetData = metrics.map(m => m.aTotal);
+    const budgetColors = metrics.map(m => m.color);
+    if (budgetChart) {
+      budgetChart.data.labels = names;
+      budgetChart.data.datasets[0].data = budgetData;
+      budgetChart.data.datasets[0].backgroundColor = budgetColors;
+      budgetChart.options.scales.x = scaleDefaults;
+      budgetChart.options.scales.y = scaleDefaults;
+      budgetChart.update();
+    } else {
+      budgetChart = new Chart(el("budget-chart"), {
+        type: "bar",
+        data: { labels: names, datasets: [{ label: "Actual", data: budgetData, backgroundColor: budgetColors }] },
+        options: {
+          plugins: { legend: { display: false } },
+          scales: { x: scaleDefaults, y: scaleDefaults }
+        }
+      });
+    }
 
-    if (trendChart) trendChart.destroy();
+    // --- Trend chart ---
     const trendWeeks = allWeeks.filter(w => w !== currentWeek);
-    trendChart = new Chart(el("trend-chart"), {
-      type: "line",
-      data: {
-        labels: trendWeeks.map(w => `Wk ${w}`),
-        datasets: STORES.map((s, i) => ({
-          label: shortName(s),
-          data: trendWeeks.map(w => (weeklyTotalsCache[s] && weeklyTotalsCache[s][w]) || null),
-          borderColor: COLORS[i],
-          backgroundColor: COLORS[i] + '20',
-          borderWidth: 2.5,
-          pointRadius: 3,
-          pointHoverRadius: 6,
-          tension: 0.3,
-          fill: false
-        }))
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'nearest', intersect: true },
-        scales: {
-          x: { ...scaleDefaults, ticks: { ...scaleDefaults.ticks, maxRotation: 0 } },
-          y: {
-            ...scaleDefaults,
-            ticks: { ...scaleDefaults.ticks, callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(0) + 'K' : v) }
-          }
-        },
-        plugins: {
-          legend: {
-            labels: { color: textColor, usePointStyle: true, pointStyle: 'circle', padding: 16 }
-          },
-          tooltip: {
-            callbacks: {
-              label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y != null ? fmtDollar(ctx.parsed.y) : '—'}`
+    const trendLabels = trendWeeks.map(w => `Wk ${w}`);
+    const trendDatasets = STORES.map((s, i) => ({
+      label: shortName(s),
+      data: trendWeeks.map(w => (weeklyTotalsCache[s] && weeklyTotalsCache[s][w]) || null),
+      borderColor: COLORS[i],
+      backgroundColor: COLORS[i] + '20',
+      borderWidth: 2.5,
+      pointRadius: 3,
+      pointHoverRadius: 6,
+      tension: 0.3,
+      fill: false
+    }));
+    if (trendChart) {
+      trendChart.data.labels = trendLabels;
+      trendChart.data.datasets = trendDatasets;
+      trendChart.options.scales.x = { ...scaleDefaults, ticks: { ...scaleDefaults.ticks, maxRotation: 0 } };
+      trendChart.options.scales.y = {
+        ...scaleDefaults,
+        ticks: { ...scaleDefaults.ticks, callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(0) + 'K' : v) }
+      };
+      trendChart.options.plugins.legend.labels.color = textColor;
+      trendChart.update();
+    } else {
+      trendChart = new Chart(el("trend-chart"), {
+        type: "line",
+        data: { labels: trendLabels, datasets: trendDatasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'nearest', intersect: true },
+          scales: {
+            x: { ...scaleDefaults, ticks: { ...scaleDefaults.ticks, maxRotation: 0 } },
+            y: {
+              ...scaleDefaults,
+              ticks: { ...scaleDefaults.ticks, callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(0) + 'K' : v) }
             }
           },
-          zoom: {
-            pan: { enabled: true, mode: 'x', onPanComplete: () => el('reset-zoom-btn').classList.remove('hidden') },
+          plugins: {
+            legend: {
+              labels: { color: textColor, usePointStyle: true, pointStyle: 'circle', padding: 16 }
+            },
+            tooltip: {
+              callbacks: {
+                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y != null ? fmtDollar(ctx.parsed.y) : '—'}`
+              }
+            },
             zoom: {
-              wheel: { enabled: false },
-              pinch: { enabled: false },
-              mode: 'x',
-              onZoomComplete: () => el('reset-zoom-btn').classList.remove('hidden')
+              pan: { enabled: true, mode: 'x', onPanComplete: () => el('reset-zoom-btn').classList.remove('hidden') },
+              zoom: {
+                wheel: { enabled: false },
+                pinch: { enabled: false },
+                mode: 'x',
+                onZoomComplete: () => el('reset-zoom-btn').classList.remove('hidden')
+              }
             }
           }
         }
-      }
-    });
+      });
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════

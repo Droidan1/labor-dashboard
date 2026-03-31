@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dashboard-cache-v2';
+const CACHE_NAME = 'dashboard-cache-v3';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -22,6 +22,15 @@ self.addEventListener('activate', event => {
 });
 
 self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+
+  // Never cache API requests – always go to network
+  if (url.hostname.includes('google') ||
+      url.hostname.includes('clover') ||
+      url.hostname.includes('workers.dev')) {
+    return;
+  }
+
   event.respondWith(
     fetch(event.request)
       .then(response => {
