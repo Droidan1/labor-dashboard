@@ -343,10 +343,12 @@
   // ═══════════════════════════════════════════════════════════════
   let allStoreData   = {};
   let liveCloverData = {}; // Stores our live API numbers: { total, retail, bin }
+  let historicalCloverData = {}; // { storeName: { "YYYY-MM-DD": { total, retail, bin, avgCart, ... } } }
   let selectedWeek   = null;
   let currentWeek    = null;
   let allWeeks       = [];
   let liveDataLoading = false;
+  let historicalDataLoading = false;
   let weeklyTotalsCache = {}; // { storeName: { weekNum: aTotal } }
   let laborChart=null, budgetChart=null, trendChart=null;
 
@@ -543,6 +545,48 @@
     }
   }
 
+  async function fetchHistoricalCloverData(storeKey, fromDate, toDate) {
+    const workerUrl = `https://clover-sales-api.howardbrian86.workers.dev/?history=true&store=${storeKey}&from=${fromDate}&to=${toDate}`;
+    try {
+      const response = await fetch(workerUrl);
+      if (!response.ok) return {};
+      return await response.json();
+    } catch (error) {
+      console.warn(`Historical data error for ${storeKey}:`, error.message);
+      return {};
+    }
+  }
+
+  // Load historical Clover snapshots for the selected week's date range
+  async function loadHistoricalCloverForWeek(weekNum) {
+    // Find the date range for this week from sheets data
+    let minDate = null, maxDate = null;
+    for (const s of STORES) {
+      for (const r of (allStoreData[s] || [])) {
+        if (r.week === weekNum && r.date) {
+          if (!minDate || r.date < minDate) minDate = r.date;
+          if (!maxDate || r.date > maxDate) maxDate = r.date;
+        }
+      }
+    }
+    if (!minDate || !maxDate) return;
+
+    const fromStr = minDate.toISOString().slice(0, 10);
+    const toStr = maxDate.toISOString().slice(0, 10);
+
+    historicalDataLoading = true;
+    renderDashboard();
+
+    await Promise.all(STORES.map(async (s) => {
+      const storeKey = s.split('/')[0].toLowerCase();
+      const data = await fetchHistoricalCloverData(storeKey, fromStr, toStr);
+      historicalCloverData[s] = { ...(historicalCloverData[s] || {}), ...data };
+    }));
+
+    historicalDataLoading = false;
+    renderDashboard();
+  }
+
   async function loadAll() {
     el("splash").classList.remove("hidden");
     el("app").classList.add("hidden");
@@ -641,7 +685,14 @@
       if (w === selectedWeek) opt.selected = true;
       select.appendChild(opt);
     }
-    select.onchange = () => { selectedWeek = select.value; renderDashboard(); };
+    select.onchange = () => {
+      selectedWeek = select.value;
+      renderDashboard();
+      // Load historical Clover snapshots for past weeks
+      if (selectedWeek !== currentWeek) {
+        loadHistoricalCloverForWeek(selectedWeek);
+      }
+    };
   }
 
   function renderDashboard() {
@@ -699,16 +750,49 @@
       }
       el("today-total-card").classList.remove("hidden");
     } else {
-      el("today-total-card").classList.add("hidden");
+      // For past weeks, aggregate historical Clover snapshots for the top card
+      let hasAnyHistData = false;
+      for (const s of STORES) {
+        const storeHist = historicalCloverData[s] || {};
+        const weekRows = (allStoreData[s] || []).filter(r => r.week === selectedWeek);
+        for (const [dateKey, snap] of Object.entries(storeHist)) {
+          const matchesWeek = weekRows.some(r => r.date && r.date.toISOString().slice(0, 10) === dateKey);
+          if (!matchesWeek) continue;
+          hasAnyHistData = true;
+          todayTotal += snap.total || 0;
+          todayRetail += snap.retail || 0;
+          todayBin += snap.bin || 0;
+          allOrderCount += snap.orderCount || 0;
+          if (snap.avgTxnSec != null && snap.orderCount > 0) {
+            allTxnTimeTotal += snap.avgTxnSec * snap.orderCount;
+            allTxnTimeCount += snap.orderCount;
+          }
+          if (snap.avgItems != null && snap.orderCount > 0) {
+            allItemCount += snap.avgItems * snap.orderCount;
+          }
+          if (snap.avgCart != null && snap.orderCount > 0) {
+            allCartTotal += snap.avgCart * snap.orderCount;
+          }
+        }
+        if (Object.keys(storeHist).length > 0) storesWithData++;
+      }
+      if (hasAnyHistData || historicalDataLoading) {
+        el("today-total-card").classList.remove("hidden");
+      } else {
+        el("today-total-card").classList.add("hidden");
+      }
     }
 
     const totalAvgCart = allOrderCount > 0 ? allCartTotal / allOrderCount : 0;
     const totalAvgItems = allOrderCount > 0 ? allItemCount / allOrderCount : 0;
     const totalAvgTxnSec = allTxnTimeCount > 0 ? Math.round(allTxnTimeTotal / allTxnTimeCount) : null;
 
-    if (liveDataLoading) {
+    const isLoading = isCurrentWeek ? liveDataLoading : historicalDataLoading;
+    const cardLabel = isCurrentWeek ? "Today's Sales" : `Week ${selectedWeek} Clover Data`;
+
+    if (isLoading) {
       el("c-today-total").innerHTML = '<span class="loading-dot text-[#3BB54A] text-lg">Loading...</span>';
-      el("c-today-sub").textContent = 'Fetching live data';
+      el("c-today-sub").textContent = isCurrentWeek ? 'Fetching live data' : 'Loading stored data';
       el("c-today-breakdown").innerHTML = '';
     } else {
       el("c-today-total").textContent = storesWithData > 0 ? fmtDollar(todayTotal) : '—';
@@ -746,7 +830,7 @@
     el("c-today-budget").innerHTML = todayTotalBudget > 0 ? fmtDollar(todayTotalBudget) : '<span class="text-gray-300 font-medium">—</span>';
 
     const diffEl = el("c-today-diff");
-    if (!liveDataLoading && todayTotal > 0 && todayTotalBudget > 0) {
+    if (!isLoading && todayTotal > 0 && todayTotalBudget > 0) {
       const diff = todayTotal - todayTotalBudget;
       const isPositive = diff >= 0;
       diffEl.className = `text-[10px] font-semibold mt-1 ${isPositive ? 'text-green-600' : 'text-red-500'}`;
@@ -812,6 +896,38 @@
       const liveAvgItems = liveData?.avgItems ?? null;
       const liveOrderCount = liveData?.orderCount ?? null;
       const liveAvgTxnSec = liveData?.avgTxnSec ?? null;
+
+      // Aggregate historical Clover snapshots for this store's week
+      const storeHistory = historicalCloverData[m.store] || {};
+      let histTotal = 0, histRetail = 0, histBin = 0, histOrderCount = 0;
+      let histTxnTimeTotal = 0, histTxnTimeCount = 0, histItemCount = 0, histCartTotal = 0;
+      let histDayCount = 0;
+      for (const [dateKey, snap] of Object.entries(storeHistory)) {
+        // Check if this date belongs to the selected week
+        const weekRows = (allStoreData[m.store] || []).filter(r => r.week === selectedWeek);
+        const matchesWeek = weekRows.some(r => r.date && r.date.toISOString().slice(0, 10) === dateKey);
+        if (!matchesWeek) continue;
+        histDayCount++;
+        histTotal += snap.total || 0;
+        histRetail += snap.retail || 0;
+        histBin += snap.bin || 0;
+        histOrderCount += snap.orderCount || 0;
+        if (snap.avgTxnSec != null && snap.orderCount > 0) {
+          histTxnTimeTotal += snap.avgTxnSec * snap.orderCount;
+          histTxnTimeCount += snap.orderCount;
+        }
+        if (snap.avgItems != null && snap.orderCount > 0) {
+          histItemCount += snap.avgItems * snap.orderCount;
+        }
+        if (snap.avgCart != null && snap.orderCount > 0) {
+          histCartTotal += snap.avgCart * snap.orderCount;
+        }
+      }
+      const hasHistData = histDayCount > 0;
+      const histAvgCart = histOrderCount > 0 ? histCartTotal / histOrderCount : 0;
+      const histAvgItems = histOrderCount > 0 ? histItemCount / histOrderCount : 0;
+      const histAvgTxnSec = histTxnTimeCount > 0 ? Math.round(histTxnTimeTotal / histTxnTimeCount) : null;
+
       // Add live sales to the historical weekly total only for current week
       const combinedTotal = (m.aTotal || 0) + (liveSales != null && liveSales > 0 ? liveSales : 0);
 
@@ -890,6 +1006,35 @@
             })()}
           </div>
         </div>
+        ${hasHistData ? `
+        <div class="flex gap-4 mb-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
+          <div>
+            <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div>
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(histRetail)}</div>
+          </div>
+          <div>
+            <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(histBin)}</div>
+          </div>
+        </div>
+        <div class="flex gap-4 mb-3 text-center">
+          <div class="flex-1 py-2 px-2 rounded-lg bg-[#194975]/10 dark:bg-[#194975]/20 border border-[#194975]/20 dark:border-[#194975]/30">
+            <div class="text-[9px] font-semibold text-[#194975] dark:text-[#00B8FF] uppercase tracking-wider">Avg Cart</div>
+            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(histAvgCart)}</div>
+          </div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-[#194975]/10 dark:bg-[#194975]/20 border border-[#194975]/20 dark:border-[#194975]/30">
+            <div class="text-[9px] font-semibold text-[#194975] dark:text-[#00B8FF] uppercase tracking-wider">Avg Items</div>
+            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${histAvgItems.toFixed(1)}</div>
+          </div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-[#194975]/10 dark:bg-[#194975]/20 border border-[#194975]/20 dark:border-[#194975]/30">
+            <div class="text-[9px] font-semibold text-[#194975] dark:text-[#00B8FF] uppercase tracking-wider">Orders</div>
+            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${histOrderCount}</div>
+          </div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-[#194975]/10 dark:bg-[#194975]/20 border border-[#194975]/20 dark:border-[#194975]/30">
+            <div class="text-[9px] font-semibold text-[#194975] dark:text-[#00B8FF] uppercase tracking-wider">Avg Time</div>
+            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(histAvgTxnSec)}</div>
+          </div>
+        </div>` : (historicalDataLoading ? '<div class="text-xs text-gray-400 dark:text-gray-500 mb-3 text-center">Loading historical data...</div>' : '')}
         <div class="h-px bg-gray-100 dark:bg-gray-700 w-full mb-3"></div>` : ''}
 
         ${isCurrentWeek && !liveDataLoading && liveSales != null && liveSales > 0 ? `
