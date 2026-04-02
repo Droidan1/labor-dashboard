@@ -1225,6 +1225,7 @@
   function showStoreDetail(storeName) {
     currentPage = 'store-detail';
     currentStoreName = storeName;
+    el('mobile-menu-btn').classList.add('hidden');
 
     el('store-detail-title').textContent = shortName(storeName);
     el('store-detail-subtitle').textContent = `Week ${selectedWeek} Daily Breakdown`;
@@ -1286,6 +1287,7 @@
     if (dailySalesChart) { dailySalesChart.destroy(); dailySalesChart = null; }
     el('page-store-detail').classList.add('hidden');
     el('page-dashboard').classList.remove('hidden');
+    el('mobile-menu-btn').classList.remove('hidden');
   }
 
   function switchStoreTab(tab) {
