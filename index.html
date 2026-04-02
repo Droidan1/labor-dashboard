@@ -386,10 +386,13 @@
   }
 
   function sumRows(rows) {
-    let aTotal = null, bTotal = null, laborNum = 0, laborDen = 0;
+    let aTotal = null, bTotal = null, aRetail = null, aBins = null, aAuction = null, laborNum = 0, laborDen = 0;
     for (const r of rows) {
       if (r.aTotal != null) aTotal = (aTotal || 0) + r.aTotal;
       if (r.bTotal != null) bTotal = (bTotal || 0) + r.bTotal;
+      if (r.aRetail != null) aRetail = (aRetail || 0) + r.aRetail;
+      if (r.aBins != null) aBins = (aBins || 0) + r.aBins;
+      if (r.aAuction != null) aAuction = (aAuction || 0) + r.aAuction;
       if (r.aLabor != null && r.aTotal != null) {
         laborNum += (r.aLabor * r.aTotal);
         laborDen += r.aTotal;
@@ -397,7 +400,7 @@
     }
     let laborPct = normalizeLaborPct(laborDen > 0 ? (laborNum / laborDen) : null);
 
-    return { aTotal, bTotal, variance: (aTotal != null && bTotal != null) ? aTotal - bTotal : null, laborPct };
+    return { aTotal, bTotal, aRetail, aBins, aAuction, variance: (aTotal != null && bTotal != null) ? aTotal - bTotal : null, laborPct };
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -453,6 +456,8 @@
         date,
         week:  c[C.WEEK]?.v  != null ? String(c[C.WEEK].v)  : null,
         bTotal:   n(C.B_TOTAL),
+        aRetail:  n(C.A_RETAIL),
+        aBins:    n(C.A_BINS),
         aTotal:   n(C.A_TOTAL),
         aLabor:   n(C.A_LABOR),
         aAuction: n(C.A_AUCTION)
@@ -1006,32 +1011,37 @@
             })()}
           </div>
         </div>
-        ${hasHistData ? `
+        ${(m.aRetail != null || m.aBins != null || m.aAuction != null) ? `
         <div class="flex gap-4 mb-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
           <div>
             <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div>
-            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(histRetail)}</div>
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aRetail || 0)}</div>
           </div>
           <div>
             <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
-            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(histBin)}</div>
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aBins || 0)}</div>
           </div>
-        </div>
+          <div>
+            <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div>
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aAuction || 0)}</div>
+          </div>
+        </div>` : ''}
+        ${hasHistData ? `
         <div class="flex gap-4 mb-3 text-center">
-          <div class="flex-1 py-2 px-2 rounded-lg bg-[#194975]/10 dark:bg-[#194975]/20 border border-[#194975]/20 dark:border-[#194975]/30">
-            <div class="text-[9px] font-semibold text-[#194975] dark:text-[#00B8FF] uppercase tracking-wider">Avg Cart</div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
+            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Cart</div>
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(histAvgCart)}</div>
           </div>
-          <div class="flex-1 py-2 px-2 rounded-lg bg-[#194975]/10 dark:bg-[#194975]/20 border border-[#194975]/20 dark:border-[#194975]/30">
-            <div class="text-[9px] font-semibold text-[#194975] dark:text-[#00B8FF] uppercase tracking-wider">Avg Items</div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
+            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Items</div>
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${histAvgItems.toFixed(1)}</div>
           </div>
-          <div class="flex-1 py-2 px-2 rounded-lg bg-[#194975]/10 dark:bg-[#194975]/20 border border-[#194975]/20 dark:border-[#194975]/30">
-            <div class="text-[9px] font-semibold text-[#194975] dark:text-[#00B8FF] uppercase tracking-wider">Orders</div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
+            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Orders</div>
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${histOrderCount}</div>
           </div>
-          <div class="flex-1 py-2 px-2 rounded-lg bg-[#194975]/10 dark:bg-[#194975]/20 border border-[#194975]/20 dark:border-[#194975]/30">
-            <div class="text-[9px] font-semibold text-[#194975] dark:text-[#00B8FF] uppercase tracking-wider">Avg Time</div>
+          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
+            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Time</div>
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(histAvgTxnSec)}</div>
           </div>
         </div>` : (historicalDataLoading ? '<div class="text-xs text-gray-400 dark:text-gray-500 mb-3 text-center">Loading historical data...</div>' : '')}
