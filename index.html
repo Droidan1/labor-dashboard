@@ -32,7 +32,7 @@
   <style>
     .loading-dot { animation: pulse 1.2s infinite; }
     @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
-    #store-modal { transition: opacity 0.2s ease-in-out; }
+
     /* Dark mode toggle switch */
     .toggle-track {
       width: 56px; height: 28px; border-radius: 14px; position: relative; cursor: pointer;
@@ -189,11 +189,12 @@
     <div id="sidebar-overlay" class="sidebar-overlay" onclick="document.getElementById('sidebar').classList.add('collapsed');this.style.display='none';localStorage.setItem('sidebarCollapsed','true')"></div>
 
     <!-- Main content -->
-    <div class="flex-1 min-w-0">
+    <div class="flex-1 min-w-0 overflow-y-auto">
       <!-- Mobile hamburger -->
       <button id="mobile-menu-btn" class="md:hidden fixed top-4 left-4 z-30 w-10 h-10 rounded-lg bg-white dark:bg-gray-800 shadow-md border border-gray-200 dark:border-gray-700 grid place-content-center" onclick="document.getElementById('sidebar').classList.remove('collapsed');document.getElementById('sidebar-overlay').style.display='block';localStorage.setItem('sidebarCollapsed','false')">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-600 dark:text-gray-300"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
+      <div id="page-dashboard">
       <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
         <div class="flex items-center justify-between max-w-7xl mx-auto">
           <div class="ml-12 md:ml-0">
@@ -284,34 +285,49 @@
         <div style="height:340px"><canvas id="trend-chart" role="img" aria-label="Line chart showing weekly sales trend across all stores"></canvas></div>
       </div>
     </div>
-    </div><!-- end main content -->
-  </div>
+    </div><!-- end #page-dashboard -->
 
-  <div id="store-modal" class="fixed inset-0 bg-gray-900/60 hidden items-center justify-center z-50 px-4 backdrop-blur-sm">
-    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden transform transition-all">
-      <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80 flex justify-between items-center">
-        <div>
-          <h2 id="modal-title" class="text-xl font-display text-gray-900 dark:text-white">Store Name</h2>
-          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Previous 14 Days History</p>
-        </div>
-        <button onclick="closeStoreModal()" aria-label="Close" class="text-gray-400 hover:text-gray-800 dark:hover:text-white text-3xl leading-none font-light">&times;</button>
-      </div>
-      <div class="flex border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-        <button id="tab-weekly" onclick="switchModalTab('weekly')" class="px-5 py-2.5 text-sm font-semibold border-b-2 border-[#3BB54A] text-[#194975] dark:text-[#3BB54A] transition-colors">Weekly</button>
-        <button id="tab-items" onclick="switchModalTab('items')" class="px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Item Sales</button>
-      </div>
-      <div class="p-0 overflow-y-auto" id="modal-content"></div>
-      <div class="p-0 overflow-y-auto hidden" id="modal-content-items">
-        <div class="p-8 text-center text-gray-400 dark:text-gray-500">
-          <div class="text-4xl mb-3">🚧</div>
-          <div class="font-semibold text-gray-600 dark:text-gray-300 mb-1">Coming Soon</div>
-          <div class="text-sm">Item-level sales breakdown will be available in a future update.</div>
+    <!-- Store Detail Page -->
+    <div id="page-store-detail" class="hidden">
+      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+        <div class="flex items-center gap-3 max-w-7xl mx-auto">
+          <button onclick="navigateToDashboard()" class="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-700 grid place-content-center hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" aria-label="Back to dashboard">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600 dark:text-gray-300"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <div>
+            <h1 id="store-detail-title" class="text-2xl font-display text-[#3BB54A]">Store Name</h1>
+            <p id="store-detail-subtitle" class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Week X Daily Breakdown</p>
+          </div>
         </div>
       </div>
-      <div class="px-6 py-4 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80 text-right">
-        <button onclick="closeStoreModal()" aria-label="Close modal" class="px-5 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600">Close</button>
+
+      <div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+        <!-- Sales metrics summary -->
+        <div id="store-detail-metrics"></div>
+
+        <!-- Tabs -->
+        <div class="flex border-b border-gray-200 dark:border-gray-700">
+          <button id="sd-tab-weekly" onclick="switchStoreTab('weekly')" class="px-5 py-2.5 text-sm font-semibold border-b-2 border-[#3BB54A] text-[#194975] dark:text-[#3BB54A] transition-colors">Weekly Breakdown</button>
+          <button id="sd-tab-chart" onclick="switchStoreTab('chart')" class="px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Daily Sales Chart</button>
+          <button id="sd-tab-items" onclick="switchStoreTab('items')" class="px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Item Sales</button>
+        </div>
+
+        <!-- Tab content -->
+        <div id="sd-content-weekly" class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden"></div>
+        <div id="sd-content-chart" class="hidden bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700">
+          <div style="height:340px"><canvas id="daily-sales-chart"></canvas></div>
+        </div>
+        <div id="sd-content-items" class="hidden bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700">
+          <div class="p-8 text-center text-gray-400 dark:text-gray-500">
+            <div class="text-4xl mb-3">&#x1F6A7;</div>
+            <div class="font-semibold text-gray-600 dark:text-gray-300 mb-1">Coming Soon</div>
+            <div class="text-sm">Item-level sales breakdown will be available in a future update.</div>
+          </div>
+        </div>
       </div>
-    </div>
+    </div><!-- end #page-store-detail -->
+
+    </div><!-- end main content -->
   </div>
 
   <script>
@@ -351,6 +367,9 @@
   let historicalDataLoading = false;
   let weeklyTotalsCache = {}; // { storeName: { weekNum: aTotal } }
   let laborChart=null, budgetChart=null, trendChart=null;
+  let currentPage = 'dashboard';   // 'dashboard' | 'store-detail'
+  let currentStoreName = null;
+  let dailySalesChart = null;
 
   // ═══════════════════════════════════════════════════════════════
   //  HELPERS & MATH
@@ -618,6 +637,7 @@
     })).then(() => {
       liveDataLoading = false;
       if (selectedWeek === currentWeek) renderDashboard();
+      if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName);
     }).catch(error => {
       console.error("Clover data load failed:", error);
       liveDataLoading = false;
@@ -696,6 +716,10 @@
       // Load historical Clover snapshots for past weeks
       if (selectedWeek !== currentWeek) {
         loadHistoricalCloverForWeek(selectedWeek);
+      }
+      // Re-render store detail page if currently viewing one
+      if (currentPage === 'store-detail' && currentStoreName) {
+        showStoreDetail(currentStoreName);
       }
     };
   }
@@ -942,7 +966,7 @@
       
       const div = document.createElement("div");
       div.className = `bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700 hover:border-[#3BB54A] hover:shadow-md transition-all cursor-pointer group`;
-      div.onclick = () => openStoreModal(m.store);
+      div.onclick = () => showStoreDetail(m.store);
       
       div.innerHTML = `
         <div class="flex items-start justify-between mb-2">
@@ -1069,29 +1093,53 @@
 
         <div class="flex justify-between items-center text-sm text-gray-500 dark:text-gray-400">
           ${isCurrentWeek ? `<span>Wk${selectedWeek} WTD: <strong class="text-gray-700 dark:text-gray-200">${fmtK(combinedTotal)}</strong>${m.bTotal != null ? ` <span class="text-gray-400 dark:text-gray-500">/ ${fmtK(m.bTotal)}</span> ${(() => { const d = combinedTotal - m.bTotal; const cls = d >= 0 ? 'text-green-600' : 'text-red-500'; const sign = d >= 0 ? '+' : '-'; return `<span class="${cls} font-semibold">${sign}${fmtK(Math.abs(d))}</span>`; })()}` : ''}</span>` : '<span></span>'}
-          <span class="text-[#194975] dark:text-[#3BB54A] font-medium group-hover:translate-x-1 transition-transform">History &rarr;</span>
+          <span class="text-[#194975] dark:text-[#3BB54A] font-medium group-hover:translate-x-1 transition-transform">View Details &rarr;</span>
         </div>`;
       container.appendChild(div);
     }
   }
 
   // ═══════════════════════════════════════════════════════════════
-  //  MODAL LOGIC (The Pop-up)
+  //  STORE DETAIL PAGE
   // ═══════════════════════════════════════════════════════════════
-  function openStoreModal(storeName) {
+  function getStoreMetrics(storeName) {
+    const isCurrentWeek = selectedWeek === currentWeek;
+    const sheetMetrics = sumRows((allStoreData[storeName] || []).filter(r => r.week === selectedWeek));
+    const liveData = isCurrentWeek ? liveCloverData[storeName] : null;
+    const storeHistory = historicalCloverData[storeName] || {};
+    let histTotal=0, histRetail=0, histBin=0, histOrderCount=0;
+    let histTxnTimeTotal=0, histTxnTimeCount=0, histItemCount=0, histCartTotal=0, histDayCount=0;
+    for (const [dateKey, snap] of Object.entries(storeHistory)) {
+      const weekRows = (allStoreData[storeName] || []).filter(r => r.week === selectedWeek);
+      if (!weekRows.some(r => r.date && r.date.toISOString().slice(0,10) === dateKey)) continue;
+      histDayCount++;
+      histTotal += snap.total||0; histRetail += snap.retail||0; histBin += snap.bin||0;
+      histOrderCount += snap.orderCount||0;
+      if (snap.avgTxnSec != null && snap.orderCount > 0) { histTxnTimeTotal += snap.avgTxnSec * snap.orderCount; histTxnTimeCount += snap.orderCount; }
+      if (snap.avgItems != null && snap.orderCount > 0) histItemCount += snap.avgItems * snap.orderCount;
+      if (snap.avgCart != null && snap.orderCount > 0) histCartTotal += snap.avgCart * snap.orderCount;
+    }
+    return {
+      sheetMetrics, liveData, isCurrentWeek,
+      liveSales: liveData?.total ?? null, liveRetail: liveData?.retail ?? null, liveBin: liveData?.bin ?? null,
+      liveAvgCart: liveData?.avgCart ?? null, liveAvgItems: liveData?.avgItems ?? null,
+      liveOrderCount: liveData?.orderCount ?? null, liveAvgTxnSec: liveData?.avgTxnSec ?? null,
+      histDayCount, histTotal, histRetail, histBin, histOrderCount,
+      histAvgCart: histOrderCount > 0 ? histCartTotal / histOrderCount : 0,
+      histAvgItems: histOrderCount > 0 ? histItemCount / histOrderCount : 0,
+      histAvgTxnSec: histTxnTimeCount > 0 ? Math.round(histTxnTimeTotal / histTxnTimeCount) : null,
+      todayBudget: isCurrentWeek ? (getTodayRow(storeName)?.bTotal ?? null) : null,
+      storeAuction: isCurrentWeek ? (getTodayRow(storeName)?.aAuction ?? null) : null,
+    };
+  }
+
+  function buildWeeklyTable(storeName) {
     const data = allStoreData[storeName] || [];
-    // Filter to only the selected week, then sort by date newest first
     const weekRows = data.filter(r => r.week === selectedWeek);
     const sorted = [...weekRows].sort((a, b) => b.date - a.date);
-    
-    el("modal-title").textContent = shortName(storeName);
-    document.querySelector("#store-modal p.text-xs").textContent = `Week ${selectedWeek} Daily Breakdown`;
-    switchModalTab('weekly');
-    
+
     let html = `<table class="w-full text-left table-fixed">
-      <colgroup>
-        <col class="w-[22%]"><col class="w-[20%]"><col class="w-[22%]"><col class="w-[22%]"><col class="w-[14%]">
-      </colgroup>
+      <colgroup><col class="w-[22%]"><col class="w-[20%]"><col class="w-[22%]"><col class="w-[22%]"><col class="w-[14%]"></colgroup>
       <thead class="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
         <tr class="text-[10px] sm:text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
           <th class="py-2 px-1.5 sm:px-4 sm:py-3 font-semibold">Date</th>
@@ -1102,91 +1150,164 @@
         </tr>
       </thead>
       <tbody class="text-xs sm:text-sm divide-y divide-gray-100 dark:divide-gray-700">`;
-      
+
     for (const r of sorted) {
-      const dateStr = r.date.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'});
-
+      const dateStr = r.date.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'});
       const dailyLabor = (r.aLabor != null && r.aTotal != null && r.aTotal > 0) ? normalizeLaborPct(r.aLabor) : null;
-
       const diff = (r.aTotal != null && r.bTotal != null) ? r.aTotal - r.bTotal : null;
       const diffPositive = diff != null && diff >= 0;
-
-      html += `
-        <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-          <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-gray-600 dark:text-gray-300 font-medium whitespace-nowrap">${escapeHtml(dateStr)}</td>
-          <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-500 dark:text-gray-400">${r.bTotal != null ? fmtDollar(r.bTotal) : '—'}</td>
-          <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right font-medium text-gray-900 dark:text-white">${r.aTotal != null ? fmtDollar(r.aTotal) : '—'}</td>
-          <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right font-semibold ${diff != null ? (diffPositive ? 'text-green-600' : 'text-red-500') : 'text-gray-300 dark:text-gray-600'}">
-            ${diff != null ? (diffPositive ? '+' : '-') + fmtDollar(Math.abs(diff)) : '—'}
-          </td>
-          <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right font-bold ${dailyLabor > LABOR_TARGET ? 'text-red-500' : 'text-green-500'}">
-            ${fmtPct(dailyLabor)}
-          </td>
-        </tr>`;
+      html += `<tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-gray-600 dark:text-gray-300 font-medium whitespace-nowrap">${escapeHtml(dateStr)}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-500 dark:text-gray-400">${r.bTotal != null ? fmtDollar(r.bTotal) : '—'}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right font-medium text-gray-900 dark:text-white">${r.aTotal != null ? fmtDollar(r.aTotal) : '—'}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right font-semibold ${diff != null ? (diffPositive ? 'text-green-600' : 'text-red-500') : 'text-gray-300 dark:text-gray-600'}">${diff != null ? (diffPositive ? '+' : '-') + fmtDollar(Math.abs(diff)) : '—'}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right font-bold ${dailyLabor > LABOR_TARGET ? 'text-red-500' : 'text-green-500'}">${fmtPct(dailyLabor)}</td>
+      </tr>`;
     }
-    
-    // Weekly totals
-    let wkSales = 0, wkBudget = 0, wkLaborNum = 0, wkLaborDen = 0;
+
+    let wkSales=0, wkBudget=0, wkLaborNum=0, wkLaborDen=0;
     for (const r of sorted) {
       if (r.aTotal != null) wkSales += r.aTotal;
       if (r.bTotal != null) wkBudget += r.bTotal;
-      if (r.aLabor != null && r.aTotal != null) {
-        const lp = normalizeLaborPct(r.aLabor);
-        if (lp != null) { wkLaborNum += (lp / 100) * r.aTotal; wkLaborDen += r.aTotal; }
-      }
+      if (r.aLabor != null && r.aTotal != null) { const lp = normalizeLaborPct(r.aLabor); if (lp != null) { wkLaborNum += (lp/100)*r.aTotal; wkLaborDen += r.aTotal; } }
     }
-    const wkDiff = wkSales - wkBudget;
-    const wkDiffPos = wkDiff >= 0;
-    const wkLabor = wkLaborDen > 0 ? (wkLaborNum / wkLaborDen) * 100 : null;
+    const wkDiff = wkSales - wkBudget, wkDiffPos = wkDiff >= 0;
+    const wkLabor = wkLaborDen > 0 ? (wkLaborNum/wkLaborDen)*100 : null;
 
     if (sorted.length > 0) {
-      html += `</tbody>
-        <tfoot class="border-t-2 border-gray-300 dark:border-gray-600">
-          <tr class="font-bold text-xs sm:text-sm">
-            <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-gray-900 dark:text-white whitespace-nowrap">Wk ${selectedWeek}</td>
-            <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-500 dark:text-gray-400">${fmtDollar(wkBudget)}</td>
-            <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-900 dark:text-white">${fmtDollar(wkSales)}</td>
-            <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right ${wkDiffPos ? 'text-green-600' : 'text-red-500'}">${wkDiffPos ? '+' : '-'}${fmtDollar(Math.abs(wkDiff))}</td>
-            <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right ${wkLabor != null && wkLabor > LABOR_TARGET ? 'text-red-500' : 'text-green-500'}">${fmtPct(wkLabor)}</td>
-          </tr>
-        </tfoot></table>`;
+      html += `</tbody><tfoot class="border-t-2 border-gray-300 dark:border-gray-600"><tr class="font-bold text-xs sm:text-sm">
+        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-gray-900 dark:text-white whitespace-nowrap">Wk ${selectedWeek}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-500 dark:text-gray-400">${fmtDollar(wkBudget)}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-900 dark:text-white">${fmtDollar(wkSales)}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right ${wkDiffPos ? 'text-green-600' : 'text-red-500'}">${wkDiffPos ? '+' : '-'}${fmtDollar(Math.abs(wkDiff))}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right ${wkLabor != null && wkLabor > LABOR_TARGET ? 'text-red-500' : 'text-green-500'}">${fmtPct(wkLabor)}</td>
+      </tr></tfoot></table>`;
     } else {
       html += `</tbody></table>`;
     }
     if (sorted.length === 0) html = `<div class="p-8 text-center text-gray-400 dark:text-gray-500">No data for Week ${selectedWeek}.</div>`;
-    
-    el("modal-content").innerHTML = html;
-    
-    // Un-hide the modal
-    const modal = el("store-modal");
-    modal.classList.remove("hidden");
-    modal.classList.add("flex");
+    return html;
   }
 
-  function switchModalTab(tab) {
-    const weeklyTab = el('tab-weekly'), itemsTab = el('tab-items');
-    const weeklyContent = el('modal-content'), itemsContent = el('modal-content-items');
+  function renderDailySalesChart(storeName) {
+    const data = allStoreData[storeName] || [];
+    const weekRows = [...data.filter(r => r.week === selectedWeek)].sort((a, b) => a.date - b.date);
+    const isDark = document.documentElement.classList.contains('dark');
+    const textColor = isDark ? '#9ca3af' : '#6b7280';
+    const gridColor = isDark ? 'rgba(75,85,99,0.3)' : 'rgba(0,0,0,0.1)';
+
+    if (dailySalesChart) { dailySalesChart.destroy(); dailySalesChart = null; }
+
+    const labels = weekRows.map(r => r.date.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'}));
+    const budgetData = weekRows.map(r => r.bTotal || 0);
+    const salesData = weekRows.map(r => r.aTotal || 0);
+
+    dailySalesChart = new Chart(el('daily-sales-chart'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Budget', data: budgetData, backgroundColor: isDark ? 'rgba(107,114,128,0.5)' : 'rgba(156,163,175,0.5)', borderColor: isDark ? '#6b7280' : '#9ca3af', borderWidth: 1 },
+          { label: 'Actual Sales', data: salesData, backgroundColor: 'rgba(59,181,74,0.7)', borderColor: '#3BB54A', borderWidth: 1 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: textColor } } },
+        scales: {
+          x: { ticks: { color: textColor }, grid: { color: gridColor } },
+          y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } }
+        }
+      }
+    });
+  }
+
+  function showStoreDetail(storeName) {
+    currentPage = 'store-detail';
+    currentStoreName = storeName;
+
+    el('store-detail-title').textContent = shortName(storeName);
+    el('store-detail-subtitle').textContent = `Week ${selectedWeek} Daily Breakdown`;
+
+    // Sales metrics summary
+    const sm = getStoreMetrics(storeName);
+    const m = sm.sheetMetrics;
+    const retail = sm.isCurrentWeek ? (sm.liveRetail ?? 0) : (m.aRetail || 0);
+    const bin = sm.isCurrentWeek ? (sm.liveBin ?? 0) : (m.aBins || 0);
+    const auction = sm.isCurrentWeek ? (sm.storeAuction || 0) : (m.aAuction || 0);
+    const avgCart = sm.isCurrentWeek ? (sm.liveAvgCart ?? sm.histAvgCart) : sm.histAvgCart;
+    const avgItems = sm.isCurrentWeek ? (sm.liveAvgItems ?? sm.histAvgItems) : sm.histAvgItems;
+    const orderCount = sm.isCurrentWeek ? (sm.liveOrderCount ?? sm.histOrderCount) : sm.histOrderCount;
+    const avgTxnSec = sm.isCurrentWeek ? (sm.liveAvgTxnSec ?? sm.histAvgTxnSec) : sm.histAvgTxnSec;
+    const hasMetrics = sm.isCurrentWeek ? (sm.liveSales != null && sm.liveSales > 0) : (sm.histDayCount > 0 || m.aRetail != null);
+
+    el('store-detail-metrics').innerHTML = `
+      <div class="flex gap-4 mb-2 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
+        <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(retail)}</div></div>
+        <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(bin)}</div></div>
+        <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(auction)}</div></div>
+      </div>
+      ${hasMetrics ? `<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
+          <div class="text-[9px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Cart</div>
+          <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(avgCart)}</div>
+        </div>
+        <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
+          <div class="text-[9px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Items</div>
+          <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${(avgItems || 0).toFixed(1)}</div>
+        </div>
+        <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
+          <div class="text-[9px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Orders</div>
+          <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${orderCount || 0}</div>
+        </div>
+        <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
+          <div class="text-[9px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Time</div>
+          <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(avgTxnSec)}</div>
+        </div>
+      </div>` : ''}`;
+
+    // Weekly table
+    el('sd-content-weekly').innerHTML = buildWeeklyTable(storeName);
+
+    // Show page
+    el('page-dashboard').classList.add('hidden');
+    el('page-store-detail').classList.remove('hidden');
+    switchStoreTab('weekly');
+
+    // Scroll to top
+    el('page-store-detail').scrollIntoView({ behavior: 'instant' });
+
+    history.pushState({ page: 'store-detail', store: storeName }, '');
+  }
+
+  function navigateToDashboard() {
+    currentPage = 'dashboard';
+    currentStoreName = null;
+    if (dailySalesChart) { dailySalesChart.destroy(); dailySalesChart = null; }
+    el('page-store-detail').classList.add('hidden');
+    el('page-dashboard').classList.remove('hidden');
+  }
+
+  function switchStoreTab(tab) {
+    const tabs = { weekly: el('sd-tab-weekly'), chart: el('sd-tab-chart'), items: el('sd-tab-items') };
+    const panels = { weekly: el('sd-content-weekly'), chart: el('sd-content-chart'), items: el('sd-content-items') };
     const active = 'px-5 py-2.5 text-sm font-semibold border-b-2 border-[#3BB54A] text-[#194975] dark:text-[#3BB54A] transition-colors';
     const inactive = 'px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors';
-    if (tab === 'weekly') {
-      weeklyTab.className = active; itemsTab.className = inactive;
-      weeklyContent.classList.remove('hidden'); itemsContent.classList.add('hidden');
-    } else {
-      itemsTab.className = active; weeklyTab.className = inactive;
-      itemsContent.classList.remove('hidden'); weeklyContent.classList.add('hidden');
+    for (const [key, btn] of Object.entries(tabs)) {
+      btn.className = key === tab ? active : inactive;
+      panels[key].classList.toggle('hidden', key !== tab);
     }
+    // Lazy-render chart on first tab switch
+    if (tab === 'chart' && currentStoreName) renderDailySalesChart(currentStoreName);
   }
 
-  function closeStoreModal() {
-    const modal = el("store-modal");
-    modal.classList.add("hidden");
-    modal.classList.remove("flex");
-  }
-
-  // Close modal if user clicks outside the white box
-  window.onclick = function(event) {
-    if (event.target == el("store-modal")) closeStoreModal();
-  }
+  window.addEventListener('popstate', (event) => {
+    if (event.state?.page === 'store-detail' && event.state?.store) {
+      showStoreDetail(event.state.store);
+    } else if (currentPage === 'store-detail') {
+      navigateToDashboard();
+    }
+  });
 
   // ═══════════════════════════════════════════════════════════════
   //  CHARTS (Minimalized for space)
