@@ -404,6 +404,76 @@
     return rows.find(r => r.date && r.date.toDateString() === todayStr) || null;
   }
 
+  // ── Comparison helpers (Last Week / Last Year) ──
+  function getLastWeekRows(storeName) {
+    const idx = allWeeks.indexOf(selectedWeek);
+    if (idx <= 0) return [];
+    const prevWeek = allWeeks[idx - 1];
+    return (allStoreData[storeName] || []).filter(r => r.week === prevWeek).sort((a, b) => a.date - b.date);
+  }
+
+  function getLastYearRows(storeName) {
+    const rows = allStoreData[storeName] || [];
+    const weekRows = rows.filter(r => r.week === selectedWeek).sort((a, b) => a.date - b.date);
+    const matched = [];
+    for (const r of weekRows) {
+      if (!r.date) continue;
+      const target = new Date(r.date);
+      target.setDate(target.getDate() - 364);
+      const best = rows.reduce((found, candidate) => {
+        if (!candidate.date || candidate.aTotal == null) return found;
+        const diff = Math.abs(candidate.date - target);
+        if (diff <= 86400000 && (!found || diff < found.diff)) return { row: candidate, diff };
+        return found;
+      }, null);
+      if (best) matched.push(best.row);
+    }
+    return matched;
+  }
+
+  function aggregateCloverMetrics(storeName, dateKeys) {
+    const storeHistory = historicalCloverData[storeName] || {};
+    let orderCount = 0, txnTimeTotal = 0, txnTimeCount = 0, itemCount = 0, cartTotal = 0, dayCount = 0;
+    for (const dk of dateKeys) {
+      const snap = storeHistory[dk];
+      if (!snap) continue;
+      dayCount++;
+      orderCount += snap.orderCount || 0;
+      if (snap.avgTxnSec != null && snap.orderCount > 0) { txnTimeTotal += snap.avgTxnSec * snap.orderCount; txnTimeCount += snap.orderCount; }
+      if (snap.avgItems != null && snap.orderCount > 0) { itemCount += snap.avgItems * snap.orderCount; }
+      if (snap.avgCart != null && snap.orderCount > 0) { cartTotal += snap.avgCart * snap.orderCount; }
+    }
+    if (dayCount === 0) return null;
+    return {
+      avgCart: orderCount > 0 ? cartTotal / orderCount : null,
+      avgItems: orderCount > 0 ? itemCount / orderCount : null,
+      orderCount,
+      avgTxnSec: txnTimeCount > 0 ? Math.round(txnTimeTotal / txnTimeCount) : null
+    };
+  }
+
+  function getLastWeekCloverMetrics(storeName) {
+    const rows = getLastWeekRows(storeName);
+    const dateKeys = rows.filter(r => r.date).map(r => r.date.toISOString().slice(0, 10));
+    return aggregateCloverMetrics(storeName, dateKeys);
+  }
+
+  function getLastYearCloverMetrics(storeName) {
+    const rows = getLastYearRows(storeName);
+    const dateKeys = rows.filter(r => r.date).map(r => r.date.toISOString().slice(0, 10));
+    return aggregateCloverMetrics(storeName, dateKeys);
+  }
+
+  function renderComparisonBadge(currentVal, prevVal, label, invertColor) {
+    if (currentVal == null || prevVal == null || prevVal === 0) return '';
+    const pct = ((currentVal - prevVal) / Math.abs(prevVal)) * 100;
+    const isPositive = pct >= 0;
+    const isGood = invertColor ? !isPositive : isPositive;
+    const arrow = isPositive ? '↑' : '↓';
+    const cls = isGood ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400';
+    return `<span class="${cls} text-[8px] font-semibold" title="vs ${label === 'LW' ? 'Last Week' : 'Last Year'}: ${isPositive ? '+' : ''}${pct.toFixed(1)}%"><span class="opacity-60">${label}</span> ${arrow}${Math.abs(pct).toFixed(1)}%</span>`;
+  }
+
   function sumRows(rows) {
     let aTotal = null, bTotal = null, aRetail = null, aBins = null, aAuction = null, laborNum = 0, laborDen = 0;
     for (const r of rows) {
@@ -581,9 +651,8 @@
     }
   }
 
-  // Load historical Clover snapshots for the selected week's date range
-  async function loadHistoricalCloverForWeek(weekNum) {
-    // Find the date range for this week from sheets data
+  // Find date range for a given week number from sheets data
+  function getWeekDateRange(weekNum) {
     let minDate = null, maxDate = null;
     for (const s of STORES) {
       for (const r of (allStoreData[s] || [])) {
@@ -593,19 +662,46 @@
         }
       }
     }
-    if (!minDate || !maxDate) return;
+    return { minDate, maxDate };
+  }
 
-    const fromStr = minDate.toISOString().slice(0, 10);
-    const toStr = maxDate.toISOString().slice(0, 10);
-
-    historicalDataLoading = true;
-    renderDashboard();
-
+  // Fetch Clover KV snapshots for a date range (skips if already cached)
+  async function fetchCloverForRange(fromDate, toDate) {
+    if (!fromDate || !toDate) return;
+    const fromStr = fromDate.toISOString().slice(0, 10);
+    const toStr = toDate.toISOString().slice(0, 10);
+    // Check if we already have data for this range (spot-check first date)
+    const alreadyCached = STORES.every(s => (historicalCloverData[s] || {})[fromStr] !== undefined);
+    if (alreadyCached) return;
     await Promise.all(STORES.map(async (s) => {
       const storeKey = s.split('/')[0].toLowerCase();
       const data = await fetchHistoricalCloverData(storeKey, fromStr, toStr);
       historicalCloverData[s] = { ...(historicalCloverData[s] || {}), ...data };
     }));
+  }
+
+  // Load historical Clover snapshots for the selected week + comparison weeks
+  async function loadHistoricalCloverForWeek(weekNum) {
+    const { minDate, maxDate } = getWeekDateRange(weekNum);
+    if (!minDate || !maxDate) return;
+
+    historicalDataLoading = true;
+    renderDashboard();
+
+    // Fetch selected week
+    await fetchCloverForRange(minDate, maxDate);
+
+    // Also fetch previous week for LW comparison
+    const idx = allWeeks.indexOf(weekNum);
+    if (idx > 0) {
+      const { minDate: lwMin, maxDate: lwMax } = getWeekDateRange(allWeeks[idx - 1]);
+      await fetchCloverForRange(lwMin, lwMax);
+    }
+
+    // Also fetch ~364 days ago for LY comparison
+    const lyMin = new Date(minDate); lyMin.setDate(lyMin.getDate() - 364);
+    const lyMax = new Date(maxDate); lyMax.setDate(lyMax.getDate() - 364);
+    await fetchCloverForRange(lyMin, lyMax);
 
     historicalDataLoading = false;
     renderDashboard();
@@ -1200,7 +1296,29 @@
 
     const labels = weekRows.map(r => r.date.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'}));
     const budgetData = weekRows.map(r => r.bTotal || 0);
-    const salesData = weekRows.map(r => r.aTotal || 0);
+
+    // Actual sales – use live Clover data for today if available
+    const todayStr = new Date().toDateString();
+    const isCurrentWeek = selectedWeek === currentWeek;
+    const liveTotal = isCurrentWeek ? (liveCloverData[storeName]?.total ?? null) : null;
+    const salesData = weekRows.map(r => {
+      if (isCurrentWeek && r.date && r.date.toDateString() === todayStr && liveTotal > 0) return liveTotal;
+      return r.aTotal || 0;
+    });
+
+    // Last week data – match by day-of-week
+    const prevWeekRows = getLastWeekRows(storeName);
+    const lastWeekData = weekRows.map(r => {
+      const match = prevWeekRows.find(pr => pr.date && pr.date.getDay() === r.date.getDay());
+      return match?.aTotal ?? null;
+    });
+
+    // Last year data – 364-day offset match by day-of-week
+    const lastYearRows = getLastYearRows(storeName);
+    const lastYearData = weekRows.map(r => {
+      const match = lastYearRows.find(lr => lr.date && lr.date.getDay() === r.date.getDay());
+      return match?.aTotal ?? null;
+    });
 
     dailySalesChart = new Chart(el('daily-sales-chart'), {
       type: 'bar',
@@ -1208,12 +1326,17 @@
         labels,
         datasets: [
           { label: 'Budget', data: budgetData, backgroundColor: isDark ? 'rgba(107,114,128,0.5)' : 'rgba(156,163,175,0.5)', borderColor: isDark ? '#6b7280' : '#9ca3af', borderWidth: 1 },
-          { label: 'Actual Sales', data: salesData, backgroundColor: 'rgba(59,181,74,0.7)', borderColor: '#3BB54A', borderWidth: 1 }
+          { label: 'Actual Sales', data: salesData, backgroundColor: 'rgba(59,181,74,0.7)', borderColor: '#3BB54A', borderWidth: 1 },
+          { label: 'Last Week', data: lastWeekData, backgroundColor: 'rgba(59,130,246,0.5)', borderColor: '#3b82f6', borderWidth: 1 },
+          { label: 'Last Year', data: lastYearData, backgroundColor: 'rgba(249,115,22,0.5)', borderColor: '#f97316', borderWidth: 1 }
         ]
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: textColor } } },
+        plugins: {
+          legend: { labels: { color: textColor } },
+          tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? '$' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : 'N/A') } }
+        },
         scales: {
           x: { ticks: { color: textColor }, grid: { color: gridColor } },
           y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } }
@@ -1242,6 +1365,10 @@
     const avgTxnSec = sm.isCurrentWeek ? (sm.liveAvgTxnSec ?? sm.histAvgTxnSec) : sm.histAvgTxnSec;
     const hasMetrics = sm.isCurrentWeek ? (sm.liveSales != null && sm.liveSales > 0) : (sm.histDayCount > 0 || m.aRetail != null);
 
+    // Comparison metrics for badges
+    const lwMetrics = getLastWeekCloverMetrics(storeName);
+    const lyMetrics = getLastYearCloverMetrics(storeName);
+
     el('store-detail-metrics').innerHTML = `
       <div class="flex gap-4 mb-2 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
         <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(retail)}</div></div>
@@ -1252,18 +1379,22 @@
         <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
           <div class="text-[9px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Cart</div>
           <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(avgCart)}</div>
+          <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(avgCart, lwMetrics?.avgCart, 'LW', false)}${renderComparisonBadge(avgCart, lyMetrics?.avgCart, 'LY', false)}</div>
         </div>
         <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
           <div class="text-[9px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Items</div>
           <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${(avgItems || 0).toFixed(1)}</div>
+          <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(avgItems, lwMetrics?.avgItems, 'LW', false)}${renderComparisonBadge(avgItems, lyMetrics?.avgItems, 'LY', false)}</div>
         </div>
         <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
           <div class="text-[9px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Orders</div>
           <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${orderCount || 0}</div>
+          <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(orderCount, lwMetrics?.orderCount, 'LW', false)}${renderComparisonBadge(orderCount, lyMetrics?.orderCount, 'LY', false)}</div>
         </div>
         <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
           <div class="text-[9px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Time</div>
           <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(avgTxnSec)}</div>
+          <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(avgTxnSec, lwMetrics?.avgTxnSec, 'LW', true)}${renderComparisonBadge(avgTxnSec, lyMetrics?.avgTxnSec, 'LY', true)}</div>
         </div>
       </div>` : ''}`;
 
