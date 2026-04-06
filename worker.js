@@ -124,14 +124,37 @@ function aggregateOrders(elements, sinceTimestamp) {
   };
 }
 
-// ─── Save a snapshot to KV ───────────────────────────────────────
+// ─── Save a snapshot to KV + D1 ─────────────────────────────────
 async function saveSnapshot(env, store, dateStr, data) {
-  const key = `sales:${store.toLowerCase()}:${dateStr}`;
-  const value = JSON.stringify({
-    ...data,
-    snapshotTime: new Date().toISOString(),
-  });
-  await env.SALES_SNAPSHOTS.put(key, value);
+  const snapshotTime = new Date().toISOString();
+
+  // Write to KV (existing behavior)
+  if (env.SALES_SNAPSHOTS) {
+    const key = `sales:${store.toLowerCase()}:${dateStr}`;
+    await env.SALES_SNAPSHOTS.put(key, JSON.stringify({ ...data, snapshotTime }));
+  }
+
+  // Write to D1
+  if (env.DB) {
+    try {
+      await env.DB.prepare(
+        `INSERT INTO daily_sales (store, date, total, retail, bin, order_count, avg_cart, avg_items, avg_txn_sec, snapshot_time)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(store, date) DO UPDATE SET
+           total=excluded.total, retail=excluded.retail, bin=excluded.bin,
+           order_count=excluded.order_count, avg_cart=excluded.avg_cart,
+           avg_items=excluded.avg_items, avg_txn_sec=excluded.avg_txn_sec,
+           snapshot_time=excluded.snapshot_time`
+      ).bind(
+        store.toUpperCase(), dateStr,
+        data.total ?? null, data.retail ?? null, data.bin ?? null,
+        data.orderCount ?? null, data.avgCart ?? null, data.avgItems ?? null,
+        data.avgTxnSec != null ? Math.round(data.avgTxnSec) : null, snapshotTime
+      ).run();
+    } catch (e) {
+      console.error(`D1 write failed for ${store} ${dateStr}:`, e.message);
+    }
+  }
 }
 
 // ─── Fetch and aggregate for a store, then snapshot ──────────────
@@ -192,6 +215,33 @@ export default {
       return new Response(JSON.stringify(results), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // ── D1 History endpoint: ?history_d1=true&store=BL1&from=YYYY-MM-DD&to=YYYY-MM-DD
+    if (url.searchParams.get("history_d1") === "true") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      }
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      const from = url.searchParams.get("from");
+      const to = url.searchParams.get("to");
+      if (!store || !from || !to) {
+        return new Response(JSON.stringify({ error: "Missing store, from, or to params" }), { status: 400, headers: corsJson });
+      }
+      const { results: rows } = await env.DB.prepare(
+        "SELECT * FROM daily_sales WHERE store = ? AND date >= ? AND date <= ? ORDER BY date"
+      ).bind(store, from, to).all();
+      const out = {};
+      for (const row of rows) {
+        out[row.date] = {
+          total: row.total, retail: row.retail, bin: row.bin,
+          avgCart: row.avg_cart, avgItems: row.avg_items,
+          orderCount: row.order_count, avgTxnSec: row.avg_txn_sec,
+          snapshotTime: row.snapshot_time,
+        };
+      }
+      return new Response(JSON.stringify(out), { headers: corsJson });
     }
 
     // ── Manual snapshot endpoint: ?action=snapshot&store=BL1

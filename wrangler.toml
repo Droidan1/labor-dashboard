@@ -12,3 +12,12 @@ crons = ["55 3 * * *"]
 [[kv_namespaces]]
 binding = "SALES_SNAPSHOTS"
 id = "<run: npx wrangler kv:namespace create SALES_SNAPSHOTS>"
+
+# D1 database for structured historical sales data
+# Create with: npx wrangler d1 create labor-dashboard-db
+# Then replace the database_id below with the generated ID
+# Apply schema: npx wrangler d1 execute labor-dashboard-db --file=schema.sql
+[[d1_databases]]
+binding = "DB"
+database_name = "labor-dashboard-db"
+database_id = "<run: npx wrangler d1 create labor-dashboard-db>"
