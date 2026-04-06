@@ -20,4 +20,4 @@ id = "<run: npx wrangler kv:namespace create SALES_SNAPSHOTS>"
 [[d1_databases]]
 binding = "DB"
 database_name = "labor-dashboard-db"
-database_id = "<run: npx wrangler d1 create labor-dashboard-db>"
+database_id = "3fa911d7-31d6-438c-985f-7ac08c407d2d"
