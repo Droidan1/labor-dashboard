@@ -144,7 +144,11 @@ async function saveSnapshot(env, store, dateStr, data) {
            total=excluded.total, retail=excluded.retail, bin=excluded.bin,
            order_count=excluded.order_count, avg_cart=excluded.avg_cart,
            avg_items=excluded.avg_items, avg_txn_sec=excluded.avg_txn_sec,
-           snapshot_time=excluded.snapshot_time`
+           snapshot_time=excluded.snapshot_time,
+           budget=COALESCE(budget, excluded.budget),
+           labor_pct=COALESCE(labor_pct, excluded.labor_pct),
+           auction=COALESCE(auction, excluded.auction),
+           week=COALESCE(week, excluded.week)`
       ).bind(
         store.toUpperCase(), dateStr,
         data.total ?? null, data.retail ?? null, data.bin ?? null,
@@ -380,7 +384,8 @@ export default {
                    total=COALESCE(excluded.total, total),
                    retail=COALESCE(excluded.retail, retail),
                    bin=COALESCE(excluded.bin, bin),
-                   auction=excluded.auction, labor_pct=excluded.labor_pct,
+                   auction=COALESCE(excluded.auction, auction),
+                   labor_pct=COALESCE(excluded.labor_pct, labor_pct),
                    order_count=COALESCE(excluded.order_count, order_count),
                    avg_cart=COALESCE(excluded.avg_cart, avg_cart),
                    avg_items=COALESCE(excluded.avg_items, avg_items),
@@ -388,8 +393,8 @@ export default {
                    snapshot_time=COALESCE(excluded.snapshot_time, snapshot_time)`
               ).bind(
                 storeCode, dateStr, week, bTotal,
-                kvData?.total ?? aTotal, kvData?.retail ?? aRetail, kvData?.bin ?? aBins,
-                aAuction, aLabor,
+                kvData?.total ?? (aTotal || null), kvData?.retail ?? (aRetail || null), kvData?.bin ?? (aBins || null),
+                aAuction || null, aLabor,
                 kvData?.orderCount ?? null, kvData?.avgCart ?? null, kvData?.avgItems ?? null,
                 kvData?.avgTxnSec != null ? Math.round(kvData.avgTxnSec) : null,
                 kvData?.snapshotTime ?? null
