@@ -11,7 +11,7 @@ crons = ["55 3 * * *"]
 # Then replace the id below with the generated namespace ID
 [[kv_namespaces]]
 binding = "SALES_SNAPSHOTS"
-id = "<run: npx wrangler kv:namespace create SALES_SNAPSHOTS>"
+id = "8f6062a726fd4fd2afcffc0512790884"
 
 # D1 database for structured historical sales data
 # Create with: npx wrangler d1 create labor-dashboard-db

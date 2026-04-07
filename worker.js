@@ -239,6 +239,8 @@ export default {
           avgCart: row.avg_cart, avgItems: row.avg_items,
           orderCount: row.order_count, avgTxnSec: row.avg_txn_sec,
           snapshotTime: row.snapshot_time,
+          budget: row.budget, laborPct: row.labor_pct,
+          auction: row.auction, week: row.week,
         };
       }
       return new Response(JSON.stringify(out), { headers: corsJson });
@@ -280,6 +282,128 @@ export default {
           status: 500, headers: corsHeaders,
         });
       }
+    }
+
+    // ── Backfill endpoint: ?action=backfill (imports Sheets + KV → D1)
+    if (url.searchParams.get("action") === "backfill") {
+      const secret = request.headers.get("X-Snapshot-Secret");
+      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: "D1 not configured" }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const SHEET_ID = "17byTs8k0CjH5gPOuBncq3RS3rL4PJR0PamdnbkKPss8";
+      const STORE_TABS = {
+        "BL1/BL6 Coliseum": "BL1", "BL2/BL7 South Bend": "BL2",
+        "BL4/BL5 Dupont": "BL4", "BL8/BL9 Holland": "BL8",
+        "BL12/BL13 Wyoming": "BL12", "BL14/B15 Battle Creek": "BL14"
+      };
+      const COL = { WEEK:2, DATE:3, B_TOTAL:8, A_RETAIL:17, A_BINS:18, A_AUCTION:19, A_TOTAL:20, A_LABOR:22 };
+
+      function parseNum(cell) {
+        if (!cell || cell.v == null || cell.v === "") return null;
+        if (typeof cell.v === "number") return cell.v;
+        const cleaned = String(cell.v).replace(/[,$%\s]/g, "");
+        const n = parseFloat(cleaned);
+        return isNaN(n) ? null : n;
+      }
+
+      function parseDate(cell) {
+        if (!cell || cell.v == null) return null;
+        const dv = cell.v;
+        if (typeof dv === "string") {
+          const dm = dv.match(/Date\((\d+),(\d+),(\d+)\)/);
+          if (dm) return new Date(+dm[1], +dm[2], +dm[3]);
+          const d = new Date(dv);
+          return isNaN(d.getTime()) ? null : d;
+        }
+        if (typeof dv === "number") {
+          const d = new Date(Math.round((dv - 25569) * 86400000));
+          return isNaN(d.getTime()) ? null : d;
+        }
+        return null;
+      }
+
+      const summary = {};
+      for (const [tabName, storeCode] of Object.entries(STORE_TABS)) {
+        let imported = 0, skipped = 0, errors = 0;
+        try {
+          // Fetch Google Sheets data via GViz API
+          const gvizUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?headers=0&sheet=${encodeURIComponent(tabName)}&tqx=out:json`;
+          const resp = await fetch(gvizUrl);
+          const text = await resp.text();
+          // Strip JSONP wrapper: google.visualization.Query.setResponse({...})
+          const jsonStart = text.indexOf("{");
+          const jsonEnd = text.lastIndexOf("}");
+          if (jsonStart === -1 || jsonEnd === -1) { summary[storeCode] = { error: "Failed to parse GViz response" }; continue; }
+          const gviz = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+          if (gviz.status !== "ok") { summary[storeCode] = { error: "Sheet returned error" }; continue; }
+
+          const rows = gviz.table.rows || [];
+          for (const row of rows) {
+            const c = row.c || [];
+            const date = parseDate(c[COL.DATE]);
+            if (!date) { skipped++; continue; }
+
+            const dateStr = date.toISOString().slice(0, 10);
+            const week = c[COL.WEEK]?.v != null ? String(c[COL.WEEK].v) : null;
+            const bTotal = parseNum(c[COL.B_TOTAL]);
+            const aRetail = parseNum(c[COL.A_RETAIL]);
+            const aBins = parseNum(c[COL.A_BINS]);
+            const aAuction = parseNum(c[COL.A_AUCTION]);
+            const aTotal = parseNum(c[COL.A_TOTAL]);
+            const aLabor = parseNum(c[COL.A_LABOR]);
+
+            // Also read KV snapshot for this date (Clover metrics)
+            let kvData = null;
+            if (env.SALES_SNAPSHOTS) {
+              kvData = await env.SALES_SNAPSHOTS.get(`sales:${storeCode.toLowerCase()}:${dateStr}`, "json");
+            }
+
+            try {
+              await env.DB.prepare(
+                `INSERT INTO daily_sales (store, date, week, budget, total, retail, bin, auction, labor_pct,
+                  order_count, avg_cart, avg_items, avg_txn_sec, snapshot_time)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(store, date) DO UPDATE SET
+                   week=excluded.week, budget=excluded.budget,
+                   total=COALESCE(excluded.total, total),
+                   retail=COALESCE(excluded.retail, retail),
+                   bin=COALESCE(excluded.bin, bin),
+                   auction=excluded.auction, labor_pct=excluded.labor_pct,
+                   order_count=COALESCE(excluded.order_count, order_count),
+                   avg_cart=COALESCE(excluded.avg_cart, avg_cart),
+                   avg_items=COALESCE(excluded.avg_items, avg_items),
+                   avg_txn_sec=COALESCE(excluded.avg_txn_sec, avg_txn_sec),
+                   snapshot_time=COALESCE(excluded.snapshot_time, snapshot_time)`
+              ).bind(
+                storeCode, dateStr, week, bTotal,
+                kvData?.total ?? aTotal, kvData?.retail ?? aRetail, kvData?.bin ?? aBins,
+                aAuction, aLabor,
+                kvData?.orderCount ?? null, kvData?.avgCart ?? null, kvData?.avgItems ?? null,
+                kvData?.avgTxnSec != null ? Math.round(kvData.avgTxnSec) : null,
+                kvData?.snapshotTime ?? null
+              ).run();
+              imported++;
+            } catch (e) {
+              errors++;
+              console.error(`Backfill D1 error ${storeCode} ${dateStr}:`, e.message);
+            }
+          }
+          summary[storeCode] = { imported, skipped, errors };
+        } catch (e) {
+          summary[storeCode] = { error: e.message };
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, summary }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     // ── Live data endpoint (existing): ?store=BL1&since=timestamp
