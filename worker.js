@@ -330,8 +330,12 @@ export default {
         return null;
       }
 
+      // Optional: filter to a single store to avoid subrequest limits
+      const filterStore = url.searchParams.get("store")?.toUpperCase();
+      const storeEntries = Object.entries(STORE_TABS).filter(([, code]) => !filterStore || code === filterStore);
+
       const summary = {};
-      for (const [tabName, storeCode] of Object.entries(STORE_TABS)) {
+      for (const [tabName, storeCode] of storeEntries) {
         let imported = 0, skipped = 0, errors = 0;
         try {
           // Fetch Google Sheets data via GViz API
