@@ -555,6 +555,39 @@
     return rows;
   }
 
+  async function loadStoreFromD1(storeName) {
+    const storeKey = storeName.split('/')[0]; // "BL1/BL6 Coliseum" → "BL1"
+    const url = `https://clover-sales-api.howardbrian86.workers.dev/?history_d1=true&store=${storeKey}&from=2025-01-01&to=2026-12-31`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`D1 fetch failed: ${resp.status}`);
+    const data = await resp.json();
+
+    const rows = [];
+    const cloverHistory = {};
+
+    for (const [dateStr, d] of Object.entries(data)) {
+      const date = new Date(dateStr + "T12:00:00");
+      rows.push({
+        date,
+        week: d.week,
+        bTotal: d.budget,
+        aRetail: d.retail,
+        aBins: d.bin,
+        aTotal: d.total,
+        aLabor: d.laborPct,
+        aAuction: d.auction
+      });
+      if (d.orderCount != null || d.avgCart != null) {
+        cloverHistory[dateStr] = {
+          total: d.total, retail: d.retail, bin: d.bin,
+          avgCart: d.avgCart, avgItems: d.avgItems,
+          orderCount: d.orderCount, avgTxnSec: d.avgTxnSec
+        };
+      }
+    }
+    return { rows, cloverHistory };
+  }
+
   const BIN_PATTERNS = [/\bbin\b/i, /\bfill a bag\b/i, /\bglass case\b/i];
   function isBinItem(name) { return BIN_PATTERNS.some(p => p.test(name)); }
 
@@ -682,28 +715,7 @@
 
   // Load historical Clover snapshots for the selected week + comparison weeks
   async function loadHistoricalCloverForWeek(weekNum) {
-    const { minDate, maxDate } = getWeekDateRange(weekNum);
-    if (!minDate || !maxDate) return;
-
-    historicalDataLoading = true;
-    renderDashboard();
-
-    // Fetch selected week
-    await fetchCloverForRange(minDate, maxDate);
-
-    // Also fetch previous week for LW comparison
-    const idx = allWeeks.indexOf(weekNum);
-    if (idx > 0) {
-      const { minDate: lwMin, maxDate: lwMax } = getWeekDateRange(allWeeks[idx - 1]);
-      await fetchCloverForRange(lwMin, lwMax);
-    }
-
-    // Also fetch ~364 days ago for LY comparison
-    const lyMin = new Date(minDate); lyMin.setDate(lyMin.getDate() - 364);
-    const lyMax = new Date(maxDate); lyMax.setDate(lyMax.getDate() - 364);
-    await fetchCloverForRange(lyMin, lyMax);
-
-    historicalDataLoading = false;
+    // D1 already loaded all historical Clover data on init — just re-render
     renderDashboard();
   }
 
@@ -711,15 +723,18 @@
     el("splash").classList.remove("hidden");
     el("app").classList.add("hidden");
     el("error-banner").classList.add("hidden");
-    el("splash-msg").textContent = "Connecting to Google Sheets…";
+    el("splash-msg").textContent = "Loading store data…";
 
     const results = {}, errors = {};
     let loaded = 0;
 
     // Start loading Sheets data
     const sheetsPromise = Promise.all(STORES.map(async (s) => {
-      try   { results[s] = await loadStore(s); }
-      catch (e) { errors[s] = e.message; results[s] = []; }
+      try {
+        const { rows, cloverHistory } = await loadStoreFromD1(s);
+        results[s] = rows;
+        historicalCloverData[s] = cloverHistory;
+      } catch (e) { errors[s] = e.message; results[s] = []; }
       loaded++;
       el("splash-msg").textContent = `Loading data… (${loaded}/${STORES.length} stores ready)`;
     }));
