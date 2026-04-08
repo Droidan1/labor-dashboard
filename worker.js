@@ -3,8 +3,134 @@ const BIN_PATTERNS = [/\bbin\b/i, /\bfill a bag\b/i, /\bglass case\b/i];
 const MAX_TXN_DURATION_MS = 30 * 60 * 1000;
 const ALL_STORES = ["BL1", "BL2", "BL4", "BL8", "BL12", "BL14"];
 
+// L3 (Clover category name) → L2 (rollup category) mapping
+const L3_TO_L2 = {
+  "BL CONSUMABLES - FOOD - PEPSI": "Consumable Food",
+  "BL CONSUMABLES - FOOD - PEPSI CASE PACK": "Consumable Food",
+  "FG BL CONSUMABLES - FOOD - BEVERAGES": "Consumable Food",
+  "FG BL CONSUMABLES - FOOD - BREAKFAST": "Consumable Food",
+  "FG BL CONSUMABLES - FOOD - CANDY": "Consumable Food",
+  "FG BL CONSUMABLES - FOOD - CANNED GOODS": "Consumable Food",
+  "FG BL CONSUMABLES - FOOD - COFFEE & TEA": "Consumable Food",
+  "FG BL CONSUMABLES - FOOD - CONDIMENTS": "Consumable Food",
+  "FG BL CONSUMABLES - FOOD - FROZEN": "Consumable Food",
+  "FG BL CONSUMABLES - FOOD - PANTRY": "Consumable Food",
+  "FG BL CONSUMABLES - FOOD - SINGLES": "Consumable Food",
+  "FG BL CONSUMABLES - FOOD - SNACKS": "Consumable Food",
+  "FG G CI MIXED CANDY": "Consumable Food",
+  "FRONTE PASTA - 10LBS": "Consumable Food",
+  "FRONTE PASTA - 5LBS": "Consumable Food",
+  "FG BL CONSUMABLES - FOOD - ENERGY DRINKS": "Consumable Food",
+  "FG BL CONSUMABLES - FOOD - MIXED BAG CANDY": "Consumable Food",
+  "FG BL CONSUMABLES - HBA - ALLERGY/COUGH/FLU": "Consumable HBA",
+  "FG BL CONSUMABLES - HBA - COSMETICS": "Consumable HBA",
+  "FG BL CONSUMABLES - HBA - FACE": "Consumable HBA",
+  "FG BL CONSUMABLES - HBA - HAIRCARE": "Consumable HBA",
+  "FG BL CONSUMABLES - HBA - HYGIENE": "Consumable HBA",
+  "FG BL CONSUMABLES - HBA - MEDS": "Consumable HBA",
+  "FG BL CONSUMABLES - HBA - ORAL": "Consumable HBA",
+  "FG BL CONSUMABLES - HBA - PAIN": "Consumable HBA",
+  "FG BL CONSUMABLES - HBA - SUNCARE": "Consumable HBA",
+  "FG BL CONSUMABLES - HBA - TRAVEL SIZE": "Consumable HBA",
+  "FG BL CONSUMABLES - CHEMICALS": "Consumable Other",
+  "FG BL CONSUMABLES - HOUSEKEEPING": "Consumable Other",
+  "FG BL CONSUMABLES - PAPER": "Consumable Other",
+  "FG BL CONSUMABLES - PET": "Consumable Other",
+  "BL PAPER - NON INVENTORY": "Consumable Other",
+  "FG BL FURNITURE - READY TO ASSEMBLE": "Furniture",
+  "FG BL FURNITURE - RTA - CHAIRS": "Furniture",
+  "FG BL FURNITURE - RTA - TABLES/STANDS": "Furniture",
+  "FG BL FURNITURE - UPHOLSTERY": "Furniture",
+  "FG BL FURNITURE - CASEGOODS": "Furniture",
+  "FG BL FURNITURE - MATTRESSES": "Furniture",
+  "FG BL WAYFAIR": "Furniture",
+  "MATTRESS ATLANTA MATTRESSES": "Furniture",
+  "BAILEY'S RECLINER FURNITURE": "Furniture",
+  "BL STORES - COMPTON'S FURNITURE": "Furniture",
+  "FG BL HARDLINES - BABY": "Hardlines",
+  "FG BL HARDLINES - ELECTRONICS": "Hardlines",
+  "FG BL HARDLINES - GENERAL MERCHANDISE": "Hardlines",
+  "FG BL HARDLINES - LUGGAGE": "Hardlines",
+  "FG BL HARDLINES - OFFICE PRODUCTS": "Hardlines",
+  "FG BL HARDLINES - STORAGE": "Hardlines",
+  "FG BL HARDLINES - TOYS": "Hardlines",
+  "FG BL HARDLINES - SPORTING GOODS": "Hardlines",
+  "FG T BULLSEYE": "Hardlines",
+  "APPLIANCES - BL STORES": "Hardlines",
+  "Bakers Secret - Kitchen Cooking": "Home",
+  "FG BL HAMILTON BEACH": "Home",
+  "FG BL HOME - BATH": "Home",
+  "FG BL HOME - BEDDING & PILLOWS": "Home",
+  "FG BL HOME - HOME DECOR": "Home",
+  "FG BL HOME - KITCHEN": "Home",
+  "FG BL HOME - RUGS": "Home",
+  "BL FOAM PLATE PACKS": "Home",
+  "FG BL SEASONAL - CHRISTMAS - CANDY": "Seasonal",
+  "FG BL SEASONAL - CHRISTMAS - GM": "Seasonal",
+  "FG BL SEASONAL - EASTER - GM": "Seasonal",
+  "FG BL SEASONAL - EASTER - CANDY": "Seasonal",
+  "FG BL SEASONAL - VALENTINES - CANDY": "Seasonal",
+  "FG BL SEASONAL - VALENTINES - GM": "Seasonal",
+  "FG BL SEASONAL - BACK TO SCHOOL": "Seasonal",
+  "FG BL SEASONAL - HALLOWEEN - GM": "Seasonal",
+  "FG BL SEASONAL - HALLOWEEN - CANDY": "Seasonal",
+  "FG BL SEASONAL - HALLOWEEN - SINGLES": "Seasonal",
+  "FG BL SEASONAL - SPRING/SUMMER": "Seasonal",
+  "FG BL SEASONAL - LAWN & GARDEN": "Seasonal",
+  "FG BALSAM CHRISTMAS TREES B": "Seasonal",
+  "FG COSTUMES": "Seasonal",
+  "FG BL SOFTLINES - ACCESSORIES": "Softline - Accessories",
+  "FG BL SOFTLINES - APPAREL": "Softline - Apparel",
+  "FG BL SOFTLINES - SHOES": "Softline - Shoes",
+  "Custom Sales": "Custom Sales",
+  "MI Bottle/Can Deposit": "Custom Sales",
+  "Refund": "Refund",
+};
+
 function isBinItem(name) {
   return BIN_PATTERNS.some(p => p.test(name));
+}
+
+// ─── Fetch item → category mapping from Clover inventory (cached 24h) ──
+async function fetchItemCategoryMap(store, env) {
+  const cacheKey = `item-cats:${store.toLowerCase()}`;
+
+  if (env.SALES_SNAPSHOTS) {
+    const cached = await env.SALES_SNAPSHOTS.get(cacheKey, "json");
+    if (cached) return cached;
+  }
+
+  const merchantId = env[`${store}_MERCHANT_ID`];
+  const apiToken = env[`${store}_API_TOKEN`];
+  if (!merchantId || !apiToken) return {};
+
+  const map = {};
+  let offset = 0;
+  const limit = 1000;
+
+  while (true) {
+    const url = `https://api.clover.com/v3/merchants/${merchantId}/items?expand=categories&limit=${limit}&offset=${offset}`;
+    const resp = await fetch(url, {
+      headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
+    });
+    const data = await resp.json();
+    if (!data?.elements?.length) break;
+
+    for (const item of data.elements) {
+      const catName = item.categories?.elements?.[0]?.name;
+      if (catName && item.id) {
+        map[item.id] = catName;
+      }
+    }
+    if (data.elements.length < limit) break;
+    offset += limit;
+  }
+
+  if (env.SALES_SNAPSHOTS) {
+    await env.SALES_SNAPSHOTS.put(cacheKey, JSON.stringify(map), { expirationTtl: 86400 });
+  }
+
+  return map;
 }
 
 // ─── Fetch raw orders from Clover API ────────────────────────────
@@ -413,6 +539,163 @@ export default {
       return new Response(JSON.stringify({ ok: true, summary }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // ── Item sales by L2 category: ?action=items&store=BL1
+    if (url.searchParams.get("action") === "items") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      if (!store) {
+        return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
+      }
+      const merchantId = env[`${store}_MERCHANT_ID`];
+      const apiToken = env[`${store}_API_TOKEN`];
+      if (!merchantId || !apiToken) {
+        return new Response(JSON.stringify({ error: "Store keys not found" }), { status: 404, headers: corsJson });
+      }
+
+      try {
+        const now = new Date();
+        const todayStr = now.toISOString().slice(0, 10);
+        const startOfDay = new Date(todayStr + "T00:00:00Z").getTime();
+
+        // Fetch orders with lineItems expanded to include item references
+        const allElements = [];
+        let offset = 0;
+        const limit = 1000;
+        while (true) {
+          const cloverUrl = `https://api.clover.com/v3/merchants/${merchantId}/orders`
+            + `?filter=createdTime>=${startOfDay}`
+            + `&filter=state=locked`
+            + `&expand=payments,lineItems.item,lineItems.discounts`
+            + `&limit=${limit}&offset=${offset}`;
+          const resp = await fetch(cloverUrl, {
+            headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
+          });
+          const data = await resp.json();
+          if (!data?.elements?.length) break;
+          allElements.push(...data.elements);
+          if (data.elements.length < limit) break;
+          offset += limit;
+        }
+
+        // Fetch item→category mapping (cached 24h)
+        const itemCatMap = await fetchItemCategoryMap(store, env);
+
+        // Aggregate by L2 category
+        const cats = {};
+        function getCat(name) {
+          if (!cats[name]) cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0 };
+          return cats[name];
+        }
+
+        for (const order of allElements) {
+          if (order.total == null || order.total === 0) continue;
+
+          // Calculate tax for this order
+          let taxCents = 0;
+          if (order.payments?.elements) {
+            for (const pmt of order.payments.elements) {
+              taxCents += (pmt.taxAmount || 0);
+            }
+          }
+
+          const lineItems = order.lineItems?.elements || [];
+
+          for (const li of lineItems) {
+            const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
+            const priceCents = (li.price || 0) * qty;
+
+            // Determine L3 category from item reference → category map
+            let l3 = null;
+            const itemId = li.item?.id;
+            if (itemId && itemCatMap[itemId]) {
+              l3 = itemCatMap[itemId];
+            }
+
+            // Map L3 → L2
+            let l2;
+            if (l3 && L3_TO_L2[l3]) {
+              l2 = L3_TO_L2[l3];
+            } else if (l3) {
+              // L3 exists but not in mapping — try to match by prefix
+              l2 = "Uncategorized";
+            } else if (li.name === "Refund" || priceCents < 0) {
+              l2 = "Refund";
+            } else {
+              l2 = "Custom Sales";
+            }
+
+            const cat = getCat(l2);
+            const grossCents = Math.abs(priceCents);
+
+            // Sum discounts on this line item
+            let discCents = 0;
+            if (li.discounts?.elements) {
+              for (const d of li.discounts.elements) {
+                discCents += Math.abs(d.amount || 0);
+              }
+            }
+
+            if (priceCents < 0) {
+              // Refund line item
+              cat.refunds -= grossCents / 100;
+              cat.net -= grossCents / 100;
+            } else {
+              cat.qty += qty;
+              cat.gross += grossCents / 100;
+              cat.discounts -= discCents / 100;
+              cat.net += (grossCents - discCents) / 100;
+            }
+          }
+        }
+
+        // Calculate totals and format response
+        let totalQty = 0, totalGross = 0, totalDisc = 0, totalRef = 0, totalNet = 0;
+        const categories = [];
+        for (const [name, c] of Object.entries(cats)) {
+          totalQty += c.qty;
+          totalGross += c.gross;
+          totalDisc += c.discounts;
+          totalRef += c.refunds;
+          totalNet += c.net;
+          categories.push({
+            category: name,
+            qty: Math.round(c.qty),
+            gross: Math.round(c.gross * 100) / 100,
+            discounts: Math.round(c.discounts * 100) / 100,
+            refunds: Math.round(c.refunds * 100) / 100,
+            netSales: Math.round(c.net * 100) / 100,
+            asp: c.qty > 0 ? Math.round((c.net / c.qty) * 100) / 100 : 0,
+          });
+        }
+
+        // Sort by net sales descending
+        categories.sort((a, b) => b.netSales - a.netSales);
+
+        // Add pctQty
+        for (const c of categories) {
+          c.pctQty = totalQty > 0 ? Math.round((c.qty / totalQty) * 1000) / 10 : 0;
+        }
+
+        return new Response(JSON.stringify({
+          store, date: todayStr,
+          categories,
+          totals: {
+            qty: Math.round(totalQty),
+            gross: Math.round(totalGross * 100) / 100,
+            discounts: Math.round(totalDisc * 100) / 100,
+            refunds: Math.round(totalRef * 100) / 100,
+            netSales: Math.round(totalNet * 100) / 100,
+            asp: totalQty > 0 ? Math.round((totalNet / totalQty) * 100) / 100 : 0,
+          },
+          orderCount: allElements.length,
+        }), { headers: corsJson });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "Items fetch failed", detail: err.message }), {
+          status: 500, headers: corsJson,
+        });
+      }
     }
 
     // ── Live data endpoint (existing): ?store=BL1&since=timestamp
