@@ -85,6 +85,11 @@ const L3_TO_L2 = {
   "Custom Sales": "Custom Sales",
   "MI Bottle/Can Deposit": "Custom Sales",
   "Refund": "Refund",
+  // Additional Clover categories not in original Sheets mapping
+  "BL Shoe Event": "Softline - Shoes",
+  "Apparel": "Softline - Apparel",
+  "Bin Products": "Bin Products",
+  "Sku Book Items": "Hardlines",
 };
 
 function isBinItem(name) {
@@ -620,16 +625,22 @@ export default {
             if (l3 && L3_TO_L2[l3]) {
               l2 = L3_TO_L2[l3];
             } else if (l3) {
-              // L3 exists but not in our mapping
               unmappedL3[l3] = (unmappedL3[l3] || 0) + 1;
               l2 = "Uncategorized";
             } else if (li.name === "Refund" || priceCents < 0) {
               l2 = "Refund";
             } else {
-              // No category found — track item name for debugging
-              const itemName = li.name || "unknown";
-              noCategory[itemName] = (noCategory[itemName] || 0) + 1;
-              l2 = "Custom Sales";
+              // No Clover category — try matching item name against L3 mapping
+              // Normalize em-dashes to hyphens for matching
+              const normalized = (li.name || "").replace(/\u2013|\u2014/g, "-");
+              const nameMatch = L3_TO_L2[normalized] || L3_TO_L2[li.name];
+              if (nameMatch) {
+                l2 = nameMatch;
+              } else {
+                const itemName = li.name || "unknown";
+                noCategory[itemName] = (noCategory[itemName] || 0) + 1;
+                l2 = "Custom Sales";
+              }
             }
 
             const cat = getCat(l2);
