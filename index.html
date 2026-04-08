@@ -1455,10 +1455,11 @@
 
   // ─── Item Sales by L2 Category ──────────────────────────────────
   let itemSalesCache = {};
+  let itemSortCol = 'netSales';
+  let itemSortAsc = false;
 
   async function loadItemSales(storeName) {
     const storeKey = storeName.split('/')[0];
-    // Don't re-fetch if already loaded for this store
     if (itemSalesCache[storeKey]) {
       renderItemSalesTable(itemSalesCache[storeKey]);
       return;
@@ -1479,9 +1480,21 @@
     }
   }
 
+  function sortItemSales(col) {
+    if (itemSortCol === col) {
+      itemSortAsc = !itemSortAsc;
+    } else {
+      itemSortCol = col;
+      itemSortAsc = col === 'category'; // default ascending for text, descending for numbers
+    }
+    const storeKey = currentStoreName?.split('/')[0];
+    if (storeKey && itemSalesCache[storeKey]) renderItemSalesTable(itemSalesCache[storeKey]);
+  }
+  window.sortItemSales = sortItemSales;
+
   function renderItemSalesTable(data) {
     const container = el('items-table-container');
-    const cats = data.categories || [];
+    const cats = [...(data.categories || [])];
     const t = data.totals || {};
 
     if (cats.length === 0) {
@@ -1489,18 +1502,33 @@
       return;
     }
 
+    // Sort categories
+    cats.sort((a, b) => {
+      let va = a[itemSortCol], vb = b[itemSortCol];
+      if (typeof va === 'string') {
+        return itemSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+      }
+      return itemSortAsc ? va - vb : vb - va;
+    });
+
+    const arrow = (col) => {
+      if (itemSortCol !== col) return ' <span class="text-gray-300 dark:text-gray-600">↕</span>';
+      return itemSortAsc ? ' ↑' : ' ↓';
+    };
+    const thCls = 'py-2 px-1.5 sm:px-3 sm:py-3 font-semibold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 select-none';
+
     let html = `<div class="text-xs text-gray-500 dark:text-gray-400 mb-3">${data.date} · ${data.orderCount} orders · Live from Clover</div>`;
     html += `<div class="overflow-x-auto"><table class="w-full text-left table-fixed">
       <colgroup><col class="w-[24%]"><col class="w-[10%]"><col class="w-[10%]"><col class="w-[14%]"><col class="w-[14%]"><col class="w-[16%]"><col class="w-[12%]"></colgroup>
       <thead class="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
         <tr class="text-[10px] sm:text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold">Category</th>
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right">Qty</th>
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right">% Qty</th>
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right">Discounts</th>
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right">Refunds</th>
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right">Net Sales</th>
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right">ASP</th>
+          <th class="${thCls}" onclick="sortItemSales('category')">Category${arrow('category')}</th>
+          <th class="${thCls} text-right" onclick="sortItemSales('qty')">Qty${arrow('qty')}</th>
+          <th class="${thCls} text-right" onclick="sortItemSales('pctQty')">% Qty${arrow('pctQty')}</th>
+          <th class="${thCls} text-right" onclick="sortItemSales('discounts')">Discounts${arrow('discounts')}</th>
+          <th class="${thCls} text-right" onclick="sortItemSales('refunds')">Refunds${arrow('refunds')}</th>
+          <th class="${thCls} text-right" onclick="sortItemSales('netSales')">Net Sales${arrow('netSales')}</th>
+          <th class="${thCls} text-right" onclick="sortItemSales('asp')">ASP${arrow('asp')}</th>
         </tr>
       </thead>
       <tbody class="text-xs sm:text-sm divide-y divide-gray-100 dark:divide-gray-700">`;

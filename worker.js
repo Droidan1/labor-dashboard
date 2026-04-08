@@ -85,6 +85,11 @@ const L3_TO_L2 = {
   "Custom Sales": "Custom Sales",
   "MI Bottle/Can Deposit": "Custom Sales",
   "Refund": "Refund",
+  // Additional Clover categories not in original Sheets mapping
+  "BL Shoe Event": "Softline - Shoes",
+  "Apparel": "Softline - Apparel",
+  "Bin Products": "Bin Products",
+  "Sku Book Items": "Hardlines",
 };
 
 function isBinItem(name) {
@@ -584,6 +589,8 @@ export default {
 
         // Aggregate by L2 category
         const cats = {};
+        const unmappedL3 = {};  // Track L3 names not in our mapping
+        const noCategory = {};  // Track items with no Clover category
         function getCat(name) {
           if (!cats[name]) cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0 };
           return cats[name];
@@ -618,12 +625,22 @@ export default {
             if (l3 && L3_TO_L2[l3]) {
               l2 = L3_TO_L2[l3];
             } else if (l3) {
-              // L3 exists but not in mapping — try to match by prefix
+              unmappedL3[l3] = (unmappedL3[l3] || 0) + 1;
               l2 = "Uncategorized";
             } else if (li.name === "Refund" || priceCents < 0) {
               l2 = "Refund";
             } else {
-              l2 = "Custom Sales";
+              // No Clover category — try matching item name against L3 mapping
+              // Normalize em-dashes to hyphens for matching
+              const normalized = (li.name || "").replace(/\u2013|\u2014/g, "-");
+              const nameMatch = L3_TO_L2[normalized] || L3_TO_L2[li.name];
+              if (nameMatch) {
+                l2 = nameMatch;
+              } else {
+                const itemName = li.name || "unknown";
+                noCategory[itemName] = (noCategory[itemName] || 0) + 1;
+                l2 = "Custom Sales";
+              }
             }
 
             const cat = getCat(l2);
@@ -690,6 +707,7 @@ export default {
             asp: totalQty > 0 ? Math.round((totalNet / totalQty) * 100) / 100 : 0,
           },
           orderCount: allElements.length,
+          _debug: { unmappedL3, noCategory, itemCatMapSize: Object.keys(itemCatMap).length },
         }), { headers: corsJson });
       } catch (err) {
         return new Response(JSON.stringify({ error: "Items fetch failed", detail: err.message }), {
