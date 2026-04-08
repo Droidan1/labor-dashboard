@@ -564,20 +564,22 @@
 
     const rows = [];
     const cloverHistory = {};
+    const todayStr = new Date().toISOString().slice(0, 10);
 
     for (const [dateStr, d] of Object.entries(data)) {
       const date = new Date(dateStr + "T12:00:00");
+      const isToday = dateStr === todayStr;
       rows.push({
         date,
         week: d.week,
         bTotal: d.budget,
-        aRetail: d.retail,
-        aBins: d.bin,
-        aTotal: d.total,
-        aLabor: d.laborPct,
-        aAuction: d.auction
+        aRetail: isToday ? null : d.retail,
+        aBins: isToday ? null : d.bin,
+        aTotal: isToday ? null : d.total,
+        aLabor: isToday ? null : d.laborPct,
+        aAuction: isToday ? null : d.auction
       });
-      if (d.orderCount != null || d.avgCart != null) {
+      if (!isToday && (d.orderCount != null || d.avgCart != null)) {
         cloverHistory[dateStr] = {
           total: d.total, retail: d.retail, bin: d.bin,
           avgCart: d.avgCart, avgItems: d.avgItems,
