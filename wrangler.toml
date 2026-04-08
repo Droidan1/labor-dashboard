@@ -6,6 +6,21 @@ compatibility_date = "2024-01-01"
 [triggers]
 crons = ["55 3 * * *"]
 
+[vars]
+BL1_MERCHANT_ID = "T3M0E73JKKF11"
+BL1_API_TOKEN = "3fd8c798-4d94-c0a8-c24d-49c870b48d97"
+BL2_MERCHANT_ID = "57QXWH2573AX1"
+BL2_API_TOKEN = "10721302-dee5-6bb0-0544-03ed92c36ed7"
+BL4_MERCHANT_ID = "PVBSM4E6G94V1"
+BL4_API_TOKEN = "eff1f746-a7c0-f7da-9e58-adeb1c4adb6a"
+BL8_MERCHANT_ID = "57KWEPWZ4BHT1"
+BL8_API_TOKEN = "5f208df2-03dc-0229-892f-96b8e129e731"
+BL12_MERCHANT_ID = "1AEWTY5Q9A3G1"
+BL12_API_TOKEN = "cdcb4c4b-831f-3934-351a-4f276d7858d3"
+BL14_MERCHANT_ID = "1RBVSDGEQYA21"
+BL14_API_TOKEN = "48ba6534-724a-9bdc-a0ff-a21e73b2d69c"
+SNAPSHOT_SECRET = "mapcaj-saTxa2-1"
+
 # KV namespace for storing daily sales snapshots
 # Create with: npx wrangler kv:namespace create SALES_SNAPSHOTS
 # Then replace the id below with the generated namespace ID
