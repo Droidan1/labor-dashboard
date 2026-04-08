@@ -393,7 +393,7 @@ export default {
                    snapshot_time=COALESCE(excluded.snapshot_time, snapshot_time)`
               ).bind(
                 storeCode, dateStr, week, bTotal,
-                kvData?.total ?? (aTotal || null), kvData?.retail ?? (aRetail || null), kvData?.bin ?? (aBins || null),
+                aTotal || kvData?.total || null, aRetail || kvData?.retail || null, aBins || kvData?.bin || null,
                 aAuction || null, aLabor,
                 kvData?.orderCount ?? null, kvData?.avgCart ?? null, kvData?.avgItems ?? null,
                 kvData?.avgTxnSec != null ? Math.round(kvData.avgTxnSec) : null,
