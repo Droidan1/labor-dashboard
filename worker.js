@@ -44,6 +44,7 @@ const L3_TO_L2 = {
   "FG BL CONSUMABLES - HBA - SUNCARE": "Consumable HBA",
   "FG BL CONSUMABLES - HBA - TRAVEL SIZE": "Consumable HBA",
   "FG BL CONSUMABLES - CHEMICALS": "Consumable Other",
+  "Chemicals": "Consumable Other",
   "FG BL CONSUMABLES - HOUSEKEEPING": "Consumable Other",
   "FG BL CONSUMABLES - PAPER": "Consumable Other",
   "FG BL CONSUMABLES - PET": "Consumable Other",
@@ -1707,6 +1708,10 @@ export default {
                     l2 = "Softline - Shoes";
                   } else if (/APPAREL|SHIRT|PANT|DRESS|JACKET|COAT|BLOUSE|SWEATER/i.test(n)) {
                     l2 = "Softline - Apparel";
+                  } else if (/CHEMICAL|CLEANING|DETERGENT/i.test(n)) {
+                    l2 = "Consumable Other";
+                  } else if (/MASK|HEMP|OIL|LOTION|CREAM|SOAP|SHAMPOO|BODY/i.test(n)) {
+                    l2 = "Consumable HBA";
                   } else {
                     const itemName = li.name || "unknown";
                     noCategory[itemName] = (noCategory[itemName] || 0) + 1;
