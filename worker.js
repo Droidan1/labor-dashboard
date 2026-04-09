@@ -92,6 +92,8 @@ const L3_TO_L2 = {
   "FG BALSAM CHRISTMAS TREES B": "Seasonal",
   "FG COSTUMES": "Seasonal",
   "FG BL SOFTLINES - ACCESSORIES": "Softline - Accessories",
+  "Accesories": "Softline - Accessories",
+  "Hamilton Beach": "Hardlines",
   "FG BL SOFTLINES - APPAREL": "Softline - Apparel",
   "FG BL SOFTLINES - SHOES": "Softline - Shoes",
   "Custom Sales": "Custom Sales",
