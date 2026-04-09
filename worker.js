@@ -1313,6 +1313,190 @@ function aggregateOrders(elements, sinceTimestamp) {
   };
 }
 
+// ─── Save item sales snapshot to KV ─────────────────────────────
+async function saveItemSalesSnapshot(env, store, dateStr, itemData) {
+  if (env.SALES_SNAPSHOTS) {
+    const key = `items:${store.toLowerCase()}:${dateStr}`;
+    await env.SALES_SNAPSHOTS.put(key, JSON.stringify({
+      ...itemData,
+      snapshotTime: new Date().toISOString()
+    }));
+  }
+}
+
+// ─── Aggregate orders into L2 item sales categories ─────────────
+function aggregateItemSales(allElements, itemCatMap, store, dateStr) {
+  const cats = {};
+  const unmappedL3 = {};
+  const noCategory = {};
+  function getCat(name) {
+    if (!cats[name]) cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0 };
+    return cats[name];
+  }
+
+  for (const order of allElements) {
+    if (order.total == null || order.total === 0) continue;
+
+    let taxCents = 0;
+    if (order.payments?.elements) {
+      for (const pmt of order.payments.elements) {
+        taxCents += (pmt.taxAmount || 0);
+      }
+    }
+
+    const lineItems = order.lineItems?.elements || [];
+
+    for (const li of lineItems) {
+      const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
+      const priceCents = (li.price || 0) * qty;
+
+      // Determine L3 category from item reference → category map
+      let l3 = null;
+      const itemId = li.item?.id;
+      if (itemId && itemCatMap[itemId]) {
+        l3 = itemCatMap[itemId];
+      }
+
+      // Map L3 → L2
+      let l2;
+      if (l3 === "Sku Book Items") {
+        l2 = SKU_BOOK_TO_L2[li.name] || "Hardlines";
+      } else if (l3 && L3_TO_L2[l3]) {
+        l2 = L3_TO_L2[l3];
+      } else if (l3) {
+        unmappedL3[l3] = (unmappedL3[l3] || 0) + 1;
+        l2 = "Uncategorized";
+      } else if (li.name === "Refund" || priceCents < 0) {
+        l2 = "Refund";
+      } else {
+        const normalized = (li.name || "").replace(/\u2013|\u2014/g, "-");
+        const nameMatch = L3_TO_L2[normalized] || L3_TO_L2[li.name];
+        if (nameMatch) {
+          l2 = nameMatch;
+        } else {
+          const blMatch = (li.name || "").match(/BL[-\s]*(\d{4,5})/i);
+          const bareMatch = !blMatch && (li.name || "").match(/\b(\d{4,5})\b/);
+          const imNum = blMatch?.[1] || bareMatch?.[1];
+          if (imNum && IM_TO_L2[imNum]) {
+            l2 = IM_TO_L2[imNum];
+          } else {
+            const n = (li.name || "").toUpperCase();
+            if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV/i.test(n)) {
+              l2 = "Furniture";
+            } else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE/i.test(n)) {
+              l2 = "Home";
+            } else if (/SHOE|BOOT|SANDAL|SLIPPER|SNEAKER/i.test(n)) {
+              l2 = "Softline - Shoes";
+            } else if (/APPAREL|SHIRT|PANT|DRESS|JACKET|COAT|BLOUSE|SWEATER/i.test(n)) {
+              l2 = "Softline - Apparel";
+            } else if (/CHEMICAL|CLEANING|DETERGENT/i.test(n)) {
+              l2 = "Consumable Other";
+            } else if (/MASK|HEMP|OIL|LOTION|CREAM|SOAP|SHAMPOO|BODY|NAIL POLISH|COSMETIC/i.test(n)) {
+              l2 = "Consumable HBA";
+            } else if (/FOOD|SNACK|CANDY|BEVERAGE|DRINK/i.test(n)) {
+              l2 = "Consumable Food";
+            } else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY/i.test(n)) {
+              l2 = "Hardlines";
+            } else {
+              const itemName = li.name || "unknown";
+              noCategory[itemName] = (noCategory[itemName] || 0) + 1;
+              l2 = "Custom Sales";
+            }
+          }
+        }
+      }
+
+      const cat = getCat(l2);
+      const grossCents = Math.abs(priceCents);
+
+      let discCents = 0;
+      if (li.discounts?.elements) {
+        for (const d of li.discounts.elements) {
+          discCents += Math.abs(d.amount || 0);
+        }
+      }
+
+      if (priceCents < 0) {
+        cat.refunds -= grossCents / 100;
+        cat.net -= grossCents / 100;
+      } else {
+        cat.qty += qty;
+        cat.gross += grossCents / 100;
+        cat.discounts -= discCents / 100;
+        cat.net += (grossCents - discCents) / 100;
+      }
+    }
+  }
+
+  // Calculate totals and format response
+  let totalQty = 0, totalGross = 0, totalDisc = 0, totalRef = 0, totalNet = 0;
+  const categories = [];
+  for (const [name, c] of Object.entries(cats)) {
+    totalQty += c.qty;
+    totalGross += c.gross;
+    totalDisc += c.discounts;
+    totalRef += c.refunds;
+    totalNet += c.net;
+    categories.push({
+      category: name,
+      qty: Math.round(c.qty),
+      gross: Math.round(c.gross * 100) / 100,
+      discounts: Math.round(c.discounts * 100) / 100,
+      refunds: Math.round(c.refunds * 100) / 100,
+      netSales: Math.round(c.net * 100) / 100,
+      asp: c.qty > 0 ? Math.round((c.net / c.qty) * 100) / 100 : 0,
+    });
+  }
+
+  categories.sort((a, b) => b.netSales - a.netSales);
+
+  for (const c of categories) {
+    c.pctQty = totalQty > 0 ? Math.round((c.qty / totalQty) * 1000) / 10 : 0;
+  }
+
+  return {
+    store, date: dateStr,
+    categories,
+    totals: {
+      qty: Math.round(totalQty),
+      gross: Math.round(totalGross * 100) / 100,
+      discounts: Math.round(totalDisc * 100) / 100,
+      refunds: Math.round(totalRef * 100) / 100,
+      netSales: Math.round(totalNet * 100) / 100,
+      asp: totalQty > 0 ? Math.round((totalNet / totalQty) * 100) / 100 : 0,
+    },
+    orderCount: allElements.length,
+    _debug: { unmappedL3, noCategory, itemCatMapSize: Object.keys(itemCatMap).length },
+  };
+}
+
+// ─── Fetch orders with lineItems for item sales ─────────────────
+async function fetchItemOrders(store, env, sinceTimestamp) {
+  const merchantId = env[`${store}_MERCHANT_ID`];
+  const apiToken = env[`${store}_API_TOKEN`];
+  if (!merchantId || !apiToken) return null;
+
+  const allElements = [];
+  let offset = 0;
+  const limit = 1000;
+  while (true) {
+    const cloverUrl = `https://api.clover.com/v3/merchants/${merchantId}/orders`
+      + `?filter=createdTime>=${sinceTimestamp}`
+      + `&filter=state=locked`
+      + `&expand=payments,lineItems.item,lineItems.discounts`
+      + `&limit=${limit}&offset=${offset}`;
+    const resp = await fetch(cloverUrl, {
+      headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
+    });
+    const data = await resp.json();
+    if (!data?.elements?.length) break;
+    allElements.push(...data.elements);
+    if (data.elements.length < limit) break;
+    offset += limit;
+  }
+  return allElements;
+}
+
 // ─── Save a snapshot to KV + D1 ─────────────────────────────────
 async function saveSnapshot(env, store, dateStr, data) {
   const snapshotTime = new Date().toISOString();
@@ -1604,13 +1788,28 @@ export default {
       });
     }
 
-    // ── Item sales by L2 category: ?action=items&store=BL1
+    // ── Item sales by L2 category: ?action=items&store=BL1[&date=2026-04-08]
     if (url.searchParams.get("action") === "items") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       const store = (url.searchParams.get("store") || "").toUpperCase();
       if (!store) {
         return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
       }
+
+      const { dateStr: todayStr, startOfDay } = getETToday();
+      const dateParam = url.searchParams.get("date");
+
+      // If requesting a past date, serve from KV snapshot
+      if (dateParam && dateParam !== todayStr) {
+        const key = `items:${store.toLowerCase()}:${dateParam}`;
+        const cached = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get(key, "json") : null;
+        if (cached) {
+          return new Response(JSON.stringify(cached), { headers: corsJson });
+        }
+        return new Response(JSON.stringify({ store, date: dateParam, categories: [], totals: { qty: 0, gross: 0, discounts: 0, refunds: 0, netSales: 0, asp: 0 }, orderCount: 0 }), { headers: corsJson });
+      }
+
+      // Live fetch from Clover for today
       const merchantId = env[`${store}_MERCHANT_ID`];
       const apiToken = env[`${store}_API_TOKEN`];
       if (!merchantId || !apiToken) {
@@ -1618,185 +1817,10 @@ export default {
       }
 
       try {
-        const { dateStr: todayStr, startOfDay } = getETToday();
-
-        // Fetch orders with lineItems expanded to include item references
-        const allElements = [];
-        let offset = 0;
-        const limit = 1000;
-        while (true) {
-          const cloverUrl = `https://api.clover.com/v3/merchants/${merchantId}/orders`
-            + `?filter=createdTime>=${startOfDay}`
-            + `&filter=state=locked`
-            + `&expand=payments,lineItems.item,lineItems.discounts`
-            + `&limit=${limit}&offset=${offset}`;
-          const resp = await fetch(cloverUrl, {
-            headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
-          });
-          const data = await resp.json();
-          if (!data?.elements?.length) break;
-          allElements.push(...data.elements);
-          if (data.elements.length < limit) break;
-          offset += limit;
-        }
-
-        // Fetch item→category mapping (cached 24h)
+        const allElements = await fetchItemOrders(store, env, startOfDay);
         const itemCatMap = await fetchItemCategoryMap(store, env);
-
-        // Aggregate by L2 category
-        const cats = {};
-        const unmappedL3 = {};  // Track L3 names not in our mapping
-        const noCategory = {};  // Track items with no Clover category
-        function getCat(name) {
-          if (!cats[name]) cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0 };
-          return cats[name];
-        }
-
-        for (const order of allElements) {
-          if (order.total == null || order.total === 0) continue;
-
-          // Calculate tax for this order
-          let taxCents = 0;
-          if (order.payments?.elements) {
-            for (const pmt of order.payments.elements) {
-              taxCents += (pmt.taxAmount || 0);
-            }
-          }
-
-          const lineItems = order.lineItems?.elements || [];
-
-          for (const li of lineItems) {
-            const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
-            const priceCents = (li.price || 0) * qty;
-
-            // Determine L3 category from item reference → category map
-            let l3 = null;
-            const itemId = li.item?.id;
-            if (itemId && itemCatMap[itemId]) {
-              l3 = itemCatMap[itemId];
-            }
-
-            // Map L3 → L2
-            let l2;
-            if (l3 === "Sku Book Items") {
-              // Sku Book items need name-based lookup for correct L2
-              l2 = SKU_BOOK_TO_L2[li.name] || "Hardlines";
-            } else if (l3 && L3_TO_L2[l3]) {
-              l2 = L3_TO_L2[l3];
-            } else if (l3) {
-              unmappedL3[l3] = (unmappedL3[l3] || 0) + 1;
-              l2 = "Uncategorized";
-            } else if (li.name === "Refund" || priceCents < 0) {
-              l2 = "Refund";
-            } else {
-              // No Clover category — try matching item name against L3 mapping
-              // Normalize em-dashes to hyphens for matching
-              const normalized = (li.name || "").replace(/\u2013|\u2014/g, "-");
-              const nameMatch = L3_TO_L2[normalized] || L3_TO_L2[li.name];
-              if (nameMatch) {
-                l2 = nameMatch;
-              } else {
-                // Try extracting BL number from item name (e.g. "BL10015", "BL-10015", "BL 10015")
-                const blMatch = (li.name || "").match(/BL[-\s]*(\d{4,5})/i);
-                // Also try matching a bare number (e.g. "14281") or number at start (e.g. "$8411 Nail Polish")
-                const bareMatch = !blMatch && (li.name || "").match(/\b(\d{4,5})\b/);
-                const imNum = blMatch?.[1] || bareMatch?.[1];
-                if (imNum && IM_TO_L2[imNum]) {
-                  l2 = IM_TO_L2[imNum];
-                } else {
-                  // Keyword-based fallback for items without BL numbers
-                  const n = (li.name || "").toUpperCase();
-                  if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV/i.test(n)) {
-                    l2 = "Furniture";
-                  } else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE/i.test(n)) {
-                    l2 = "Home";
-                  } else if (/SHOE|BOOT|SANDAL|SLIPPER|SNEAKER/i.test(n)) {
-                    l2 = "Softline - Shoes";
-                  } else if (/APPAREL|SHIRT|PANT|DRESS|JACKET|COAT|BLOUSE|SWEATER/i.test(n)) {
-                    l2 = "Softline - Apparel";
-                  } else if (/CHEMICAL|CLEANING|DETERGENT/i.test(n)) {
-                    l2 = "Consumable Other";
-                  } else if (/MASK|HEMP|OIL|LOTION|CREAM|SOAP|SHAMPOO|BODY|NAIL POLISH|COSMETIC/i.test(n)) {
-                    l2 = "Consumable HBA";
-                  } else if (/FOOD|SNACK|CANDY|BEVERAGE|DRINK/i.test(n)) {
-                    l2 = "Consumable Food";
-                  } else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY/i.test(n)) {
-                    l2 = "Hardlines";
-                  } else {
-                    const itemName = li.name || "unknown";
-                    noCategory[itemName] = (noCategory[itemName] || 0) + 1;
-                    l2 = "Custom Sales";
-                  }
-                }
-              }
-            }
-
-            const cat = getCat(l2);
-            const grossCents = Math.abs(priceCents);
-
-            // Sum discounts on this line item
-            let discCents = 0;
-            if (li.discounts?.elements) {
-              for (const d of li.discounts.elements) {
-                discCents += Math.abs(d.amount || 0);
-              }
-            }
-
-            if (priceCents < 0) {
-              // Refund line item
-              cat.refunds -= grossCents / 100;
-              cat.net -= grossCents / 100;
-            } else {
-              cat.qty += qty;
-              cat.gross += grossCents / 100;
-              cat.discounts -= discCents / 100;
-              cat.net += (grossCents - discCents) / 100;
-            }
-          }
-        }
-
-        // Calculate totals and format response
-        let totalQty = 0, totalGross = 0, totalDisc = 0, totalRef = 0, totalNet = 0;
-        const categories = [];
-        for (const [name, c] of Object.entries(cats)) {
-          totalQty += c.qty;
-          totalGross += c.gross;
-          totalDisc += c.discounts;
-          totalRef += c.refunds;
-          totalNet += c.net;
-          categories.push({
-            category: name,
-            qty: Math.round(c.qty),
-            gross: Math.round(c.gross * 100) / 100,
-            discounts: Math.round(c.discounts * 100) / 100,
-            refunds: Math.round(c.refunds * 100) / 100,
-            netSales: Math.round(c.net * 100) / 100,
-            asp: c.qty > 0 ? Math.round((c.net / c.qty) * 100) / 100 : 0,
-          });
-        }
-
-        // Sort by net sales descending
-        categories.sort((a, b) => b.netSales - a.netSales);
-
-        // Add pctQty
-        for (const c of categories) {
-          c.pctQty = totalQty > 0 ? Math.round((c.qty / totalQty) * 1000) / 10 : 0;
-        }
-
-        return new Response(JSON.stringify({
-          store, date: todayStr,
-          categories,
-          totals: {
-            qty: Math.round(totalQty),
-            gross: Math.round(totalGross * 100) / 100,
-            discounts: Math.round(totalDisc * 100) / 100,
-            refunds: Math.round(totalRef * 100) / 100,
-            netSales: Math.round(totalNet * 100) / 100,
-            asp: totalQty > 0 ? Math.round((totalNet / totalQty) * 100) / 100 : 0,
-          },
-          orderCount: allElements.length,
-          _debug: { unmappedL3, noCategory, itemCatMapSize: Object.keys(itemCatMap).length },
-        }), { headers: corsJson });
+        const result = aggregateItemSales(allElements || [], itemCatMap, store, todayStr);
+        return new Response(JSON.stringify(result), { headers: corsJson });
       } catch (err) {
         return new Response(JSON.stringify({ error: "Items fetch failed", detail: err.message }), {
           status: 500, headers: corsJson,
@@ -1855,8 +1879,24 @@ export default {
 
     for (const store of ALL_STORES) {
       try {
+        // Sales snapshot (existing)
         const data = await fetchAggregateAndSnapshot(store, env, startOfDay, todayStr);
-        results[store] = data ? "ok" : "skipped (no credentials)";
+        results[store] = { sales: data ? "ok" : "skipped" };
+
+        // Item sales snapshot (new)
+        try {
+          const elements = await fetchItemOrders(store, env, startOfDay);
+          if (elements) {
+            const itemCatMap = await fetchItemCategoryMap(store, env);
+            const itemData = aggregateItemSales(elements, itemCatMap, store, todayStr);
+            await saveItemSalesSnapshot(env, store, todayStr, itemData);
+            results[store].items = "ok";
+          } else {
+            results[store].items = "skipped";
+          }
+        } catch (itemErr) {
+          results[store].items = `error: ${itemErr.message}`;
+        }
       } catch (err) {
         results[store] = `error: ${err.message}`;
       }
