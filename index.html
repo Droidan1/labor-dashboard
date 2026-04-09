@@ -1251,6 +1251,11 @@
     const weekRows = data.filter(r => r.week === selectedWeek);
     const sorted = [...weekRows].sort((a, b) => b.date - a.date);
 
+    // Use live Clover data for today if available
+    const todayStr = new Date().toDateString();
+    const isCurrentWeek = selectedWeek === currentWeek;
+    const liveTotal = isCurrentWeek ? (liveCloverData[storeName]?.total ?? null) : null;
+
     let html = `<table class="w-full text-left table-fixed">
       <colgroup><col class="w-[22%]"><col class="w-[20%]"><col class="w-[22%]"><col class="w-[22%]"><col class="w-[14%]"></colgroup>
       <thead class="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
@@ -1266,13 +1271,15 @@
 
     for (const r of sorted) {
       const dateStr = r.date.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'});
-      const dailyLabor = (r.aLabor != null && r.aTotal != null && r.aTotal > 0) ? normalizeLaborPct(r.aLabor) : null;
-      const diff = (r.aTotal != null && r.bTotal != null) ? r.aTotal - r.bTotal : null;
+      const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
+      const sales = (isToday && liveTotal > 0) ? liveTotal : r.aTotal;
+      const dailyLabor = (r.aLabor != null && sales != null && sales > 0) ? normalizeLaborPct(r.aLabor) : null;
+      const diff = (sales != null && r.bTotal != null) ? sales - r.bTotal : null;
       const diffPositive = diff != null && diff >= 0;
       html += `<tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
         <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-gray-600 dark:text-gray-300 font-medium whitespace-nowrap">${escapeHtml(dateStr)}</td>
         <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-500 dark:text-gray-400">${r.bTotal != null ? fmtDollar(r.bTotal) : '—'}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right font-medium text-gray-900 dark:text-white">${r.aTotal != null ? fmtDollar(r.aTotal) : '—'}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right font-medium text-gray-900 dark:text-white">${sales != null ? fmtDollar(sales) : '—'}</td>
         <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right font-semibold ${diff != null ? (diffPositive ? 'text-green-600' : 'text-red-500') : 'text-gray-300 dark:text-gray-600'}">${diff != null ? (diffPositive ? '+' : '-') + fmtDollar(Math.abs(diff)) : '—'}</td>
         <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right font-bold ${dailyLabor > LABOR_TARGET ? 'text-red-500' : 'text-green-500'}">${fmtPct(dailyLabor)}</td>
       </tr>`;
@@ -1280,9 +1287,11 @@
 
     let wkSales=0, wkBudget=0, wkLaborNum=0, wkLaborDen=0;
     for (const r of sorted) {
-      if (r.aTotal != null) wkSales += r.aTotal;
+      const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
+      const sales = (isToday && liveTotal > 0) ? liveTotal : r.aTotal;
+      if (sales != null) wkSales += sales;
       if (r.bTotal != null) wkBudget += r.bTotal;
-      if (r.aLabor != null && r.aTotal != null) { const lp = normalizeLaborPct(r.aLabor); if (lp != null) { wkLaborNum += (lp/100)*r.aTotal; wkLaborDen += r.aTotal; } }
+      if (r.aLabor != null && sales != null) { const lp = normalizeLaborPct(r.aLabor); if (lp != null) { wkLaborNum += (lp/100)*sales; wkLaborDen += sales; } }
     }
     const wkDiff = wkSales - wkBudget, wkDiffPos = wkDiff >= 0;
     const wkLabor = wkLaborDen > 0 ? (wkLaborNum/wkLaborDen)*100 : null;
