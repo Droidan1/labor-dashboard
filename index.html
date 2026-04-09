@@ -319,9 +319,10 @@
           <div class="h-[340px]"><canvas id="daily-sales-chart"></canvas></div>
         </div>
         <div id="sd-content-items" class="hidden bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700">
+          <div id="items-day-selector" class="flex items-center gap-1 mb-3 overflow-x-auto"></div>
           <div id="items-table-container">
             <div class="p-8 text-center text-gray-400 dark:text-gray-500">
-              <div class="text-sm">Click to load today's category breakdown.</div>
+              <div class="text-sm">Select a day to view category breakdown.</div>
             </div>
           </div>
         </div>
@@ -1374,6 +1375,7 @@
   function showStoreDetail(storeName) {
     currentPage = 'store-detail';
     currentStoreName = storeName;
+    selectedItemDate = null;  // Reset to today when switching stores
     el('mobile-menu-btn').classList.add('hidden');
 
     el('store-detail-title').textContent = shortName(storeName);
@@ -1468,31 +1470,46 @@
     // Lazy-render chart on first tab switch
     if (tab === 'chart' && currentStoreName) renderDailySalesChart(currentStoreName);
     // Lazy-load item sales on first tab switch
-    if (tab === 'items' && currentStoreName) loadItemSales(currentStoreName);
+    if (tab === 'items' && currentStoreName) {
+      renderItemDaySelector(currentStoreName);
+      loadItemSales(currentStoreName, selectedItemDate);
+    }
   }
 
   // ─── Item Sales by L2 Category ──────────────────────────────────
-  let itemSalesCache = {};
+  let itemSalesCache = {};  // keyed by "STORE:YYYY-MM-DD"
   let itemSortCol = 'netSales';
   let itemSortAsc = false;
+  let selectedItemDate = null;  // YYYY-MM-DD string, null = today
 
-  async function loadItemSales(storeName) {
+  function getETTodayStr() {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+  }
+
+  async function loadItemSales(storeName, dateStr) {
     const storeKey = storeName.split('/')[0];
-    if (itemSalesCache[storeKey]) {
-      renderItemSalesTable(itemSalesCache[storeKey]);
+    const todayStr = getETTodayStr();
+    const targetDate = dateStr || todayStr;
+    const isToday = targetDate === todayStr;
+    const cacheKey = `${storeKey}:${targetDate}`;
+
+    if (itemSalesCache[cacheKey]) {
+      renderItemSalesTable(itemSalesCache[cacheKey], isToday);
       return;
     }
 
     const container = el('items-table-container');
-    container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">Loading category data from Clover…</div></div>`;
+    container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">${isToday ? 'Loading category data from Clover…' : 'Loading historical data…'}</div></div>`;
 
     try {
-      const resp = await fetch(`https://clover-sales-api.howardbrian86.workers.dev/?action=items&store=${storeKey}`);
+      let url = `https://clover-sales-api.howardbrian86.workers.dev/?action=items&store=${storeKey}`;
+      if (!isToday) url += `&date=${targetDate}`;
+      const resp = await fetch(url);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       if (data.error) throw new Error(data.error);
-      itemSalesCache[storeKey] = data;
-      renderItemSalesTable(data);
+      itemSalesCache[cacheKey] = data;
+      renderItemSalesTable(data, isToday);
     } catch (err) {
       container.innerHTML = `<div class="p-8 text-center text-red-400"><div class="font-semibold mb-1">Failed to load</div><div class="text-sm">${escapeHtml(err.message)}</div></div>`;
     }
@@ -1503,29 +1520,85 @@
       itemSortAsc = !itemSortAsc;
     } else {
       itemSortCol = col;
-      itemSortAsc = col === 'category'; // default ascending for text, descending for numbers
+      itemSortAsc = col === 'category';
     }
     const storeKey = currentStoreName?.split('/')[0];
-    if (storeKey && itemSalesCache[storeKey]) renderItemSalesTable(itemSalesCache[storeKey]);
+    const targetDate = selectedItemDate || getETTodayStr();
+    const cacheKey = `${storeKey}:${targetDate}`;
+    const isToday = targetDate === getETTodayStr();
+    if (storeKey && itemSalesCache[cacheKey]) renderItemSalesTable(itemSalesCache[cacheKey], isToday);
   }
   window.sortItemSales = sortItemSales;
 
   function refreshItemSales() {
     const storeKey = currentStoreName?.split('/')[0];
     if (storeKey) {
-      delete itemSalesCache[storeKey];
-      loadItemSales(currentStoreName);
+      const todayStr = getETTodayStr();
+      const cacheKey = `${storeKey}:${todayStr}`;
+      delete itemSalesCache[cacheKey];
+      selectedItemDate = null;
+      renderItemDaySelector(currentStoreName);
+      loadItemSales(currentStoreName, todayStr);
     }
   }
   window.refreshItemSales = refreshItemSales;
 
-  function renderItemSalesTable(data) {
+  function renderItemDaySelector(storeName) {
+    const container = el('items-day-selector');
+    if (!container) return;
+
+    const data = allStoreData[storeName] || [];
+    const weekRows = data.filter(r => r.week === selectedWeek);
+    const sorted = [...weekRows].sort((a, b) => a.date - b.date); // Sun → Sat
+
+    const todayStr = getETTodayStr();
+    const activeDate = selectedItemDate || todayStr;
+
+    let html = '';
+    for (const r of sorted) {
+      if (!r.date) continue;
+      const d = r.date;
+      const fmtDate = d.toISOString().slice(0, 10);
+      const dayLabel = d.toLocaleDateString('en-US', { weekday: 'short' });
+      const dateLabel = `${d.getMonth() + 1}/${d.getDate()}`;
+      const isToday = fmtDate === todayStr;
+      const isFuture = fmtDate > todayStr;
+      const isSelected = fmtDate === activeDate;
+
+      if (isFuture) {
+        html += `<button disabled class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs opacity-40 text-gray-400 dark:text-gray-600 cursor-not-allowed">
+          <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
+        </button>`;
+      } else if (isSelected) {
+        html += `<button class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs bg-[#3BB54A] text-white font-semibold shadow-sm">
+          <span>${dayLabel}</span><span>${dateLabel}</span>${isToday ? '<span class="text-[8px] uppercase tracking-wider">Live</span>' : ''}
+        </button>`;
+      } else {
+        html += `<button onclick="selectItemDay('${fmtDate}')" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+          <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
+        </button>`;
+      }
+    }
+
+    container.innerHTML = html;
+  }
+
+  function selectItemDay(dateStr) {
+    selectedItemDate = dateStr;
+    if (currentStoreName) {
+      renderItemDaySelector(currentStoreName);
+      loadItemSales(currentStoreName, dateStr);
+    }
+  }
+  window.selectItemDay = selectItemDay;
+
+  function renderItemSalesTable(data, isToday = true) {
     const container = el('items-table-container');
     const cats = [...(data.categories || [])];
     const t = data.totals || {};
 
     if (cats.length === 0) {
-      container.innerHTML = `<div class="p-8 text-center text-gray-400 dark:text-gray-500"><div class="text-sm">No item sales data for today yet.</div></div>`;
+      container.innerHTML = `<div class="p-8 text-center text-gray-400 dark:text-gray-500"><div class="text-sm">${isToday ? 'No item sales data for today yet.' : 'No stored data for this date.'}</div></div>`;
       return;
     }
 
@@ -1544,7 +1617,9 @@
     };
     const thCls = 'py-2 px-1.5 sm:px-3 sm:py-3 font-semibold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 select-none';
 
-    let html = `<div class="flex items-center justify-between mb-3"><div class="text-xs text-gray-500 dark:text-gray-400">${data.date} · ${data.orderCount} orders · Live from Clover</div><button onclick="refreshItemSales()" class="text-xs text-[#3BB54A] hover:underline font-medium">Refresh</button></div>`;
+    const sourceLabel = isToday ? 'Live from Clover' : 'Historical snapshot';
+    const refreshBtn = isToday ? `<button onclick="refreshItemSales()" class="text-xs text-[#3BB54A] hover:underline font-medium">Refresh</button>` : '';
+    let html = `<div class="flex items-center justify-between mb-3"><div class="text-xs text-gray-500 dark:text-gray-400">${data.date} · ${data.orderCount} orders · ${sourceLabel}</div>${refreshBtn}</div>`;
     html += `<div class="overflow-x-auto"><table class="w-full text-left">
       <thead class="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
         <tr class="text-[10px] sm:text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
