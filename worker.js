@@ -127,6 +127,7 @@ const SKU_BOOK_TO_L2 = {
   "9x12+ Rug": "Home",
   "Adult Apparel $6": "Softline - Apparel",
   "Adult Coat": "Softline - Apparel",
+  "$1 Food - 50001": "Consumable Food",
 };
 
 const IM_TO_L2 = {
@@ -1712,6 +1713,8 @@ export default {
                     l2 = "Consumable Other";
                   } else if (/MASK|HEMP|OIL|LOTION|CREAM|SOAP|SHAMPOO|BODY/i.test(n)) {
                     l2 = "Consumable HBA";
+                  } else if (/FOOD|SNACK|CANDY|BEVERAGE|DRINK/i.test(n)) {
+                    l2 = "Consumable Food";
                   } else {
                     const itemName = li.name || "unknown";
                     noCategory[itemName] = (noCategory[itemName] || 0) + 1;
