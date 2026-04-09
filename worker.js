@@ -1142,6 +1142,7 @@ const IM_TO_L2 = {
   "50391": "Softline - Apparel",
   "50392": "Hardlines",
   "10801": "Consumable HBA",
+  "14393": "Hardlines",
   "50868": "Hardlines",
 };
 
