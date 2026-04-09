@@ -1141,6 +1141,8 @@ const IM_TO_L2 = {
   "50390": "Softline - Apparel",
   "50391": "Softline - Apparel",
   "50392": "Hardlines",
+  "10801": "Consumable HBA",
+  "50868": "Hardlines",
 };
 
 function isBinItem(name) {
@@ -1689,14 +1691,26 @@ export default {
               if (nameMatch) {
                 l2 = nameMatch;
               } else {
-                // Try extracting BL number from item name (e.g. "BL10015" or "BL 10015")
-                const blMatch = (li.name || "").match(/BL\s*(\d{4,5})/i);
+                // Try extracting BL number from item name (e.g. "BL10015", "BL-10015", "BL 10015")
+                const blMatch = (li.name || "").match(/BL[-\s]*(\d{4,5})/i);
                 if (blMatch && IM_TO_L2[blMatch[1]]) {
                   l2 = IM_TO_L2[blMatch[1]];
                 } else {
-                  const itemName = li.name || "unknown";
-                  noCategory[itemName] = (noCategory[itemName] || 0) + 1;
-                  l2 = "Custom Sales";
+                  // Keyword-based fallback for items without BL numbers
+                  const n = (li.name || "").toUpperCase();
+                  if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV/i.test(n)) {
+                    l2 = "Furniture";
+                  } else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE/i.test(n)) {
+                    l2 = "Home";
+                  } else if (/SHOE|BOOT|SANDAL|SLIPPER|SNEAKER/i.test(n)) {
+                    l2 = "Softline - Shoes";
+                  } else if (/APPAREL|SHIRT|PANT|DRESS|JACKET|COAT|BLOUSE|SWEATER/i.test(n)) {
+                    l2 = "Softline - Apparel";
+                  } else {
+                    const itemName = li.name || "unknown";
+                    noCategory[itemName] = (noCategory[itemName] || 0) + 1;
+                    l2 = "Custom Sales";
+                  }
                 }
               }
             }
