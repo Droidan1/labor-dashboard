@@ -129,6 +129,7 @@
     }
     .sidebar:not(.collapsed) .sidebar-toggle-bottom .chevron { transform: rotate(180deg); }
     .sidebar.collapsed #sidebar-dark-toggle { display: none; }
+    .toggle-scale { transform: scale(0.8); transform-origin: left center; }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -139,7 +140,7 @@
 
   <div id="splash" class="flex flex-col items-center justify-center min-h-screen absolute inset-0 bg-[#F6F6F6] dark:bg-gray-900 z-50">
     <div class="text-3xl font-display text-[#3BB54A] dark:text-[#3BB54A] mb-2">Bargain Lane Dashboard</div>
-    <div id="splash-msg" class="text-gray-500 dark:text-gray-400 text-sm loading-dot">Connecting to Google Sheets…</div>
+    <div id="splash-msg" class="text-gray-500 dark:text-gray-400 text-sm loading-dot">Loading dashboard…</div>
   </div>
 
   <div id="error-banner" class="hidden bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm px-6 py-3 rounded-lg mx-6 mt-4"></div>
@@ -169,7 +170,7 @@
       <!-- Bottom Section -->
       <div id="sidebar-dark-toggle" class="px-2 pb-2 space-y-1">
         <div class="flex items-center gap-3 px-3 py-2.5">
-          <div id="dark-toggle" class="toggle-track flex-shrink-0" role="switch" aria-checked="false" aria-label="Toggle dark mode" tabindex="0" style="transform: scale(0.8);">
+          <div id="dark-toggle" class="toggle-track toggle-scale flex-shrink-0" role="switch" aria-checked="false" aria-label="Toggle dark mode" tabindex="0">
             <div class="toggle-knob"></div>
           </div>
           <span id="dark-label" class="nav-label text-xs text-gray-500 dark:text-gray-400 select-none">Dark mode <span id="dark-state">off</span></span>
@@ -234,7 +235,7 @@
               <div id="c-variance" class="text-xs font-semibold mt-1">—</div>
             </div>
             <div class="min-w-0">
-              <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Monthly</div>
+              <div id="c-month-label" class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Monthly</div>
               <div class="flex items-baseline gap-1 mt-1 flex-wrap">
                 <span id="c-month-total" class="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">—</span>
                 <span class="text-gray-300 dark:text-gray-600">/</span>
@@ -266,23 +267,23 @@
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div class="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors">
           <h3 class="font-display text-gray-800 dark:text-gray-200 mb-4" id="labor-chart-title">Labor % by Store</h3>
-          <div style="height:240px"><canvas id="labor-chart" role="img" aria-label="Horizontal bar chart showing labor percentage by store"></canvas></div>
+          <div class="h-60"><canvas id="labor-chart" role="img" aria-label="Horizontal bar chart showing labor percentage by store"></canvas></div>
         </div>
         <div class="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors">
           <h3 class="font-display text-gray-800 dark:text-gray-200 mb-4" id="budget-chart-title">Actual vs Budget — Net Sales</h3>
-          <div style="height:240px"><canvas id="budget-chart" role="img" aria-label="Bar chart comparing actual vs budget net sales by store"></canvas></div>
+          <div class="h-60"><canvas id="budget-chart" role="img" aria-label="Bar chart comparing actual vs budget net sales by store"></canvas></div>
         </div>
       </div>
       <div class="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors">
         <div class="flex justify-between items-center mb-4">
           <h3 class="font-display text-gray-800 dark:text-gray-200">Weekly Sales Trend — All Stores</h3>
           <div class="flex gap-1">
-            <button onclick="if(trendChart) { trendChart.zoom(1.3); el('reset-zoom-btn').classList.remove('hidden'); }" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" title="Zoom In">+</button>
-            <button onclick="if(trendChart) { trendChart.zoom(0.7); }" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" title="Zoom Out">−</button>
-            <button id="reset-zoom-btn" onclick="if(trendChart) { trendChart.resetZoom(); this.classList.add('hidden'); }" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors hidden">Reset</button>
+            <button onclick="if(trendChart) { trendChart.zoom(1.3); el('reset-zoom-btn').classList.remove('hidden'); }" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" title="Zoom In" aria-label="Zoom in">+</button>
+            <button onclick="if(trendChart) { trendChart.zoom(0.7); }" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" title="Zoom Out" aria-label="Zoom out">−</button>
+            <button id="reset-zoom-btn" onclick="if(trendChart) { trendChart.resetZoom(); this.classList.add('hidden'); }" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors hidden" aria-label="Reset zoom">Reset</button>
           </div>
         </div>
-        <div style="height:340px"><canvas id="trend-chart" role="img" aria-label="Line chart showing weekly sales trend across all stores"></canvas></div>
+        <div class="h-[340px]"><canvas id="trend-chart" role="img" aria-label="Line chart showing weekly sales trend across all stores"></canvas></div>
       </div>
     </div>
     </div><!-- end #page-dashboard -->
@@ -315,7 +316,7 @@
         <!-- Tab content -->
         <div id="sd-content-weekly" class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden"></div>
         <div id="sd-content-chart" class="hidden bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700">
-          <div style="height:340px"><canvas id="daily-sales-chart"></canvas></div>
+          <div class="h-[340px]"><canvas id="daily-sales-chart"></canvas></div>
         </div>
         <div id="sd-content-items" class="hidden bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700">
           <div id="items-table-container">
@@ -725,12 +726,10 @@
     el("splash").classList.remove("hidden");
     el("app").classList.add("hidden");
     el("error-banner").classList.add("hidden");
-    el("splash-msg").textContent = "Loading store data…";
-
     const results = {}, errors = {};
     let loaded = 0;
 
-    // Start loading Sheets data
+    // Start loading data
     const sheetsPromise = Promise.all(STORES.map(async (s) => {
       try {
         const { rows, cloverHistory } = await loadStoreFromD1(s);
@@ -738,7 +737,7 @@
         historicalCloverData[s] = cloverHistory;
       } catch (e) { errors[s] = e.message; results[s] = []; }
       loaded++;
-      el("splash-msg").textContent = `Loading data… (${loaded}/${STORES.length} stores ready)`;
+      el("splash-msg").textContent = `Loading stores… (${loaded}/${STORES.length})`;
     }));
 
     liveDataLoading = true;
@@ -938,29 +937,29 @@
       el("c-today-breakdown").innerHTML = '';
     } else {
       el("c-today-total").textContent = storesWithData > 0 ? fmtDollar(todayTotal) : '—';
-      el("c-today-sub").textContent = storesWithData > 0 ? `${storesWithData} of ${STORES.length} reporting` : 'All stores';
+      el("c-today-sub").textContent = storesWithData > 0 ? `${storesWithData} of ${STORES.length} stores reporting` : 'All stores';
       if (storesWithData > 0) {
         el("c-today-breakdown").innerHTML = `
           <div class="flex gap-4 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
-            <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayRetail)}</div></div>
-            <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayBin)}</div></div>
-            <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayAuction)}</div></div>
+            <div><div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayRetail)}</div></div>
+            <div><div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayBin)}</div></div>
+            <div><div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayAuction)}</div></div>
           </div>
           <div class="flex gap-4 mt-3 text-center">
             <div class="flex-1 py-2.5 px-3 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-              <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Avg Cart</div>
+              <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Avg Cart</div>
               <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(totalAvgCart)}</div>
             </div>
             <div class="flex-1 py-2.5 px-3 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-              <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Avg Items</div>
+              <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Avg Items</div>
               <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${totalAvgItems.toFixed(1)}</div>
             </div>
             <div class="flex-1 py-2.5 px-3 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-              <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Orders</div>
+              <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Orders</div>
               <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${allOrderCount}</div>
             </div>
             <div class="flex-1 py-2.5 px-3 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-              <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Avg Time</div>
+              <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Avg Time</div>
               <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(totalAvgTxnSec)}</div>
             </div>
           </div>`;
@@ -1014,6 +1013,7 @@
     }
     el("c-month-total").textContent = fmtK(mA);
     el("c-month-budget").textContent = fmtK(mB);
+    el("c-month-label").textContent = monthLabel ? `Monthly · ${monthLabel}` : 'Monthly';
     const mDiff = mA - mB;
     const mCls = mDiff >= 0 ? 'text-green-600' : 'text-red-500';
     el("c-month-variance").className = `text-xs font-semibold mt-1 ${mCls}`;
@@ -1102,7 +1102,7 @@
           </div>
           <div class="text-right">
             <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Day Budget</div>
-            <div class="text-2xl font-bold text-gray-500 dark:text-gray-300">
+            <div class="text-3xl font-bold text-gray-400 dark:text-gray-500">
               ${todayBudget != null ? fmtDollar(todayBudget) : '<span class="text-gray-300 dark:text-gray-600 text-lg font-medium">—</span>'}
             </div>
             ${(() => {
@@ -1117,15 +1117,15 @@
         ${!liveDataLoading && liveSales != null && liveSales > 0 ? `
         <div class="flex gap-4 mb-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
           <div>
-            <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div>
+            <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(liveRetail)}</div>
           </div>
           <div>
-            <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
+            <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(liveBin)}</div>
           </div>
           <div>
-            <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div>
+            <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(storeAuction || 0)}</div>
           </div>
         </div>` : ''}
@@ -1138,7 +1138,7 @@
           </div>
           <div class="text-right">
             <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Week Budget</div>
-            <div class="text-2xl font-bold text-gray-500 dark:text-gray-300">${m.bTotal != null ? fmtDollar(m.bTotal) : '<span class="text-gray-300 dark:text-gray-600 text-lg font-medium">—</span>'}</div>
+            <div class="text-3xl font-bold text-gray-400 dark:text-gray-500">${m.bTotal != null ? fmtDollar(m.bTotal) : '<span class="text-gray-300 dark:text-gray-600 text-lg font-medium">—</span>'}</div>
             ${(() => {
               if (m.bTotal == null || m.aTotal == null) return '';
               const diff = combinedTotal - m.bTotal;
@@ -1151,34 +1151,34 @@
         ${(m.aRetail != null || m.aBins != null || m.aAuction != null) ? `
         <div class="flex gap-4 mb-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
           <div>
-            <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div>
+            <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aRetail || 0)}</div>
           </div>
           <div>
-            <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
+            <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aBins || 0)}</div>
           </div>
           <div>
-            <div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div>
+            <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aAuction || 0)}</div>
           </div>
         </div>` : ''}
         ${hasHistData ? `
         <div class="flex gap-4 mb-3 text-center">
           <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Cart</div>
+            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Cart</div>
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(histAvgCart)}</div>
           </div>
           <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Items</div>
+            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Items</div>
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${histAvgItems.toFixed(1)}</div>
           </div>
           <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Orders</div>
+            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Orders</div>
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${histOrderCount}</div>
           </div>
           <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Time</div>
+            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Time</div>
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(histAvgTxnSec)}</div>
           </div>
         </div>` : (historicalDataLoading ? '<div class="text-xs text-gray-400 dark:text-gray-500 mb-3 text-center">Loading historical data...</div>' : '')}
@@ -1187,19 +1187,19 @@
         ${isCurrentWeek && !liveDataLoading && liveSales != null && liveSales > 0 ? `
         <div class="flex gap-4 mb-3 text-center">
           <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Cart</div>
+            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Cart</div>
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(liveAvgCart)}</div>
           </div>
           <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Items</div>
+            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Items</div>
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${liveAvgItems.toFixed(1)}</div>
           </div>
           <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Orders</div>
+            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Orders</div>
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${liveOrderCount}</div>
           </div>
           <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[9px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Time</div>
+            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Time</div>
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(liveAvgTxnSec)}</div>
           </div>
         </div>` : ''}
@@ -1289,7 +1289,7 @@
 
     if (sorted.length > 0) {
       html += `</tbody><tfoot class="border-t-2 border-gray-300 dark:border-gray-600"><tr class="font-bold text-xs sm:text-sm">
-        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-gray-900 dark:text-white whitespace-nowrap">Wk ${selectedWeek}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-gray-900 dark:text-white whitespace-nowrap">Week ${selectedWeek} Total</td>
         <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-500 dark:text-gray-400">${fmtDollar(wkBudget)}</td>
         <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-900 dark:text-white">${fmtDollar(wkSales)}</td>
         <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right ${wkDiffPos ? 'text-green-600' : 'text-red-500'}">${wkDiffPos ? '+' : '-'}${fmtDollar(Math.abs(wkDiff))}</td>
@@ -1387,29 +1387,38 @@
     const lyMetrics = getLastYearCloverMetrics(storeName);
 
     el('store-detail-metrics').innerHTML = `
-      <div class="flex gap-4 mb-2 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
-        <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(retail)}</div></div>
-        <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(bin)}</div></div>
-        <div><div class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(auction)}</div></div>
+      <div class="grid grid-cols-3 gap-4 mb-4">
+        <div class="py-3 px-4 rounded-lg bg-gray-100 dark:bg-gray-700/60 text-center">
+          <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Retail</div>
+          <div class="text-lg font-bold text-gray-700 dark:text-gray-200">${fmtDollar(retail)}</div>
+        </div>
+        <div class="py-3 px-4 rounded-lg bg-gray-100 dark:bg-gray-700/60 text-center">
+          <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Bin</div>
+          <div class="text-lg font-bold text-gray-700 dark:text-gray-200">${fmtDollar(bin)}</div>
+        </div>
+        <div class="py-3 px-4 rounded-lg bg-gray-100 dark:bg-gray-700/60 text-center">
+          <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Auction</div>
+          <div class="text-lg font-bold text-gray-700 dark:text-gray-200">${fmtDollar(auction)}</div>
+        </div>
       </div>
       ${hasMetrics ? `<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
-          <div class="text-[9px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Cart</div>
+          <div class="text-[10px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Cart</div>
           <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(avgCart)}</div>
           <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(avgCart, lwMetrics?.avgCart, 'LW', false)}${renderComparisonBadge(avgCart, lyMetrics?.avgCart, 'LY', false)}</div>
         </div>
         <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
-          <div class="text-[9px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Items</div>
+          <div class="text-[10px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Items</div>
           <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${(avgItems || 0).toFixed(1)}</div>
           <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(avgItems, lwMetrics?.avgItems, 'LW', false)}${renderComparisonBadge(avgItems, lyMetrics?.avgItems, 'LY', false)}</div>
         </div>
         <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
-          <div class="text-[9px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Orders</div>
+          <div class="text-[10px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Orders</div>
           <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${orderCount || 0}</div>
           <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(orderCount, lwMetrics?.orderCount, 'LW', false)}${renderComparisonBadge(orderCount, lyMetrics?.orderCount, 'LY', false)}</div>
         </div>
         <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
-          <div class="text-[9px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Time</div>
+          <div class="text-[10px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Time</div>
           <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(avgTxnSec)}</div>
           <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(avgTxnSec, lwMetrics?.avgTxnSec, 'LW', true)}${renderComparisonBadge(avgTxnSec, lyMetrics?.avgTxnSec, 'LY', true)}</div>
         </div>
@@ -1492,6 +1501,15 @@
   }
   window.sortItemSales = sortItemSales;
 
+  function refreshItemSales() {
+    const storeKey = currentStoreName?.split('/')[0];
+    if (storeKey) {
+      delete itemSalesCache[storeKey];
+      loadItemSales(currentStoreName);
+    }
+  }
+  window.refreshItemSales = refreshItemSales;
+
   function renderItemSalesTable(data) {
     const container = el('items-table-container');
     const cats = [...(data.categories || [])];
@@ -1517,7 +1535,7 @@
     };
     const thCls = 'py-2 px-1.5 sm:px-3 sm:py-3 font-semibold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 select-none';
 
-    let html = `<div class="text-xs text-gray-500 dark:text-gray-400 mb-3">${data.date} · ${data.orderCount} orders · Live from Clover</div>`;
+    let html = `<div class="flex items-center justify-between mb-3"><div class="text-xs text-gray-500 dark:text-gray-400">${data.date} · ${data.orderCount} orders · Live from Clover</div><button onclick="refreshItemSales()" class="text-xs text-[#3BB54A] hover:underline font-medium">Refresh</button></div>`;
     html += `<div class="overflow-x-auto"><table class="w-full text-left table-fixed">
       <colgroup><col class="w-[24%]"><col class="w-[10%]"><col class="w-[10%]"><col class="w-[14%]"><col class="w-[14%]"><col class="w-[16%]"><col class="w-[12%]"></colgroup>
       <thead class="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
