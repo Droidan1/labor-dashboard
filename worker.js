@@ -3,6 +3,17 @@ const BIN_PATTERNS = [/\bbin\b/i, /\bfill a bag\b/i, /\bglass case\b/i];
 const MAX_TXN_DURATION_MS = 30 * 60 * 1000;
 const ALL_STORES = ["BL1", "BL2", "BL4", "BL8", "BL12", "BL14"];
 
+// Get today's date and start-of-day timestamp in Eastern Time (all stores are ET)
+function getETToday() {
+  const now = new Date();
+  const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now);
+  const tzParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }).formatToParts(now);
+  const isDST = tzParts.find(p => p.type === 'timeZoneName')?.value === 'EDT';
+  const utcOffsetHours = isDST ? 4 : 5;
+  const startOfDay = new Date(dateStr + 'T00:00:00Z').getTime() + (utcOffsetHours * 3600000);
+  return { dateStr, startOfDay };
+}
+
 // L3 (Clover category name) → L2 (rollup category) mapping
 const L3_TO_L2 = {
   "BL CONSUMABLES - FOOD - PEPSI": "Consumable Food",
@@ -560,9 +571,7 @@ export default {
       }
 
       try {
-        const now = new Date();
-        const todayStr = now.toISOString().slice(0, 10);
-        const startOfDay = new Date(todayStr + "T00:00:00Z").getTime();
+        const { dateStr: todayStr, startOfDay } = getETToday();
 
         // Fetch orders with lineItems expanded to include item references
         const allElements = [];
@@ -735,7 +744,8 @@ export default {
     }
 
     const since = url.searchParams.get("since");
-    const startOfToday = since ? Number(since) : new Date(new Date().toISOString().slice(0, 10)).getTime();
+    const et = getETToday();
+    const startOfToday = since ? Number(since) : et.startOfDay;
 
     try {
       const elements = await fetchCloverOrders(targetStore, env, startOfToday);
@@ -746,9 +756,8 @@ export default {
 
       // Snapshot-on-fetch: save today's aggregated data to KV in background
       if (env.SALES_SNAPSHOTS && elements && elements.length > 0) {
-        const todayStr = new Date().toISOString().slice(0, 10);
         const aggregated = aggregateOrders(elements, startOfToday);
-        ctx.waitUntil(saveSnapshot(env, targetStore, todayStr, aggregated));
+        ctx.waitUntil(saveSnapshot(env, targetStore, et.dateStr, aggregated));
       }
 
       return response;
@@ -761,9 +770,7 @@ export default {
 
   // ── Cron trigger handler (end-of-day snapshots) ───────────────
   async scheduled(event, env, ctx) {
-    const now = new Date();
-    const todayStr = now.toISOString().slice(0, 10);
-    const startOfDay = new Date(todayStr + "T00:00:00Z").getTime();
+    const { dateStr: todayStr, startOfDay } = getETToday();
 
     const results = {};
 
