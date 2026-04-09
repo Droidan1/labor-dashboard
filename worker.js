@@ -1696,8 +1696,11 @@ export default {
               } else {
                 // Try extracting BL number from item name (e.g. "BL10015", "BL-10015", "BL 10015")
                 const blMatch = (li.name || "").match(/BL[-\s]*(\d{4,5})/i);
-                if (blMatch && IM_TO_L2[blMatch[1]]) {
-                  l2 = IM_TO_L2[blMatch[1]];
+                // Also try matching a bare number (e.g. "14281") or number at start (e.g. "$8411 Nail Polish")
+                const bareMatch = !blMatch && (li.name || "").match(/\b(\d{4,5})\b/);
+                const imNum = blMatch?.[1] || bareMatch?.[1];
+                if (imNum && IM_TO_L2[imNum]) {
+                  l2 = IM_TO_L2[imNum];
                 } else {
                   // Keyword-based fallback for items without BL numbers
                   const n = (li.name || "").toUpperCase();
@@ -1711,10 +1714,12 @@ export default {
                     l2 = "Softline - Apparel";
                   } else if (/CHEMICAL|CLEANING|DETERGENT/i.test(n)) {
                     l2 = "Consumable Other";
-                  } else if (/MASK|HEMP|OIL|LOTION|CREAM|SOAP|SHAMPOO|BODY/i.test(n)) {
+                  } else if (/MASK|HEMP|OIL|LOTION|CREAM|SOAP|SHAMPOO|BODY|NAIL POLISH|COSMETIC/i.test(n)) {
                     l2 = "Consumable HBA";
                   } else if (/FOOD|SNACK|CANDY|BEVERAGE|DRINK/i.test(n)) {
                     l2 = "Consumable Food";
+                  } else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY/i.test(n)) {
+                    l2 = "Hardlines";
                   } else {
                     const itemName = li.name || "unknown";
                     noCategory[itemName] = (noCategory[itemName] || 0) + 1;
