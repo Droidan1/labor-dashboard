@@ -1536,15 +1536,14 @@
     const thCls = 'py-2 px-1.5 sm:px-3 sm:py-3 font-semibold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 select-none';
 
     let html = `<div class="flex items-center justify-between mb-3"><div class="text-xs text-gray-500 dark:text-gray-400">${data.date} · ${data.orderCount} orders · Live from Clover</div><button onclick="refreshItemSales()" class="text-xs text-[#3BB54A] hover:underline font-medium">Refresh</button></div>`;
-    html += `<div class="overflow-x-auto"><table class="w-full text-left table-fixed">
-      <colgroup><col class="w-[24%]"><col class="w-[10%]"><col class="w-[10%]"><col class="w-[14%]"><col class="w-[14%]"><col class="w-[16%]"><col class="w-[12%]"></colgroup>
+    html += `<div class="overflow-x-auto"><table class="w-full text-left">
       <thead class="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
         <tr class="text-[10px] sm:text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
           <th class="${thCls}" onclick="sortItemSales('category')">Category${arrow('category')}</th>
           <th class="${thCls} text-right" onclick="sortItemSales('qty')">Qty${arrow('qty')}</th>
-          <th class="${thCls} text-right" onclick="sortItemSales('pctQty')">% Qty${arrow('pctQty')}</th>
-          <th class="${thCls} text-right" onclick="sortItemSales('discounts')">Discounts${arrow('discounts')}</th>
-          <th class="${thCls} text-right" onclick="sortItemSales('refunds')">Refunds${arrow('refunds')}</th>
+          <th class="${thCls} text-right hidden sm:table-cell" onclick="sortItemSales('pctQty')">% Qty${arrow('pctQty')}</th>
+          <th class="${thCls} text-right hidden sm:table-cell" onclick="sortItemSales('discounts')">Discounts${arrow('discounts')}</th>
+          <th class="${thCls} text-right hidden sm:table-cell" onclick="sortItemSales('refunds')">Refunds${arrow('refunds')}</th>
           <th class="${thCls} text-right" onclick="sortItemSales('netSales')">Net Sales${arrow('netSales')}</th>
           <th class="${thCls} text-right" onclick="sortItemSales('asp')">ASP${arrow('asp')}</th>
         </tr>
@@ -1555,11 +1554,11 @@
       const discStr = c.discounts < 0 ? `-${fmtDollar(Math.abs(c.discounts))}` : fmtDollar(c.discounts);
       const refStr = c.refunds < 0 ? `-${fmtDollar(Math.abs(c.refunds))}` : (c.refunds === 0 ? '$0.00' : fmtDollar(c.refunds));
       html += `<tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap">${escapeHtml(c.category)}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 font-medium text-gray-700 dark:text-gray-200">${escapeHtml(c.category)}</td>
         <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-600 dark:text-gray-300">${c.qty.toLocaleString()}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-500 dark:text-gray-400">${c.pctQty.toFixed(1)}%</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.discounts < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'}">${discStr}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.refunds < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'}">${refStr}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-500 dark:text-gray-400 hidden sm:table-cell">${c.pctQty.toFixed(1)}%</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.discounts < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'} hidden sm:table-cell">${discStr}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.refunds < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'} hidden sm:table-cell">${refStr}</td>
         <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right font-medium text-gray-900 dark:text-white">${fmtDollar(c.netSales)}</td>
         <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-600 dark:text-gray-300">${fmtDollar(c.asp)}</td>
       </tr>`;
@@ -1571,9 +1570,9 @@
     html += `</tbody><tfoot class="border-t-2 border-gray-300 dark:border-gray-600"><tr class="font-bold text-xs sm:text-sm">
       <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-gray-900 dark:text-white">Grand Total</td>
       <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${t.qty.toLocaleString()}</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-500 dark:text-gray-400">100%</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${t.discounts < 0 ? 'text-red-500' : ''}">${totalDiscStr}</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${t.refunds < 0 ? 'text-red-500' : ''}">${totalRefStr}</td>
+      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-500 dark:text-gray-400 hidden sm:table-cell">100%</td>
+      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${t.discounts < 0 ? 'text-red-500' : ''} hidden sm:table-cell">${totalDiscStr}</td>
+      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${t.refunds < 0 ? 'text-red-500' : ''} hidden sm:table-cell">${totalRefStr}</td>
       <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${fmtDollar(t.netSales)}</td>
       <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${fmtDollar(t.asp)}</td>
     </tr></tfoot></table></div>`;
