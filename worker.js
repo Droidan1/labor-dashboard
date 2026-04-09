@@ -100,7 +100,32 @@ const L3_TO_L2 = {
   "BL Shoe Event": "Softline - Shoes",
   "Apparel": "Softline - Apparel",
   "Bin Products": "Bin Products",
-  "Sku Book Items": "Hardlines",
+  "Sku Book Items": "Sku Book Items",
+};
+
+// Sku Book items → correct L2 category (by item name)
+// These items are categorized as "Sku Book Items" in Clover but belong to different L2s
+const SKU_BOOK_TO_L2 = {
+  "$10 Boots": "Softline - Shoes",
+  "$10 Clearance Furniture": "Furniture",
+  "$10 Kids Shoes": "Softline - Shoes",
+  "$20 Men's & Women's Shoes": "Softline - Shoes",
+  "$3 XMAS": "Seasonal",
+  "$30 Athletics Shoes": "Softline - Shoes",
+  "$4 Home Decor Sale - 10392": "Home",
+  "$4 Bath Sale - 50064": "Home",
+  "$4 Kitchen Sale - 10390": "Home",
+  "$4 Open Toe Shoe": "Softline - Shoes",
+  "$5 XMAS": "Seasonal",
+  "$50 Pepsi Can": "Consumable Food",
+  "14281 - Diapers $2.50": "Hardlines",
+  ".35 Cosmetics": "Consumable HBA",
+  "3x5 - 4x6 Rug": "Home",
+  "5x8 - 6x9d Rug": "Home",
+  "7x9 - 9x12 Rug": "Home",
+  "9x12+ Rug": "Home",
+  "Adult Apparel $6": "Softline - Apparel",
+  "Adult Coat": "Softline - Apparel",
 };
 
 function isBinItem(name) {
@@ -631,7 +656,10 @@ export default {
 
             // Map L3 → L2
             let l2;
-            if (l3 && L3_TO_L2[l3]) {
+            if (l3 === "Sku Book Items") {
+              // Sku Book items need name-based lookup for correct L2
+              l2 = SKU_BOOK_TO_L2[li.name] || "Hardlines";
+            } else if (l3 && L3_TO_L2[l3]) {
               l2 = L3_TO_L2[l3];
             } else if (l3) {
               unmappedL3[l3] = (unmappedL3[l3] || 0) + 1;
