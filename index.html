@@ -173,6 +173,10 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
           <span class="nav-label">Inventory</span>
         </div>
+        <div class="nav-item" data-page="supply-request" onclick="navigateToPage('supply-request')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/><line x1="9" y1="9" x2="10" y2="9"/></svg></span>
+          <span class="nav-label">Supply Request</span>
+        </div>
       </nav>
 
       <!-- Bottom Section -->
@@ -374,6 +378,23 @@
         </div>
       </div>
     </div><!-- end #page-inventory -->
+
+    <div id="page-supply-request" class="hidden">
+      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+        <div class="max-w-7xl mx-auto">
+          <div class="ml-12 md:ml-0">
+            <h1 class="text-2xl font-display text-[#3BB54A]">Supply Request</h1>
+            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Coming soon</p>
+          </div>
+        </div>
+      </div>
+      <div class="max-w-7xl mx-auto px-6 py-6">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-12 text-center">
+          <svg class="mx-auto mb-4 text-gray-300 dark:text-gray-600" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/><line x1="9" y1="9" x2="10" y2="9"/></svg>
+          <p class="text-gray-400 dark:text-gray-500 text-sm">Managers submit supply requests and track status; admins get notified on new requests — coming soon.</p>
+        </div>
+      </div>
+    </div><!-- end #page-supply-request -->
 
     <div id="page-settings" class="hidden">
       <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
@@ -1860,6 +1881,7 @@
     el('page-dashboard').classList.add('hidden');
     el('page-weekly-summary').classList.add('hidden');
     el('page-inventory').classList.add('hidden');
+    el('page-supply-request').classList.add('hidden');
     el('page-store-detail').classList.remove('hidden');
     document.querySelectorAll('.nav-item[data-page]').forEach(item => item.classList.remove('active'));
     switchStoreTab('weekly');
@@ -1875,7 +1897,7 @@
   }
 
   function navigateToPage(page) {
-    const pages = ['dashboard', 'store-detail', 'weekly-summary', 'inventory', 'settings'];
+    const pages = ['dashboard', 'store-detail', 'weekly-summary', 'inventory', 'supply-request', 'settings'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
       if (pageEl) pageEl.classList.toggle('hidden', p !== page);
