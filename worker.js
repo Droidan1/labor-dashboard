@@ -14,6 +14,15 @@ function getETToday() {
   return { dateStr, startOfDay };
 }
 
+// Get the Unix-ms timestamp for midnight ET on an arbitrary YYYY-MM-DD string
+function getStartOfDayET(dateStr) {
+  const noon = new Date(dateStr + 'T16:00:00Z'); // guaranteed to be "that date" in ET
+  const tzParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }).formatToParts(noon);
+  const isDST = tzParts.find(p => p.type === 'timeZoneName')?.value === 'EDT';
+  const utcOffsetHours = isDST ? 4 : 5;
+  return new Date(dateStr + 'T00:00:00Z').getTime() + (utcOffsetHours * 3600000);
+}
+
 // L3 (Clover category name) → L2 (rollup category) mapping
 const L3_TO_L2 = {
   "BL CONSUMABLES - FOOD - PEPSI": "Consumable Food",
@@ -1488,7 +1497,8 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr) {
 }
 
 // ─── Fetch orders with lineItems for item sales ─────────────────
-async function fetchItemOrders(store, env, sinceTimestamp) {
+// Optional untilTimestamp adds a createdTime< upper bound (needed for historical re-snapshot)
+async function fetchItemOrders(store, env, sinceTimestamp, untilTimestamp = null) {
   const merchantId = env[`${store}_MERCHANT_ID`];
   const apiToken = env[`${store}_API_TOKEN`];
   if (!merchantId || !apiToken) return null;
@@ -1497,11 +1507,12 @@ async function fetchItemOrders(store, env, sinceTimestamp) {
   let offset = 0;
   const limit = 1000;
   while (true) {
-    const cloverUrl = `https://api.clover.com/v3/merchants/${merchantId}/orders`
+    let cloverUrl = `https://api.clover.com/v3/merchants/${merchantId}/orders`
       + `?filter=createdTime>=${sinceTimestamp}`
       + `&filter=state=locked`
       + `&expand=payments,lineItems.item,lineItems.discounts`
       + `&limit=${limit}&offset=${offset}`;
+    if (untilTimestamp) cloverUrl += `&filter=createdTime<${untilTimestamp}`;
     const resp = await fetch(cloverUrl, {
       headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
     });
@@ -1803,6 +1814,49 @@ export default {
       return new Response(JSON.stringify({ ok: true, summary }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // ── Admin: re-snapshot item sales for a date: ?action=items-snapshot&store=BL1[&date=2026-04-08]
+    // store=all re-processes every store. Requires X-Snapshot-Secret header.
+    if (url.searchParams.get("action") === "items-snapshot") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const secret = request.headers.get("X-Snapshot-Secret");
+      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      }
+
+      const storeParam = (url.searchParams.get("store") || "").toUpperCase();
+      if (!storeParam) {
+        return new Response(JSON.stringify({ error: "Missing store param (use store=BL1 or store=all)" }), { status: 400, headers: corsJson });
+      }
+      const stores = storeParam === "ALL" ? ALL_STORES : [storeParam];
+
+      const { dateStr: todayStr } = getETToday();
+      const dateParam = url.searchParams.get("date") || todayStr;
+
+      const sinceTs = getStartOfDayET(dateParam);
+      let untilTs = null;
+      if (dateParam !== todayStr) {
+        // Add upper bound so a historical re-snapshot doesn't bleed into the next day
+        const nextDay = new Date(dateParam + 'T12:00:00Z');
+        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+        untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
+      }
+
+      const results = {};
+      for (const store of stores) {
+        try {
+          const elements = await fetchItemOrders(store, env, sinceTs, untilTs);
+          if (!elements) { results[store] = "skipped (no credentials)"; continue; }
+          const itemCatMap = await fetchItemCategoryMap(store, env);
+          const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam);
+          await saveItemSalesSnapshot(env, store, dateParam, itemData);
+          results[store] = { ok: true, orders: itemData.orderCount, netSales: itemData.totals.netSales };
+        } catch (e) {
+          results[store] = { error: e.message };
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, date: dateParam, results }), { headers: corsJson });
     }
 
     // ── Item sales by L2 category: ?action=items&store=BL1[&date=2026-04-08]

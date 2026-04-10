@@ -173,6 +173,10 @@
 
       <!-- Bottom Section -->
       <div id="sidebar-dark-toggle" class="px-2 pb-2 space-y-1">
+        <div class="nav-item" data-page="settings" onclick="navigateToPage('settings')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+          <span class="nav-label">Settings</span>
+        </div>
         <div class="flex items-center gap-3 px-3 py-2.5">
           <div id="dark-toggle" class="toggle-track toggle-scale flex-shrink-0" role="switch" aria-checked="false" aria-label="Toggle dark mode" tabindex="0">
             <div class="toggle-knob"></div>
@@ -347,6 +351,48 @@
         </div>
       </div>
     </div><!-- end #page-weekly-summary -->
+
+    <div id="page-settings" class="hidden">
+      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+        <div class="max-w-3xl mx-auto">
+          <h1 class="text-2xl font-display text-[#3BB54A]">Settings</h1>
+        </div>
+      </div>
+      <div class="max-w-3xl mx-auto px-6 py-6 space-y-6">
+
+        <!-- Admin Tools -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
+          <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Admin Tools</h2>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Re-build item sales snapshots from Clover for any past day. Use this after a categorization fix to correct historical Item Sales data.</p>
+
+          <div class="space-y-4">
+            <div class="flex flex-wrap gap-4 items-end">
+              <div>
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Store</label>
+                <select id="resnapshot-store" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+                  <option value="all">All Stores</option>
+                  <option value="BL1">BL1 – Coliseum</option>
+                  <option value="BL2">BL2 – South Bend</option>
+                  <option value="BL4">BL4 – Dupont</option>
+                  <option value="BL8">BL8 – Holland</option>
+                  <option value="BL12">BL12 – Wyoming</option>
+                  <option value="BL14">BL14 – Battle Creek</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Date</label>
+                <input id="resnapshot-date" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              </div>
+              <button onclick="runReSnapshot()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
+                Re-snapshot Item Sales
+              </button>
+            </div>
+            <div id="resnapshot-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- end #page-settings -->
 
     </div><!-- end main content -->
   </div>
@@ -1475,7 +1521,7 @@
   }
 
   function navigateToPage(page) {
-    const pages = ['dashboard', 'store-detail', 'weekly-summary'];
+    const pages = ['dashboard', 'store-detail', 'weekly-summary', 'settings'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
       if (pageEl) pageEl.classList.toggle('hidden', p !== page);
@@ -1836,6 +1882,53 @@
       });
     }
   }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  SETTINGS – ADMIN RE-SNAPSHOT
+  // ═══════════════════════════════════════════════════════════════
+  (function initSettingsPage() {
+    // Pre-fill date input with today ET
+    const dateInput = document.getElementById('resnapshot-date');
+    if (dateInput) dateInput.value = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+  })();
+
+  async function runReSnapshot() {
+    const store = document.getElementById('resnapshot-store').value;
+    const date = document.getElementById('resnapshot-date').value;
+    const statusEl = document.getElementById('resnapshot-status');
+
+    if (!date) { alert('Please select a date.'); return; }
+
+    statusEl.className = 'text-sm rounded-lg px-4 py-3 border border-yellow-200 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400';
+    statusEl.classList.remove('hidden');
+    statusEl.textContent = `Running re-snapshot for ${store === 'all' ? 'all stores' : store} on ${date}…`;
+
+    try {
+      const resp = await fetch(
+        `https://clover-sales-api.howardbrian86.workers.dev/?action=items-snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(date)}`,
+        { headers: { 'X-Snapshot-Secret': 'mapcaj-saTxa2-1' } }
+      );
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+
+      const lines = Object.entries(data.results).map(([s, r]) => {
+        if (r.ok) return `${s}: ${r.orders} orders · $${r.netSales.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})} net`;
+        return `${s}: ${typeof r === 'string' ? r : (r.error || 'unknown error')}`;
+      });
+      statusEl.className = 'text-sm rounded-lg px-4 py-3 border border-green-200 dark:border-green-700 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400';
+      statusEl.innerHTML = `<strong>Done</strong> – ${date}<br><span class="font-mono text-xs">${lines.join('<br>')}</span>`;
+
+      // Bust the item sales cache for the affected store/date so the next tab visit re-fetches
+      const affectedStores = store === 'all'
+        ? ['BL1','BL2','BL4','BL8','BL12','BL14']
+        : [store.toUpperCase()];
+      for (const s of affectedStores) delete itemSalesCache[`${s}:${date}`];
+    } catch (err) {
+      statusEl.className = 'text-sm rounded-lg px-4 py-3 border border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400';
+      statusEl.textContent = `Error: ${err.message}`;
+    }
+  }
+  window.runReSnapshot = runReSnapshot;
 
   // ═══════════════════════════════════════════════════════════════
   //  SIDEBAR
