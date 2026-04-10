@@ -1206,7 +1206,7 @@ async function fetchItemCategoryMap(store, env) {
 }
 
 // ─── Fetch raw orders from Clover API ────────────────────────────
-async function fetchCloverOrders(store, env, sinceTimestamp) {
+async function fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp = null) {
   const targetStore = store.toUpperCase();
   const merchantId = env[`${targetStore}_MERCHANT_ID`];
   const apiToken = env[`${targetStore}_API_TOKEN`];
@@ -1218,11 +1218,12 @@ async function fetchCloverOrders(store, env, sinceTimestamp) {
   const allElements = [];
 
   while (true) {
-    const cloverUrl = `https://api.clover.com/v3/merchants/${merchantId}/orders`
+    let cloverUrl = `https://api.clover.com/v3/merchants/${merchantId}/orders`
       + `?filter=createdTime>=${sinceTimestamp}`
       + `&filter=state=locked`
       + `&expand=payments,lineItems`
       + `&limit=${limit}&offset=${offset}`;
+    if (untilTimestamp) cloverUrl += `&filter=createdTime<${untilTimestamp}`;
 
     const resp = await fetch(cloverUrl, {
       method: "GET",
@@ -1857,6 +1858,70 @@ export default {
         }
       }
       return new Response(JSON.stringify({ ok: true, date: dateParam, results }), { headers: corsJson });
+    }
+
+    // ── Hourly net sales for a store+date: ?action=hourly&store=BL1&date=YYYY-MM-DD
+    // Returns a 24-slot array of net sales per ET hour. Used by the Daily Sales Chart
+    // popup to compare current day hour-by-hour against the same day last week.
+    if (url.searchParams.get("action") === "hourly") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      if (!store) {
+        return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
+      }
+
+      const { dateStr: todayStr } = getETToday();
+      const dateParam = url.searchParams.get("date") || todayStr;
+
+      const sinceTs = getStartOfDayET(dateParam);
+      let untilTs = null;
+      if (dateParam !== todayStr) {
+        const nextDay = new Date(dateParam + 'T12:00:00Z');
+        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+        untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
+      }
+
+      try {
+        const elements = await fetchCloverOrders(store, env, sinceTs, untilTs);
+        if (!elements) {
+          return new Response(JSON.stringify({ error: "Store keys not found" }), { status: 404, headers: corsJson });
+        }
+
+        const hourFmt = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/New_York',
+          hour: '2-digit',
+          hour12: false,
+        });
+
+        const hours = new Array(24).fill(0);
+        for (const order of elements) {
+          if (order.state !== "locked") continue;
+          if (order.total == null || order.total === 0) continue;
+
+          let taxCents = 0;
+          if (order.payments?.elements) {
+            for (const pmt of order.payments.elements) {
+              taxCents += (pmt.taxAmount || 0);
+            }
+          }
+          const orderNetCents = order.total - taxCents;
+
+          // Intl formatToParts returns "24" for midnight under hour12:false in some runtimes;
+          // normalize by parsing the hour string mod 24.
+          const hourStr = hourFmt.format(new Date(order.createdTime));
+          let h = parseInt(hourStr, 10);
+          if (!Number.isFinite(h)) h = 0;
+          h = h % 24;
+          hours[h] += orderNetCents / 100;
+        }
+
+        const rounded = hours.map(v => Math.round(v * 100) / 100);
+        return new Response(JSON.stringify({ store, date: dateParam, hours: rounded }), { headers: corsJson });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "Hourly fetch failed", detail: err.message }), {
+          status: 500, headers: corsJson,
+        });
+      }
     }
 
     // ── Item sales by L2 category: ?action=items&store=BL1[&date=2026-04-08]

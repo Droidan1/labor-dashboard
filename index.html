@@ -401,6 +401,34 @@
     </div><!-- end main content -->
   </div>
 
+  <!-- ─────────── Hourly Sales Modal ─────────── -->
+  <div id="hourly-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div id="hourly-modal-backdrop" class="absolute inset-0 bg-black/60"></div>
+    <div class="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+      <div class="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+        <div>
+          <h3 id="hourly-modal-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Hourly Sales</h3>
+          <p id="hourly-modal-subtitle" class="text-xs text-gray-500 dark:text-gray-400 mt-0.5"></p>
+        </div>
+        <button id="hourly-modal-close" class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-1" aria-label="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div class="p-4 flex-1 min-h-0 overflow-auto">
+        <div id="hourly-modal-loading" class="text-center text-gray-500 dark:text-gray-400 py-8">Loading hourly data…</div>
+        <div id="hourly-modal-error" class="hidden text-center text-red-600 dark:text-red-400 py-8"></div>
+        <div id="hourly-modal-chart-wrap" class="hidden">
+          <div class="relative h-64 sm:h-80">
+            <canvas id="hourly-chart"></canvas>
+          </div>
+          <div id="hourly-modal-totals" class="mt-4 grid grid-cols-2 gap-3 text-sm"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
   // ═══════════════════════════════════════════════════════════════
   //  CONFIG
@@ -441,6 +469,7 @@
   let currentPage = 'dashboard';   // 'dashboard' | 'store-detail'
   let currentStoreName = null;
   let dailySalesChart = null;
+  let hourlyChart = null;
 
   // ═══════════════════════════════════════════════════════════════
   //  HELPERS & MATH
@@ -1429,6 +1458,24 @@
       },
       options: {
         responsive: true, maintainAspectRatio: false,
+        onClick: (_evt, elements, chart) => {
+          // Resolve clicked bar via Chart.js helpers so clicking anywhere in a bar column works.
+          let idx = elements?.[0]?.index;
+          if (idx == null) {
+            const pts = chart.getElementsAtEventForMode(_evt, 'index', { intersect: false }, true);
+            idx = pts?.[0]?.index;
+          }
+          if (idx == null) return;
+          const row = weekRows[idx];
+          if (!row || !row.date) return;
+          const y = row.date.getFullYear();
+          const m = String(row.date.getMonth() + 1).padStart(2, '0');
+          const d = String(row.date.getDate()).padStart(2, '0');
+          showHourlyModal(storeName, `${y}-${m}-${d}`, row.date);
+        },
+        onHover: (evt, elements) => {
+          evt.native.target.style.cursor = elements?.length ? 'pointer' : 'default';
+        },
         plugins: {
           legend: { labels: { color: textColor } },
           tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? '$' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : 'N/A') } }
@@ -1439,6 +1486,159 @@
         }
       }
     });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  HOURLY SALES MODAL
+  // ═══════════════════════════════════════════════════════════════
+  async function showHourlyModal(storeName, dateStr, rowDate) {
+    const modal = el('hourly-modal');
+    const loadingEl = el('hourly-modal-loading');
+    const errorEl = el('hourly-modal-error');
+    const chartWrap = el('hourly-modal-chart-wrap');
+    const totalsEl = el('hourly-modal-totals');
+
+    // Reset + show
+    modal.classList.remove('hidden');
+    loadingEl.classList.remove('hidden');
+    errorEl.classList.add('hidden');
+    chartWrap.classList.add('hidden');
+    if (hourlyChart) { hourlyChart.destroy(); hourlyChart = null; }
+
+    const storeKey = storeName.split('/')[0];
+    el('hourly-modal-title').textContent = `${shortName(storeName)} — Hourly Sales`;
+    const prettyDate = rowDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+    el('hourly-modal-subtitle').textContent = prettyDate;
+
+    // Compute same-day-last-week in local terms, then format as YYYY-MM-DD
+    const lastWeekDate = new Date(rowDate);
+    lastWeekDate.setDate(lastWeekDate.getDate() - 7);
+    const lwY = lastWeekDate.getFullYear();
+    const lwM = String(lastWeekDate.getMonth() + 1).padStart(2, '0');
+    const lwD = String(lastWeekDate.getDate()).padStart(2, '0');
+    const lastWeekStr = `${lwY}-${lwM}-${lwD}`;
+
+    const base = 'https://clover-sales-api.howardbrian86.workers.dev/?action=hourly';
+    const curUrl = `${base}&store=${storeKey}&date=${dateStr}`;
+    const lwUrl = `${base}&store=${storeKey}&date=${lastWeekStr}`;
+
+    try {
+      const [curResp, lwResp] = await Promise.all([fetch(curUrl), fetch(lwUrl)]);
+      if (!curResp.ok) throw new Error(`Current day HTTP ${curResp.status}`);
+      if (!lwResp.ok) throw new Error(`Last week HTTP ${lwResp.status}`);
+      const [curData, lwData] = await Promise.all([curResp.json(), lwResp.json()]);
+      if (curData.error) throw new Error(curData.error);
+      if (lwData.error) throw new Error(lwData.error);
+
+      const curHours = curData.hours || new Array(24).fill(0);
+      const lwHours = lwData.hours || new Array(24).fill(0);
+
+      // Trim leading/trailing hours where BOTH datasets are zero to keep the chart readable.
+      let start = 0, end = 23;
+      while (start <= end && curHours[start] === 0 && lwHours[start] === 0) start++;
+      while (end >= start && curHours[end] === 0 && lwHours[end] === 0) end--;
+      if (start > end) { start = 8; end = 20; } // sane default for a no-data day
+
+      const labels = [];
+      const curSeries = [];
+      const lwSeries = [];
+      for (let h = start; h <= end; h++) {
+        const ampm = h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`;
+        labels.push(ampm);
+        curSeries.push(curHours[h]);
+        lwSeries.push(lwHours[h]);
+      }
+
+      const curTotal = curHours.reduce((a, b) => a + b, 0);
+      const lwTotal = lwHours.reduce((a, b) => a + b, 0);
+      const delta = curTotal - lwTotal;
+      const pct = lwTotal > 0 ? (delta / lwTotal) * 100 : null;
+      const fmt$ = v => '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const deltaColor = delta >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400';
+      const deltaSign = delta >= 0 ? '+' : '';
+      totalsEl.innerHTML = `
+        <div class="rounded-lg bg-gray-100 dark:bg-gray-700/50 p-3">
+          <div class="text-xs text-gray-500 dark:text-gray-400">This Day</div>
+          <div class="text-base font-semibold text-gray-900 dark:text-gray-100">${fmt$(curTotal)}</div>
+        </div>
+        <div class="rounded-lg bg-gray-100 dark:bg-gray-700/50 p-3">
+          <div class="text-xs text-gray-500 dark:text-gray-400">Last Week</div>
+          <div class="text-base font-semibold text-gray-900 dark:text-gray-100">${fmt$(lwTotal)}</div>
+        </div>
+        <div class="col-span-2 rounded-lg bg-gray-100 dark:bg-gray-700/50 p-3">
+          <div class="text-xs text-gray-500 dark:text-gray-400">Difference</div>
+          <div class="text-base font-semibold ${deltaColor}">${deltaSign}${fmt$(delta)}${pct != null ? ` (${deltaSign}${pct.toFixed(1)}%)` : ''}</div>
+        </div>
+      `;
+
+      const isDark = document.documentElement.classList.contains('dark');
+      const textColor = isDark ? '#9ca3af' : '#6b7280';
+      const gridColor = isDark ? 'rgba(75,85,99,0.3)' : 'rgba(0,0,0,0.1)';
+
+      loadingEl.classList.add('hidden');
+      chartWrap.classList.remove('hidden');
+
+      hourlyChart = new Chart(el('hourly-chart'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'This Day',
+              data: curSeries,
+              borderColor: '#3BB54A',
+              backgroundColor: 'rgba(59,181,74,0.15)',
+              borderWidth: 2,
+              tension: 0.3,
+              fill: true,
+              pointRadius: 3,
+            },
+            {
+              label: 'Last Week',
+              data: lwSeries,
+              borderColor: '#3b82f6',
+              backgroundColor: 'rgba(59,130,246,0.1)',
+              borderWidth: 2,
+              borderDash: [5, 4],
+              tension: 0.3,
+              fill: false,
+              pointRadius: 3,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { labels: { color: textColor } },
+            tooltip: {
+              callbacks: {
+                label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? fmt$(ctx.parsed.y) : 'N/A'),
+              },
+            },
+          },
+          scales: {
+            x: { ticks: { color: textColor }, grid: { color: gridColor } },
+            y: {
+              beginAtZero: true,
+              ticks: { color: textColor, callback: v => '$' + (v >= 1000 ? (v / 1000).toFixed(1) + 'K' : v) },
+              grid: { color: gridColor },
+            },
+          },
+        },
+      });
+    } catch (err) {
+      loadingEl.classList.add('hidden');
+      chartWrap.classList.add('hidden');
+      errorEl.classList.remove('hidden');
+      errorEl.innerHTML = `<div class="font-semibold mb-1">Failed to load hourly data</div><div class="text-sm">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function closeHourlyModal() {
+    el('hourly-modal').classList.add('hidden');
+    if (hourlyChart) { hourlyChart.destroy(); hourlyChart = null; }
   }
 
   function showStoreDetail(storeName) {
@@ -1987,6 +2187,16 @@
     initSidebar();
     initDarkMode();
     el("refresh-btn").onclick = loadAll;
+
+    // Hourly modal: close on button click, backdrop click, or Escape key
+    el('hourly-modal-close').onclick = closeHourlyModal;
+    el('hourly-modal-backdrop').onclick = closeHourlyModal;
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !el('hourly-modal').classList.contains('hidden')) {
+        closeHourlyModal();
+      }
+    });
+
     loadAll();
   });
   </script>
