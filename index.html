@@ -340,8 +340,10 @@
     <div id="page-weekly-summary" class="hidden">
       <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
         <div class="max-w-7xl mx-auto">
-          <h1 class="text-2xl font-display text-[#3BB54A]">Weekly Retail Summary</h1>
-          <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Coming soon</p>
+          <div class="ml-12 md:ml-0">
+            <h1 class="text-2xl font-display text-[#3BB54A]">Weekly Retail Summary</h1>
+            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Coming soon</p>
+          </div>
         </div>
       </div>
       <div class="max-w-7xl mx-auto px-6 py-6">
@@ -355,7 +357,9 @@
     <div id="page-settings" class="hidden">
       <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
         <div class="max-w-3xl mx-auto">
-          <h1 class="text-2xl font-display text-[#3BB54A]">Settings</h1>
+          <div class="ml-12 md:ml-0">
+            <h1 class="text-2xl font-display text-[#3BB54A]">Settings</h1>
+          </div>
         </div>
       </div>
       <div class="max-w-3xl mx-auto px-6 py-6 space-y-6">
@@ -1215,16 +1219,16 @@
           </div>
         </div>
         ${(m.aRetail != null || m.aBins != null || m.aAuction != null) ? `
-        <div class="flex gap-4 mb-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
-          <div>
+        <div class="flex gap-4 mb-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40 text-center">
+          <div class="flex-1">
             <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aRetail || 0)}</div>
           </div>
-          <div>
+          <div class="flex-1">
             <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aBins || 0)}</div>
           </div>
-          <div>
+          <div class="flex-1">
             <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aAuction || 0)}</div>
           </div>
