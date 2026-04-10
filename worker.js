@@ -1336,6 +1336,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr) {
 
   for (const order of allElements) {
     if (order.total == null || order.total === 0) continue;
+    if (order.state !== "locked") continue;
 
     let taxCents = 0;
     if (order.payments?.elements) {
@@ -1343,8 +1344,10 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr) {
         taxCents += (pmt.taxAmount || 0);
       }
     }
+    const orderNetCents = order.total - taxCents;
 
     const lineItems = order.lineItems?.elements || [];
+    let orderLineItemNetCents = 0;
 
     for (const li of lineItems) {
       const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
@@ -1419,12 +1422,26 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr) {
       if (priceCents < 0) {
         cat.refunds -= grossCents / 100;
         cat.net -= grossCents / 100;
+        orderLineItemNetCents -= grossCents;
       } else {
         cat.qty += qty;
         cat.gross += grossCents / 100;
         cat.discounts -= discCents / 100;
         cat.net += (grossCents - discCents) / 100;
+        orderLineItemNetCents += (grossCents - discCents);
       }
+    }
+
+    // Reconcile line-item sum to order net (order.total - tax). Any residual
+    // — custom-amount sales with no line items, line-item modifications, order
+    // service charges — is routed to a clearly labeled bucket so the Grand
+    // Total matches the Weekly Breakdown's Sales figure for this day. Round
+    // to whole cents first so sub-cent artifacts from weighted-item arithmetic
+    // don't create phantom $0.00 rows.
+    const residualCents = Math.round(orderNetCents - orderLineItemNetCents);
+    if (residualCents !== 0) {
+      const cat = getCat("Other / Non-Item");
+      cat.net += residualCents / 100;
     }
   }
 
