@@ -429,6 +429,29 @@
     </div>
   </div>
 
+  <!-- ─────────── Hourly Item Sales Modal (drill-down from hourly modal) ─────────── -->
+  <div id="items-hour-modal" class="hidden fixed inset-0 z-[60] flex items-center justify-center p-4">
+    <div id="items-hour-modal-backdrop" class="absolute inset-0 bg-black/60"></div>
+    <div class="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+      <div class="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+        <div>
+          <h3 id="items-hour-modal-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Item Sales</h3>
+          <p id="items-hour-modal-subtitle" class="text-xs text-gray-500 dark:text-gray-400 mt-0.5"></p>
+        </div>
+        <button id="items-hour-modal-close" class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-1" aria-label="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div class="p-4 flex-1 min-h-0 overflow-auto">
+        <div id="items-hour-modal-loading" class="text-center text-gray-500 dark:text-gray-400 py-8">Loading item sales…</div>
+        <div id="items-hour-modal-error" class="hidden text-center text-red-600 dark:text-red-400 py-8"></div>
+        <div id="items-hour-modal-body" class="hidden"></div>
+      </div>
+    </div>
+  </div>
+
   <script>
   // ═══════════════════════════════════════════════════════════════
   //  CONFIG
@@ -1610,6 +1633,18 @@
           responsive: true,
           maintainAspectRatio: false,
           interaction: { mode: 'index', intersect: false },
+          onClick: (evt, _elements, chart) => {
+            // Resolve clicked x index in 'index' mode so clicking anywhere in the column works.
+            const pts = chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, true);
+            const idx = pts?.[0]?.index;
+            if (idx == null) return;
+            const absHour = start + idx;
+            showHourlyItemsModal(storeName, dateStr, absHour, rowDate);
+          },
+          onHover: (evt, _elements, chart) => {
+            const pts = chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, true);
+            evt.native.target.style.cursor = pts?.length ? 'pointer' : 'default';
+          },
           plugins: {
             legend: { labels: { color: textColor } },
             tooltip: {
@@ -1639,6 +1674,99 @@
   function closeHourlyModal() {
     el('hourly-modal').classList.add('hidden');
     if (hourlyChart) { hourlyChart.destroy(); hourlyChart = null; }
+  }
+
+  // Drill-down: fetch item sales for a single ET hour and render in a nested modal.
+  async function showHourlyItemsModal(storeName, dateStr, hour, rowDate) {
+    const modal = el('items-hour-modal');
+    const loadingEl = el('items-hour-modal-loading');
+    const errorEl = el('items-hour-modal-error');
+    const bodyEl = el('items-hour-modal-body');
+
+    modal.classList.remove('hidden');
+    loadingEl.classList.remove('hidden');
+    errorEl.classList.add('hidden');
+    bodyEl.classList.add('hidden');
+    bodyEl.innerHTML = '';
+
+    const storeKey = storeName.split('/')[0];
+    const ampm = hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`;
+    const endHour = (hour + 1) % 24;
+    const endAmpm = endHour === 0 ? '12 AM' : endHour < 12 ? `${endHour} AM` : endHour === 12 ? '12 PM' : `${endHour - 12} PM`;
+    el('items-hour-modal-title').textContent = `${shortName(storeName)} — Item Sales ${ampm}–${endAmpm}`;
+    const prettyDate = rowDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+    el('items-hour-modal-subtitle').textContent = prettyDate;
+
+    const fmt$ = v => '$' + (v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    try {
+      const resp = await fetch(`https://clover-sales-api.howardbrian86.workers.dev/?action=items-hour&store=${storeKey}&date=${dateStr}&hour=${hour}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error);
+
+      loadingEl.classList.add('hidden');
+      bodyEl.classList.remove('hidden');
+
+      const cats = [...(data.categories || [])].sort((a, b) => b.netSales - a.netSales);
+      const t = data.totals || { qty: 0, discounts: 0, refunds: 0, netSales: 0, asp: 0 };
+
+      if (cats.length === 0) {
+        bodyEl.innerHTML = `<div class="p-8 text-center text-gray-400 dark:text-gray-500"><div class="text-sm">No item sales recorded during this hour.</div></div>`;
+        return;
+      }
+
+      const thCls = 'py-2 px-1.5 sm:px-3 sm:py-3 font-semibold';
+      let html = `<div class="mb-3 text-xs text-gray-500 dark:text-gray-400">${data.orderCount} orders · Net ${fmt$(t.netSales)}</div>`;
+      html += `<div class="overflow-x-auto"><table class="w-full text-left">
+        <thead class="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
+          <tr class="text-[10px] sm:text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+            <th class="${thCls}">Category</th>
+            <th class="${thCls} text-right">Qty</th>
+            <th class="${thCls} text-right hidden sm:table-cell">Discounts</th>
+            <th class="${thCls} text-right hidden sm:table-cell">Refunds</th>
+            <th class="${thCls} text-right">Net Sales</th>
+            <th class="${thCls} text-right">ASP</th>
+          </tr>
+        </thead>
+        <tbody class="text-xs sm:text-sm divide-y divide-gray-100 dark:divide-gray-700">`;
+
+      for (const c of cats) {
+        const discStr = c.discounts < 0 ? `-${fmt$(Math.abs(c.discounts))}` : fmt$(c.discounts);
+        const refStr = c.refunds < 0 ? `-${fmt$(Math.abs(c.refunds))}` : (c.refunds === 0 ? '$0.00' : fmt$(c.refunds));
+        html += `<tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+          <td class="py-2 px-1.5 sm:py-3 sm:px-3 font-medium text-gray-700 dark:text-gray-200">${escapeHtml(c.category)}</td>
+          <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-600 dark:text-gray-300">${(c.qty || 0).toLocaleString()}</td>
+          <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.discounts < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'} hidden sm:table-cell">${discStr}</td>
+          <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.refunds < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'} hidden sm:table-cell">${refStr}</td>
+          <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right font-medium text-gray-900 dark:text-white">${fmt$(c.netSales)}</td>
+          <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-600 dark:text-gray-300">${fmt$(c.asp)}</td>
+        </tr>`;
+      }
+
+      const totalDiscStr = t.discounts < 0 ? `-${fmt$(Math.abs(t.discounts))}` : fmt$(t.discounts);
+      const totalRefStr = t.refunds < 0 ? `-${fmt$(Math.abs(t.refunds))}` : '$0.00';
+      html += `</tbody><tfoot class="border-t-2 border-gray-300 dark:border-gray-600"><tr class="font-bold text-xs sm:text-sm">
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-gray-900 dark:text-white">Total</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${(t.qty || 0).toLocaleString()}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${t.discounts < 0 ? 'text-red-500' : 'text-gray-900 dark:text-white'} hidden sm:table-cell">${totalDiscStr}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${t.refunds < 0 ? 'text-red-500' : 'text-gray-900 dark:text-white'} hidden sm:table-cell">${totalRefStr}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${fmt$(t.netSales)}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${fmt$(t.asp)}</td>
+      </tr></tfoot></table></div>`;
+
+      bodyEl.innerHTML = html;
+    } catch (err) {
+      loadingEl.classList.add('hidden');
+      bodyEl.classList.add('hidden');
+      errorEl.classList.remove('hidden');
+      errorEl.innerHTML = `<div class="font-semibold mb-1">Failed to load item sales</div><div class="text-sm">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function closeHourlyItemsModal() {
+    el('items-hour-modal').classList.add('hidden');
+    el('items-hour-modal-body').innerHTML = '';
   }
 
   function showStoreDetail(storeName) {
@@ -2188,11 +2316,17 @@
     initDarkMode();
     el("refresh-btn").onclick = loadAll;
 
-    // Hourly modal: close on button click, backdrop click, or Escape key
+    // Hourly modal: close on button click, backdrop click, or Escape key.
+    // The item-sales drill-down sits on top; Escape closes the topmost modal first.
     el('hourly-modal-close').onclick = closeHourlyModal;
     el('hourly-modal-backdrop').onclick = closeHourlyModal;
+    el('items-hour-modal-close').onclick = closeHourlyItemsModal;
+    el('items-hour-modal-backdrop').onclick = closeHourlyItemsModal;
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !el('hourly-modal').classList.contains('hidden')) {
+      if (e.key !== 'Escape') return;
+      if (!el('items-hour-modal').classList.contains('hidden')) {
+        closeHourlyItemsModal();
+      } else if (!el('hourly-modal').classList.contains('hidden')) {
         closeHourlyModal();
       }
     });

@@ -1860,6 +1860,42 @@ export default {
       return new Response(JSON.stringify({ ok: true, date: dateParam, results }), { headers: corsJson });
     }
 
+    // ── Item sales for a single ET hour: ?action=items-hour&store=BL1&date=YYYY-MM-DD&hour=14
+    // Always live-fetches from Clover (narrow 1-hour window). Used by the hourly popup
+    // drill-down when a user clicks a specific hour bar.
+    if (url.searchParams.get("action") === "items-hour") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      if (!store) {
+        return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
+      }
+
+      const { dateStr: todayStr } = getETToday();
+      const dateParam = url.searchParams.get("date") || todayStr;
+      const hourParam = parseInt(url.searchParams.get("hour") || "", 10);
+      if (!Number.isFinite(hourParam) || hourParam < 0 || hourParam > 23) {
+        return new Response(JSON.stringify({ error: "Invalid hour param (must be 0-23)" }), { status: 400, headers: corsJson });
+      }
+
+      const sinceTs = getStartOfDayET(dateParam) + hourParam * 3600000;
+      const untilTs = sinceTs + 3600000;
+
+      try {
+        const elements = await fetchItemOrders(store, env, sinceTs, untilTs);
+        if (!elements) {
+          return new Response(JSON.stringify({ error: "Store keys not found" }), { status: 404, headers: corsJson });
+        }
+        const itemCatMap = await fetchItemCategoryMap(store, env);
+        const result = aggregateItemSales(elements, itemCatMap, store, dateParam);
+        result.hour = hourParam;
+        return new Response(JSON.stringify(result), { headers: corsJson });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "Items-hour fetch failed", detail: err.message }), {
+          status: 500, headers: corsJson,
+        });
+      }
+    }
+
     // ── Hourly net sales for a store+date: ?action=hourly&store=BL1&date=YYYY-MM-DD
     // Returns a 24-slot array of net sales per ET hour. Used by the Daily Sales Chart
     // popup to compare current day hour-by-hour against the same day last week.
