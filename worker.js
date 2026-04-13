@@ -1334,6 +1334,270 @@ async function saveItemSalesSnapshot(env, store, dateStr, itemData) {
   }
 }
 
+// ─── Weekly retail helpers ──────────────────────────────────────
+
+// Resolve a (year, week) pair → 7 ISO date strings (Mon–Sun). Best-effort
+// fallback when D1 has no rows for the week yet (e.g. the sheet hasn't been
+// imported). D1 is the source of truth otherwise — see resolveWeekDates().
+function getISOWeekDates(year, week) {
+  // ISO 8601: week 1 contains Jan 4. Monday is day-of-week 1.
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Dow = jan4.getUTCDay() || 7; // Sun=7
+  const week1Monday = new Date(jan4);
+  week1Monday.setUTCDate(jan4.getUTCDate() - (jan4Dow - 1));
+  const start = new Date(week1Monday);
+  start.setUTCDate(week1Monday.getUTCDate() + (week - 1) * 7);
+  const out = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start);
+    d.setUTCDate(start.getUTCDate() + i);
+    out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+// Resolve a sheet-derived `week` label to its 7 dates. Trusts D1 since the
+// `week` column is whatever the Google Sheet says, not strictly ISO. Falls
+// back to ISO calc only when D1 has no rows for that (week, year) yet.
+async function resolveWeekDates(env, week, year) {
+  if (env.DB) {
+    try {
+      // D1 weeks are stored across all stores; DISTINCT date for the week
+      // covers the same dates regardless of store. Filter by year via the
+      // `date LIKE 'YYYY-%'` prefix so cross-year duplicate week numbers
+      // don't collide.
+      const { results } = await env.DB.prepare(
+        "SELECT DISTINCT date FROM daily_sales WHERE week = ? AND date LIKE ? ORDER BY date"
+      ).bind(String(week), `${year}-%`).all();
+      if (results && results.length) return results.map(r => r.date);
+    } catch (e) {
+      console.error("resolveWeekDates D1 error:", e.message);
+    }
+  }
+  const w = parseInt(week, 10);
+  const y = parseInt(year, 10);
+  if (Number.isFinite(w) && Number.isFinite(y)) return getISOWeekDates(y, w);
+  return [];
+}
+
+// Merge an array of per-day item-sales snapshots into a single weekly object
+// with the same { categories, totals } shape, including nested l3Rows.
+// Tolerant of legacy snapshots that lack `l3Rows` or cost — those days just
+// contribute zero cost and emit no L3 detail.
+function mergeItemSnapshots(snapshots) {
+  const cats = {}; // L2 → { qty, gross, discounts, refunds, net, cost, l3: { l3Name → {qty,gross,discounts,refunds,net,cost} } }
+  let totalOrders = 0;
+  for (const snap of snapshots) {
+    if (!snap || !Array.isArray(snap.categories)) continue;
+    totalOrders += Number(snap.orderCount) || 0;
+    for (const c of snap.categories) {
+      const name = c.category || "Uncategorized";
+      if (!cats[name]) {
+        cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0, l3: {} };
+      }
+      const bucket = cats[name];
+      bucket.qty += Number(c.qty) || 0;
+      bucket.gross += Number(c.gross) || 0;
+      bucket.discounts += Number(c.discounts) || 0;
+      bucket.refunds += Number(c.refunds) || 0;
+      bucket.net += Number(c.netSales) || 0;
+      bucket.cost += Number(c.cost) || 0;
+      if (Array.isArray(c.l3Rows)) {
+        for (const l of c.l3Rows) {
+          const lName = l.l3 || "(uncategorized)";
+          if (!bucket.l3[lName]) {
+            bucket.l3[lName] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0 };
+          }
+          const lb = bucket.l3[lName];
+          lb.qty += Number(l.qty) || 0;
+          lb.gross += Number(l.gross) || 0;
+          lb.discounts += Number(l.discounts) || 0;
+          lb.refunds += Number(l.refunds) || 0;
+          lb.net += Number(l.netSales) || 0;
+          lb.cost += Number(l.cost) || 0;
+        }
+      }
+    }
+  }
+  let totalQty = 0, totalGross = 0, totalDisc = 0, totalRef = 0, totalNet = 0, totalCost = 0;
+  const categories = [];
+  for (const [name, c] of Object.entries(cats)) {
+    totalQty += c.qty; totalGross += c.gross; totalDisc += c.discounts;
+    totalRef += c.refunds; totalNet += c.net; totalCost += c.cost;
+    const gp = c.net - c.cost;
+    const l3Rows = Object.entries(c.l3).map(([l3Name, lc]) => {
+      const lgp = lc.net - lc.cost;
+      return {
+        l3: l3Name,
+        qty: Math.round(lc.qty),
+        gross: Math.round(lc.gross * 100) / 100,
+        discounts: Math.round(lc.discounts * 100) / 100,
+        refunds: Math.round(lc.refunds * 100) / 100,
+        netSales: Math.round(lc.net * 100) / 100,
+        asp: lc.qty > 0 ? Math.round((lc.net / lc.qty) * 100) / 100 : 0,
+        cost: Math.round(lc.cost * 100) / 100,
+        extCost: Math.round(lc.cost * 100) / 100,
+        grossProfit: Math.round(lgp * 100) / 100,
+        gpmPct: lc.net > 0 ? Math.round((lgp / lc.net) * 1000) / 10 : 0,
+      };
+    }).sort((a, b) => b.netSales - a.netSales);
+    categories.push({
+      category: name,
+      qty: Math.round(c.qty),
+      gross: Math.round(c.gross * 100) / 100,
+      discounts: Math.round(c.discounts * 100) / 100,
+      refunds: Math.round(c.refunds * 100) / 100,
+      netSales: Math.round(c.net * 100) / 100,
+      asp: c.qty > 0 ? Math.round((c.net / c.qty) * 100) / 100 : 0,
+      cost: Math.round(c.cost * 100) / 100,
+      extCost: Math.round(c.cost * 100) / 100,
+      grossProfit: Math.round(gp * 100) / 100,
+      gpmPct: c.net > 0 ? Math.round((gp / c.net) * 1000) / 10 : 0,
+      l3Rows,
+    });
+  }
+  categories.sort((a, b) => b.netSales - a.netSales);
+  for (const c of categories) {
+    c.pctQty = totalQty > 0 ? Math.round((c.qty / totalQty) * 1000) / 10 : 0;
+    for (const l of c.l3Rows || []) {
+      l.pctQty = totalQty > 0 ? Math.round((l.qty / totalQty) * 1000) / 10 : 0;
+    }
+  }
+  const totalGp = totalNet - totalCost;
+  return {
+    categories,
+    totals: {
+      qty: Math.round(totalQty),
+      gross: Math.round(totalGross * 100) / 100,
+      discounts: Math.round(totalDisc * 100) / 100,
+      refunds: Math.round(totalRef * 100) / 100,
+      netSales: Math.round(totalNet * 100) / 100,
+      asp: totalQty > 0 ? Math.round((totalNet / totalQty) * 100) / 100 : 0,
+      cost: Math.round(totalCost * 100) / 100,
+      grossProfit: Math.round(totalGp * 100) / 100,
+      gpmPct: totalNet > 0 ? Math.round((totalGp / totalNet) * 1000) / 10 : 0,
+    },
+    orderCount: totalOrders,
+  };
+}
+
+// Build a per-store weekly bundle (daily rows + KPI totals + merged item sales)
+// for use by both ?action=weekly-summary and the week-summary KV pre-roll.
+async function buildStoreWeekly(env, store, dates) {
+  const lc = store.toLowerCase();
+  // Daily sales rows from D1 (one row per date)
+  let dailyRows = [];
+  if (env.DB && dates.length) {
+    const placeholders = dates.map(() => "?").join(",");
+    const { results } = await env.DB.prepare(
+      `SELECT date, total, retail, bin, auction, budget, labor_pct, order_count, avg_cart
+       FROM daily_sales WHERE store = ? AND date IN (${placeholders}) ORDER BY date`
+    ).bind(store, ...dates).all();
+    dailyRows = results || [];
+  }
+  // Item sales snapshots from KV (one per date)
+  const itemSnaps = await Promise.all(
+    dates.map(d => env.SALES_SNAPSHOTS
+      ? env.SALES_SNAPSHOTS.get(`items:${lc}:${d}`, "json")
+      : Promise.resolve(null))
+  );
+
+  // KPI totals from D1 daily rows. Use D1 `total` (= aggregated sales) as the
+  // single source of truth for net sales, mirroring the dashboard's behavior
+  // — keeps Weekly Retail's Net Sales identical to the Dashboard's week total.
+  let netSales = 0, retail = 0, bin = 0, auction = 0, budget = 0, transactions = 0;
+  let laborNumerator = 0, laborDenominator = 0;
+  for (const r of dailyRows) {
+    netSales += Number(r.total) || 0;
+    retail += Number(r.retail) || 0;
+    bin += Number(r.bin) || 0;
+    auction += Number(r.auction) || 0;
+    budget += Number(r.budget) || 0;
+    transactions += Number(r.order_count) || 0;
+    const lp = Number(r.labor_pct);
+    const t = Number(r.total);
+    if (Number.isFinite(lp) && Number.isFinite(t) && t > 0) {
+      laborNumerator += lp * t;
+      laborDenominator += t;
+    }
+  }
+  const merged = mergeItemSnapshots(itemSnaps.filter(Boolean));
+  const qty = merged.totals.qty;
+  const asp = qty > 0 ? netSales / qty : 0;
+  const variance = netSales - budget;
+  const variancePct = budget > 0 ? (variance / budget) * 100 : 0;
+  const laborPct = laborDenominator > 0 ? laborNumerator / laborDenominator : 0;
+
+  return {
+    daily: dailyRows.map(r => ({
+      date: r.date,
+      total: Number(r.total) || 0,
+      retail: Number(r.retail) || 0,
+      bin: Number(r.bin) || 0,
+      auction: Number(r.auction) || 0,
+      orderCount: Number(r.order_count) || 0,
+      avgCart: Number(r.avg_cart) || 0,
+      budget: Number(r.budget) || 0,
+      laborPct: Number(r.labor_pct) || 0,
+    })),
+    totals: {
+      netSales: Math.round(netSales * 100) / 100,
+      retail: Math.round(retail * 100) / 100,
+      bin: Math.round(bin * 100) / 100,
+      auction: Math.round(auction * 100) / 100,
+      qty,
+      transactions,
+      asp: Math.round(asp * 100) / 100,
+      budget: Math.round(budget * 100) / 100,
+      varianceDollar: Math.round(variance * 100) / 100,
+      variancePct: Math.round(variancePct * 10) / 10,
+      laborPct: Math.round(laborPct * 10) / 10,
+    },
+    itemSales: merged,
+  };
+}
+
+// Pre-roll a single (store, week, year) into `week-summary:<store>:<week>-<year>`.
+// Cron calls this for every week whose 7 days are now in D1; the rebuild
+// endpoint calls it across an entire year for backfill.
+async function writeWeekSummary(env, store, week, year) {
+  if (!env.SALES_SNAPSHOTS) return null;
+  const dates = await resolveWeekDates(env, week, year);
+  if (!dates.length) return null;
+  const bundle = await buildStoreWeekly(env, store, dates);
+  const payload = {
+    store, week: String(week), year: Number(year), dates,
+    totals: bundle.totals,
+    snapshotTime: new Date().toISOString(),
+  };
+  await env.SALES_SNAPSHOTS.put(
+    `week-summary:${store.toLowerCase()}:${week}-${year}`,
+    JSON.stringify(payload)
+  );
+  return payload;
+}
+
+// Cron-side rollup: when today is Sunday (last day of an ISO-style week), the
+// week's 7 days are now finalized — write the pre-roll for every store.
+async function rollupWeekSummariesIfReady(env, todayStr) {
+  if (!env.DB) return;
+  // Look up any week where today is the latest date for that week → that
+  // week's 7 days are present in D1. Trust the sheet's week label.
+  const { results } = await env.DB.prepare(
+    "SELECT DISTINCT week FROM daily_sales WHERE date = ?"
+  ).bind(todayStr).all();
+  if (!results || !results.length) return;
+  const year = parseInt(todayStr.slice(0, 4), 10);
+  for (const r of results) {
+    const wk = r.week;
+    if (!wk) continue;
+    for (const store of ALL_STORES) {
+      try { await writeWeekSummary(env, store, wk, year); }
+      catch (e) { console.error(`writeWeekSummary ${store}/${wk}:`, e.message); }
+    }
+  }
+}
+
 // ─── Admin-managed item categorization overrides ────────────────
 // Stored globally (all stores share) in KV key `item-overrides:global` as:
 //   {
@@ -1374,6 +1638,26 @@ async function fetchItemOverrides(env) {
   };
 }
 
+// ─── Admin-managed Item Master cost map ─────────────────────────
+// Stored globally (all stores share) in KV key `item-costs:global` as:
+//   { items: { "<itemNo>": { cost: number, desc: string } }, importedAt, count }
+// Populated via the ?action=item-costs admin endpoint. Used by aggregateItemSales
+// to enrich line-items with cost so the Weekly Retail Summary page can show CPU,
+// Ext Cost, Gross Profit, GPM%.
+const ITEM_COSTS_KEY = "item-costs:global";
+const EMPTY_ITEM_COSTS = { items: {}, importedAt: null, count: 0 };
+
+async function fetchItemCosts(env) {
+  if (!env.SALES_SNAPSHOTS) return EMPTY_ITEM_COSTS;
+  const val = await env.SALES_SNAPSHOTS.get(ITEM_COSTS_KEY, "json");
+  if (!val || typeof val !== "object") return EMPTY_ITEM_COSTS;
+  return {
+    items: val.items && typeof val.items === "object" ? val.items : {},
+    importedAt: val.importedAt || null,
+    count: Number(val.count) || 0,
+  };
+}
+
 // Match a line item against admin pattern rules. First matching rule wins.
 // type=prefix: normalized name startsWith value (case-insensitive, normalized)
 // type=contains: normalized name includes value
@@ -1400,16 +1684,26 @@ function matchOverridePattern(rawName, imNum, patterns) {
 // ─── Aggregate orders into L2 item sales categories ─────────────
 // `overrides` is the shape returned by fetchItemOverrides(). Safe to pass
 // undefined / EMPTY_OVERRIDES — caller threads it in for live + snapshot paths.
-function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides) {
+// `itemCosts` is the shape returned by fetchItemCosts(); used to enrich each
+// line-item with cost so we can emit cost / extCost / grossProfit / gpmPct.
+function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, itemCosts) {
   const ov = overrides || EMPTY_OVERRIDES;
   const ovItems = ov.items || {};
   const ovPatterns = ov.patterns || [];
-  const cats = {};
+  const ic = itemCosts || EMPTY_ITEM_COSTS;
+  const icItems = ic.items || {};
+  const cats = {};        // L2 → { qty, gross, discounts, refunds, net, cost }
+  const l3Cats = {};      // L2 → L3 → { qty, gross, discounts, refunds, net, cost }
   const unmappedL3 = {};
   const noCategory = {};
   function getCat(name) {
-    if (!cats[name]) cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0 };
+    if (!cats[name]) cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0 };
     return cats[name];
+  }
+  function getL3(l2, l3) {
+    if (!l3Cats[l2]) l3Cats[l2] = {};
+    if (!l3Cats[l2][l3]) l3Cats[l2][l3] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0 };
+    return l3Cats[l2][l3];
   }
 
   for (const order of allElements) {
@@ -1431,15 +1725,26 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides) 
       const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
       const priceCents = (li.price || 0) * qty;
 
+      // Hoisted IM-number extraction: needed both for cost lookup (regardless
+      // of which categorization tier resolves L2) and for the Tier-6 IM_TO_L2
+      // fallback below. Pulled out of the deeply-nested if-ladder so the value
+      // is available at line-item scope.
+      const blMatchEarly = (li.name || "").match(/BL[-\s]*(\d{4,5})/i);
+      const bareMatchEarly = !blMatchEarly && (li.name || "").match(/\b(\d{4,5})\b/);
+      const imNum = blMatchEarly?.[1] || bareMatchEarly?.[1];
+
       // Tier 0: admin-assigned per-item override (id: or name: key). Skips all
       // downstream heuristics so Settings UI edits take effect immediately.
       const itemId = li.item?.id;
       const nameKey = normalizeItemName(li.name);
       let l2 = null;
+      let l2Source = null;  // "override" | "clover-l3" | "name" | "im" | "heuristic" | "pattern" | "custom"
       if (itemId && ovItems["id:" + itemId] && VALID_L2.has(ovItems["id:" + itemId])) {
         l2 = ovItems["id:" + itemId];
+        l2Source = "override";
       } else if (nameKey && ovItems["name:" + nameKey] && VALID_L2.has(ovItems["name:" + nameKey])) {
         l2 = ovItems["name:" + nameKey];
+        l2Source = "override";
       }
 
       // Determine L3 category from item reference → category map
@@ -1453,12 +1758,15 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides) 
         // override already decided
       } else if (l3 === "Sku Book Items") {
         l2 = SKU_BOOK_TO_L2[li.name] || "Hardlines";
+        l2Source = "clover-l3";
       } else if (l3 && ov.l3Map && ov.l3Map[l3] && VALID_L2.has(ov.l3Map[l3])) {
         // Admin L3 mapping wins over built-in L3_TO_L2 so overrides can also
         // correct mis-categorized Clover categories, not just add new ones.
         l2 = ov.l3Map[l3];
+        l2Source = "clover-l3";
       } else if (l3 && L3_TO_L2[l3]) {
         l2 = L3_TO_L2[l3];
+        l2Source = "clover-l3";
       } else if (l3) {
         // Enriched tracking: {qty, net} so the Settings UI can rank L3s by
         // revenue impact and admins fix the biggest offenders first.
@@ -1467,45 +1775,56 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides) 
         bucket.net += priceCents / 100;
         unmappedL3[l3] = bucket;
         l2 = "Uncategorized";
+        l2Source = "clover-l3";
       } else if (li.name === "Refund" || priceCents < 0) {
         l2 = "Refund";
+        l2Source = "custom";
       } else {
         const normalized = (li.name || "").replace(/\u2013|\u2014/g, "-");
         const nameMatch = L3_TO_L2[normalized] || L3_TO_L2[li.name];
         if (nameMatch) {
           l2 = nameMatch;
+          l2Source = "name";
         } else {
-          const blMatch = (li.name || "").match(/BL[-\s]*(\d{4,5})/i);
-          const bareMatch = !blMatch && (li.name || "").match(/\b(\d{4,5})\b/);
-          const imNum = blMatch?.[1] || bareMatch?.[1];
           if (imNum && IM_TO_L2[imNum]) {
             l2 = IM_TO_L2[imNum];
+            l2Source = "im";
           } else {
             const n = (li.name || "").toUpperCase();
             if (/EASTER|VALENTINE|CHRISTMAS|HALLOWEEN|FOURTH OF JULY|4TH OF JULY|ST[.\s]*PATRICK|HOLIDAY|SEASONAL/i.test(n)) {
               l2 = "Seasonal";
+              l2Source = "heuristic";
             } else if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV|RECLINER|LOVESEAT|OTTOMAN|MATTRESS/i.test(n)) {
               l2 = "Furniture";
+              l2Source = "heuristic";
             } else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE/i.test(n)) {
               l2 = "Home";
+              l2Source = "heuristic";
             } else if (/SHOE|BOOT|SANDAL|SLIPPER|SNEAKER/i.test(n)) {
               l2 = "Softline - Shoes";
+              l2Source = "heuristic";
             } else if (/APPAREL|SHIRT|PANT|DRESS|JACKET|COAT|BLOUSE|SWEATER/i.test(n)) {
               l2 = "Softline - Apparel";
+              l2Source = "heuristic";
             } else if (/CHEMICAL|CLEANING|DETERGENT/i.test(n)) {
               l2 = "Consumable Other";
+              l2Source = "heuristic";
             } else if (/MASK|HEMP|OIL|LOTION|CREAM|SOAP|SHAMPOO|BODY|NAIL POLISH|COSMETIC/i.test(n)) {
               l2 = "Consumable HBA";
+              l2Source = "heuristic";
             } else if (/FOOD|SNACK|CANDY|BEVERAGE|DRINK/i.test(n)) {
               l2 = "Consumable Food";
+              l2Source = "heuristic";
             } else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY|HAMILTON BEACH|FIRE PIT/i.test(n)) {
               l2 = "Hardlines";
+              l2Source = "heuristic";
             } else {
               // Tier 6.5: admin-defined pattern rules (prefix / contains / im-number).
               // First match wins so more specific rules should be written earlier.
               const patternL2 = matchOverridePattern(li.name, imNum, ovPatterns);
               if (patternL2) {
                 l2 = patternL2;
+                l2Source = "pattern";
               } else {
                 const itemName = li.name || "unknown";
                 const bucket = noCategory[itemName] || { qty: 0, net: 0, itemId: itemId || null };
@@ -1515,13 +1834,40 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides) 
                 if (!bucket.itemId && itemId) bucket.itemId = itemId;
                 noCategory[itemName] = bucket;
                 l2 = "Custom Sales";
+                l2Source = "custom";
               }
             }
           }
         }
       }
 
+      // ── L3 key resolution ─────────────────────────────────────
+      // Goal: keep the L3 row count bounded and deterministic. Real Clover L3
+      // names pass through verbatim. Heuristic / IM / pattern hits collapse to
+      // a single synthetic row per (L2, source) so the per-store table doesn't
+      // explode with thousands of one-off product names. Custom Sales / Refund /
+      // Uncategorized keep raw item names so admins can still identify offenders.
+      let l3Key;
+      if (l2Source === "clover-l3" && l3) {
+        l3Key = l3;
+      } else if (l2Source === "override") {
+        l3Key = "[Override] " + l2;
+      } else if (l2Source === "name") {
+        l3Key = "[Name match] " + (li.name || "(unnamed)");
+      } else if (l2Source === "im") {
+        l3Key = "[IM " + (imNum || "?") + "] " + l2;
+      } else if (l2Source === "pattern") {
+        l3Key = "[Pattern] " + l2;
+      } else if (l2Source === "heuristic") {
+        l3Key = "[Heuristic] " + l2;
+      } else if (l2 === "Custom Sales" || l2 === "Refund" || l2 === "Uncategorized") {
+        l3Key = li.name || "(unnamed)";
+      } else {
+        l3Key = "[Other] " + l2;
+      }
+
       const cat = getCat(l2);
+      const l3Cat = getL3(l2, l3Key);
       const grossCents = Math.abs(priceCents);
 
       let discCents = 0;
@@ -1531,15 +1877,31 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides) 
         }
       }
 
+      // Cost lookup: join on the IM number we extracted at the top of the loop.
+      // Misses (no imNum, or imNum not in master) silently contribute 0 — those
+      // rows will render with `—` in the CPU/Ext Cost columns.
+      const costRecord = imNum ? icItems[imNum] : null;
+      const unitCost = (costRecord && Number.isFinite(Number(costRecord.cost)))
+        ? Number(costRecord.cost) : 0;
+
       if (priceCents < 0) {
         cat.refunds -= grossCents / 100;
         cat.net -= grossCents / 100;
+        l3Cat.refunds -= grossCents / 100;
+        l3Cat.net -= grossCents / 100;
         orderLineItemNetCents -= grossCents;
       } else {
+        const lineCost = unitCost * qty;
         cat.qty += qty;
         cat.gross += grossCents / 100;
         cat.discounts -= discCents / 100;
         cat.net += (grossCents - discCents) / 100;
+        cat.cost += lineCost;
+        l3Cat.qty += qty;
+        l3Cat.gross += grossCents / 100;
+        l3Cat.discounts -= discCents / 100;
+        l3Cat.net += (grossCents - discCents) / 100;
+        l3Cat.cost += lineCost;
         orderLineItemNetCents += (grossCents - discCents);
       }
     }
@@ -1558,7 +1920,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides) 
   }
 
   // Calculate totals and format response
-  let totalQty = 0, totalGross = 0, totalDisc = 0, totalRef = 0, totalNet = 0;
+  let totalQty = 0, totalGross = 0, totalDisc = 0, totalRef = 0, totalNet = 0, totalCost = 0;
   const categories = [];
   for (const [name, c] of Object.entries(cats)) {
     totalQty += c.qty;
@@ -1566,6 +1928,27 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides) 
     totalDisc += c.discounts;
     totalRef += c.refunds;
     totalNet += c.net;
+    totalCost += c.cost;
+    const grossProfit = c.net - c.cost;
+    const l3Map = l3Cats[name] || {};
+    const l3Rows = [];
+    for (const [l3Name, lc] of Object.entries(l3Map)) {
+      const l3Gp = lc.net - lc.cost;
+      l3Rows.push({
+        l3: l3Name,
+        qty: Math.round(lc.qty),
+        gross: Math.round(lc.gross * 100) / 100,
+        discounts: Math.round(lc.discounts * 100) / 100,
+        refunds: Math.round(lc.refunds * 100) / 100,
+        netSales: Math.round(lc.net * 100) / 100,
+        asp: lc.qty > 0 ? Math.round((lc.net / lc.qty) * 100) / 100 : 0,
+        cost: Math.round(lc.cost * 100) / 100,
+        extCost: Math.round(lc.cost * 100) / 100,
+        grossProfit: Math.round(l3Gp * 100) / 100,
+        gpmPct: lc.net > 0 ? Math.round((l3Gp / lc.net) * 1000) / 10 : 0,
+      });
+    }
+    l3Rows.sort((a, b) => b.netSales - a.netSales);
     categories.push({
       category: name,
       qty: Math.round(c.qty),
@@ -1574,6 +1957,11 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides) 
       refunds: Math.round(c.refunds * 100) / 100,
       netSales: Math.round(c.net * 100) / 100,
       asp: c.qty > 0 ? Math.round((c.net / c.qty) * 100) / 100 : 0,
+      cost: Math.round(c.cost * 100) / 100,
+      extCost: Math.round(c.cost * 100) / 100,
+      grossProfit: Math.round(grossProfit * 100) / 100,
+      gpmPct: c.net > 0 ? Math.round((grossProfit / c.net) * 1000) / 10 : 0,
+      l3Rows,
     });
   }
 
@@ -1581,8 +1969,14 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides) 
 
   for (const c of categories) {
     c.pctQty = totalQty > 0 ? Math.round((c.qty / totalQty) * 1000) / 10 : 0;
+    if (c.l3Rows && c.l3Rows.length) {
+      for (const l of c.l3Rows) {
+        l.pctQty = totalQty > 0 ? Math.round((l.qty / totalQty) * 1000) / 10 : 0;
+      }
+    }
   }
 
+  const totalGp = totalNet - totalCost;
   return {
     store, date: dateStr,
     categories,
@@ -1593,9 +1987,16 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides) 
       refunds: Math.round(totalRef * 100) / 100,
       netSales: Math.round(totalNet * 100) / 100,
       asp: totalQty > 0 ? Math.round((totalNet / totalQty) * 100) / 100 : 0,
+      cost: Math.round(totalCost * 100) / 100,
+      grossProfit: Math.round(totalGp * 100) / 100,
+      gpmPct: totalNet > 0 ? Math.round((totalGp / totalNet) * 1000) / 10 : 0,
     },
     orderCount: allElements.length,
-    _debug: { unmappedL3, noCategory, itemCatMapSize: Object.keys(itemCatMap).length },
+    _debug: {
+      unmappedL3, noCategory,
+      itemCatMapSize: Object.keys(itemCatMap).length,
+      itemCostsCount: Object.keys(icItems).length,
+    },
   };
 }
 
@@ -1946,14 +2347,17 @@ export default {
         untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
       }
 
-      const overrides = await fetchItemOverrides(env);
+      const [overrides, itemCosts] = await Promise.all([
+        fetchItemOverrides(env),
+        fetchItemCosts(env),
+      ]);
       const results = {};
       for (const store of stores) {
         try {
           const elements = await fetchItemOrders(store, env, sinceTs, untilTs);
           if (!elements) { results[store] = "skipped (no credentials)"; continue; }
           const itemCatMap = await fetchItemCategoryMap(store, env);
-          const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides);
+          const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts);
           await saveItemSalesSnapshot(env, store, dateParam, itemData);
           results[store] = { ok: true, orders: itemData.orderCount, netSales: itemData.totals.netSales };
         } catch (e) {
@@ -2130,6 +2534,311 @@ export default {
       return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
     }
 
+    // ── Admin: read or replace the global Item Master cost map.
+    //    GET  ?action=item-costs              → { items, importedAt, count }
+    //    POST ?action=item-costs  with body { items: { "<itemNo>": { cost, desc } } }
+    //       Authoritative replace (not merge) — admin always uploads the full
+    //       parsed file. Validates each entry before persisting.
+    if (url.searchParams.get("action") === "item-costs") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const secret = request.headers.get("X-Snapshot-Secret");
+      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      }
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+
+      if (request.method === "GET") {
+        const current = await fetchItemCosts(env);
+        return new Response(JSON.stringify(current), { headers: corsJson });
+      }
+
+      if (request.method === "POST") {
+        let body;
+        try { body = await request.json(); }
+        catch { return new Response(JSON.stringify({ error: "Invalid JSON body" }), { status: 400, headers: corsJson }); }
+
+        const rawItems = body?.items;
+        if (!rawItems || typeof rawItems !== "object") {
+          return new Response(JSON.stringify({ error: "Body must include items: { itemNo: { cost, desc } }" }), { status: 400, headers: corsJson });
+        }
+
+        const cleaned = {};
+        let rejected = 0;
+        for (const [k, v] of Object.entries(rawItems)) {
+          if (!/^\d{4,5}$/.test(String(k))) { rejected++; continue; }
+          const cost = Number(v?.cost);
+          if (!Number.isFinite(cost) || cost < 0) { rejected++; continue; }
+          cleaned[String(k)] = {
+            cost: Math.round(cost * 10000) / 10000,
+            desc: typeof v?.desc === "string" ? v.desc : "",
+          };
+        }
+        const payload = {
+          items: cleaned,
+          importedAt: new Date().toISOString(),
+          count: Object.keys(cleaned).length,
+        };
+        await env.SALES_SNAPSHOTS.put(ITEM_COSTS_KEY, JSON.stringify(payload));
+        return new Response(JSON.stringify({ ok: true, count: payload.count, rejected, importedAt: payload.importedAt }), { headers: corsJson });
+      }
+
+      return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
+    }
+
+    // ── Public: Weekly Retail Summary feed
+    //    ?action=weekly-summary&week=15&year=2026
+    // Returns one payload feeding the Summary tab + all 6 per-store tabs.
+    if (url.searchParams.get("action") === "weekly-summary") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const week = url.searchParams.get("week");
+      const year = url.searchParams.get("year") || String(new Date().getUTCFullYear());
+      if (!week) {
+        return new Response(JSON.stringify({ error: "Missing week param" }), { status: 400, headers: corsJson });
+      }
+
+      try {
+        const dates = await resolveWeekDates(env, week, year);
+        if (!dates.length) {
+          return new Response(JSON.stringify({
+            week, year: Number(year), dates: [], stores: {}, company: { totals: {}, l2Matrix: [] },
+            note: "No daily_sales rows found for this week.",
+          }), { headers: corsJson });
+        }
+
+        const bundles = await Promise.all(
+          ALL_STORES.map(s => buildStoreWeekly(env, s, dates))
+        );
+        const stores = {};
+        ALL_STORES.forEach((s, i) => { stores[s] = bundles[i]; });
+
+        // Company totals (sum of stores)
+        let cNet = 0, cRetail = 0, cBin = 0, cAuction = 0, cBudget = 0,
+            cQty = 0, cTxn = 0, cLaborNum = 0, cLaborDen = 0;
+        for (const b of bundles) {
+          cNet += b.totals.netSales;
+          cRetail += b.totals.retail;
+          cBin += b.totals.bin;
+          cAuction += b.totals.auction;
+          cBudget += b.totals.budget;
+          cQty += b.totals.qty;
+          cTxn += b.totals.transactions;
+          if (b.totals.netSales > 0) {
+            cLaborNum += b.totals.laborPct * b.totals.netSales;
+            cLaborDen += b.totals.netSales;
+          }
+        }
+        const cAsp = cQty > 0 ? cNet / cQty : 0;
+        const cVar = cNet - cBudget;
+        const cVarPct = cBudget > 0 ? (cVar / cBudget) * 100 : 0;
+        const cLabor = cLaborDen > 0 ? cLaborNum / cLaborDen : 0;
+
+        // L2 × store matrix
+        const l2Set = new Set();
+        for (const b of bundles) {
+          for (const c of b.itemSales.categories) l2Set.add(c.category);
+        }
+        const l2Matrix = [];
+        for (const l2 of l2Set) {
+          const row = { l2, byStore: {}, total: 0 };
+          ALL_STORES.forEach((s, i) => {
+            const found = bundles[i].itemSales.categories.find(c => c.category === l2);
+            const v = found ? found.netSales : 0;
+            row.byStore[s] = v;
+            row.total += v;
+          });
+          row.total = Math.round(row.total * 100) / 100;
+          l2Matrix.push(row);
+        }
+        l2Matrix.sort((a, b) => b.total - a.total);
+
+        return new Response(JSON.stringify({
+          week, year: Number(year), dates,
+          stores,
+          company: {
+            totals: {
+              netSales: Math.round(cNet * 100) / 100,
+              retail: Math.round(cRetail * 100) / 100,
+              bin: Math.round(cBin * 100) / 100,
+              auction: Math.round(cAuction * 100) / 100,
+              budget: Math.round(cBudget * 100) / 100,
+              qty: cQty,
+              transactions: cTxn,
+              asp: Math.round(cAsp * 100) / 100,
+              varianceDollar: Math.round(cVar * 100) / 100,
+              variancePct: Math.round(cVarPct * 10) / 10,
+              laborPct: Math.round(cLabor * 10) / 10,
+            },
+            l2Matrix,
+          },
+        }), { headers: corsJson });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "weekly-summary failed", detail: err.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Public: trailing 13-week summary feed
+    //    ?action=weekly-t13&endWeek=15&year=2026
+    // Reads from pre-rolled `week-summary:` KV keys; falls back to live aggregation
+    // for any missing key (and logs a warning).
+    if (url.searchParams.get("action") === "weekly-t13") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const endWeek = url.searchParams.get("endWeek");
+      const year = url.searchParams.get("year") || String(new Date().getUTCFullYear());
+      if (!endWeek) {
+        return new Response(JSON.stringify({ error: "Missing endWeek param" }), { status: 400, headers: corsJson });
+      }
+
+      try {
+        // Resolve 13 ordered weeks ending at endWeek. Trust D1 to enumerate
+        // weeks (sheet-derived). If endWeek date hasn't been imported, fall
+        // back to numeric range.
+        let weeks = [];
+        if (env.DB) {
+          // Find the latest date for endWeek to anchor the trailing window
+          const anchor = await env.DB.prepare(
+            "SELECT MAX(date) as d FROM daily_sales WHERE week = ? AND date LIKE ?"
+          ).bind(String(endWeek), `${year}-%`).first();
+          const anchorDate = anchor?.d;
+          if (anchorDate) {
+            const { results } = await env.DB.prepare(
+              `SELECT week, MIN(date) as start_date, MAX(date) as end_date
+               FROM daily_sales WHERE date <= ?
+               GROUP BY week ORDER BY MIN(date) DESC LIMIT 13`
+            ).bind(anchorDate).all();
+            weeks = (results || []).reverse().map(r => ({
+              week: String(r.week),
+              start: r.start_date,
+              end: r.end_date,
+            }));
+          }
+        }
+        if (!weeks.length) {
+          // Fallback: numeric range ending at endWeek
+          const ew = parseInt(endWeek, 10);
+          const yr = parseInt(year, 10);
+          for (let i = 12; i >= 0; i--) {
+            const w = ew - i;
+            if (w < 1) continue;
+            const dates = getISOWeekDates(yr, w);
+            weeks.push({ week: String(w), start: dates[0], end: dates[6] });
+          }
+        }
+
+        // Build per-store time series. Read pre-rolled summaries first; on
+        // miss, build live for that one (store, week).
+        const stores = {};
+        for (const s of ALL_STORES) {
+          stores[s] = {
+            netSales: [], qty: [], transactions: [], asp: [], laborPct: [], budget: [],
+          };
+        }
+        const total = {
+          netSales: [], qty: [], transactions: [], asp: [], laborPct: [], budget: [],
+        };
+
+        let liveBuilds = 0;
+        for (const wkObj of weeks) {
+          const wk = wkObj.week;
+          const perStore = {};
+          await Promise.all(ALL_STORES.map(async (s) => {
+            let summary = null;
+            if (env.SALES_SNAPSHOTS) {
+              summary = await env.SALES_SNAPSHOTS.get(
+                `week-summary:${s.toLowerCase()}:${wk}-${year}`, "json"
+              );
+            }
+            if (!summary) {
+              liveBuilds++;
+              const dates = await resolveWeekDates(env, wk, year);
+              if (dates.length) {
+                const bundle = await buildStoreWeekly(env, s, dates);
+                summary = { totals: bundle.totals };
+              } else {
+                summary = { totals: { netSales: 0, qty: 0, transactions: 0, asp: 0, laborPct: 0, budget: 0 } };
+              }
+            }
+            perStore[s] = summary.totals;
+          }));
+
+          let wkNet = 0, wkQty = 0, wkTxn = 0, wkBudget = 0, wkLaborNum = 0, wkLaborDen = 0;
+          for (const s of ALL_STORES) {
+            const t = perStore[s] || {};
+            stores[s].netSales.push(Number(t.netSales) || 0);
+            stores[s].qty.push(Number(t.qty) || 0);
+            stores[s].transactions.push(Number(t.transactions) || 0);
+            stores[s].asp.push(Number(t.asp) || 0);
+            stores[s].laborPct.push(Number(t.laborPct) || 0);
+            stores[s].budget.push(Number(t.budget) || 0);
+            wkNet += Number(t.netSales) || 0;
+            wkQty += Number(t.qty) || 0;
+            wkTxn += Number(t.transactions) || 0;
+            wkBudget += Number(t.budget) || 0;
+            const tn = Number(t.netSales) || 0;
+            if (tn > 0) {
+              wkLaborNum += (Number(t.laborPct) || 0) * tn;
+              wkLaborDen += tn;
+            }
+          }
+          total.netSales.push(Math.round(wkNet * 100) / 100);
+          total.qty.push(wkQty);
+          total.transactions.push(wkTxn);
+          total.asp.push(wkQty > 0 ? Math.round((wkNet / wkQty) * 100) / 100 : 0);
+          total.laborPct.push(wkLaborDen > 0 ? Math.round((wkLaborNum / wkLaborDen) * 10) / 10 : 0);
+          total.budget.push(Math.round(wkBudget * 100) / 100);
+        }
+
+        if (liveBuilds > 0) {
+          console.warn(`weekly-t13: ${liveBuilds} live aggregations (consider running ?action=rebuild-week-summaries)`);
+        }
+
+        return new Response(JSON.stringify({
+          weeks: weeks.map(w => w.week),
+          dates: weeks,
+          stores,
+          total,
+          liveBuilds,
+        }), { headers: corsJson });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "weekly-t13 failed", detail: err.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Admin: rebuild week-summary KV keys for an entire year (backfill)
+    //    ?action=rebuild-week-summaries&year=2026
+    // Iterates every distinct week in D1 for the given year and writes the
+    // pre-roll for every store. Required before T13 will read from cache.
+    if (url.searchParams.get("action") === "rebuild-week-summaries") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const secret = request.headers.get("X-Snapshot-Secret");
+      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      }
+      if (!env.DB || !env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "DB or KV not configured" }), { status: 500, headers: corsJson });
+      }
+      const year = url.searchParams.get("year") || String(new Date().getUTCFullYear());
+
+      const { results } = await env.DB.prepare(
+        "SELECT DISTINCT week FROM daily_sales WHERE date LIKE ? ORDER BY week"
+      ).bind(`${year}-%`).all();
+      const weeks = (results || []).map(r => r.week).filter(Boolean);
+
+      const summary = { year: Number(year), weeks: weeks.length, written: 0, errors: [] };
+      for (const wk of weeks) {
+        for (const store of ALL_STORES) {
+          try {
+            const out = await writeWeekSummary(env, store, wk, year);
+            if (out) summary.written++;
+          } catch (e) {
+            summary.errors.push(`${store}/${wk}: ${e.message}`);
+          }
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, ...summary }), { headers: corsJson });
+    }
+
     // ── Item sales for a single ET hour: ?action=items-hour&store=BL1&date=YYYY-MM-DD&hour=14
     // Always live-fetches from Clover (narrow 1-hour window). Used by the hourly popup
     // drill-down when a user clicks a specific hour bar.
@@ -2156,8 +2865,11 @@ export default {
           return new Response(JSON.stringify({ error: "Store keys not found" }), { status: 404, headers: corsJson });
         }
         const itemCatMap = await fetchItemCategoryMap(store, env);
-        const overrides = await fetchItemOverrides(env);
-        const result = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides);
+        const [overrides, itemCosts] = await Promise.all([
+          fetchItemOverrides(env),
+          fetchItemCosts(env),
+        ]);
+        const result = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts);
         result.hour = hourParam;
         return new Response(JSON.stringify(result), { headers: corsJson });
       } catch (err) {
@@ -2262,8 +2974,11 @@ export default {
       try {
         const allElements = await fetchItemOrders(store, env, startOfDay);
         const itemCatMap = await fetchItemCategoryMap(store, env);
-        const overrides = await fetchItemOverrides(env);
-        const result = aggregateItemSales(allElements || [], itemCatMap, store, todayStr, overrides);
+        const [overrides, itemCosts] = await Promise.all([
+          fetchItemOverrides(env),
+          fetchItemCosts(env),
+        ]);
+        const result = aggregateItemSales(allElements || [], itemCatMap, store, todayStr, overrides, itemCosts);
         return new Response(JSON.stringify(result), { headers: corsJson });
       } catch (err) {
         return new Response(JSON.stringify({ error: "Items fetch failed", detail: err.message }), {
@@ -2320,7 +3035,10 @@ export default {
     const { dateStr: todayStr, startOfDay } = getETToday();
 
     const results = {};
-    const overrides = await fetchItemOverrides(env);
+    const [overrides, itemCosts] = await Promise.all([
+      fetchItemOverrides(env),
+      fetchItemCosts(env),
+    ]);
 
     for (const store of ALL_STORES) {
       try {
@@ -2333,7 +3051,7 @@ export default {
           const elements = await fetchItemOrders(store, env, startOfDay);
           if (elements) {
             const itemCatMap = await fetchItemCategoryMap(store, env);
-            const itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides);
+            const itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides, itemCosts);
             await saveItemSalesSnapshot(env, store, todayStr, itemData);
             results[store].items = "ok";
           } else {
@@ -2345,6 +3063,15 @@ export default {
       } catch (err) {
         results[store] = `error: ${err.message}`;
       }
+    }
+
+    // Roll up week-summary KV keys for any week whose 7 days are now in D1.
+    // Lets the Weekly Retail T13 endpoint serve from pre-rolled summaries
+    // instead of doing 500+ KV reads per page visit.
+    try {
+      await rollupWeekSummariesIfReady(env, todayStr);
+    } catch (err) {
+      console.error("Week summary rollup failed:", err.message);
     }
 
     console.log("Daily snapshot results:", JSON.stringify(results));

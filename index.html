@@ -348,17 +348,43 @@
     <div id="page-weekly-summary" class="hidden">
       <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
         <div class="max-w-7xl mx-auto">
-          <div class="ml-12 md:ml-0">
-            <h1 class="text-2xl font-display text-[#3BB54A]">Weekly Retail Summary</h1>
-            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Coming soon</p>
+          <div class="ml-12 md:ml-0 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h1 class="text-2xl font-display text-[#3BB54A]">Weekly Retail Summary</h1>
+              <p id="wrs-subtitle" class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Loading…</p>
+            </div>
+            <div class="flex gap-3 items-end">
+              <div>
+                <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Year</label>
+                <select id="wrs-year-select" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]"></select>
+              </div>
+              <div>
+                <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Week</label>
+                <select id="wrs-week-select" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]"></select>
+              </div>
+              <button id="wrs-refresh" onclick="loadWeeklyRetail(true)" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Refresh</button>
+            </div>
           </div>
         </div>
       </div>
       <div class="max-w-7xl mx-auto px-6 py-6">
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-12 text-center">
-          <svg class="mx-auto mb-4 text-gray-300 dark:text-gray-600" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-          <p class="text-gray-400 dark:text-gray-500 text-sm">Weekly retail summary features will be added here.</p>
-        </div>
+        <nav id="wrs-tabs" class="flex flex-wrap gap-1 border-b border-gray-200 dark:border-gray-700 mb-6">
+          <button data-wrs-tab="summary" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-[#3BB54A] text-[#3BB54A]">Summary</button>
+          <button data-wrs-tab="t13" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">T13</button>
+          <button data-wrs-tab="BL1" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Coliseum</button>
+          <button data-wrs-tab="BL2" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">South Bend</button>
+          <button data-wrs-tab="BL4" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Dupont</button>
+          <button data-wrs-tab="BL8" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Holland</button>
+          <button data-wrs-tab="BL12" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Wyoming</button>
+          <button data-wrs-tab="BL14" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Battle Creek</button>
+        </nav>
+
+        <div id="wrs-loading" class="hidden text-center py-12 text-sm text-gray-400 dark:text-gray-500">Loading weekly data…</div>
+        <div id="wrs-error" class="hidden p-4 mb-4 text-sm rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 text-red-700 dark:text-red-300"></div>
+
+        <section id="wrs-pane-summary" class="wrs-pane space-y-6"></section>
+        <section id="wrs-pane-t13" class="wrs-pane hidden space-y-6"></section>
+        <section id="wrs-pane-store" class="wrs-pane hidden space-y-6"></section>
       </div>
     </div><!-- end #page-weekly-summary -->
 
@@ -434,6 +460,25 @@
               </button>
             </div>
             <div id="resnapshot-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
+          </div>
+        </div>
+
+        <!-- Item Master Costs -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
+          <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Item Master Costs</h2>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Upload an Item Master export so the Weekly Retail Summary can render CPU, Ext Cost, Gross Profit, and GPM% per L2/L3 category. Accepts <code>.html</code> (Item Master export), <code>.csv</code>, or <code>.json</code>. Re-snapshot historical days after uploading to backfill cost into existing data.</p>
+
+          <div class="space-y-4">
+            <div class="flex flex-wrap gap-4 items-end">
+              <div class="flex-1 min-w-[220px]">
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">File</label>
+                <input id="im-file" type="file" accept=".html,.htm,.csv,.json,.txt" class="block w-full text-sm text-gray-700 dark:text-gray-200 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#3BB54A]/10 file:text-[#3BB54A] hover:file:bg-[#3BB54A]/20">
+              </div>
+              <button onclick="importItemCosts()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Upload</button>
+              <button onclick="refreshItemCostsStatus()" class="px-4 py-2 text-sm font-semibold border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors">Refresh status</button>
+            </div>
+            <div id="im-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
+            <div id="im-summary" class="text-xs text-gray-500 dark:text-gray-400">Status: not loaded yet.</div>
           </div>
         </div>
 
@@ -620,6 +665,15 @@
   let currentStoreName = null;
   let dailySalesChart = null;
   let hourlyChart = null;
+
+  // Weekly Retail Summary state. Reset to null when the user changes
+  // week/year so the next render fetches fresh data.
+  let wrsData = null;            // last ?action=weekly-summary payload
+  let wrsT13Data = null;         // last ?action=weekly-t13 payload
+  let wrsCurrentTab = 'summary'; // 'summary' | 't13' | 'BL1'..'BL14'
+  let wrsExpandedL2 = new Set(); // composite keys "STORE:L2" for L3 expansions
+  let wrsT13Chart = null;
+  let wrsInitialized = false;
 
   // ═══════════════════════════════════════════════════════════════
   //  HELPERS & MATH
@@ -2001,6 +2055,12 @@
     currentPage = page;
     el('mobile-menu-btn').classList.toggle('hidden', page === 'store-detail');
 
+    // Lazy-init Weekly Retail when first navigated to. Guarded by !wrsData
+    // so subsequent visits don't refetch unnecessarily.
+    if (page === 'weekly-summary') {
+      initWeeklyRetail();
+    }
+
     // Close mobile sidebar
     const sidebar = el('sidebar');
     if (window.innerWidth < 768 && sidebar && !sidebar.classList.contains('collapsed')) {
@@ -2772,6 +2832,662 @@
   window.resnapshotRecent = resnapshotRecent;
 
   // ═══════════════════════════════════════════════════════════════
+  //  WEEKLY RETAIL SUMMARY — helpers + init + loaders
+  // ═══════════════════════════════════════════════════════════════
+  const WRS_STORE_KEYS  = ['BL1','BL2','BL4','BL8','BL12','BL14'];
+  const WRS_STORE_NAMES = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek' };
+
+  function fmtInt(n) { return (n == null || n === 0) ? '0' : Number(n).toLocaleString('en-US'); }
+  function fmtDash(n) { return (n == null || n === 0) ? '—' : fmtDollar(n); }
+  function wrsVarianceClass(n) {
+    if (n == null) return '';
+    return n >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400';
+  }
+  function wrsCpu(cost, qty) {
+    if (!cost || !qty) return '—';
+    return fmtDollar(cost / qty);
+  }
+
+  function wrsSetStatus(msg, type) {
+    const el2 = el('wrs-subtitle');
+    if (el2) el2.textContent = msg || '';
+  }
+
+  function wrsShowLoading(show) {
+    el('wrs-loading').classList.toggle('hidden', !show);
+    el('wrs-error').classList.toggle('hidden', true);
+  }
+
+  function wrsShowError(msg) {
+    el('wrs-loading').classList.add('hidden');
+    const errEl = el('wrs-error');
+    errEl.textContent = msg;
+    errEl.classList.remove('hidden');
+  }
+
+  function initWeeklyRetail() {
+    if (wrsInitialized && wrsData) return;
+    wrsInitialized = true;
+
+    // Populate year select from allStoreData dates
+    const yearSel = el('wrs-year-select');
+    const weekSel = el('wrs-week-select');
+    const years = new Set();
+    for (const rows of Object.values(allStoreData)) {
+      for (const r of (rows || [])) {
+        if (r.date) years.add(String(r.date.getFullYear ? r.date.getFullYear() : r.date).slice(0,4));
+      }
+    }
+    const curYear = String(new Date().getFullYear());
+    years.add(curYear);
+    yearSel.innerHTML = [...years].sort((a,b)=>b-a)
+      .map(y => `<option value="${y}"${y===curYear?' selected':''}>${y}</option>`).join('');
+
+    // Populate week select from allWeeks
+    weekSel.innerHTML = (allWeeks || []).slice().reverse()
+      .map(w => `<option value="${w}"${w===selectedWeek?' selected':''}>${'Week ' + w}</option>`).join('');
+
+    loadWeeklyRetail(false);
+  }
+
+  async function loadWeeklyRetail(force) {
+    if (wrsData && !force) { renderWrsActiveTab(); return; }
+    const week = el('wrs-week-select').value;
+    const year = el('wrs-year-select').value;
+    if (!week || !year) return;
+    wrsShowLoading(true);
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=weekly-summary&week=${encodeURIComponent(week)}&year=${encodeURIComponent(year)}`);
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      wrsData = data;
+      wrsExpandedL2.clear();
+      el('wrs-subtitle').textContent = `Week ${week} · ${year}`;
+    } catch(e) {
+      wrsShowError('Failed to load weekly data: ' + e.message);
+      return;
+    } finally { wrsShowLoading(false); }
+    renderWrsActiveTab();
+  }
+
+  async function loadT13() {
+    const week = el('wrs-week-select').value;
+    const year = el('wrs-year-select').value;
+    if (!week || !year) return;
+    el('wrs-pane-t13').innerHTML = '<p class="text-sm text-gray-400 py-8 text-center">Loading T13…</p>';
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=weekly-t13&endWeek=${encodeURIComponent(week)}&year=${encodeURIComponent(year)}`);
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      wrsT13Data = data;
+    } catch(e) {
+      el('wrs-pane-t13').innerHTML = `<p class="text-sm text-red-500 py-8 text-center">T13 load failed: ${escapeHtml(e.message)}</p>`;
+      return;
+    }
+    renderT13();
+  }
+
+  function switchWrsTab(tab) {
+    wrsCurrentTab = tab;
+    document.querySelectorAll('#wrs-tabs .wrs-tab').forEach(btn => {
+      const active = btn.dataset.wrsTab === tab;
+      btn.classList.toggle('border-[#3BB54A]', active);
+      btn.classList.toggle('text-[#3BB54A]', active);
+      btn.classList.toggle('border-transparent', !active);
+      btn.classList.toggle('text-gray-500', !active);
+      btn.classList.toggle('dark:text-gray-400', !active);
+    });
+    ['summary','t13','store'].forEach(p => el('wrs-pane-'+p).classList.add('hidden'));
+    if (tab === 'summary') {
+      el('wrs-pane-summary').classList.remove('hidden');
+      if (wrsData) renderWrsSummary();
+    } else if (tab === 't13') {
+      el('wrs-pane-t13').classList.remove('hidden');
+      if (!wrsT13Data) loadT13(); else renderT13();
+    } else {
+      el('wrs-pane-store').classList.remove('hidden');
+      if (wrsData) renderWrsStore(tab);
+    }
+  }
+
+  function renderWrsActiveTab() {
+    switchWrsTab(wrsCurrentTab);
+  }
+
+  window.switchWrsTab = switchWrsTab;
+  window.loadWeeklyRetail = loadWeeklyRetail;
+
+  // ═══════════════════════════════════════════════════════════════
+  //  WEEKLY RETAIL SUMMARY — Summary tab renderer
+  // ═══════════════════════════════════════════════════════════════
+  function renderWrsSummary() {
+    if (!wrsData) return;
+    const d = wrsData;
+    const co = d.company || {};
+    const coT = co.totals || {};
+
+    // ── KPI table ──────────────────────────────────────────────
+    const kpiCols = ['Net Sales','Qty','Transactions','ASP','Budget','Variance $','Variance %','Labor %'];
+    const storeRows = WRS_STORE_KEYS.map(s => {
+      const t = (d.stores[s] || {}).totals || {};
+      return { label: WRS_STORE_NAMES[s], t };
+    });
+    const totRow = { label: 'Total', t: coT };
+
+    function kpiCell(t, col) {
+      switch(col) {
+        case 'Net Sales':    return fmtDollar(t.netSales);
+        case 'Qty':          return fmtInt(t.qty);
+        case 'Transactions': return fmtInt(t.transactions);
+        case 'ASP':          return fmtDollar(t.asp);
+        case 'Budget':       return fmtDollar(t.budget);
+        case 'Variance $': {
+          const v = t.varianceDollar;
+          return `<span class="${wrsVarianceClass(v)}">${v != null ? fmtDollar(v) : '—'}</span>`;
+        }
+        case 'Variance %': {
+          const v = t.variancePct;
+          return `<span class="${wrsVarianceClass(v)}">${v != null ? fmtPct(v) : '—'}</span>`;
+        }
+        case 'Labor %': return fmtPct(t.laborPct);
+        default: return '—';
+      }
+    }
+
+    const thCls = 'px-3 py-2 text-left text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap';
+    const tdCls = 'px-3 py-2 text-sm text-gray-800 dark:text-gray-100 whitespace-nowrap';
+    const tdTotCls = 'px-3 py-2 text-sm font-semibold text-gray-900 dark:text-white whitespace-nowrap';
+
+    let kpiHtml = `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead><tr class="border-b border-gray-100 dark:border-gray-700">
+          <th class="${thCls}">Store</th>
+          ${kpiCols.map(c=>`<th class="${thCls} text-right">${escapeHtml(c)}</th>`).join('')}
+        </tr></thead>
+        <tbody>`;
+    for (const {label, t} of storeRows) {
+      kpiHtml += `<tr class="border-b border-gray-50 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
+        <td class="${tdCls} font-medium">${escapeHtml(label)}</td>
+        ${kpiCols.map(c=>`<td class="${tdCls} text-right">${kpiCell(t,c)}</td>`).join('')}
+      </tr>`;
+    }
+    kpiHtml += `<tr class="bg-gray-50 dark:bg-gray-700/40 border-t-2 border-gray-200 dark:border-gray-600">
+      <td class="${tdTotCls}">${totRow.label}</td>
+      ${kpiCols.map(c=>`<td class="${tdTotCls} text-right">${kpiCell(totRow.t,c)}</td>`).join('')}
+    </tr></tbody></table></div>`;
+
+    // ── L2 matrix ──────────────────────────────────────────────
+    const matrix = co.l2Matrix || [];
+    let matHtml = `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-x-auto mt-6">
+      <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700">
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Net Sales by L2 Category × Store</h3>
+      </div>
+      <table class="w-full text-sm">
+        <thead><tr class="border-b border-gray-100 dark:border-gray-700">
+          <th class="${thCls}">Category</th>
+          ${WRS_STORE_KEYS.map(s=>`<th class="${thCls} text-right">${escapeHtml(WRS_STORE_NAMES[s])}</th>`).join('')}
+          <th class="${thCls} text-right">Total</th>
+        </tr></thead>
+        <tbody>`;
+    let grandTotal = 0;
+    const storeTotals = Object.fromEntries(WRS_STORE_KEYS.map(s=>[s,0]));
+    for (const row of matrix) {
+      grandTotal += row.total || 0;
+      WRS_STORE_KEYS.forEach(s => { storeTotals[s] += (row.byStore && row.byStore[s]) || 0; });
+      matHtml += `<tr class="border-b border-gray-50 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
+        <td class="${tdCls} font-medium">${escapeHtml(row.l2)}</td>
+        ${WRS_STORE_KEYS.map(s=>`<td class="${tdCls} text-right">${row.byStore && row.byStore[s] ? fmtDollar(row.byStore[s]) : '—'}</td>`).join('')}
+        <td class="${tdCls} text-right font-medium">${fmtDollar(row.total)}</td>
+      </tr>`;
+    }
+    matHtml += `<tr class="bg-gray-50 dark:bg-gray-700/40 border-t-2 border-gray-200 dark:border-gray-600">
+      <td class="${tdTotCls}">Grand Total</td>
+      ${WRS_STORE_KEYS.map(s=>`<td class="${tdTotCls} text-right">${fmtDollar(storeTotals[s])}</td>`).join('')}
+      <td class="${tdTotCls} text-right">${fmtDollar(grandTotal)}</td>
+    </tr></tbody></table></div>`;
+
+    el('wrs-pane-summary').innerHTML = kpiHtml + matHtml;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  WEEKLY RETAIL SUMMARY — T13 tab renderer
+  // ═══════════════════════════════════════════════════════════════
+  function renderT13() {
+    if (!wrsT13Data) return;
+    const d = wrsT13Data;
+    const weeks = d.weeks || [];
+    const dates = d.dates || [];
+    const total = d.total || {};
+    const stores = d.stores || {};
+    const thCls = 'px-2 py-2 text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap';
+    const tdCls = 'px-2 py-2 text-xs text-right text-gray-800 dark:text-gray-100 whitespace-nowrap';
+    const tdTotCls = 'px-2 py-2 text-xs text-right font-semibold text-gray-900 dark:text-white whitespace-nowrap';
+
+    // ── Top table: weekly totals (Net Sales, all stores + Grand Total + Budget + %Budget) ──
+    let topHtml = `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-x-auto">
+      <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700">
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Weekly Net Sales — Trailing 13 Weeks</h3>
+      </div>
+      <table class="w-full text-sm">
+        <thead><tr class="border-b border-gray-100 dark:border-gray-700">
+          <th class="${thCls} text-left">Week</th>
+          <th class="${thCls} text-left">Dates</th>
+          ${WRS_STORE_KEYS.map(s=>`<th class="${thCls}">${escapeHtml(WRS_STORE_NAMES[s])}</th>`).join('')}
+          <th class="${thCls}">Grand Total</th>
+          <th class="${thCls}">Budget</th>
+          <th class="${thCls}">% Budget</th>
+        </tr></thead>
+        <tbody>`;
+    weeks.forEach((wk, i) => {
+      const dObj = dates[i] || {};
+      const dateRange = dObj.start && dObj.end ? `${dObj.start.slice(5)} – ${dObj.end.slice(5)}` : '';
+      const gt = (total.netSales || [])[i] || 0;
+      const bud = (total.budget || [])[i] || 0;
+      const pctBud = bud > 0 ? ((gt / bud) * 100).toFixed(1) + '%' : '—';
+      const pctCls = bud > 0 ? wrsVarianceClass(gt - bud) : '';
+      topHtml += `<tr class="border-b border-gray-50 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
+        <td class="px-2 py-2 text-xs font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap">Wk ${wk}</td>
+        <td class="px-2 py-2 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">${dateRange}</td>
+        ${WRS_STORE_KEYS.map(s => {
+          const v = ((stores[s] || {}).netSales || [])[i] || 0;
+          return `<td class="${tdCls}">${v ? fmtK(v) : '—'}</td>`;
+        }).join('')}
+        <td class="${tdTotCls}">${fmtK(gt)}</td>
+        <td class="${tdCls}">${bud ? fmtK(bud) : '—'}</td>
+        <td class="${tdCls} ${pctCls}">${pctBud}</td>
+      </tr>`;
+    });
+    topHtml += `</tbody></table></div>`;
+
+    // ── Chart.js sparkline ──────────────────────────────────────
+    const chartHtml = `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-4">
+      <canvas id="wrs-t13-chart" height="120"></canvas>
+    </div>`;
+
+    // ── Bottom table: per-store trend rows ──────────────────────
+    let botHtml = `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-x-auto">
+      <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700">
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Per-Store Net Sales Trend</h3>
+      </div>
+      <table class="w-full text-sm">
+        <thead><tr class="border-b border-gray-100 dark:border-gray-700">
+          <th class="${thCls} text-left">Store</th>
+          ${weeks.map(w=>`<th class="${thCls}">Wk ${w}</th>`).join('')}
+          <th class="${thCls}">Avg</th>
+          <th class="${thCls}">Total</th>
+        </tr></thead>
+        <tbody>`;
+    for (const s of WRS_STORE_KEYS) {
+      const vals = (stores[s] || {}).netSales || [];
+      const filled = vals.filter(v => v > 0);
+      const avg = filled.length ? filled.reduce((a,b)=>a+b,0)/filled.length : 0;
+      const rowTotal = vals.reduce((a,b)=>a+b,0);
+      botHtml += `<tr class="border-b border-gray-50 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
+        <td class="px-2 py-2 text-xs font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap">${escapeHtml(WRS_STORE_NAMES[s])}</td>
+        ${vals.map(v=>`<td class="${tdCls}">${v ? fmtK(v) : '—'}</td>`).join('')}
+        <td class="${tdTotCls}">${avg ? fmtK(avg) : '—'}</td>
+        <td class="${tdTotCls}">${rowTotal ? fmtK(rowTotal) : '—'}</td>
+      </tr>`;
+    }
+    const totVals = total.netSales || [];
+    const totFilled = totVals.filter(v=>v>0);
+    const totAvg = totFilled.length ? totFilled.reduce((a,b)=>a+b,0)/totFilled.length : 0;
+    const totSum = totVals.reduce((a,b)=>a+b,0);
+    botHtml += `<tr class="bg-gray-50 dark:bg-gray-700/40 border-t-2 border-gray-200 dark:border-gray-600">
+      <td class="${tdTotCls} text-left">All Stores</td>
+      ${totVals.map(v=>`<td class="${tdTotCls}">${v ? fmtK(v) : '—'}</td>`).join('')}
+      <td class="${tdTotCls}">${totAvg ? fmtK(totAvg) : '—'}</td>
+      <td class="${tdTotCls}">${totSum ? fmtK(totSum) : '—'}</td>
+    </tr></tbody></table></div>`;
+
+    el('wrs-pane-t13').innerHTML = topHtml + chartHtml + botHtml;
+
+    // Draw chart after DOM is set
+    requestAnimationFrame(() => {
+      const ctx = document.getElementById('wrs-t13-chart');
+      if (!ctx || typeof Chart === 'undefined') return;
+      if (wrsT13Chart) { wrsT13Chart.destroy(); wrsT13Chart = null; }
+      const labels = weeks.map((w,i) => { const d2 = dates[i]; return d2 && d2.start ? d2.start.slice(5) : 'Wk '+w; });
+      wrsT13Chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Grand Total Net Sales',
+            data: total.netSales || [],
+            borderColor: '#3BB54A', backgroundColor: 'rgba(59,181,74,0.1)',
+            tension: 0.3, fill: true, pointRadius: 3,
+          }, {
+            label: 'Budget',
+            data: total.budget || [],
+            borderColor: '#94a3b8', backgroundColor: 'transparent',
+            borderDash: [4,4], tension: 0.3, pointRadius: 0,
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: true,
+          plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 11 } } } },
+          scales: {
+            y: { ticks: { callback: v => fmtK(v), font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } },
+            x: { ticks: { font: { size: 10 } }, grid: { display: false } },
+          },
+        },
+      });
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  WEEKLY RETAIL SUMMARY — Per-store tab renderer
+  // ═══════════════════════════════════════════════════════════════
+  function renderWrsStore(storeKey) {
+    if (!wrsData || !wrsData.stores) return;
+    const storeData = wrsData.stores[storeKey];
+    if (!storeData) {
+      el('wrs-pane-store').innerHTML = `<p class="text-sm text-gray-400 py-8 text-center">No data for ${escapeHtml(WRS_STORE_NAMES[storeKey] || storeKey)}.</p>`;
+      return;
+    }
+    const totals = storeData.totals || {};
+    const daily = storeData.daily || [];
+    const cats = (storeData.itemSales || {}).categories || [];
+    const itemTotals = (storeData.itemSales || {}).totals || {};
+    const storeName = WRS_STORE_NAMES[storeKey] || storeKey;
+    const week = wrsData.week;
+    const dates = wrsData.dates || [];
+
+    // Header card
+    const headerHtml = `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-5">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">${escapeHtml(storeName)}</h2>
+          <p class="text-xs text-gray-400 dark:text-gray-500">Week ${escapeHtml(String(week))} · ${dates.length ? escapeHtml(dates[0] + ' – ' + dates[dates.length-1]) : ''}</p>
+        </div>
+        <div class="flex flex-wrap gap-4">
+          ${[['Retail', totals.retail],['Bin', totals.bin],['Auction', totals.auction],['Net Sales', totals.netSales]].map(([l,v]) =>
+            `<div class="text-center"><div class="text-[10px] text-gray-400 uppercase tracking-wider">${l}</div><div class="text-base font-bold text-gray-900 dark:text-white">${fmtK(v||0)}</div></div>`
+          ).join('')}
+        </div>
+      </div>
+    </div>`;
+
+    // 13-column L2 table
+    const thCls = 'px-2 py-2 text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap';
+    const tdCls = 'px-2 py-2 text-xs text-right text-gray-800 dark:text-gray-100 whitespace-nowrap';
+    const tdTotCls = 'px-2 py-2 text-xs text-right font-semibold text-gray-900 dark:text-white whitespace-nowrap';
+    const cols = ['L2 Category','Qty','%Qty','Gross','Discounts','Refunds','Net','%NS','ASP','CPU','Ext Cost','Gross Profit','GPM%'];
+
+    function renderRow(row, isL3, isLegacy) {
+      const hasL3 = !isL3 && Array.isArray(row.l3Rows) && row.l3Rows.length > 0;
+      const expandKey = `${storeKey}:${row.category || row.l3}`;
+      const expanded = wrsExpandedL2.has(expandKey);
+      const label = isL3 ? row.l3 : row.category;
+      const chevron = hasL3
+        ? `<button onclick="toggleL2Expansion('${escapeHtml(storeKey)}','${escapeHtml(row.category)}')" class="mr-1 text-gray-400 hover:text-[#3BB54A] transition-colors" title="Toggle detail">${expanded ? '▾' : '▸'}</button>`
+        : (isLegacy && !isL3 ? '<span class="mr-1 text-gray-300 dark:text-gray-600" title="L3/cost unavailable — re-snapshot this week">◦</span>' : '<span class="mr-1 inline-block w-3"></span>');
+      const ns = row.netSales || 0;
+      const tot = itemTotals.netSales || 1;
+      const cpu = wrsCpu(row.cost, row.qty);
+      const rowBg = isL3
+        ? 'bg-gray-50 dark:bg-gray-700/30'
+        : 'hover:bg-gray-50 dark:hover:bg-gray-700/20';
+      const labelCell = isL3
+        ? `<td class="px-2 py-1.5 text-xs text-gray-600 dark:text-gray-300 pl-8 whitespace-nowrap">${escapeHtml(String(label||''))}</td>`
+        : `<td class="px-2 py-2 text-xs font-medium text-gray-800 dark:text-gray-100 whitespace-nowrap">${chevron}${escapeHtml(String(label||''))}</td>`;
+      return `<tr class="border-b border-gray-50 dark:border-gray-700/30 ${rowBg}">
+        ${labelCell}
+        <td class="${isL3?'px-2 py-1.5 text-xs text-right text-gray-600 dark:text-gray-300 whitespace-nowrap':tdCls}">${fmtInt(row.qty)}</td>
+        <td class="${isL3?'px-2 py-1.5 text-xs text-right text-gray-600 dark:text-gray-300 whitespace-nowrap':tdCls}">${row.pctQty != null ? fmtPct(row.pctQty) : '—'}</td>
+        <td class="${isL3?'px-2 py-1.5 text-xs text-right text-gray-600 dark:text-gray-300 whitespace-nowrap':tdCls}">${fmtDash(row.gross)}</td>
+        <td class="${isL3?'px-2 py-1.5 text-xs text-right text-gray-600 dark:text-gray-300 whitespace-nowrap':tdCls}">${row.discounts ? fmtDollar(row.discounts) : '—'}</td>
+        <td class="${isL3?'px-2 py-1.5 text-xs text-right text-gray-600 dark:text-gray-300 whitespace-nowrap':tdCls}">${row.refunds ? fmtDollar(row.refunds) : '—'}</td>
+        <td class="${isL3?'px-2 py-1.5 text-xs text-right font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap':tdCls+' font-medium'}">${fmtDash(row.netSales)}</td>
+        <td class="${isL3?'px-2 py-1.5 text-xs text-right text-gray-600 dark:text-gray-300 whitespace-nowrap':tdCls}">${ns && tot ? fmtPct((ns/tot)*100) : '—'}</td>
+        <td class="${isL3?'px-2 py-1.5 text-xs text-right text-gray-600 dark:text-gray-300 whitespace-nowrap':tdCls}">${fmtDash(row.asp)}</td>
+        <td class="${isL3?'px-2 py-1.5 text-xs text-right text-gray-600 dark:text-gray-300 whitespace-nowrap':tdCls}">${cpu}</td>
+        <td class="${isL3?'px-2 py-1.5 text-xs text-right text-gray-600 dark:text-gray-300 whitespace-nowrap':tdCls}">${fmtDash(row.extCost)}</td>
+        <td class="${isL3?'px-2 py-1.5 text-xs text-right text-gray-600 dark:text-gray-300 whitespace-nowrap':tdCls}">${fmtDash(row.grossProfit)}</td>
+        <td class="${isL3?'px-2 py-1.5 text-xs text-right text-gray-600 dark:text-gray-300 whitespace-nowrap':tdCls}">${row.gpmPct != null ? fmtPct(row.gpmPct) : '—'}</td>
+      </tr>`;
+    }
+
+    let tbody = '';
+    for (const c of cats) {
+      const isLegacy = !Array.isArray(c.l3Rows);
+      tbody += renderRow(c, false, isLegacy);
+      if (!isLegacy && wrsExpandedL2.has(`${storeKey}:${c.category}`)) {
+        for (const l of c.l3Rows) tbody += renderRow(l, true, false);
+      }
+    }
+
+    // Bin / Total With Bin footer rows
+    const binSales = daily.reduce((s,r) => s + (Number(r.bin)||0), 0);
+    const l2Grand = itemTotals.netSales || 0;
+    const totalWithBin = l2Grand + binSales;
+    tbody += `<tr class="border-t border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/30">
+      <td class="px-2 py-2 text-xs font-medium text-gray-600 dark:text-gray-300 whitespace-nowrap pl-4">Bin Sales</td>
+      <td colspan="5" class="px-2 py-2 text-xs text-gray-400"></td>
+      <td class="${tdTotCls}">${fmtDollar(binSales)}</td>
+      <td colspan="6"></td>
+    </tr>
+    <tr class="bg-gray-100 dark:bg-gray-700/50">
+      <td class="px-2 py-2 text-xs font-semibold text-gray-800 dark:text-gray-100 whitespace-nowrap pl-4">Total With Bin Sales</td>
+      <td colspan="5" class="px-2 py-2 text-xs text-gray-400"></td>
+      <td class="${tdTotCls}">${fmtDollar(totalWithBin)}</td>
+      <td colspan="6"></td>
+    </tr>`;
+
+    const tableHtml = `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead><tr class="border-b border-gray-100 dark:border-gray-700">
+          ${cols.map(c=>`<th class="${thCls}${c==='L2 Category'?' text-left':''}">${escapeHtml(c)}</th>`).join('')}
+        </tr></thead>
+        <tbody>${tbody}</tbody>
+        <tfoot><tr class="bg-gray-50 dark:bg-gray-700/40 border-t-2 border-gray-200 dark:border-gray-600">
+          <td class="${tdTotCls} text-left">L2 Total</td>
+          <td class="${tdTotCls}">${fmtInt(itemTotals.qty)}</td>
+          <td class="${tdTotCls}">100%</td>
+          <td class="${tdTotCls}">${fmtDash(itemTotals.gross)}</td>
+          <td class="${tdTotCls}">${itemTotals.discounts ? fmtDollar(itemTotals.discounts) : '—'}</td>
+          <td class="${tdTotCls}">${itemTotals.refunds ? fmtDollar(itemTotals.refunds) : '—'}</td>
+          <td class="${tdTotCls}">${fmtDash(itemTotals.netSales)}</td>
+          <td class="${tdTotCls}">—</td>
+          <td class="${tdTotCls}">${fmtDash(itemTotals.asp)}</td>
+          <td class="${tdTotCls}">—</td>
+          <td class="${tdTotCls}">${fmtDash(itemTotals.cost)}</td>
+          <td class="${tdTotCls}">${fmtDash(itemTotals.grossProfit)}</td>
+          <td class="${tdTotCls}">${itemTotals.gpmPct != null ? fmtPct(itemTotals.gpmPct) : '—'}</td>
+        </tr></tfoot>
+      </table>
+    </div>`;
+
+    el('wrs-pane-store').innerHTML = headerHtml + tableHtml;
+  }
+
+  function toggleL2Expansion(storeKey, l2) {
+    const key = `${storeKey}:${l2}`;
+    if (wrsExpandedL2.has(key)) wrsExpandedL2.delete(key);
+    else wrsExpandedL2.add(key);
+    renderWrsStore(storeKey);
+  }
+  window.toggleL2Expansion = toggleL2Expansion;
+
+  // ═══════════════════════════════════════════════════════════════
+  //  SETTINGS — ITEM MASTER COSTS
+  // ═══════════════════════════════════════════════════════════════
+  function imSetStatus(msg, type) {
+    const s = el('im-status');
+    s.classList.remove('hidden');
+    const cls = {
+      ok:    'border-green-200 dark:border-green-700 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400',
+      error: 'border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400',
+      info:  'border-yellow-200 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400',
+    };
+    s.className = 'text-sm rounded-lg px-4 py-3 border ' + (cls[type] || cls.info);
+    s.textContent = msg;
+  }
+
+  function parseItemCostsCSV(text) {
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (!lines.length) throw new Error('Empty CSV');
+    const header = lines[0].split(',').map(h => h.replace(/^"|"$/g,'').trim().toLowerCase());
+    const itemNoIdx = header.findIndex(h => h.includes('item no') || h === 'item_no' || h === 'itemno');
+    const costIdx = header.findIndex(h => h.includes('item cost') || h.includes('cost') || h === 'cpu');
+    const descIdx = header.findIndex(h => h.includes('desc') || h.includes('name'));
+    if (itemNoIdx < 0 || costIdx < 0) throw new Error(`CSV must have "Item No." and "Item Cost" columns. Found: ${header.join(', ')}`);
+    const items = {};
+    for (let i = 1; i < lines.length; i++) {
+      const cells = lines[i].split(',').map(c => c.replace(/^"|"$/g,'').trim());
+      const itemNo = String(cells[itemNoIdx] || '').trim().replace(/^0+/, '');
+      const cost = parseFloat(String(cells[costIdx] || '').replace(/[$,]/g,''));
+      if (!/^\d{4,5}$/.test(itemNo)) continue;
+      if (!Number.isFinite(cost) || cost < 0) continue;
+      items[itemNo] = { cost, desc: descIdx >= 0 ? (cells[descIdx] || '') : '' };
+    }
+    return items;
+  }
+
+  function parseItemCostsJSON(text) {
+    const raw = JSON.parse(text);
+    if (raw && typeof raw === 'object' && !Array.isArray(raw) && raw.items) return raw.items;
+    if (Array.isArray(raw)) {
+      const items = {};
+      for (const r of raw) {
+        const itemNo = String(r.itemNo || r.item_no || r.ItemNo || '').trim().replace(/^0+/,'');
+        const cost = parseFloat(r.cost || r.Cost || 0);
+        if (!/^\d{4,5}$/.test(itemNo) || !Number.isFinite(cost) || cost < 0) continue;
+        items[itemNo] = { cost, desc: r.desc || r.description || r.name || '' };
+      }
+      return items;
+    }
+    throw new Error('JSON must be { items: {...} } or an array of { itemNo, cost } objects');
+  }
+
+  function parseItemCostsHTML(text) {
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+    const rows = Array.from(doc.querySelectorAll('tr'));
+    if (!rows.length) throw new Error('No <tr> elements found in HTML file');
+    // Detect column indices from first few rows that have digit-only cells
+    let itemNoCol = -1, costCol = -1, descCol = -1;
+    for (const row of rows.slice(0, 5)) {
+      const cells = Array.from(row.querySelectorAll('td,th')).map(c => c.textContent.trim());
+      if (!cells.length) continue;
+      // Look for header row
+      const lower = cells.map(c => c.toLowerCase());
+      if (itemNoCol < 0) {
+        const i = lower.findIndex(c => c.includes('item no') || c === 'item_no');
+        if (i >= 0) itemNoCol = i;
+      }
+      if (costCol < 0) {
+        const i = lower.findIndex(c => c.includes('cost') || c.includes('cpu'));
+        if (i >= 0) costCol = i;
+      }
+      if (descCol < 0) {
+        const i = lower.findIndex(c => c.includes('desc') || c.includes('name'));
+        if (i >= 0) descCol = i;
+      }
+    }
+    // If headers not found, fall back to sniffing data rows
+    if (itemNoCol < 0) {
+      for (const row of rows.slice(0, 10)) {
+        const cells = Array.from(row.querySelectorAll('td')).map(c => c.textContent.trim());
+        for (let i = 0; i < cells.length; i++) {
+          if (/^\d{4,5}$/.test(cells[i])) { itemNoCol = i; break; }
+        }
+        if (itemNoCol >= 0) break;
+      }
+    }
+    if (itemNoCol < 0) throw new Error('Could not detect "Item No." column in HTML. Try CSV format.');
+    // Detect cost column: first column with "$" or decimal values after the itemNo column
+    if (costCol < 0) {
+      for (const row of rows.slice(0, 15)) {
+        const cells = Array.from(row.querySelectorAll('td')).map(c => c.textContent.trim());
+        if (!cells[itemNoCol] || !/^\d{4,5}$/.test(cells[itemNoCol])) continue;
+        for (let i = itemNoCol + 1; i < cells.length; i++) {
+          const v = parseFloat(cells[i].replace(/[$,]/g,''));
+          if (Number.isFinite(v) && v >= 0 && v < 10000) { costCol = i; break; }
+        }
+        if (costCol >= 0) break;
+      }
+    }
+    if (costCol < 0) throw new Error('Could not detect cost column in HTML. Try CSV format.');
+    const items = {};
+    for (const row of rows) {
+      const cells = Array.from(row.querySelectorAll('td')).map(c => c.textContent.trim());
+      if (cells.length <= Math.max(itemNoCol, costCol)) continue;
+      const itemNo = cells[itemNoCol].trim().replace(/^0+/,'');
+      if (!/^\d{4,5}$/.test(itemNo)) continue;
+      const cost = parseFloat(cells[costCol].replace(/[$,]/g,''));
+      if (!Number.isFinite(cost) || cost < 0) continue;
+      items[itemNo] = { cost, desc: descCol >= 0 && cells[descCol] ? cells[descCol] : '' };
+    }
+    return items;
+  }
+
+  async function importItemCosts() {
+    const fileInput = el('im-file');
+    if (!fileInput.files || !fileInput.files[0]) { imSetStatus('Please select a file first.', 'info'); return; }
+    const file = fileInput.files[0];
+    imSetStatus('Parsing file…', 'info');
+    let items;
+    try {
+      const text = await file.text();
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (ext === 'json') items = parseItemCostsJSON(text);
+      else if (ext === 'csv' || ext === 'txt') items = parseItemCostsCSV(text);
+      else items = parseItemCostsHTML(text); // .html, .htm or unknown
+    } catch (e) {
+      imSetStatus('Parse error: ' + e.message, 'error');
+      return;
+    }
+    const count = Object.keys(items).length;
+    if (!count) { imSetStatus('No valid items found in file. Check format.', 'error'); return; }
+    imSetStatus(`Uploading ${count.toLocaleString()} items…`, 'info');
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=item-costs`, {
+        method: 'POST',
+        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      imSetStatus(`Uploaded ${data.count.toLocaleString()} items (${data.rejected||0} rejected). Re-snapshot history to apply costs.`, 'ok');
+      refreshItemCostsStatus();
+    } catch (e) {
+      imSetStatus('Upload failed: ' + e.message, 'error');
+    }
+  }
+
+  async function refreshItemCostsStatus() {
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=item-costs`, {
+        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+      });
+      const data = await resp.json();
+      const summEl = el('im-summary');
+      if (!resp.ok || data.error) {
+        summEl.textContent = 'Status: error reading – ' + (data.error || `HTTP ${resp.status}`);
+      } else if (!data.importedAt) {
+        summEl.textContent = 'Status: no Item Master data uploaded yet.';
+      } else {
+        summEl.textContent = `Status: ${(data.count||0).toLocaleString()} items · imported ${new Date(data.importedAt).toLocaleString()}`;
+      }
+    } catch(e) {
+      el('im-summary').textContent = 'Status: could not fetch – ' + e.message;
+    }
+  }
+
+  window.importItemCosts = importItemCosts;
+  window.refreshItemCostsStatus = refreshItemCostsStatus;
+
+  // Auto-load item costs status on Settings page visit
+  (function() {
+    const orig = window.navigateToPage;
+    window.navigateToPage = function(page) {
+      orig(page);
+      if (page === 'settings') refreshItemCostsStatus();
+    };
+  })();
+
+  // ═══════════════════════════════════════════════════════════════
   //  SIDEBAR
   // ═══════════════════════════════════════════════════════════════
   function initSidebar() {
@@ -2824,6 +3540,19 @@
     initSidebar();
     initDarkMode();
     el("refresh-btn").onclick = loadAll;
+
+    // Wire Weekly Retail tab clicks once
+    document.querySelectorAll('#wrs-tabs .wrs-tab').forEach(btn => {
+      btn.addEventListener('click', () => switchWrsTab(btn.dataset.wrsTab));
+    });
+    document.getElementById('wrs-week-select').addEventListener('change', () => {
+      wrsData = null; wrsT13Data = null;
+      loadWeeklyRetail(true);
+    });
+    document.getElementById('wrs-year-select').addEventListener('change', () => {
+      wrsData = null; wrsT13Data = null;
+      loadWeeklyRetail(true);
+    });
 
     // Hourly modal: close on button click, backdrop click, or Escape key.
     // The item-sales drill-down sits on top; Escape closes the topmost modal first.
