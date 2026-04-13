@@ -1336,10 +1336,16 @@ async function saveItemSalesSnapshot(env, store, dateStr, itemData) {
 
 // ─── Admin-managed item categorization overrides ────────────────
 // Stored globally (all stores share) in KV key `item-overrides:global` as:
-//   { items: { "id:<cloverItemId>"|"name:<normalized>": "<L2>" }, patterns: [{type,value,category}] }
+//   {
+//     items:   { "id:<cloverItemId>"|"name:<normalized>": "<L2>" },
+//     patterns:[{type,value,category}],
+//     l3Map:   { "<clover-L3-category-name>": "<L2>" }
+//   }
 // pattern type ∈ "prefix" | "contains" | "im-number".
+// l3Map catches items that DO have a Clover catalog category but that L3 name
+// isn't in the built-in L3_TO_L2 map — these otherwise route to "Uncategorized".
 const ITEM_OVERRIDES_KEY = "item-overrides:global";
-const EMPTY_OVERRIDES = { items: {}, patterns: [] };
+const EMPTY_OVERRIDES = { items: {}, patterns: [], l3Map: {} };
 const VALID_L2 = new Set([
   "Softline - Apparel", "Softline - Shoes", "Softline - Accessories",
   "Home", "Furniture", "Hardlines",
@@ -1364,6 +1370,7 @@ async function fetchItemOverrides(env) {
   return {
     items: val.items && typeof val.items === "object" ? val.items : {},
     patterns: Array.isArray(val.patterns) ? val.patterns : [],
+    l3Map: val.l3Map && typeof val.l3Map === "object" ? val.l3Map : {},
   };
 }
 
@@ -1446,10 +1453,19 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides) 
         // override already decided
       } else if (l3 === "Sku Book Items") {
         l2 = SKU_BOOK_TO_L2[li.name] || "Hardlines";
+      } else if (l3 && ov.l3Map && ov.l3Map[l3] && VALID_L2.has(ov.l3Map[l3])) {
+        // Admin L3 mapping wins over built-in L3_TO_L2 so overrides can also
+        // correct mis-categorized Clover categories, not just add new ones.
+        l2 = ov.l3Map[l3];
       } else if (l3 && L3_TO_L2[l3]) {
         l2 = L3_TO_L2[l3];
       } else if (l3) {
-        unmappedL3[l3] = (unmappedL3[l3] || 0) + 1;
+        // Enriched tracking: {qty, net} so the Settings UI can rank L3s by
+        // revenue impact and admins fix the biggest offenders first.
+        const bucket = unmappedL3[l3] || { qty: 0, net: 0 };
+        bucket.qty += qty;
+        bucket.net += priceCents / 100;
+        unmappedL3[l3] = bucket;
         l2 = "Uncategorized";
       } else if (li.name === "Refund" || priceCents < 0) {
         l2 = "Refund";
@@ -1972,8 +1988,9 @@ export default {
         return new Response(JSON.stringify({ error: "Missing start or end param (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
       }
 
-      // Union { name → {qty, net, itemId} } across the date range
+      // Union { name → {qty, net, itemId} } and { l3 → {qty, net} } across the range.
       const agg = {};
+      const l3Agg = {};
       const current = new Date(start + "T00:00:00Z");
       const endDate = new Date(end + "T00:00:00Z");
       const datesScanned = [];
@@ -2002,15 +2019,34 @@ export default {
             agg[name] = prior;
           }
         }
+        const uL3 = snap?._debug?.unmappedL3;
+        if (uL3 && typeof uL3 === "object") {
+          for (const [l3, val] of Object.entries(uL3)) {
+            let qty = 0, net = 0;
+            if (typeof val === "number") {
+              qty = val;
+            } else if (val && typeof val === "object") {
+              qty = Number(val.qty) || 0;
+              net = Number(val.net) || 0;
+            }
+            const prior = l3Agg[l3] || { l3, qty: 0, net: 0 };
+            prior.qty += qty;
+            prior.net += net;
+            l3Agg[l3] = prior;
+          }
+        }
         current.setUTCDate(current.getUTCDate() + 1);
       }
 
       const items = Object.values(agg)
         .map(i => ({ ...i, qty: Math.round(i.qty * 100) / 100, net: Math.round(i.net * 100) / 100 }))
         .sort((a, b) => b.net - a.net);
+      const l3Categories = Object.values(l3Agg)
+        .map(i => ({ ...i, qty: Math.round(i.qty * 100) / 100, net: Math.round(i.net * 100) / 100 }))
+        .sort((a, b) => b.net - a.net);
 
       return new Response(JSON.stringify({
-        store: storeParam, start, end, datesScanned, items,
+        store: storeParam, start, end, datesScanned, items, l3Categories,
       }), { headers: corsJson });
     }
 
@@ -2044,6 +2080,7 @@ export default {
         const next = {
           items: existing.items || {},
           patterns: existing.patterns || [],
+          l3Map: existing.l3Map || {},
         };
 
         if (body && typeof body.items === "object" && body.items !== null) {
@@ -2073,6 +2110,17 @@ export default {
             }
           }
           next.patterns = body.patterns;
+        }
+
+        if (body && typeof body.l3Map === "object" && body.l3Map !== null) {
+          for (const [k, v] of Object.entries(body.l3Map)) {
+            if (!VALID_L2.has(v)) {
+              return new Response(JSON.stringify({
+                error: `Invalid L2 "${v}" for L3 "${k}". Allowed: ${[...VALID_L2].join(", ")}`
+              }), { status: 400, headers: corsJson });
+            }
+          }
+          next.l3Map = body.l3Map;
         }
 
         await env.SALES_SNAPSHOTS.put(ITEM_OVERRIDES_KEY, JSON.stringify(next));
