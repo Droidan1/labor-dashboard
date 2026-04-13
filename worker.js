@@ -1334,8 +1334,69 @@ async function saveItemSalesSnapshot(env, store, dateStr, itemData) {
   }
 }
 
+// ─── Admin-managed item categorization overrides ────────────────
+// Stored globally (all stores share) in KV key `item-overrides:global` as:
+//   { items: { "id:<cloverItemId>"|"name:<normalized>": "<L2>" }, patterns: [{type,value,category}] }
+// pattern type ∈ "prefix" | "contains" | "im-number".
+const ITEM_OVERRIDES_KEY = "item-overrides:global";
+const EMPTY_OVERRIDES = { items: {}, patterns: [] };
+const VALID_L2 = new Set([
+  "Softline - Apparel", "Softline - Shoes", "Softline - Accessories",
+  "Home", "Furniture", "Hardlines",
+  "Consumable Food", "Consumable HBA", "Consumable Other",
+  "Seasonal", "Bin Products", "Sku Book Items", "Custom Sales", "Refund",
+]);
+
+// Normalize an item name for lookup: trim, lowercase, collapse whitespace,
+// normalize en/em dashes. Matches what we'd write into `overrides.items` as a key.
+function normalizeItemName(s) {
+  return String(s || "")
+    .replace(/\u2013|\u2014/g, "-")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+async function fetchItemOverrides(env) {
+  if (!env.SALES_SNAPSHOTS) return EMPTY_OVERRIDES;
+  const val = await env.SALES_SNAPSHOTS.get(ITEM_OVERRIDES_KEY, "json");
+  if (!val || typeof val !== "object") return EMPTY_OVERRIDES;
+  return {
+    items: val.items && typeof val.items === "object" ? val.items : {},
+    patterns: Array.isArray(val.patterns) ? val.patterns : [],
+  };
+}
+
+// Match a line item against admin pattern rules. First matching rule wins.
+// type=prefix: normalized name startsWith value (case-insensitive, normalized)
+// type=contains: normalized name includes value
+// type=im-number: the already-extracted 4-5 digit IM number equals value exactly
+function matchOverridePattern(rawName, imNum, patterns) {
+  if (!patterns || !patterns.length) return null;
+  const norm = normalizeItemName(rawName);
+  for (const p of patterns) {
+    if (!p || !p.type || !p.value || !p.category) continue;
+    if (!VALID_L2.has(p.category)) continue;
+    const v = String(p.value).trim().toLowerCase();
+    if (!v) continue;
+    if (p.type === "prefix") {
+      if (norm.startsWith(v)) return p.category;
+    } else if (p.type === "contains") {
+      if (norm.includes(v)) return p.category;
+    } else if (p.type === "im-number") {
+      if (imNum && String(imNum) === String(p.value).trim()) return p.category;
+    }
+  }
+  return null;
+}
+
 // ─── Aggregate orders into L2 item sales categories ─────────────
-function aggregateItemSales(allElements, itemCatMap, store, dateStr) {
+// `overrides` is the shape returned by fetchItemOverrides(). Safe to pass
+// undefined / EMPTY_OVERRIDES — caller threads it in for live + snapshot paths.
+function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides) {
+  const ov = overrides || EMPTY_OVERRIDES;
+  const ovItems = ov.items || {};
+  const ovPatterns = ov.patterns || [];
   const cats = {};
   const unmappedL3 = {};
   const noCategory = {};
@@ -1363,16 +1424,27 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr) {
       const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
       const priceCents = (li.price || 0) * qty;
 
+      // Tier 0: admin-assigned per-item override (id: or name: key). Skips all
+      // downstream heuristics so Settings UI edits take effect immediately.
+      const itemId = li.item?.id;
+      const nameKey = normalizeItemName(li.name);
+      let l2 = null;
+      if (itemId && ovItems["id:" + itemId] && VALID_L2.has(ovItems["id:" + itemId])) {
+        l2 = ovItems["id:" + itemId];
+      } else if (nameKey && ovItems["name:" + nameKey] && VALID_L2.has(ovItems["name:" + nameKey])) {
+        l2 = ovItems["name:" + nameKey];
+      }
+
       // Determine L3 category from item reference → category map
       let l3 = null;
-      const itemId = li.item?.id;
-      if (itemId && itemCatMap[itemId]) {
+      if (!l2 && itemId && itemCatMap[itemId]) {
         l3 = itemCatMap[itemId];
       }
 
       // Map L3 → L2
-      let l2;
-      if (l3 === "Sku Book Items") {
+      if (l2) {
+        // override already decided
+      } else if (l3 === "Sku Book Items") {
         l2 = SKU_BOOK_TO_L2[li.name] || "Hardlines";
       } else if (l3 && L3_TO_L2[l3]) {
         l2 = L3_TO_L2[l3];
@@ -1394,7 +1466,9 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr) {
             l2 = IM_TO_L2[imNum];
           } else {
             const n = (li.name || "").toUpperCase();
-            if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV/i.test(n)) {
+            if (/EASTER|VALENTINE|CHRISTMAS|HALLOWEEN|FOURTH OF JULY|4TH OF JULY|ST[.\s]*PATRICK|HOLIDAY|SEASONAL/i.test(n)) {
+              l2 = "Seasonal";
+            } else if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV|RECLINER|LOVESEAT|OTTOMAN|MATTRESS/i.test(n)) {
               l2 = "Furniture";
             } else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE/i.test(n)) {
               l2 = "Home";
@@ -1408,12 +1482,24 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr) {
               l2 = "Consumable HBA";
             } else if (/FOOD|SNACK|CANDY|BEVERAGE|DRINK/i.test(n)) {
               l2 = "Consumable Food";
-            } else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY/i.test(n)) {
+            } else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY|HAMILTON BEACH|FIRE PIT/i.test(n)) {
               l2 = "Hardlines";
             } else {
-              const itemName = li.name || "unknown";
-              noCategory[itemName] = (noCategory[itemName] || 0) + 1;
-              l2 = "Custom Sales";
+              // Tier 6.5: admin-defined pattern rules (prefix / contains / im-number).
+              // First match wins so more specific rules should be written earlier.
+              const patternL2 = matchOverridePattern(li.name, imNum, ovPatterns);
+              if (patternL2) {
+                l2 = patternL2;
+              } else {
+                const itemName = li.name || "unknown";
+                const bucket = noCategory[itemName] || { qty: 0, net: 0, itemId: itemId || null };
+                bucket.qty += qty;
+                // Record positive net; refund branch above won't reach here.
+                bucket.net += priceCents / 100;
+                if (!bucket.itemId && itemId) bucket.itemId = itemId;
+                noCategory[itemName] = bucket;
+                l2 = "Custom Sales";
+              }
             }
           }
         }
@@ -1576,7 +1662,7 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr) {
 // ─── CORS headers ────────────────────────────────────────────────
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, X-Snapshot-Secret",
 };
 
@@ -1844,13 +1930,14 @@ export default {
         untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
       }
 
+      const overrides = await fetchItemOverrides(env);
       const results = {};
       for (const store of stores) {
         try {
           const elements = await fetchItemOrders(store, env, sinceTs, untilTs);
           if (!elements) { results[store] = "skipped (no credentials)"; continue; }
           const itemCatMap = await fetchItemCategoryMap(store, env);
-          const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam);
+          const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides);
           await saveItemSalesSnapshot(env, store, dateParam, itemData);
           results[store] = { ok: true, orders: itemData.orderCount, netSales: itemData.totals.netSales };
         } catch (e) {
@@ -1858,6 +1945,141 @@ export default {
         }
       }
       return new Response(JSON.stringify({ ok: true, date: dateParam, results }), { headers: corsJson });
+    }
+
+    // ── Admin: list items that fell into "Custom Sales" for a date range
+    //    ?action=noncategorized-items&store=BL1&start=YYYY-MM-DD&end=YYYY-MM-DD
+    // Reads `items:<store>:<date>` KV snapshots and unions every `_debug.noCategory`
+    // entry, returning [{name, itemId, qty, net}] sorted by net desc. Requires the
+    // same X-Snapshot-Secret header as other admin endpoints.
+    if (url.searchParams.get("action") === "noncategorized-items") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const secret = request.headers.get("X-Snapshot-Secret");
+      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      }
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+
+      const storeParam = (url.searchParams.get("store") || "").toUpperCase();
+      if (!storeParam) {
+        return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
+      }
+      const start = url.searchParams.get("start");
+      const end = url.searchParams.get("end");
+      if (!start || !end) {
+        return new Response(JSON.stringify({ error: "Missing start or end param (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+      }
+
+      // Union { name → {qty, net, itemId} } across the date range
+      const agg = {};
+      const current = new Date(start + "T00:00:00Z");
+      const endDate = new Date(end + "T00:00:00Z");
+      const datesScanned = [];
+      while (current <= endDate) {
+        const dateStr = current.toISOString().slice(0, 10);
+        datesScanned.push(dateStr);
+        const snap = await env.SALES_SNAPSHOTS.get(
+          `items:${storeParam.toLowerCase()}:${dateStr}`, "json"
+        );
+        const noCat = snap?._debug?.noCategory;
+        if (noCat && typeof noCat === "object") {
+          for (const [name, val] of Object.entries(noCat)) {
+            // Legacy shape was plain count (number). New shape is {qty, net, itemId}.
+            let qty = 0, net = 0, itemId = null;
+            if (typeof val === "number") {
+              qty = val;
+            } else if (val && typeof val === "object") {
+              qty = Number(val.qty) || 0;
+              net = Number(val.net) || 0;
+              itemId = val.itemId || null;
+            }
+            const prior = agg[name] || { name, itemId: null, qty: 0, net: 0 };
+            prior.qty += qty;
+            prior.net += net;
+            if (!prior.itemId && itemId) prior.itemId = itemId;
+            agg[name] = prior;
+          }
+        }
+        current.setUTCDate(current.getUTCDate() + 1);
+      }
+
+      const items = Object.values(agg)
+        .map(i => ({ ...i, qty: Math.round(i.qty * 100) / 100, net: Math.round(i.net * 100) / 100 }))
+        .sort((a, b) => b.net - a.net);
+
+      return new Response(JSON.stringify({
+        store: storeParam, start, end, datesScanned, items,
+      }), { headers: corsJson });
+    }
+
+    // ── Admin: read the current override map
+    //    GET  ?action=item-overrides  → { items, patterns }
+    //    POST ?action=item-overrides  with body { items?, patterns? }
+    //       Merges into the existing KV record. Pass the full `items` object to
+    //       replace per-item assignments wholesale; pass the full `patterns` array
+    //       to replace the rule list. Either key can be omitted to preserve it.
+    if (url.searchParams.get("action") === "item-overrides") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const secret = request.headers.get("X-Snapshot-Secret");
+      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      }
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+
+      if (request.method === "GET") {
+        const current = await fetchItemOverrides(env);
+        return new Response(JSON.stringify(current), { headers: corsJson });
+      }
+
+      if (request.method === "POST") {
+        let body;
+        try { body = await request.json(); }
+        catch { return new Response(JSON.stringify({ error: "Invalid JSON body" }), { status: 400, headers: corsJson }); }
+
+        const existing = await fetchItemOverrides(env);
+        const next = {
+          items: existing.items || {},
+          patterns: existing.patterns || [],
+        };
+
+        if (body && typeof body.items === "object" && body.items !== null) {
+          // Validate every L2 before persisting. Reject wholesale on first bad
+          // value so admins don't silently write a typo that kills categorization.
+          for (const [k, v] of Object.entries(body.items)) {
+            if (!VALID_L2.has(v)) {
+              return new Response(JSON.stringify({
+                error: `Invalid L2 "${v}" for item "${k}". Allowed: ${[...VALID_L2].join(", ")}`
+              }), { status: 400, headers: corsJson });
+            }
+          }
+          next.items = body.items;
+        }
+
+        if (Array.isArray(body?.patterns)) {
+          for (const p of body.patterns) {
+            if (!p || !["prefix", "contains", "im-number"].includes(p.type) || !p.value || !p.category) {
+              return new Response(JSON.stringify({
+                error: "Each pattern needs {type: prefix|contains|im-number, value, category}"
+              }), { status: 400, headers: corsJson });
+            }
+            if (!VALID_L2.has(p.category)) {
+              return new Response(JSON.stringify({
+                error: `Invalid L2 "${p.category}" in pattern rule`
+              }), { status: 400, headers: corsJson });
+            }
+          }
+          next.patterns = body.patterns;
+        }
+
+        await env.SALES_SNAPSHOTS.put(ITEM_OVERRIDES_KEY, JSON.stringify(next));
+        return new Response(JSON.stringify({ ok: true, ...next }), { headers: corsJson });
+      }
+
+      return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
     }
 
     // ── Item sales for a single ET hour: ?action=items-hour&store=BL1&date=YYYY-MM-DD&hour=14
@@ -1886,7 +2108,8 @@ export default {
           return new Response(JSON.stringify({ error: "Store keys not found" }), { status: 404, headers: corsJson });
         }
         const itemCatMap = await fetchItemCategoryMap(store, env);
-        const result = aggregateItemSales(elements, itemCatMap, store, dateParam);
+        const overrides = await fetchItemOverrides(env);
+        const result = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides);
         result.hour = hourParam;
         return new Response(JSON.stringify(result), { headers: corsJson });
       } catch (err) {
@@ -1991,7 +2214,8 @@ export default {
       try {
         const allElements = await fetchItemOrders(store, env, startOfDay);
         const itemCatMap = await fetchItemCategoryMap(store, env);
-        const result = aggregateItemSales(allElements || [], itemCatMap, store, todayStr);
+        const overrides = await fetchItemOverrides(env);
+        const result = aggregateItemSales(allElements || [], itemCatMap, store, todayStr, overrides);
         return new Response(JSON.stringify(result), { headers: corsJson });
       } catch (err) {
         return new Response(JSON.stringify({ error: "Items fetch failed", detail: err.message }), {
@@ -2048,6 +2272,7 @@ export default {
     const { dateStr: todayStr, startOfDay } = getETToday();
 
     const results = {};
+    const overrides = await fetchItemOverrides(env);
 
     for (const store of ALL_STORES) {
       try {
@@ -2060,7 +2285,7 @@ export default {
           const elements = await fetchItemOrders(store, env, startOfDay);
           if (elements) {
             const itemCatMap = await fetchItemCategoryMap(store, env);
-            const itemData = aggregateItemSales(elements, itemCatMap, store, todayStr);
+            const itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides);
             await saveItemSalesSnapshot(env, store, todayStr, itemData);
             results[store].items = "ok";
           } else {
