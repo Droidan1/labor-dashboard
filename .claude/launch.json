@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "Static File Server",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8080"],
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-l", "8080", "."],
       "port": 8080
     }
   ]
