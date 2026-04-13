@@ -470,22 +470,47 @@
 
             <div id="overrides-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
 
-            <div id="overrides-table-wrap" class="hidden">
-              <div class="overflow-x-auto">
-                <table class="min-w-full text-sm">
-                  <thead class="bg-gray-50 dark:bg-gray-700/50 text-xs text-gray-600 dark:text-gray-300 uppercase">
-                    <tr>
-                      <th class="px-3 py-2 text-left">Item Name</th>
-                      <th class="px-3 py-2 text-right">Qty</th>
-                      <th class="px-3 py-2 text-right">Net</th>
-                      <th class="px-3 py-2 text-left">Assign L2</th>
-                      <th class="px-3 py-2 text-left">Also add rule</th>
-                    </tr>
-                  </thead>
-                  <tbody id="overrides-tbody" class="divide-y divide-gray-100 dark:divide-gray-700"></tbody>
-                </table>
+            <div id="overrides-table-wrap" class="hidden space-y-6">
+              <div id="overrides-items-section">
+                <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Custom Sales items</h3>
+                <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Items with no Clover catalog category. Assign each to an L2 and optionally save a prefix rule.</p>
+                <div class="overflow-x-auto">
+                  <table class="min-w-full text-sm">
+                    <thead class="bg-gray-50 dark:bg-gray-700/50 text-xs text-gray-600 dark:text-gray-300 uppercase">
+                      <tr>
+                        <th class="px-3 py-2 text-left">Item Name</th>
+                        <th class="px-3 py-2 text-right">Qty</th>
+                        <th class="px-3 py-2 text-right">Net</th>
+                        <th class="px-3 py-2 text-left">Assign L2</th>
+                        <th class="px-3 py-2 text-left">Also add rule</th>
+                      </tr>
+                    </thead>
+                    <tbody id="overrides-tbody" class="divide-y divide-gray-100 dark:divide-gray-700"></tbody>
+                  </table>
+                </div>
+                <p id="overrides-items-empty" class="hidden text-xs text-gray-400 dark:text-gray-500 italic">No Custom Sales items in this range.</p>
               </div>
-              <div class="mt-4 flex flex-wrap gap-3">
+
+              <div id="overrides-l3-section">
+                <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Uncategorized L3 categories</h3>
+                <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Clover catalog categories that aren't mapped to an L2 yet. One assignment covers every item in that category across all stores.</p>
+                <div class="overflow-x-auto">
+                  <table class="min-w-full text-sm">
+                    <thead class="bg-gray-50 dark:bg-gray-700/50 text-xs text-gray-600 dark:text-gray-300 uppercase">
+                      <tr>
+                        <th class="px-3 py-2 text-left">Clover L3 Category</th>
+                        <th class="px-3 py-2 text-right">Qty</th>
+                        <th class="px-3 py-2 text-right">Net</th>
+                        <th class="px-3 py-2 text-left">Assign L2</th>
+                      </tr>
+                    </thead>
+                    <tbody id="overrides-l3-tbody" class="divide-y divide-gray-100 dark:divide-gray-700"></tbody>
+                  </table>
+                </div>
+                <p id="overrides-l3-empty" class="hidden text-xs text-gray-400 dark:text-gray-500 italic">No unmapped L3 categories in this range.</p>
+              </div>
+
+              <div class="flex flex-wrap gap-3">
                 <button onclick="saveCategoryOverrides()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
                   Save Overrides
                 </button>
@@ -2552,43 +2577,82 @@
       const data = await resp.json();
       if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
 
-      const tbody = document.getElementById('overrides-tbody');
-      tbody.innerHTML = '';
-      if (!data.items || !data.items.length) {
-        setOverridesStatus(`No uncategorized items in snapshots for ${store} · ${start} → ${end}.`, 'ok');
-        return;
-      }
+      const items = Array.isArray(data.items) ? data.items : [];
+      const l3s = Array.isArray(data.l3Categories) ? data.l3Categories : [];
 
-      for (const it of data.items) {
-        const tr = document.createElement('tr');
-        const prefix = detectPrefix(it.name);
+      // Items table
+      const tbody = document.getElementById('overrides-tbody');
+      const itemsEmpty = document.getElementById('overrides-items-empty');
+      tbody.innerHTML = '';
+      if (!items.length) {
+        itemsEmpty.classList.remove('hidden');
+      } else {
+        itemsEmpty.classList.add('hidden');
         const optionsHtml = ['<option value="">— pick —</option>']
           .concat(OVERRIDE_L2_OPTIONS.map(l => `<option value="${l}">${l}</option>`))
           .join('');
-        const ruleCell = prefix
-          ? `<label class="inline-flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
-               <input type="checkbox" class="override-rule-cb" data-prefix="${prefix}">
-               prefix <code class="text-[11px] px-1 bg-gray-100 dark:bg-gray-700 rounded">${prefix}</code>
-             </label>`
-          : `<span class="text-xs text-gray-400 dark:text-gray-500">—</span>`;
-        tr.innerHTML = `
-          <td class="px-3 py-2 align-top text-gray-900 dark:text-gray-100">
-            <div class="font-medium break-all">${it.name.replace(/</g, '&lt;')}</div>
-            ${it.itemId ? `<div class="text-[11px] text-gray-400 dark:text-gray-500 font-mono">${it.itemId}</div>` : ''}
-          </td>
-          <td class="px-3 py-2 align-top text-right tabular-nums text-gray-700 dark:text-gray-300">${it.qty.toLocaleString()}</td>
-          <td class="px-3 py-2 align-top text-right tabular-nums text-gray-700 dark:text-gray-300">$${it.net.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
-          <td class="px-3 py-2 align-top">
-            <select class="override-l2 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1"
-                    data-name="${it.name.replace(/"/g, '&quot;')}"
-                    data-item-id="${it.itemId || ''}">${optionsHtml}</select>
-          </td>
-          <td class="px-3 py-2 align-top">${ruleCell}</td>`;
-        tbody.appendChild(tr);
+        for (const it of items) {
+          const tr = document.createElement('tr');
+          const prefix = detectPrefix(it.name);
+          const ruleCell = prefix
+            ? `<label class="inline-flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
+                 <input type="checkbox" class="override-rule-cb" data-prefix="${prefix}">
+                 prefix <code class="text-[11px] px-1 bg-gray-100 dark:bg-gray-700 rounded">${prefix}</code>
+               </label>`
+            : `<span class="text-xs text-gray-400 dark:text-gray-500">—</span>`;
+          tr.innerHTML = `
+            <td class="px-3 py-2 align-top text-gray-900 dark:text-gray-100">
+              <div class="font-medium break-all">${it.name.replace(/</g, '&lt;')}</div>
+              ${it.itemId ? `<div class="text-[11px] text-gray-400 dark:text-gray-500 font-mono">${it.itemId}</div>` : ''}
+            </td>
+            <td class="px-3 py-2 align-top text-right tabular-nums text-gray-700 dark:text-gray-300">${it.qty.toLocaleString()}</td>
+            <td class="px-3 py-2 align-top text-right tabular-nums text-gray-700 dark:text-gray-300">$${it.net.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+            <td class="px-3 py-2 align-top">
+              <select class="override-l2 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1"
+                      data-name="${it.name.replace(/"/g, '&quot;')}"
+                      data-item-id="${it.itemId || ''}">${optionsHtml}</select>
+            </td>
+            <td class="px-3 py-2 align-top">${ruleCell}</td>`;
+          tbody.appendChild(tr);
+        }
+      }
+
+      // L3 categories table
+      const l3Tbody = document.getElementById('overrides-l3-tbody');
+      const l3Empty = document.getElementById('overrides-l3-empty');
+      l3Tbody.innerHTML = '';
+      if (!l3s.length) {
+        l3Empty.classList.remove('hidden');
+      } else {
+        l3Empty.classList.add('hidden');
+        const optionsHtml = ['<option value="">— pick —</option>']
+          .concat(OVERRIDE_L2_OPTIONS.map(l => `<option value="${l}">${l}</option>`))
+          .join('');
+        for (const c of l3s) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td class="px-3 py-2 align-top text-gray-900 dark:text-gray-100">
+              <div class="font-medium break-all">${c.l3.replace(/</g, '&lt;')}</div>
+            </td>
+            <td class="px-3 py-2 align-top text-right tabular-nums text-gray-700 dark:text-gray-300">${c.qty.toLocaleString()}</td>
+            <td class="px-3 py-2 align-top text-right tabular-nums text-gray-700 dark:text-gray-300">$${c.net.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+            <td class="px-3 py-2 align-top">
+              <select class="override-l3 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1"
+                      data-l3="${c.l3.replace(/"/g, '&quot;')}">${optionsHtml}</select>
+            </td>`;
+          l3Tbody.appendChild(tr);
+        }
       }
 
       document.getElementById('overrides-table-wrap').classList.remove('hidden');
-      setOverridesStatus(`Loaded ${data.items.length} uncategorized item${data.items.length === 1 ? '' : 's'} from ${data.datesScanned.length} day${data.datesScanned.length === 1 ? '' : 's'}. Assign each to an L2 and Save.`, 'ok');
+      if (!items.length && !l3s.length) {
+        setOverridesStatus(`No uncategorized items or L3 categories in snapshots for ${store} · ${start} → ${end}.`, 'ok');
+      } else {
+        const parts = [];
+        if (items.length) parts.push(`${items.length} item${items.length === 1 ? '' : 's'}`);
+        if (l3s.length) parts.push(`${l3s.length} L3 categor${l3s.length === 1 ? 'y' : 'ies'}`);
+        setOverridesStatus(`Loaded ${parts.join(' · ')} from ${data.datesScanned.length} day${data.datesScanned.length === 1 ? '' : 's'}. Assign each to an L2 and Save.`, 'ok');
+      }
     } catch (err) {
       setOverridesStatus(`Error: ${err.message}`, 'error');
     }
@@ -2598,7 +2662,7 @@
     setOverridesStatus('Saving overrides…', 'info');
 
     // Fetch current overrides so we merge rather than clobber
-    let existing = { items: {}, patterns: [] };
+    let existing = { items: {}, patterns: [], l3Map: {} };
     try {
       const getResp = await fetch(`${WORKER_BASE}?action=item-overrides`, {
         headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }
@@ -2608,9 +2672,10 @@
 
     const items = Object.assign({}, existing.items || {});
     const patterns = Array.isArray(existing.patterns) ? existing.patterns.slice() : [];
+    const l3Map = Object.assign({}, existing.l3Map || {});
     const seenPrefixes = new Set(patterns.filter(p => p.type === 'prefix').map(p => String(p.value).toLowerCase()));
 
-    let assigned = 0, newRules = 0;
+    let assigned = 0, newRules = 0, l3Assigned = 0;
     for (const sel of document.querySelectorAll('select.override-l2')) {
       const l2 = sel.value;
       if (!l2) continue;
@@ -2633,7 +2698,16 @@
       }
     }
 
-    if (!assigned && !newRules) {
+    for (const sel of document.querySelectorAll('select.override-l3')) {
+      const l2 = sel.value;
+      if (!l2) continue;
+      const l3 = sel.dataset.l3 || '';
+      if (!l3) continue;
+      l3Map[l3] = l2;
+      l3Assigned++;
+    }
+
+    if (!assigned && !newRules && !l3Assigned) {
       setOverridesStatus('No L2 assignments selected — nothing to save.', 'info');
       return;
     }
@@ -2642,14 +2716,16 @@
       const resp = await fetch(`${WORKER_BASE}?action=item-overrides`, {
         method: 'POST',
         headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items, patterns }),
+        body: JSON.stringify({ items, patterns, l3Map }),
       });
       const data = await resp.json();
       if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      const parts = [];
+      if (assigned) parts.push(`${assigned} item assignment${assigned === 1 ? '' : 's'}`);
+      if (l3Assigned) parts.push(`${l3Assigned} L3 assignment${l3Assigned === 1 ? '' : 's'}`);
+      if (newRules) parts.push(`${newRules} new prefix rule${newRules === 1 ? '' : 's'}`);
       setOverridesStatus(
-        `Saved ${assigned} item assignment${assigned === 1 ? '' : 's'}` +
-        (newRules ? ` · ${newRules} new prefix rule${newRules === 1 ? '' : 's'}` : '') +
-        `. Click <em>Re-snapshot selected range</em> to rebuild history.`,
+        `Saved ${parts.join(' · ')}. Click <em>Re-snapshot selected range</em> to rebuild history.`,
         'ok'
       );
     } catch (err) {
