@@ -1956,6 +1956,52 @@
   async function loadItemSales(storeName, dateStr) {
     const storeKey = storeName.split('/')[0];
     const todayStr = getETTodayStr();
+    const container = el('items-table-container');
+
+    // Week aggregate: fetch every selectable day in the current week, then merge.
+    if (dateStr === 'WEEK') {
+      const weekRows = (allStoreData[storeName] || [])
+        .filter(r => r.week === selectedWeek && r.date)
+        .sort((a, b) => a.date - b.date);
+      const days = weekRows
+        .map(r => r.date.toISOString().slice(0, 10))
+        .filter(d => d <= todayStr);  // skip future days
+      if (days.length === 0) {
+        container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="text-sm">No days in this week have data yet.</div></div>`;
+        return;
+      }
+
+      const weekStart = days[0];
+      const weekEnd = days[days.length - 1];
+      const cacheKey = `${storeKey}:WEEK:${weekStart}:${weekEnd}`;
+      if (itemSalesCache[cacheKey]) {
+        renderItemSalesTable(itemSalesCache[cacheKey], true);
+        return;
+      }
+
+      container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">Aggregating ${days.length} day${days.length === 1 ? '' : 's'} of item sales…</div></div>`;
+
+      try {
+        const responses = await Promise.all(days.map(d => {
+          const isLive = d === todayStr;
+          const url = `https://clover-sales-api.howardbrian86.workers.dev/?action=items&store=${storeKey}` + (isLive ? '' : `&date=${d}`);
+          return fetch(url).then(r => {
+            if (!r.ok) throw new Error(`${d}: HTTP ${r.status}`);
+            return r.json();
+          });
+        }));
+        for (const r of responses) {
+          if (r && r.error) throw new Error(r.error);
+        }
+        const merged = mergeItemSalesData(responses, weekStart, weekEnd);
+        itemSalesCache[cacheKey] = merged;
+        renderItemSalesTable(merged, true);
+      } catch (err) {
+        container.innerHTML = `<div class="p-8 text-center text-red-400"><div class="font-semibold mb-1">Failed to load week total</div><div class="text-sm">${escapeHtml(err.message)}</div></div>`;
+      }
+      return;
+    }
+
     const targetDate = dateStr || todayStr;
     const isToday = targetDate === todayStr;
     const cacheKey = `${storeKey}:${targetDate}`;
@@ -1965,7 +2011,6 @@
       return;
     }
 
-    const container = el('items-table-container');
     container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">${isToday ? 'Loading category data from Clover…' : 'Loading historical data…'}</div></div>`;
 
     try {
@@ -1982,6 +2027,54 @@
     }
   }
 
+  // Merge per-day item sales responses into a single week-aggregate payload
+  // shaped like the per-day response so renderItemSalesTable can render it.
+  function mergeItemSalesData(dayResponses, weekStart, weekEnd) {
+    const byCategory = new Map();
+    let totalQty = 0, totalGross = 0, totalDisc = 0, totalRef = 0, totalNet = 0;
+    let orderCount = 0;
+    for (const day of dayResponses) {
+      if (!day) continue;
+      orderCount += day.orderCount || 0;
+      const t = day.totals || {};
+      totalQty += t.qty || 0;
+      totalGross += t.gross || 0;
+      totalDisc += t.discounts || 0;
+      totalRef += t.refunds || 0;
+      totalNet += t.netSales || 0;
+      for (const c of (day.categories || [])) {
+        const existing = byCategory.get(c.category) || {
+          category: c.category, qty: 0, gross: 0, discounts: 0, refunds: 0, netSales: 0,
+        };
+        existing.qty += c.qty || 0;
+        existing.gross += c.gross || 0;
+        existing.discounts += c.discounts || 0;
+        existing.refunds += c.refunds || 0;
+        existing.netSales += c.netSales || 0;
+        byCategory.set(c.category, existing);
+      }
+    }
+    const categories = [];
+    for (const c of byCategory.values()) {
+      c.pctQty = totalQty > 0 ? (c.qty / totalQty) * 100 : 0;
+      c.asp = c.qty > 0 ? c.netSales / c.qty : 0;
+      categories.push(c);
+    }
+    return {
+      date: weekStart === weekEnd ? `Week of ${weekStart}` : `Week of ${weekStart} – ${weekEnd}`,
+      orderCount,
+      categories,
+      totals: {
+        qty: totalQty,
+        gross: totalGross,
+        discounts: totalDisc,
+        refunds: totalRef,
+        netSales: totalNet,
+        asp: totalQty > 0 ? totalNet / totalQty : 0,
+      },
+    };
+  }
+
   function sortItemSales(col) {
     if (itemSortCol === col) {
       itemSortAsc = !itemSortAsc;
@@ -1990,23 +2083,41 @@
       itemSortAsc = col === 'category';
     }
     const storeKey = currentStoreName?.split('/')[0];
-    const targetDate = selectedItemDate || getETTodayStr();
+    if (!storeKey) return;
+    const todayStr = getETTodayStr();
+    if (selectedItemDate === 'WEEK') {
+      // Find the cached week aggregate (key shape: STORE:WEEK:start:end)
+      const prefix = `${storeKey}:WEEK:`;
+      const hit = Object.keys(itemSalesCache).find(k => k.startsWith(prefix));
+      if (hit) renderItemSalesTable(itemSalesCache[hit], true);
+      return;
+    }
+    const targetDate = selectedItemDate || todayStr;
     const cacheKey = `${storeKey}:${targetDate}`;
-    const isToday = targetDate === getETTodayStr();
-    if (storeKey && itemSalesCache[cacheKey]) renderItemSalesTable(itemSalesCache[cacheKey], isToday);
+    const isToday = targetDate === todayStr;
+    if (itemSalesCache[cacheKey]) renderItemSalesTable(itemSalesCache[cacheKey], isToday);
   }
   window.sortItemSales = sortItemSales;
 
   function refreshItemSales() {
     const storeKey = currentStoreName?.split('/')[0];
-    if (storeKey) {
-      const todayStr = getETTodayStr();
-      const cacheKey = `${storeKey}:${todayStr}`;
-      delete itemSalesCache[cacheKey];
-      selectedItemDate = null;
-      renderItemDaySelector(currentStoreName);
-      loadItemSales(currentStoreName, todayStr);
+    if (!storeKey) return;
+    const todayStr = getETTodayStr();
+    if (selectedItemDate === 'WEEK') {
+      // Clear today's per-day cache (only live one that can change) and any
+      // week aggregate caches for this store; then re-aggregate.
+      delete itemSalesCache[`${storeKey}:${todayStr}`];
+      const weekPrefix = `${storeKey}:WEEK:`;
+      for (const k of Object.keys(itemSalesCache)) {
+        if (k.startsWith(weekPrefix)) delete itemSalesCache[k];
+      }
+      loadItemSales(currentStoreName, 'WEEK');
+      return;
     }
+    delete itemSalesCache[`${storeKey}:${todayStr}`];
+    selectedItemDate = null;
+    renderItemDaySelector(currentStoreName);
+    loadItemSales(currentStoreName, todayStr);
   }
   window.refreshItemSales = refreshItemSales;
 
@@ -2043,6 +2154,23 @@
       } else {
         html += `<button onclick="selectItemDay('${fmtDate}')" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
           <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
+        </button>`;
+      }
+    }
+
+    // Week total button — aggregates every selectable day in the current week.
+    const firstDate = sorted[0]?.date;
+    const lastDate = sorted[sorted.length - 1]?.date;
+    if (firstDate && lastDate) {
+      const rangeLabel = `${firstDate.getMonth() + 1}/${firstDate.getDate()}–${lastDate.getMonth() + 1}/${lastDate.getDate()}`;
+      const isWeekSelected = activeDate === 'WEEK';
+      if (isWeekSelected) {
+        html += `<button class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs bg-[#3BB54A] text-white font-semibold shadow-sm">
+          <span>Week</span><span>${rangeLabel}</span>
+        </button>`;
+      } else {
+        html += `<button onclick="selectItemDay('WEEK')" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-dashed border-gray-300 dark:border-gray-600">
+          <span class="font-semibold">Week</span><span>${rangeLabel}</span>
         </button>`;
       }
     }
