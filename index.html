@@ -169,6 +169,14 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
           <span class="nav-label">Weekly Retail Summary</span>
         </div>
+        <div class="nav-item" data-page="inventory" onclick="navigateToPage('inventory')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
+          <span class="nav-label">Inventory</span>
+        </div>
+        <div class="nav-item" data-page="supply-request" onclick="navigateToPage('supply-request')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/><line x1="9" y1="9" x2="10" y2="9"/></svg></span>
+          <span class="nav-label">Supply Request</span>
+        </div>
       </nav>
 
       <!-- Bottom Section -->
@@ -353,6 +361,40 @@
         </div>
       </div>
     </div><!-- end #page-weekly-summary -->
+
+    <div id="page-inventory" class="hidden">
+      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+        <div class="max-w-7xl mx-auto">
+          <div class="ml-12 md:ml-0">
+            <h1 class="text-2xl font-display text-[#3BB54A]">Inventory</h1>
+            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Coming soon</p>
+          </div>
+        </div>
+      </div>
+      <div class="max-w-7xl mx-auto px-6 py-6">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-12 text-center">
+          <svg class="mx-auto mb-4 text-gray-300 dark:text-gray-600" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          <p class="text-gray-400 dark:text-gray-500 text-sm">View Clover inventory per location and add new items — coming soon.</p>
+        </div>
+      </div>
+    </div><!-- end #page-inventory -->
+
+    <div id="page-supply-request" class="hidden">
+      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+        <div class="max-w-7xl mx-auto">
+          <div class="ml-12 md:ml-0">
+            <h1 class="text-2xl font-display text-[#3BB54A]">Supply Request</h1>
+            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Coming soon</p>
+          </div>
+        </div>
+      </div>
+      <div class="max-w-7xl mx-auto px-6 py-6">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-12 text-center">
+          <svg class="mx-auto mb-4 text-gray-300 dark:text-gray-600" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/><line x1="9" y1="9" x2="10" y2="9"/></svg>
+          <p class="text-gray-400 dark:text-gray-500 text-sm">Managers submit supply requests and track status; admins get notified on new requests — coming soon.</p>
+        </div>
+      </div>
+    </div><!-- end #page-supply-request -->
 
     <div id="page-settings" class="hidden">
       <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
@@ -1898,6 +1940,8 @@
     // Show page
     el('page-dashboard').classList.add('hidden');
     el('page-weekly-summary').classList.add('hidden');
+    el('page-inventory').classList.add('hidden');
+    el('page-supply-request').classList.add('hidden');
     el('page-store-detail').classList.remove('hidden');
     document.querySelectorAll('.nav-item[data-page]').forEach(item => item.classList.remove('active'));
     switchStoreTab('weekly');
@@ -1913,7 +1957,7 @@
   }
 
   function navigateToPage(page) {
-    const pages = ['dashboard', 'store-detail', 'weekly-summary', 'settings'];
+    const pages = ['dashboard', 'store-detail', 'weekly-summary', 'inventory', 'supply-request', 'settings'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
       if (pageEl) pageEl.classList.toggle('hidden', p !== page);
@@ -1972,6 +2016,52 @@
   async function loadItemSales(storeName, dateStr) {
     const storeKey = storeName.split('/')[0];
     const todayStr = getETTodayStr();
+    const container = el('items-table-container');
+
+    // Week aggregate: fetch every selectable day in the current week, then merge.
+    if (dateStr === 'WEEK') {
+      const weekRows = (allStoreData[storeName] || [])
+        .filter(r => r.week === selectedWeek && r.date)
+        .sort((a, b) => a.date - b.date);
+      const days = weekRows
+        .map(r => r.date.toISOString().slice(0, 10))
+        .filter(d => d <= todayStr);  // skip future days
+      if (days.length === 0) {
+        container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="text-sm">No days in this week have data yet.</div></div>`;
+        return;
+      }
+
+      const weekStart = days[0];
+      const weekEnd = days[days.length - 1];
+      const cacheKey = `${storeKey}:WEEK:${weekStart}:${weekEnd}`;
+      if (itemSalesCache[cacheKey]) {
+        renderItemSalesTable(itemSalesCache[cacheKey], true);
+        return;
+      }
+
+      container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">Aggregating ${days.length} day${days.length === 1 ? '' : 's'} of item sales…</div></div>`;
+
+      try {
+        const responses = await Promise.all(days.map(d => {
+          const isLive = d === todayStr;
+          const url = `https://clover-sales-api.howardbrian86.workers.dev/?action=items&store=${storeKey}` + (isLive ? '' : `&date=${d}`);
+          return fetch(url).then(r => {
+            if (!r.ok) throw new Error(`${d}: HTTP ${r.status}`);
+            return r.json();
+          });
+        }));
+        for (const r of responses) {
+          if (r && r.error) throw new Error(r.error);
+        }
+        const merged = mergeItemSalesData(responses, weekStart, weekEnd);
+        itemSalesCache[cacheKey] = merged;
+        renderItemSalesTable(merged, true);
+      } catch (err) {
+        container.innerHTML = `<div class="p-8 text-center text-red-400"><div class="font-semibold mb-1">Failed to load week total</div><div class="text-sm">${escapeHtml(err.message)}</div></div>`;
+      }
+      return;
+    }
+
     const targetDate = dateStr || todayStr;
     const isToday = targetDate === todayStr;
     const cacheKey = `${storeKey}:${targetDate}`;
@@ -1981,7 +2071,6 @@
       return;
     }
 
-    const container = el('items-table-container');
     container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">${isToday ? 'Loading category data from Clover…' : 'Loading historical data…'}</div></div>`;
 
     try {
@@ -1998,6 +2087,54 @@
     }
   }
 
+  // Merge per-day item sales responses into a single week-aggregate payload
+  // shaped like the per-day response so renderItemSalesTable can render it.
+  function mergeItemSalesData(dayResponses, weekStart, weekEnd) {
+    const byCategory = new Map();
+    let totalQty = 0, totalGross = 0, totalDisc = 0, totalRef = 0, totalNet = 0;
+    let orderCount = 0;
+    for (const day of dayResponses) {
+      if (!day) continue;
+      orderCount += day.orderCount || 0;
+      const t = day.totals || {};
+      totalQty += t.qty || 0;
+      totalGross += t.gross || 0;
+      totalDisc += t.discounts || 0;
+      totalRef += t.refunds || 0;
+      totalNet += t.netSales || 0;
+      for (const c of (day.categories || [])) {
+        const existing = byCategory.get(c.category) || {
+          category: c.category, qty: 0, gross: 0, discounts: 0, refunds: 0, netSales: 0,
+        };
+        existing.qty += c.qty || 0;
+        existing.gross += c.gross || 0;
+        existing.discounts += c.discounts || 0;
+        existing.refunds += c.refunds || 0;
+        existing.netSales += c.netSales || 0;
+        byCategory.set(c.category, existing);
+      }
+    }
+    const categories = [];
+    for (const c of byCategory.values()) {
+      c.pctQty = totalQty > 0 ? (c.qty / totalQty) * 100 : 0;
+      c.asp = c.qty > 0 ? c.netSales / c.qty : 0;
+      categories.push(c);
+    }
+    return {
+      date: weekStart === weekEnd ? `Week of ${weekStart}` : `Week of ${weekStart} – ${weekEnd}`,
+      orderCount,
+      categories,
+      totals: {
+        qty: totalQty,
+        gross: totalGross,
+        discounts: totalDisc,
+        refunds: totalRef,
+        netSales: totalNet,
+        asp: totalQty > 0 ? totalNet / totalQty : 0,
+      },
+    };
+  }
+
   function sortItemSales(col) {
     if (itemSortCol === col) {
       itemSortAsc = !itemSortAsc;
@@ -2006,23 +2143,41 @@
       itemSortAsc = col === 'category';
     }
     const storeKey = currentStoreName?.split('/')[0];
-    const targetDate = selectedItemDate || getETTodayStr();
+    if (!storeKey) return;
+    const todayStr = getETTodayStr();
+    if (selectedItemDate === 'WEEK') {
+      // Find the cached week aggregate (key shape: STORE:WEEK:start:end)
+      const prefix = `${storeKey}:WEEK:`;
+      const hit = Object.keys(itemSalesCache).find(k => k.startsWith(prefix));
+      if (hit) renderItemSalesTable(itemSalesCache[hit], true);
+      return;
+    }
+    const targetDate = selectedItemDate || todayStr;
     const cacheKey = `${storeKey}:${targetDate}`;
-    const isToday = targetDate === getETTodayStr();
-    if (storeKey && itemSalesCache[cacheKey]) renderItemSalesTable(itemSalesCache[cacheKey], isToday);
+    const isToday = targetDate === todayStr;
+    if (itemSalesCache[cacheKey]) renderItemSalesTable(itemSalesCache[cacheKey], isToday);
   }
   window.sortItemSales = sortItemSales;
 
   function refreshItemSales() {
     const storeKey = currentStoreName?.split('/')[0];
-    if (storeKey) {
-      const todayStr = getETTodayStr();
-      const cacheKey = `${storeKey}:${todayStr}`;
-      delete itemSalesCache[cacheKey];
-      selectedItemDate = null;
-      renderItemDaySelector(currentStoreName);
-      loadItemSales(currentStoreName, todayStr);
+    if (!storeKey) return;
+    const todayStr = getETTodayStr();
+    if (selectedItemDate === 'WEEK') {
+      // Clear today's per-day cache (only live one that can change) and any
+      // week aggregate caches for this store; then re-aggregate.
+      delete itemSalesCache[`${storeKey}:${todayStr}`];
+      const weekPrefix = `${storeKey}:WEEK:`;
+      for (const k of Object.keys(itemSalesCache)) {
+        if (k.startsWith(weekPrefix)) delete itemSalesCache[k];
+      }
+      loadItemSales(currentStoreName, 'WEEK');
+      return;
     }
+    delete itemSalesCache[`${storeKey}:${todayStr}`];
+    selectedItemDate = null;
+    renderItemDaySelector(currentStoreName);
+    loadItemSales(currentStoreName, todayStr);
   }
   window.refreshItemSales = refreshItemSales;
 
@@ -2059,6 +2214,23 @@
       } else {
         html += `<button onclick="selectItemDay('${fmtDate}')" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
           <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
+        </button>`;
+      }
+    }
+
+    // Week total button — aggregates every selectable day in the current week.
+    const firstDate = sorted[0]?.date;
+    const lastDate = sorted[sorted.length - 1]?.date;
+    if (firstDate && lastDate) {
+      const rangeLabel = `${firstDate.getMonth() + 1}/${firstDate.getDate()}–${lastDate.getMonth() + 1}/${lastDate.getDate()}`;
+      const isWeekSelected = activeDate === 'WEEK';
+      if (isWeekSelected) {
+        html += `<button class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs bg-[#3BB54A] text-white font-semibold shadow-sm">
+          <span>Week</span><span>${rangeLabel}</span>
+        </button>`;
+      } else {
+        html += `<button onclick="selectItemDay('WEEK')" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-dashed border-gray-300 dark:border-gray-600">
+          <span class="font-semibold">Week</span><span>${rangeLabel}</span>
         </button>`;
       }
     }
