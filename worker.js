@@ -2587,6 +2587,139 @@ export default {
       return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
     }
 
+    // ── Admin: Fetch Clover categories for a store (5-min KV cache)
+    //    GET ?action=clover-categories&store=BL1
+    if (url.searchParams.get("action") === "clover-categories") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const secret = request.headers.get("X-Snapshot-Secret");
+      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      }
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      if (!ALL_STORES.includes(store)) {
+        return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+      }
+      const cacheKey = `clover-categories:${store}`;
+      const cached = await env.SALES_SNAPSHOTS.get(cacheKey, "json");
+      if (cached) {
+        return new Response(JSON.stringify(cached), { headers: corsJson });
+      }
+      const merchantId = env[`${store}_MERCHANT_ID`];
+      const apiToken = env[`${store}_API_TOKEN`];
+      if (!merchantId || !apiToken) {
+        return new Response(JSON.stringify({ error: "Store not configured" }), { status: 500, headers: corsJson });
+      }
+      const catResp = await fetch(`https://api.clover.com/v3/merchants/${merchantId}/categories?limit=1000`, {
+        headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
+      });
+      if (!catResp.ok) {
+        const txt = await catResp.text();
+        return new Response(JSON.stringify({ error: `Clover error: ${catResp.status}`, detail: txt }), { status: 502, headers: corsJson });
+      }
+      const catData = await catResp.json();
+      await env.SALES_SNAPSHOTS.put(cacheKey, JSON.stringify(catData), { expirationTtl: 300 });
+      return new Response(JSON.stringify(catData), { headers: corsJson });
+    }
+
+    // ── Admin: Create a Clover item (per-store or all stores)
+    //    POST ?action=create-clover-item
+    if (url.searchParams.get("action") === "create-clover-item") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const secret = request.headers.get("X-Snapshot-Secret");
+      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      }
+      if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
+      }
+      const body = await request.json();
+      const { store, name, code, priceCents, costCents, taxable, hidden, l2, l3 } = body;
+      if (!name || !code || !priceCents || !l2 || !l3) {
+        return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400, headers: corsJson });
+      }
+      const targetStores = (store === "all") ? ALL_STORES : [String(store).toUpperCase()];
+
+      async function resolveCloverCategory(s, categoryName) {
+        const mId = env[`${s}_MERCHANT_ID`];
+        const tok = env[`${s}_API_TOKEN`];
+        const headers = { "Authorization": `Bearer ${tok}`, "Content-Type": "application/json" };
+        const listResp = await fetch(`https://api.clover.com/v3/merchants/${mId}/categories?limit=1000`, { headers });
+        if (!listResp.ok) throw new Error(`categories list: ${listResp.status}`);
+        const listData = await listResp.json();
+        const existing = (listData.elements || []).find(
+          c => (c.name || "").trim().toLowerCase() === categoryName.trim().toLowerCase()
+        );
+        if (existing) return { categoryId: existing.id, created: false };
+        const createResp = await fetch(`https://api.clover.com/v3/merchants/${mId}/categories`, {
+          method: "POST", headers, body: JSON.stringify({ name: categoryName }),
+        });
+        if (!createResp.ok) throw new Error(`category create: ${createResp.status}`);
+        const cat = await createResp.json();
+        return { categoryId: cat.id, created: true };
+      }
+
+      async function createItemForStore(s) {
+        try {
+          const mId = env[`${s}_MERCHANT_ID`];
+          const tok = env[`${s}_API_TOKEN`];
+          if (!mId || !tok) return { store: s, ok: false, error: "Store not configured", stage: "config" };
+          const headers = { "Authorization": `Bearer ${tok}`, "Content-Type": "application/json" };
+
+          const { categoryId, created: categoryCreated } = await resolveCloverCategory(s, l3);
+
+          const itemBody = { name, code, price: priceCents, hidden: !!hidden, defaultTaxRates: !!taxable, priceType: "FIXED" };
+          if (costCents != null) itemBody.cost = costCents;
+          const itemResp = await fetch(`https://api.clover.com/v3/merchants/${mId}/items`, {
+            method: "POST", headers, body: JSON.stringify(itemBody),
+          });
+          if (!itemResp.ok) {
+            const txt = await itemResp.text();
+            return { store: s, ok: false, error: txt, stage: "item" };
+          }
+          const item = await itemResp.json();
+          const itemId = item.id;
+
+          const assocResp = await fetch(`https://api.clover.com/v3/merchants/${mId}/category_items`, {
+            method: "POST", headers,
+            body: JSON.stringify({ elements: [{ category: { id: categoryId }, item: { id: itemId } }] }),
+          });
+          if (!assocResp.ok) {
+            const txt = await assocResp.text();
+            return { store: s, ok: false, error: txt, stage: "associate" };
+          }
+
+          return { store: s, ok: true, itemId, categoryId, categoryCreated };
+        } catch (err) {
+          return { store: s, ok: false, error: err.message, stage: "categories" };
+        }
+      }
+
+      const results = await Promise.all(targetStores.map(s => createItemForStore(s)));
+
+      // Cost KV merge (only if costCents provided)
+      let costUpdated = false;
+      if (costCents != null) {
+        const costs = await fetchItemCosts(env);
+        const isNew = !costs.items[code];
+        costs.items[code] = { cost: costCents / 100, desc: name };
+        if (isNew) costs.count = (costs.count || 0) + 1;
+        costs.importedAt = new Date().toISOString();
+        await env.SALES_SNAPSHOTS.put(ITEM_COSTS_KEY, JSON.stringify(costs));
+        costUpdated = true;
+      }
+
+      // L3→L2 mapping merge (only if not already mapped)
+      let l3Mapped = false;
+      const overrides = await fetchItemOverrides(env);
+      if (!overrides.l3Map[l3]) {
+        overrides.l3Map[l3] = l2;
+        await env.SALES_SNAPSHOTS.put(ITEM_OVERRIDES_KEY, JSON.stringify(overrides));
+        l3Mapped = true;
+      }
+
+      return new Response(JSON.stringify({ results, costUpdated, l3Mapped }), { headers: corsJson });
+    }
+
     // ── Public: Weekly Retail Summary feed
     //    ?action=weekly-summary&week=15&year=2026
     // Returns one payload feeding the Summary tab + all 6 per-store tabs.

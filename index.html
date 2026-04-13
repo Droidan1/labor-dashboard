@@ -393,14 +393,82 @@
         <div class="max-w-7xl mx-auto">
           <div class="ml-12 md:ml-0">
             <h1 class="text-2xl font-display text-[#3BB54A]">Inventory</h1>
-            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Coming soon</p>
+            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Add items to Clover POS</p>
           </div>
         </div>
       </div>
-      <div class="max-w-7xl mx-auto px-6 py-6">
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-12 text-center">
-          <svg class="mx-auto mb-4 text-gray-300 dark:text-gray-600" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-          <p class="text-gray-400 dark:text-gray-500 text-sm">View Clover inventory per location and add new items — coming soon.</p>
+      <div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+        <!-- Add Item card -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
+          <h2 class="text-base font-semibold text-gray-800 dark:text-gray-100 mb-5">Add Item</h2>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <!-- Location -->
+            <div>
+              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Location</label>
+              <select id="inv-store" onchange="loadCategoriesForStore(this.value)" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+                <option value="all">All Locations</option>
+                <option value="BL1">BL1</option>
+                <option value="BL2">BL2</option>
+                <option value="BL4">BL4</option>
+                <option value="BL8">BL8</option>
+                <option value="BL12">BL12</option>
+                <option value="BL14">BL14</option>
+              </select>
+            </div>
+            <!-- Name -->
+            <div>
+              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Name <span class="text-red-400">*</span></label>
+              <input id="inv-name" type="text" placeholder="Item name" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+            </div>
+            <!-- Code/SKU -->
+            <div>
+              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Code / SKU <span class="text-red-400">*</span></label>
+              <input id="inv-code" type="text" placeholder="e.g. 12345" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+            </div>
+            <!-- Price -->
+            <div>
+              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Price ($) <span class="text-red-400">*</span></label>
+              <input id="inv-price" type="number" min="0.01" step="0.01" placeholder="9.99" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+            </div>
+            <!-- Unit Cost -->
+            <div>
+              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Unit Cost ($) <span class="text-gray-400 font-normal normal-case tracking-normal text-[10px]">optional</span></label>
+              <input id="inv-cost" type="number" min="0" step="0.01" placeholder="3.00" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+            </div>
+            <!-- Category (L2) -->
+            <div>
+              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Category (L2) <span class="text-red-400">*</span></label>
+              <select id="inv-l2" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+                <option value="">— select —</option>
+              </select>
+            </div>
+            <!-- Sub-category (L3) -->
+            <div>
+              <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Sub-category (L3) <span class="text-red-400">*</span></label>
+              <input id="inv-l3" type="text" list="inv-cat-datalist" placeholder="Type or pick existing Clover category" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              <datalist id="inv-cat-datalist"></datalist>
+            </div>
+            <!-- Flags -->
+            <div class="flex items-center gap-6 pt-5">
+              <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                <input id="inv-taxable" type="checkbox" checked class="rounded border-gray-300 dark:border-gray-600 text-[#3BB54A] focus:ring-[#3BB54A]">
+                Taxable
+              </label>
+              <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                <input id="inv-hidden" type="checkbox" class="rounded border-gray-300 dark:border-gray-600 text-[#3BB54A] focus:ring-[#3BB54A]">
+                Hidden
+              </label>
+            </div>
+          </div>
+          <div id="inv-status" class="hidden mt-4 text-sm rounded-lg px-4 py-3 border"></div>
+          <div class="mt-5">
+            <button id="inv-submit" onclick="createCloverItem()" class="px-5 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Add Item</button>
+          </div>
+        </div>
+        <!-- Results panel -->
+        <div id="inv-results" class="hidden bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
+          <h2 class="text-base font-semibold text-gray-800 dark:text-gray-100 mb-4">Results</h2>
+          <div id="inv-results-body"></div>
         </div>
       </div>
     </div><!-- end #page-inventory -->
@@ -3553,6 +3621,147 @@
         closeHourlyModal();
       }
     });
+
+    // ── Inventory page ──────────────────────────────────────────────────────────
+
+    // Populate L2 select and load Clover categories when page opens
+    (function initInventoryL2() {
+      const sel = el('inv-l2');
+      OVERRIDE_L2_OPTIONS.forEach(opt => {
+        const o = document.createElement('option');
+        o.value = opt;
+        o.textContent = opt;
+        sel.appendChild(o);
+      });
+    })();
+
+    function invSetStatus(msg, tone) {
+      const s = el('inv-status');
+      const tones = {
+        ok:    'border-green-200 dark:border-green-700 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400',
+        error: 'border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400',
+        info:  'border-yellow-200 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400',
+      };
+      s.className = `text-sm rounded-lg px-4 py-3 border ${tones[tone] || tones.info}`;
+      s.classList.remove('hidden');
+      s.innerHTML = msg;
+    }
+
+    async function loadCategoriesForStore(storeVal) {
+      const fetchStore = (storeVal === 'all') ? 'BL1' : storeVal;
+      const dl = el('inv-cat-datalist');
+      dl.innerHTML = '';
+      try {
+        const resp = await fetch(`${WORKER_BASE}?action=clover-categories&store=${fetchStore}`, {
+          headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        (data.elements || []).forEach(cat => {
+          const opt = document.createElement('option');
+          opt.value = cat.name;
+          dl.appendChild(opt);
+        });
+      } catch (_) { /* silently skip — datalist is optional UX */ }
+    }
+
+    async function createCloverItem() {
+      const storeVal = el('inv-store').value;
+      const name     = el('inv-name').value.trim();
+      const code     = el('inv-code').value.trim();
+      const priceRaw = parseFloat(el('inv-price').value);
+      const costRaw  = el('inv-cost').value.trim();
+      const taxable  = el('inv-taxable').checked;
+      const hidden   = el('inv-hidden').checked;
+      const l2       = el('inv-l2').value;
+      const l3       = el('inv-l3').value.trim();
+
+      // Validation
+      if (!name) { invSetStatus('Name is required.', 'error'); return; }
+      if (!code) { invSetStatus('Code / SKU is required.', 'error'); return; }
+      if (!priceRaw || priceRaw <= 0) { invSetStatus('Price must be greater than $0.', 'error'); return; }
+      if (!l2) { invSetStatus('Category (L2) is required.', 'error'); return; }
+      if (!l3) { invSetStatus('Sub-category (L3) is required.', 'error'); return; }
+
+      const priceCents = Math.round(priceRaw * 100);
+      const costCents  = costRaw !== '' ? Math.round(parseFloat(costRaw) * 100) : null;
+
+      // Non-blocking SKU warning
+      if (!/^\d{4,5}$/.test(code)) {
+        invSetStatus('Note: SKU is not a 4–5 digit number — it won\'t auto-link to Item Master cost data.', 'info');
+      } else {
+        el('inv-status').classList.add('hidden');
+      }
+
+      const btn = el('inv-submit');
+      btn.disabled = true;
+      btn.textContent = 'Creating…';
+      el('inv-results').classList.add('hidden');
+
+      try {
+        const resp = await fetch(`${WORKER_BASE}?action=create-clover-item`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+          body: JSON.stringify({ store: storeVal, name, code, priceCents, costCents, taxable, hidden, l2, l3 }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+
+        const results = data.results || [];
+        const anyOk   = results.some(r => r.ok);
+        const allOk   = results.every(r => r.ok);
+
+        // Render results
+        const rb = el('inv-results-body');
+        if (results.length === 1) {
+          // Single-store card
+          const r = results[0];
+          rb.innerHTML = r.ok
+            ? `<div class="text-sm text-green-700 dark:text-green-400"><span class="font-semibold">Created</span> — Item ID: <code class="font-mono">${escapeHtml(r.itemId)}</code>${r.categoryCreated ? ' · Category created' : ' · Category matched'}</div>`
+            : `<div class="text-sm text-red-600 dark:text-red-400"><span class="font-semibold">Failed</span> [${escapeHtml(r.stage)}]: ${escapeHtml(r.error)}</div>`;
+        } else {
+          // All-locations table
+          rb.innerHTML = `<table class="w-full text-sm"><thead><tr class="text-left text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-100 dark:border-gray-700"><th class="pb-2 pr-4">Store</th><th class="pb-2 pr-4">Status</th><th class="pb-2 pr-4">Item ID</th><th class="pb-2">Category</th></tr></thead><tbody>
+            ${results.map(r => `<tr class="border-b border-gray-50 dark:border-gray-700/50">
+              <td class="py-2 pr-4 font-medium text-gray-700 dark:text-gray-300">${escapeHtml(r.store)}</td>
+              <td class="py-2 pr-4 ${r.ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}">${r.ok ? '✓ Created' : '✗ Error'}</td>
+              <td class="py-2 pr-4 font-mono text-gray-600 dark:text-gray-400">${r.ok ? escapeHtml(r.itemId) : '—'}</td>
+              <td class="py-2 text-gray-600 dark:text-gray-400">${r.ok ? escapeHtml(l3) + (r.categoryCreated ? ' <span class="text-[10px] text-gray-400">(new)</span>' : '') : escapeHtml(r.error || '') + (r.stage ? ` <span class="text-[10px]">[${escapeHtml(r.stage)}]</span>` : '')}</td>
+            </tr>`).join('')}
+          </tbody></table>`;
+        }
+        el('inv-results').classList.remove('hidden');
+
+        // Post-success side-effects
+        if (anyOk) {
+          const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+          const affected = results.filter(r => r.ok).map(r => r.store);
+          affected.forEach(s => delete itemSalesCache[`${s}:${todayStr}`]);
+          if (data.costUpdated) refreshItemCostsStatus();
+        }
+
+        // Clear form on full success
+        if (allOk) {
+          el('inv-name').value = '';
+          el('inv-code').value = '';
+          el('inv-price').value = '';
+          el('inv-cost').value = '';
+          el('inv-l3').value = '';
+          el('inv-taxable').checked = true;
+          el('inv-hidden').checked = false;
+          if (!/^\d{4,5}$/.test(code)) { /* keep warning */ } else { el('inv-status').classList.add('hidden'); }
+          invSetStatus(allOk ? (data.costUpdated ? 'Item created and cost recorded.' : 'Item created.') : 'Some stores succeeded — form left populated for retry.', allOk ? 'ok' : 'info');
+        }
+      } catch (err) {
+        invSetStatus('Error: ' + escapeHtml(err.message), 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Add Item';
+      }
+    }
+
+    // Pre-load categories for default selection (All Locations → BL1)
+    loadCategoriesForStore('all');
 
     loadAll();
   });
