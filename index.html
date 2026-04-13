@@ -437,6 +437,66 @@
           </div>
         </div>
 
+        <!-- Custom Sales Categorization -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
+          <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Custom Sales Categorization</h2>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Assign uncategorized items to an L2 bucket. Overrides apply to every store and take effect on the next snapshot (use <em>Re-snapshot</em> below to update history).</p>
+
+          <div class="space-y-4">
+            <div class="flex flex-wrap gap-4 items-end">
+              <div>
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Store</label>
+                <select id="overrides-store" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+                  <option value="BL1">BL1 – Coliseum</option>
+                  <option value="BL2">BL2 – South Bend</option>
+                  <option value="BL4">BL4 – Dupont</option>
+                  <option value="BL8">BL8 – Holland</option>
+                  <option value="BL12">BL12 – Wyoming</option>
+                  <option value="BL14">BL14 – Battle Creek</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Start</label>
+                <input id="overrides-start" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">End</label>
+                <input id="overrides-end" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              </div>
+              <button onclick="loadUncategorized()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
+                Load Uncategorized Items
+              </button>
+            </div>
+
+            <div id="overrides-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
+
+            <div id="overrides-table-wrap" class="hidden">
+              <div class="overflow-x-auto">
+                <table class="min-w-full text-sm">
+                  <thead class="bg-gray-50 dark:bg-gray-700/50 text-xs text-gray-600 dark:text-gray-300 uppercase">
+                    <tr>
+                      <th class="px-3 py-2 text-left">Item Name</th>
+                      <th class="px-3 py-2 text-right">Qty</th>
+                      <th class="px-3 py-2 text-right">Net</th>
+                      <th class="px-3 py-2 text-left">Assign L2</th>
+                      <th class="px-3 py-2 text-left">Also add rule</th>
+                    </tr>
+                  </thead>
+                  <tbody id="overrides-tbody" class="divide-y divide-gray-100 dark:divide-gray-700"></tbody>
+                </table>
+              </div>
+              <div class="mt-4 flex flex-wrap gap-3">
+                <button onclick="saveCategoryOverrides()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
+                  Save Overrides
+                </button>
+                <button onclick="resnapshotRecent()" class="px-4 py-2 text-sm font-semibold bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-100 rounded-lg transition-colors">
+                  Re-snapshot selected range
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div><!-- end #page-settings -->
 
@@ -2391,9 +2451,19 @@
   //  SETTINGS – ADMIN RE-SNAPSHOT
   // ═══════════════════════════════════════════════════════════════
   (function initSettingsPage() {
-    // Pre-fill date input with today ET
+    // Pre-fill date inputs with ET today (re-snapshot) and last-7-days (overrides range)
+    const etToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
     const dateInput = document.getElementById('resnapshot-date');
-    if (dateInput) dateInput.value = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+    if (dateInput) dateInput.value = etToday;
+
+    const startEl = document.getElementById('overrides-start');
+    const endEl = document.getElementById('overrides-end');
+    if (startEl && endEl) {
+      endEl.value = etToday;
+      const weekAgo = new Date(etToday + 'T12:00:00Z');
+      weekAgo.setUTCDate(weekAgo.getUTCDate() - 6);
+      startEl.value = weekAgo.toISOString().slice(0, 10);
+    }
   })();
 
   async function runReSnapshot() {
@@ -2433,6 +2503,197 @@
     }
   }
   window.runReSnapshot = runReSnapshot;
+
+  // ═══════════════════════════════════════════════════════════════
+  //  SETTINGS – CUSTOM SALES CATEGORIZATION
+  // ═══════════════════════════════════════════════════════════════
+  const OVERRIDE_L2_OPTIONS = [
+    'Softline - Apparel', 'Softline - Shoes', 'Softline - Accessories',
+    'Home', 'Furniture', 'Hardlines',
+    'Consumable Food', 'Consumable HBA', 'Consumable Other',
+    'Seasonal',
+  ];
+  const SNAPSHOT_SECRET = 'mapcaj-saTxa2-1';
+  const WORKER_BASE = 'https://clover-sales-api.howardbrian86.workers.dev/';
+
+  // Auto-detect a reusable prefix rule from an item name. Matches the leading
+  // digit run (e.g. "50418 VCF Recliner" → "50418"). Returns null if no prefix
+  // can reasonably be pulled out.
+  function detectPrefix(name) {
+    const m = String(name || '').trim().match(/^(\d{4,5})\b/);
+    return m ? m[1] : null;
+  }
+
+  function setOverridesStatus(msg, tone) {
+    const statusEl = document.getElementById('overrides-status');
+    if (!statusEl) return;
+    const tones = {
+      info: 'border-yellow-200 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400',
+      ok: 'border-green-200 dark:border-green-700 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400',
+      error: 'border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400',
+    };
+    statusEl.className = `text-sm rounded-lg px-4 py-3 border ${tones[tone] || tones.info}`;
+    statusEl.classList.remove('hidden');
+    statusEl.innerHTML = msg;
+  }
+
+  async function loadUncategorized() {
+    const store = document.getElementById('overrides-store').value;
+    const start = document.getElementById('overrides-start').value;
+    const end = document.getElementById('overrides-end').value;
+    if (!start || !end) { alert('Please select start and end dates.'); return; }
+
+    setOverridesStatus(`Loading uncategorized items for ${store} · ${start} → ${end}…`, 'info');
+    document.getElementById('overrides-table-wrap').classList.add('hidden');
+
+    try {
+      const url = `${WORKER_BASE}?action=noncategorized-items&store=${encodeURIComponent(store)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+      const resp = await fetch(url, { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+
+      const tbody = document.getElementById('overrides-tbody');
+      tbody.innerHTML = '';
+      if (!data.items || !data.items.length) {
+        setOverridesStatus(`No uncategorized items in snapshots for ${store} · ${start} → ${end}.`, 'ok');
+        return;
+      }
+
+      for (const it of data.items) {
+        const tr = document.createElement('tr');
+        const prefix = detectPrefix(it.name);
+        const optionsHtml = ['<option value="">— pick —</option>']
+          .concat(OVERRIDE_L2_OPTIONS.map(l => `<option value="${l}">${l}</option>`))
+          .join('');
+        const ruleCell = prefix
+          ? `<label class="inline-flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
+               <input type="checkbox" class="override-rule-cb" data-prefix="${prefix}">
+               prefix <code class="text-[11px] px-1 bg-gray-100 dark:bg-gray-700 rounded">${prefix}</code>
+             </label>`
+          : `<span class="text-xs text-gray-400 dark:text-gray-500">—</span>`;
+        tr.innerHTML = `
+          <td class="px-3 py-2 align-top text-gray-900 dark:text-gray-100">
+            <div class="font-medium break-all">${it.name.replace(/</g, '&lt;')}</div>
+            ${it.itemId ? `<div class="text-[11px] text-gray-400 dark:text-gray-500 font-mono">${it.itemId}</div>` : ''}
+          </td>
+          <td class="px-3 py-2 align-top text-right tabular-nums text-gray-700 dark:text-gray-300">${it.qty.toLocaleString()}</td>
+          <td class="px-3 py-2 align-top text-right tabular-nums text-gray-700 dark:text-gray-300">$${it.net.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+          <td class="px-3 py-2 align-top">
+            <select class="override-l2 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1"
+                    data-name="${it.name.replace(/"/g, '&quot;')}"
+                    data-item-id="${it.itemId || ''}">${optionsHtml}</select>
+          </td>
+          <td class="px-3 py-2 align-top">${ruleCell}</td>`;
+        tbody.appendChild(tr);
+      }
+
+      document.getElementById('overrides-table-wrap').classList.remove('hidden');
+      setOverridesStatus(`Loaded ${data.items.length} uncategorized item${data.items.length === 1 ? '' : 's'} from ${data.datesScanned.length} day${data.datesScanned.length === 1 ? '' : 's'}. Assign each to an L2 and Save.`, 'ok');
+    } catch (err) {
+      setOverridesStatus(`Error: ${err.message}`, 'error');
+    }
+  }
+
+  async function saveCategoryOverrides() {
+    setOverridesStatus('Saving overrides…', 'info');
+
+    // Fetch current overrides so we merge rather than clobber
+    let existing = { items: {}, patterns: [] };
+    try {
+      const getResp = await fetch(`${WORKER_BASE}?action=item-overrides`, {
+        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }
+      });
+      if (getResp.ok) existing = await getResp.json();
+    } catch {}
+
+    const items = Object.assign({}, existing.items || {});
+    const patterns = Array.isArray(existing.patterns) ? existing.patterns.slice() : [];
+    const seenPrefixes = new Set(patterns.filter(p => p.type === 'prefix').map(p => String(p.value).toLowerCase()));
+
+    let assigned = 0, newRules = 0;
+    for (const sel of document.querySelectorAll('select.override-l2')) {
+      const l2 = sel.value;
+      if (!l2) continue;
+      const name = sel.dataset.name || '';
+      const itemId = sel.dataset.itemId || '';
+      const key = itemId ? `id:${itemId}` : `name:${name.trim().toLowerCase().replace(/\u2013|\u2014/g, '-').replace(/\s+/g, ' ')}`;
+      items[key] = l2;
+      assigned++;
+
+      // Row-level "also add prefix rule" checkbox
+      const row = sel.closest('tr');
+      const ruleCb = row ? row.querySelector('input.override-rule-cb') : null;
+      if (ruleCb && ruleCb.checked && ruleCb.dataset.prefix) {
+        const prefix = ruleCb.dataset.prefix.toLowerCase();
+        if (!seenPrefixes.has(prefix)) {
+          patterns.push({ type: 'prefix', value: ruleCb.dataset.prefix, category: l2 });
+          seenPrefixes.add(prefix);
+          newRules++;
+        }
+      }
+    }
+
+    if (!assigned && !newRules) {
+      setOverridesStatus('No L2 assignments selected — nothing to save.', 'info');
+      return;
+    }
+
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=item-overrides`, {
+        method: 'POST',
+        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, patterns }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      setOverridesStatus(
+        `Saved ${assigned} item assignment${assigned === 1 ? '' : 's'}` +
+        (newRules ? ` · ${newRules} new prefix rule${newRules === 1 ? '' : 's'}` : '') +
+        `. Click <em>Re-snapshot selected range</em> to rebuild history.`,
+        'ok'
+      );
+    } catch (err) {
+      setOverridesStatus(`Error: ${err.message}`, 'error');
+    }
+  }
+
+  async function resnapshotRecent() {
+    const store = document.getElementById('overrides-store').value;
+    const start = document.getElementById('overrides-start').value;
+    const end = document.getElementById('overrides-end').value;
+    if (!start || !end) { alert('Please select start and end dates.'); return; }
+
+    const dates = [];
+    const cur = new Date(start + 'T00:00:00Z');
+    const endDate = new Date(end + 'T00:00:00Z');
+    while (cur <= endDate) {
+      dates.push(cur.toISOString().slice(0, 10));
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+
+    setOverridesStatus(`Re-snapshotting ${store} for ${dates.length} day${dates.length === 1 ? '' : 's'}…`, 'info');
+    let ok = 0, errs = 0;
+    for (const d of dates) {
+      try {
+        const resp = await fetch(
+          `${WORKER_BASE}?action=items-snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(d)}`,
+          { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
+        );
+        const data = await resp.json();
+        if (!resp.ok || data.error) { errs++; continue; }
+        ok++;
+        delete itemSalesCache[`${store.toUpperCase()}:${d}`];
+      } catch { errs++; }
+    }
+    setOverridesStatus(
+      `Re-snapshot complete: ${ok} ok${errs ? ` · ${errs} errors` : ''}. Open Store Detail → Item Sales to verify.`,
+      errs ? 'error' : 'ok'
+    );
+  }
+
+  window.loadUncategorized = loadUncategorized;
+  window.saveCategoryOverrides = saveCategoryOverrides;
+  window.resnapshotRecent = resnapshotRecent;
 
   // ═══════════════════════════════════════════════════════════════
   //  SIDEBAR
