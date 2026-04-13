@@ -3348,10 +3348,12 @@
     const doc = new DOMParser().parseFromString(text, 'text/html');
     const rows = Array.from(doc.querySelectorAll('tr'));
     if (!rows.length) throw new Error('No <tr> elements found in HTML file');
-    // Detect column indices from first few rows that have digit-only cells
+    // Detect column indices from first few rows. Use 'td' only (not 'td,th') so the
+    // leading row-header <th> in Google Sheets HTML exports doesn't shift our indices —
+    // data extraction below also uses 'td' only, and the two must stay aligned.
     let itemNoCol = -1, costCol = -1, descCol = -1;
-    for (const row of rows.slice(0, 5)) {
-      const cells = Array.from(row.querySelectorAll('td,th')).map(c => c.textContent.trim());
+    for (const row of rows.slice(0, 10)) {
+      const cells = Array.from(row.querySelectorAll('td')).map(c => c.textContent.trim());
       if (!cells.length) continue;
       // Look for header row
       const lower = cells.map(c => c.toLowerCase());
