@@ -470,6 +470,127 @@
           <h2 class="text-base font-semibold text-gray-800 dark:text-gray-100 mb-4">Results</h2>
           <div id="inv-results-body"></div>
         </div>
+
+        <!-- ── Inventory Viewer card ─────────────────────────────── -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
+          <!-- Collapsible header -->
+          <button onclick="toggleInvViewer()" class="w-full flex items-center justify-between px-6 py-4 text-left">
+            <span class="text-base font-semibold text-gray-800 dark:text-gray-100">Inventory Viewer</span>
+            <svg id="inv-viewer-chevron" class="w-5 h-5 text-gray-500 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <!-- Collapsible body -->
+          <div id="inv-viewer-body" class="hidden border-t border-gray-100 dark:border-gray-700 px-6 pb-6 pt-4">
+            <!-- Controls row -->
+            <div class="flex flex-wrap gap-3 mb-4">
+              <select id="inv-view-store" onchange="invViewStore=this.value" class="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+                <option value="BL1">BL1</option>
+                <option value="BL2">BL2</option>
+                <option value="BL4">BL4</option>
+                <option value="BL8">BL8</option>
+                <option value="BL12">BL12</option>
+                <option value="BL14">BL14</option>
+              </select>
+              <input id="inv-view-search" type="text" placeholder="Search by name or code…" oninput="renderInvTable()" class="flex-1 min-w-[180px] px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 placeholder-gray-400">
+              <button onclick="loadInventory(true)" class="px-4 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">Load Inventory</button>
+              <button onclick="findDuplicates()" class="px-4 py-2 text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-colors">Find Duplicates</button>
+              <button onclick="clearInvViewer()" class="px-4 py-2 text-sm font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-100 rounded-lg transition-colors">Clear</button>
+            </div>
+            <!-- Status -->
+            <div id="inv-view-status" class="hidden mb-3 text-sm px-4 py-2 rounded-lg"></div>
+            <!-- Table -->
+            <div id="inv-view-table-wrap" class="hidden overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+              <table class="min-w-full text-sm">
+                <thead class="sticky top-0 bg-gray-50 dark:bg-gray-900 text-left">
+                  <tr>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Name</th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Code</th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Price</th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Cost</th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Category</th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Tax</th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Hidden</th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300"></th>
+                  </tr>
+                </thead>
+                <tbody id="inv-view-tbody" class="divide-y divide-gray-100 dark:divide-gray-700 bg-white dark:bg-gray-800"></tbody>
+              </table>
+            </div>
+            <!-- Pagination -->
+            <div id="inv-view-pagination" class="hidden flex items-center justify-between mt-3 text-sm text-gray-600 dark:text-gray-400">
+              <span id="inv-view-page-label"></span>
+              <div class="flex gap-2">
+                <button onclick="invPagePrev()" id="inv-btn-prev" class="px-3 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">← Prev</button>
+                <button onclick="invPageNext()" id="inv-btn-next" class="px-3 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">Next →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Edit Item Modal ───────────────────────────────────── -->
+        <div id="inv-edit-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/50 p-4">
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-lg p-6">
+            <h3 id="inv-edit-title" class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">Edit Item</h3>
+            <div class="grid grid-cols-2 gap-4">
+              <div class="col-span-2">
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name</label>
+                <input id="inv-edit-name" type="text" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Code / SKU</label>
+                <input id="inv-edit-code" type="text" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Price ($)</label>
+                <input id="inv-edit-price" type="number" step="0.01" min="0" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Unit Cost ($)</label>
+                <input id="inv-edit-cost" type="number" step="0.01" min="0" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Sub-category (L3)</label>
+                <input id="inv-edit-l3" type="text" list="inv-edit-l3-list" class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+                <datalist id="inv-edit-l3-list"></datalist>
+              </div>
+              <div class="flex items-end gap-4 pb-1">
+                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                  <input id="inv-edit-taxable" type="checkbox" class="rounded">Taxable
+                </label>
+                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                  <input id="inv-edit-hidden" type="checkbox" class="rounded">Hidden
+                </label>
+              </div>
+            </div>
+            <div id="inv-edit-status" class="hidden mt-3 text-sm px-4 py-2 rounded-lg"></div>
+            <div class="flex justify-end gap-3 mt-5">
+              <button onclick="closeInvModal('inv-edit-modal')" class="px-4 py-2 text-sm font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-100 rounded-lg">Cancel</button>
+              <button onclick="saveEditItem()" class="px-4 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg">Save Changes</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Delete Confirm Modal ──────────────────────────────── -->
+        <div id="inv-delete-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/50 p-4">
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6">
+            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">Delete Item?</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Delete <strong id="inv-del-name" class="text-gray-800 dark:text-gray-100"></strong>
+              <span class="text-gray-500">(code: <span id="inv-del-code"></span>)</span>?
+            </p>
+            <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer mb-5">
+              <input id="inv-del-all-stores" type="checkbox" class="rounded">
+              Also delete from all other stores
+            </label>
+            <div id="inv-del-status" class="hidden mb-3 text-sm px-4 py-2 rounded-lg"></div>
+            <div class="flex justify-end gap-3">
+              <button onclick="closeInvModal('inv-delete-modal')" class="px-4 py-2 text-sm font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-100 rounded-lg">Cancel</button>
+              <button onclick="confirmDelete()" class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg">Delete</button>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div><!-- end #page-inventory -->
 
@@ -3602,10 +3723,16 @@
       });
       if (!resp.ok) return;
       const data = await resp.json();
+      const editDl = el('inv-edit-l3-list');
       (data.elements || []).forEach(cat => {
         const opt = document.createElement('option');
         opt.value = cat.name;
         dl.appendChild(opt);
+        if (editDl) {
+          const opt2 = document.createElement('option');
+          opt2.value = cat.name;
+          editDl.appendChild(opt2);
+        }
       });
     } catch (_) { /* silently skip — datalist is optional UX */ }
   }
@@ -3725,6 +3852,309 @@
     }
   }
 
+  // ── Inventory Viewer ─────────────────────────────────────────
+  let invViewStore = 'BL1';
+  let invViewItems = [];       // current page
+  let invViewAllItems = [];    // all pages (populated by findDuplicates)
+  let invViewOffset = 0;
+  let invViewTotal = null;
+  let invViewDupMode = false;
+  let invDupCodes = new Set();
+  let invPendingDelete = null; // { item }
+
+  function invViewSetStatus(msg, tone) {
+    const s = el('inv-view-status');
+    if (!msg) { s.classList.add('hidden'); return; }
+    const tones = { ok: 'bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-200', error: 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300', info: 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300', warn: 'bg-yellow-50 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200' };
+    s.className = `text-sm px-4 py-2 rounded-lg ${tones[tone] || tones.info}`;
+    s.textContent = msg;
+    s.classList.remove('hidden');
+  }
+
+  function invEditSetStatus(msg, tone) {
+    const s = el('inv-edit-status');
+    if (!msg) { s.classList.add('hidden'); return; }
+    const tones = { ok: 'bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-200', error: 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300', info: 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' };
+    s.className = `text-sm px-4 py-2 rounded-lg ${tones[tone] || tones.info}`;
+    s.textContent = msg;
+    s.classList.remove('hidden');
+  }
+
+  function invDelSetStatus(msg, tone) {
+    const s = el('inv-del-status');
+    if (!msg) { s.classList.add('hidden'); return; }
+    const tones = { ok: 'bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-200', error: 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300' };
+    s.className = `text-sm px-4 py-2 rounded-lg ${tones[tone] || tones.error}`;
+    s.textContent = msg;
+    s.classList.remove('hidden');
+  }
+
+  function toggleInvViewer() {
+    const body = el('inv-viewer-body');
+    const chevron = el('inv-viewer-chevron');
+    const open = body.classList.toggle('hidden') === false;
+    chevron.style.transform = open ? 'rotate(180deg)' : '';
+    try { localStorage.setItem('inv-viewer-open', open ? '1' : '0'); } catch(e) {}
+  }
+
+  async function loadInventory(reset = true) {
+    invViewStore = el('inv-view-store').value;
+    if (reset) {
+      invViewOffset = 0;
+      invViewAllItems = [];
+      invViewDupMode = false;
+      invDupCodes = new Set();
+    }
+    invViewSetStatus('Loading…', 'info');
+    el('inv-view-table-wrap').classList.add('hidden');
+    el('inv-view-pagination').classList.add('hidden');
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=inventory-items&store=${invViewStore}&offset=${invViewOffset}`, {
+        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }
+      });
+      const data = await resp.json();
+      if (!data.ok) { invViewSetStatus('Error: ' + (data.error || 'unknown'), 'error'); return; }
+      invViewItems = data.elements;
+      invViewTotal = data.total;
+      invViewSetStatus('', '');
+      renderInvTable();
+      updateInvPagination(data.hasMore);
+    } catch(err) {
+      invViewSetStatus('Error: ' + escapeHtml(err.message), 'error');
+    }
+  }
+
+  function renderInvTable() {
+    const query = (el('inv-view-search')?.value || '').toLowerCase();
+    let rows = invViewDupMode
+      ? invViewAllItems.filter(i => invDupCodes.has(i.code))
+      : invViewItems;
+    if (query) {
+      rows = rows.filter(i => i.name.toLowerCase().includes(query) || i.code.toLowerCase().includes(query));
+    }
+    const tbody = el('inv-view-tbody');
+    if (rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="px-3 py-6 text-center text-gray-400 text-sm">No items found.</td></tr>';
+    } else {
+      tbody.innerHTML = rows.map(item => {
+        const isDup = invDupCodes.has(item.code);
+        const rowClass = isDup ? 'bg-yellow-50 dark:bg-yellow-900/20' : '';
+        const nameClass = item.hidden ? 'line-through text-gray-400' : 'text-gray-800 dark:text-gray-100';
+        return `<tr class="${rowClass} hover:bg-gray-50 dark:hover:bg-gray-700/50">
+          <td class="px-3 py-2 ${nameClass} max-w-[200px] truncate" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</td>
+          <td class="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">${escapeHtml(item.code)}</td>
+          <td class="px-3 py-2 text-gray-700 dark:text-gray-300">${fmtDollar(item.price / 100)}</td>
+          <td class="px-3 py-2 text-gray-700 dark:text-gray-300">${item.cost ? fmtDollar(item.cost / 100) : '—'}</td>
+          <td class="px-3 py-2 text-gray-600 dark:text-gray-400 max-w-[160px] truncate" title="${escapeHtml(item.category)}">${escapeHtml(item.category) || '—'}</td>
+          <td class="px-3 py-2 text-center">${item.defaultTaxRates ? '✓' : ''}</td>
+          <td class="px-3 py-2 text-center">${item.hidden ? '✓' : ''}</td>
+          <td class="px-3 py-2 whitespace-nowrap">
+            <button onclick='openEditModal(${JSON.stringify(item)})' class="text-xs px-2 py-1 bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/40 dark:hover:bg-blue-800/60 text-blue-700 dark:text-blue-300 rounded mr-1">Edit</button>
+            <button onclick='openDeleteModal(${JSON.stringify(item)})' class="text-xs px-2 py-1 bg-red-100 hover:bg-red-200 dark:bg-red-900/40 dark:hover:bg-red-800/60 text-red-700 dark:text-red-300 rounded">Del</button>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+    el('inv-view-table-wrap').classList.remove('hidden');
+  }
+
+  function updateInvPagination(hasMore) {
+    const pag = el('inv-view-pagination');
+    pag.classList.remove('hidden');
+    const showing = invViewOffset + 1;
+    const end = invViewOffset + invViewItems.length;
+    const totalStr = invViewTotal != null ? ` of ${invViewTotal}` : '';
+    el('inv-view-page-label').textContent = `Showing ${showing}–${end}${totalStr}`;
+    el('inv-btn-prev').disabled = invViewOffset === 0;
+    el('inv-btn-next').disabled = !hasMore;
+  }
+
+  function invPagePrev() {
+    if (invViewOffset === 0) return;
+    invViewOffset = Math.max(0, invViewOffset - 100);
+    loadInventory(false);
+  }
+
+  function invPageNext() {
+    invViewOffset += 100;
+    loadInventory(false);
+  }
+
+  async function findDuplicates() {
+    invViewStore = el('inv-view-store').value;
+    invViewAllItems = [];
+    invViewSetStatus('Fetching all pages…', 'info');
+    el('inv-view-table-wrap').classList.add('hidden');
+    el('inv-view-pagination').classList.add('hidden');
+    let offset = 0;
+    try {
+      while (true) {
+        const resp = await fetch(`${WORKER_BASE}?action=inventory-items&store=${invViewStore}&offset=${offset}`, {
+          headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }
+        });
+        const data = await resp.json();
+        if (!data.ok) { invViewSetStatus('Error: ' + (data.error || 'unknown'), 'error'); return; }
+        invViewAllItems = invViewAllItems.concat(data.elements);
+        if (!data.hasMore) break;
+        offset += 100;
+        invViewSetStatus(`Fetching… loaded ${invViewAllItems.length} items`, 'info');
+      }
+      // Build duplicate codes set
+      const codeCounts = {};
+      for (const item of invViewAllItems) {
+        if (item.code) codeCounts[item.code] = (codeCounts[item.code] || 0) + 1;
+      }
+      invDupCodes = new Set(Object.keys(codeCounts).filter(c => codeCounts[c] > 1));
+      const dupItems = invViewAllItems.filter(i => invDupCodes.has(i.code));
+      invViewDupMode = true;
+      if (invDupCodes.size === 0) {
+        invViewSetStatus(`No duplicates found across ${invViewAllItems.length} items.`, 'ok');
+        invViewItems = invViewAllItems.slice(0, 100);
+        renderInvTable();
+      } else {
+        invViewSetStatus(`Found ${invDupCodes.size} duplicate code(s) across ${dupItems.length} items (${invViewAllItems.length} total).`, 'warn');
+        invViewItems = [];
+        renderInvTable();
+      }
+      el('inv-view-pagination').classList.add('hidden');
+    } catch(err) {
+      invViewSetStatus('Error: ' + escapeHtml(err.message), 'error');
+    }
+  }
+
+  function clearInvViewer() {
+    invViewItems = [];
+    invViewAllItems = [];
+    invViewOffset = 0;
+    invViewTotal = null;
+    invViewDupMode = false;
+    invDupCodes = new Set();
+    el('inv-view-tbody').innerHTML = '';
+    el('inv-view-table-wrap').classList.add('hidden');
+    el('inv-view-pagination').classList.add('hidden');
+    el('inv-view-search').value = '';
+    invViewSetStatus('', '');
+  }
+
+  function openEditModal(item) {
+    el('inv-edit-title').textContent = `Edit Item — ${invViewStore}`;
+    el('inv-edit-name').value = item.name || '';
+    el('inv-edit-code').value = item.code || '';
+    el('inv-edit-price').value = item.price ? (item.price / 100).toFixed(2) : '';
+    el('inv-edit-cost').value = item.cost ? (item.cost / 100).toFixed(2) : '';
+    el('inv-edit-l3').value = item.category || '';
+    el('inv-edit-taxable').checked = !!item.defaultTaxRates;
+    el('inv-edit-hidden').checked = !!item.hidden;
+    // Store editing context on the modal
+    el('inv-edit-modal').dataset.itemId = item.id;
+    el('inv-edit-modal').dataset.categoryId = item.categoryId || '';
+    invEditSetStatus('', '');
+    // Populate L3 datalist from loaded categories
+    loadCategoriesForStore(invViewStore);
+    el('inv-edit-modal').classList.remove('hidden');
+  }
+
+  async function saveEditItem() {
+    const modal = el('inv-edit-modal');
+    const itemId = modal.dataset.itemId;
+    const currentCategoryId = modal.dataset.categoryId;
+    const name = el('inv-edit-name').value.trim();
+    const code = el('inv-edit-code').value.trim();
+    const priceVal = parseFloat(el('inv-edit-price').value);
+    const costVal = el('inv-edit-cost').value !== '' ? parseFloat(el('inv-edit-cost').value) : undefined;
+    const l3 = el('inv-edit-l3').value.trim();
+    const taxable = el('inv-edit-taxable').checked;
+    const hidden = el('inv-edit-hidden').checked;
+    if (!name) { invEditSetStatus('Name is required.', 'error'); return; }
+    if (isNaN(priceVal) || priceVal < 0) { invEditSetStatus('Invalid price.', 'error'); return; }
+
+    const saveBtn = modal.querySelector('button[onclick="saveEditItem()"]');
+    saveBtn.disabled = true;
+    invEditSetStatus('Saving…', 'info');
+
+    const payload = {
+      store: invViewStore, itemId, name, code,
+      priceCents: Math.round(priceVal * 100),
+      taxable, hidden, l3, currentCategoryId
+    };
+    if (costVal !== undefined) payload.costCents = Math.round(costVal * 100);
+
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=update-clover-item`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        body: JSON.stringify(payload)
+      });
+      const data = await resp.json();
+      if (!data.ok) { invEditSetStatus('Error: ' + (data.error || 'unknown'), 'error'); return; }
+      // Update in-place in both arrays
+      const update = idx => {
+        if (idx >= 0) invViewItems[idx] = { ...invViewItems[idx], name, code, price: Math.round(priceVal * 100), cost: costVal !== undefined ? Math.round(costVal * 100) : invViewItems[idx]?.cost, defaultTaxRates: taxable, hidden, category: l3 };
+      };
+      update(invViewItems.findIndex(i => i.id === itemId));
+      const allIdx = invViewAllItems.findIndex(i => i.id === itemId);
+      if (allIdx >= 0) invViewAllItems[allIdx] = { ...invViewAllItems[allIdx], name, code, price: Math.round(priceVal * 100), cost: costVal !== undefined ? Math.round(costVal * 100) : invViewAllItems[allIdx]?.cost, defaultTaxRates: taxable, hidden, category: l3 };
+      renderInvTable();
+      closeInvModal('inv-edit-modal');
+      invViewSetStatus('Item updated.', 'ok');
+    } catch(err) {
+      invEditSetStatus('Error: ' + escapeHtml(err.message), 'error');
+    } finally {
+      saveBtn.disabled = false;
+    }
+  }
+
+  function openDeleteModal(item) {
+    invPendingDelete = item;
+    el('inv-del-name').textContent = item.name;
+    el('inv-del-code').textContent = item.code;
+    el('inv-del-all-stores').checked = false;
+    invDelSetStatus('', '');
+    el('inv-delete-modal').classList.remove('hidden');
+  }
+
+  async function confirmDelete() {
+    if (!invPendingDelete) return;
+    const item = invPendingDelete;
+    const allStores = el('inv-del-all-stores').checked;
+    const delBtn = el('inv-delete-modal').querySelector('button[onclick="confirmDelete()"]');
+    delBtn.disabled = true;
+    invDelSetStatus('Deleting…', 'info');
+    try {
+      const payload = allStores
+        ? { stores: ['BL1','BL2','BL4','BL8','BL12','BL14'], itemId: item.id }
+        : { store: invViewStore, itemId: item.id };
+      const resp = await fetch(`${WORKER_BASE}?action=delete-clover-item`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        body: JSON.stringify(payload)
+      });
+      const data = await resp.json();
+      const results = data.results || [];
+      const anyFail = results.some(r => !r.ok);
+      if (anyFail) {
+        const errs = results.filter(r => !r.ok).map(r => `${r.store}: ${r.error}`).join('; ');
+        invDelSetStatus('Partial failure — ' + errs, 'error');
+        return;
+      }
+      // Remove from local arrays
+      invViewItems = invViewItems.filter(i => i.id !== item.id);
+      invViewAllItems = invViewAllItems.filter(i => i.id !== item.id);
+      renderInvTable();
+      closeInvModal('inv-delete-modal');
+      invViewSetStatus(`Deleted "${item.name}".`, 'ok');
+      invPendingDelete = null;
+    } catch(err) {
+      invDelSetStatus('Error: ' + escapeHtml(err.message), 'error');
+    } finally {
+      delBtn.disabled = false;
+    }
+  }
+
+  function closeInvModal(modalId) {
+    el(modalId).classList.add('hidden');
+  }
+
   // ═══════════════════════════════════════════════════════════════
   //  INIT
   // ═══════════════════════════════════════════════════════════════
@@ -3783,6 +4213,14 @@
 
     // Pre-load categories for default selection (All Locations → BL1)
     loadCategoriesForStore('all');
+
+    // Restore inventory viewer open/closed state
+    try {
+      if (localStorage.getItem('inv-viewer-open') === '1') {
+        el('inv-viewer-body').classList.remove('hidden');
+        el('inv-viewer-chevron').style.transform = 'rotate(180deg)';
+      }
+    } catch(e) {}
 
     loadAll();
   });
