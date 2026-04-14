@@ -597,7 +597,7 @@
             </div>
           </div>
         <!-- ── Schedule Sale Modal ───────────────────────────────── -->
-        <div id="inv-sale-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/50 p-4">
+        <div id="inv-sale-modal" style="display:none" class="fixed inset-0 z-50 items-center justify-center bg-black/50 p-4">
           <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-xl p-6 max-h-[90vh] overflow-y-auto">
             <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">Schedule Sale</h3>
             <!-- Store badge -->
@@ -4259,7 +4259,10 @@
   }
 
   function closeInvModal(modalId) {
-    el(modalId).classList.add('hidden');
+    const m = el(modalId);
+    // inv-sale-modal uses inline style.display (avoids hidden+flex Tailwind class conflict)
+    if (modalId === 'inv-sale-modal') m.style.display = 'none';
+    else m.classList.add('hidden');
   }
 
   // ── Inventory row selection ────────────────────────────────────────────
@@ -4323,6 +4326,7 @@
 
   // ── Schedule Sale modal ────────────────────────────────────────────────
   function openSaleModal() {
+    console.log('[sale-scheduler] openSaleModal called, selected=', invSelectedItems.size);
     if (invSelectedItems.size === 0) return;
     el('inv-sale-store-badge').textContent = el('inv-view-store').value;
     // Populate items list
@@ -4345,7 +4349,7 @@
     el('inv-sale-status').classList.add('hidden');
     el('inv-sale-discount-val').value = '';
     document.querySelector('input[name="inv-sale-kind"][value="percent"]').checked = true;
-    el('inv-sale-modal').classList.remove('hidden');
+    el('inv-sale-modal').style.display = 'flex';
   }
 
   // Convert a Date to datetime-local string (YYYY-MM-DDTHH:MM) in local tz
