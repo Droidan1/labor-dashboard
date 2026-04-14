@@ -600,10 +600,17 @@
         <div id="inv-sale-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/50 p-4">
           <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-xl p-6 max-h-[90vh] overflow-y-auto">
             <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">Schedule Sale</h3>
-            <!-- Store badge -->
-            <div class="mb-4 flex items-center gap-2">
-              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Store:</span>
-              <span id="inv-sale-store-badge" class="px-2 py-0.5 text-xs font-bold rounded bg-[#3BB54A]/20 text-[#3BB54A]"></span>
+            <!-- Store selector -->
+            <div class="mb-4">
+              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Stores</span>
+              <div id="inv-sale-stores" class="flex flex-wrap gap-2 mt-1.5">
+                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"><input type="checkbox" value="BL1" class="accent-[#3BB54A] inv-sale-store-cb"> BL1</label>
+                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"><input type="checkbox" value="BL2" class="accent-[#3BB54A] inv-sale-store-cb"> BL2</label>
+                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"><input type="checkbox" value="BL4" class="accent-[#3BB54A] inv-sale-store-cb"> BL4</label>
+                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"><input type="checkbox" value="BL8" class="accent-[#3BB54A] inv-sale-store-cb"> BL8</label>
+                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"><input type="checkbox" value="BL12" class="accent-[#3BB54A] inv-sale-store-cb"> BL12</label>
+                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"><input type="checkbox" value="BL14" class="accent-[#3BB54A] inv-sale-store-cb"> BL14</label>
+              </div>
             </div>
             <!-- Items list -->
             <div class="mb-4">
@@ -4323,7 +4330,9 @@
   // ── Schedule Sale modal ────────────────────────────────────────────────
   function openSaleModal() {
     if (invSelectedItems.size === 0) return;
-    el('inv-sale-store-badge').textContent = el('inv-view-store').value;
+    // Pre-check current store, uncheck others
+    const curStore = el('inv-view-store').value;
+    document.querySelectorAll('.inv-sale-store-cb').forEach(cb => { cb.checked = cb.value === curStore; });
     // Populate items list
     const list = el('inv-sale-items-list');
     list.innerHTML = [...invSelectedItems.values()].map(item => `
@@ -4406,12 +4415,12 @@
   }
 
   async function submitSaleSchedule() {
-    const store = el('inv-view-store').value;
+    const stores = [...document.querySelectorAll('.inv-sale-store-cb:checked')].map(cb => cb.value);
+    if (stores.length === 0) return setSaleModalStatus('Select at least one store.', 'error');
     const val = parseFloat(el('inv-sale-discount-val').value);
     const kind = getSaleKind();
     const startStr = el('inv-sale-start').value;
     const endStr = el('inv-sale-end').value;
-    const statusEl = el('inv-sale-status');
     const submitBtn = el('inv-sale-submit');
     if (!val || val <= 0) return setSaleModalStatus('Enter a discount value.', 'error');
     if (kind === 'percent' && val >= 100) return setSaleModalStatus('Percent must be < 100.', 'error');
@@ -4420,20 +4429,32 @@
     const endsAt = etLocalToDate(endStr);
     if (endsAt <= startsAt) return setSaleModalStatus('End must be after start.', 'error');
     if (startsAt <= new Date()) return setSaleModalStatus('Start time must be in the future.', 'error');
-    const items = [...invSelectedItems.values()].map(i => ({ id: i.id, name: i.name, priceCents: i.priceCents }));
+    const items = [...invSelectedItems.values()].map(i => ({ id: i.id, name: i.name }));
+    const discount = { kind, value: kind === 'percent' ? val : Math.round(val * 100) };
     submitBtn.disabled = true;
-    setSaleModalStatus('Scheduling…', 'info');
+    setSaleModalStatus(`Scheduling across ${stores.length} store${stores.length > 1 ? 's' : ''}…`, 'info');
     try {
-      const resp = await fetch(`${WORKER_BASE}?action=schedule-sale`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
-        body: JSON.stringify({ store, items: items.map(i => ({ id: i.id, name: i.name })), discount: { kind, value: kind === 'percent' ? val : Math.round(val * 100) }, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() }),
-      });
-      const data = await resp.json();
-      if (!data.ok) { setSaleModalStatus('Error: ' + (data.error || 'unknown'), 'error'); submitBtn.disabled = false; return; }
-      setSaleModalStatus(`Scheduled ${data.count} item${data.count === 1 ? '' : 's'} (group ${data.scheduleGroup}).`, 'ok');
+      const results = await Promise.all(stores.map(store =>
+        fetch(`${WORKER_BASE}?action=schedule-sale`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+          body: JSON.stringify({ store, items, discount, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() }),
+        }).then(r => r.json())
+      ));
+      const errors = results.filter(r => !r.ok);
+      if (errors.length === results.length) {
+        setSaleModalStatus('Error: ' + (errors[0].error || 'unknown'), 'error');
+        submitBtn.disabled = false;
+        return;
+      }
+      const ok = results.filter(r => r.ok);
+      const totalItems = ok.reduce((s, r) => s + r.count, 0);
+      const msg = ok.length === 1
+        ? `Scheduled ${totalItems} item${totalItems === 1 ? '' : 's'} for ${stores[0]} (group ${ok[0].scheduleGroup}).`
+        : `Scheduled ${totalItems} items across ${ok.length} stores.` + (errors.length ? ` ${errors.length} store(s) failed.` : '');
+      setSaleModalStatus(msg, errors.length ? 'info' : 'ok');
       clearInvSelection();
-      setTimeout(() => closeInvModal('inv-sale-modal'), 1800);
+      setTimeout(() => closeInvModal('inv-sale-modal'), 2200);
     } catch (err) {
       setSaleModalStatus('Error: ' + escapeHtml(err.message), 'error');
       submitBtn.disabled = false;
