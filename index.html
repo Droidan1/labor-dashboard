@@ -500,7 +500,7 @@
             <!-- Status -->
             <div id="inv-view-status" class="hidden mb-3 text-sm px-4 py-2 rounded-lg"></div>
             <!-- Selection toolbar (shown when rows are checked) -->
-            <div id="inv-sel-toolbar" class="hidden mb-3 flex items-center gap-3 px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 text-sm text-blue-800 dark:text-blue-200">
+            <div id="inv-sel-toolbar" style="display:none" class="mb-3 items-center gap-3 px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 text-sm text-blue-800 dark:text-blue-200">
               <span id="inv-sel-count" class="font-semibold"></span>
               <button onclick="openSaleModal()" class="px-3 py-1 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors">Schedule Sale</button>
               <button onclick="clearInvSelection()" class="px-3 py-1 text-xs font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-100 rounded-lg transition-colors">Clear Selection</button>
@@ -4270,11 +4270,12 @@
     const n = invSelectedItems.size;
     const toolbar = el('inv-sel-toolbar');
     const countEl = el('inv-sel-count');
+    if (!toolbar) { console.warn('[sale-scheduler] inv-sel-toolbar not found in DOM'); return; }
     if (n === 0) {
-      toolbar.classList.add('hidden');
+      toolbar.style.display = 'none';
     } else {
-      toolbar.classList.remove('hidden');
-      countEl.textContent = `${n} item${n === 1 ? '' : 's'} selected`;
+      toolbar.style.display = 'flex';
+      if (countEl) countEl.textContent = `${n} item${n === 1 ? '' : 's'} selected`;
     }
   }
 
