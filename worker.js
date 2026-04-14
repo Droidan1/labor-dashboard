@@ -2639,18 +2639,30 @@ export default {
       }
       const targetStores = (store === "all") ? ALL_STORES : [String(store).toUpperCase()];
 
+      // Fetch wrapper: retries up to 3x on 429 with exponential backoff
+      async function cloverFetch(url, options) {
+        let delay = 1000;
+        for (let attempt = 0; attempt <= 3; attempt++) {
+          const resp = await fetch(url, options);
+          if (resp.status !== 429 || attempt === 3) return resp;
+          const retryAfter = parseInt(resp.headers.get("Retry-After") || "0", 10);
+          await new Promise(r => setTimeout(r, retryAfter ? retryAfter * 1000 : delay));
+          delay *= 2;
+        }
+      }
+
       async function resolveCloverCategory(s, categoryName) {
         const mId = env[`${s}_MERCHANT_ID`];
         const tok = env[`${s}_API_TOKEN`];
         const headers = { "Authorization": `Bearer ${tok}`, "Content-Type": "application/json" };
-        const listResp = await fetch(`https://api.clover.com/v3/merchants/${mId}/categories?limit=1000`, { headers });
+        const listResp = await cloverFetch(`https://api.clover.com/v3/merchants/${mId}/categories?limit=1000`, { headers });
         if (!listResp.ok) throw new Error(`categories list: ${listResp.status}`);
         const listData = await listResp.json();
         const existing = (listData.elements || []).find(
           c => (c.name || "").trim().toLowerCase() === categoryName.trim().toLowerCase()
         );
         if (existing) return { categoryId: existing.id, created: false };
-        const createResp = await fetch(`https://api.clover.com/v3/merchants/${mId}/categories`, {
+        const createResp = await cloverFetch(`https://api.clover.com/v3/merchants/${mId}/categories`, {
           method: "POST", headers, body: JSON.stringify({ name: categoryName }),
         });
         if (!createResp.ok) throw new Error(`category create: ${createResp.status}`);
@@ -2669,7 +2681,7 @@ export default {
 
           const itemBody = { name, code, sku: code, price: priceCents, hidden: !!hidden, defaultTaxRates: !!taxable, priceType: "FIXED" };
           if (costCents != null) itemBody.cost = costCents;
-          const itemResp = await fetch(`https://api.clover.com/v3/merchants/${mId}/items`, {
+          const itemResp = await cloverFetch(`https://api.clover.com/v3/merchants/${mId}/items`, {
             method: "POST", headers, body: JSON.stringify(itemBody),
           });
           if (!itemResp.ok) {
@@ -2679,7 +2691,7 @@ export default {
           const item = await itemResp.json();
           const itemId = item.id;
 
-          const assocResp = await fetch(`https://api.clover.com/v3/merchants/${mId}/category_items`, {
+          const assocResp = await cloverFetch(`https://api.clover.com/v3/merchants/${mId}/category_items`, {
             method: "POST", headers,
             body: JSON.stringify({ elements: [{ category: { id: categoryId }, item: { id: itemId } }] }),
           });
