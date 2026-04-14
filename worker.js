@@ -1195,6 +1195,128 @@ async function resolveCloverCategory(s, categoryName, env) {
   return { categoryId: cat.id, created: true };
 }
 
+// ─── Sale Scheduler helpers ─────────────────────────────────────────────
+// Read a single Clover item's current price (cents).
+async function getCloverItemPrice(env, store, itemId) {
+  const mId = env[`${store}_MERCHANT_ID`];
+  const tok = env[`${store}_API_TOKEN`];
+  const r = await cloverFetch(
+    `https://api.clover.com/v3/merchants/${mId}/items/${itemId}`,
+    { headers: { Authorization: `Bearer ${tok}` } }
+  );
+  if (!r.ok) throw new Error(`Clover GET item ${itemId} ${r.status}`);
+  const j = await r.json();
+  return j.price || 0;
+}
+
+// Write a single Clover item's price (cents). Uses POST per Clover convention.
+async function setCloverItemPrice(env, store, itemId, priceCents) {
+  const mId = env[`${store}_MERCHANT_ID`];
+  const tok = env[`${store}_API_TOKEN`];
+  const r = await cloverFetch(
+    `https://api.clover.com/v3/merchants/${mId}/items/${itemId}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tok}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ price: priceCents }),
+    }
+  );
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    throw new Error(`Clover POST item ${itemId} ${r.status} ${txt.slice(0, 200)}`);
+  }
+  return r;
+}
+
+// Compute the target sale price given a discount kind + value.
+// Clamps to a 1-cent floor so we never accidentally zero out an item.
+function computeSalePrice(originalCents, kind, value) {
+  if (kind === "percent") {
+    return Math.max(1, Math.round(originalCents * (1 - value / 100)));
+  }
+  // 'amount' — value is cents off
+  return Math.max(1, originalCents - Math.round(value));
+}
+
+// Every-minute cron worker: flip prices at starts_at, revert at ends_at.
+// Per-tick cap keeps us under CPU budget; next tick drains any backlog.
+async function processSaleSchedules(env, now) {
+  const nowIso = now.toISOString();
+  const PER_TICK = 50;
+  const result = { activated: 0, reverted: 0, errors: [] };
+  if (!env.DB) return result;
+
+  // 1. Activate pending schedules whose start time has arrived.
+  const pending = await env.DB
+    .prepare(
+      "SELECT * FROM sale_schedules WHERE status='pending' AND starts_at <= ? ORDER BY starts_at ASC LIMIT ?"
+    )
+    .bind(nowIso, PER_TICK)
+    .all();
+  await Promise.allSettled((pending.results || []).map(async row => {
+    try {
+      const currentCents = await getCloverItemPrice(env, row.store, row.item_id);
+      const saleCents = computeSalePrice(currentCents, row.discount_kind, row.discount_value);
+      if (saleCents >= currentCents) {
+        throw new Error(`Computed sale price ${saleCents} >= current ${currentCents}; aborting`);
+      }
+      await setCloverItemPrice(env, row.store, row.item_id, saleCents);
+      await env.DB
+        .prepare(
+          "UPDATE sale_schedules SET original_price=?, sale_price=?, status='active', activated_at=? WHERE id=?"
+        )
+        .bind(currentCents, saleCents, nowIso, row.id)
+        .run();
+      result.activated++;
+    } catch (err) {
+      result.errors.push(`activate ${row.store}/${row.item_id}: ${err.message}`);
+      await env.DB
+        .prepare("UPDATE sale_schedules SET status='error', error_msg=? WHERE id=?")
+        .bind(String(err.message).slice(0, 500), row.id)
+        .run()
+        .catch(() => {});
+    }
+  }));
+
+  // 2. Revert active schedules whose end time has arrived.
+  const active = await env.DB
+    .prepare(
+      "SELECT * FROM sale_schedules WHERE status='active' AND ends_at <= ? ORDER BY ends_at ASC LIMIT ?"
+    )
+    .bind(nowIso, PER_TICK)
+    .all();
+  await Promise.allSettled((active.results || []).map(async row => {
+    try {
+      // Drift guard — don't overwrite if someone manually edited the price
+      // while the sale was running. Flag for admin review instead.
+      const currentCents = await getCloverItemPrice(env, row.store, row.item_id);
+      if (currentCents !== row.sale_price) {
+        throw new Error(`Price drifted: expected ${row.sale_price}, found ${currentCents}. Manual review needed.`);
+      }
+      await setCloverItemPrice(env, row.store, row.item_id, row.original_price);
+      await env.DB
+        .prepare(
+          "UPDATE sale_schedules SET status='completed', reverted_at=? WHERE id=?"
+        )
+        .bind(nowIso, row.id)
+        .run();
+      result.reverted++;
+    } catch (err) {
+      result.errors.push(`revert ${row.store}/${row.item_id}: ${err.message}`);
+      await env.DB
+        .prepare("UPDATE sale_schedules SET status='error', error_msg=? WHERE id=?")
+        .bind(String(err.message).slice(0, 500), row.id)
+        .run()
+        .catch(() => {});
+    }
+  }));
+
+  return result;
+}
+
 // ─── Fetch item → category mapping from Clover inventory (cached 24h) ──
 async function fetchItemCategoryMap(store, env) {
   const cacheKey = `item-cats:${store.toLowerCase()}`;
@@ -3316,8 +3438,142 @@ export default {
     }
   },
 
-  // ── Cron trigger handler (end-of-day snapshots) ───────────────
+  // ── Admin: Schedule a sale ──────────────────────────────────────────────
+  //    POST ?action=schedule-sale
+  //    body: { store, items:[{id,name,priceCents}], discount:{kind,value}, startsAt, endsAt }
+  if (request.method === "POST" && url.searchParams.get("action") === "schedule-sale") {
+    const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+    const unauth = requireAdminSecret(request, env, corsJson);
+    if (unauth) return unauth;
+    const body = await request.json().catch(() => null);
+    if (!body) return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: corsJson });
+    const { store, items, discount, startsAt, endsAt } = body;
+    if (!ALL_STORES.includes(store)) return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+    if (!Array.isArray(items) || items.length === 0) return new Response(JSON.stringify({ error: "items must be a non-empty array" }), { status: 400, headers: corsJson });
+    if (!discount?.kind || !["percent", "amount"].includes(discount.kind)) return new Response(JSON.stringify({ error: "discount.kind must be 'percent' or 'amount'" }), { status: 400, headers: corsJson });
+    if (typeof discount.value !== "number" || discount.value <= 0) return new Response(JSON.stringify({ error: "discount.value must be a positive number" }), { status: 400, headers: corsJson });
+    if (discount.kind === "percent" && discount.value >= 100) return new Response(JSON.stringify({ error: "Percent discount must be < 100" }), { status: 400, headers: corsJson });
+    const sAt = new Date(startsAt), eAt = new Date(endsAt);
+    if (isNaN(sAt) || isNaN(eAt)) return new Response(JSON.stringify({ error: "Invalid startsAt or endsAt" }), { status: 400, headers: corsJson });
+    if (eAt <= sAt) return new Response(JSON.stringify({ error: "endsAt must be after startsAt" }), { status: 400, headers: corsJson });
+    if (sAt < new Date()) return new Response(JSON.stringify({ error: "startsAt must be in the future" }), { status: 400, headers: corsJson });
+    // Check for overlapping schedules
+    const ids = items.map(i => `'${String(i.id).replace(/'/g,"")}'`).join(",");
+    const overlap = await env.DB.prepare(
+      `SELECT item_id FROM sale_schedules
+       WHERE store=? AND item_id IN (${ids})
+         AND status IN ('pending','active')
+         AND starts_at < ? AND ends_at > ?
+       LIMIT 1`
+    ).bind(store, eAt.toISOString(), sAt.toISOString()).first();
+    if (overlap) return new Response(JSON.stringify({ error: `Item ${overlap.item_id} already has an overlapping active/pending schedule` }), { status: 409, headers: corsJson });
+    // Generate schedule group id (simple timestamp-based)
+    const scheduleGroup = `sg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const now = new Date().toISOString();
+    const stmt = env.DB.prepare(
+      `INSERT INTO sale_schedules (schedule_group,store,item_id,item_name,discount_kind,discount_value,starts_at,ends_at,status,created_at)
+       VALUES (?,?,?,?,?,?,?,?,'pending',?)`
+    );
+    const stmts = items.map(item =>
+      stmt.bind(scheduleGroup, store, item.id, item.name || "", discount.kind, discount.value, sAt.toISOString(), eAt.toISOString(), now)
+    );
+    await env.DB.batch(stmts);
+    return new Response(JSON.stringify({ ok: true, scheduleGroup, count: items.length }), { headers: corsJson });
+  }
+
+  // ── Admin: List sale schedules ──────────────────────────────────────────
+  //    GET ?action=list-sale-schedules&store=BL1&filter=upcoming|active|past|all
+  if (url.searchParams.get("action") === "list-sale-schedules") {
+    const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+    const unauth = requireAdminSecret(request, env, corsJson);
+    if (unauth) return unauth;
+    const store = url.searchParams.get("store") || "";
+    const filter = url.searchParams.get("filter") || "all";
+    if (!ALL_STORES.includes(store)) return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+    let whereStatus = "";
+    if (filter === "upcoming") whereStatus = "AND status='pending'";
+    else if (filter === "active") whereStatus = "AND status='active'";
+    else if (filter === "past") whereStatus = "AND status IN ('completed','cancelled','error')";
+    const rows = await env.DB.prepare(
+      `SELECT * FROM sale_schedules WHERE store=? ${whereStatus} ORDER BY starts_at DESC LIMIT 200`
+    ).bind(store).all();
+    // Group by schedule_group
+    const groups = {};
+    for (const row of (rows.results || [])) {
+      if (!groups[row.schedule_group]) {
+        groups[row.schedule_group] = { scheduleGroup: row.schedule_group, store: row.store, discountKind: row.discount_kind, discountValue: row.discount_value, startsAt: row.starts_at, endsAt: row.ends_at, status: row.status, createdAt: row.created_at, items: [] };
+      }
+      groups[row.schedule_group].items.push({ id: row.item_id, name: row.item_name, originalPrice: row.original_price, salePrice: row.sale_price, status: row.status, activatedAt: row.activated_at, revertedAt: row.reverted_at, errorMsg: row.error_msg });
+      // Promote worst status to group level
+      const rank = { error: 4, pending: 3, active: 2, completed: 1, cancelled: 0 };
+      if ((rank[row.status] || 0) > (rank[groups[row.schedule_group].status] || 0)) {
+        groups[row.schedule_group].status = row.status;
+      }
+    }
+    return new Response(JSON.stringify({ ok: true, groups: Object.values(groups) }), { headers: corsJson });
+  }
+
+  // ── Admin: Cancel a sale schedule ──────────────────────────────────────
+  //    POST ?action=cancel-sale-schedule  body: { scheduleGroup }
+  if (request.method === "POST" && url.searchParams.get("action") === "cancel-sale-schedule") {
+    const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+    const unauth = requireAdminSecret(request, env, corsJson);
+    if (unauth) return unauth;
+    const body = await request.json().catch(() => null);
+    const { scheduleGroup } = body || {};
+    if (!scheduleGroup) return new Response(JSON.stringify({ error: "Missing scheduleGroup" }), { status: 400, headers: corsJson });
+    const rows = await env.DB.prepare(
+      "SELECT * FROM sale_schedules WHERE schedule_group=? AND status IN ('pending','active')"
+    ).bind(scheduleGroup).all();
+    const pending = (rows.results || []).filter(r => r.status === "pending");
+    const active  = (rows.results || []).filter(r => r.status === "active");
+    const now = new Date().toISOString();
+    const errors = [];
+    // Cancel pending rows immediately
+    if (pending.length) {
+      await env.DB.prepare(
+        `UPDATE sale_schedules SET status='cancelled' WHERE schedule_group=? AND status='pending'`
+      ).bind(scheduleGroup).run();
+    }
+    // Force-revert active rows
+    await Promise.allSettled(active.map(async row => {
+      try {
+        const store = row.store;
+        const currentCents = await getCloverItemPrice(env, store, row.item_id);
+        const priceToRestore = currentCents === row.sale_price ? row.original_price : currentCents;
+        await setCloverItemPrice(env, store, row.item_id, priceToRestore);
+        await env.DB.prepare(
+          "UPDATE sale_schedules SET status='completed', reverted_at=?, error_msg=? WHERE id=?"
+        ).bind(now, "Cancelled by admin", row.id).run();
+      } catch (err) {
+        errors.push(`${row.item_id}: ${err.message}`);
+        await env.DB.prepare(
+          "UPDATE sale_schedules SET status='error', error_msg=? WHERE id=?"
+        ).bind(String(err.message).slice(0, 500), row.id).run().catch(() => {});
+      }
+    }));
+    return new Response(JSON.stringify({ ok: true, cancelled: pending.length, reverted: active.length - errors.length, errors }), { headers: corsJson });
+  }
+
+  // ── Admin: Manually trigger the sale scheduler (debug / test) ──────────
+  //    POST ?action=run-sale-scheduler-now
+  if (request.method === "POST" && url.searchParams.get("action") === "run-sale-scheduler-now") {
+    const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+    const unauth = requireAdminSecret(request, env, corsJson);
+    if (unauth) return unauth;
+    const result = await processSaleSchedules(env, new Date());
+    return new Response(JSON.stringify({ ok: true, ...result }), { headers: corsJson });
+  }
+
+  // ── Cron trigger handler ───────────────────────────────────────
   async scheduled(event, env, ctx) {
+    // Route by cron expression.
+    // "* * * * *" — every-minute sale scheduler
+    if (event.cron === "* * * * *") {
+      ctx.waitUntil(processSaleSchedules(env, new Date()));
+      return;
+    }
+    // "55 3 * * *" — nightly end-of-day snapshot rollup (fall-through below)
     const { dateStr: todayStr, startOfDay } = getETToday();
 
     const results = {};
