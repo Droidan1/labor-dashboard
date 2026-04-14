@@ -398,9 +398,15 @@
         </div>
       </div>
       <div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
-        <!-- Add Item card -->
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
-          <h2 class="text-base font-semibold text-gray-800 dark:text-gray-100 mb-5">Add Item</h2>
+        <!-- Add Item card (collapsible) -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
+          <button onclick="toggleAddItem()" class="w-full flex items-center justify-between px-6 py-4 text-left">
+            <span class="text-base font-semibold text-gray-800 dark:text-gray-100">Add Item</span>
+            <svg id="inv-add-chevron" class="w-5 h-5 text-gray-500 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <div id="inv-add-body" class="hidden px-6 pb-6">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <!-- Location -->
             <div>
@@ -464,6 +470,7 @@
           <div class="mt-5">
             <button id="inv-submit" onclick="createCloverItem()" class="px-5 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Add Item</button>
           </div>
+          </div><!-- /inv-add-body -->
         </div>
         <!-- Results panel -->
         <div id="inv-results" class="hidden bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
@@ -3941,6 +3948,13 @@
     }
   }
 
+  function toggleAddItem() {
+    const body = el('inv-add-body');
+    const chevron = el('inv-add-chevron');
+    const hidden = body.classList.toggle('hidden');
+    chevron.classList.toggle('rotate-180', !hidden);
+  }
+
   // ── Inventory Viewer ─────────────────────────────────────────
   let invViewStore = 'BL1';
   let invViewItems = [];       // current page
@@ -4506,11 +4520,14 @@
         return;
       }
       list.innerHTML = data.groups.map(g => {
-        const shortId = g.scheduleGroup.slice(-8);
         const discLabel = g.discountKind === 'percent' ? `${g.discountValue}% off` : `$${(g.discountValue / 100).toFixed(2)} off`;
         const statusBadge = `<span class="px-2 py-0.5 text-xs font-semibold rounded ${SCHED_STATUS_CLASS[g.status] || ''}">${SCHED_STATUS_LABEL[g.status] || g.status}</span>`;
-        const cancelBtn = (g.status === 'pending' || g.status === 'active')
-          ? `<button onclick="cancelSaleSchedule('${escapeHtml(g.scheduleGroup)}')" class="text-xs px-2 py-1 bg-red-100 hover:bg-red-200 dark:bg-red-900/40 dark:hover:bg-red-800/60 text-red-700 dark:text-red-300 rounded">Cancel</button>` : '';
+        const isFinished = ['completed', 'cancelled', 'error'].includes(g.status);
+        const actionBtn = (g.status === 'pending' || g.status === 'active')
+          ? `<button onclick="cancelSaleSchedule('${escapeHtml(g.scheduleGroup)}')" class="text-xs px-2 py-1 bg-red-100 hover:bg-red-200 dark:bg-red-900/40 dark:hover:bg-red-800/60 text-red-700 dark:text-red-300 rounded">Cancel</button>`
+          : isFinished
+          ? `<button onclick="removeSaleSchedule('${escapeHtml(g.scheduleGroup)}')" class="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 rounded">Remove</button>`
+          : '';
         const itemRows = g.items.map(item => {
           const priceStr = item.originalPrice && item.salePrice
             ? `${fmtDollar(item.originalPrice/100)} → <span class="text-green-600 dark:text-green-400 font-semibold">${fmtDollar(item.salePrice/100)}</span>`
@@ -4527,13 +4544,12 @@
               <div class="flex items-center gap-2 flex-wrap">
                 ${statusBadge}
                 <span class="text-sm font-semibold text-gray-800 dark:text-gray-100">${discLabel}</span>
-                <span class="text-xs text-gray-400 font-mono">#${shortId}</span>
               </div>
               <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
                 ${fmtSchedTime(g.startsAt)} &rarr; ${fmtSchedTime(g.endsAt)} ET &bull; ${g.items.length} item${g.items.length === 1 ? '' : 's'}
               </div>
             </div>
-            <div>${cancelBtn}</div>
+            <div>${actionBtn}</div>
           </div>
           <div class="mt-2 pl-1 border-l-2 border-gray-100 dark:border-gray-700 space-y-0.5">${itemRows}</div>
         </div>`;
@@ -4555,6 +4571,21 @@
       });
       const data = await resp.json();
       if (!data.ok) { alert('Cancel failed: ' + (data.error || 'unknown')); return; }
+      loadSaleSchedules();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  }
+
+  async function removeSaleSchedule(scheduleGroup) {
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=delete-sale-schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        body: JSON.stringify({ scheduleGroup }),
+      });
+      const data = await resp.json();
+      if (!data.ok) { alert('Remove failed: ' + (data.error || 'unknown')); return; }
       loadSaleSchedules();
     } catch (err) {
       alert('Error: ' + err.message);
