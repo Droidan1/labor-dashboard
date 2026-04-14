@@ -516,15 +516,15 @@
             <div id="inv-view-table-wrap" class="hidden overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
               <table class="min-w-full text-sm">
                 <thead class="sticky top-0 bg-gray-50 dark:bg-gray-900 text-left">
-                  <tr>
+                  <tr id="inv-thead-row">
                     <th class="px-3 py-2"><input type="checkbox" id="inv-sel-all" onchange="toggleSelectAll(this.checked)" class="w-4 h-4 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] cursor-pointer"></th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Name</th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Code</th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Price</th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Cost</th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Category</th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Tax</th>
-                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Hidden</th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('name')"><span>Name</span><span id="inv-sort-name" class="ml-1 text-blue-500"></span></th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('code')"><span>Code</span><span id="inv-sort-code" class="ml-1 text-blue-500"></span></th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('price')"><span>Price</span><span id="inv-sort-price" class="ml-1 text-blue-500"></span></th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('cost')"><span>Cost</span><span id="inv-sort-cost" class="ml-1 text-blue-500"></span></th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('category')"><span>Category</span><span id="inv-sort-category" class="ml-1 text-blue-500"></span></th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('tax')"><span>Tax</span><span id="inv-sort-tax" class="ml-1 text-blue-500"></span></th>
+                    <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300 cursor-pointer select-none whitespace-nowrap" onclick="sortInvTable('hidden')"><span>Hidden</span><span id="inv-sort-hidden" class="ml-1 text-blue-500"></span></th>
                     <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300"></th>
                   </tr>
                 </thead>
@@ -3964,6 +3964,8 @@
   let invViewOffset = 0;
   let invViewTotal = null;
   let invViewDupMode = false;
+  let invSortField = null;   // 'name'|'code'|'price'|'cost'|'category'|'tax'|'hidden'
+  let invSortAsc = true;
   let invDupCodes = new Set();
   let invPendingDelete = null; // { item }
 
@@ -4049,7 +4051,33 @@
         if (ka !== kb) return ka < kb ? -1 : 1;
         return (a.name || '').localeCompare(b.name || '');
       });
+    } else if (invSortField) {
+      rows = rows.slice().sort((a, b) => {
+        let va, vb;
+        if (invSortField === 'price' || invSortField === 'cost') {
+          va = a[invSortField] ?? -1;
+          vb = b[invSortField] ?? -1;
+          return invSortAsc ? va - vb : vb - va;
+        } else if (invSortField === 'tax') {
+          va = a.defaultTaxRates ? 1 : 0;
+          vb = b.defaultTaxRates ? 1 : 0;
+          return invSortAsc ? va - vb : vb - va;
+        } else if (invSortField === 'hidden') {
+          va = a.hidden ? 1 : 0;
+          vb = b.hidden ? 1 : 0;
+          return invSortAsc ? va - vb : vb - va;
+        } else {
+          va = (a[invSortField] || '').toLowerCase();
+          vb = (b[invSortField] || '').toLowerCase();
+          return invSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+        }
+      });
     }
+    // Update sort indicators
+    ['name','code','price','cost','category','tax','hidden'].forEach(f => {
+      const el2 = el(`inv-sort-${f}`);
+      if (el2) el2.textContent = invSortField === f ? (invSortAsc ? '▲' : '▼') : '';
+    });
     const tbody = el('inv-view-tbody');
     if (rows.length === 0) {
       tbody.innerHTML = '<tr><td colspan="9" class="px-3 py-6 text-center text-gray-400 text-sm">No items found.</td></tr>';
@@ -4081,6 +4109,16 @@
       }).join('');
     }
     el('inv-view-table-wrap').classList.remove('hidden');
+  }
+
+  function sortInvTable(field) {
+    if (invSortField === field) {
+      invSortAsc = !invSortAsc;
+    } else {
+      invSortField = field;
+      invSortAsc = true;
+    }
+    renderInvTable();
   }
 
   function updateInvPagination(hasMore) {
