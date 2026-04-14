@@ -1163,6 +1163,38 @@ function isBinItem(name) {
   return BIN_PATTERNS.some(p => p.test(name));
 }
 
+// ─── Clover API fetch helper: retries up to 3x on 429 ───────────────────
+async function cloverFetch(url, options) {
+  let delay = 1000;
+  for (let attempt = 0; attempt <= 3; attempt++) {
+    const resp = await fetch(url, options);
+    if (resp.status !== 429 || attempt === 3) return resp;
+    const retryAfter = parseInt(resp.headers.get("Retry-After") || "0", 10);
+    await new Promise(r => setTimeout(r, retryAfter ? retryAfter * 1000 : delay));
+    delay *= 2;
+  }
+}
+
+// ─── Resolve or create a Clover category by name (case-insensitive) ──────
+async function resolveCloverCategory(s, categoryName, env) {
+  const mId = env[`${s}_MERCHANT_ID`];
+  const tok = env[`${s}_API_TOKEN`];
+  const headers = { "Authorization": `Bearer ${tok}`, "Content-Type": "application/json" };
+  const listResp = await cloverFetch(`https://api.clover.com/v3/merchants/${mId}/categories?limit=1000`, { headers });
+  if (!listResp.ok) throw new Error(`categories list: ${listResp.status}`);
+  const listData = await listResp.json();
+  const existing = (listData.elements || []).find(
+    c => (c.name || "").trim().toLowerCase() === categoryName.trim().toLowerCase()
+  );
+  if (existing) return { categoryId: existing.id, created: false };
+  const createResp = await cloverFetch(`https://api.clover.com/v3/merchants/${mId}/categories`, {
+    method: "POST", headers, body: JSON.stringify({ name: categoryName }),
+  });
+  if (!createResp.ok) throw new Error(`category create: ${createResp.status}`);
+  const cat = await createResp.json();
+  return { categoryId: cat.id, created: true };
+}
+
 // ─── Fetch item → category mapping from Clover inventory (cached 24h) ──
 async function fetchItemCategoryMap(store, env) {
   const cacheKey = `item-cats:${store.toLowerCase()}`;
@@ -2639,37 +2671,6 @@ export default {
       }
       const targetStores = (store === "all") ? ALL_STORES : [String(store).toUpperCase()];
 
-      // Fetch wrapper: retries up to 3x on 429 with exponential backoff
-      async function cloverFetch(url, options) {
-        let delay = 1000;
-        for (let attempt = 0; attempt <= 3; attempt++) {
-          const resp = await fetch(url, options);
-          if (resp.status !== 429 || attempt === 3) return resp;
-          const retryAfter = parseInt(resp.headers.get("Retry-After") || "0", 10);
-          await new Promise(r => setTimeout(r, retryAfter ? retryAfter * 1000 : delay));
-          delay *= 2;
-        }
-      }
-
-      async function resolveCloverCategory(s, categoryName) {
-        const mId = env[`${s}_MERCHANT_ID`];
-        const tok = env[`${s}_API_TOKEN`];
-        const headers = { "Authorization": `Bearer ${tok}`, "Content-Type": "application/json" };
-        const listResp = await cloverFetch(`https://api.clover.com/v3/merchants/${mId}/categories?limit=1000`, { headers });
-        if (!listResp.ok) throw new Error(`categories list: ${listResp.status}`);
-        const listData = await listResp.json();
-        const existing = (listData.elements || []).find(
-          c => (c.name || "").trim().toLowerCase() === categoryName.trim().toLowerCase()
-        );
-        if (existing) return { categoryId: existing.id, created: false };
-        const createResp = await cloverFetch(`https://api.clover.com/v3/merchants/${mId}/categories`, {
-          method: "POST", headers, body: JSON.stringify({ name: categoryName }),
-        });
-        if (!createResp.ok) throw new Error(`category create: ${createResp.status}`);
-        const cat = await createResp.json();
-        return { categoryId: cat.id, created: true };
-      }
-
       async function createItemForStore(s) {
         try {
           const mId = env[`${s}_MERCHANT_ID`];
@@ -2690,7 +2691,7 @@ export default {
             }
           }
 
-          const { categoryId, created: categoryCreated } = await resolveCloverCategory(s, l3);
+          const { categoryId, created: categoryCreated } = await resolveCloverCategory(s, l3, env);
 
           const itemBody = { name, code, sku: code, price: priceCents, hidden: !!hidden, defaultTaxRates: !!taxable, priceType: "FIXED" };
           if (costCents != null) itemBody.cost = costCents;
@@ -2743,6 +2744,138 @@ export default {
       }
 
       return new Response(JSON.stringify({ results, costUpdated, l3Mapped }), { headers: corsJson });
+    }
+
+    // ── Admin: Inventory Items (paginated)
+    //    GET ?action=inventory-items&store=BL1&offset=0
+    if (url.searchParams.get("action") === "inventory-items") {
+      if (request.headers.get("X-Snapshot-Secret") !== env.SNAPSHOT_SECRET) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const store = url.searchParams.get("store") || "";
+      const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+      if (!ALL_STORES.includes(store)) {
+        return new Response(JSON.stringify({ ok: false, error: "Invalid store" }), { status: 400, headers: corsJson });
+      }
+      const mId = env[`${store}_MERCHANT_ID`];
+      const tok = env[`${store}_API_TOKEN`];
+      const apiUrl = `https://api.clover.com/v3/merchants/${mId}/items?expand=categories&limit=100&offset=${offset}`;
+      const resp = await cloverFetch(apiUrl, { headers: { "Authorization": `Bearer ${tok}` } });
+      if (!resp.ok) {
+        const txt = await resp.text();
+        return new Response(JSON.stringify({ ok: false, error: txt }), { status: resp.status, headers: corsJson });
+      }
+      const data = await resp.json();
+      const elements = (data.elements || []).map(item => ({
+        id: item.id,
+        name: item.name || "",
+        code: item.code || "",
+        sku: item.sku || "",
+        price: item.price || 0,
+        cost: item.cost || 0,
+        hidden: item.hidden || false,
+        defaultTaxRates: item.defaultTaxRates || false,
+        priceType: item.priceType || "FIXED",
+        modifiedTime: item.modifiedTime || 0,
+        category: item.categories?.elements?.[0]?.name || "",
+        categoryId: item.categories?.elements?.[0]?.id || "",
+      }));
+      const total = data.total ?? data.count ?? null;
+      const hasMore = elements.length === 100;
+      return new Response(JSON.stringify({ ok: true, elements, offset, total, hasMore }), { headers: corsJson });
+    }
+
+    // ── Admin: Update Clover Item
+    //    POST ?action=update-clover-item  body: { store, itemId, name, code, priceCents, costCents, taxable, hidden, l3, currentCategoryId }
+    if (url.searchParams.get("action") === "update-clover-item") {
+      if (request.headers.get("X-Snapshot-Secret") !== env.SNAPSHOT_SECRET) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const body = await request.json();
+      const { store, itemId, name, code, priceCents, costCents, taxable, hidden, l3, currentCategoryId } = body;
+      if (!ALL_STORES.includes(store) || !itemId) {
+        return new Response(JSON.stringify({ ok: false, error: "Invalid store or itemId" }), { status: 400, headers: corsJson });
+      }
+      const mId = env[`${store}_MERCHANT_ID`];
+      const tok = env[`${store}_API_TOKEN`];
+      const authHeaders = { "Authorization": `Bearer ${tok}`, "Content-Type": "application/json" };
+
+      // Build scalar patch — only include defined fields
+      const patch = {};
+      if (name !== undefined) patch.name = name;
+      if (code !== undefined) { patch.code = code; patch.sku = code; }
+      if (priceCents !== undefined) patch.price = priceCents;
+      if (costCents !== undefined) patch.cost = costCents;
+      if (taxable !== undefined) patch.defaultTaxRates = taxable;
+      if (hidden !== undefined) patch.hidden = hidden;
+
+      const patchResp = await cloverFetch(
+        `https://api.clover.com/v3/merchants/${mId}/items/${itemId}`,
+        { method: "POST", headers: authHeaders, body: JSON.stringify(patch) }
+      );
+      if (!patchResp.ok) {
+        const txt = await patchResp.text();
+        return new Response(JSON.stringify({ ok: false, error: txt, stage: "patch" }), { status: patchResp.status, headers: corsJson });
+      }
+      const updatedItem = await patchResp.json();
+
+      // Handle category reassignment if l3 was sent
+      if (l3 !== undefined) {
+        // Remove existing category associations for this item
+        const itemCatUrl = `https://api.clover.com/v3/merchants/${mId}/category_items?filter=item.id%3D${itemId}`;
+        const catItemsResp = await cloverFetch(itemCatUrl, { headers: { "Authorization": `Bearer ${tok}` } });
+        if (catItemsResp.ok) {
+          const catData = await catItemsResp.json();
+          for (const assoc of (catData.elements || [])) {
+            await cloverFetch(
+              `https://api.clover.com/v3/merchants/${mId}/category_items/${assoc.id}`,
+              { method: "DELETE", headers: { "Authorization": `Bearer ${tok}` } }
+            );
+          }
+        }
+        // Assign new category if l3 is non-empty
+        if (l3) {
+          const newCatId = await resolveCloverCategory(store, l3, env);
+          if (newCatId) {
+            await cloverFetch(
+              `https://api.clover.com/v3/merchants/${mId}/category_items`,
+              { method: "POST", headers: authHeaders, body: JSON.stringify({ elements: [{ category: { id: newCatId }, item: { id: itemId } }] }) }
+            );
+          }
+        }
+      }
+
+      return new Response(JSON.stringify({ ok: true, item: updatedItem }), { headers: corsJson });
+    }
+
+    // ── Admin: Delete Clover Item
+    //    POST ?action=delete-clover-item  body: { store, itemId } OR { stores: ["BL1","BL2"], itemId }
+    if (url.searchParams.get("action") === "delete-clover-item") {
+      if (request.headers.get("X-Snapshot-Secret") !== env.SNAPSHOT_SECRET) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const body = await request.json();
+      const { itemId } = body;
+      const storesToDelete = body.stores
+        ? body.stores.filter(s => ALL_STORES.includes(s))
+        : (ALL_STORES.includes(body.store) ? [body.store] : []);
+      if (!itemId || storesToDelete.length === 0) {
+        return new Response(JSON.stringify({ ok: false, error: "Invalid itemId or store(s)" }), { status: 400, headers: corsJson });
+      }
+      const results = await Promise.all(storesToDelete.map(async s => {
+        const mId = env[`${s}_MERCHANT_ID`];
+        const tok = env[`${s}_API_TOKEN`];
+        const delResp = await cloverFetch(
+          `https://api.clover.com/v3/merchants/${mId}/items/${itemId}`,
+          { method: "DELETE", headers: { "Authorization": `Bearer ${tok}` } }
+        );
+        if (delResp.ok || delResp.status === 404) {
+          return { store: s, ok: true };
+        }
+        const txt = await delResp.text();
+        return { store: s, ok: false, error: txt };
+      }));
+      return new Response(JSON.stringify({ results }), { headers: corsJson });
     }
 
     // ── Public: Weekly Retail Summary feed
