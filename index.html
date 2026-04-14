@@ -862,7 +862,6 @@
   let wrsCurrentTab = 'summary'; // 'summary' | 't13' | 'BL1'..'BL14'
   let wrsExpandedL2 = new Set(); // composite keys "STORE:L2" for L3 expansions
   let wrsT13Chart = null;
-  let wrsInitialized = false;
 
   // ═══════════════════════════════════════════════════════════════
   //  HELPERS & MATH
@@ -3055,8 +3054,7 @@
   }
 
   function initWeeklyRetail() {
-    if (wrsInitialized && wrsData) return;
-    wrsInitialized = true;
+    if (wrsData) return;
 
     // Populate year select from allStoreData dates
     const yearSel = el('wrs-year-select');
@@ -3117,6 +3115,7 @@
   }
 
   function switchWrsTab(tab) {
+    if (wrsCurrentTab === tab) return;
     wrsCurrentTab = tab;
     document.querySelectorAll('#wrs-tabs .wrs-tab').forEach(btn => {
       const active = btn.dataset.wrsTab === tab;
