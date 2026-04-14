@@ -3512,6 +3512,24 @@ export default {
     return new Response(JSON.stringify({ ok: true, cancelled: pending.length, reverted: active.length - errors.length, errors }), { headers: corsJson });
   }
 
+  // ── Admin: Delete (remove) a finished sale schedule from the log ─────
+  //    POST ?action=delete-sale-schedule  body: { scheduleGroup }
+  if (request.method === "POST" && url.searchParams.get("action") === "delete-sale-schedule") {
+    const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+    const unauth = requireAdminSecret(request, env, corsJson);
+    if (unauth) return unauth;
+    const body = await request.json().catch(() => null);
+    const { scheduleGroup } = body || {};
+    if (!scheduleGroup) return new Response(JSON.stringify({ error: "Missing scheduleGroup" }), { status: 400, headers: corsJson });
+    // Only allow deleting finished schedules (completed, cancelled, error)
+    const active = await env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM sale_schedules WHERE schedule_group=? AND status IN ('pending','active')"
+    ).bind(scheduleGroup).first();
+    if (active && active.cnt > 0) return new Response(JSON.stringify({ error: "Cannot remove an active/pending schedule — cancel it first" }), { status: 400, headers: corsJson });
+    await env.DB.prepare("DELETE FROM sale_schedules WHERE schedule_group=?").bind(scheduleGroup).run();
+    return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+  }
+
   // ── Admin: Manually trigger the sale scheduler (debug / test) ──────────
   //    POST ?action=run-sale-scheduler-now
   if (request.method === "POST" && url.searchParams.get("action") === "run-sale-scheduler-now") {
