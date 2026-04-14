@@ -499,11 +499,18 @@
             </div>
             <!-- Status -->
             <div id="inv-view-status" class="hidden mb-3 text-sm px-4 py-2 rounded-lg"></div>
+            <!-- Selection toolbar (shown when rows are checked) -->
+            <div id="inv-sel-toolbar" class="hidden mb-3 flex items-center gap-3 px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 text-sm text-blue-800 dark:text-blue-200">
+              <span id="inv-sel-count" class="font-semibold"></span>
+              <button onclick="openSaleModal()" class="px-3 py-1 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors">Schedule Sale</button>
+              <button onclick="clearInvSelection()" class="px-3 py-1 text-xs font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-100 rounded-lg transition-colors">Clear Selection</button>
+            </div>
             <!-- Table -->
             <div id="inv-view-table-wrap" class="hidden overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
               <table class="min-w-full text-sm">
                 <thead class="sticky top-0 bg-gray-50 dark:bg-gray-900 text-left">
                   <tr>
+                    <th class="px-3 py-2"><input type="checkbox" id="inv-sel-all" onchange="toggleSelectAll(this.checked)" class="w-4 h-4 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] cursor-pointer"></th>
                     <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Name</th>
                     <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Code</th>
                     <th class="px-3 py-2 font-semibold text-gray-600 dark:text-gray-300">Price</th>
@@ -588,6 +595,82 @@
               <button onclick="closeInvModal('inv-delete-modal')" class="px-4 py-2 text-sm font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-100 rounded-lg">Cancel</button>
               <button onclick="confirmDelete()" class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg">Delete</button>
             </div>
+          </div>
+        <!-- ── Schedule Sale Modal ───────────────────────────────── -->
+        <div id="inv-sale-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/50 p-4">
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-xl p-6 max-h-[90vh] overflow-y-auto">
+            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">Schedule Sale</h3>
+            <!-- Store badge -->
+            <div class="mb-4 flex items-center gap-2">
+              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Store:</span>
+              <span id="inv-sale-store-badge" class="px-2 py-0.5 text-xs font-bold rounded bg-[#3BB54A]/20 text-[#3BB54A]"></span>
+            </div>
+            <!-- Items list -->
+            <div class="mb-4">
+              <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Items selected</p>
+              <div id="inv-sale-items-list" class="space-y-1 max-h-40 overflow-y-auto pr-1"></div>
+            </div>
+            <!-- Discount -->
+            <div class="mb-4">
+              <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Discount</p>
+              <div class="flex items-center gap-3 flex-wrap">
+                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                  <input type="radio" name="inv-sale-kind" value="percent" checked onchange="updateSalePreview()" class="accent-[#3BB54A]"> % off
+                </label>
+                <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                  <input type="radio" name="inv-sale-kind" value="amount" onchange="updateSalePreview()" class="accent-[#3BB54A]"> $ off
+                </label>
+                <input id="inv-sale-discount-val" type="number" min="0.01" step="0.01" placeholder="20" oninput="updateSalePreview()" class="w-24 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+              </div>
+            </div>
+            <!-- Date range -->
+            <div class="mb-4 grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Start (ET)</label>
+                <input id="inv-sale-start" type="datetime-local" oninput="updateSalePreview()" class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">End (ET)</label>
+                <input id="inv-sale-end" type="datetime-local" oninput="updateSalePreview()" class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+              </div>
+            </div>
+            <p class="text-[11px] text-gray-400 dark:text-gray-500 -mt-2 mb-4">All times are Eastern Time. Sale activates within ~60 seconds of start.</p>
+            <!-- Preview -->
+            <div id="inv-sale-preview" class="hidden mb-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50 text-xs text-gray-700 dark:text-gray-300 space-y-1"></div>
+            <!-- Status -->
+            <div id="inv-sale-status" class="hidden mb-3 text-sm px-4 py-2 rounded-lg"></div>
+            <div class="flex justify-end gap-3">
+              <button onclick="closeInvModal('inv-sale-modal')" class="px-4 py-2 text-sm font-semibold bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-100 rounded-lg">Cancel</button>
+              <button id="inv-sale-submit" onclick="submitSaleSchedule()" class="px-4 py-2 text-sm font-semibold bg-green-600 hover:bg-green-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">Schedule Sale</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Scheduled Sales card ──────────────────────────────── -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 mt-4">
+          <button onclick="toggleSaleSchedules()" class="w-full flex items-center justify-between px-6 py-4 text-left">
+            <span class="text-base font-semibold text-gray-800 dark:text-gray-100">Scheduled Sales</span>
+            <svg id="inv-sched-chevron" class="w-5 h-5 text-gray-500 transition-transform duration-200 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <div id="inv-sched-body" class="border-t border-gray-100 dark:border-gray-700 px-6 pb-6 pt-4">
+            <!-- Controls -->
+            <div class="flex flex-wrap gap-3 mb-4">
+              <select id="inv-sched-store" class="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+                <option value="BL1">BL1</option><option value="BL2">BL2</option><option value="BL4">BL4</option>
+                <option value="BL8">BL8</option><option value="BL12">BL12</option><option value="BL14">BL14</option>
+              </select>
+              <select id="inv-sched-filter" onchange="loadSaleSchedules()" class="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+                <option value="all">All</option>
+                <option value="upcoming">Upcoming</option>
+                <option value="active">Active</option>
+                <option value="past">Past</option>
+              </select>
+              <button onclick="loadSaleSchedules()" class="px-4 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">Load</button>
+            </div>
+            <div id="inv-sched-status" class="hidden mb-3 text-sm px-4 py-2 rounded-lg"></div>
+            <div id="inv-sched-list" class="space-y-3"></div>
           </div>
         </div>
 
@@ -3946,14 +4029,21 @@
     }
     const tbody = el('inv-view-tbody');
     if (rows.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="px-3 py-6 text-center text-gray-400 text-sm">No items found.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="px-3 py-6 text-center text-gray-400 text-sm">No items found.</td></tr>';
     } else {
       tbody.innerHTML = rows.map(item => {
         const isDup = invDupCodes.has(dupKey(item));
         const rowClass = isDup ? 'bg-yellow-50 dark:bg-yellow-900/20' : '';
         const nameClass = item.hidden ? 'line-through text-gray-400' : 'text-gray-800 dark:text-gray-100';
-        return `<tr class="${rowClass} hover:bg-gray-50 dark:hover:bg-gray-700/50">
-          <td class="px-3 py-2 ${nameClass} max-w-[200px] truncate" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</td>
+        const isChecked = invSelectedItems.has(item.id);
+        const escapedName = escapeHtml(item.name);
+        return `<tr class="${rowClass} hover:bg-gray-50 dark:hover:bg-gray-700/50" data-item-name="${escapedName}" data-price-cents="${item.price}">
+          <td class="px-3 py-2">
+            <input type="checkbox" data-item-id="${escapeHtml(item.id)}" ${isChecked ? 'checked' : ''}
+              onchange="toggleRowSelect('${escapeHtml(item.id)}', ${JSON.stringify(item.name)}, ${item.price}, this.checked)"
+              class="w-4 h-4 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] cursor-pointer">
+          </td>
+          <td class="px-3 py-2 ${nameClass} max-w-[200px] truncate" title="${escapedName}">${escapedName}</td>
           <td class="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">${escapeHtml(item.code)}</td>
           <td class="px-3 py-2 text-gray-700 dark:text-gray-300">${fmtDollar(item.price / 100)}</td>
           <td class="px-3 py-2 text-gray-700 dark:text-gray-300">${item.cost ? fmtDollar(item.cost / 100) : '—'}</td>
@@ -4050,6 +4140,7 @@
     el('inv-view-pagination').classList.add('hidden');
     el('inv-view-search').value = '';
     invViewSetStatus('', '');
+    clearInvSelection();
   }
 
   function openEditModal(item) {
@@ -4169,6 +4260,281 @@
 
   function closeInvModal(modalId) {
     el(modalId).classList.add('hidden');
+  }
+
+  // ── Inventory row selection ────────────────────────────────────────────
+  // invSelectedItems: Map<itemId, {id, name, priceCents}>
+  const invSelectedItems = new Map();
+
+  function updateSelectionUI() {
+    const n = invSelectedItems.size;
+    const toolbar = el('inv-sel-toolbar');
+    const countEl = el('inv-sel-count');
+    if (n === 0) {
+      toolbar.classList.add('hidden');
+    } else {
+      toolbar.classList.remove('hidden');
+      countEl.textContent = `${n} item${n === 1 ? '' : 's'} selected`;
+    }
+  }
+
+  function toggleRowSelect(itemId, name, priceCents, checked) {
+    if (checked) {
+      invSelectedItems.set(itemId, { id: itemId, name, priceCents });
+    } else {
+      invSelectedItems.delete(itemId);
+    }
+    updateSelectionUI();
+    // Keep select-all checkbox in sync
+    const allCbs = el('inv-view-tbody').querySelectorAll('input[type=checkbox]');
+    const allChecked = allCbs.length > 0 && [...allCbs].every(cb => cb.checked);
+    const selAll = el('inv-sel-all');
+    if (selAll) selAll.checked = allChecked;
+  }
+
+  function toggleSelectAll(checked) {
+    el('inv-view-tbody').querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.checked = checked;
+      const row = cb.closest('tr');
+      if (!row) return;
+      const itemId = cb.dataset.itemId;
+      const name = row.dataset.itemName || '';
+      const priceCents = Number(row.dataset.priceCents || 0);
+      if (checked) {
+        invSelectedItems.set(itemId, { id: itemId, name, priceCents });
+      } else {
+        invSelectedItems.delete(itemId);
+      }
+    });
+    updateSelectionUI();
+  }
+
+  function clearInvSelection() {
+    invSelectedItems.clear();
+    el('inv-view-tbody').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+    const selAll = el('inv-sel-all');
+    if (selAll) selAll.checked = false;
+    updateSelectionUI();
+  }
+
+  // ── Schedule Sale modal ────────────────────────────────────────────────
+  function openSaleModal() {
+    if (invSelectedItems.size === 0) return;
+    el('inv-sale-store-badge').textContent = el('inv-view-store').value;
+    // Populate items list
+    const list = el('inv-sale-items-list');
+    list.innerHTML = [...invSelectedItems.values()].map(item => `
+      <div class="flex items-center justify-between text-sm text-gray-700 dark:text-gray-300 py-1 border-b border-gray-100 dark:border-gray-700 last:border-0" data-item-id="${escapeHtml(item.id)}">
+        <span class="truncate max-w-[280px]" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+        <span class="font-mono text-gray-500 dark:text-gray-400 ml-3 shrink-0">${fmtDollar(item.priceCents / 100)}</span>
+      </div>`).join('');
+    // Default start = tomorrow midnight ET, end = +2 days
+    const now = new Date();
+    const tmrw = new Date(now);
+    tmrw.setDate(tmrw.getDate() + 1);
+    tmrw.setHours(0, 0, 0, 0);
+    const end = new Date(tmrw);
+    end.setDate(end.getDate() + 2);
+    el('inv-sale-start').value = toDatetimeLocal(tmrw);
+    el('inv-sale-end').value = toDatetimeLocal(end);
+    el('inv-sale-preview').classList.add('hidden');
+    el('inv-sale-status').classList.add('hidden');
+    el('inv-sale-discount-val').value = '';
+    document.querySelector('input[name="inv-sale-kind"][value="percent"]').checked = true;
+    el('inv-sale-modal').classList.remove('hidden');
+  }
+
+  // Convert a Date to datetime-local string (YYYY-MM-DDTHH:MM) in local tz
+  function toDatetimeLocal(d) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  // Parse a datetime-local string as if it were Eastern Time and return a UTC Date.
+  // Uses the same approach as the rest of the dashboard: rely on Intl for offset.
+  function etLocalToDate(localStr) {
+    // Try native TZ parse via UTC offset lookup
+    const utcGuess = new Date(localStr + ':00');
+    const etFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12: false });
+    // Build date parts from localStr
+    const [datePart, timePart] = localStr.split('T');
+    const [yr, mo, da] = datePart.split('-').map(Number);
+    const [hr, mn] = timePart.split(':').map(Number);
+    // Bisect to find the UTC instant whose ET representation matches localStr.
+    // Start at UTC = (localStr treated as UTC) − 5h; bracket within ±26h.
+    let lo = Date.UTC(yr, mo-1, da, hr, mn, 0) - 5*3600*1000;
+    let hi = lo + 2*3600*1000;
+    for (let i = 0; i < 60; i++) {
+      const mid = Math.floor((lo + hi) / 2);
+      const d = new Date(mid);
+      const parts = {};
+      for (const p of etFmt.formatToParts(d)) parts[p.type] = p.value;
+      const dHr = parseInt(parts.hour), dMn = parseInt(parts.minute);
+      const dDa = parseInt(parts.day), dMo = parseInt(parts.month), dYr = parseInt(parts.year);
+      if (dYr === yr && dMo === mo && dDa === da && dHr === hr && dMn === mn) return new Date(mid);
+      const diff = (dYr*525600 + dMo*44640 + dDa*1440 + dHr*60 + dMn) - (yr*525600 + mo*44640 + da*1440 + hr*60 + mn);
+      if (diff < 0) lo = mid + 60000; else hi = mid - 60000;
+    }
+    return new Date(lo);
+  }
+
+  function getSaleKind() {
+    return document.querySelector('input[name="inv-sale-kind"]:checked')?.value || 'percent';
+  }
+
+  function updateSalePreview() {
+    const val = parseFloat(el('inv-sale-discount-val').value);
+    const kind = getSaleKind();
+    const startStr = el('inv-sale-start').value;
+    const endStr = el('inv-sale-end').value;
+    const preview = el('inv-sale-preview');
+    if (!val || val <= 0 || !startStr || !endStr) { preview.classList.add('hidden'); return; }
+    const lines = [...invSelectedItems.values()].map(item => {
+      const orig = item.priceCents;
+      let sale;
+      if (kind === 'percent') sale = Math.max(1, Math.round(orig * (1 - val / 100)));
+      else sale = Math.max(1, orig - Math.round(val * 100));
+      const diff = orig - sale;
+      return `<div>${escapeHtml(item.name.slice(0, 40))} &rarr; <span class="font-semibold text-green-600 dark:text-green-400">${fmtDollar(sale/100)}</span> <span class="text-gray-400">(was ${fmtDollar(orig/100)}, saving ${fmtDollar(diff/100)})</span></div>`;
+    });
+    lines.push(`<div class="mt-1 text-gray-500">${startStr} &rarr; ${endStr} ET</div>`);
+    preview.innerHTML = lines.join('');
+    preview.classList.remove('hidden');
+  }
+
+  async function submitSaleSchedule() {
+    const store = el('inv-view-store').value;
+    const val = parseFloat(el('inv-sale-discount-val').value);
+    const kind = getSaleKind();
+    const startStr = el('inv-sale-start').value;
+    const endStr = el('inv-sale-end').value;
+    const statusEl = el('inv-sale-status');
+    const submitBtn = el('inv-sale-submit');
+    if (!val || val <= 0) return setSaleModalStatus('Enter a discount value.', 'error');
+    if (kind === 'percent' && val >= 100) return setSaleModalStatus('Percent must be < 100.', 'error');
+    if (!startStr || !endStr) return setSaleModalStatus('Select start and end times.', 'error');
+    const startsAt = etLocalToDate(startStr);
+    const endsAt = etLocalToDate(endStr);
+    if (endsAt <= startsAt) return setSaleModalStatus('End must be after start.', 'error');
+    if (startsAt <= new Date()) return setSaleModalStatus('Start time must be in the future.', 'error');
+    const items = [...invSelectedItems.values()].map(i => ({ id: i.id, name: i.name, priceCents: i.priceCents }));
+    submitBtn.disabled = true;
+    setSaleModalStatus('Scheduling…', 'info');
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=schedule-sale`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        body: JSON.stringify({ store, items: items.map(i => ({ id: i.id, name: i.name })), discount: { kind, value: kind === 'percent' ? val : Math.round(val * 100) }, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() }),
+      });
+      const data = await resp.json();
+      if (!data.ok) { setSaleModalStatus('Error: ' + (data.error || 'unknown'), 'error'); submitBtn.disabled = false; return; }
+      setSaleModalStatus(`Scheduled ${data.count} item${data.count === 1 ? '' : 's'} (group ${data.scheduleGroup}).`, 'ok');
+      clearInvSelection();
+      setTimeout(() => closeInvModal('inv-sale-modal'), 1800);
+    } catch (err) {
+      setSaleModalStatus('Error: ' + escapeHtml(err.message), 'error');
+      submitBtn.disabled = false;
+    }
+  }
+
+  function setSaleModalStatus(msg, type) {
+    const el2 = el('inv-sale-status');
+    el2.classList.remove('hidden', 'bg-green-50', 'text-green-700', 'border-green-200', 'bg-red-50', 'text-red-700', 'border-red-200', 'bg-blue-50', 'text-blue-700', 'border-blue-200', 'dark:bg-green-900/20', 'dark:text-green-300', 'dark:bg-red-900/20', 'dark:text-red-300', 'dark:bg-blue-900/20', 'dark:text-blue-300');
+    const map = { ok: ['bg-green-50','text-green-700','border-green-200','dark:bg-green-900/20','dark:text-green-300'], error: ['bg-red-50','text-red-700','border-red-200','dark:bg-red-900/20','dark:text-red-300'], info: ['bg-blue-50','text-blue-700','border-blue-200','dark:bg-blue-900/20','dark:text-blue-300'] };
+    el2.classList.add(...(map[type] || map.info));
+    el2.textContent = msg;
+  }
+
+  // ── Scheduled Sales card ───────────────────────────────────────────────
+  function toggleSaleSchedules() {
+    const body = el('inv-sched-body');
+    const chevron = el('inv-sched-chevron');
+    const hidden = body.classList.toggle('hidden');
+    chevron.classList.toggle('rotate-180', !hidden);
+  }
+
+  const SCHED_STATUS_LABEL = { pending: 'Upcoming', active: 'Active', completed: 'Completed', cancelled: 'Cancelled', error: 'Error' };
+  const SCHED_STATUS_CLASS  = { pending: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300', active: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300', completed: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300', cancelled: 'bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500', error: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' };
+
+  function fmtSchedTime(isoStr) {
+    if (!isoStr) return '—';
+    return new Date(isoStr).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+  }
+
+  async function loadSaleSchedules() {
+    const store = el('inv-sched-store').value;
+    const filter = el('inv-sched-filter').value;
+    const statusEl = el('inv-sched-status');
+    const list = el('inv-sched-list');
+    statusEl.className = 'mb-3 text-sm px-4 py-2 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/20 dark:text-blue-300';
+    statusEl.textContent = 'Loading…';
+    statusEl.classList.remove('hidden');
+    list.innerHTML = '';
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=list-sale-schedules&store=${store}&filter=${filter}`, {
+        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }
+      });
+      const data = await resp.json();
+      if (!data.ok) { statusEl.textContent = 'Error: ' + (data.error || 'unknown'); statusEl.className = 'mb-3 text-sm px-4 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200'; return; }
+      statusEl.classList.add('hidden');
+      if (!data.groups.length) {
+        list.innerHTML = '<p class="text-sm text-gray-400 dark:text-gray-500">No schedules found.</p>';
+        return;
+      }
+      list.innerHTML = data.groups.map(g => {
+        const shortId = g.scheduleGroup.slice(-8);
+        const discLabel = g.discountKind === 'percent' ? `${g.discountValue}% off` : `$${(g.discountValue / 100).toFixed(2)} off`;
+        const statusBadge = `<span class="px-2 py-0.5 text-xs font-semibold rounded ${SCHED_STATUS_CLASS[g.status] || ''}">${SCHED_STATUS_LABEL[g.status] || g.status}</span>`;
+        const cancelBtn = (g.status === 'pending' || g.status === 'active')
+          ? `<button onclick="cancelSaleSchedule('${escapeHtml(g.scheduleGroup)}')" class="text-xs px-2 py-1 bg-red-100 hover:bg-red-200 dark:bg-red-900/40 dark:hover:bg-red-800/60 text-red-700 dark:text-red-300 rounded">Cancel</button>` : '';
+        const itemRows = g.items.map(item => {
+          const priceStr = item.originalPrice && item.salePrice
+            ? `${fmtDollar(item.originalPrice/100)} → <span class="text-green-600 dark:text-green-400 font-semibold">${fmtDollar(item.salePrice/100)}</span>`
+            : '—';
+          const errStr = item.errorMsg ? `<span class="text-red-500 text-xs ml-2" title="${escapeHtml(item.errorMsg)}">⚠ error</span>` : '';
+          return `<div class="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 py-0.5">
+            <span class="truncate max-w-[260px]" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+            <span class="font-mono ml-2 shrink-0">${priceStr}${errStr}</span>
+          </div>`;
+        }).join('');
+        return `<div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+          <div class="flex items-start justify-between gap-2 mb-2">
+            <div>
+              <div class="flex items-center gap-2 flex-wrap">
+                ${statusBadge}
+                <span class="text-sm font-semibold text-gray-800 dark:text-gray-100">${discLabel}</span>
+                <span class="text-xs text-gray-400 font-mono">#${shortId}</span>
+              </div>
+              <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                ${fmtSchedTime(g.startsAt)} &rarr; ${fmtSchedTime(g.endsAt)} ET &bull; ${g.items.length} item${g.items.length === 1 ? '' : 's'}
+              </div>
+            </div>
+            <div>${cancelBtn}</div>
+          </div>
+          <div class="mt-2 pl-1 border-l-2 border-gray-100 dark:border-gray-700 space-y-0.5">${itemRows}</div>
+        </div>`;
+      }).join('');
+    } catch (err) {
+      statusEl.textContent = 'Error: ' + escapeHtml(err.message);
+      statusEl.className = 'mb-3 text-sm px-4 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
+      statusEl.classList.remove('hidden');
+    }
+  }
+
+  async function cancelSaleSchedule(scheduleGroup) {
+    if (!confirm('Cancel this sale? Active items will have their original price restored.')) return;
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=cancel-sale-schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        body: JSON.stringify({ scheduleGroup }),
+      });
+      const data = await resp.json();
+      if (!data.ok) { alert('Cancel failed: ' + (data.error || 'unknown')); return; }
+      loadSaleSchedules();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════
