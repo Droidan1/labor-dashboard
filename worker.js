@@ -2749,6 +2749,7 @@ export default {
     // ── Admin: Inventory Items (paginated)
     //    GET ?action=inventory-items&store=BL1&offset=0
     if (url.searchParams.get("action") === "inventory-items") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       if (request.headers.get("X-Snapshot-Secret") !== env.SNAPSHOT_SECRET) {
         return new Response("Unauthorized", { status: 401 });
       }
@@ -2788,6 +2789,7 @@ export default {
     // ── Admin: Update Clover Item
     //    POST ?action=update-clover-item  body: { store, itemId, name, code, priceCents, costCents, taxable, hidden, l3, currentCategoryId }
     if (url.searchParams.get("action") === "update-clover-item") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       if (request.headers.get("X-Snapshot-Secret") !== env.SNAPSHOT_SECRET) {
         return new Response("Unauthorized", { status: 401 });
       }
@@ -2851,6 +2853,7 @@ export default {
     // ── Admin: Delete Clover Item
     //    POST ?action=delete-clover-item  body: { store, itemId } OR { stores: ["BL1","BL2"], itemId }
     if (url.searchParams.get("action") === "delete-clover-item") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       if (request.headers.get("X-Snapshot-Secret") !== env.SNAPSHOT_SECRET) {
         return new Response("Unauthorized", { status: 401 });
       }
