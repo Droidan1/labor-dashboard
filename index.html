@@ -3657,20 +3657,36 @@
       const allOk   = results.every(r => r.ok);
 
       // Render results
+      const allDuplicate = results.every(r => r.duplicate);
+      const anyDuplicate = results.some(r => r.duplicate);
+      const anyRealError = results.some(r => !r.ok && !r.duplicate);
+
       const rb = el('inv-results-body');
       if (results.length === 1) {
         const r = results[0];
         rb.innerHTML = r.ok
           ? `<div class="text-sm text-green-700 dark:text-green-400"><span class="font-semibold">Created</span> — Item ID: <code class="font-mono">${escapeHtml(r.itemId)}</code>${r.categoryCreated ? ' · Category created' : ' · Category matched'}</div>`
-          : `<div class="text-sm text-red-600 dark:text-red-400"><span class="font-semibold">Failed</span> [${escapeHtml(r.stage)}]: ${escapeHtml(r.error)}</div>`;
+          : r.duplicate
+            ? `<div class="text-sm text-yellow-700 dark:text-yellow-400"><span class="font-semibold">Already exists</span> — Item ID: <code class="font-mono">${escapeHtml(r.existingId)}</code></div>`
+            : `<div class="text-sm text-red-600 dark:text-red-400"><span class="font-semibold">Failed</span> [${escapeHtml(r.stage)}]: ${escapeHtml(r.error)}</div>`;
       } else {
         rb.innerHTML = `<table class="w-full text-sm"><thead><tr class="text-left text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-100 dark:border-gray-700"><th class="pb-2 pr-4">Store</th><th class="pb-2 pr-4">Status</th><th class="pb-2 pr-4">Item ID</th><th class="pb-2">Category</th></tr></thead><tbody>
-          ${results.map(r => `<tr class="border-b border-gray-50 dark:border-gray-700/50">
-            <td class="py-2 pr-4 font-medium text-gray-700 dark:text-gray-300">${escapeHtml(r.store)}</td>
-            <td class="py-2 pr-4 ${r.ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}">${r.ok ? '✓ Created' : '✗ Error'}</td>
-            <td class="py-2 pr-4 font-mono text-gray-600 dark:text-gray-400">${r.ok ? escapeHtml(r.itemId) : '—'}</td>
-            <td class="py-2 text-gray-600 dark:text-gray-400">${r.ok ? escapeHtml(l3) + (r.categoryCreated ? ' <span class="text-[10px] text-gray-400">(new)</span>' : '') : escapeHtml(r.error || '') + (r.stage ? ` <span class="text-[10px]">[${escapeHtml(r.stage)}]</span>` : '')}</td>
-          </tr>`).join('')}
+          ${results.map(r => {
+            const statusCls = r.ok ? 'text-green-600 dark:text-green-400' : r.duplicate ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400';
+            const statusTxt = r.ok ? '✓ Created' : r.duplicate ? '⚠ Exists' : '✗ Error';
+            const idTxt     = r.ok ? escapeHtml(r.itemId) : r.duplicate ? escapeHtml(r.existingId) : '—';
+            const detailTxt = r.ok
+              ? escapeHtml(l3) + (r.categoryCreated ? ' <span class="text-[10px] text-gray-400">(new)</span>' : '')
+              : r.duplicate
+                ? '<span class="text-[10px] text-gray-400">already in Clover</span>'
+                : escapeHtml(r.error || '') + (r.stage ? ` <span class="text-[10px]">[${escapeHtml(r.stage)}]</span>` : '');
+            return `<tr class="border-b border-gray-50 dark:border-gray-700/50">
+              <td class="py-2 pr-4 font-medium text-gray-700 dark:text-gray-300">${escapeHtml(r.store)}</td>
+              <td class="py-2 pr-4 ${statusCls}">${statusTxt}</td>
+              <td class="py-2 pr-4 font-mono text-gray-600 dark:text-gray-400">${idTxt}</td>
+              <td class="py-2 text-gray-600 dark:text-gray-400">${detailTxt}</td>
+            </tr>`;
+          }).join('')}
         </tbody></table>`;
       }
       el('inv-results').classList.remove('hidden');
@@ -3692,8 +3708,14 @@
         el('inv-hidden').checked = false;
         if (/^\d{4,5}$/.test(code)) el('inv-status').classList.add('hidden');
         invSetStatus(data.costUpdated ? 'Item created and cost recorded.' : 'Item created.', 'ok');
+      } else if (allDuplicate) {
+        invSetStatus('Item already exists in all selected stores.', 'info');
+      } else if (anyOk && anyDuplicate && !anyRealError) {
+        invSetStatus('Created in new stores — already existed in others.', 'ok');
       } else if (anyOk) {
         invSetStatus('Some stores succeeded — form left populated for retry.', 'info');
+      } else if (anyDuplicate && !anyRealError) {
+        invSetStatus('Item already exists in the selected store.', 'info');
       }
     } catch (err) {
       invSetStatus('Error: ' + escapeHtml(err.message), 'error');

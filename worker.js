@@ -2677,6 +2677,19 @@ export default {
           if (!mId || !tok) return { store: s, ok: false, error: "Store not configured", stage: "config" };
           const headers = { "Authorization": `Bearer ${tok}`, "Content-Type": "application/json" };
 
+          // Duplicate check: look for existing item with same code
+          const dupResp = await cloverFetch(
+            `https://api.clover.com/v3/merchants/${mId}/items?filter=code%3D${encodeURIComponent(code)}&limit=5`,
+            { headers }
+          );
+          if (dupResp.ok) {
+            const dupData = await dupResp.json();
+            if ((dupData.elements || []).length > 0) {
+              const existing = dupData.elements[0];
+              return { store: s, ok: false, duplicate: true, existingId: existing.id, error: "Item with this code already exists" };
+            }
+          }
+
           const { categoryId, created: categoryCreated } = await resolveCloverCategory(s, l3);
 
           const itemBody = { name, code, sku: code, price: priceCents, hidden: !!hidden, defaultTaxRates: !!taxable, priceType: "FIXED" };
