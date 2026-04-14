@@ -1462,28 +1462,28 @@ function mergeItemSnapshots(snapshots) {
       return {
         l3: l3Name,
         qty: Math.round(lc.qty),
-        gross: Math.round(lc.gross * 100) / 100,
-        discounts: Math.round(lc.discounts * 100) / 100,
-        refunds: Math.round(lc.refunds * 100) / 100,
-        netSales: Math.round(lc.net * 100) / 100,
-        asp: lc.qty > 0 ? Math.round((lc.net / lc.qty) * 100) / 100 : 0,
-        cost: Math.round(lc.cost * 100) / 100,
-        extCost: Math.round(lc.cost * 100) / 100,
-        grossProfit: Math.round(lgp * 100) / 100,
+        gross: roundCents(lc.gross),
+        discounts: roundCents(lc.discounts),
+        refunds: roundCents(lc.refunds),
+        netSales: roundCents(lc.net),
+        asp: lc.qty > 0 ? roundCents(lc.net / lc.qty) : 0,
+        cost: roundCents(lc.cost),
+        extCost: roundCents(lc.cost),
+        grossProfit: roundCents(lgp),
         gpmPct: lc.net > 0 ? Math.round((lgp / lc.net) * 1000) / 10 : 0,
       };
     }).sort((a, b) => b.netSales - a.netSales);
     categories.push({
       category: name,
       qty: Math.round(c.qty),
-      gross: Math.round(c.gross * 100) / 100,
-      discounts: Math.round(c.discounts * 100) / 100,
-      refunds: Math.round(c.refunds * 100) / 100,
-      netSales: Math.round(c.net * 100) / 100,
-      asp: c.qty > 0 ? Math.round((c.net / c.qty) * 100) / 100 : 0,
-      cost: Math.round(c.cost * 100) / 100,
-      extCost: Math.round(c.cost * 100) / 100,
-      grossProfit: Math.round(gp * 100) / 100,
+      gross: roundCents(c.gross),
+      discounts: roundCents(c.discounts),
+      refunds: roundCents(c.refunds),
+      netSales: roundCents(c.net),
+      asp: c.qty > 0 ? roundCents(c.net / c.qty) : 0,
+      cost: roundCents(c.cost),
+      extCost: roundCents(c.cost),
+      grossProfit: roundCents(gp),
       gpmPct: c.net > 0 ? Math.round((gp / c.net) * 1000) / 10 : 0,
       l3Rows,
     });
@@ -1500,13 +1500,13 @@ function mergeItemSnapshots(snapshots) {
     categories,
     totals: {
       qty: Math.round(totalQty),
-      gross: Math.round(totalGross * 100) / 100,
-      discounts: Math.round(totalDisc * 100) / 100,
-      refunds: Math.round(totalRef * 100) / 100,
-      netSales: Math.round(totalNet * 100) / 100,
-      asp: totalQty > 0 ? Math.round((totalNet / totalQty) * 100) / 100 : 0,
-      cost: Math.round(totalCost * 100) / 100,
-      grossProfit: Math.round(totalGp * 100) / 100,
+      gross: roundCents(totalGross),
+      discounts: roundCents(totalDisc),
+      refunds: roundCents(totalRef),
+      netSales: roundCents(totalNet),
+      asp: totalQty > 0 ? roundCents(totalNet / totalQty) : 0,
+      cost: roundCents(totalCost),
+      grossProfit: roundCents(totalGp),
       gpmPct: totalNet > 0 ? Math.round((totalGp / totalNet) * 1000) / 10 : 0,
     },
     orderCount: totalOrders,
@@ -1573,15 +1573,15 @@ async function buildStoreWeekly(env, store, dates) {
       laborPct: Number(r.labor_pct) || 0,
     })),
     totals: {
-      netSales: Math.round(netSales * 100) / 100,
-      retail: Math.round(retail * 100) / 100,
-      bin: Math.round(bin * 100) / 100,
-      auction: Math.round(auction * 100) / 100,
+      netSales: roundCents(netSales),
+      retail: roundCents(retail),
+      bin: roundCents(bin),
+      auction: roundCents(auction),
       qty,
       transactions,
-      asp: Math.round(asp * 100) / 100,
-      budget: Math.round(budget * 100) / 100,
-      varianceDollar: Math.round(variance * 100) / 100,
+      asp: roundCents(asp),
+      budget: roundCents(budget),
+      varianceDollar: roundCents(variance),
       variancePct: Math.round(variancePct * 10) / 10,
       laborPct: Math.round(laborPct * 10) / 10,
     },
@@ -1969,14 +1969,14 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       l3Rows.push({
         l3: l3Name,
         qty: Math.round(lc.qty),
-        gross: Math.round(lc.gross * 100) / 100,
-        discounts: Math.round(lc.discounts * 100) / 100,
-        refunds: Math.round(lc.refunds * 100) / 100,
-        netSales: Math.round(lc.net * 100) / 100,
-        asp: lc.qty > 0 ? Math.round((lc.net / lc.qty) * 100) / 100 : 0,
-        cost: Math.round(lc.cost * 100) / 100,
-        extCost: Math.round(lc.cost * 100) / 100,
-        grossProfit: Math.round(l3Gp * 100) / 100,
+        gross: roundCents(lc.gross),
+        discounts: roundCents(lc.discounts),
+        refunds: roundCents(lc.refunds),
+        netSales: roundCents(lc.net),
+        asp: lc.qty > 0 ? roundCents(lc.net / lc.qty) : 0,
+        cost: roundCents(lc.cost),
+        extCost: roundCents(lc.cost),
+        grossProfit: roundCents(l3Gp),
         gpmPct: lc.net > 0 ? Math.round((l3Gp / lc.net) * 1000) / 10 : 0,
       });
     }
@@ -1984,14 +1984,14 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     categories.push({
       category: name,
       qty: Math.round(c.qty),
-      gross: Math.round(c.gross * 100) / 100,
-      discounts: Math.round(c.discounts * 100) / 100,
-      refunds: Math.round(c.refunds * 100) / 100,
-      netSales: Math.round(c.net * 100) / 100,
-      asp: c.qty > 0 ? Math.round((c.net / c.qty) * 100) / 100 : 0,
-      cost: Math.round(c.cost * 100) / 100,
-      extCost: Math.round(c.cost * 100) / 100,
-      grossProfit: Math.round(grossProfit * 100) / 100,
+      gross: roundCents(c.gross),
+      discounts: roundCents(c.discounts),
+      refunds: roundCents(c.refunds),
+      netSales: roundCents(c.net),
+      asp: c.qty > 0 ? roundCents(c.net / c.qty) : 0,
+      cost: roundCents(c.cost),
+      extCost: roundCents(c.cost),
+      grossProfit: roundCents(grossProfit),
       gpmPct: c.net > 0 ? Math.round((grossProfit / c.net) * 1000) / 10 : 0,
       l3Rows,
     });
@@ -2014,13 +2014,13 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     categories,
     totals: {
       qty: Math.round(totalQty),
-      gross: Math.round(totalGross * 100) / 100,
-      discounts: Math.round(totalDisc * 100) / 100,
-      refunds: Math.round(totalRef * 100) / 100,
-      netSales: Math.round(totalNet * 100) / 100,
-      asp: totalQty > 0 ? Math.round((totalNet / totalQty) * 100) / 100 : 0,
-      cost: Math.round(totalCost * 100) / 100,
-      grossProfit: Math.round(totalGp * 100) / 100,
+      gross: roundCents(totalGross),
+      discounts: roundCents(totalDisc),
+      refunds: roundCents(totalRef),
+      netSales: roundCents(totalNet),
+      asp: totalQty > 0 ? roundCents(totalNet / totalQty) : 0,
+      cost: roundCents(totalCost),
+      grossProfit: roundCents(totalGp),
       gpmPct: totalNet > 0 ? Math.round((totalGp / totalNet) * 1000) / 10 : 0,
     },
     orderCount: allElements.length,
@@ -2115,6 +2115,18 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, X-Snapshot-Secret",
 };
 
+// Returns a 401 Response if the request lacks a valid admin secret, else null.
+// Every secret-gated endpoint uses this to avoid drifting auth checks.
+function requireAdminSecret(request, env, corsJson) {
+  if (!env.SNAPSHOT_SECRET || request.headers.get("X-Snapshot-Secret") !== env.SNAPSHOT_SECRET) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+  }
+  return null;
+}
+
+// Round to 2 decimal places (dollar/cents precision).
+const roundCents = n => Math.round(n * 100) / 100;
+
 // ─── Worker export ───────────────────────────────────────────────
 export default {
   // ── HTTP request handler ──────────────────────────────────────
@@ -2189,12 +2201,8 @@ export default {
 
     // ── Manual snapshot endpoint: ?action=snapshot&store=BL1
     if (url.searchParams.get("action") === "snapshot") {
-      const secret = request.headers.get("X-Snapshot-Secret");
-      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-          status: 401, headers: corsHeaders,
-        });
-      }
+      const unauth = requireAdminSecret(request, env, corsHeaders);
+      if (unauth) return unauth;
 
       const store = url.searchParams.get("store");
       if (!store) {
@@ -2227,12 +2235,9 @@ export default {
 
     // ── Backfill endpoint: ?action=backfill (imports Sheets + KV → D1)
     if (url.searchParams.get("action") === "backfill") {
-      const secret = request.headers.get("X-Snapshot-Secret");
-      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
       if (!env.DB) {
         return new Response(JSON.stringify({ error: "D1 not configured" }), {
           status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -2356,10 +2361,8 @@ export default {
     // store=all re-processes every store. Requires X-Snapshot-Secret header.
     if (url.searchParams.get("action") === "items-snapshot") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const secret = request.headers.get("X-Snapshot-Secret");
-      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
-      }
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
 
       const storeParam = (url.searchParams.get("store") || "").toUpperCase();
       if (!storeParam) {
@@ -2406,10 +2409,8 @@ export default {
     // same X-Snapshot-Secret header as other admin endpoints.
     if (url.searchParams.get("action") === "noncategorized-items") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const secret = request.headers.get("X-Snapshot-Secret");
-      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
-      }
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
       }
@@ -2475,10 +2476,10 @@ export default {
       }
 
       const items = Object.values(agg)
-        .map(i => ({ ...i, qty: Math.round(i.qty * 100) / 100, net: Math.round(i.net * 100) / 100 }))
+        .map(i => ({ ...i, qty: roundCents(i.qty), net: roundCents(i.net) }))
         .sort((a, b) => b.net - a.net);
       const l3Categories = Object.values(l3Agg)
-        .map(i => ({ ...i, qty: Math.round(i.qty * 100) / 100, net: Math.round(i.net * 100) / 100 }))
+        .map(i => ({ ...i, qty: roundCents(i.qty), net: roundCents(i.net) }))
         .sort((a, b) => b.net - a.net);
 
       return new Response(JSON.stringify({
@@ -2494,10 +2495,8 @@ export default {
     //       to replace the rule list. Either key can be omitted to preserve it.
     if (url.searchParams.get("action") === "item-overrides") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const secret = request.headers.get("X-Snapshot-Secret");
-      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
-      }
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
       }
@@ -2573,10 +2572,8 @@ export default {
     //       parsed file. Validates each entry before persisting.
     if (url.searchParams.get("action") === "item-costs") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const secret = request.headers.get("X-Snapshot-Secret");
-      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
-      }
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
       }
@@ -2623,10 +2620,8 @@ export default {
     //    GET ?action=clover-categories&store=BL1
     if (url.searchParams.get("action") === "clover-categories") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const secret = request.headers.get("X-Snapshot-Secret");
-      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
-      }
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
       const store = (url.searchParams.get("store") || "").toUpperCase();
       if (!ALL_STORES.includes(store)) {
         return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
@@ -2657,10 +2652,8 @@ export default {
     //    POST ?action=create-clover-item
     if (url.searchParams.get("action") === "create-clover-item") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const secret = request.headers.get("X-Snapshot-Secret");
-      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
-      }
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
       if (request.method !== "POST") {
         return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
       }
@@ -2750,9 +2743,8 @@ export default {
     //    GET ?action=inventory-items&store=BL1&offset=0
     if (url.searchParams.get("action") === "inventory-items") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      if (request.headers.get("X-Snapshot-Secret") !== env.SNAPSHOT_SECRET) {
-        return new Response("Unauthorized", { status: 401 });
-      }
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
       const store = url.searchParams.get("store") || "";
       const offset = parseInt(url.searchParams.get("offset") || "0", 10);
       if (!ALL_STORES.includes(store)) {
@@ -2790,9 +2782,8 @@ export default {
     //    POST ?action=update-clover-item  body: { store, itemId, name, code, priceCents, costCents, taxable, hidden, l3, currentCategoryId }
     if (url.searchParams.get("action") === "update-clover-item") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      if (request.headers.get("X-Snapshot-Secret") !== env.SNAPSHOT_SECRET) {
-        return new Response("Unauthorized", { status: 401 });
-      }
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
       const body = await request.json();
       const { store, itemId, name, code, priceCents, costCents, taxable, hidden, l3, currentCategoryId } = body;
       if (!ALL_STORES.includes(store) || !itemId) {
@@ -2854,9 +2845,8 @@ export default {
     //    POST ?action=delete-clover-item  body: { store, itemId } OR { stores: ["BL1","BL2"], itemId }
     if (url.searchParams.get("action") === "delete-clover-item") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      if (request.headers.get("X-Snapshot-Secret") !== env.SNAPSHOT_SECRET) {
-        return new Response("Unauthorized", { status: 401 });
-      }
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
       const body = await request.json();
       const { itemId } = body;
       const storesToDelete = body.stores
@@ -2942,7 +2932,7 @@ export default {
             row.byStore[s] = v;
             row.total += v;
           });
-          row.total = Math.round(row.total * 100) / 100;
+          row.total = roundCents(row.total);
           l2Matrix.push(row);
         }
         l2Matrix.sort((a, b) => b.total - a.total);
@@ -2952,15 +2942,15 @@ export default {
           stores,
           company: {
             totals: {
-              netSales: Math.round(cNet * 100) / 100,
-              retail: Math.round(cRetail * 100) / 100,
-              bin: Math.round(cBin * 100) / 100,
-              auction: Math.round(cAuction * 100) / 100,
-              budget: Math.round(cBudget * 100) / 100,
+              netSales: roundCents(cNet),
+              retail: roundCents(cRetail),
+              bin: roundCents(cBin),
+              auction: roundCents(cAuction),
+              budget: roundCents(cBudget),
               qty: cQty,
               transactions: cTxn,
-              asp: Math.round(cAsp * 100) / 100,
-              varianceDollar: Math.round(cVar * 100) / 100,
+              asp: roundCents(cAsp),
+              varianceDollar: roundCents(cVar),
               variancePct: Math.round(cVarPct * 10) / 10,
               laborPct: Math.round(cLabor * 10) / 10,
             },
@@ -3075,12 +3065,12 @@ export default {
               wkLaborDen += tn;
             }
           }
-          total.netSales.push(Math.round(wkNet * 100) / 100);
+          total.netSales.push(roundCents(wkNet));
           total.qty.push(wkQty);
           total.transactions.push(wkTxn);
-          total.asp.push(wkQty > 0 ? Math.round((wkNet / wkQty) * 100) / 100 : 0);
+          total.asp.push(wkQty > 0 ? roundCents(wkNet / wkQty) : 0);
           total.laborPct.push(wkLaborDen > 0 ? Math.round((wkLaborNum / wkLaborDen) * 10) / 10 : 0);
-          total.budget.push(Math.round(wkBudget * 100) / 100);
+          total.budget.push(roundCents(wkBudget));
         }
 
         if (liveBuilds > 0) {
@@ -3105,10 +3095,8 @@ export default {
     // pre-roll for every store. Required before T13 will read from cache.
     if (url.searchParams.get("action") === "rebuild-week-summaries") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const secret = request.headers.get("X-Snapshot-Secret");
-      if (!env.SNAPSHOT_SECRET || secret !== env.SNAPSHOT_SECRET) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
-      }
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
       if (!env.DB || !env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "DB or KV not configured" }), { status: 500, headers: corsJson });
       }
@@ -3119,17 +3107,21 @@ export default {
       ).bind(`${year}-%`).all();
       const weeks = (results || []).map(r => r.week).filter(Boolean);
 
+      const jobs = weeks.flatMap(wk =>
+        ALL_STORES.map(store => ({ wk, store }))
+      );
+      const settled = await Promise.allSettled(
+        jobs.map(({ wk, store }) => writeWeekSummary(env, store, wk, year))
+      );
       const summary = { year: Number(year), weeks: weeks.length, written: 0, errors: [] };
-      for (const wk of weeks) {
-        for (const store of ALL_STORES) {
-          try {
-            const out = await writeWeekSummary(env, store, wk, year);
-            if (out) summary.written++;
-          } catch (e) {
-            summary.errors.push(`${store}/${wk}: ${e.message}`);
-          }
+      settled.forEach((r, i) => {
+        const { wk, store } = jobs[i];
+        if (r.status === "fulfilled") {
+          if (r.value) summary.written++;
+        } else {
+          summary.errors.push(`${store}/${wk}: ${r.reason?.message || r.reason}`);
         }
-      }
+      });
       return new Response(JSON.stringify({ ok: true, ...summary }), { headers: corsJson });
     }
 
@@ -3228,7 +3220,7 @@ export default {
           hours[h] += orderNetCents / 100;
         }
 
-        const rounded = hours.map(v => Math.round(v * 100) / 100);
+        const rounded = hours.map(v => roundCents(v));
         return new Response(JSON.stringify({ store, date: dateParam, hours: rounded }), { headers: corsJson });
       } catch (err) {
         return new Response(JSON.stringify({ error: "Hourly fetch failed", detail: err.message }), {
