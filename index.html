@@ -450,12 +450,12 @@
             </div>
             <!-- Flags -->
             <div class="flex items-center gap-6 pt-5">
-              <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
-                <input id="inv-taxable" type="checkbox" checked class="rounded border-gray-300 dark:border-gray-600 text-[#3BB54A] focus:ring-[#3BB54A]">
+              <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 cursor-pointer">
+                <input id="inv-taxable" type="checkbox" checked class="w-5 h-5 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] focus:ring-2 focus:ring-[#3BB54A] focus:ring-offset-1 dark:focus:ring-offset-gray-800 cursor-pointer">
                 Taxable
               </label>
-              <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
-                <input id="inv-hidden" type="checkbox" class="rounded border-gray-300 dark:border-gray-600 text-[#3BB54A] focus:ring-[#3BB54A]">
+              <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 cursor-pointer">
+                <input id="inv-hidden" type="checkbox" class="w-5 h-5 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] focus:ring-2 focus:ring-[#3BB54A] focus:ring-offset-1 dark:focus:ring-offset-gray-800 cursor-pointer">
                 Hidden
               </label>
             </div>
@@ -555,11 +555,11 @@
                 <datalist id="inv-edit-l3-list"></datalist>
               </div>
               <div class="flex items-end gap-4 pb-1">
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
-                  <input id="inv-edit-taxable" type="checkbox" class="rounded">Taxable
+                <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 cursor-pointer">
+                  <input id="inv-edit-taxable" type="checkbox" class="w-5 h-5 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] focus:ring-2 focus:ring-[#3BB54A] focus:ring-offset-1 dark:focus:ring-offset-gray-800 cursor-pointer">Taxable
                 </label>
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
-                  <input id="inv-edit-hidden" type="checkbox" class="rounded">Hidden
+                <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200 cursor-pointer">
+                  <input id="inv-edit-hidden" type="checkbox" class="w-5 h-5 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] focus:ring-2 focus:ring-[#3BB54A] focus:ring-offset-1 dark:focus:ring-offset-gray-800 cursor-pointer">Hidden
                 </label>
               </div>
             </div>
@@ -3923,20 +3923,33 @@
     }
   }
 
+  // Normalized key used for exact-match duplicate detection across code/SKU.
+  function dupKey(item) {
+    return ((item.code || item.sku || '') + '').trim().toLowerCase();
+  }
+
   function renderInvTable() {
     const query = (el('inv-view-search')?.value || '').toLowerCase();
     let rows = invViewDupMode
-      ? invViewAllItems.filter(i => invDupCodes.has(i.code))
+      ? invViewAllItems.filter(i => invDupCodes.has(dupKey(i)))
       : invViewItems;
     if (query) {
       rows = rows.filter(i => i.name.toLowerCase().includes(query) || i.code.toLowerCase().includes(query));
+    }
+    // In duplicate mode, sort by the match key so pairs are always adjacent.
+    if (invViewDupMode) {
+      rows = rows.slice().sort((a, b) => {
+        const ka = dupKey(a), kb = dupKey(b);
+        if (ka !== kb) return ka < kb ? -1 : 1;
+        return (a.name || '').localeCompare(b.name || '');
+      });
     }
     const tbody = el('inv-view-tbody');
     if (rows.length === 0) {
       tbody.innerHTML = '<tr><td colspan="8" class="px-3 py-6 text-center text-gray-400 text-sm">No items found.</td></tr>';
     } else {
       tbody.innerHTML = rows.map(item => {
-        const isDup = invDupCodes.has(item.code);
+        const isDup = invDupCodes.has(dupKey(item));
         const rowClass = isDup ? 'bg-yellow-50 dark:bg-yellow-900/20' : '';
         const nameClass = item.hidden ? 'line-through text-gray-400' : 'text-gray-800 dark:text-gray-100';
         return `<tr class="${rowClass} hover:bg-gray-50 dark:hover:bg-gray-700/50">
@@ -3998,20 +4011,24 @@
         offset += 100;
         invViewSetStatus(`Fetching… loaded ${invViewAllItems.length} items`, 'info');
       }
-      // Build duplicate codes set
+      // Find items whose code/sku exactly matches another item's code/sku.
+      // Key by normalized code (falling back to sku), trim + lowercase so
+      // accidental whitespace/case variants still collapse. Empty keys skipped.
       const codeCounts = {};
       for (const item of invViewAllItems) {
-        if (item.code) codeCounts[item.code] = (codeCounts[item.code] || 0) + 1;
+        const key = dupKey(item);
+        if (!key) continue;
+        codeCounts[key] = (codeCounts[key] || 0) + 1;
       }
       invDupCodes = new Set(Object.keys(codeCounts).filter(c => codeCounts[c] > 1));
-      const dupItems = invViewAllItems.filter(i => invDupCodes.has(i.code));
+      const dupItems = invViewAllItems.filter(i => invDupCodes.has(dupKey(i)));
       invViewDupMode = true;
       if (invDupCodes.size === 0) {
         invViewSetStatus(`No duplicates found across ${invViewAllItems.length} items.`, 'ok');
         invViewItems = invViewAllItems.slice(0, 100);
         renderInvTable();
       } else {
-        invViewSetStatus(`Found ${invDupCodes.size} duplicate code(s) across ${dupItems.length} items (${invViewAllItems.length} total).`, 'warn');
+        invViewSetStatus(`Found ${invDupCodes.size} duplicate code/SKU(s) across ${dupItems.length} items (${invViewAllItems.length} total).`, 'warn');
         invViewItems = [];
         renderInvTable();
       }
