@@ -2667,7 +2667,7 @@ export default {
 
           const { categoryId, created: categoryCreated } = await resolveCloverCategory(s, l3);
 
-          const itemBody = { name, code, price: priceCents, hidden: !!hidden, defaultTaxRates: !!taxable, priceType: "FIXED" };
+          const itemBody = { name, code, sku: code, price: priceCents, hidden: !!hidden, defaultTaxRates: !!taxable, priceType: "FIXED" };
           if (costCents != null) itemBody.cost = costCents;
           const itemResp = await fetch(`https://api.clover.com/v3/merchants/${mId}/items`, {
             method: "POST", headers, body: JSON.stringify(itemBody),
