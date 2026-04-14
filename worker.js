@@ -3395,29 +3395,6 @@ export default {
       }
     }
 
-    // ── Live data endpoint (existing): ?store=BL1&since=timestamp
-    const storeKey = url.searchParams.get("store");
-    if (!storeKey) {
-      return new Response(JSON.stringify({ error: "Please specify a store" }), {
-        status: 400, headers: corsHeaders,
-      });
-    }
-
-    const targetStore = storeKey.toUpperCase();
-    const merchantId = env[`${targetStore}_MERCHANT_ID`];
-    const apiToken = env[`${targetStore}_API_TOKEN`];
-
-    if (!merchantId || !apiToken) {
-      return new Response(JSON.stringify({ error: "Store keys not found in Cloudflare" }), {
-        status: 404, headers: corsHeaders,
-      });
-    }
-
-    const since = url.searchParams.get("since");
-    const et = getETToday();
-    const startOfToday = since ? Number(since) : et.startOfDay;
-
-
   // ── Admin: Schedule a sale ──────────────────────────────────────────────
   //    POST ?action=schedule-sale
   //    body: { store, items:[{id,name,priceCents}], discount:{kind,value}, startsAt, endsAt }
@@ -3544,6 +3521,29 @@ export default {
     const result = await processSaleSchedules(env, new Date());
     return new Response(JSON.stringify({ ok: true, ...result }), { headers: corsJson });
   }
+
+    // ── Live data endpoint (existing): ?store=BL1&since=timestamp
+    const storeKey = url.searchParams.get("store");
+    if (!storeKey) {
+      return new Response(JSON.stringify({ error: "Please specify a store" }), {
+        status: 400, headers: corsHeaders,
+      });
+    }
+
+    const targetStore = storeKey.toUpperCase();
+    const merchantId = env[`${targetStore}_MERCHANT_ID`];
+    const apiToken = env[`${targetStore}_API_TOKEN`];
+
+    if (!merchantId || !apiToken) {
+      return new Response(JSON.stringify({ error: "Store keys not found in Cloudflare" }), {
+        status: 404, headers: corsHeaders,
+      });
+    }
+
+    const since = url.searchParams.get("since");
+    const et = getETToday();
+    const startOfToday = since ? Number(since) : et.startOfDay;
+
     try {
       const elements = await fetchCloverOrders(targetStore, env, startOfToday);
       const result = JSON.stringify({ elements: elements || [] });
