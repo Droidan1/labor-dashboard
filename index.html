@@ -4040,7 +4040,7 @@
       ? invViewAllItems.filter(i => invDupCodes.has(dupKey(i)))
       : invViewItems;
     if (query) {
-      rows = rows.filter(i => i.name.toLowerCase().includes(query) || i.code.toLowerCase().includes(query));
+      rows = rows.filter(i => i.name.toLowerCase().includes(query) || i.code.toLowerCase().includes(query) || (i.category || '').toLowerCase().includes(query));
     }
     // In duplicate mode, sort by the match key so pairs are always adjacent.
     if (invViewDupMode) {
