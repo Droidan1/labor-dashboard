@@ -2,9 +2,11 @@ name = "clover-sales-api"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
-# Cron trigger: 11:55 PM ET (03:55 UTC) daily for end-of-day snapshots
+# Cron triggers:
+#   - "55 3 * * *"  — 11:55 PM ET (03:55 UTC) daily end-of-day snapshot rollup
+#   - "* * * * *"   — every minute: sale scheduler (activate pending, revert expired)
 [triggers]
-crons = ["55 3 * * *"]
+crons = ["55 3 * * *", "* * * * *"]
 
 [vars]
 BL1_MERCHANT_ID = "T3M0E73JKKF11"
