@@ -4016,16 +4016,22 @@
     el('inv-view-table-wrap').classList.add('hidden');
     el('inv-view-pagination').classList.add('hidden');
     try {
-      const resp = await fetch(`${WORKER_BASE}?action=inventory-items&store=${invViewStore}&offset=${invViewOffset}`, {
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }
-      });
-      const data = await resp.json();
-      if (!data.ok) { invViewSetStatus('Error: ' + (data.error || 'unknown'), 'error'); return; }
-      invViewItems = data.elements;
-      invViewTotal = data.total;
-      invViewSetStatus('', '');
+      let offset = 0;
+      while (true) {
+        const resp = await fetch(`${WORKER_BASE}?action=inventory-items&store=${invViewStore}&offset=${offset}`, {
+          headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }
+        });
+        const data = await resp.json();
+        if (!data.ok) { invViewSetStatus('Error: ' + (data.error || 'unknown'), 'error'); return; }
+        invViewAllItems = invViewAllItems.concat(data.elements);
+        if (data.total != null) invViewTotal = data.total;
+        if (!data.hasMore) break;
+        offset += 1000;
+        invViewSetStatus(`Loading… ${invViewAllItems.length} items so far`, 'info');
+      }
+      invViewItems = invViewAllItems;
+      invViewSetStatus(`Loaded ${invViewAllItems.length} items`, 'ok');
       renderInvTable();
-      updateInvPagination(data.hasMore);
     } catch(err) {
       invViewSetStatus('Error: ' + escapeHtml(err.message), 'error');
     }
@@ -4145,22 +4151,13 @@
 
   async function findDuplicates() {
     invViewStore = el('inv-view-store').value;
-    invViewAllItems = [];
-    invViewSetStatus('Fetching all pages…', 'info');
     el('inv-view-table-wrap').classList.add('hidden');
     el('inv-view-pagination').classList.add('hidden');
-    let offset = 0;
     try {
-      while (true) {
-        const resp = await fetch(`${WORKER_BASE}?action=inventory-items&store=${invViewStore}&offset=${offset}`, {
-          headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }
-        });
-        const data = await resp.json();
-        if (!data.ok) { invViewSetStatus('Error: ' + (data.error || 'unknown'), 'error'); return; }
-        invViewAllItems = invViewAllItems.concat(data.elements);
-        if (!data.hasMore) break;
-        offset += 100;
-        invViewSetStatus(`Fetching… loaded ${invViewAllItems.length} items`, 'info');
+      // Reuse already-loaded full catalog; reload if empty or store changed
+      if (invViewAllItems.length === 0) {
+        await loadInventory(true);
+        if (invViewAllItems.length === 0) return; // loadInventory showed its own error
       }
       // Find items whose code/sku exactly matches another item's code/sku.
       // Key by normalized code (falling back to sku), trim + lowercase so
@@ -4176,7 +4173,7 @@
       invViewDupMode = true;
       if (invDupCodes.size === 0) {
         invViewSetStatus(`No duplicates found across ${invViewAllItems.length} items.`, 'ok');
-        invViewItems = invViewAllItems.slice(0, 100);
+        invViewItems = invViewAllItems;
         renderInvTable();
       } else {
         invViewSetStatus(`Found ${invDupCodes.size} duplicate code/SKU(s) across ${dupItems.length} items (${invViewAllItems.length} total).`, 'warn');

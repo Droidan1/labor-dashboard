@@ -2874,7 +2874,7 @@ export default {
       }
       const mId = env[`${store}_MERCHANT_ID`];
       const tok = env[`${store}_API_TOKEN`];
-      const apiUrl = `https://api.clover.com/v3/merchants/${mId}/items?expand=categories&limit=100&offset=${offset}`;
+      const apiUrl = `https://api.clover.com/v3/merchants/${mId}/items?expand=categories&limit=1000&offset=${offset}`;
       const resp = await cloverFetch(apiUrl, { headers: { "Authorization": `Bearer ${tok}` } });
       if (!resp.ok) {
         const txt = await resp.text();
@@ -2896,7 +2896,7 @@ export default {
         categoryId: item.categories?.elements?.[0]?.id || "",
       }));
       const total = data.total ?? data.count ?? null;
-      const hasMore = elements.length === 100;
+      const hasMore = elements.length === 1000;
       return new Response(JSON.stringify({ ok: true, elements, offset, total, hasMore }), { headers: corsJson });
     }
 
