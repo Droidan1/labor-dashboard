@@ -3417,26 +3417,6 @@ export default {
     const et = getETToday();
     const startOfToday = since ? Number(since) : et.startOfDay;
 
-    try {
-      const elements = await fetchCloverOrders(targetStore, env, startOfToday);
-      const result = JSON.stringify({ elements: elements || [] });
-      const response = new Response(result, {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-
-      // Snapshot-on-fetch: save today's aggregated data to KV in background
-      if (env.SALES_SNAPSHOTS && elements && elements.length > 0) {
-        const aggregated = aggregateOrders(elements, startOfToday);
-        ctx.waitUntil(saveSnapshot(env, targetStore, et.dateStr, aggregated));
-      }
-
-      return response;
-    } catch (error) {
-      return new Response(JSON.stringify({ error: "Failed to connect to Clover" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-  },
 
   // ── Admin: Schedule a sale ──────────────────────────────────────────────
   //    POST ?action=schedule-sale
@@ -3564,6 +3544,26 @@ export default {
     const result = await processSaleSchedules(env, new Date());
     return new Response(JSON.stringify({ ok: true, ...result }), { headers: corsJson });
   }
+    try {
+      const elements = await fetchCloverOrders(targetStore, env, startOfToday);
+      const result = JSON.stringify({ elements: elements || [] });
+      const response = new Response(result, {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+
+      // Snapshot-on-fetch: save today's aggregated data to KV in background
+      if (env.SALES_SNAPSHOTS && elements && elements.length > 0) {
+        const aggregated = aggregateOrders(elements, startOfToday);
+        ctx.waitUntil(saveSnapshot(env, targetStore, et.dateStr, aggregated));
+      }
+
+      return response;
+    } catch (error) {
+      return new Response(JSON.stringify({ error: "Failed to connect to Clover" }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+  },
 
   // ── Cron trigger handler ───────────────────────────────────────
   async scheduled(event, env, ctx) {
