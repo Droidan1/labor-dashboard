@@ -4039,8 +4039,8 @@
         const escapedName = escapeHtml(item.name);
         return `<tr class="${rowClass} hover:bg-gray-50 dark:hover:bg-gray-700/50" data-item-name="${escapedName}" data-price-cents="${item.price}">
           <td class="px-3 py-2">
-            <input type="checkbox" data-item-id="${escapeHtml(item.id)}" ${isChecked ? 'checked' : ''}
-              onchange="toggleRowSelect('${escapeHtml(item.id)}', ${JSON.stringify(item.name)}, ${item.price}, this.checked)"
+            <input type="checkbox" data-item-id="${escapeHtml(item.id)}" data-item-name="${escapedName}" data-price-cents="${item.price}" ${isChecked ? 'checked' : ''}
+              onchange="toggleRowSelect(this)"
               class="w-4 h-4 rounded border-2 border-gray-400 dark:border-gray-500 accent-[#3BB54A] cursor-pointer">
           </td>
           <td class="px-3 py-2 ${nameClass} max-w-[200px] truncate" title="${escapedName}">${escapedName}</td>
@@ -4278,8 +4278,11 @@
     }
   }
 
-  function toggleRowSelect(itemId, name, priceCents, checked) {
-    if (checked) {
+  function toggleRowSelect(cb) {
+    const itemId = cb.dataset.itemId;
+    const name = cb.dataset.itemName || '';
+    const priceCents = Number(cb.dataset.priceCents || 0);
+    if (cb.checked) {
       invSelectedItems.set(itemId, { id: itemId, name, priceCents });
     } else {
       invSelectedItems.delete(itemId);
@@ -4287,7 +4290,7 @@
     updateSelectionUI();
     // Keep select-all checkbox in sync
     const allCbs = el('inv-view-tbody').querySelectorAll('input[type=checkbox]');
-    const allChecked = allCbs.length > 0 && [...allCbs].every(cb => cb.checked);
+    const allChecked = allCbs.length > 0 && [...allCbs].every(c => c.checked);
     const selAll = el('inv-sel-all');
     if (selAll) selAll.checked = allChecked;
   }
