@@ -4429,9 +4429,11 @@
     const [yr, mo, da] = datePart.split('-').map(Number);
     const [hr, mn] = timePart.split(':').map(Number);
     // Bisect to find the UTC instant whose ET representation matches localStr.
-    // Start at UTC = (localStr treated as UTC) − 5h; bracket within ±26h.
-    let lo = Date.UTC(yr, mo-1, da, hr, mn, 0) - 5*3600*1000;
-    let hi = lo + 2*3600*1000;
+    // ET is UTC-4 (EDT) or UTC-5 (EST), so correct UTC = localStr-as-UTC + 4 or 5h.
+    // Bracket [local+3h, local+6h] covers both offsets with margin.
+    const localAsUtc = Date.UTC(yr, mo-1, da, hr, mn, 0);
+    let lo = localAsUtc + 3*3600*1000;
+    let hi = localAsUtc + 6*3600*1000;
     for (let i = 0; i < 60; i++) {
       const mid = Math.floor((lo + hi) / 2);
       const d = new Date(mid);
