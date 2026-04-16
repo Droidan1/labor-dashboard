@@ -1196,8 +1196,8 @@ async function resolveCloverCategory(s, categoryName, env) {
 }
 
 // ─── Sale Scheduler helpers ─────────────────────────────────────────────
-// Read a single Clover item's current price (cents).
-async function getCloverItemPrice(env, store, itemId) {
+// Read a single Clover item's current price (cents) and name.
+async function getCloverItem(env, store, itemId) {
   const mId = env[`${store}_MERCHANT_ID`];
   const tok = env[`${store}_API_TOKEN`];
   const r = await cloverFetch(
@@ -1206,11 +1206,15 @@ async function getCloverItemPrice(env, store, itemId) {
   );
   if (!r.ok) throw new Error(`Clover GET item ${itemId} ${r.status}`);
   const j = await r.json();
-  return j.price || 0;
+  return { price: j.price || 0, name: j.name || "" };
+}
+// Convenience wrapper — returns only the price (cents).
+async function getCloverItemPrice(env, store, itemId) {
+  return (await getCloverItem(env, store, itemId)).price;
 }
 
-// Write a single Clover item's price (cents). Uses POST per Clover convention.
-async function setCloverItemPrice(env, store, itemId, priceCents) {
+// Write arbitrary fields to a Clover item. Uses POST per Clover convention.
+async function setCloverItemFields(env, store, itemId, fields) {
   const mId = env[`${store}_MERCHANT_ID`];
   const tok = env[`${store}_API_TOKEN`];
   const r = await cloverFetch(
@@ -1221,7 +1225,7 @@ async function setCloverItemPrice(env, store, itemId, priceCents) {
         Authorization: `Bearer ${tok}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ price: priceCents }),
+      body: JSON.stringify(fields),
     }
   );
   if (!r.ok) {
@@ -1229,6 +1233,24 @@ async function setCloverItemPrice(env, store, itemId, priceCents) {
     throw new Error(`Clover POST item ${itemId} ${r.status} ${txt.slice(0, 200)}`);
   }
   return r;
+}
+// Convenience wrapper — sets only the price (cents).
+async function setCloverItemPrice(env, store, itemId, priceCents) {
+  return setCloverItemFields(env, store, itemId, { price: priceCents });
+}
+
+const SALE_PREFIX = "SALE ";
+const SALE_SUFFIX_RE = / \(was \$[\d,.]+\)$/;
+
+// Build a POS-visible sale name: "SALE Widget (was $12.99)"
+// Clover caps item names at 127 chars; truncate the original name if needed.
+function buildSaleName(originalName, originalPriceCents) {
+  const suffix = ` (was $${(originalPriceCents / 100).toFixed(2)})`;
+  const maxNameLen = 127 - SALE_PREFIX.length - suffix.length;
+  const truncName = originalName.length > maxNameLen
+    ? originalName.slice(0, maxNameLen - 1) + "\u2026"
+    : originalName;
+  return SALE_PREFIX + truncName + suffix;
 }
 
 // Compute the target sale price given a discount kind + value.
@@ -1258,17 +1280,19 @@ async function processSaleSchedules(env, now) {
     .all();
   await Promise.allSettled((pending.results || []).map(async row => {
     try {
-      const currentCents = await getCloverItemPrice(env, row.store, row.item_id);
+      const item = await getCloverItem(env, row.store, row.item_id);
+      const currentCents = item.price;
       const saleCents = computeSalePrice(currentCents, row.discount_kind, row.discount_value);
       if (saleCents >= currentCents) {
         throw new Error(`Computed sale price ${saleCents} >= current ${currentCents}; aborting`);
       }
-      await setCloverItemPrice(env, row.store, row.item_id, saleCents);
+      const saleName = buildSaleName(item.name, currentCents);
+      await setCloverItemFields(env, row.store, row.item_id, { price: saleCents, name: saleName });
       await env.DB
         .prepare(
-          "UPDATE sale_schedules SET original_price=?, sale_price=?, status='active', activated_at=? WHERE id=?"
+          "UPDATE sale_schedules SET original_price=?, sale_price=?, original_name=?, status='active', activated_at=? WHERE id=?"
         )
-        .bind(currentCents, saleCents, nowIso, row.id)
+        .bind(currentCents, saleCents, item.name, nowIso, row.id)
         .run();
       result.activated++;
     } catch (err) {
@@ -1292,11 +1316,13 @@ async function processSaleSchedules(env, now) {
     try {
       // Drift guard — don't overwrite if someone manually edited the price
       // while the sale was running. Flag for admin review instead.
-      const currentCents = await getCloverItemPrice(env, row.store, row.item_id);
-      if (currentCents !== row.sale_price) {
-        throw new Error(`Price drifted: expected ${row.sale_price}, found ${currentCents}. Manual review needed.`);
+      const item = await getCloverItem(env, row.store, row.item_id);
+      if (item.price !== row.sale_price) {
+        throw new Error(`Price drifted: expected ${row.sale_price}, found ${item.price}. Manual review needed.`);
       }
-      await setCloverItemPrice(env, row.store, row.item_id, row.original_price);
+      const revertFields = { price: row.original_price };
+      if (row.original_name) revertFields.name = row.original_name;
+      await setCloverItemFields(env, row.store, row.item_id, revertFields);
       await env.DB
         .prepare(
           "UPDATE sale_schedules SET status='completed', reverted_at=? WHERE id=?"
@@ -3492,13 +3518,14 @@ export default {
         `UPDATE sale_schedules SET status='cancelled' WHERE schedule_group=? AND status='pending'`
       ).bind(scheduleGroup).run();
     }
-    // Force-revert active rows
+    // Force-revert active rows (restore both price and name)
     await Promise.allSettled(active.map(async row => {
       try {
         const store = row.store;
-        const currentCents = await getCloverItemPrice(env, store, row.item_id);
-        const priceToRestore = currentCents === row.sale_price ? row.original_price : currentCents;
-        await setCloverItemPrice(env, store, row.item_id, priceToRestore);
+        const item = await getCloverItem(env, store, row.item_id);
+        const revertFields = { price: item.price === row.sale_price ? row.original_price : item.price };
+        if (row.original_name) revertFields.name = row.original_name;
+        await setCloverItemFields(env, store, row.item_id, revertFields);
         await env.DB.prepare(
           "UPDATE sale_schedules SET status='completed', reverted_at=?, error_msg=? WHERE id=?"
         ).bind(now, "Cancelled by admin", row.id).run();

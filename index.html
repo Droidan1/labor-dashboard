@@ -4465,7 +4465,8 @@
       if (kind === 'percent') sale = Math.max(1, Math.round(orig * (1 - val / 100)));
       else sale = Math.max(1, orig - Math.round(val * 100));
       const diff = orig - sale;
-      return `<div>${escapeHtml(item.name.slice(0, 40))} &rarr; <span class="font-semibold text-green-600 dark:text-green-400">${fmtDollar(sale/100)}</span> <span class="text-gray-400">(was ${fmtDollar(orig/100)}, saving ${fmtDollar(diff/100)})</span></div>`;
+      const posName = `SALE ${item.name} (was ${fmtDollar(orig/100)})`;
+      return `<div class="mb-1"><span class="font-semibold text-green-600 dark:text-green-400">${fmtDollar(sale/100)}</span> <span class="text-gray-400">(saving ${fmtDollar(diff/100)})</span><div class="text-xs text-gray-500 dark:text-gray-400 ml-2">POS name: <span class="font-mono">${escapeHtml(posName.slice(0, 127))}</span></div></div>`;
     });
     lines.push(`<div class="mt-1 text-gray-500">${startStr} &rarr; ${endStr} ET</div>`);
     preview.innerHTML = lines.join('');
