@@ -1242,10 +1242,11 @@ async function setCloverItemPrice(env, store, itemId, priceCents) {
 const SALE_PREFIX = "SALE ";
 const SALE_SUFFIX_RE = / \(was \$[\d,.]+\)$/;
 
-// Build a POS-visible sale name: "SALE Widget (was $12.99)"
+// Build a POS-visible sale name: "SALE Widget (was $12.99 Flash Sale)"
 // Clover caps item names at 127 chars; truncate the original name if needed.
-function buildSaleName(originalName, originalPriceCents) {
-  const suffix = ` (was $${(originalPriceCents / 100).toFixed(2)})`;
+function buildSaleName(originalName, originalPriceCents, saleLabel) {
+  const price = `$${(originalPriceCents / 100).toFixed(2)}`;
+  const suffix = saleLabel ? ` (was ${price} ${saleLabel})` : ` (was ${price})`;
   const maxNameLen = 127 - SALE_PREFIX.length - suffix.length;
   const truncName = originalName.length > maxNameLen
     ? originalName.slice(0, maxNameLen - 1) + "\u2026"
@@ -1286,7 +1287,7 @@ async function processSaleSchedules(env, now) {
       if (saleCents >= currentCents) {
         throw new Error(`Computed sale price ${saleCents} >= current ${currentCents}; aborting`);
       }
-      const saleName = buildSaleName(item.name, currentCents);
+      const saleName = buildSaleName(item.name, currentCents, row.sale_label);
       await setCloverItemFields(env, row.store, row.item_id, { price: saleCents, name: saleName });
       await env.DB
         .prepare(
@@ -3430,7 +3431,7 @@ export default {
     if (unauth) return unauth;
     const body = await request.json().catch(() => null);
     if (!body) return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: corsJson });
-    const { store, items, discount, startsAt, endsAt } = body;
+    const { store, items, discount, saleLabel, startsAt, endsAt } = body;
     if (!ALL_STORES.includes(store)) return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
     if (!Array.isArray(items) || items.length === 0) return new Response(JSON.stringify({ error: "items must be a non-empty array" }), { status: 400, headers: corsJson });
     if (!discount?.kind || !["percent", "amount"].includes(discount.kind)) return new Response(JSON.stringify({ error: "discount.kind must be 'percent' or 'amount'" }), { status: 400, headers: corsJson });
@@ -3454,11 +3455,12 @@ export default {
     const scheduleGroup = `sg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const now = new Date().toISOString();
     const stmt = env.DB.prepare(
-      `INSERT INTO sale_schedules (schedule_group,store,item_id,item_name,discount_kind,discount_value,starts_at,ends_at,status,created_at)
-       VALUES (?,?,?,?,?,?,?,?,'pending',?)`
+      `INSERT INTO sale_schedules (schedule_group,store,item_id,item_name,discount_kind,discount_value,sale_label,starts_at,ends_at,status,created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,'pending',?)`
     );
+    const label = typeof saleLabel === "string" ? saleLabel.trim().slice(0, 30) || null : null;
     const stmts = items.map(item =>
-      stmt.bind(scheduleGroup, store, item.id, item.name || "", discount.kind, discount.value, sAt.toISOString(), eAt.toISOString(), now)
+      stmt.bind(scheduleGroup, store, item.id, item.name || "", discount.kind, discount.value, label, sAt.toISOString(), eAt.toISOString(), now)
     );
     await env.DB.batch(stmts);
     return new Response(JSON.stringify({ ok: true, scheduleGroup, count: items.length }), { headers: corsJson });
