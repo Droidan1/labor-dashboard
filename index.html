@@ -639,6 +639,11 @@
                 <input id="inv-sale-discount-val" type="number" min="0.01" step="0.01" placeholder="20" oninput="updateSalePreview()" class="w-24 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
               </div>
             </div>
+            <!-- Sale Label -->
+            <div class="mb-4">
+              <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Sale Label <span class="font-normal normal-case">(optional)</span></label>
+              <input id="inv-sale-label" type="text" maxlength="30" placeholder="e.g. Flash Sale, Manager Sale" oninput="updateSalePreview()" class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+            </div>
             <!-- Date range -->
             <div class="mb-4 grid grid-cols-2 gap-4">
               <div>
@@ -4408,6 +4413,7 @@
     el('inv-sale-preview').classList.add('hidden');
     el('inv-sale-status').classList.add('hidden');
     el('inv-sale-discount-val').value = '';
+    el('inv-sale-label').value = '';
     document.querySelector('input[name="inv-sale-kind"][value="percent"]').checked = true;
     el('inv-sale-modal').style.display = 'flex';
   }
@@ -4459,13 +4465,15 @@
     const endStr = el('inv-sale-end').value;
     const preview = el('inv-sale-preview');
     if (!val || val <= 0 || !startStr || !endStr) { preview.classList.add('hidden'); return; }
+    const saleLabel = (el('inv-sale-label').value || '').trim();
     const lines = [...invSelectedItems.values()].map(item => {
       const orig = item.priceCents;
       let sale;
       if (kind === 'percent') sale = Math.max(1, Math.round(orig * (1 - val / 100)));
       else sale = Math.max(1, orig - Math.round(val * 100));
       const diff = orig - sale;
-      const posName = `SALE ${item.name} (was ${fmtDollar(orig/100)})`;
+      const suffix = saleLabel ? `(was ${fmtDollar(orig/100)} ${saleLabel})` : `(was ${fmtDollar(orig/100)})`;
+      const posName = `SALE ${item.name} ${suffix}`;
       return `<div class="mb-1"><span class="font-semibold text-green-600 dark:text-green-400">${fmtDollar(sale/100)}</span> <span class="text-gray-400">(saving ${fmtDollar(diff/100)})</span><div class="text-xs text-gray-500 dark:text-gray-400 ml-2">POS name: <span class="font-mono">${escapeHtml(posName.slice(0, 127))}</span></div></div>`;
     });
     lines.push(`<div class="mt-1 text-gray-500">${startStr} &rarr; ${endStr} ET</div>`);
@@ -4490,6 +4498,7 @@
     if (startsAt <= new Date()) return setSaleModalStatus('Start time must be in the future.', 'error');
     const items = [...invSelectedItems.values()].map(i => ({ id: i.id, name: i.name }));
     const discount = { kind, value: kind === 'percent' ? val : Math.round(val * 100) };
+    const saleLabel = (el('inv-sale-label').value || '').trim() || undefined;
     submitBtn.disabled = true;
     setSaleModalStatus(`Scheduling across ${stores.length} store${stores.length > 1 ? 's' : ''}…`, 'info');
     try {
@@ -4497,7 +4506,7 @@
         fetch(`${WORKER_BASE}?action=schedule-sale`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
-          body: JSON.stringify({ store, items, discount, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() }),
+          body: JSON.stringify({ store, items, discount, saleLabel, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() }),
         }).then(r => r.json())
       ));
       const errors = results.filter(r => !r.ok);
