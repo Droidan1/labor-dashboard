@@ -229,12 +229,13 @@
 
       <div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
       
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-3 flex-wrap">
         <label for="week-select" class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Viewing Week:</label>
         <select id="week-select"
           class="px-4 py-2 rounded-lg text-sm font-medium bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-600 shadow-sm hover:border-[#3BB54A] focus:outline-none focus:ring-2 focus:ring-[#3BB54A] focus:border-[#3BB54A] transition-colors cursor-pointer appearance-none"
           style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 20 20%22 fill=%22%236b7280%22%3E%3Cpath fill-rule=%22evenodd%22 d=%22M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z%22 clip-rule=%22evenodd%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 0.5rem center; background-size: 1.25rem; padding-right: 2rem;">
         </select>
+        <div id="dash-day-selector" class="flex items-center gap-1 overflow-x-auto"></div>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -242,7 +243,7 @@
           <div class="text-xs font-display text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">All Stores Budget</div>
           <div class="grid grid-cols-2 gap-4 min-w-0">
             <div class="min-w-0">
-              <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Weekly</div>
+              <div id="c-period-label" class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Weekly</div>
               <div class="flex items-baseline gap-1 mt-1 flex-wrap">
                 <span id="c-total" class="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">—</span>
                 <span class="text-gray-300 dark:text-gray-600">/</span>
@@ -264,7 +265,7 @@
         <div id="today-total-card" class="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors order-2">
           <div class="flex justify-between items-start gap-2">
             <div class="min-w-0">
-              <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Today's Net Sales</div>
+              <div id="c-today-card-label" class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Today's Net Sales</div>
               <div id="c-today-total" class="text-xl font-bold text-gray-900 dark:text-white leading-none mb-1 truncate">—</div>
               <div id="c-today-sub" class="text-[10px] text-gray-400 dark:text-gray-500">All stores</div>
             </div>
@@ -949,6 +950,7 @@
   let historicalCloverData = {}; // { storeName: { "YYYY-MM-DD": { total, retail, bin, avgCart, ... } } }
   let selectedWeek   = null;
   let currentWeek    = null;
+  let selectedDashDay = null;  // null = full week, 'YYYY-MM-DD' = single day
   let allWeeks       = [];
   let liveDataLoading = false;
   let historicalDataLoading = false;
@@ -1398,6 +1400,7 @@
     el("last-updated").textContent = `Updated ${new Date().toLocaleTimeString()} · Target: ${LABOR_TARGET}%`;
 
     renderWeekButtons();
+    renderDashDaySelector();
     if (selectedWeek) renderDashboard();
 
     el("splash").classList.add("hidden");
@@ -1419,6 +1422,8 @@
     }
     select.onchange = () => {
       selectedWeek = select.value;
+      selectedDashDay = null; // reset to week view on week change
+      renderDashDaySelector();
       renderDashboard();
       // Load historical Clover snapshots for past weeks
       if (selectedWeek !== currentWeek) {
@@ -1431,12 +1436,94 @@
     };
   }
 
+  function renderDashDaySelector() {
+    const container = el('dash-day-selector');
+    if (!container || !selectedWeek) { if (container) container.innerHTML = ''; return; }
+
+    // Gather all dates in the selected week across all stores
+    const dateSet = new Set();
+    for (const s of STORES) {
+      for (const r of (allStoreData[s] || [])) {
+        if (r.week === selectedWeek && r.date) dateSet.add(r.date.toISOString().slice(0, 10));
+      }
+    }
+    const dates = [...dateSet].sort();
+    if (dates.length === 0) { container.innerHTML = ''; return; }
+
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+    const activeDay = selectedDashDay; // null means "Week" is selected
+
+    let html = '';
+
+    // "Week" button (aggregate — the default)
+    if (activeDay === null) {
+      html += `<button class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs bg-[#3BB54A] text-white font-semibold shadow-sm">
+        <span>Week</span><span>${selectedWeek}</span>
+      </button>`;
+    } else {
+      html += `<button onclick="selectDashDay(null)" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-dashed border-gray-300 dark:border-gray-600">
+        <span class="font-semibold">Week</span><span>${selectedWeek}</span>
+      </button>`;
+    }
+
+    for (const dateStr of dates) {
+      const d = new Date(dateStr + 'T12:00:00'); // noon to avoid timezone issues
+      const dayLabel = d.toLocaleDateString('en-US', { weekday: 'short' });
+      const dateLabel = `${d.getMonth() + 1}/${d.getDate()}`;
+      const isFuture = dateStr > todayStr;
+      const isSelected = dateStr === activeDay;
+      const isToday = dateStr === todayStr;
+
+      if (isFuture) {
+        html += `<button disabled class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs opacity-40 text-gray-400 dark:text-gray-600 cursor-not-allowed">
+          <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
+        </button>`;
+      } else if (isSelected) {
+        html += `<button class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs bg-[#3BB54A] text-white font-semibold shadow-sm">
+          <span>${dayLabel}</span><span>${dateLabel}</span>${isToday ? '<span class="text-[8px] uppercase tracking-wider">Live</span>' : ''}
+        </button>`;
+      } else {
+        html += `<button onclick="selectDashDay('${dateStr}')" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+          <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
+        </button>`;
+      }
+    }
+    container.innerHTML = html;
+  }
+
+  function selectDashDay(dateStr) {
+    selectedDashDay = dateStr;
+    renderDashDaySelector();
+    renderDashboard();
+    if (currentPage === 'store-detail' && currentStoreName) {
+      showStoreDetail(currentStoreName);
+    }
+  }
+  window.selectDashDay = selectDashDay;
+
   function renderDashboard() {
     if (!selectedWeek) return;
 
+    // Row filter: full week or single day
+    const dayFilter = selectedDashDay;
+    const filterRows = (rows) => {
+      const weekRows = rows.filter(r => r.week === selectedWeek);
+      if (!dayFilter) return weekRows;
+      return weekRows.filter(r => r.date && r.date.toISOString().slice(0, 10) === dayFilter);
+    };
+    // Whether a Clover snapshot date matches the current filter
+    const matchesCloverDate = (dateKey, weekRows) => {
+      if (dayFilter) return dateKey === dayFilter;
+      return weekRows.some(r => r.date && r.date.toISOString().slice(0, 10) === dateKey);
+    };
+
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+    const isDayView = !!dayFilter;
+    const isViewingToday = dayFilter === todayStr;
+
     const metrics = STORES.map((s, i) => ({
       store: s, name: shortName(s), color: COLORS[i],
-      ...sumRows((allStoreData[s] || []).filter(r => r.week === selectedWeek)),
+      ...sumRows(filterRows(allStoreData[s] || [])),
     }));
 
     // Top KPI Math
@@ -1455,7 +1542,12 @@
     let storesWithData = 0;
     let allOrderCount = 0, allTxnTimeTotal = 0, allTxnTimeCount = 0, allItemCount = 0, allCartTotal = 0;
 
-    if (isCurrentWeek) {
+    // Show live data only when viewing today (either full current week or today selected)
+    const showLive = isCurrentWeek && (!isDayView || isViewingToday);
+    // Show historical for past weeks, or for a specific past day in current week
+    const showHist = !isCurrentWeek || (isDayView && !isViewingToday);
+
+    if (showLive) {
       for (const s of STORES) {
         const live = liveCloverData[s];
         if (live != null && live.total > 0) {
@@ -1485,15 +1577,15 @@
         }
       }
       el("today-total-card").classList.remove("hidden");
-    } else {
-      // For past weeks, aggregate historical Clover snapshots for the top card
+    }
+    if (showHist) {
+      // Aggregate historical Clover snapshots, filtered to day if applicable
       let hasAnyHistData = false;
       for (const s of STORES) {
         const storeHist = historicalCloverData[s] || {};
         const weekRows = (allStoreData[s] || []).filter(r => r.week === selectedWeek);
         for (const [dateKey, snap] of Object.entries(storeHist)) {
-          const matchesWeek = weekRows.some(r => r.date && r.date.toISOString().slice(0, 10) === dateKey);
-          if (!matchesWeek) continue;
+          if (!matchesCloverDate(dateKey, weekRows)) continue;
           hasAnyHistData = true;
           todayTotal += snap.total || 0;
           todayRetail += snap.retail || 0;
@@ -1514,7 +1606,7 @@
       }
       if (hasAnyHistData || historicalDataLoading) {
         el("today-total-card").classList.remove("hidden");
-      } else {
+      } else if (!showLive) {
         el("today-total-card").classList.add("hidden");
       }
     }
@@ -1523,12 +1615,20 @@
     const totalAvgItems = allOrderCount > 0 ? allItemCount / allOrderCount : 0;
     const totalAvgTxnSec = allTxnTimeCount > 0 ? Math.round(allTxnTimeTotal / allTxnTimeCount) : null;
 
-    const isLoading = isCurrentWeek ? liveDataLoading : historicalDataLoading;
-    const cardLabel = isCurrentWeek ? "Today's Sales" : `Week ${selectedWeek} Clover Data`;
+    const isLoading = showLive ? liveDataLoading : historicalDataLoading;
+    let cardLabel;
+    if (isDayView) {
+      const dd = new Date(dayFilter + 'T12:00:00');
+      cardLabel = isViewingToday ? "Today's Sales" : dd.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    } else {
+      cardLabel = isCurrentWeek ? "Today's Sales" : `Week ${selectedWeek} Clover Data`;
+    }
+
+    el("c-today-card-label").textContent = cardLabel;
 
     if (isLoading) {
       el("c-today-total").innerHTML = '<span class="loading-dot text-[#3BB54A] text-lg">Loading...</span>';
-      el("c-today-sub").textContent = isCurrentWeek ? 'Fetching live data' : 'Loading stored data';
+      el("c-today-sub").textContent = showLive ? 'Fetching live data' : 'Loading stored data';
       el("c-today-breakdown").innerHTML = '';
     } else {
       el("c-today-total").textContent = storesWithData > 0 ? fmtDollar(todayTotal) : '—';
@@ -1575,6 +1675,7 @@
       diffEl.textContent = '';
     }
 
+    el("c-period-label").textContent = isDayView ? "Daily" : "Weekly";
     el("c-total").textContent = fmtK(tA);
     el("c-budget").textContent = fmtK(tB);
     const wkDiff = tA - tB;
@@ -1623,9 +1724,15 @@
     container.innerHTML = "";
 
     const isCurrentWeek = selectedWeek === currentWeek;
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+    const isDayView = !!selectedDashDay;
+    const isViewingToday = selectedDashDay === todayStr;
+    // Show live data only for today (full current week or today specifically selected)
+    const cardShowLive = isCurrentWeek && (!isDayView || isViewingToday);
+    const cardShowHist = !isCurrentWeek || (isDayView && !isViewingToday);
 
     for (const m of metrics) {
-      const liveData = isCurrentWeek ? liveCloverData[m.store] : null;
+      const liveData = cardShowLive ? liveCloverData[m.store] : null;
       const liveSales = liveData?.total ?? null;
       const liveRetail = liveData?.retail ?? null;
       const liveBin = liveData?.bin ?? null;
@@ -1634,16 +1741,15 @@
       const liveOrderCount = liveData?.orderCount ?? null;
       const liveAvgTxnSec = liveData?.avgTxnSec ?? null;
 
-      // Aggregate historical Clover snapshots for this store's week
+      // Aggregate historical Clover snapshots for this store, filtered by day if applicable
       const storeHistory = historicalCloverData[m.store] || {};
       let histTotal = 0, histRetail = 0, histBin = 0, histOrderCount = 0;
       let histTxnTimeTotal = 0, histTxnTimeCount = 0, histItemCount = 0, histCartTotal = 0;
       let histDayCount = 0;
       for (const [dateKey, snap] of Object.entries(storeHistory)) {
-        // Check if this date belongs to the selected week
         const weekRows = (allStoreData[m.store] || []).filter(r => r.week === selectedWeek);
-        const matchesWeek = weekRows.some(r => r.date && r.date.toISOString().slice(0, 10) === dateKey);
-        if (!matchesWeek) continue;
+        if (selectedDashDay) { if (dateKey !== selectedDashDay) continue; }
+        else { if (!weekRows.some(r => r.date && r.date.toISOString().slice(0, 10) === dateKey)) continue; }
         histDayCount++;
         histTotal += snap.total || 0;
         histRetail += snap.retail || 0;
@@ -1665,29 +1771,35 @@
       const histAvgItems = histOrderCount > 0 ? histItemCount / histOrderCount : 0;
       const histAvgTxnSec = histTxnTimeCount > 0 ? Math.round(histTxnTimeTotal / histTxnTimeCount) : null;
 
-      // Add live sales to the historical weekly total only for current week
+      // Add live sales to the total only when showing live data
       const combinedTotal = (m.aTotal || 0) + (liveSales != null && liveSales > 0 ? liveSales : 0);
 
-      // Find today's budget from the store data (only for current week)
-      const todayBudget = isCurrentWeek ? (getTodayRow(m.store)?.bTotal ?? null) : null;
-      const storeAuction = isCurrentWeek ? (getTodayRow(m.store)?.aAuction ?? null) : null;
-      
+      // Budget for today's row (only when showing live)
+      const todayBudget = cardShowLive ? (getTodayRow(m.store)?.bTotal ?? null) : null;
+      const storeAuction = cardShowLive ? (getTodayRow(m.store)?.aAuction ?? null) : null;
+
+      // Label for the "total" section when not showing live
+      const periodLabel = isDayView
+        ? new Date(selectedDashDay + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+        : `Week ${selectedWeek}`;
+      const budgetLabel = isDayView ? 'Day Budget' : 'Week Budget';
+
       const div = document.createElement("div");
       div.className = `bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700 hover:border-[#3BB54A] hover:shadow-md transition-all cursor-pointer group`;
       div.onclick = () => showStoreDetail(m.store);
-      
+
       div.innerHTML = `
         <div class="flex items-start justify-between mb-2">
           <div>
             <div class="font-display text-gray-900 dark:text-white group-hover:text-[#194975] dark:group-hover:text-[#3BB54A] transition-colors">${escapeHtml(m.name)}</div>
             <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">${escapeHtml(m.store.split("/")[0])}</div>
           </div>
-          ${isCurrentWeek ? `<span class="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-100 dark:border-green-800 flex items-center gap-1">
+          ${cardShowLive ? `<span class="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-100 dark:border-green-800 flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span> Live
           </span>` : ''}
         </div>
-        
-        ${isCurrentWeek ? `<div class="mt-4 mb-3 flex justify-between items-start">
+
+        ${cardShowLive ? `<div class="mt-4 mb-3 flex justify-between items-start">
           <div>
             <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Today's Net Sales</div>
             <div class="text-3xl font-bold text-gray-900 dark:text-white">
@@ -1726,13 +1838,13 @@
         </div>` : ''}
         <div class="h-px bg-gray-100 dark:bg-gray-700 w-full mb-3"></div>` : ''}
 
-        ${!isCurrentWeek ? `<div class="mt-4 mb-3 flex justify-between items-start">
+        ${!cardShowLive ? `<div class="mt-4 mb-3 flex justify-between items-start">
           <div>
-            <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Week ${selectedWeek} Total</div>
+            <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">${periodLabel} Total</div>
             <div class="text-3xl font-bold text-gray-900 dark:text-white">${fmtDollar(combinedTotal)}</div>
           </div>
           <div class="text-right">
-            <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Week Budget</div>
+            <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">${budgetLabel}</div>
             <div class="text-3xl font-bold text-gray-400 dark:text-gray-500">${m.bTotal != null ? fmtDollar(m.bTotal) : '<span class="text-gray-300 dark:text-gray-600 text-lg font-medium">—</span>'}</div>
             ${(() => {
               if (m.bTotal == null || m.aTotal == null) return '';
@@ -1779,7 +1891,7 @@
         </div>` : (historicalDataLoading ? '<div class="text-xs text-gray-400 dark:text-gray-500 mb-3 text-center">Loading historical data...</div>' : '')}
         <div class="h-px bg-gray-100 dark:bg-gray-700 w-full mb-3"></div>` : ''}
 
-        ${isCurrentWeek && !liveDataLoading && liveSales != null && liveSales > 0 ? `
+        ${cardShowLive && !liveDataLoading && liveSales != null && liveSales > 0 ? `
         <div class="flex gap-4 mb-3 text-center">
           <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
             <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Cart</div>
@@ -1800,7 +1912,7 @@
         </div>` : ''}
 
         <div class="flex justify-between items-center text-sm text-gray-500 dark:text-gray-400">
-          ${isCurrentWeek ? `<span>Wk${selectedWeek} WTD: <strong class="text-gray-700 dark:text-gray-200">${fmtK(combinedTotal)}</strong>${m.bTotal != null ? ` <span class="text-gray-400 dark:text-gray-500">/ ${fmtK(m.bTotal)}</span> ${(() => { const d = combinedTotal - m.bTotal; const cls = d >= 0 ? 'text-green-600' : 'text-red-500'; const sign = d >= 0 ? '+' : '-'; return `<span class="${cls} font-semibold">${sign}${fmtK(Math.abs(d))}</span>`; })()}` : ''}</span>` : '<span></span>'}
+          ${cardShowLive && !isDayView ? `<span>Wk${selectedWeek} WTD: <strong class="text-gray-700 dark:text-gray-200">${fmtK(combinedTotal)}</strong>${m.bTotal != null ? ` <span class="text-gray-400 dark:text-gray-500">/ ${fmtK(m.bTotal)}</span> ${(() => { const d = combinedTotal - m.bTotal; const cls = d >= 0 ? 'text-green-600' : 'text-red-500'; const sign = d >= 0 ? '+' : '-'; return `<span class="${cls} font-semibold">${sign}${fmtK(Math.abs(d))}</span>`; })()}` : ''}</span>` : '<span></span>'}
           <span class="text-[#194975] dark:text-[#3BB54A] font-medium group-hover:translate-x-1 transition-transform">View Details &rarr;</span>
         </div>`;
       container.appendChild(div);
