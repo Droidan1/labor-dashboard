@@ -2258,11 +2258,28 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr) {
 }
 
 // ─── CORS headers ────────────────────────────────────────────────
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-Snapshot-Secret",
-};
+// Allowlist-based CORS. Echoes the matching Origin back so that Phase 2 can
+// enable Access-Control-Allow-Credentials for session cookies without a
+// second CORS refactor. Unknown origins get no Allow-Origin header and the
+// browser blocks the response.
+const ALLOWED_ORIGINS = [
+  "https://www.retjg.com",
+  "https://retjg.com",
+];
+// localhost on any port for dev (http://localhost:1234, http://127.0.0.1:5500, etc.)
+const LOCALHOST_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
+function resolveCors(request) {
+  const origin = request.headers.get("Origin") || "";
+  const allowed = ALLOWED_ORIGINS.includes(origin) || LOCALHOST_RE.test(origin);
+  const headers = {
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, X-Snapshot-Secret",
+    "Vary": "Origin",
+  };
+  if (allowed) headers["Access-Control-Allow-Origin"] = origin;
+  return headers;
+}
 
 // Returns a 401 Response if the request lacks a valid admin secret, else null.
 // Every secret-gated endpoint uses this to avoid drifting auth checks.
@@ -2280,6 +2297,7 @@ const roundCents = n => Math.round(n * 100) / 100;
 export default {
   // ── HTTP request handler ──────────────────────────────────────
   async fetch(request, env, ctx) {
+    const corsHeaders = resolveCors(request);
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders });
     }
