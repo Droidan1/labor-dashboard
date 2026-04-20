@@ -3355,7 +3355,26 @@
   }
 
   function renderWrsActiveTab() {
-    switchWrsTab(wrsCurrentTab);
+    const tab = wrsCurrentTab;
+    document.querySelectorAll('#wrs-tabs .wrs-tab').forEach(btn => {
+      const active = btn.dataset.wrsTab === tab;
+      btn.classList.toggle('border-[#3BB54A]', active);
+      btn.classList.toggle('text-[#3BB54A]', active);
+      btn.classList.toggle('border-transparent', !active);
+      btn.classList.toggle('text-gray-500', !active);
+      btn.classList.toggle('dark:text-gray-400', !active);
+    });
+    ['summary','t13','store'].forEach(p => el('wrs-pane-'+p).classList.add('hidden'));
+    if (tab === 'summary') {
+      el('wrs-pane-summary').classList.remove('hidden');
+      if (wrsData) renderWrsSummary();
+    } else if (tab === 't13') {
+      el('wrs-pane-t13').classList.remove('hidden');
+      if (!wrsT13Data) loadT13(); else renderT13();
+    } else {
+      el('wrs-pane-store').classList.remove('hidden');
+      if (wrsData) renderWrsStore(tab);
+    }
   }
 
   window.switchWrsTab = switchWrsTab;
