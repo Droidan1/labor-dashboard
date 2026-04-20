@@ -2551,6 +2551,86 @@ export default {
       return new Response(JSON.stringify({ ok: true, date: dateParam, results }), { headers: corsJson });
     }
 
+    // ── Admin: backfill `items:` KV snapshots across a date range
+    //    ?action=backfill-items-snapshots&store=all&start=YYYY-MM-DD&end=YYYY-MM-DD[&force=1]
+    // Iterates each date in [start,end] and re-runs the items-snapshot logic,
+    // skipping dates that already have a KV entry unless force=1. Restores
+    // qty/ASP/L2 data on the Weekly Retail Summary for historical weeks.
+    if (url.searchParams.get("action") === "backfill-items-snapshots") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+
+      const storeParam = (url.searchParams.get("store") || "").toUpperCase();
+      const start = url.searchParams.get("start");
+      const end = url.searchParams.get("end");
+      const force = url.searchParams.get("force") === "1";
+      if (!storeParam) {
+        return new Response(JSON.stringify({ error: "Missing store param (use store=BL1 or store=all)" }), { status: 400, headers: corsJson });
+      }
+      if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+        return new Response(JSON.stringify({ error: "Missing or invalid start/end (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+      }
+      const stores = storeParam === "ALL" ? ALL_STORES : [storeParam];
+      const { dateStr: todayStr } = getETToday();
+
+      // Build date list
+      const dates = [];
+      const cur = new Date(start + "T00:00:00Z");
+      const endDate = new Date(end + "T00:00:00Z");
+      while (cur <= endDate) {
+        dates.push(cur.toISOString().slice(0, 10));
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+
+      const [overrides, itemCosts] = await Promise.all([
+        fetchItemOverrides(env),
+        fetchItemCosts(env),
+      ]);
+      const catMapCache = {};
+      const summary = {};
+      for (const store of stores) {
+        const storeOut = { written: 0, skipped: 0, errors: 0, details: [] };
+        try {
+          catMapCache[store] = catMapCache[store] || await fetchItemCategoryMap(store, env);
+        } catch (e) {
+          storeOut.errors++;
+          storeOut.details.push({ error: `category map: ${e.message}` });
+          summary[store] = storeOut;
+          continue;
+        }
+        for (const dateStr of dates) {
+          const key = `items:${store.toLowerCase()}:${dateStr}`;
+          try {
+            if (!force) {
+              const existing = await env.SALES_SNAPSHOTS.get(key);
+              if (existing) { storeOut.skipped++; continue; }
+            }
+            const sinceTs = getStartOfDayET(dateStr);
+            let untilTs = null;
+            if (dateStr !== todayStr) {
+              const nextDay = new Date(dateStr + 'T12:00:00Z');
+              nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+              untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
+            }
+            const elements = await fetchItemOrders(store, env, sinceTs, untilTs);
+            if (!elements) { storeOut.details.push({ date: dateStr, note: "no credentials" }); continue; }
+            const itemData = aggregateItemSales(elements, catMapCache[store], store, dateStr, overrides, itemCosts);
+            await saveItemSalesSnapshot(env, store, dateStr, itemData);
+            storeOut.written++;
+          } catch (e) {
+            storeOut.errors++;
+            storeOut.details.push({ date: dateStr, error: e.message });
+          }
+        }
+        summary[store] = storeOut;
+      }
+      return new Response(JSON.stringify({ ok: true, start, end, force, summary }), { headers: corsJson });
+    }
+
     // ── Admin: list items that fell into "Custom Sales" for a date range
     //    ?action=noncategorized-items&store=BL1&start=YYYY-MM-DD&end=YYYY-MM-DD
     // Reads `items:<store>:<date>` KV snapshots and unions every `_debug.noCategory`
