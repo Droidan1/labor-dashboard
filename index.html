@@ -1322,8 +1322,8 @@
 
   async function loadStoreFromD1(storeName) {
     const storeKey = storeName.split('/')[0]; // "BL1/BL6 Coliseum" → "BL1"
-    const url = `https://clover-sales-api.howardbrian86.workers.dev/?history_d1=true&store=${storeKey}&from=2025-01-01&to=2026-12-31`;
-    const resp = await fetch(url);
+    const url = `${WORKER_BASE}?history_d1=true&store=${storeKey}&from=2025-01-01&to=2026-12-31`;
+    const resp = await fetch(url, { credentials: 'include' });
     if (!resp.ok) throw new Error(`D1 fetch failed: ${resp.status}`);
     const data = await resp.json();
 
@@ -1361,9 +1361,9 @@
   async function fetchLiveCloverSales(storeKey) {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const workerUrl = `https://clover-sales-api.howardbrian86.workers.dev/?store=${storeKey}&since=${startOfToday}`;
+    const workerUrl = `${WORKER_BASE}?store=${storeKey}&since=${startOfToday}`;
     try {
-      const response = await fetch(workerUrl);
+      const response = await fetch(workerUrl, { credentials: 'include' });
       if (!response.ok) throw new Error(`Worker returned ${response.status}`);
       const data = await response.json();
       let totalNet = 0, binNet = 0, retailNet = 0, orderCount = 0, totalItemCount = 0, totalTxnTimeMs = 0, txnTimeCount = 0;
@@ -1440,9 +1440,9 @@
   }
 
   async function fetchHistoricalCloverData(storeKey, fromDate, toDate) {
-    const workerUrl = `https://clover-sales-api.howardbrian86.workers.dev/?history=true&store=${storeKey}&from=${fromDate}&to=${toDate}`;
+    const workerUrl = `${WORKER_BASE}?history=true&store=${storeKey}&from=${fromDate}&to=${toDate}`;
     try {
-      const response = await fetch(workerUrl);
+      const response = await fetch(workerUrl, { credentials: 'include' });
       if (!response.ok) return {};
       return await response.json();
     } catch (error) {
@@ -2293,12 +2293,12 @@
     const lwD = String(lastWeekDate.getDate()).padStart(2, '0');
     const lastWeekStr = `${lwY}-${lwM}-${lwD}`;
 
-    const base = 'https://clover-sales-api.howardbrian86.workers.dev/?action=hourly';
+    const base = `${WORKER_BASE}?action=hourly`;
     const curUrl = `${base}&store=${storeKey}&date=${dateStr}`;
     const lwUrl = `${base}&store=${storeKey}&date=${lastWeekStr}`;
 
     try {
-      const [curResp, lwResp] = await Promise.all([fetch(curUrl), fetch(lwUrl)]);
+      const [curResp, lwResp] = await Promise.all([fetch(curUrl, { credentials: 'include' }), fetch(lwUrl, { credentials: 'include' })]);
       if (!curResp.ok) throw new Error(`Current day HTTP ${curResp.status}`);
       if (!lwResp.ok) throw new Error(`Last week HTTP ${lwResp.status}`);
       const [curData, lwData] = await Promise.all([curResp.json(), lwResp.json()]);
@@ -2452,7 +2452,7 @@
     const fmt$ = v => '$' + (v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     try {
-      const resp = await fetch(`https://clover-sales-api.howardbrian86.workers.dev/?action=items-hour&store=${storeKey}&date=${dateStr}&hour=${hour}`);
+      const resp = await fetch(`${WORKER_BASE}?action=items-hour&store=${storeKey}&date=${dateStr}&hour=${hour}`, { credentials: 'include' });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       if (data.error) throw new Error(data.error);
@@ -2703,8 +2703,8 @@
       try {
         const responses = await Promise.all(days.map(d => {
           const isLive = d === todayStr;
-          const url = `https://clover-sales-api.howardbrian86.workers.dev/?action=items&store=${storeKey}` + (isLive ? '' : `&date=${d}`);
-          return fetch(url).then(r => {
+          const url = `${WORKER_BASE}?action=items&store=${storeKey}` + (isLive ? '' : `&date=${d}`);
+          return fetch(url, { credentials: 'include' }).then(r => {
             if (!r.ok) throw new Error(`${d}: HTTP ${r.status}`);
             return r.json();
           });
@@ -2733,9 +2733,9 @@
     container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">${isToday ? 'Loading category data from Clover…' : 'Loading historical data…'}</div></div>`;
 
     try {
-      let url = `https://clover-sales-api.howardbrian86.workers.dev/?action=items&store=${storeKey}`;
+      let url = `${WORKER_BASE}?action=items&store=${storeKey}`;
       if (!isToday) url += `&date=${targetDate}`;
-      const resp = await fetch(url);
+      const resp = await fetch(url, { credentials: 'include' });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       if (data.error) throw new Error(data.error);
@@ -3138,7 +3138,7 @@
 
     try {
       const resp = await fetch(
-        `https://clover-sales-api.howardbrian86.workers.dev/?action=items-snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(date)}`,
+        `${WORKER_BASE}?action=items-snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(date)}`,
         { headers: { 'X-Snapshot-Secret': 'mapcaj-saTxa2-1' } }
       );
       const data = await resp.json();
