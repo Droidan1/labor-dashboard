@@ -2263,8 +2263,8 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr) {
 // second CORS refactor. Unknown origins get no Allow-Origin header and the
 // browser blocks the response.
 const ALLOWED_ORIGINS = [
-  "https://www.retjg.com",
-  "https://retjg.com",
+  "https://www.retjghub.com",
+  "https://retjghub.com",
 ];
 // localhost on any port for dev (http://localhost:1234, http://127.0.0.1:5500, etc.)
 const LOCALHOST_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
