@@ -2293,6 +2293,101 @@ function requireAdminSecret(request, env, corsJson) {
 // Round to 2 decimal places (dollar/cents precision).
 const roundCents = n => Math.round(n * 100) / 100;
 
+// ─── Auth helpers ─────────────────────────────────────────────────
+
+function randomHex(bytes) {
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
+  return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function getSessionCookie(request) {
+  const cookie = request.headers.get('Cookie') || '';
+  const match = cookie.match(/(?:^|;\s*)session=([^;]+)/);
+  return match ? match[1] : null;
+}
+
+// Returns user row or null.
+async function getAuthUser(request, env) {
+  if (!env.DB) return null;
+  const sessionId = getSessionCookie(request);
+  if (!sessionId) return null;
+  const now = new Date().toISOString();
+  const { results } = await env.DB.prepare(
+    `SELECT u.id, u.email, u.role, u.stores, u.status
+     FROM sessions s JOIN users u ON s.user_id = u.id
+     WHERE s.id = ? AND s.expires_at > ? AND u.status = 'active'`
+  ).bind(sessionId, now).all();
+  if (!results || !results.length) return null;
+  const user = results[0];
+  user.stores = user.stores ? JSON.parse(user.stores) : null;
+  // Roll expiry 7 more days on each use (sliding window)
+  const newExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?')
+    .bind(newExpiry, sessionId).run().catch(() => {});
+  return user;
+}
+
+// Returns null (= all stores) or string[] of allowed store codes.
+function allowedStores(user) {
+  if (!user) return null;
+  if (user.role === 'superuser' || user.role === 'admin') return null;
+  return user.stores || [];
+}
+
+function canAccessStore(user, store) {
+  const allowed = allowedStores(user);
+  if (allowed === null) return true;
+  return allowed.includes(store);
+}
+
+// Roles that can access inventory / supply request pages.
+function canAccessInventory(user) {
+  return user && (user.role === 'superuser' || user.role === 'admin');
+}
+
+// Auth check for inventory/supply endpoints: accepts either a valid session
+// with admin+ role, or the X-Snapshot-Secret header (for tooling/scripts).
+function requireInventoryAccess(currentUser, isAdminSecret, corsJson) {
+  if (isAdminSecret) return null;
+  if (!currentUser || !canAccessInventory(currentUser)) {
+    return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+  }
+  return null;
+}
+
+function sessionCookie(id, maxAge) {
+  return `session=${id}; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=retjghub.com; Max-Age=${maxAge}`;
+}
+
+async function sendMagicLinkEmail(email, token, env) {
+  const link = `https://api.retjghub.com/?action=auth-verify&token=${token}`;
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: 'noreply@retjghub.com',
+      to: email,
+      subject: 'Your Bargain Lane Dashboard login link',
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
+          <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:48px;margin-bottom:24px">
+          <h2 style="margin:0 0 8px">Sign in to your dashboard</h2>
+          <p style="color:#555;margin:0 0 24px">Click the button below to sign in. This link expires in 15 minutes and can only be used once.</p>
+          <a href="${link}" style="display:inline-block;background:#3BB54A;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:600">Sign in</a>
+          <p style="color:#999;font-size:12px;margin-top:24px">If you didn't request this, ignore this email.</p>
+        </div>`,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Resend error ${res.status}: ${err}`);
+  }
+}
+
 // ─── Worker export ───────────────────────────────────────────────
 export default {
   // ── HTTP request handler ──────────────────────────────────────
@@ -2303,6 +2398,118 @@ export default {
     }
 
     const url = new URL(request.url);
+    const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+
+    // ── Auth: POST /auth/login — send magic link ──────────────────
+    if (request.method === "POST" && url.searchParams.get("action") === "auth-login") {
+      try {
+        const { email } = await request.json();
+        if (!email || !email.includes('@')) {
+          return new Response(JSON.stringify({ error: "Invalid email" }), { status: 400, headers: corsJson });
+        }
+        const normalized = email.trim().toLowerCase();
+        // Look up user — respond generically whether found or not (don't leak existence)
+        const { results } = await env.DB.prepare(
+          "SELECT id FROM users WHERE email = ? AND status = 'active'"
+        ).bind(normalized).all();
+        if (results && results.length) {
+          const token = randomHex(32);
+          const expires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+          await env.DB.prepare(
+            "INSERT INTO magic_links (token, email, expires_at) VALUES (?, ?, ?)"
+          ).bind(token, normalized, expires).run();
+          await sendMagicLinkEmail(normalized, token, env);
+        }
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Auth: GET /auth/verify — consume magic link, create session ──
+    if (url.searchParams.get("action") === "auth-verify") {
+      const token = url.searchParams.get("token");
+      if (!token) return Response.redirect("https://www.retjghub.com/?auth_error=invalid", 302);
+      try {
+        const now = new Date().toISOString();
+        const { results } = await env.DB.prepare(
+          "SELECT email, expires_at, used_at FROM magic_links WHERE token = ?"
+        ).bind(token).all();
+        if (!results || !results.length || results[0].used_at || results[0].expires_at < now) {
+          return Response.redirect("https://www.retjghub.com/?auth_error=expired", 302);
+        }
+        const { email } = results[0];
+        // Mark token used
+        await env.DB.prepare("UPDATE magic_links SET used_at = ? WHERE token = ?")
+          .bind(now, token).run();
+        // Load user
+        const { results: users } = await env.DB.prepare(
+          "SELECT id FROM users WHERE email = ? AND status = 'active'"
+        ).bind(email).all();
+        if (!users || !users.length) {
+          return Response.redirect("https://www.retjghub.com/?auth_error=nouser", 302);
+        }
+        const userId = users[0].id;
+        // Create session (7 days)
+        const sessionId = randomHex(32);
+        const expiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+        await env.DB.prepare(
+          "INSERT INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)"
+        ).bind(sessionId, userId, expiry, now).run();
+        // Update last_login
+        await env.DB.prepare("UPDATE users SET last_login = ? WHERE id = ?")
+          .bind(now, userId).run();
+        return new Response(null, {
+          status: 302,
+          headers: {
+            "Location": "https://www.retjghub.com/",
+            "Set-Cookie": sessionCookie(sessionId, 7 * 24 * 60 * 60),
+          },
+        });
+      } catch (e) {
+        return Response.redirect("https://www.retjghub.com/?auth_error=server", 302);
+      }
+    }
+
+    // ── Auth: GET ?action=auth-me — return current user info ─────
+    if (url.searchParams.get("action") === "auth-me") {
+      const user = await getAuthUser(request, env);
+      if (!user) {
+        return new Response(JSON.stringify({ authenticated: false }), { headers: corsJson });
+      }
+      return new Response(JSON.stringify({
+        authenticated: true,
+        email: user.email,
+        role: user.role,
+        stores: user.stores,
+      }), { headers: corsJson });
+    }
+
+    // ── Auth: POST /auth/logout ───────────────────────────────────
+    if (request.method === "POST" && url.searchParams.get("action") === "auth-logout") {
+      const sessionId = getSessionCookie(request);
+      if (sessionId && env.DB) {
+        await env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind(sessionId).run().catch(() => {});
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...corsJson, "Set-Cookie": sessionCookie("", 0) },
+      });
+    }
+
+    // ── Auth gate: all routes below require a valid session ───────
+    // Exception: requests carrying X-Snapshot-Secret bypass session auth
+    // (admin tooling, cron callbacks, backfill scripts).
+    const isAdminSecret = !!(env.SNAPSHOT_SECRET &&
+      request.headers.get("X-Snapshot-Secret") === env.SNAPSHOT_SECRET);
+    let currentUser = null;
+    if (!isAdminSecret) {
+      currentUser = await getAuthUser(request, env);
+      if (!currentUser) {
+        return new Response(JSON.stringify({ error: "Unauthorized", code: "NO_SESSION" }), {
+          status: 401, headers: corsJson,
+        });
+      }
+    }
 
     // ── History endpoint: ?history=true&store=BL1&from=2026-03-25&to=2026-04-01
     if (url.searchParams.get("history") === "true") {
@@ -2311,6 +2518,9 @@ export default {
         return new Response(JSON.stringify({ error: "Please specify a store" }), {
           status: 400, headers: corsHeaders,
         });
+      }
+      if (!canAccessStore(currentUser, store)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
 
       const from = url.searchParams.get("from");
@@ -2339,7 +2549,6 @@ export default {
 
     // ── D1 History endpoint: ?history_d1=true&store=BL1&from=YYYY-MM-DD&to=YYYY-MM-DD
     if (url.searchParams.get("history_d1") === "true") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       if (!env.DB) {
         return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
       }
@@ -2348,6 +2557,9 @@ export default {
       const to = url.searchParams.get("to");
       if (!store || !from || !to) {
         return new Response(JSON.stringify({ error: "Missing store, from, or to params" }), { status: 400, headers: corsJson });
+      }
+      if (!canAccessStore(currentUser, store)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
       const { results: rows } = await env.DB.prepare(
         "SELECT * FROM daily_sales WHERE store = ? AND date >= ? AND date <= ? ORDER BY date"
@@ -2866,8 +3078,7 @@ export default {
     // ── Admin: Fetch Clover categories for a store (5-min KV cache)
     //    GET ?action=clover-categories&store=BL1
     if (url.searchParams.get("action") === "clover-categories") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       const store = (url.searchParams.get("store") || "").toUpperCase();
       if (!ALL_STORES.includes(store)) {
@@ -2898,8 +3109,7 @@ export default {
     // ── Admin: Create a Clover item (per-store or all stores)
     //    POST ?action=create-clover-item
     if (url.searchParams.get("action") === "create-clover-item") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (request.method !== "POST") {
         return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
@@ -2989,8 +3199,7 @@ export default {
     // ── Admin: Inventory Items (paginated)
     //    GET ?action=inventory-items&store=BL1&offset=0
     if (url.searchParams.get("action") === "inventory-items") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       const store = url.searchParams.get("store") || "";
       const offset = parseInt(url.searchParams.get("offset") || "0", 10);
@@ -3028,8 +3237,7 @@ export default {
     // ── Admin: Update Clover Item
     //    POST ?action=update-clover-item  body: { store, itemId, name, code, priceCents, costCents, taxable, hidden, l3, currentCategoryId }
     if (url.searchParams.get("action") === "update-clover-item") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       const body = await request.json();
       const { store, itemId, name, code, priceCents, costCents, taxable, hidden, l3, currentCategoryId } = body;
@@ -3091,8 +3299,7 @@ export default {
     // ── Admin: Delete Clover Item
     //    POST ?action=delete-clover-item  body: { store, itemId } OR { stores: ["BL1","BL2"], itemId }
     if (url.searchParams.get("action") === "delete-clover-item") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       const body = await request.json();
       const { itemId } = body;
@@ -3122,7 +3329,6 @@ export default {
     //    ?action=weekly-summary&week=15&year=2026
     // Returns one payload feeding the Summary tab + all 6 per-store tabs.
     if (url.searchParams.get("action") === "weekly-summary") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       const week = url.searchParams.get("week");
       const year = url.searchParams.get("year") || String(new Date().getUTCFullYear());
       if (!week) {
@@ -3138,13 +3344,18 @@ export default {
           }), { headers: corsJson });
         }
 
+        // Scope stores to what the current user is allowed to see
+        const scopedStores = allowedStores(currentUser)
+          ? ALL_STORES.filter(s => allowedStores(currentUser).includes(s))
+          : ALL_STORES;
+
         const bundles = await Promise.all(
-          ALL_STORES.map(s => buildStoreWeekly(env, s, dates))
+          scopedStores.map(s => buildStoreWeekly(env, s, dates))
         );
         const stores = {};
-        ALL_STORES.forEach((s, i) => { stores[s] = bundles[i]; });
+        scopedStores.forEach((s, i) => { stores[s] = bundles[i]; });
 
-        // Company totals (sum of stores)
+        // Company totals (sum of scoped stores)
         let cNet = 0, cRetail = 0, cBin = 0, cAuction = 0, cBudget = 0,
             cQty = 0, cTxn = 0, cLaborNum = 0, cLaborDen = 0;
         for (const b of bundles) {
@@ -3165,7 +3376,7 @@ export default {
         const cVarPct = cBudget > 0 ? (cVar / cBudget) * 100 : 0;
         const cLabor = cLaborDen > 0 ? cLaborNum / cLaborDen : 0;
 
-        // L2 × store matrix
+        // L2 × store matrix (scoped stores only)
         const l2Set = new Set();
         for (const b of bundles) {
           for (const c of b.itemSales.categories) l2Set.add(c.category);
@@ -3173,7 +3384,7 @@ export default {
         const l2Matrix = [];
         for (const l2 of l2Set) {
           const row = { l2, byStore: {}, total: 0 };
-          ALL_STORES.forEach((s, i) => {
+          scopedStores.forEach((s, i) => {
             const found = bundles[i].itemSales.categories.find(c => c.category === l2);
             const v = found ? found.netSales : 0;
             row.byStore[s] = v;
@@ -3214,7 +3425,6 @@ export default {
     // Reads from pre-rolled `week-summary:` KV keys; falls back to live aggregation
     // for any missing key (and logs a warning).
     if (url.searchParams.get("action") === "weekly-t13") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       const endWeek = url.searchParams.get("endWeek");
       const year = url.searchParams.get("year") || String(new Date().getUTCFullYear());
       if (!endWeek) {
@@ -3259,8 +3469,11 @@ export default {
 
         // Build per-store time series. Read pre-rolled summaries first; on
         // miss, build live for that one (store, week).
+        const scopedStoresT13 = allowedStores(currentUser)
+          ? ALL_STORES.filter(s => allowedStores(currentUser).includes(s))
+          : ALL_STORES;
         const stores = {};
-        for (const s of ALL_STORES) {
+        for (const s of scopedStoresT13) {
           stores[s] = {
             netSales: [], qty: [], transactions: [], asp: [], laborPct: [], budget: [],
           };
@@ -3273,7 +3486,7 @@ export default {
         for (const wkObj of weeks) {
           const wk = wkObj.week;
           const perStore = {};
-          await Promise.all(ALL_STORES.map(async (s) => {
+          await Promise.all(scopedStoresT13.map(async (s) => {
             let summary = null;
             if (env.SALES_SNAPSHOTS) {
               summary = await env.SALES_SNAPSHOTS.get(
@@ -3294,7 +3507,7 @@ export default {
           }));
 
           let wkNet = 0, wkQty = 0, wkTxn = 0, wkBudget = 0, wkLaborNum = 0, wkLaborDen = 0;
-          for (const s of ALL_STORES) {
+          for (const s of scopedStoresT13) {
             const t = perStore[s] || {};
             stores[s].netSales.push(Number(t.netSales) || 0);
             stores[s].qty.push(Number(t.qty) || 0);
@@ -3376,10 +3589,12 @@ export default {
     // Always live-fetches from Clover (narrow 1-hour window). Used by the hourly popup
     // drill-down when a user clicks a specific hour bar.
     if (url.searchParams.get("action") === "items-hour") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       const store = (url.searchParams.get("store") || "").toUpperCase();
       if (!store) {
         return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
+      }
+      if (!canAccessStore(currentUser, store)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
 
       const { dateStr: todayStr } = getETToday();
@@ -3416,10 +3631,12 @@ export default {
     // Returns a 24-slot array of net sales per ET hour. Used by the Daily Sales Chart
     // popup to compare current day hour-by-hour against the same day last week.
     if (url.searchParams.get("action") === "hourly") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       const store = (url.searchParams.get("store") || "").toUpperCase();
       if (!store) {
         return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
+      }
+      if (!canAccessStore(currentUser, store)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
 
       const { dateStr: todayStr } = getETToday();
@@ -3478,10 +3695,12 @@ export default {
 
     // ── Item sales by L2 category: ?action=items&store=BL1[&date=2026-04-08]
     if (url.searchParams.get("action") === "items") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       const store = (url.searchParams.get("store") || "").toUpperCase();
       if (!store) {
         return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
+      }
+      if (!canAccessStore(currentUser, store)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
 
       const { dateStr: todayStr, startOfDay } = getETToday();
@@ -3524,8 +3743,7 @@ export default {
   //    POST ?action=schedule-sale
   //    body: { store, items:[{id,name,priceCents}], discount:{kind,value}, startsAt, endsAt }
   if (request.method === "POST" && url.searchParams.get("action") === "schedule-sale") {
-    const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-    const unauth = requireAdminSecret(request, env, corsJson);
+    const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
     if (unauth) return unauth;
     const body = await request.json().catch(() => null);
     if (!body) return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: corsJson });
@@ -3567,8 +3785,7 @@ export default {
   // ── Admin: List sale schedules ──────────────────────────────────────────
   //    GET ?action=list-sale-schedules&store=BL1&filter=upcoming|active|past|all
   if (url.searchParams.get("action") === "list-sale-schedules") {
-    const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-    const unauth = requireAdminSecret(request, env, corsJson);
+    const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
     if (unauth) return unauth;
     const store = url.searchParams.get("store") || "";
     const filter = url.searchParams.get("filter") || "all";
@@ -3599,8 +3816,7 @@ export default {
   // ── Admin: Cancel a sale schedule ──────────────────────────────────────
   //    POST ?action=cancel-sale-schedule  body: { scheduleGroup }
   if (request.method === "POST" && url.searchParams.get("action") === "cancel-sale-schedule") {
-    const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-    const unauth = requireAdminSecret(request, env, corsJson);
+    const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
     if (unauth) return unauth;
     const body = await request.json().catch(() => null);
     const { scheduleGroup } = body || {};
@@ -3642,8 +3858,7 @@ export default {
   // ── Admin: Delete (remove) a finished sale schedule from the log ─────
   //    POST ?action=delete-sale-schedule  body: { scheduleGroup }
   if (request.method === "POST" && url.searchParams.get("action") === "delete-sale-schedule") {
-    const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-    const unauth = requireAdminSecret(request, env, corsJson);
+    const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
     if (unauth) return unauth;
     const body = await request.json().catch(() => null);
     const { scheduleGroup } = body || {};
