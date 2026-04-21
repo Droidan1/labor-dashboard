@@ -2388,6 +2388,34 @@ async function sendMagicLinkEmail(email, token, env) {
   }
 }
 
+async function sendInviteEmail(email, token, env) {
+  const link = `https://api.retjghub.com/?action=auth-verify&token=${token}`;
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: 'noreply@retjghub.com',
+      to: email,
+      subject: "You've been invited to Bargain Lane Dashboard",
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
+          <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:48px;margin-bottom:24px">
+          <h2 style="margin:0 0 8px">You've been invited</h2>
+          <p style="color:#555;margin:0 0 24px">You've been given access to the Bargain Lane Dashboard. Click the button below to sign in and get started. This link expires in 24 hours.</p>
+          <a href="${link}" style="display:inline-block;background:#3BB54A;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:600">Accept Invite</a>
+          <p style="color:#999;font-size:12px;margin-top:24px">If you weren't expecting this, you can ignore this email.</p>
+        </div>`,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Resend error ${res.status}: ${err}`);
+  }
+}
+
 // ─── Worker export ───────────────────────────────────────────────
 export default {
   // ── HTTP request handler ──────────────────────────────────────
@@ -2508,6 +2536,109 @@ export default {
         return new Response(JSON.stringify({ error: "Unauthorized", code: "NO_SESSION" }), {
           status: 401, headers: corsJson,
         });
+      }
+    }
+
+    // ── User management: list-users ──────────────────────────────────
+    if (url.searchParams.get("action") === "list-users") {
+      if (!canAccessInventory(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      const { results } = await env.DB.prepare(
+        "SELECT id, email, role, stores, status, created_at, last_login FROM users ORDER BY created_at DESC"
+      ).all();
+      return new Response(JSON.stringify({ ok: true, users: results || [] }), { headers: corsJson });
+    }
+
+    // ── User management: invite-user ─────────────────────────────────
+    if (request.method === "POST" && url.searchParams.get("action") === "invite-user") {
+      if (!canAccessInventory(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const { email, role, stores } = await request.json();
+        const validRoles = currentUser.role === 'superuser'
+          ? ['admin', 'district_manager', 'manager']
+          : ['district_manager', 'manager'];
+        if (!validRoles.includes(role)) {
+          return new Response(JSON.stringify({ error: "Invalid role" }), { status: 400, headers: corsJson });
+        }
+        const normalized = email.trim().toLowerCase();
+        const existing = await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(normalized).first();
+        if (existing) {
+          return new Response(JSON.stringify({ error: "A user with that email already exists" }), { status: 409, headers: corsJson });
+        }
+        const id = 'usr_' + randomHex(8);
+        const storesJson = stores && stores.length ? JSON.stringify(stores) : null;
+        await env.DB.prepare(
+          "INSERT INTO users (id, email, role, stores, status, created_at) VALUES (?, ?, ?, ?, 'active', datetime('now'))"
+        ).bind(id, normalized, role, storesJson).run();
+        const token = randomHex(32);
+        const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        await env.DB.prepare("INSERT INTO magic_links (token, email, expires_at) VALUES (?, ?, ?)")
+          .bind(token, normalized, expires).run();
+        await sendInviteEmail(normalized, token, env);
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── User management: resend-invite ───────────────────────────────
+    if (request.method === "POST" && url.searchParams.get("action") === "resend-invite") {
+      if (!canAccessInventory(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const { email } = await request.json();
+        const normalized = email.trim().toLowerCase();
+        const user = await env.DB.prepare("SELECT id FROM users WHERE email = ? AND status = 'active'").bind(normalized).first();
+        if (!user) return new Response(JSON.stringify({ error: "User not found" }), { status: 404, headers: corsJson });
+        const token = randomHex(32);
+        const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        await env.DB.prepare("INSERT INTO magic_links (token, email, expires_at) VALUES (?, ?, ?)")
+          .bind(token, normalized, expires).run();
+        await sendInviteEmail(normalized, token, env);
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── User management: update-user ─────────────────────────────────
+    if (request.method === "POST" && url.searchParams.get("action") === "update-user") {
+      if (!canAccessInventory(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const { id, role, stores, status } = await request.json();
+        const parts = [], values = [];
+        if (role !== undefined) { parts.push('role = ?'); values.push(role); }
+        if (stores !== undefined) { parts.push('stores = ?'); values.push(stores && stores.length ? JSON.stringify(stores) : null); }
+        if (status !== undefined) { parts.push('status = ?'); values.push(status); }
+        if (!parts.length) return new Response(JSON.stringify({ error: "Nothing to update" }), { status: 400, headers: corsJson });
+        values.push(id);
+        await env.DB.prepare(`UPDATE users SET ${parts.join(', ')} WHERE id = ?`).bind(...values).run();
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── User management: delete-user ─────────────────────────────────
+    if (request.method === "POST" && url.searchParams.get("action") === "delete-user") {
+      if (currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const { id } = await request.json();
+        if (id === currentUser.id) {
+          return new Response(JSON.stringify({ error: "Cannot delete your own account" }), { status: 400, headers: corsJson });
+        }
+        await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(id).run();
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
     }
 
