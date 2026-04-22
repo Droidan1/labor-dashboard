@@ -166,11 +166,21 @@
           Send sign-in link
         </button>
       </div>
-      <!-- Sent confirmation -->
+      <!-- Sent confirmation + OTP entry -->
       <div id="login-sent" class="hidden text-center py-4">
         <div class="text-4xl mb-3">📬</div>
         <p class="text-sm font-medium text-gray-800 dark:text-gray-100">Check your email</p>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">A sign-in link is on its way. It expires in 15 minutes.</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 mb-5">A sign-in link is on its way. It expires in 15 minutes.</p>
+        <div class="border-t border-gray-200 dark:border-gray-600 pt-4">
+          <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">Using the mobile app? Enter your 6-digit code:</p>
+          <input id="login-otp" type="number" inputmode="numeric" pattern="[0-9]*" placeholder="000000" maxlength="6"
+            class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-4 py-2.5 text-sm text-center tracking-widest font-mono focus:outline-none focus:ring-2 focus:ring-[#3BB54A] mb-2" />
+          <div id="login-otp-error" class="hidden text-xs text-red-500 mb-2"></div>
+          <button onclick="submitOtp()"
+            class="w-full bg-[#3BB54A] hover:bg-[#32a040] text-white font-semibold text-sm py-2.5 rounded-lg transition-colors">
+            Verify code
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -5076,6 +5086,36 @@
     }
   }
 
+  async function submitOtp() {
+    const email = el('login-email').value.trim();
+    const otp = el('login-otp').value.trim();
+    const errEl = el('login-otp-error');
+    errEl.classList.add('hidden');
+    if (!otp || otp.length !== 6) {
+      errEl.textContent = 'Enter your 6-digit code.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=auth-verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email, otp }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        location.reload();
+      } else {
+        errEl.textContent = data.error || 'Invalid or expired code.';
+        errEl.classList.remove('hidden');
+      }
+    } catch (e) {
+      errEl.textContent = 'Network error. Try again.';
+      errEl.classList.remove('hidden');
+    }
+  }
+
   async function logout() {
     await fetch(`${WORKER_BASE}?action=auth-logout`, { method: 'POST', credentials: 'include' });
     currentUser = null;
@@ -5305,6 +5345,7 @@
 
   window.sendLoginLink = sendLoginLink;
   window.showSignInForm = showSignInForm;
+  window.submitOtp = submitOtp;
   window.logout = logout;
 
   document.addEventListener("DOMContentLoaded", () => {

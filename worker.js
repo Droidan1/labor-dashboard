@@ -2363,7 +2363,7 @@ function sessionCookie(id, maxAge) {
   return `session=${id}; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=retjghub.com; Max-Age=${maxAge}`;
 }
 
-async function sendMagicLinkEmail(email, token, env) {
+async function sendMagicLinkEmail(email, token, otpCode, env) {
   const link = `https://api.retjghub.com/?action=auth-verify&token=${token}`;
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -2381,6 +2381,10 @@ async function sendMagicLinkEmail(email, token, env) {
           <h2 style="margin:0 0 8px">Sign in to your dashboard</h2>
           <p style="color:#555;margin:0 0 24px">Click the button below to sign in. This link expires in 15 minutes and can only be used once.</p>
           <a href="${link}" style="display:inline-block;background:#3BB54A;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:600">Sign in</a>
+          <hr style="border:none;border-top:1px solid #eee;margin:28px 0">
+          <p style="color:#555;font-size:14px;margin:0 0 8px"><strong>Using the mobile app?</strong> Enter this code instead:</p>
+          <div style="font-size:36px;font-weight:700;letter-spacing:8px;color:#3BB54A;margin:8px 0 4px">${otpCode}</div>
+          <p style="color:#999;font-size:12px;margin:0">Code expires in 15 minutes.</p>
           <p style="color:#999;font-size:12px;margin-top:24px">If you didn't request this, ignore this email.</p>
         </div>`,
     }),
@@ -2445,11 +2449,12 @@ export default {
         ).bind(normalized).all();
         if (results && results.length) {
           const token = randomHex(32);
+          const otpCode = String(Math.floor(100000 + Math.random() * 900000)); // 6-digit OTP
           const expires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
           await env.DB.prepare(
-            "INSERT INTO magic_links (token, email, expires_at) VALUES (?, ?, ?)"
-          ).bind(token, normalized, expires).run();
-          await sendMagicLinkEmail(normalized, token, env);
+            "INSERT INTO magic_links (token, email, expires_at, otp_code) VALUES (?, ?, ?, ?)"
+          ).bind(token, normalized, expires, otpCode).run();
+          await sendMagicLinkEmail(normalized, token, otpCode, env);
         }
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {
@@ -2499,6 +2504,45 @@ export default {
         });
       } catch (e) {
         return Response.redirect("https://www.retjghub.com/?auth_error=server", 302);
+      }
+    }
+
+    // ── Auth: POST ?action=auth-verify-otp — OTP code login for PWA ──
+    if (request.method === "POST" && url.searchParams.get("action") === "auth-verify-otp") {
+      try {
+        const { email, otp } = await request.json();
+        if (!email || !otp) {
+          return new Response(JSON.stringify({ error: "Missing email or code" }), { status: 400, headers: corsJson });
+        }
+        const normalized = email.trim().toLowerCase();
+        const now = new Date().toISOString();
+        const { results } = await env.DB.prepare(
+          "SELECT token FROM magic_links WHERE email = ? AND otp_code = ? AND expires_at > ? AND used_at IS NULL"
+        ).bind(normalized, String(otp).trim(), now).all();
+        if (!results || !results.length) {
+          return new Response(JSON.stringify({ error: "Invalid or expired code" }), { status: 401, headers: corsJson });
+        }
+        const { token } = results[0];
+        // Mark used
+        await env.DB.prepare("UPDATE magic_links SET used_at = ? WHERE token = ?").bind(now, token).run();
+        // Load user
+        const { results: users } = await env.DB.prepare(
+          "SELECT id FROM users WHERE email = ? AND status = 'active'"
+        ).bind(normalized).all();
+        if (!users || !users.length) {
+          return new Response(JSON.stringify({ error: "Account not found" }), { status: 403, headers: corsJson });
+        }
+        const sessionId = randomHex(32);
+        const expiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+        await env.DB.prepare(
+          "INSERT INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)"
+        ).bind(sessionId, users[0].id, expiry, now).run();
+        await env.DB.prepare("UPDATE users SET last_login = ? WHERE id = ?").bind(now, users[0].id).run();
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { ...corsJson, "Set-Cookie": sessionCookie(sessionId, 7 * 24 * 60 * 60) },
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
     }
 
