@@ -1430,6 +1430,7 @@ function aggregateOrders(elements, sinceTimestamp) {
   let totalNet = 0, binNet = 0, retailNet = 0;
   let orderCount = 0, totalItemCount = 0;
   let totalTxnTimeMs = 0, txnTimeCount = 0;
+  let cartNet = 0, cartCount = 0; // avg cart excludes bin-only orders
 
   for (const order of elements) {
     if (order.total == null || order.total === 0) continue;
@@ -1487,9 +1488,22 @@ function aggregateOrders(elements, sinceTimestamp) {
     } else {
       retailNet += orderNet;
     }
+
+    // Avg cart: count only orders with retail items; use retail portion only
+    if (orderNet > 0) {
+      if (itemGross === 0) {
+        // No line items (manual entry) — treat as retail
+        cartNet += orderNet;
+        cartCount++;
+      } else if (retailItemTotal > 0) {
+        cartNet += orderNet * (retailItemTotal / itemGross);
+        cartCount++;
+      }
+      // Pure bin orders (retailItemTotal === 0) are excluded
+    }
   }
 
-  const avgCart = orderCount > 0 ? (totalNet / orderCount) / 100 : 0;
+  const avgCart = cartCount > 0 ? (cartNet / cartCount) / 100 : 0;
   const avgItems = orderCount > 0 ? totalItemCount / orderCount : 0;
   const avgTxnSec = txnTimeCount > 0 ? Math.round(totalTxnTimeMs / txnTimeCount / 1000) : null;
 
