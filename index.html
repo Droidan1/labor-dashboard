@@ -246,7 +246,7 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
           </button>
         </div>
-        <div class="nav-item" data-page="settings" onclick="navigateToPage('settings')">
+        <div id="nav-settings" class="hidden nav-item" data-page="settings" onclick="navigateToPage('settings')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
           <span class="nav-label">Settings</span>
         </div>
@@ -1239,7 +1239,7 @@
 
   function aggregateCloverMetrics(storeName, dateKeys) {
     const storeHistory = historicalCloverData[storeName] || {};
-    let orderCount = 0, txnTimeTotal = 0, txnTimeCount = 0, itemCount = 0, cartTotal = 0, dayCount = 0;
+    let orderCount = 0, txnTimeTotal = 0, txnTimeCount = 0, itemCount = 0, cartTotal = 0, aspTotal = 0, aspCount = 0, dayCount = 0;
     for (const dk of dateKeys) {
       const snap = storeHistory[dk];
       if (!snap) continue;
@@ -1248,13 +1248,15 @@
       if (snap.avgTxnSec != null && snap.orderCount > 0) { txnTimeTotal += snap.avgTxnSec * snap.orderCount; txnTimeCount += snap.orderCount; }
       if (snap.avgItems != null && snap.orderCount > 0) { itemCount += snap.avgItems * snap.orderCount; }
       if (snap.avgCart != null && snap.orderCount > 0) { cartTotal += snap.avgCart * snap.orderCount; }
+      if (snap.avgASP != null && snap.orderCount > 0) { aspTotal += snap.avgASP * snap.orderCount; aspCount += snap.orderCount; }
     }
     if (dayCount === 0) return null;
     return {
       avgCart: orderCount > 0 ? cartTotal / orderCount : null,
       avgItems: orderCount > 0 ? itemCount / orderCount : null,
       orderCount,
-      avgTxnSec: txnTimeCount > 0 ? Math.round(txnTimeTotal / txnTimeCount) : null
+      avgTxnSec: txnTimeCount > 0 ? Math.round(txnTimeTotal / txnTimeCount) : null,
+      avgASP: aspCount > 0 ? aspTotal / aspCount : null
     };
   }
 
@@ -1389,7 +1391,7 @@
         cloverHistory[dateStr] = {
           total: d.total, retail: d.retail, bin: d.bin,
           avgCart: d.avgCart, avgItems: d.avgItems,
-          orderCount: d.orderCount, avgTxnSec: d.avgTxnSec
+          orderCount: d.orderCount, avgTxnSec: d.avgTxnSec, avgASP: d.avgASP ?? null
         };
       }
     }
@@ -1407,7 +1409,7 @@
       const response = await fetch(workerUrl, { credentials: 'include' });
       if (!response.ok) throw new Error(`Worker returned ${response.status}`);
       const data = await response.json();
-      let totalNet = 0, binNet = 0, retailNet = 0, orderCount = 0, totalItemCount = 0, totalTxnTimeMs = 0, txnTimeCount = 0;
+      let totalNet = 0, binNet = 0, retailNet = 0, orderCount = 0, totalItemCount = 0, retailItemCount = 0, totalTxnTimeMs = 0, txnTimeCount = 0;
       let cartNet = 0, cartCount = 0; // avg cart excludes bin-only orders
 
       if (data && data.elements) {
@@ -1455,6 +1457,7 @@
                 binItemTotal += price;
               } else {
                 retailItemTotal += price;
+                if (orderNet > 0) retailItemCount += qty;
               }
             }
           }
@@ -1485,7 +1488,8 @@
       const avgCart = cartCount > 0 ? (cartNet / cartCount) / 100 : 0;
       const avgItems = orderCount > 0 ? totalItemCount / orderCount : 0;
       const avgTxnSec = txnTimeCount > 0 ? Math.round(totalTxnTimeMs / txnTimeCount / 1000) : null;
-      return { total: totalNet / 100, retail: Math.round(retailNet) / 100, bin: Math.round(binNet) / 100, avgCart, avgItems, orderCount, avgTxnSec };
+      const avgASP = retailItemCount > 0 ? retailNet / retailItemCount / 100 : null;
+      return { total: totalNet / 100, retail: Math.round(retailNet) / 100, bin: Math.round(binNet) / 100, avgCart, avgItems, orderCount, avgTxnSec, avgASP };
     } catch (error) {
       console.warn(`Clover API error for ${storeKey}:`, error.message);
       return null;
@@ -1608,6 +1612,9 @@
     }
 
     selectedWeek = currentWeek ?? (allWeeks[allWeeks.length - 1] ?? null);
+    if (selectedWeek === currentWeek) {
+      selectedDashDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+    }
 
     // Show error banner if any stores failed to load
     const failedStores = Object.keys(errors);
@@ -1642,7 +1649,9 @@
     }
     select.onchange = () => {
       selectedWeek = select.value;
-      selectedDashDay = null; // reset to week view on week change
+      selectedDashDay = selectedWeek === currentWeek
+        ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+        : null;
       renderDashDaySelector();
       renderDashboard();
       // Load historical Clover snapshots for past weeks
@@ -1760,7 +1769,7 @@
     let todayTotal = 0, todayRetail = 0, todayBin = 0, todayAuction = 0;
     let todayTotalBudget = 0;
     let storesWithData = 0;
-    let allOrderCount = 0, allTxnTimeTotal = 0, allTxnTimeCount = 0, allItemCount = 0, allCartTotal = 0;
+    let allOrderCount = 0, allTxnTimeTotal = 0, allTxnTimeCount = 0, allItemCount = 0, allCartTotal = 0, allASPTotal = 0, allASPCount = 0;
 
     // Show live data only when viewing today (either full current week or today selected)
     const showLive = isCurrentWeek && (!isDayView || isViewingToday);
@@ -1784,6 +1793,10 @@
           }
           if (live.avgCart != null && live.orderCount > 0) {
             allCartTotal += live.avgCart * live.orderCount;
+          }
+          if (live.avgASP != null && live.orderCount > 0) {
+            allASPTotal += live.avgASP * live.orderCount;
+            allASPCount += live.orderCount;
           }
           storesWithData++;
         }
@@ -1821,6 +1834,10 @@
           if (snap.avgCart != null && snap.orderCount > 0) {
             allCartTotal += snap.avgCart * snap.orderCount;
           }
+          if (snap.avgASP != null && snap.orderCount > 0) {
+            allASPTotal += snap.avgASP * snap.orderCount;
+            allASPCount += snap.orderCount;
+          }
         }
         if (Object.keys(storeHist).length > 0) storesWithData++;
       }
@@ -1834,6 +1851,7 @@
     const totalAvgCart = allOrderCount > 0 ? allCartTotal / allOrderCount : 0;
     const totalAvgItems = allOrderCount > 0 ? allItemCount / allOrderCount : 0;
     const totalAvgTxnSec = allTxnTimeCount > 0 ? Math.round(allTxnTimeTotal / allTxnTimeCount) : null;
+    const totalAvgASP = allASPCount > 0 ? allASPTotal / allASPCount : null;
 
     const isLoading = showLive ? liveDataLoading : historicalDataLoading;
     let cardLabel;
@@ -1874,8 +1892,8 @@
               <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${allOrderCount}</div>
             </div>
             <div class="flex-1 py-2.5 px-3 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-              <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Avg Time</div>
-              <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(totalAvgTxnSec)}</div>
+              <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">ASP</div>
+              <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(totalAvgASP)}</div>
             </div>
           </div>`;
       } else {
@@ -1948,7 +1966,7 @@
     const isDayView = !!selectedDashDay;
     const isViewingToday = selectedDashDay === todayStr;
     // Show live data only for today (full current week or today specifically selected)
-    const cardShowLive = isCurrentWeek && (!isDayView || isViewingToday);
+    const cardShowLive = isCurrentWeek && isDayView && isViewingToday;
     const cardShowHist = !isCurrentWeek || (isDayView && !isViewingToday);
 
     for (const m of metrics) {
@@ -1960,11 +1978,12 @@
       const liveAvgItems = liveData?.avgItems ?? null;
       const liveOrderCount = liveData?.orderCount ?? null;
       const liveAvgTxnSec = liveData?.avgTxnSec ?? null;
+      const liveAvgASP = liveData?.avgASP ?? null;
 
       // Aggregate historical Clover snapshots for this store, filtered by day if applicable
       const storeHistory = historicalCloverData[m.store] || {};
       let histTotal = 0, histRetail = 0, histBin = 0, histOrderCount = 0;
-      let histTxnTimeTotal = 0, histTxnTimeCount = 0, histItemCount = 0, histCartTotal = 0;
+      let histTxnTimeTotal = 0, histTxnTimeCount = 0, histItemCount = 0, histCartTotal = 0, histASPTotal = 0, histASPCount = 0;
       let histDayCount = 0;
       for (const [dateKey, snap] of Object.entries(storeHistory)) {
         const weekRows = (allStoreData[m.store] || []).filter(r => r.week === selectedWeek);
@@ -1985,11 +2004,16 @@
         if (snap.avgCart != null && snap.orderCount > 0) {
           histCartTotal += snap.avgCart * snap.orderCount;
         }
+        if (snap.avgASP != null && snap.orderCount > 0) {
+          histASPTotal += snap.avgASP * snap.orderCount;
+          histASPCount += snap.orderCount;
+        }
       }
       const hasHistData = histDayCount > 0;
       const histAvgCart = histOrderCount > 0 ? histCartTotal / histOrderCount : 0;
       const histAvgItems = histOrderCount > 0 ? histItemCount / histOrderCount : 0;
       const histAvgTxnSec = histTxnTimeCount > 0 ? Math.round(histTxnTimeTotal / histTxnTimeCount) : null;
+      const histAvgASP = histASPCount > 0 ? histASPTotal / histASPCount : null;
 
       // Add live sales to the total only when showing live data
       const combinedTotal = (m.aTotal || 0) + (liveSales != null && liveSales > 0 ? liveSales : 0);
@@ -2105,8 +2129,8 @@
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${histOrderCount}</div>
           </div>
           <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Time</div>
-            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(histAvgTxnSec)}</div>
+            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">ASP</div>
+            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(histAvgASP)}</div>
           </div>
         </div>` : (historicalDataLoading ? '<div class="text-xs text-gray-400 dark:text-gray-500 mb-3 text-center">Loading historical data...</div>' : '')}
         <div class="h-px bg-gray-100 dark:bg-gray-700 w-full mb-3"></div>` : ''}
@@ -2126,8 +2150,8 @@
             <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${liveOrderCount}</div>
           </div>
           <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Time</div>
-            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(liveAvgTxnSec)}</div>
+            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">ASP</div>
+            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(liveAvgASP)}</div>
           </div>
         </div>` : ''}
 
@@ -2148,7 +2172,7 @@
     const liveData = isCurrentWeek ? liveCloverData[storeName] : null;
     const storeHistory = historicalCloverData[storeName] || {};
     let histTotal=0, histRetail=0, histBin=0, histOrderCount=0;
-    let histTxnTimeTotal=0, histTxnTimeCount=0, histItemCount=0, histCartTotal=0, histDayCount=0;
+    let histTxnTimeTotal=0, histTxnTimeCount=0, histItemCount=0, histCartTotal=0, histASPTotal=0, histASPCount=0, histDayCount=0;
     for (const [dateKey, snap] of Object.entries(storeHistory)) {
       const weekRows = (allStoreData[storeName] || []).filter(r => r.week === selectedWeek);
       if (!weekRows.some(r => r.date && r.date.toISOString().slice(0,10) === dateKey)) continue;
@@ -2158,16 +2182,19 @@
       if (snap.avgTxnSec != null && snap.orderCount > 0) { histTxnTimeTotal += snap.avgTxnSec * snap.orderCount; histTxnTimeCount += snap.orderCount; }
       if (snap.avgItems != null && snap.orderCount > 0) histItemCount += snap.avgItems * snap.orderCount;
       if (snap.avgCart != null && snap.orderCount > 0) histCartTotal += snap.avgCart * snap.orderCount;
+      if (snap.avgASP != null && snap.orderCount > 0) { histASPTotal += snap.avgASP * snap.orderCount; histASPCount += snap.orderCount; }
     }
     return {
       sheetMetrics, liveData, isCurrentWeek,
       liveSales: liveData?.total ?? null, liveRetail: liveData?.retail ?? null, liveBin: liveData?.bin ?? null,
       liveAvgCart: liveData?.avgCart ?? null, liveAvgItems: liveData?.avgItems ?? null,
       liveOrderCount: liveData?.orderCount ?? null, liveAvgTxnSec: liveData?.avgTxnSec ?? null,
+      liveAvgASP: liveData?.avgASP ?? null,
       histDayCount, histTotal, histRetail, histBin, histOrderCount,
       histAvgCart: histOrderCount > 0 ? histCartTotal / histOrderCount : 0,
       histAvgItems: histOrderCount > 0 ? histItemCount / histOrderCount : 0,
       histAvgTxnSec: histTxnTimeCount > 0 ? Math.round(histTxnTimeTotal / histTxnTimeCount) : null,
+      histAvgASP: histASPCount > 0 ? histASPTotal / histASPCount : null,
       todayBudget: isCurrentWeek ? (getTodayRow(storeName)?.bTotal ?? null) : null,
       storeAuction: isCurrentWeek ? (getTodayRow(storeName)?.aAuction ?? null) : null,
     };
@@ -2593,6 +2620,7 @@
     const avgItems = sm.isCurrentWeek ? (sm.liveAvgItems ?? sm.histAvgItems) : sm.histAvgItems;
     const orderCount = sm.isCurrentWeek ? (sm.liveOrderCount ?? sm.histOrderCount) : sm.histOrderCount;
     const avgTxnSec = sm.isCurrentWeek ? (sm.liveAvgTxnSec ?? sm.histAvgTxnSec) : sm.histAvgTxnSec;
+    const avgASP = sm.isCurrentWeek ? (sm.liveAvgASP ?? sm.histAvgASP) : sm.histAvgASP;
     const hasMetrics = sm.isCurrentWeek ? (sm.liveSales != null && sm.liveSales > 0) : (sm.histDayCount > 0 || m.aRetail != null);
 
     // Comparison metrics for badges
@@ -2631,9 +2659,9 @@
           <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(orderCount, lwMetrics?.orderCount, 'LW', false)}${renderComparisonBadge(orderCount, lyMetrics?.orderCount, 'LY', false)}</div>
         </div>
         <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
-          <div class="text-[10px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Time</div>
-          <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${fmtTime(avgTxnSec)}</div>
-          <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(avgTxnSec, lwMetrics?.avgTxnSec, 'LW', true)}${renderComparisonBadge(avgTxnSec, lyMetrics?.avgTxnSec, 'LY', true)}</div>
+          <div class="text-[10px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">ASP</div>
+          <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(avgASP)}</div>
+          <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(avgASP, lwMetrics?.avgASP, 'LW', false)}${renderComparisonBadge(avgASP, lyMetrics?.avgASP, 'LY', false)}</div>
         </div>
       </div>` : ''}`;
 
@@ -5080,14 +5108,16 @@
     el('user-email-label').textContent = user.email;
     el('user-role-label').textContent = user.role.replace('_', ' ');
 
-    // Hide inventory/supply-request nav for non-admin roles
-    const canInventory = user.role === 'superuser' || user.role === 'admin';
-    el('nav-inventory').classList.toggle('hidden', !canInventory);
-    el('nav-supply-request').classList.toggle('hidden', !canInventory);
-    el('nav-users').classList.toggle('hidden', !canInventory);
+    // Show/hide nav items based on role
+    const isAdmin = user.role === 'superuser' || user.role === 'admin';
+    const isSuperuser = user.role === 'superuser';
+    el('nav-inventory').classList.toggle('hidden', !isAdmin);
+    el('nav-supply-request').classList.toggle('hidden', !isAdmin);
+    el('nav-users').classList.toggle('hidden', !isAdmin);
+    el('nav-admin-settings').classList.toggle('hidden', !isSuperuser);
+    el('nav-settings').classList.toggle('hidden', !isAdmin);
     const adminOpt = el('invite-role-admin');
-    if (adminOpt) adminOpt.classList.toggle('hidden', user.role !== 'superuser');
-    el('nav-admin-settings').classList.toggle('hidden', user.role !== 'superuser');
+    if (adminOpt) adminOpt.classList.toggle('hidden', !isSuperuser);
 
     // Restrict visible stores to user's allowed list (null = all stores for superuser/admin)
     if (user.stores && user.stores.length) {
