@@ -146,12 +146,17 @@
         <h1 class="text-2xl font-display text-[#3BB54A]">Bargain Lane</h1>
         <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Dashboard</p>
       </div>
-      <div id="login-sent" class="hidden text-center py-4">
-        <div class="text-4xl mb-3">📬</div>
-        <p class="text-sm font-medium text-gray-800 dark:text-gray-100">Check your email</p>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">A sign-in link is on its way. It expires in 15 minutes.</p>
+      <!-- Invite-only landing (default) -->
+      <div id="login-invite-only" class="text-center py-2">
+        <p class="text-sm text-gray-700 dark:text-gray-300 font-medium">This dashboard is invite-only.</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 mb-4">Access is granted by your administrator.</p>
+        <button onclick="showSignInForm()"
+          class="text-xs text-[#3BB54A] hover:underline focus:outline-none">
+          Already have an account? Sign in →
+        </button>
       </div>
-      <div id="login-form-wrap">
+      <!-- Sign-in form (shown for returning users) -->
+      <div id="login-form-wrap" class="hidden">
         <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Email address</label>
         <input id="login-email" type="email" placeholder="you@bargainlane.com"
           class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#3BB54A] mb-3" />
@@ -160,6 +165,12 @@
           class="w-full bg-[#3BB54A] hover:bg-[#32a040] text-white font-semibold text-sm py-2.5 rounded-lg transition-colors">
           Send sign-in link
         </button>
+      </div>
+      <!-- Sent confirmation -->
+      <div id="login-sent" class="hidden text-center py-4">
+        <div class="text-4xl mb-3">📬</div>
+        <p class="text-sm font-medium text-gray-800 dark:text-gray-100">Check your email</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">A sign-in link is on its way. It expires in 15 minutes.</p>
       </div>
     </div>
   </div>
@@ -4995,10 +5006,20 @@
   function showLoginPage(errorMsg) {
     el('splash').classList.add('hidden');
     el('login-page').classList.remove('hidden');
+    // Always reset to invite-only landing; if there's an error, jump straight to form
+    el('login-invite-only').classList.toggle('hidden', !!errorMsg);
+    el('login-form-wrap').classList.toggle('hidden', !errorMsg);
+    el('login-sent').classList.add('hidden');
     if (errorMsg) {
       el('login-error').textContent = errorMsg;
       el('login-error').classList.remove('hidden');
     }
+  }
+
+  function showSignInForm() {
+    el('login-invite-only').classList.add('hidden');
+    el('login-form-wrap').classList.remove('hidden');
+    el('login-email').focus();
   }
 
   function applyRoleUI(user) {
@@ -5283,6 +5304,7 @@
   window.deleteUser = deleteUser;
 
   window.sendLoginLink = sendLoginLink;
+  window.showSignInForm = showSignInForm;
   window.logout = logout;
 
   document.addEventListener("DOMContentLoaded", () => {
