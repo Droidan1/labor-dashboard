@@ -2277,7 +2277,10 @@ function resolveCors(request) {
     "Access-Control-Allow-Headers": "Content-Type, X-Snapshot-Secret",
     "Vary": "Origin",
   };
-  if (allowed) headers["Access-Control-Allow-Origin"] = origin;
+  if (allowed) {
+    headers["Access-Control-Allow-Origin"] = origin;
+    headers["Access-Control-Allow-Credentials"] = "true";
+  }
   return headers;
 }
 
