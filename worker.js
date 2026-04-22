@@ -1428,7 +1428,7 @@ async function fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp = nu
 // ─── Aggregate raw orders into summary metrics ───────────────────
 function aggregateOrders(elements, sinceTimestamp) {
   let totalNet = 0, binNet = 0, retailNet = 0;
-  let orderCount = 0, totalItemCount = 0;
+  let orderCount = 0, totalItemCount = 0, retailItemCount = 0;
   let totalTxnTimeMs = 0, txnTimeCount = 0;
   let cartNet = 0, cartCount = 0; // avg cart excludes bin-only orders
 
@@ -1475,6 +1475,7 @@ function aggregateOrders(elements, sinceTimestamp) {
           binItemTotal += price;
         } else {
           retailItemTotal += price;
+          if (orderNet > 0) retailItemCount += qty;
         }
       }
     }
@@ -1506,6 +1507,7 @@ function aggregateOrders(elements, sinceTimestamp) {
   const avgCart = cartCount > 0 ? (cartNet / cartCount) / 100 : 0;
   const avgItems = orderCount > 0 ? totalItemCount / orderCount : 0;
   const avgTxnSec = txnTimeCount > 0 ? Math.round(totalTxnTimeMs / txnTimeCount / 1000) : null;
+  const avgASP = retailItemCount > 0 ? retailNet / retailItemCount / 100 : null;
 
   return {
     total: totalNet / 100,
@@ -1515,6 +1517,7 @@ function aggregateOrders(elements, sinceTimestamp) {
     avgItems,
     orderCount,
     avgTxnSec,
+    avgASP,
   };
 }
 
@@ -2236,14 +2239,16 @@ async function saveSnapshot(env, store, dateStr, data) {
 
   // Write to D1
   if (env.DB) {
+    try { await env.DB.prepare('ALTER TABLE daily_sales ADD COLUMN avg_asp REAL').run(); } catch {}
     try {
       await env.DB.prepare(
-        `INSERT INTO daily_sales (store, date, total, retail, bin, order_count, avg_cart, avg_items, avg_txn_sec, snapshot_time)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO daily_sales (store, date, total, retail, bin, order_count, avg_cart, avg_items, avg_txn_sec, avg_asp, snapshot_time)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(store, date) DO UPDATE SET
            total=excluded.total, retail=excluded.retail, bin=excluded.bin,
            order_count=excluded.order_count, avg_cart=excluded.avg_cart,
            avg_items=excluded.avg_items, avg_txn_sec=excluded.avg_txn_sec,
+           avg_asp=excluded.avg_asp,
            snapshot_time=excluded.snapshot_time,
            budget=COALESCE(budget, excluded.budget),
            labor_pct=COALESCE(labor_pct, excluded.labor_pct),
@@ -2253,7 +2258,9 @@ async function saveSnapshot(env, store, dateStr, data) {
         store.toUpperCase(), dateStr,
         data.total ?? null, data.retail ?? null, data.bin ?? null,
         data.orderCount ?? null, data.avgCart ?? null, data.avgItems ?? null,
-        data.avgTxnSec != null ? Math.round(data.avgTxnSec) : null, snapshotTime
+        data.avgTxnSec != null ? Math.round(data.avgTxnSec) : null,
+        data.avgASP != null ? Math.round(data.avgASP * 100) / 100 : null,
+        snapshotTime
       ).run();
     } catch (e) {
       console.error(`D1 write failed for ${store} ${dateStr}:`, e.message);
@@ -2762,6 +2769,7 @@ export default {
           total: row.total, retail: row.retail, bin: row.bin,
           avgCart: row.avg_cart, avgItems: row.avg_items,
           orderCount: row.order_count, avgTxnSec: row.avg_txn_sec,
+          avgASP: row.avg_asp ?? null,
           snapshotTime: row.snapshot_time,
           budget: row.budget, laborPct: row.labor_pct,
           auction: row.auction, week: row.week,
@@ -2890,8 +2898,8 @@ export default {
             try {
               await env.DB.prepare(
                 `INSERT INTO daily_sales (store, date, week, budget, total, retail, bin, auction, labor_pct,
-                  order_count, avg_cart, avg_items, avg_txn_sec, snapshot_time)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  order_count, avg_cart, avg_items, avg_txn_sec, avg_asp, snapshot_time)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(store, date) DO UPDATE SET
                    week=excluded.week, budget=excluded.budget,
                    total=COALESCE(excluded.total, total),
@@ -2903,6 +2911,7 @@ export default {
                    avg_cart=COALESCE(excluded.avg_cart, avg_cart),
                    avg_items=COALESCE(excluded.avg_items, avg_items),
                    avg_txn_sec=COALESCE(excluded.avg_txn_sec, avg_txn_sec),
+                   avg_asp=COALESCE(excluded.avg_asp, avg_asp),
                    snapshot_time=COALESCE(excluded.snapshot_time, snapshot_time)`
               ).bind(
                 storeCode, dateStr, week, bTotal,
@@ -2910,6 +2919,7 @@ export default {
                 aAuction || null, aLabor || null,
                 kvData?.orderCount ?? null, kvData?.avgCart ?? null, kvData?.avgItems ?? null,
                 kvData?.avgTxnSec != null ? Math.round(kvData.avgTxnSec) : null,
+                kvData?.avgASP != null ? Math.round(kvData.avgASP * 100) / 100 : null,
                 kvData?.snapshotTime ?? null
               ).run();
               imported++;
