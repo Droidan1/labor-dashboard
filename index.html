@@ -1408,6 +1408,7 @@
       if (!response.ok) throw new Error(`Worker returned ${response.status}`);
       const data = await response.json();
       let totalNet = 0, binNet = 0, retailNet = 0, orderCount = 0, totalItemCount = 0, totalTxnTimeMs = 0, txnTimeCount = 0;
+      let cartNet = 0, cartCount = 0; // avg cart excludes bin-only orders
 
       if (data && data.elements) {
         for (const order of data.elements) {
@@ -1468,9 +1469,20 @@
             // No line items (manual refund/adjustment) — attribute to retail
             retailNet += orderNet;
           }
+
+          // Avg cart: count only orders with retail items; use retail portion only
+          if (orderNet > 0) {
+            if (itemGross === 0) {
+              cartNet += orderNet;
+              cartCount++;
+            } else if (retailItemTotal > 0) {
+              cartNet += orderNet * (retailItemTotal / itemGross);
+              cartCount++;
+            }
+          }
         }
       }
-      const avgCart = orderCount > 0 ? (totalNet / orderCount) / 100 : 0;
+      const avgCart = cartCount > 0 ? (cartNet / cartCount) / 100 : 0;
       const avgItems = orderCount > 0 ? totalItemCount / orderCount : 0;
       const avgTxnSec = txnTimeCount > 0 ? Math.round(totalTxnTimeMs / txnTimeCount / 1000) : null;
       return { total: totalNet / 100, retail: Math.round(retailNet) / 100, bin: Math.round(binNet) / 100, avgCart, avgItems, orderCount, avgTxnSec };
