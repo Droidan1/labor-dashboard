@@ -5014,6 +5014,17 @@
     el('nav-users').classList.toggle('hidden', !canInventory);
     const adminOpt = el('invite-role-admin');
     if (adminOpt) adminOpt.classList.toggle('hidden', user.role !== 'superuser');
+
+    // Restrict visible stores to user's allowed list (null = all stores for superuser/admin)
+    if (user.stores && user.stores.length) {
+      const allowed = user.stores; // e.g. ['BL1']
+      STORES.splice(0, STORES.length,
+        ...STORES.filter(s => allowed.includes(s.split('/')[0]))
+      );
+      WRS_STORE_KEYS.splice(0, WRS_STORE_KEYS.length,
+        ...WRS_STORE_KEYS.filter(s => allowed.includes(s))
+      );
+    }
   }
 
   async function sendLoginLink() {
