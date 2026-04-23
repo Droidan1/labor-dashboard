@@ -922,7 +922,7 @@
           <div class="border-t border-gray-100 dark:border-gray-700 mt-6 pt-5 space-y-3">
             <div>
               <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Rebuild Week Summaries</p>
-              <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Re-rolls all week-summary KV entries for the current year. Required to populate the T13 Combined Store Units Sold table for historical weeks. Run this after a re-snapshot backfill.</p>
+              <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Re-rolls the trailing 13 weeks of week-summary KV entries. Required to populate the T13 Combined Store Units Sold table. Run this after a re-snapshot backfill.</p>
               <div class="flex items-center gap-3">
                 <button onclick="runRebuildWeekSummaries()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
                   Rebuild Week Summaries
@@ -3360,7 +3360,6 @@
   async function runRebuildWeekSummaries() {
     const statusEl = el('rebuild-weeks-status');
     const year = new Date().getFullYear();
-    let offset = 0, totalWritten = 0, totalWeeks = null, allErrors = [];
 
     const setStatus = (msg, tone) => {
       statusEl.classList.remove('hidden');
@@ -3375,22 +3374,15 @@
     };
 
     try {
-      while (true) {
-        const prog = totalWeeks ? ` (${Math.min(offset, totalWeeks)}/${totalWeeks})` : '';
-        setStatus(`Rebuilding week summaries${prog}…`, 'info');
-        const resp = await fetch(`${WORKER_BASE}?action=rebuild-week-summaries&year=${year}&offset=${offset}`, {
-          headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
-        });
-        const data = await resp.json();
-        if (!data.ok) throw new Error(data.error || 'Failed');
-        totalWritten += data.written || 0;
-        totalWeeks = data.total;
-        if (data.errors?.length) allErrors.push(...data.errors);
-        if (data.done) break;
-        offset = data.nextOffset;
-      }
-      const errMsg = allErrors.length ? ` ${allErrors.length} error(s): ${allErrors.slice(0, 3).join(', ')}${allErrors.length > 3 ? '…' : ''}` : '';
-      setStatus(`Done — ${totalWritten} summaries written across ${totalWeeks} weeks.${errMsg}`, allErrors.length ? 'error' : 'ok');
+      setStatus('Rebuilding trailing 13 weeks…', 'info');
+      const resp = await fetch(`${WORKER_BASE}?action=rebuild-week-summaries&year=${year}`, {
+        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+      });
+      const data = await resp.json();
+      if (!data.ok) throw new Error(data.error || 'Failed');
+      const errs = data.errors || [];
+      const errMsg = errs.length ? ` ${errs.length} error(s): ${errs.slice(0, 3).join(', ')}${errs.length > 3 ? '…' : ''}` : '';
+      setStatus(`Done — ${data.written} summaries written across ${data.weeks} weeks.${errMsg}`, errs.length ? 'error' : 'ok');
     } catch (err) {
       setStatus(`Error: ${err.message}`, 'error');
     }

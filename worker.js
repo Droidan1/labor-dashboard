@@ -3792,20 +3792,17 @@ export default {
       }
       const year = url.searchParams.get("year") || String(new Date().getUTCFullYear());
 
+      // Default: rebuild the trailing 13 weeks (what T13 needs). Optional `weeks`
+      // param overrides. Each (store, week) ~8 subrequests, 13×6=78 writes ≈ 624
+      // subrequests — comfortably under Cloudflare's 1,000 per-invocation cap.
+      const trailing = Math.max(1, Math.min(20, parseInt(url.searchParams.get("weeks") || "13", 10)));
       const { results } = await env.DB.prepare(
-        "SELECT DISTINCT week FROM daily_sales WHERE date LIKE ? ORDER BY week"
-      ).bind(`${year}-%`).all();
-      const allWeeks = (results || []).map(r => r.week).filter(Boolean);
+        "SELECT DISTINCT week FROM daily_sales WHERE date LIKE ? ORDER BY week DESC LIMIT ?"
+      ).bind(`${year}-%`, trailing).all();
+      const weeks = (results || []).map(r => r.week).filter(Boolean).reverse();
 
-      // Paginate: each invocation handles a small batch to stay under Cloudflare's
-      // 1,000 subrequest-per-invocation cap. Each (store, week) costs ~8 subrequests
-      // (1 D1 + 7 KV reads), so 6 stores × 15 weeks ≈ 720 — safely under the limit.
-      const BATCH = 15;
-      const offset = Math.max(0, parseInt(url.searchParams.get("offset") || "0", 10));
-      const batch = allWeeks.slice(offset, offset + BATCH);
-
-      const summary = { year: Number(year), total: allWeeks.length, offset, batchSize: batch.length, written: 0, errors: [] };
-      for (const wk of batch) {
+      const summary = { year: Number(year), weeks: weeks.length, written: 0, errors: [] };
+      for (const wk of weeks) {
         const settled = await Promise.allSettled(
           ALL_STORES.map(store => writeWeekSummary(env, store, wk, year))
         );
@@ -3818,9 +3815,6 @@ export default {
           }
         });
       }
-      const nextOffset = offset + BATCH;
-      summary.done = nextOffset >= allWeeks.length;
-      summary.nextOffset = summary.done ? null : nextOffset;
       return new Response(JSON.stringify({ ok: true, ...summary }), { headers: corsJson });
     }
 
