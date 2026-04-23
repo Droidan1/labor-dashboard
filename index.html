@@ -3875,7 +3875,52 @@
     });
     topHtml += `</tbody></table></div>`;
 
-    el('wrs-pane-t13').innerHTML = topHtml;
+    // ── Combined Store Units Sold by L2 category ────────────────
+    const T13_L2_CATS = [
+      'Consumable Food', 'Consumable HBA', 'Consumable Other',
+      'Furniture', 'Hardlines', 'Home', 'Seasonal',
+      'Softline - Accessories', 'Softline - Apparel', 'Softline - Shoes',
+    ];
+    const l2Units = d.l2Units || [];
+    const wkLabels = weeks.map((wk, i) => {
+      const dObj = dates[i] || {};
+      return dObj.start ? dObj.start.slice(5) : `Wk ${wk}`;
+    });
+
+    let unitsHtml = `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-x-auto">
+      <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700">
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Combined Store Units Sold</h3>
+      </div>
+      <table class="w-full text-sm">
+        <thead><tr class="border-b border-gray-100 dark:border-gray-700">
+          <th class="${thCls} text-left">Category</th>
+          ${wkLabels.map(l => `<th class="${thCls}">${escapeHtml(l)}</th>`).join('')}
+          <th class="${thCls}">Total</th>
+        </tr></thead>
+        <tbody>`;
+
+    for (const cat of T13_L2_CATS) {
+      const vals = l2Units.map(wk => wk[cat] || 0);
+      const rowTotal = vals.reduce((a, b) => a + b, 0);
+      unitsHtml += `<tr class="border-b border-gray-50 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
+        <td class="px-2 py-2 text-xs font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap">${escapeHtml(cat)}</td>
+        ${vals.map(v => `<td class="${tdCls}">${v ? v.toLocaleString() : '—'}</td>`).join('')}
+        <td class="${tdTotCls}">${rowTotal ? rowTotal.toLocaleString() : '—'}</td>
+      </tr>`;
+    }
+
+    // Grand total row across all listed categories
+    const grandVals = weeks.map((_, i) =>
+      T13_L2_CATS.reduce((s, cat) => s + ((l2Units[i] || {})[cat] || 0), 0)
+    );
+    const grandTotal = grandVals.reduce((a, b) => a + b, 0);
+    unitsHtml += `<tr class="bg-gray-50 dark:bg-gray-700/40 border-t-2 border-gray-200 dark:border-gray-600">
+      <td class="${tdTotCls} text-left">All Categories</td>
+      ${grandVals.map(v => `<td class="${tdTotCls}">${v ? v.toLocaleString() : '—'}</td>`).join('')}
+      <td class="${tdTotCls}">${grandTotal ? grandTotal.toLocaleString() : '—'}</td>
+    </tr></tbody></table></div>`;
+
+    el('wrs-pane-t13').innerHTML = topHtml + unitsHtml;
   }
 
   // ═══════════════════════════════════════════════════════════════
