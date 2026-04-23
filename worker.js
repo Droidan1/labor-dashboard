@@ -1752,6 +1752,7 @@ async function buildStoreWeekly(env, store, dates) {
       laborPct: Math.round(laborPct * 10) / 10,
     },
     itemSales: merged,
+    l2Qty: Object.fromEntries(merged.categories.map(c => [c.category, Math.round(c.qty)])),
   };
 }
 
@@ -1766,6 +1767,7 @@ async function writeWeekSummary(env, store, week, year) {
   const payload = {
     store, week: String(week), year: Number(year), dates,
     totals: bundle.totals,
+    l2Qty: bundle.l2Qty || {},
     snapshotTime: new Date().toISOString(),
   };
   await env.SALES_SNAPSHOTS.put(
@@ -3685,9 +3687,11 @@ export default {
         };
 
         let liveBuilds = 0;
+        const l2UnitsByWeek = []; // one entry per week: { L2Name: combinedQty }
         for (const wkObj of weeks) {
           const wk = wkObj.week;
           const perStore = {};
+          const perStoreL2 = {};
           await Promise.all(scopedStoresT13.map(async (s) => {
             let summary = null;
             if (env.SALES_SNAPSHOTS) {
@@ -3700,12 +3704,13 @@ export default {
               const dates = await resolveWeekDates(env, wk, year);
               if (dates.length) {
                 const bundle = await buildStoreWeekly(env, s, dates);
-                summary = { totals: bundle.totals };
+                summary = { totals: bundle.totals, l2Qty: bundle.l2Qty };
               } else {
-                summary = { totals: { netSales: 0, qty: 0, transactions: 0, asp: 0, laborPct: 0, budget: 0 } };
+                summary = { totals: { netSales: 0, qty: 0, transactions: 0, asp: 0, laborPct: 0, budget: 0 }, l2Qty: {} };
               }
             }
             perStore[s] = summary.totals;
+            perStoreL2[s] = summary.l2Qty || {};
           }));
 
           let wkNet = 0, wkQty = 0, wkTxn = 0, wkBudget = 0, wkLaborNum = 0, wkLaborDen = 0;
@@ -3733,6 +3738,15 @@ export default {
           total.asp.push(wkQty > 0 ? roundCents(wkNet / wkQty) : 0);
           total.laborPct.push(wkLaborDen > 0 ? Math.round((wkLaborNum / wkLaborDen) * 10) / 10 : 0);
           total.budget.push(roundCents(wkBudget));
+
+          // Aggregate L2 units across all stores for this week
+          const wkL2 = {};
+          for (const s of scopedStoresT13) {
+            for (const [cat, qty] of Object.entries(perStoreL2[s] || {})) {
+              wkL2[cat] = (wkL2[cat] || 0) + qty;
+            }
+          }
+          l2UnitsByWeek.push(wkL2);
         }
 
         if (liveBuilds > 0) {
@@ -3744,6 +3758,7 @@ export default {
           dates: weeks,
           stores,
           total,
+          l2Units: l2UnitsByWeek,
           liveBuilds,
         }), { headers: corsJson });
       } catch (err) {
