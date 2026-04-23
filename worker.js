@@ -2982,6 +2982,19 @@ export default {
           results[store] = { error: e.message };
         }
       }
+      // Rebuild week-summary KV for the affected week so T13 L2 data is current
+      if (env.DB && env.SALES_SNAPSHOTS) {
+        const year = dateParam.slice(0, 4);
+        const { results: wkRows } = await env.DB.prepare(
+          "SELECT DISTINCT week FROM daily_sales WHERE date = ?"
+        ).bind(dateParam).all().catch(() => ({ results: [] }));
+        for (const { week: wk } of (wkRows || [])) {
+          if (!wk) continue;
+          const rebuildStores = storeParam === "ALL" ? ALL_STORES : stores;
+          await Promise.allSettled(rebuildStores.map(s => writeWeekSummary(env, s, wk, year)));
+        }
+      }
+
       return new Response(JSON.stringify({ ok: true, date: dateParam, results }), { headers: corsJson });
     }
 
