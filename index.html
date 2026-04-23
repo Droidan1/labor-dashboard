@@ -3359,21 +3359,40 @@
 
   async function runRebuildWeekSummaries() {
     const statusEl = el('rebuild-weeks-status');
-    statusEl.className = 'text-sm rounded-lg px-4 py-3 border flex-1 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300';
-    statusEl.classList.remove('hidden');
-    statusEl.textContent = 'Rebuilding week summaries…';
     const year = new Date().getFullYear();
+    let offset = 0, totalWritten = 0, totalWeeks = null, allErrors = [];
+
+    const setStatus = (msg, tone) => {
+      statusEl.classList.remove('hidden');
+      const base = 'text-sm rounded-lg px-4 py-3 border flex-1';
+      const colors = {
+        info:  'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300',
+        ok:    'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-700 dark:text-green-300',
+        error: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300',
+      };
+      statusEl.className = `${base} ${colors[tone]}`;
+      statusEl.textContent = msg;
+    };
+
     try {
-      const resp = await fetch(`${WORKER_BASE}?action=rebuild-week-summaries&year=${year}`, {
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
-      });
-      const data = await resp.json();
-      if (!data.ok) throw new Error(data.error || 'Failed');
-      statusEl.className = 'text-sm rounded-lg px-4 py-3 border flex-1 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-700 dark:text-green-300';
-      statusEl.textContent = `Done — ${data.written} week summaries written across ${data.weeks} weeks.${data.errors?.length ? ' Errors: ' + data.errors.join(', ') : ''}`;
+      while (true) {
+        const prog = totalWeeks ? ` (${Math.min(offset, totalWeeks)}/${totalWeeks})` : '';
+        setStatus(`Rebuilding week summaries${prog}…`, 'info');
+        const resp = await fetch(`${WORKER_BASE}?action=rebuild-week-summaries&year=${year}&offset=${offset}`, {
+          headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        });
+        const data = await resp.json();
+        if (!data.ok) throw new Error(data.error || 'Failed');
+        totalWritten += data.written || 0;
+        totalWeeks = data.total;
+        if (data.errors?.length) allErrors.push(...data.errors);
+        if (data.done) break;
+        offset = data.nextOffset;
+      }
+      const errMsg = allErrors.length ? ` ${allErrors.length} error(s): ${allErrors.slice(0, 3).join(', ')}${allErrors.length > 3 ? '…' : ''}` : '';
+      setStatus(`Done — ${totalWritten} summaries written across ${totalWeeks} weeks.${errMsg}`, allErrors.length ? 'error' : 'ok');
     } catch (err) {
-      statusEl.className = 'text-sm rounded-lg px-4 py-3 border flex-1 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300';
-      statusEl.textContent = `Error: ${err.message}`;
+      setStatus(`Error: ${err.message}`, 'error');
     }
   }
   window.runRebuildWeekSummaries = runRebuildWeekSummaries;
