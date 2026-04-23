@@ -3797,21 +3797,22 @@ export default {
       ).bind(`${year}-%`).all();
       const weeks = (results || []).map(r => r.week).filter(Boolean);
 
-      const jobs = weeks.flatMap(wk =>
-        ALL_STORES.map(store => ({ wk, store }))
-      );
-      const settled = await Promise.allSettled(
-        jobs.map(({ wk, store }) => writeWeekSummary(env, store, wk, year))
-      );
+      // Process weeks sequentially to stay under Cloudflare's subrequest limit.
+      // Within each week all stores run in parallel (6 concurrent jobs, safe).
       const summary = { year: Number(year), weeks: weeks.length, written: 0, errors: [] };
-      settled.forEach((r, i) => {
-        const { wk, store } = jobs[i];
-        if (r.status === "fulfilled") {
-          if (r.value) summary.written++;
-        } else {
-          summary.errors.push(`${store}/${wk}: ${r.reason?.message || r.reason}`);
-        }
-      });
+      for (const wk of weeks) {
+        const settled = await Promise.allSettled(
+          ALL_STORES.map(store => writeWeekSummary(env, store, wk, year))
+        );
+        settled.forEach((r, i) => {
+          const store = ALL_STORES[i];
+          if (r.status === "fulfilled") {
+            if (r.value) summary.written++;
+          } else {
+            summary.errors.push(`${store}/${wk}: ${r.reason?.message || r.reason}`);
+          }
+        });
+      }
       return new Response(JSON.stringify({ ok: true, ...summary }), { headers: corsJson });
     }
 
