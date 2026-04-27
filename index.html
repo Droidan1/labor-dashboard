@@ -892,7 +892,7 @@
         <!-- Admin Tools -->
         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
           <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Admin Tools</h2>
-          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Re-build item sales snapshots from Clover for any past day. Use this after a categorization fix to correct historical Item Sales data.</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Re-build item sales snapshots from Clover for any past day. Set <em>Days back</em> > 1 to backfill a range ending at <em>End Date</em>. Use this after a categorization fix or to fill gaps before running Rebuild Week Summaries.</p>
 
           <div class="space-y-4">
             <div class="flex flex-wrap gap-4 items-end">
@@ -909,8 +909,12 @@
                 </select>
               </div>
               <div>
-                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Date</label>
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">End Date</label>
                 <input id="resnapshot-date" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Days back (incl. end date)</label>
+                <input id="resnapshot-days" type="number" min="1" max="30" value="1" class="w-24 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
               </div>
               <button onclick="runReSnapshot()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
                 Re-snapshot Item Sales
@@ -3321,39 +3325,56 @@
 
   async function runReSnapshot() {
     const store = document.getElementById('resnapshot-store').value;
-    const date = document.getElementById('resnapshot-date').value;
+    const endDate = document.getElementById('resnapshot-date').value;
+    const days = Math.max(1, Math.min(30, parseInt(document.getElementById('resnapshot-days').value, 10) || 1));
     const statusEl = document.getElementById('resnapshot-status');
 
-    if (!date) { alert('Please select a date.'); return; }
+    if (!endDate) { alert('Please select an end date.'); return; }
 
-    statusEl.className = 'text-sm rounded-lg px-4 py-3 border border-yellow-200 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400';
-    statusEl.classList.remove('hidden');
-    statusEl.textContent = `Running re-snapshot for ${store === 'all' ? 'all stores' : store} on ${date}…`;
-
-    try {
-      const resp = await fetch(
-        `${WORKER_BASE}?action=items-snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(date)}`,
-        { headers: { 'X-Snapshot-Secret': 'mapcaj-saTxa2-1' } }
-      );
-      const data = await resp.json();
-      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
-
-      const lines = Object.entries(data.results).map(([s, r]) => {
-        if (r.ok) return `${s}: ${r.orders} orders · $${r.netSales.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})} net`;
-        return `${s}: ${typeof r === 'string' ? r : (r.error || 'unknown error')}`;
-      });
-      statusEl.className = 'text-sm rounded-lg px-4 py-3 border border-green-200 dark:border-green-700 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400';
-      statusEl.innerHTML = `<strong>Done</strong> – ${date}<br><span class="font-mono text-xs">${lines.join('<br>')}</span>`;
-
-      // Bust the item sales cache for the affected store/date so the next tab visit re-fetches
-      const affectedStores = store === 'all'
-        ? ['BL1','BL2','BL4','BL8','BL12','BL14']
-        : [store.toUpperCase()];
-      for (const s of affectedStores) delete itemSalesCache[`${s}:${date}`];
-    } catch (err) {
-      statusEl.className = 'text-sm rounded-lg px-4 py-3 border border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400';
-      statusEl.textContent = `Error: ${err.message}`;
+    // Build descending date list ending at endDate, length = days.
+    const dateList = [];
+    const end = new Date(endDate + 'T00:00:00Z');
+    for (let i = 0; i < days; i++) {
+      const d = new Date(end.getTime() - i * 86400000);
+      dateList.push(d.toISOString().slice(0, 10));
     }
+
+    const setStatus = (html, tone) => {
+      const colors = {
+        info:  'border-yellow-200 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400',
+        ok:    'border-green-200 dark:border-green-700 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400',
+        error: 'border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400',
+      };
+      statusEl.className = `text-sm rounded-lg px-4 py-3 border ${colors[tone]}`;
+      statusEl.classList.remove('hidden');
+      statusEl.innerHTML = html;
+    };
+
+    const succeeded = [];
+    const failed = [];
+    const affectedStores = store === 'all' ? ['BL1','BL2','BL4','BL8','BL12','BL14'] : [store.toUpperCase()];
+
+    for (let i = 0; i < dateList.length; i++) {
+      const date = dateList[i];
+      setStatus(`Re-snapshotting ${store === 'all' ? 'all stores' : store} (${i + 1}/${dateList.length}) — ${date}…`, 'info');
+      try {
+        const resp = await fetch(
+          `${WORKER_BASE}?action=items-snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(date)}`,
+          { headers: { 'X-Snapshot-Secret': 'mapcaj-saTxa2-1' } }
+        );
+        const data = await resp.json();
+        if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+        succeeded.push(date);
+        for (const s of affectedStores) delete itemSalesCache[`${s}:${date}`];
+      } catch (err) {
+        failed.push(`${date}: ${err.message}`);
+      }
+    }
+
+    const tone = failed.length ? 'error' : 'ok';
+    const summary = `<strong>Done</strong> — ${succeeded.length}/${dateList.length} date(s) re-snapshotted across ${dateList[dateList.length - 1]} → ${dateList[0]}.`;
+    const errBlock = failed.length ? `<br><span class="font-mono text-xs">${failed.slice(0, 5).join('<br>')}${failed.length > 5 ? '<br>…' : ''}</span>` : '';
+    setStatus(summary + errBlock, tone);
   }
   window.runReSnapshot = runReSnapshot;
 
