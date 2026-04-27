@@ -3793,8 +3793,9 @@ export default {
       const year = url.searchParams.get("year") || String(new Date().getUTCFullYear());
 
       // Default: rebuild the trailing 13 weeks (what T13 needs). Optional `weeks`
-      // param overrides. Each (store, week) ~8 subrequests, 13×6=78 writes ≈ 624
-      // subrequests — comfortably under Cloudflare's 1,000 per-invocation cap.
+      // param overrides. Subrequest budget: 1 (week list) + per week [1 (dates) +
+      // 6 stores × (1 D1 + 7 KV get + 1 KV put = 9)] = 1 + 13×55 = 716. Well
+      // under Cloudflare's 1,000-per-invocation cap.
       const trailing = Math.max(1, Math.min(20, parseInt(url.searchParams.get("weeks") || "13", 10)));
       const { results } = await env.DB.prepare(
         "SELECT DISTINCT week FROM daily_sales WHERE date LIKE ? ORDER BY week DESC LIMIT ?"
@@ -3803,17 +3804,29 @@ export default {
 
       const summary = { year: Number(year), weeks: weeks.length, written: 0, errors: [] };
       for (const wk of weeks) {
-        const settled = await Promise.allSettled(
-          ALL_STORES.map(store => writeWeekSummary(env, store, wk, year))
-        );
-        settled.forEach((r, i) => {
-          const store = ALL_STORES[i];
-          if (r.status === "fulfilled") {
-            if (r.value) summary.written++;
-          } else {
-            summary.errors.push(`${store}/${wk}: ${r.reason?.message || r.reason}`);
+        // Resolve dates ONCE per week, reuse across all 6 stores.
+        const dates = await resolveWeekDates(env, wk, year);
+        if (!dates.length) continue;
+
+        // Sequential per store to keep concurrent-subrequest pressure low.
+        for (const store of ALL_STORES) {
+          try {
+            const bundle = await buildStoreWeekly(env, store, dates);
+            const payload = {
+              store, week: String(wk), year: Number(year), dates,
+              totals: bundle.totals,
+              l2Qty: bundle.l2Qty || {},
+              snapshotTime: new Date().toISOString(),
+            };
+            await env.SALES_SNAPSHOTS.put(
+              `week-summary:${store.toLowerCase()}:${wk}-${year}`,
+              JSON.stringify(payload)
+            );
+            summary.written++;
+          } catch (e) {
+            summary.errors.push(`${store}/${wk}: ${e?.message || e}`);
           }
-        });
+        }
       }
       return new Response(JSON.stringify({ ok: true, ...summary }), { headers: corsJson });
     }
