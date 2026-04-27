@@ -130,6 +130,31 @@
     .sidebar:not(.collapsed) .sidebar-toggle-bottom .chevron { transform: rotate(180deg); }
     .sidebar.collapsed #sidebar-dark-toggle { display: none; }
     .toggle-scale { transform: scale(0.8); transform-origin: left center; }
+
+    /* ── Print / PDF rules — only active when body has .printing-wrs ── */
+    @media print {
+      body.printing-wrs .sidebar,
+      body.printing-wrs .sidebar-toggle-bottom,
+      body.printing-wrs #sidebar-mobile-toggle,
+      body.printing-wrs #wrs-tabs,
+      body.printing-wrs #wrs-refresh,
+      body.printing-wrs #wrs-download-pdf,
+      body.printing-wrs #wrs-year-select,
+      body.printing-wrs #wrs-week-select,
+      body.printing-wrs label[for="wrs-year-select"],
+      body.printing-wrs .wrs-pane.hidden { display: none !important; }
+      body.printing-wrs .wrs-pane:not(.hidden) { display: block !important; break-inside: auto; }
+      body.printing-wrs main, body.printing-wrs #app, body.printing-wrs body {
+        margin: 0 !important; padding: 0 !important; background: white !important;
+      }
+      body.printing-wrs .sticky { position: static !important; }
+      body.printing-wrs table { break-inside: auto; font-size: 10px; }
+      body.printing-wrs tr { break-inside: avoid; }
+      body.printing-wrs .bg-white, body.printing-wrs .dark\\:bg-gray-800 {
+        box-shadow: none !important; border: 1px solid #e5e7eb !important;
+      }
+      @page { size: landscape; margin: 0.4in; }
+    }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -429,6 +454,7 @@
                 <select id="wrs-week-select" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]"></select>
               </div>
               <button id="wrs-refresh" onclick="loadWeeklyRetail(true)" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Refresh</button>
+              <button id="wrs-download-pdf" onclick="downloadWrsAsPdf()" class="px-4 py-2 text-sm font-semibold bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg transition-colors">Download PDF</button>
             </div>
           </div>
         </div>
@@ -3377,6 +3403,42 @@
     setStatus(summary + errBlock, tone);
   }
   window.runReSnapshot = runReSnapshot;
+
+  // Print the currently visible WRS pane to PDF via the browser's native dialog.
+  // No external library — relies on @media print rules + a temporary header
+  // injected into the active pane so the PDF has context (page name + week).
+  function downloadWrsAsPdf() {
+    const panes = ['summary', 't13', 'BL1', 'BL2', 'BL4', 'BL8', 'BL12', 'BL14'];
+    let activeLabel = 'Summary';
+    const activeBtn = document.querySelector('#wrs-tabs .wrs-tab.border-\\[\\#3BB54A\\], #wrs-tabs button[data-wrs-tab].text-\\[\\#3BB54A\\]');
+    if (activeBtn) activeLabel = activeBtn.textContent.trim();
+
+    // Find the currently visible pane (only one of the three is unhidden).
+    const visiblePane =
+      [el('wrs-pane-summary'), el('wrs-pane-t13'), el('wrs-pane-store')]
+        .find(p => p && !p.classList.contains('hidden'));
+    if (!visiblePane) { alert('No active tab to export.'); return; }
+
+    const subtitle = (el('wrs-subtitle')?.textContent || '').trim();
+    const header = document.createElement('div');
+    header.id = 'wrs-print-header';
+    header.style.cssText = 'margin: 0 0 16px; padding-bottom: 12px; border-bottom: 2px solid #3BB54A;';
+    header.innerHTML = `
+      <div style="font-size:18px;font-weight:600;color:#3BB54A;">Weekly Retail Summary — ${escapeHtml(activeLabel)}</div>
+      <div style="font-size:11px;color:#6b7280;margin-top:4px;">${escapeHtml(subtitle)}</div>
+    `;
+    visiblePane.insertBefore(header, visiblePane.firstChild);
+    document.body.classList.add('printing-wrs');
+
+    const cleanup = () => {
+      document.body.classList.remove('printing-wrs');
+      header.remove();
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    setTimeout(() => window.print(), 50);
+  }
+  window.downloadWrsAsPdf = downloadWrsAsPdf;
 
   async function runRebuildWeekSummaries() {
     const statusEl = el('rebuild-weeks-status');
