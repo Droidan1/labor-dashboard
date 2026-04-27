@@ -28,6 +28,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
   <style>
     .loading-dot { animation: pulse 1.2s infinite; }
@@ -130,31 +131,6 @@
     .sidebar:not(.collapsed) .sidebar-toggle-bottom .chevron { transform: rotate(180deg); }
     .sidebar.collapsed #sidebar-dark-toggle { display: none; }
     .toggle-scale { transform: scale(0.8); transform-origin: left center; }
-
-    /* ── Print / PDF rules — only active when body has .printing-wrs ── */
-    @media print {
-      body.printing-wrs .sidebar,
-      body.printing-wrs .sidebar-toggle-bottom,
-      body.printing-wrs #sidebar-mobile-toggle,
-      body.printing-wrs #wrs-tabs,
-      body.printing-wrs #wrs-refresh,
-      body.printing-wrs #wrs-download-pdf,
-      body.printing-wrs #wrs-year-select,
-      body.printing-wrs #wrs-week-select,
-      body.printing-wrs label[for="wrs-year-select"],
-      body.printing-wrs .wrs-pane.hidden { display: none !important; }
-      body.printing-wrs .wrs-pane:not(.hidden) { display: block !important; break-inside: auto; }
-      body.printing-wrs main, body.printing-wrs #app, body.printing-wrs body {
-        margin: 0 !important; padding: 0 !important; background: white !important;
-      }
-      body.printing-wrs .sticky { position: static !important; }
-      body.printing-wrs table { break-inside: auto; font-size: 10px; }
-      body.printing-wrs tr { break-inside: avoid; }
-      body.printing-wrs .bg-white, body.printing-wrs .dark\\:bg-gray-800 {
-        box-shadow: none !important; border: 1px solid #e5e7eb !important;
-      }
-      @page { size: landscape; margin: 0.4in; }
-    }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -3404,39 +3380,102 @@
   }
   window.runReSnapshot = runReSnapshot;
 
-  // Print the currently visible WRS pane to PDF via the browser's native dialog.
-  // No external library — relies on @media print rules + a temporary header
-  // injected into the active pane so the PDF has context (page name + week).
-  function downloadWrsAsPdf() {
-    const panes = ['summary', 't13', 'BL1', 'BL2', 'BL4', 'BL8', 'BL12', 'BL14'];
+  // Render the currently visible WRS pane to a polished PDF using html2pdf.js
+  // (jsPDF + html2canvas). The output is a high-resolution image of the
+  // styled HTML wrapped in a branded report layout — looks like a native
+  // PDF report, not a browser print.
+  async function downloadWrsAsPdf() {
+    if (typeof html2pdf === 'undefined') {
+      alert('PDF library is still loading — please try again in a moment.');
+      return;
+    }
+
     let activeLabel = 'Summary';
-    const activeBtn = document.querySelector('#wrs-tabs .wrs-tab.border-\\[\\#3BB54A\\], #wrs-tabs button[data-wrs-tab].text-\\[\\#3BB54A\\]');
+    const activeBtn = document.querySelector('#wrs-tabs .wrs-tab.text-\\[\\#3BB54A\\]')
+                  || document.querySelector('#wrs-tabs .wrs-tab.border-\\[\\#3BB54A\\]');
     if (activeBtn) activeLabel = activeBtn.textContent.trim();
 
-    // Find the currently visible pane (only one of the three is unhidden).
     const visiblePane =
       [el('wrs-pane-summary'), el('wrs-pane-t13'), el('wrs-pane-store')]
         .find(p => p && !p.classList.contains('hidden'));
     if (!visiblePane) { alert('No active tab to export.'); return; }
 
-    const subtitle = (el('wrs-subtitle')?.textContent || '').trim();
-    const header = document.createElement('div');
-    header.id = 'wrs-print-header';
-    header.style.cssText = 'margin: 0 0 16px; padding-bottom: 12px; border-bottom: 2px solid #3BB54A;';
-    header.innerHTML = `
-      <div style="font-size:18px;font-weight:600;color:#3BB54A;">Weekly Retail Summary — ${escapeHtml(activeLabel)}</div>
-      <div style="font-size:11px;color:#6b7280;margin-top:4px;">${escapeHtml(subtitle)}</div>
-    `;
-    visiblePane.insertBefore(header, visiblePane.firstChild);
-    document.body.classList.add('printing-wrs');
+    const btn = el('wrs-download-pdf');
+    const origBtnText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating PDF…'; }
 
-    const cleanup = () => {
-      document.body.classList.remove('printing-wrs');
-      header.remove();
-      window.removeEventListener('afterprint', cleanup);
-    };
-    window.addEventListener('afterprint', cleanup);
-    setTimeout(() => window.print(), 50);
+    const subtitle = (el('wrs-subtitle')?.textContent || '').trim();
+    const generatedAt = new Date().toLocaleString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+    });
+
+    // Build an off-screen wrapper styled as a report page. Force light
+    // colors so the PDF is consistent regardless of dark mode.
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = `
+      position: fixed; left: -10000px; top: 0; width: 1280px;
+      background: #ffffff; color: #111827;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 32px 36px;
+    `;
+    wrapper.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;
+                  border-bottom:3px solid #3BB54A;padding-bottom:14px;margin-bottom:22px;">
+        <div>
+          <div style="font-size:11px;font-weight:600;letter-spacing:1.5px;
+                      text-transform:uppercase;color:#3BB54A;">Weekly Retail Summary</div>
+          <div style="font-size:24px;font-weight:700;color:#111827;margin-top:4px;">
+            ${escapeHtml(activeLabel)}
+          </div>
+          <div style="font-size:12px;color:#6b7280;margin-top:6px;">
+            ${escapeHtml(subtitle)}
+          </div>
+        </div>
+        <div style="text-align:right;font-size:10px;color:#9ca3af;">
+          Generated ${escapeHtml(generatedAt)}
+        </div>
+      </div>
+      <div id="wrs-pdf-body"></div>
+      <div style="margin-top:20px;padding-top:10px;border-top:1px solid #e5e7eb;
+                  font-size:9px;color:#9ca3af;text-align:center;">
+        Confidential — internal use only
+      </div>
+    `;
+
+    // Clone the pane so we don't disturb the live DOM.
+    const clone = visiblePane.cloneNode(true);
+    // Force light backgrounds on cards inside the clone.
+    clone.querySelectorAll('[class]').forEach(node => {
+      const c = node.className;
+      if (typeof c === 'string') {
+        node.className = c
+          .split(/\s+/)
+          .filter(cls => !cls.startsWith('dark:'))
+          .join(' ');
+      }
+    });
+    clone.style.color = '#111827';
+    wrapper.querySelector('#wrs-pdf-body').appendChild(clone);
+    document.body.appendChild(wrapper);
+
+    const filename = `WRS-${activeLabel.replace(/\s+/g, '_')}-${new Date().toISOString().slice(0, 10)}.pdf`;
+
+    try {
+      await html2pdf().set({
+        margin: [0.4, 0.4, 0.4, 0.4],
+        filename,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false },
+        jsPDF: { unit: 'in', format: 'letter', orientation: 'landscape' },
+        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
+      }).from(wrapper).save();
+    } catch (err) {
+      alert('PDF generation failed: ' + err.message);
+    } finally {
+      wrapper.remove();
+      if (btn) { btn.disabled = false; btn.textContent = origBtnText; }
+    }
   }
   window.downloadWrsAsPdf = downloadWrsAsPdf;
 
