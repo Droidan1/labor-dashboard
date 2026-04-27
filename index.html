@@ -432,6 +432,7 @@
               </div>
               <button id="wrs-refresh" onclick="loadWeeklyRetail(true)" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Refresh</button>
               <button id="wrs-download-pdf" onclick="downloadWrsAsPdf()" class="px-4 py-2 text-sm font-semibold bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg transition-colors">Download PDF</button>
+              <button id="wrs-download-csv" onclick="downloadWrsAsCsv()" class="px-4 py-2 text-sm font-semibold bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg transition-colors">Download CSV</button>
             </div>
           </div>
         </div>
@@ -3559,6 +3560,81 @@
     }
   }
   window.downloadWrsAsPdf = downloadWrsAsPdf;
+
+  // Export the currently visible WRS pane as a CSV. One file per tab,
+  // multiple tables separated by a blank line + a section header row.
+  function downloadWrsAsCsv() {
+    let activeLabel = 'Summary';
+    const activeBtn = document.querySelector('#wrs-tabs .wrs-tab.text-\\[\\#3BB54A\\]')
+                  || document.querySelector('#wrs-tabs .wrs-tab.border-\\[\\#3BB54A\\]');
+    if (activeBtn) activeLabel = activeBtn.textContent.trim();
+
+    const visiblePane =
+      [el('wrs-pane-summary'), el('wrs-pane-t13'), el('wrs-pane-store')]
+        .find(p => p && !p.classList.contains('hidden'));
+    if (!visiblePane) { alert('No active tab to export.'); return; }
+
+    const subtitle = (el('wrs-subtitle')?.textContent || '').trim();
+
+    // RFC 4180-ish quoter: wrap in quotes if value contains comma, quote,
+    // newline, or leading/trailing whitespace; double internal quotes.
+    const csvCell = v => {
+      const s = (v == null ? '' : String(v)).replace(/\s+/g, ' ').trim();
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csvRow = arr => arr.map(csvCell).join(',');
+
+    const lines = [];
+    lines.push(csvRow([`Weekly Retail Summary — ${activeLabel}`]));
+    if (subtitle) lines.push(csvRow([subtitle]));
+    lines.push(csvRow([`Exported ${new Date().toLocaleString('en-US')}`]));
+    lines.push('');
+
+    // KPI tiles (label, value pairs)
+    const kpiRows = [];
+    visiblePane.querySelectorAll('.text-2xl, .text-xl, .text-3xl').forEach(valEl => {
+      const card = valEl.closest('.bg-white, .rounded-xl, .rounded-lg');
+      if (!card || kpiRows.find(k => k.card === card)) return;
+      const labelEl = card.querySelector('.uppercase, .text-xs');
+      const label = labelEl ? labelEl.textContent.trim() : '';
+      const value = valEl.textContent.trim();
+      if (label && value) kpiRows.push({ card, label, value });
+    });
+    if (kpiRows.length) {
+      lines.push(csvRow(['KPI', 'Value']));
+      for (const k of kpiRows) lines.push(csvRow([k.label, k.value]));
+      lines.push('');
+    }
+
+    // Each on-screen <table>
+    const tables = Array.from(visiblePane.querySelectorAll('table'));
+    for (const tbl of tables) {
+      const card = tbl.closest('.bg-white, .rounded-xl') || tbl.parentElement;
+      const titleEl = card?.querySelector('h3, h2');
+      const title = titleEl ? titleEl.textContent.trim() : '';
+      if (title) lines.push(csvRow([title]));
+
+      for (const row of tbl.tHead?.rows || []) {
+        lines.push(csvRow(Array.from(row.cells).map(c => c.textContent)));
+      }
+      for (const row of tbl.tBodies[0]?.rows || []) {
+        lines.push(csvRow(Array.from(row.cells).map(c => c.textContent)));
+      }
+      lines.push('');
+    }
+
+    // BOM so Excel auto-detects UTF-8
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `WRS-${activeLabel.replace(/\s+/g, '_')}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+  window.downloadWrsAsCsv = downloadWrsAsCsv;
 
   async function runRebuildWeekSummaries() {
     const statusEl = el('rebuild-weeks-status');
