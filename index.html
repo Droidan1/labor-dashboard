@@ -28,7 +28,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
   <style>
     .loading-dot { animation: pulse 1.2s infinite; }
@@ -3380,15 +3381,12 @@
   }
   window.runReSnapshot = runReSnapshot;
 
-  // Render the currently visible WRS pane to a polished PDF using html2pdf.js
-  // (jsPDF + html2canvas). The output is a high-resolution image of the
-  // styled HTML wrapped in a branded report layout — looks like a native
-  // PDF report, not a browser print.
+  // Render the currently visible WRS pane to a true native PDF using
+  // jsPDF + jspdf-autotable. Walks the on-screen tables and KPI cards to
+  // emit vector text (selectable, crisp at any zoom). No html-to-image.
   async function downloadWrsAsPdf() {
-    if (typeof html2pdf === 'undefined') {
-      alert('PDF library is still loading — please try again in a moment.');
-      return;
-    }
+    const jsPDFCtor = window.jspdf?.jsPDF || window.jsPDF;
+    if (!jsPDFCtor) { alert('PDF library is still loading — please try again in a moment.'); return; }
 
     let activeLabel = 'Summary';
     const activeBtn = document.querySelector('#wrs-tabs .wrs-tab.text-\\[\\#3BB54A\\]')
@@ -3410,70 +3408,153 @@
       hour: 'numeric', minute: '2-digit',
     });
 
-    // Build an off-screen wrapper styled as a report page. Force light
-    // colors so the PDF is consistent regardless of dark mode.
-    const wrapper = document.createElement('div');
-    wrapper.style.cssText = `
-      position: fixed; left: -10000px; top: 0; width: 1280px;
-      background: #ffffff; color: #111827;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      padding: 32px 36px;
-    `;
-    wrapper.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;
-                  border-bottom:3px solid #3BB54A;padding-bottom:14px;margin-bottom:22px;">
-        <div>
-          <div style="font-size:11px;font-weight:600;letter-spacing:1.5px;
-                      text-transform:uppercase;color:#3BB54A;">Weekly Retail Summary</div>
-          <div style="font-size:24px;font-weight:700;color:#111827;margin-top:4px;">
-            ${escapeHtml(activeLabel)}
-          </div>
-          <div style="font-size:12px;color:#6b7280;margin-top:6px;">
-            ${escapeHtml(subtitle)}
-          </div>
-        </div>
-        <div style="text-align:right;font-size:10px;color:#9ca3af;">
-          Generated ${escapeHtml(generatedAt)}
-        </div>
-      </div>
-      <div id="wrs-pdf-body"></div>
-      <div style="margin-top:20px;padding-top:10px;border-top:1px solid #e5e7eb;
-                  font-size:9px;color:#9ca3af;text-align:center;">
-        Confidential — internal use only
-      </div>
-    `;
-
-    // Clone the pane so we don't disturb the live DOM.
-    const clone = visiblePane.cloneNode(true);
-    // Force light backgrounds on cards inside the clone.
-    clone.querySelectorAll('[class]').forEach(node => {
-      const c = node.className;
-      if (typeof c === 'string') {
-        node.className = c
-          .split(/\s+/)
-          .filter(cls => !cls.startsWith('dark:'))
-          .join(' ');
-      }
-    });
-    clone.style.color = '#111827';
-    wrapper.querySelector('#wrs-pdf-body').appendChild(clone);
-    document.body.appendChild(wrapper);
-
-    const filename = `WRS-${activeLabel.replace(/\s+/g, '_')}-${new Date().toISOString().slice(0, 10)}.pdf`;
-
     try {
-      await html2pdf().set({
-        margin: [0.4, 0.4, 0.4, 0.4],
-        filename,
-        image: { type: 'jpeg', quality: 0.95 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false },
-        jsPDF: { unit: 'in', format: 'letter', orientation: 'landscape' },
-        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
-      }).from(wrapper).save();
+      const doc = new jsPDFCtor({ unit: 'pt', format: 'letter', orientation: 'landscape' });
+      const pageW = doc.internal.pageSize.getWidth();
+      const pageH = doc.internal.pageSize.getHeight();
+      const margin = 36;
+      const green = [59, 181, 74];
+      const ink = [17, 24, 39];
+      const muted = [107, 114, 128];
+
+      // ── Branded header ───────────────────────────────────────────
+      doc.setFillColor(...green);
+      doc.rect(0, 0, pageW, 4, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(...green);
+      doc.text('WEEKLY RETAIL SUMMARY', margin, 30);
+      doc.setFontSize(20);
+      doc.setTextColor(...ink);
+      doc.text(activeLabel, margin, 52);
+      if (subtitle) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        doc.setTextColor(...muted);
+        doc.text(subtitle, margin, 68);
+      }
+      doc.setFontSize(8);
+      doc.setTextColor(...muted);
+      doc.text(`Generated ${generatedAt}`, pageW - margin, 30, { align: 'right' });
+      doc.setDrawColor(229, 231, 235);
+      doc.setLineWidth(0.5);
+      doc.line(margin, 80, pageW - margin, 80);
+
+      let cursorY = 96;
+
+      // ── KPI tiles — heuristic scan for stat-card patterns ────────
+      // Pattern: a div whose inline structure shows a label (uppercase
+      // small text) followed by a large bold number.
+      const kpiTiles = [];
+      visiblePane.querySelectorAll('.text-2xl, .text-xl, .text-3xl').forEach(valEl => {
+        const card = valEl.closest('.bg-white, .rounded-xl, .rounded-lg');
+        if (!card || kpiTiles.find(k => k.card === card)) return;
+        // Find the small label sibling
+        const labelEl = card.querySelector('.uppercase, .text-xs');
+        const label = labelEl ? labelEl.textContent.trim() : '';
+        const value = valEl.textContent.trim();
+        if (label && value) kpiTiles.push({ card, label, value });
+      });
+
+      if (kpiTiles.length) {
+        doc.autoTable({
+          startY: cursorY,
+          margin: { left: margin, right: margin },
+          theme: 'plain',
+          body: [kpiTiles.map(k => `${k.label}\n${k.value}`)],
+          styles: {
+            fontSize: 9, cellPadding: { top: 8, right: 10, bottom: 8, left: 10 },
+            lineColor: [229, 231, 235], lineWidth: 0.5, valign: 'middle',
+            textColor: ink,
+          },
+          didParseCell: data => {
+            // First line = label (small/muted), second = value (bold large)
+            const text = data.cell.raw || '';
+            const [label, ...rest] = text.split('\n');
+            data.cell.text = [label, rest.join('\n')];
+          },
+          willDrawCell: data => {
+            data.cell.styles.fontStyle = 'normal';
+          },
+        });
+        cursorY = doc.lastAutoTable.finalY + 18;
+      }
+
+      // ── Tables — emit each <table> as an autoTable with its <h3> title ─
+      const tables = Array.from(visiblePane.querySelectorAll('table'));
+      for (const tbl of tables) {
+        // Title: nearest preceding h3 inside the same card.
+        const card = tbl.closest('.bg-white, .rounded-xl') || tbl.parentElement;
+        const titleEl = card?.querySelector('h3, h2');
+        const title = titleEl ? titleEl.textContent.trim() : '';
+
+        const headRows = Array.from(tbl.tHead?.rows || []).map(r =>
+          Array.from(r.cells).map(c => c.textContent.replace(/\s+/g, ' ').trim())
+        );
+        const bodyRows = Array.from(tbl.tBodies[0]?.rows || []).map(r =>
+          Array.from(r.cells).map(c => c.textContent.replace(/\s+/g, ' ').trim())
+        );
+        if (!bodyRows.length) continue;
+
+        // Detect "total" rows (last row often totals; also bold/highlighted)
+        const totalRowIdxs = bodyRows.map((row, i) => {
+          const tr = tbl.tBodies[0].rows[i];
+          return tr.classList.contains('bg-gray-50') || /^all categories$|^total$/i.test(row[0] || '') ? i : -1;
+        }).filter(i => i >= 0);
+
+        // Page-break check
+        if (cursorY > pageH - margin - 60) { doc.addPage(); cursorY = margin + 20; }
+
+        if (title) {
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(11);
+          doc.setTextColor(...ink);
+          doc.text(title, margin, cursorY);
+          cursorY += 8;
+        }
+
+        doc.autoTable({
+          startY: cursorY,
+          margin: { left: margin, right: margin },
+          head: headRows,
+          body: bodyRows,
+          theme: 'striped',
+          headStyles: { fillColor: green, textColor: 255, fontStyle: 'bold', fontSize: 8 },
+          bodyStyles: { fontSize: 8, textColor: ink },
+          alternateRowStyles: { fillColor: [249, 250, 251] },
+          styles: { cellPadding: 4, lineColor: [229, 231, 235], lineWidth: 0.25, overflow: 'linebreak' },
+          columnStyles: { 0: { cellWidth: 'auto', fontStyle: 'bold' } },
+          didParseCell: data => {
+            if (data.section === 'body' && totalRowIdxs.includes(data.row.index)) {
+              data.cell.styles.fontStyle = 'bold';
+              data.cell.styles.fillColor = [243, 244, 246];
+            }
+            if (data.section === 'body' && data.column.index > 0) {
+              data.cell.styles.halign = 'right';
+            }
+            if (data.section === 'head' && data.column.index > 0) {
+              data.cell.styles.halign = 'right';
+            }
+          },
+        });
+        cursorY = doc.lastAutoTable.finalY + 16;
+      }
+
+      // ── Page footer on every page ────────────────────────────────
+      const pageCount = doc.internal.getNumberOfPages();
+      for (let p = 1; p <= pageCount; p++) {
+        doc.setPage(p);
+        doc.setFontSize(8);
+        doc.setTextColor(...muted);
+        doc.text('Confidential — internal use only', margin, pageH - 18);
+        doc.text(`Page ${p} of ${pageCount}`, pageW - margin, pageH - 18, { align: 'right' });
+      }
+
+      const filename = `WRS-${activeLabel.replace(/\s+/g, '_')}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      doc.save(filename);
     } catch (err) {
       alert('PDF generation failed: ' + err.message);
     } finally {
-      wrapper.remove();
       if (btn) { btn.disabled = false; btn.textContent = origBtnText; }
     }
   }
