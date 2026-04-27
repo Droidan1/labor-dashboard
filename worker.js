@@ -1753,6 +1753,7 @@ async function buildStoreWeekly(env, store, dates) {
     },
     itemSales: merged,
     l2Qty: Object.fromEntries(merged.categories.map(c => [c.category, Math.round(c.qty)])),
+    l2Net: Object.fromEntries(merged.categories.map(c => [c.category, roundCents(c.netSales)])),
   };
 }
 
@@ -1768,6 +1769,7 @@ async function writeWeekSummary(env, store, week, year) {
     store, week: String(week), year: Number(year), dates,
     totals: bundle.totals,
     l2Qty: bundle.l2Qty || {},
+    l2Net: bundle.l2Net || {},
     snapshotTime: new Date().toISOString(),
   };
   await env.SALES_SNAPSHOTS.put(
@@ -3701,10 +3703,12 @@ export default {
 
         let liveBuilds = 0;
         const l2UnitsByWeek = []; // one entry per week: { L2Name: combinedQty }
+        const l2NetByWeek = [];   // one entry per week: { L2Name: combinedNetSales }
         for (const wkObj of weeks) {
           const wk = wkObj.week;
           const perStore = {};
           const perStoreL2 = {};
+          const perStoreL2Net = {};
           await Promise.all(scopedStoresT13.map(async (s) => {
             let summary = null;
             if (env.SALES_SNAPSHOTS) {
@@ -3717,13 +3721,14 @@ export default {
               const dates = await resolveWeekDates(env, wk, year);
               if (dates.length) {
                 const bundle = await buildStoreWeekly(env, s, dates);
-                summary = { totals: bundle.totals, l2Qty: bundle.l2Qty };
+                summary = { totals: bundle.totals, l2Qty: bundle.l2Qty, l2Net: bundle.l2Net };
               } else {
-                summary = { totals: { netSales: 0, qty: 0, transactions: 0, asp: 0, laborPct: 0, budget: 0 }, l2Qty: {} };
+                summary = { totals: { netSales: 0, qty: 0, transactions: 0, asp: 0, laborPct: 0, budget: 0 }, l2Qty: {}, l2Net: {} };
               }
             }
             perStore[s] = summary.totals;
             perStoreL2[s] = summary.l2Qty || {};
+            perStoreL2Net[s] = summary.l2Net || {};
           }));
 
           let wkNet = 0, wkQty = 0, wkTxn = 0, wkBudget = 0, wkLaborNum = 0, wkLaborDen = 0;
@@ -3760,6 +3765,15 @@ export default {
             }
           }
           l2UnitsByWeek.push(wkL2);
+
+          // Aggregate L2 net sales across all stores for this week
+          const wkL2Net = {};
+          for (const s of scopedStoresT13) {
+            for (const [cat, net] of Object.entries(perStoreL2Net[s] || {})) {
+              wkL2Net[cat] = (wkL2Net[cat] || 0) + net;
+            }
+          }
+          l2NetByWeek.push(Object.fromEntries(Object.entries(wkL2Net).map(([k, v]) => [k, roundCents(v)])));
         }
 
         if (liveBuilds > 0) {
@@ -3772,6 +3786,7 @@ export default {
           stores,
           total,
           l2Units: l2UnitsByWeek,
+          l2Net: l2NetByWeek,
           liveBuilds,
         }), { headers: corsJson });
       } catch (err) {
@@ -3816,6 +3831,7 @@ export default {
               store, week: String(wk), year: Number(year), dates,
               totals: bundle.totals,
               l2Qty: bundle.l2Qty || {},
+              l2Net: bundle.l2Net || {},
               snapshotTime: new Date().toISOString(),
             };
             await env.SALES_SNAPSHOTS.put(
