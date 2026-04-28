@@ -3091,18 +3091,24 @@ export default {
                   order_count, avg_cart, avg_items, avg_txn_sec, avg_asp, snapshot_time)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(store, date) DO UPDATE SET
-                   week=excluded.week, budget=excluded.budget,
-                   total=COALESCE(excluded.total, total),
-                   retail=COALESCE(excluded.retail, retail),
-                   bin=COALESCE(excluded.bin, bin),
+                   -- Sheet-authoritative columns: Sheet always wins (humans enter these)
+                   week=excluded.week,
+                   budget=excluded.budget,
                    auction=COALESCE(excluded.auction, auction),
                    labor_pct=COALESCE(excluded.labor_pct, labor_pct),
-                   order_count=COALESCE(excluded.order_count, order_count),
-                   avg_cart=COALESCE(excluded.avg_cart, avg_cart),
-                   avg_items=COALESCE(excluded.avg_items, avg_items),
-                   avg_txn_sec=COALESCE(excluded.avg_txn_sec, avg_txn_sec),
-                   avg_asp=COALESCE(excluded.avg_asp, avg_asp),
-                   snapshot_time=COALESCE(excluded.snapshot_time, snapshot_time)`
+                   -- Phase 2C: Cron-authoritative columns. Cron writes the truth
+                   -- from Clover; Sheet backfill must NOT overwrite it. Flipped
+                   -- COALESCE so existing non-null values are preserved.
+                   -- (excluded.* still fills initial NULLs on first import.)
+                   total=COALESCE(total, excluded.total),
+                   retail=COALESCE(retail, excluded.retail),
+                   bin=COALESCE(bin, excluded.bin),
+                   order_count=COALESCE(order_count, excluded.order_count),
+                   avg_cart=COALESCE(avg_cart, excluded.avg_cart),
+                   avg_items=COALESCE(avg_items, excluded.avg_items),
+                   avg_txn_sec=COALESCE(avg_txn_sec, excluded.avg_txn_sec),
+                   avg_asp=COALESCE(avg_asp, excluded.avg_asp),
+                   snapshot_time=COALESCE(snapshot_time, excluded.snapshot_time)`
               ).bind(
                 storeCode, dateStr, week, bTotal,
                 kvData?.total || aTotal || null, kvData?.retail || aRetail || null, kvData?.bin || aBins || null,
