@@ -4106,9 +4106,11 @@ export default {
         const dates = await resolveWeekDates(env, wk, year);
         if (!dates.length) continue;
 
-        // Sequential per store to keep concurrent-subrequest pressure low.
-        for (const store of ALL_STORES) {
-          try {
+        // Parallel per store within a week — drops wall-clock per week
+        // from ~5s to ~1s. Concurrent subrequest pressure: 6 stores ×
+        // (1 D1 + 7 KV get) = 48, just under CF's 50-concurrent limit.
+        const settled = await Promise.allSettled(
+          ALL_STORES.map(async (store) => {
             const bundle = await buildStoreWeekly(env, store, dates);
             const payload = {
               store, week: String(wk), year: Number(year), dates,
@@ -4121,11 +4123,16 @@ export default {
               `week-summary:${store.toLowerCase()}:${wk}-${year}`,
               JSON.stringify(payload)
             );
+            return store;
+          })
+        );
+        settled.forEach((r, i) => {
+          if (r.status === "fulfilled") {
             summary.written++;
-          } catch (e) {
-            summary.errors.push(`${store}/${wk}: ${e?.message || e}`);
+          } else {
+            summary.errors.push(`${ALL_STORES[i]}/${wk}: ${r.reason?.message || r.reason}`);
           }
-        }
+        });
       }
       return new Response(JSON.stringify({ ok: true, ...summary }), { headers: corsJson });
     }

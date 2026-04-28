@@ -3791,19 +3791,30 @@
     let done = 0;
     const failed = [];
     const startTime = Date.now();
-    for (const date of dateList) {
+
+    // Process dates in parallel batches. 4-wide gives us ~4× throughput
+    // without overwhelming the browser's connection pool. Each batch
+    // settles before the next starts so progress UI is sensible.
+    const BATCH = 4;
+    for (let i = 0; i < dateList.length; i += BATCH) {
+      const batch = dateList.slice(i, i + BATCH);
       const elapsed = Math.round((Date.now() - startTime) / 1000);
-      setStatus(`Backfilling sales (${done + 1}/${total}) — ${date} · ${elapsed}s elapsed…`, 'info');
-      try {
-        const data = await fetchWithRetry(
+      setStatus(`Backfilling sales (${done}/${total}) — current batch: ${batch.join(', ')} · ${elapsed}s elapsed…`, 'info');
+      const settled = await Promise.allSettled(batch.map(date =>
+        fetchWithRetry(
           `${WORKER_BASE}?action=snapshot&store=all&date=${encodeURIComponent(date)}`,
           { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
-        );
-        const storeErrs = Object.entries(data.results || {}).filter(([, v]) => v?.error);
-        if (storeErrs.length) failed.push(date);
-        done++;
-      } catch (err) {
-        failed.push(date);
+        ).then(data => ({ date, data }))
+      ));
+      for (let j = 0; j < settled.length; j++) {
+        const r = settled[j];
+        const date = batch[j];
+        if (r.status === 'fulfilled') {
+          const storeErrs = Object.entries(r.value.data.results || {}).filter(([, v]) => v?.error);
+          if (storeErrs.length) failed.push(date); else done++;
+        } else {
+          failed.push(date);
+        }
       }
     }
     _backfillFailed = failed; // remember for next click
