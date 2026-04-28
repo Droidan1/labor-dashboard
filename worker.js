@@ -1468,6 +1468,15 @@ async function fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp = nu
       },
     });
 
+    // Critical: throw on non-2xx. Previously a 429 (rate limit) or 5xx
+    // would parse to JSON with no `elements`, the loop would silently
+    // break, and the caller would write $0 to daily_sales — overwriting
+    // real revenue with zero. Now the failure propagates and the
+    // backfill UI surfaces it for retry.
+    if (!resp.ok) {
+      throw new Error(`Clover orders ${targetStore} HTTP ${resp.status}`);
+    }
+
     const data = await resp.json();
     if (!data || !data.elements || data.elements.length === 0) break;
 
@@ -2356,6 +2365,26 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
   // Phase 2A: subtract /v3/refunds total (pre-tax) to match Clover Sales Summary.
   const refundCents = await fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp);
   applyRefundsToAggregate(data, refundCents);
+
+  // Defensive guard: if Clover returned 0 orders AND we already have a
+  // non-zero daily_sales row, refuse to overwrite. Protects against
+  // transient empty responses (rate limit, hiccup, partial outage)
+  // silently zeroing real revenue. Only applies when total is exactly 0.
+  if (data.total === 0 && env.DB) {
+    try {
+      const existing = await env.DB.prepare(
+        "SELECT total FROM daily_sales WHERE store = ? AND date = ?"
+      ).bind(store.toUpperCase(), dateStr).first();
+      if (existing && existing.total != null && existing.total > 0) {
+        console.warn(`Skipping zero-overwrite for ${store}/${dateStr} (existing total=$${existing.total})`);
+        data.skippedZeroOverwrite = true;
+        data.total = existing.total; // return existing value to caller for visibility
+        return data;
+      }
+    } catch (e) {
+      console.warn(`zero-overwrite guard query failed for ${store}/${dateStr}:`, e.message);
+    }
+  }
 
   await saveSnapshot(env, store, dateStr, data);
   return data;

@@ -3792,10 +3792,11 @@
     const failed = [];
     const startTime = Date.now();
 
-    // Process dates in parallel batches. 4-wide gives us ~4× throughput
-    // without overwhelming the browser's connection pool. Each batch
-    // settles before the next starts so progress UI is sensible.
-    const BATCH = 4;
+    // Process dates in parallel batches. 2-wide is gentle on Clover's
+    // per-merchant rate limits (each batch issues ~24 concurrent Clover
+    // calls — orders + refunds × 6 stores × 2 dates). Was 4-wide but
+    // that triggered 429s that silently zeroed real revenue.
+    const BATCH = 2;
     for (let i = 0; i < dateList.length; i += BATCH) {
       const batch = dateList.slice(i, i + BATCH);
       const elapsed = Math.round((Date.now() - startTime) / 1000);
