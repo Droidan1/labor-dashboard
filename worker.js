@@ -2333,7 +2333,7 @@ async function fetchItemOrders(store, env, sinceTimestamp, untilTimestamp = null
     let cloverUrl = `https://api.clover.com/v3/merchants/${merchantId}/orders`
       + `?filter=createdTime>=${sinceTimestamp}`
       + `&filter=state=locked`
-      + `&expand=payments,lineItems.item,lineItems.discounts`
+      + `&expand=payments,lineItems.item,lineItems.discounts,discounts`
       + `&limit=${limit}&offset=${offset}`;
     if (untilTimestamp) cloverUrl += `&filter=createdTime<${untilTimestamp}`;
     const resp = await fetch(cloverUrl, {
