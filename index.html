@@ -3792,11 +3792,10 @@
     const failed = [];
     const startTime = Date.now();
 
-    // Process dates in parallel batches. 2-wide is gentle on Clover's
-    // per-merchant rate limits (each batch issues ~24 concurrent Clover
-    // calls — orders + refunds × 6 stores × 2 dates). Was 4-wide but
-    // that triggered 429s that silently zeroed real revenue.
-    const BATCH = 2;
+    // Sequential (BATCH=1) to stay well under Clover's per-merchant
+    // rate limits. The worker now retries 429s internally with backoff,
+    // so individual dates self-heal — no need to push batch concurrency.
+    const BATCH = 1;
     for (let i = 0; i < dateList.length; i += BATCH) {
       const batch = dateList.slice(i, i + BATCH);
       const elapsed = Math.round((Date.now() - startTime) / 1000);

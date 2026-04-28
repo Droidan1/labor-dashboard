@@ -1409,20 +1409,14 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
   let total = 0;
   let offset = 0;
   const limit = 1000;
+  const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
   try {
     while (true) {
       let url = `https://api.clover.com/v3/merchants/${merchantId}/refunds`
         + `?filter=createdTime>=${sinceTimestamp}`
         + `&limit=${limit}&offset=${offset}`;
       if (untilTimestamp) url += `&filter=createdTime<${untilTimestamp}`;
-      const resp = await fetch(url, {
-        headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
-      });
-      if (!resp.ok) {
-        console.warn(`fetchRefundsTotal(${store}) HTTP ${resp.status}`);
-        break;
-      }
-      const data = await resp.json();
+      const data = await cloverFetchWithRetry(url, headers, `Clover refunds ${store}`);
       if (!data?.elements?.length) break;
       for (const r of data.elements) {
         // refund.amount includes tax; subtract tax to match Clover's pre-tax "Refunds" line.
@@ -1434,10 +1428,38 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
       offset += limit;
     }
   } catch (e) {
+    // Refunds endpoint failure is non-fatal: returning 0 means we just
+    // don't subtract refunds for this snapshot (matches pre-Phase-2A
+    // behavior). The defensive D1 guard still prevents accidental zeroing.
     console.warn(`fetchRefundsTotal(${store}) error:`, e.message);
     return 0;
   }
   return total;
+}
+
+// ─── Helper: fetch with retry on 429 / 5xx, throw on persistent failure
+// Returns the parsed JSON body. Honors Retry-After header where present.
+// Critical for Clover endpoints — silently treating a 429 as "no data"
+// caused zeroing of real revenue in daily_sales.
+async function cloverFetchWithRetry(url, headers, label) {
+  const maxAttempts = 5;
+  const baseDelayMs = 1000;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const resp = await fetch(url, { method: "GET", headers });
+    if (resp.ok) return await resp.json();
+
+    // 429 (rate limited) and 5xx are retryable; 4xx other than 429 is not.
+    const retryable = resp.status === 429 || resp.status >= 500;
+    if (!retryable || attempt === maxAttempts) {
+      throw new Error(`${label} HTTP ${resp.status} (attempt ${attempt})`);
+    }
+    const retryAfter = parseInt(resp.headers.get("Retry-After") || "0", 10);
+    const sleepMs = retryAfter > 0
+      ? Math.min(retryAfter * 1000, 15000)
+      : baseDelayMs * Math.pow(2, attempt - 1); // 1s, 2s, 4s, 8s
+    await new Promise(r => setTimeout(r, sleepMs));
+  }
+  throw new Error(`${label} retry loop exited unexpectedly`);
 }
 
 // ─── Fetch raw orders from Clover API ────────────────────────────
@@ -1451,6 +1473,10 @@ async function fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp = nu
   const limit = 1000;
   let offset = 0;
   const allElements = [];
+  const headers = {
+    "Authorization": `Bearer ${apiToken}`,
+    "Content-Type": "application/json",
+  };
 
   while (true) {
     let cloverUrl = `https://api.clover.com/v3/merchants/${merchantId}/orders`
@@ -1460,24 +1486,10 @@ async function fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp = nu
       + `&limit=${limit}&offset=${offset}`;
     if (untilTimestamp) cloverUrl += `&filter=createdTime<${untilTimestamp}`;
 
-    const resp = await fetch(cloverUrl, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${apiToken}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    // Critical: throw on non-2xx. Previously a 429 (rate limit) or 5xx
-    // would parse to JSON with no `elements`, the loop would silently
-    // break, and the caller would write $0 to daily_sales — overwriting
-    // real revenue with zero. Now the failure propagates and the
-    // backfill UI surfaces it for retry.
-    if (!resp.ok) {
-      throw new Error(`Clover orders ${targetStore} HTTP ${resp.status}`);
-    }
-
-    const data = await resp.json();
+    // Retries on 429/5xx with exponential backoff. Throws on persistent
+    // failure — caller (fetchAggregateAndSnapshot) will not write a
+    // snapshot, and the defensive D1 guard prevents accidental zeroing.
+    const data = await cloverFetchWithRetry(cloverUrl, headers, `Clover orders ${targetStore}`);
     if (!data || !data.elements || data.elements.length === 0) break;
 
     allElements.push(...data.elements);
@@ -2298,10 +2310,17 @@ async function fetchItemOrders(store, env, sinceTimestamp, untilTimestamp = null
 async function saveSnapshot(env, store, dateStr, data) {
   const snapshotTime = new Date().toISOString();
 
-  // Write to KV (existing behavior)
+  // Write to KV (cache for live dashboard reads). D1 is the durable
+  // source-of-truth for daily_sales totals — if KV write fails (e.g.
+  // daily put quota exceeded on Workers Free), don't bail the snapshot;
+  // D1 still gets the truth.
   if (env.SALES_SNAPSHOTS) {
     const key = `sales:${store.toLowerCase()}:${dateStr}`;
-    await env.SALES_SNAPSHOTS.put(key, JSON.stringify({ ...data, snapshotTime }));
+    try {
+      await env.SALES_SNAPSHOTS.put(key, JSON.stringify({ ...data, snapshotTime }));
+    } catch (e) {
+      console.warn(`KV put failed for ${key}: ${e.message}`);
+    }
   }
 
   // Write to D1
