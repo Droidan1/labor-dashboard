@@ -2888,15 +2888,25 @@ export default {
         untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
       }
 
+      // Run all stores in parallel — each store is independent and the
+      // subrequest budget is per-store-per-day (~30), so 6 in parallel
+      // stays well under Cloudflare's 1,000-per-invocation cap while
+      // dropping wall-clock from ~12s to ~2s per date.
+      const settled = await Promise.allSettled(
+        stores.map(store => fetchAggregateAndSnapshot(store, env, startOfDay, dateStr, untilTs))
+      );
       const results = {};
-      for (const store of stores) {
-        try {
-          const data = await fetchAggregateAndSnapshot(store, env, startOfDay, dateStr, untilTs);
-          results[store] = data ? { ok: true, total: data.total, refundsSubtracted: data.refundsSubtracted ?? 0 } : { error: "no credentials" };
-        } catch (err) {
-          results[store] = { error: err.message };
+      settled.forEach((r, i) => {
+        const store = stores[i];
+        if (r.status === "fulfilled") {
+          const data = r.value;
+          results[store] = data
+            ? { ok: true, total: data.total, refundsSubtracted: data.refundsSubtracted ?? 0 }
+            : { error: "no credentials" };
+        } else {
+          results[store] = { error: r.reason?.message || String(r.reason) };
         }
-      }
+      });
       return new Response(JSON.stringify({ ok: true, date: dateStr, results }), {
         headers: corsJson,
       });
