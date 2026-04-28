@@ -3737,6 +3737,11 @@
   // daily_sales totals with the current reconciliation rules
   // (Phase 2A: refunds subtracted). Each date is one worker invocation
   // so subrequest budget is per-day, not cumulative.
+  // Resilience:
+  //   - Each date gets up to 2 retries on transient errors
+  //   - Failed dates are remembered; re-running picks them up
+  //   - If the auto-rebuild fails, retry it 2× with backoff before giving up
+  let _backfillFailed = []; // sticky list of failed dates from prior runs
   async function runBackfillSales13w() {
     const statusEl = el('backfill-sales-status');
     const setStatus = (msg, tone) => {
@@ -3750,51 +3755,74 @@
       statusEl.innerHTML = msg;
     };
 
-    // Build descending date list: today, yesterday, ... back 91 days.
-    const days = 91;
-    const dateList = [];
-    const today = new Date();
-    today.setHours(12, 0, 0, 0); // anchor noon to avoid TZ edge cases on the loop
-    for (let i = 0; i < days; i++) {
-      const d = new Date(today.getTime() - i * 86400000);
-      dateList.push(d.toISOString().slice(0, 10));
+    // If the previous run left dates incomplete, only retry those.
+    let dateList;
+    if (_backfillFailed.length) {
+      dateList = [..._backfillFailed];
+    } else {
+      // Build descending date list: today, yesterday, ... back 91 days.
+      const days = 91;
+      dateList = [];
+      const today = new Date();
+      today.setHours(12, 0, 0, 0);
+      for (let i = 0; i < days; i++) {
+        const d = new Date(today.getTime() - i * 86400000);
+        dateList.push(d.toISOString().slice(0, 10));
+      }
     }
+    const total = dateList.length;
+
+    const fetchWithRetry = async (url, opts, attempts = 3) => {
+      let lastErr;
+      for (let i = 0; i < attempts; i++) {
+        try {
+          const resp = await fetch(url, opts);
+          const data = await resp.json();
+          if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+          return data;
+        } catch (err) {
+          lastErr = err;
+          if (i < attempts - 1) await new Promise(r => setTimeout(r, 800 * (i + 1))); // 800, 1600ms
+        }
+      }
+      throw lastErr;
+    };
 
     let done = 0;
     const failed = [];
     const startTime = Date.now();
     for (const date of dateList) {
       const elapsed = Math.round((Date.now() - startTime) / 1000);
-      setStatus(`Backfilling sales (${done + 1}/${days}) — ${date} · ${elapsed}s elapsed…`, 'info');
+      setStatus(`Backfilling sales (${done + 1}/${total}) — ${date} · ${elapsed}s elapsed…`, 'info');
       try {
-        const resp = await fetch(
+        const data = await fetchWithRetry(
           `${WORKER_BASE}?action=snapshot&store=all&date=${encodeURIComponent(date)}`,
           { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
         );
-        const data = await resp.json();
-        if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
-        // Detect any per-store errors inside the result object
         const storeErrs = Object.entries(data.results || {}).filter(([, v]) => v?.error);
-        if (storeErrs.length) failed.push(`${date}: ${storeErrs.map(([s, v]) => `${s}=${v.error}`).join(', ')}`);
+        if (storeErrs.length) failed.push(date);
         done++;
       } catch (err) {
-        failed.push(`${date}: ${err.message}`);
+        failed.push(date);
       }
     }
+    _backfillFailed = failed; // remember for next click
 
-    // Auto-rebuild week summaries so T13 reflects the new daily_sales numbers.
-    setStatus(`Backfill complete (${done}/${days}). Rebuilding week summaries…`, 'info');
+    // Auto-rebuild with retry; on persistent failure, prompt manual rebuild.
+    setStatus(`Backfill complete (${done}/${total}). Rebuilding week summaries…`, 'info');
     try {
-      const resp = await fetch(`${WORKER_BASE}?action=rebuild-week-summaries`, {
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
-      });
-      const data = await resp.json();
-      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
-      const tone = failed.length ? 'error' : 'ok';
-      const errBlock = failed.length ? `<br><span class="font-mono text-xs">${failed.slice(0, 5).join('<br>')}${failed.length > 5 ? '<br>…' : ''}</span>` : '';
-      setStatus(`<strong>Done</strong> — ${done}/${days} dates re-snapshotted, ${data.written} week summaries rebuilt.${errBlock}`, tone);
+      const data = await fetchWithRetry(
+        `${WORKER_BASE}?action=rebuild-week-summaries`,
+        { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } },
+        3
+      );
+      const failNote = failed.length
+        ? `<br><span class="text-xs">${failed.length} date(s) still failed — click <strong>Backfill Last 13 Weeks</strong> again to retry just those.</span>`
+        : '';
+      setStatus(`<strong>Done</strong> — ${done}/${total} dates re-snapshotted, ${data.written} week summaries rebuilt.${failNote}`,
+        failed.length ? 'error' : 'ok');
     } catch (err) {
-      setStatus(`Backfill done (${done}/${days}) but rebuild failed: ${err.message}`, 'error');
+      setStatus(`Backfill done (${done}/${total}). Rebuild failed: ${err.message}<br><span class="text-xs">Click <strong>Rebuild Week Summaries</strong> above to retry the rebuild manually.</span>`, 'error');
     }
   }
   window.runBackfillSales13w = runBackfillSales13w;
