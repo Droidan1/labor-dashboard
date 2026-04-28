@@ -1998,6 +1998,42 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     const lineItems = order.lineItems?.elements || [];
     let orderLineItemNetCents = 0;
 
+    // ── Phase 2B: pre-compute discounts (amount + percentage) ─────
+    // Clover stores percentage-based discounts as `percentage` with no
+    // `amount` field. The previous code only read `amount`, missing
+    // ~70% of discounts ($936/day at BL1). Two-pass approach:
+    //   1) For each line item, resolve its line-level disc (amount or
+    //      gross × percentage / 100). Track post-line-disc subtotal.
+    //   2) Resolve order-level disc against that subtotal.
+    //   3) In the main loop below, distribute order-level disc
+    //      proportionally to each line item's post-line-disc net.
+    let subtotalAfterLineDiscCents = 0;
+    const liDiscCache = new Map(); // li -> lineDiscCents
+    for (const li of lineItems) {
+      const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
+      const liGrossCents = Math.abs((li.price || 0) * qty);
+      let lineDiscCents = 0;
+      for (const d of (li.discounts?.elements || [])) {
+        if (d.amount != null && d.amount !== 0) {
+          lineDiscCents += Math.abs(d.amount);
+        } else if (d.percentage) {
+          lineDiscCents += Math.round(liGrossCents * Number(d.percentage) / 100);
+        }
+      }
+      liDiscCache.set(li, lineDiscCents);
+      if ((li.price || 0) >= 0) {
+        subtotalAfterLineDiscCents += (liGrossCents - lineDiscCents);
+      }
+    }
+    let orderDiscCents = 0;
+    for (const d of (order.discounts?.elements || [])) {
+      if (d.amount != null && d.amount !== 0) {
+        orderDiscCents += Math.abs(d.amount);
+      } else if (d.percentage && subtotalAfterLineDiscCents > 0) {
+        orderDiscCents += Math.round(subtotalAfterLineDiscCents * Number(d.percentage) / 100);
+      }
+    }
+
     for (const li of lineItems) {
       const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
       const priceCents = (li.price || 0) * qty;
@@ -2147,10 +2183,16 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       const l3Cat = getL3(l2, l3Key);
       const grossCents = Math.abs(priceCents);
 
-      let discCents = 0;
-      if (li.discounts?.elements) {
-        for (const d of li.discounts.elements) {
-          discCents += Math.abs(d.amount || 0);
+      // Phase 2B: line-level discount (resolved above, handles % case)
+      let discCents = liDiscCache.get(li) || 0;
+
+      // Phase 2B: allocate order-level discount proportionally to this
+      // line item's contribution to the post-line-discount subtotal.
+      // Skip refund rows (priceCents < 0) — they shouldn't carry order-disc share.
+      if (priceCents >= 0 && orderDiscCents > 0 && subtotalAfterLineDiscCents > 0) {
+        const lineNetCents = grossCents - discCents;
+        if (lineNetCents > 0) {
+          discCents += Math.round(orderDiscCents * lineNetCents / subtotalAfterLineDiscCents);
         }
       }
 
@@ -3226,12 +3268,17 @@ export default {
         sum_lineitem_discounts: 0,     // line-item-attached discounts
         sum_order_discounts: 0,        // order.discounts.elements
         sum_lineitem_refunds: 0,       // lineItem.refunds.elements
+        sum_lineitem_mods_negative: 0, // Phase 2B: Σ(|amount|) for negative-amount mods
+        sum_lineitem_mods_positive: 0, // Phase 2B: Σ amount for positive mods (surcharges)
+        sum_lineitem_mods_total: 0,    // signed sum of all mod amounts (informational)
         negative_lineitem_total: 0,
       };
       const stateBreakdown = {};
       let negativeLineItemCount = 0;
       const topResiduals = [];          // {orderId, residual, total}
       let zeroTotalOrderCount = 0;
+      const modSamples = [];            // first 10 modifications, for shape inspection
+      let modCount = 0;
 
       for (const o of orders) {
         stateBreakdown[o.state || "(unknown)"] = (stateBreakdown[o.state || "(unknown)"] || 0) + 1;
@@ -3250,8 +3297,28 @@ export default {
         cents.sum_payment_taxAmount += orderPmtTax;
         cents.sum_payment_tipAmount += orderPmtTip;
 
+        // Phase 2B-aware: percentage-only discounts need to be resolved
+        // against post-line-discount subtotal. First pass over line items
+        // computes line discounts and the subtotal; then order-level
+        // percentage discounts can be evaluated against it.
+        let _liGrossSum = 0, _liDiscSum = 0;
+        for (const li of (o.lineItems?.elements || [])) {
+          const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
+          const liGross = Math.abs((li.price || 0) * qty);
+          if ((li.price || 0) < 0) continue;
+          _liGrossSum += liGross;
+          for (const d of (li.discounts?.elements || [])) {
+            if (d.amount != null && d.amount !== 0) _liDiscSum += Math.abs(d.amount);
+            else if (d.percentage) _liDiscSum += Math.round(liGross * Number(d.percentage) / 100);
+          }
+        }
+        const _subtotalPostLineDisc = _liGrossSum - _liDiscSum;
         for (const d of (o.discounts?.elements || [])) {
-          cents.sum_order_discounts += Math.abs(d.amount || 0);
+          if (d.amount != null && d.amount !== 0) {
+            cents.sum_order_discounts += Math.abs(d.amount);
+          } else if (d.percentage && _subtotalPostLineDisc > 0) {
+            cents.sum_order_discounts += Math.round(_subtotalPostLineDisc * Number(d.percentage) / 100);
+          }
         }
 
         let orderLineItemGross = 0, orderLineItemDisc = 0, orderLineItemRefund = 0;
@@ -3264,10 +3331,30 @@ export default {
             cents.negative_lineitem_total += liGross;
           }
           for (const d of (li.discounts?.elements || [])) {
-            orderLineItemDisc += Math.abs(d.amount || 0);
+            if (d.amount != null && d.amount !== 0) {
+              orderLineItemDisc += Math.abs(d.amount);
+            } else if (d.percentage) {
+              orderLineItemDisc += Math.round(Math.abs(liGross) * Number(d.percentage) / 100);
+            }
           }
           for (const r of (li.refunds?.elements || [])) {
             orderLineItemRefund += Math.abs(r.amount || 0);
+          }
+          // Phase 2B inventory: enumerate modifications. Hypothesis is
+          // markdowns/sale prices live here as negative-amount mods.
+          for (const m of (li.modifications?.elements || [])) {
+            modCount++;
+            const amount = m.amount || 0;
+            cents.sum_lineitem_mods_total += amount;
+            if (amount < 0) cents.sum_lineitem_mods_negative += Math.abs(amount);
+            else cents.sum_lineitem_mods_positive += amount;
+            if (modSamples.length < 10) {
+              modSamples.push({
+                liName: li.name, liPrice: li.price, liQty: qty,
+                modName: m.name, modAmount: amount / 100,
+                modAllFields: Object.keys(m),
+              });
+            }
           }
         }
         cents.sum_lineitem_gross += orderLineItemGross;
@@ -3325,6 +3412,8 @@ export default {
           ourNet_minus_lineitem_refunds: +ourNet_minus_lineitem_refunds.toFixed(2),
         },
         negativeLineItemCount,
+        modCount,
+        modSamples,
         topResiduals: topResiduals.slice(0, 10),
       };
 
