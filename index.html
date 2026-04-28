@@ -991,6 +991,19 @@
               </div>
             </div>
           </div>
+
+          <div class="border-t border-gray-100 dark:border-gray-700 mt-6 pt-5 space-y-3">
+            <div>
+              <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Backfill Sales (Last 13 Weeks)</p>
+              <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Re-snapshots <em>daily sales totals</em> from Clover for the last 91 days across all stores, applying the latest reconciliation rules (refunds subtracted to match Clover Sales Summary). Loops one date at a time; takes ~1–2 minutes. Auto-rebuilds week summaries when finished.</p>
+              <div class="flex items-center gap-3">
+                <button onclick="runBackfillSales13w()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
+                  Backfill Last 13 Weeks
+                </button>
+                <div id="backfill-sales-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Item Master Costs -->
@@ -3719,6 +3732,72 @@
     }
   }
   window.runRebuildWeekSummaries = runRebuildWeekSummaries;
+
+  // Loop the snapshot endpoint over the trailing 91 days to backfill
+  // daily_sales totals with the current reconciliation rules
+  // (Phase 2A: refunds subtracted). Each date is one worker invocation
+  // so subrequest budget is per-day, not cumulative.
+  async function runBackfillSales13w() {
+    const statusEl = el('backfill-sales-status');
+    const setStatus = (msg, tone) => {
+      statusEl.classList.remove('hidden');
+      const colors = {
+        info:  'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300',
+        ok:    'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-700 dark:text-green-300',
+        error: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300',
+      };
+      statusEl.className = `text-sm rounded-lg px-4 py-3 border flex-1 ${colors[tone]}`;
+      statusEl.innerHTML = msg;
+    };
+
+    // Build descending date list: today, yesterday, ... back 91 days.
+    const days = 91;
+    const dateList = [];
+    const today = new Date();
+    today.setHours(12, 0, 0, 0); // anchor noon to avoid TZ edge cases on the loop
+    for (let i = 0; i < days; i++) {
+      const d = new Date(today.getTime() - i * 86400000);
+      dateList.push(d.toISOString().slice(0, 10));
+    }
+
+    let done = 0;
+    const failed = [];
+    const startTime = Date.now();
+    for (const date of dateList) {
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      setStatus(`Backfilling sales (${done + 1}/${days}) — ${date} · ${elapsed}s elapsed…`, 'info');
+      try {
+        const resp = await fetch(
+          `${WORKER_BASE}?action=snapshot&store=all&date=${encodeURIComponent(date)}`,
+          { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
+        );
+        const data = await resp.json();
+        if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+        // Detect any per-store errors inside the result object
+        const storeErrs = Object.entries(data.results || {}).filter(([, v]) => v?.error);
+        if (storeErrs.length) failed.push(`${date}: ${storeErrs.map(([s, v]) => `${s}=${v.error}`).join(', ')}`);
+        done++;
+      } catch (err) {
+        failed.push(`${date}: ${err.message}`);
+      }
+    }
+
+    // Auto-rebuild week summaries so T13 reflects the new daily_sales numbers.
+    setStatus(`Backfill complete (${done}/${days}). Rebuilding week summaries…`, 'info');
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=rebuild-week-summaries`, {
+        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      const tone = failed.length ? 'error' : 'ok';
+      const errBlock = failed.length ? `<br><span class="font-mono text-xs">${failed.slice(0, 5).join('<br>')}${failed.length > 5 ? '<br>…' : ''}</span>` : '';
+      setStatus(`<strong>Done</strong> — ${done}/${days} dates re-snapshotted, ${data.written} week summaries rebuilt.${errBlock}`, tone);
+    } catch (err) {
+      setStatus(`Backfill done (${done}/${days}) but rebuild failed: ${err.message}`, 'error');
+    }
+  }
+  window.runBackfillSales13w = runBackfillSales13w;
 
   // ═══════════════════════════════════════════════════════════════
   //  SETTINGS – CUSTOM SALES CATEGORIZATION

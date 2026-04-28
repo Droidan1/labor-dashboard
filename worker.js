@@ -1393,6 +1393,12 @@ async function fetchItemCategoryMap(store, env) {
 // `order.total`. Phase 2A: fetch this endpoint per (store, day) and
 // subtract from `totalNet` so dashboard matches Clover Sales Summary.
 //
+// Phase 2A refinement: subtract `refund.taxAmount` from each refund's
+// gross amount. The /v3/refunds endpoint returns refund.amount INCLUDING
+// the original tax, but Clover's Sales Summary "Refunds" line is the
+// pre-tax portion (mirroring how Net Sales itself is pre-tax). Without
+// this, we over-deduct by the refund tax amount.
+//
 // Defensive: returns 0 on any failure (rate limit, network) — better to
 // over-report a single day than to break the snapshot pipeline.
 async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = null) {
@@ -1418,7 +1424,12 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
       }
       const data = await resp.json();
       if (!data?.elements?.length) break;
-      for (const r of data.elements) total += (r.amount || 0);
+      for (const r of data.elements) {
+        // refund.amount includes tax; subtract tax to match Clover's pre-tax "Refunds" line.
+        const gross = r.amount || 0;
+        const tax = r.taxAmount || 0;
+        total += (gross - tax);
+      }
       if (data.elements.length < limit) break;
       offset += limit;
     }
@@ -2342,9 +2353,7 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
 
   const data = aggregateOrders(elements, sinceTimestamp);
 
-  // Phase 2A: subtract /v3/refunds total to match Clover Sales Summary.
-  // (Refunds endpoint is the canonical source for the "Refunds" line in
-  // Clover's report; order.total alone is insufficient.)
+  // Phase 2A: subtract /v3/refunds total (pre-tax) to match Clover Sales Summary.
   const refundCents = await fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp);
   applyRefundsToAggregate(data, refundCents);
 
@@ -4440,7 +4449,7 @@ export default {
       // Snapshot-on-fetch: save today's aggregated data to KV in background
       if (env.SALES_SNAPSHOTS && elements && elements.length > 0) {
         const aggregated = aggregateOrders(elements, startOfToday);
-        // Phase 2A: also subtract refunds to match Clover Sales Summary.
+        // Phase 2A: also subtract refunds (pre-tax) to match Clover Sales Summary.
         ctx.waitUntil((async () => {
           const refundCents = await fetchRefundsTotal(targetStore, env, startOfToday);
           applyRefundsToAggregate(aggregated, refundCents);
