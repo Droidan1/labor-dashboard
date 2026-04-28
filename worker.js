@@ -1386,6 +1386,49 @@ async function fetchItemCategoryMap(store, env) {
   return map;
 }
 
+// ─── Fetch total refunds (in cents) from Clover for a window ─────
+// Clover's Sales Summary computes Net Sales = Gross − Discounts − Refunds.
+// Our `order.total` already nets discounts, but refunds are tracked
+// separately on /v3/refunds and are NOT consistently subtracted from
+// `order.total`. Phase 2A: fetch this endpoint per (store, day) and
+// subtract from `totalNet` so dashboard matches Clover Sales Summary.
+//
+// Defensive: returns 0 on any failure (rate limit, network) — better to
+// over-report a single day than to break the snapshot pipeline.
+async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = null) {
+  const merchantId = env[`${store}_MERCHANT_ID`];
+  const apiToken = env[`${store}_API_TOKEN`];
+  if (!merchantId || !apiToken) return 0;
+
+  let total = 0;
+  let offset = 0;
+  const limit = 1000;
+  try {
+    while (true) {
+      let url = `https://api.clover.com/v3/merchants/${merchantId}/refunds`
+        + `?filter=createdTime>=${sinceTimestamp}`
+        + `&limit=${limit}&offset=${offset}`;
+      if (untilTimestamp) url += `&filter=createdTime<${untilTimestamp}`;
+      const resp = await fetch(url, {
+        headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
+      });
+      if (!resp.ok) {
+        console.warn(`fetchRefundsTotal(${store}) HTTP ${resp.status}`);
+        break;
+      }
+      const data = await resp.json();
+      if (!data?.elements?.length) break;
+      for (const r of data.elements) total += (r.amount || 0);
+      if (data.elements.length < limit) break;
+      offset += limit;
+    }
+  } catch (e) {
+    console.warn(`fetchRefundsTotal(${store}) error:`, e.message);
+    return 0;
+  }
+  return total;
+}
+
 // ─── Fetch raw orders from Clover API ────────────────────────────
 async function fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp = null) {
   const targetStore = store.toUpperCase();
@@ -2272,12 +2315,39 @@ async function saveSnapshot(env, store, dateStr, data) {
   }
 }
 
+// ─── Apply refund subtraction to aggregated totals ───────────────
+// Mutates `data` to subtract refundCents proportionally across total /
+// retail / bin so the split adds up. Stores the original total and the
+// refund amount as metadata for auditability.
+function applyRefundsToAggregate(data, refundCents) {
+  if (!refundCents || refundCents <= 0) return data;
+  const refundDollars = refundCents / 100;
+  const totalBefore = data.total;
+  data.totalBeforeRefunds = +totalBefore.toFixed(2);
+  data.refundsSubtracted = +refundDollars.toFixed(2);
+  data.total = +(totalBefore - refundDollars).toFixed(2);
+  if (totalBefore > 0) {
+    const retailShare = data.retail / totalBefore;
+    const binShare = data.bin / totalBefore;
+    data.retail = +(data.retail - refundDollars * retailShare).toFixed(2);
+    data.bin = +(data.bin - refundDollars * binShare).toFixed(2);
+  }
+  return data;
+}
+
 // ─── Fetch and aggregate for a store, then snapshot ──────────────
-async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr) {
-  const elements = await fetchCloverOrders(store, env, sinceTimestamp);
+async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, untilTimestamp = null) {
+  const elements = await fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp);
   if (!elements) return null;
 
   const data = aggregateOrders(elements, sinceTimestamp);
+
+  // Phase 2A: subtract /v3/refunds total to match Clover Sales Summary.
+  // (Refunds endpoint is the canonical source for the "Refunds" line in
+  // Clover's report; order.total alone is insufficient.)
+  const refundCents = await fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp);
+  applyRefundsToAggregate(data, refundCents);
+
   await saveSnapshot(env, store, dateStr, data);
   return data;
 }
@@ -2782,38 +2852,45 @@ export default {
       return new Response(JSON.stringify(out), { headers: corsJson });
     }
 
-    // ── Manual snapshot endpoint: ?action=snapshot&store=BL1
+    // ── Manual snapshot endpoint: ?action=snapshot&store=BL1[&date=2026-04-26]
+    // store=all snapshots every store. date defaults to today (ET, not UTC).
     if (url.searchParams.get("action") === "snapshot") {
-      const unauth = requireAdminSecret(request, env, corsHeaders);
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
       if (unauth) return unauth;
 
-      const store = url.searchParams.get("store");
-      if (!store) {
-        return new Response(JSON.stringify({ error: "Please specify a store" }), {
-          status: 400, headers: corsHeaders,
+      const storeParam = (url.searchParams.get("store") || "").toUpperCase();
+      if (!storeParam) {
+        return new Response(JSON.stringify({ error: "Missing store param (use store=BL1 or store=all)" }), {
+          status: 400, headers: corsJson,
         });
       }
+      const stores = storeParam === "ALL" ? ALL_STORES : [storeParam];
 
-      const now = new Date();
-      const dateStr = now.toISOString().slice(0, 10);
-      // Use midnight UTC as the start time for full-day snapshot
-      const startOfDay = new Date(dateStr + "T00:00:00Z").getTime();
+      const { dateStr: todayStr } = getETToday();
+      const dateStr = url.searchParams.get("date") || todayStr;
 
-      try {
-        const data = await fetchAggregateAndSnapshot(store.toUpperCase(), env, startOfDay, dateStr);
-        if (!data) {
-          return new Response(JSON.stringify({ error: "Store keys not found" }), {
-            status: 404, headers: corsHeaders,
-          });
+      // Use ET day boundaries (was UTC — caused day-shift bug for early-AM snapshots).
+      const startOfDay = getStartOfDayET(dateStr);
+      let untilTs = null;
+      if (dateStr !== todayStr) {
+        const nextDay = new Date(dateStr + 'T12:00:00Z');
+        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+        untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
+      }
+
+      const results = {};
+      for (const store of stores) {
+        try {
+          const data = await fetchAggregateAndSnapshot(store, env, startOfDay, dateStr, untilTs);
+          results[store] = data ? { ok: true, total: data.total, refundsSubtracted: data.refundsSubtracted ?? 0 } : { error: "no credentials" };
+        } catch (err) {
+          results[store] = { error: err.message };
         }
-        return new Response(JSON.stringify({ ok: true, store, date: dateStr, data }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      } catch (err) {
-        return new Response(JSON.stringify({ error: "Snapshot failed", detail: err.message }), {
-          status: 500, headers: corsHeaders,
-        });
       }
+      return new Response(JSON.stringify({ ok: true, date: dateStr, results }), {
+        headers: corsJson,
+      });
     }
 
     // ── Backfill endpoint: ?action=backfill (imports Sheets + KV → D1)
@@ -2998,6 +3075,193 @@ export default {
       }
 
       return new Response(JSON.stringify({ ok: true, date: dateParam, results }), { headers: corsJson });
+    }
+
+    // ── Admin: sales reconciliation diagnostic
+    //    ?action=sales-diag&store=BL1&date=2026-04-26
+    // Pulls one (store, date) of orders fresh from Clover with EVERY potentially
+    // relevant field expanded and dumps every sum that could explain a mismatch
+    // between our Net Sales and Clover's Sales Summary report. Read-only: does
+    // not write to KV or D1. Used for Phase 1 reconciliation of Option A.
+    if (url.searchParams.get("action") === "sales-diag") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      const dateParam = url.searchParams.get("date");
+      if (!store || !dateParam) {
+        return new Response(JSON.stringify({ error: "Missing store or date param" }), { status: 400, headers: corsJson });
+      }
+      const merchantId = env[`${store}_MERCHANT_ID`];
+      const apiToken = env[`${store}_API_TOKEN`];
+      if (!merchantId || !apiToken) {
+        return new Response(JSON.stringify({ error: `No credentials for store ${store}` }), { status: 400, headers: corsJson });
+      }
+
+      const sinceTs = getStartOfDayET(dateParam);
+      const nextDay = new Date(dateParam + 'T12:00:00Z');
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      const untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
+
+      const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
+
+      // 1) Fetch orders with EVERY relevant expansion for this date.
+      //    Clover supports comma-separated expansions; we ask for everything
+      //    that could possibly carry a $ figure.
+      const orders = [];
+      let offset = 0;
+      const limit = 1000;
+      while (true) {
+        const url = `https://api.clover.com/v3/merchants/${merchantId}/orders`
+          + `?filter=createdTime>=${sinceTs}`
+          + `&filter=createdTime<${untilTs}`
+          + `&expand=payments,lineItems.item,lineItems.discounts,lineItems.modifications,lineItems.refunds,discounts,credits,refunds,serviceCharge`
+          + `&limit=${limit}&offset=${offset}`;
+        const resp = await fetch(url, { headers });
+        const data = await resp.json();
+        if (!data?.elements?.length) break;
+        orders.push(...data.elements);
+        if (data.elements.length < limit) break;
+        offset += limit;
+      }
+
+      // 2) Independently fetch /credits and /refunds for the same window.
+      //    Cross-day refunds (refund posted today against a prior-day order)
+      //    won't appear in the orders fetch above.
+      const fetchEndpoint = async (path) => {
+        try {
+          const r = await fetch(
+            `https://api.clover.com/v3/merchants/${merchantId}/${path}`
+            + `?filter=createdTime>=${sinceTs}&filter=createdTime<${untilTs}&limit=1000`,
+            { headers }
+          );
+          if (!r.ok) return { error: `${r.status}`, elements: [] };
+          const j = await r.json();
+          return j;
+        } catch (e) {
+          return { error: e.message, elements: [] };
+        }
+      };
+      const [credits, refundsEp] = await Promise.all([
+        fetchEndpoint("credits"),
+        fetchEndpoint("refunds"),
+      ]);
+
+      // 3) Walk orders and sum every potentially-relevant figure (cents).
+      const cents = {
+        sum_order_total: 0,
+        sum_order_taxAmount: 0,        // top-level field (if exists)
+        sum_payment_taxAmount: 0,      // current source for our totalNet
+        sum_payment_tipAmount: 0,
+        sum_order_serviceCharge: 0,
+        sum_lineitem_gross: 0,         // Σ price × qty
+        sum_lineitem_discounts: 0,     // line-item-attached discounts
+        sum_order_discounts: 0,        // order.discounts.elements
+        sum_lineitem_refunds: 0,       // lineItem.refunds.elements
+        negative_lineitem_total: 0,
+      };
+      const stateBreakdown = {};
+      let negativeLineItemCount = 0;
+      const topResiduals = [];          // {orderId, residual, total}
+      let zeroTotalOrderCount = 0;
+
+      for (const o of orders) {
+        stateBreakdown[o.state || "(unknown)"] = (stateBreakdown[o.state || "(unknown)"] || 0) + 1;
+        if (o.total == null) continue;
+        if (o.total === 0) zeroTotalOrderCount++;
+
+        cents.sum_order_total += (o.total || 0);
+        cents.sum_order_taxAmount += (o.taxAmount || 0);
+        cents.sum_order_serviceCharge += (o.serviceCharge?.amount ?? o.serviceCharge ?? 0) || 0;
+
+        let orderPmtTax = 0, orderPmtTip = 0;
+        for (const p of (o.payments?.elements || [])) {
+          orderPmtTax += (p.taxAmount || 0);
+          orderPmtTip += (p.tipAmount || 0);
+        }
+        cents.sum_payment_taxAmount += orderPmtTax;
+        cents.sum_payment_tipAmount += orderPmtTip;
+
+        for (const d of (o.discounts?.elements || [])) {
+          cents.sum_order_discounts += Math.abs(d.amount || 0);
+        }
+
+        let orderLineItemGross = 0, orderLineItemDisc = 0, orderLineItemRefund = 0;
+        for (const li of (o.lineItems?.elements || [])) {
+          const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
+          const liGross = (li.price || 0) * qty;
+          orderLineItemGross += liGross;
+          if ((li.price || 0) < 0) {
+            negativeLineItemCount++;
+            cents.negative_lineitem_total += liGross;
+          }
+          for (const d of (li.discounts?.elements || [])) {
+            orderLineItemDisc += Math.abs(d.amount || 0);
+          }
+          for (const r of (li.refunds?.elements || [])) {
+            orderLineItemRefund += Math.abs(r.amount || 0);
+          }
+        }
+        cents.sum_lineitem_gross += orderLineItemGross;
+        cents.sum_lineitem_discounts += orderLineItemDisc;
+        cents.sum_lineitem_refunds += orderLineItemRefund;
+
+        // Residual = order.total − tax(from payments) − Σ(li.gross − li.disc)
+        // — the same residual that lands in our "Other / Non-Item" bucket.
+        const orderNet = o.total - orderPmtTax;
+        const orderLineItemNet = orderLineItemGross - orderLineItemDisc;
+        const residual = orderNet - orderLineItemNet;
+        if (Math.abs(residual) > 50) { // >$0.50
+          topResiduals.push({
+            orderId: o.id, total: o.total / 100, residual: residual / 100,
+            state: o.state, lineItemCount: (o.lineItems?.elements || []).length,
+          });
+        }
+      }
+      topResiduals.sort((a, b) => Math.abs(b.residual) - Math.abs(a.residual));
+
+      const sum_credits = (credits.elements || []).reduce((s, c) => s + (c.amount || 0), 0);
+      const sum_refunds_ep = (refundsEp.elements || []).reduce((s, r) => s + (r.amount || 0), 0);
+
+      // 4) Compute candidate "true" net values to triangulate against Clover.
+      const ourNet = (cents.sum_order_total - cents.sum_payment_taxAmount) / 100;
+      const altNet_orderTax = (cents.sum_order_total - cents.sum_order_taxAmount) / 100;
+      const cloverFormulaNet = (cents.sum_lineitem_gross - cents.sum_lineitem_discounts - cents.sum_order_discounts) / 100;
+      const ourNet_minus_serviceCharge = ourNet - cents.sum_order_serviceCharge / 100;
+      const ourNet_minus_credits = ourNet - sum_credits / 100;
+      const ourNet_minus_refunds_ep = ourNet - sum_refunds_ep / 100;
+      const ourNet_minus_lineitem_refunds = ourNet - cents.sum_lineitem_refunds / 100;
+
+      const out = {
+        store, date: dateParam,
+        window: { sinceTs, untilTs, sinceISO: new Date(sinceTs).toISOString(), untilISO: new Date(untilTs).toISOString() },
+        orderCount: orders.length,
+        zeroTotalOrderCount,
+        stateBreakdown,
+        // Sums in dollars
+        sums_dollars: Object.fromEntries(Object.entries(cents).map(([k, v]) => [k, +(v / 100).toFixed(2)])),
+        sum_credits_endpoint: +(sum_credits / 100).toFixed(2),
+        sum_refunds_endpoint: +(sum_refunds_ep / 100).toFixed(2),
+        credits_count: (credits.elements || []).length,
+        refunds_endpoint_count: (refundsEp.elements || []).length,
+        credits_endpoint_error: credits.error || null,
+        refunds_endpoint_error: refundsEp.error || null,
+        // Candidate net values — pick the one that matches Clover Sales Summary
+        candidates: {
+          ourNet_current: +ourNet.toFixed(2),
+          altNet_using_order_taxAmount: +altNet_orderTax.toFixed(2),
+          cloverFormula_lineItemGross_minus_allDiscounts: +cloverFormulaNet.toFixed(2),
+          ourNet_minus_serviceCharge: +ourNet_minus_serviceCharge.toFixed(2),
+          ourNet_minus_credits_endpoint: +ourNet_minus_credits.toFixed(2),
+          ourNet_minus_refunds_endpoint: +ourNet_minus_refunds_ep.toFixed(2),
+          ourNet_minus_lineitem_refunds: +ourNet_minus_lineitem_refunds.toFixed(2),
+        },
+        negativeLineItemCount,
+        topResiduals: topResiduals.slice(0, 10),
+      };
+
+      return new Response(JSON.stringify(out, null, 2), { headers: corsJson });
     }
 
     // ── Admin: backfill `items:` KV snapshots across a date range
@@ -4176,7 +4440,12 @@ export default {
       // Snapshot-on-fetch: save today's aggregated data to KV in background
       if (env.SALES_SNAPSHOTS && elements && elements.length > 0) {
         const aggregated = aggregateOrders(elements, startOfToday);
-        ctx.waitUntil(saveSnapshot(env, targetStore, et.dateStr, aggregated));
+        // Phase 2A: also subtract refunds to match Clover Sales Summary.
+        ctx.waitUntil((async () => {
+          const refundCents = await fetchRefundsTotal(targetStore, env, startOfToday);
+          applyRefundsToAggregate(aggregated, refundCents);
+          await saveSnapshot(env, targetStore, et.dateStr, aggregated);
+        })());
       }
 
       return response;
