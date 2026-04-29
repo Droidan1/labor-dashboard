@@ -2001,31 +2001,34 @@
       ...sumRows(filterRows(allStoreData[s] || [])),
     }));
 
-    // Top KPI Math
-    let tA=0, tB=0, lNum=0, lDen=0;
+    // Labor calc uses the day-filtered metrics (the labor chart respects
+    // the day selector). Weekly tA/tB are computed separately below so
+    // the All Stores Budget card always shows the full week regardless
+    // of which day is selected.
+    let lNum=0, lDen=0;
     for (const m of metrics) {
-      if (m.aTotal != null) tA += m.aTotal;
-      if (m.bTotal != null) tB += m.bTotal;
       if (m.laborPct != null && m.aTotal != null) { lNum += (m.laborPct / 100) * m.aTotal; lDen += m.aTotal; }
     }
+    const laborTot = lDen > 0 ? (lNum / lDen) * 100 : null;
 
-    // Live boost: when viewing the current week (full week or today specifically),
-    // replace today's contribution to tA with the fresh live Clover total.
-    // Subtract any stale today-row aTotal from D1 to avoid double-counting.
-    // Same logic applied to mA below.
-    const todayBoostInView = (selectedWeek === currentWeek) && (!dayFilter || dayFilter === todayStr);
-    let liveBoost = 0;
-    if (todayBoostInView) {
+    // All Stores Budget — Weekly (always full week, never day-filtered).
+    // Sum the entire selected week from D1, then live-boost today's
+    // contribution when viewing the current week.
+    let tA=0, tB=0;
+    for (const s of STORES) {
+      const wk = sumRows((allStoreData[s] || []).filter(r => r.week === selectedWeek));
+      if (wk.aTotal != null) tA += wk.aTotal;
+      if (wk.bTotal != null) tB += wk.bTotal;
+    }
+    if (selectedWeek === currentWeek) {
       for (const s of STORES) {
         const live = liveCloverData[s];
         if (!live || live.total == null) continue;
         const todayRow = (allStoreData[s] || []).find(r => r.date && r.date.toISOString().slice(0, 10) === todayStr);
         const stale = todayRow?.aTotal ?? 0;
-        liveBoost += (live.total - stale);
+        tA += (live.total - stale);
       }
-      tA += liveBoost;
     }
-    const laborTot = lDen > 0 ? (lNum / lDen) * 100 : null;
 
     // Today's total live sales across all stores
     const isCurrentWeek = selectedWeek === currentWeek;
@@ -2176,7 +2179,11 @@
       diffEl.textContent = '';
     }
 
-    el("c-period-label").textContent = isDayView ? "Daily" : "Weekly";
+    // Always show Weekly (week-to-date, live-boosted) — even when a
+    // specific day is selected. The day selector affects per-store cards
+    // and charts, but the All Stores Budget left panel intentionally
+    // ignores it so the user can always see the week-level pacing.
+    el("c-period-label").textContent = "Weekly";
     el("c-total").textContent = fmtK(tA);
     el("c-budget").textContent = fmtK(tB);
     const wkDiff = tA - tB;
