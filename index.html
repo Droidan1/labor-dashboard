@@ -1004,6 +1004,85 @@
               </div>
             </div>
           </div>
+
+          <!-- Manual Sales Override -->
+          <div class="border-t border-gray-100 dark:border-gray-700 mt-6 pt-5 space-y-3">
+            <div>
+              <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Manual Sales Override</p>
+              <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Set sales totals for a (store, date) when Clover lost the data. Once saved, the row is locked and the cron snapshot / Sheet backfill will not overwrite it. Auto-rebuilds the affected week summary.</p>
+
+              <!-- Single entry -->
+              <div class="grid grid-cols-2 md:grid-cols-6 gap-2 mb-3">
+                <select id="mso-store" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                  <option value="BL1">BL1 – Coliseum</option>
+                  <option value="BL2">BL2 – South Bend</option>
+                  <option value="BL4">BL4 – Dupont</option>
+                  <option value="BL8">BL8 – Holland</option>
+                  <option value="BL12">BL12 – Wyoming</option>
+                  <option value="BL14">BL14 – Battle Creek</option>
+                </select>
+                <input id="mso-date" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                <input id="mso-total" type="number" step="0.01" placeholder="Total $" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                <input id="mso-retail" type="number" step="0.01" placeholder="Retail $" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                <input id="mso-bin" type="number" step="0.01" placeholder="Bin $" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                <input id="mso-auction" type="number" step="0.01" placeholder="Auction $" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+              </div>
+              <div class="flex items-center gap-3 mb-4">
+                <button onclick="runManualSalesSingle()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
+                  Save Single Entry
+                </button>
+              </div>
+
+              <!-- Bulk -->
+              <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Bulk paste (CSV)</p>
+              <p class="text-xs text-gray-400 dark:text-gray-500 mb-2">One row per line: <code>store,date,total,retail,bin,auction</code> — only <code>store</code> and <code>date</code> are required. Header row optional.</p>
+              <textarea id="mso-bulk" rows="6" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2" placeholder="BL1,2026-01-28,7761&#10;BL2,2026-01-28,5400"></textarea>
+              <div class="flex items-center gap-3 mt-2">
+                <button onclick="runManualSalesBulk()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
+                  Save Bulk Entries
+                </button>
+                <div id="mso-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Manual Labor Hours -->
+          <div class="border-t border-gray-100 dark:border-gray-700 mt-6 pt-5 space-y-3">
+            <div>
+              <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Manual Labor Hours</p>
+              <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Set labor hours for a (store, date). Marks the row as a manual override — the cron snapshot / Sheet backfill will not change it.</p>
+
+              <!-- Single entry -->
+              <div class="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
+                <select id="mlh-store" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                  <option value="BL1">BL1 – Coliseum</option>
+                  <option value="BL2">BL2 – South Bend</option>
+                  <option value="BL4">BL4 – Dupont</option>
+                  <option value="BL8">BL8 – Holland</option>
+                  <option value="BL12">BL12 – Wyoming</option>
+                  <option value="BL14">BL14 – Battle Creek</option>
+                </select>
+                <input id="mlh-date" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                <input id="mlh-hours" type="number" step="0.25" placeholder="Hours" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+              </div>
+              <div class="flex items-center gap-3 mb-4">
+                <button onclick="runManualLaborSingle()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
+                  Save Single Entry
+                </button>
+              </div>
+
+              <!-- Bulk -->
+              <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Bulk paste (CSV)</p>
+              <p class="text-xs text-gray-400 dark:text-gray-500 mb-2">One row per line: <code>store,date,hours</code>. Header row optional.</p>
+              <textarea id="mlh-bulk" rows="6" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2" placeholder="BL1,2026-01-28,42.5&#10;BL2,2026-01-28,38"></textarea>
+              <div class="flex items-center gap-3 mt-2">
+                <button onclick="runManualLaborBulk()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
+                  Save Bulk Entries
+                </button>
+                <div id="mlh-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Item Master Costs -->
@@ -3837,6 +3916,131 @@
     }
   }
   window.runBackfillSales13w = runBackfillSales13w;
+
+  // ── Manual override helpers ────────────────────────────────────
+  // Shared status renderer + POST function for the manual-override
+  // admin endpoint. Sales and Labor tools both call submitOverride().
+  function _setOverrideStatus(elId, msg, tone) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const colors = {
+      info:  'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300',
+      ok:    'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-700 dark:text-green-300',
+      error: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300',
+    };
+    el.className = `text-sm rounded-lg px-4 py-3 border flex-1 ${colors[tone] || colors.info}`;
+    el.classList.remove('hidden');
+    el.innerHTML = msg;
+  }
+
+  async function _submitOverride(entries, statusElId) {
+    if (!entries.length) {
+      _setOverrideStatus(statusElId, 'No entries to submit.', 'error');
+      return;
+    }
+    _setOverrideStatus(statusElId, `Saving ${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}…`, 'info');
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=manual-override`, {
+        method: 'POST',
+        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entries }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      const errs = (data.results || []).filter(r => r.error);
+      const errBlock = errs.length
+        ? `<br><span class="font-mono text-xs">${errs.slice(0, 5).map(e => `${e.store}/${e.date}: ${e.error}`).join('<br>')}${errs.length > 5 ? '<br>…' : ''}</span>`
+        : '';
+      const rebuiltCount = (data.rebuilt || []).reduce((s, r) => s + (r.written || 0), 0);
+      _setOverrideStatus(
+        statusElId,
+        `<strong>Done</strong> — ${data.count}/${data.total} entries saved. ${rebuiltCount ? rebuiltCount + ' week-summary writes refreshed.' : ''}${errBlock}`,
+        errs.length ? 'error' : 'ok'
+      );
+    } catch (err) {
+      _setOverrideStatus(statusElId, `Error: ${err.message}`, 'error');
+    }
+  }
+
+  // CSV parser tolerant of header rows and surrounding whitespace.
+  // Returns array of cell-arrays (no field names — caller maps positions).
+  function _parseCsvLines(text) {
+    const lines = (text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (!lines.length) return [];
+    // Skip header if first row's date column doesn't look like YYYY-MM-DD
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const cells = lines[i].split(',').map(c => c.trim());
+      if (i === 0 && !/^\d{4}-\d{2}-\d{2}$/.test(cells[1] || '')) continue; // header
+      out.push(cells);
+    }
+    return out;
+  }
+
+  // ── Manual Sales Override ──────────────────────────────────────
+  async function runManualSalesSingle() {
+    const store = document.getElementById('mso-store').value;
+    const date = document.getElementById('mso-date').value;
+    if (!date) { _setOverrideStatus('mso-status', 'Please pick a date.', 'error'); return; }
+    const entry = { store, date };
+    for (const f of ['total','retail','bin','auction']) {
+      const v = document.getElementById('mso-' + f).value;
+      if (v !== '' && v != null) entry[f] = Number(v);
+    }
+    const numericKeys = Object.keys(entry).filter(k => k !== 'store' && k !== 'date');
+    if (!numericKeys.length) { _setOverrideStatus('mso-status', 'Enter at least one numeric field.', 'error'); return; }
+    await _submitOverride([entry], 'mso-status');
+  }
+  window.runManualSalesSingle = runManualSalesSingle;
+
+  async function runManualSalesBulk() {
+    const text = document.getElementById('mso-bulk').value;
+    const rows = _parseCsvLines(text);
+    if (!rows.length) { _setOverrideStatus('mso-status', 'Paste at least one row of CSV.', 'error'); return; }
+    const entries = [];
+    const errors = [];
+    rows.forEach((r, i) => {
+      const [store, date, total, retail, bin, auction] = r;
+      if (!store || !date) { errors.push(`Row ${i+1}: missing store or date`); return; }
+      const e = { store, date };
+      if (total) e.total = Number(total);
+      if (retail) e.retail = Number(retail);
+      if (bin) e.bin = Number(bin);
+      if (auction) e.auction = Number(auction);
+      entries.push(e);
+    });
+    if (errors.length && !entries.length) {
+      _setOverrideStatus('mso-status', `All rows invalid:<br>${errors.slice(0,5).join('<br>')}`, 'error');
+      return;
+    }
+    await _submitOverride(entries, 'mso-status');
+  }
+  window.runManualSalesBulk = runManualSalesBulk;
+
+  // ── Manual Labor Hours ─────────────────────────────────────────
+  async function runManualLaborSingle() {
+    const store = document.getElementById('mlh-store').value;
+    const date = document.getElementById('mlh-date').value;
+    const hours = document.getElementById('mlh-hours').value;
+    if (!date) { _setOverrideStatus('mlh-status', 'Please pick a date.', 'error'); return; }
+    if (hours === '') { _setOverrideStatus('mlh-status', 'Enter labor hours.', 'error'); return; }
+    await _submitOverride([{ store, date, labor_hours: Number(hours) }], 'mlh-status');
+  }
+  window.runManualLaborSingle = runManualLaborSingle;
+
+  async function runManualLaborBulk() {
+    const text = document.getElementById('mlh-bulk').value;
+    const rows = _parseCsvLines(text);
+    if (!rows.length) { _setOverrideStatus('mlh-status', 'Paste at least one row of CSV.', 'error'); return; }
+    const entries = [];
+    rows.forEach(r => {
+      const [store, date, hours] = r;
+      if (store && date && hours) entries.push({ store, date, labor_hours: Number(hours) });
+    });
+    if (!entries.length) { _setOverrideStatus('mlh-status', 'No valid rows found.', 'error'); return; }
+    await _submitOverride(entries, 'mlh-status');
+  }
+  window.runManualLaborBulk = runManualLaborBulk;
 
   // ═══════════════════════════════════════════════════════════════
   //  SETTINGS – CUSTOM SALES CATEGORIZATION
