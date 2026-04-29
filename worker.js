@@ -2427,23 +2427,32 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
   const refundCents = await fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp);
   applyRefundsToAggregate(data, refundCents);
 
-  // Defensive guard: if Clover returned 0 orders AND we already have a
-  // non-zero daily_sales row, refuse to overwrite. Protects against
-  // transient empty responses (rate limit, hiccup, partial outage)
-  // silently zeroing real revenue. Only applies when total is exactly 0.
-  if (data.total === 0 && env.DB) {
+  // Defensive guards before persisting:
+  //  1) If row is_manual_override = 1, NEVER overwrite (admin entered
+  //     real numbers manually because Clover lost the data).
+  //  2) If Clover returned 0 orders AND we already have a non-zero
+  //     daily_sales row, refuse to overwrite — protects against
+  //     transient empty responses silently zeroing real revenue.
+  if (env.DB) {
     try {
       const existing = await env.DB.prepare(
-        "SELECT total FROM daily_sales WHERE store = ? AND date = ?"
+        "SELECT total, is_manual_override FROM daily_sales WHERE store = ? AND date = ?"
       ).bind(store.toUpperCase(), dateStr).first();
-      if (existing && existing.total != null && existing.total > 0) {
+
+      if (existing && existing.is_manual_override) {
+        console.warn(`Skipping manual-override row for ${store}/${dateStr}`);
+        data.skippedManualOverride = true;
+        data.total = existing.total;
+        return data;
+      }
+      if (data.total === 0 && existing && existing.total != null && existing.total > 0) {
         console.warn(`Skipping zero-overwrite for ${store}/${dateStr} (existing total=$${existing.total})`);
         data.skippedZeroOverwrite = true;
-        data.total = existing.total; // return existing value to caller for visibility
+        data.total = existing.total;
         return data;
       }
     } catch (e) {
-      console.warn(`zero-overwrite guard query failed for ${store}/${dateStr}:`, e.message);
+      console.warn(`pre-save guard query failed for ${store}/${dateStr}:`, e.message);
     }
   }
 
@@ -3091,24 +3100,23 @@ export default {
                   order_count, avg_cart, avg_items, avg_txn_sec, avg_asp, snapshot_time)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(store, date) DO UPDATE SET
+                   -- Manual-override rows are immutable: keep all existing values.
+                   -- The CASE wrappers below short-circuit when is_manual_override=1.
                    -- Sheet-authoritative columns: Sheet always wins (humans enter these)
-                   week=excluded.week,
-                   budget=excluded.budget,
-                   auction=COALESCE(excluded.auction, auction),
-                   labor_pct=COALESCE(excluded.labor_pct, labor_pct),
-                   -- Phase 2C: Cron-authoritative columns. Cron writes the truth
-                   -- from Clover; Sheet backfill must NOT overwrite it. Flipped
-                   -- COALESCE so existing non-null values are preserved.
-                   -- (excluded.* still fills initial NULLs on first import.)
-                   total=COALESCE(total, excluded.total),
-                   retail=COALESCE(retail, excluded.retail),
-                   bin=COALESCE(bin, excluded.bin),
-                   order_count=COALESCE(order_count, excluded.order_count),
-                   avg_cart=COALESCE(avg_cart, excluded.avg_cart),
-                   avg_items=COALESCE(avg_items, excluded.avg_items),
-                   avg_txn_sec=COALESCE(avg_txn_sec, excluded.avg_txn_sec),
-                   avg_asp=COALESCE(avg_asp, excluded.avg_asp),
-                   snapshot_time=COALESCE(snapshot_time, excluded.snapshot_time)`
+                   week=CASE WHEN is_manual_override=1 THEN week ELSE excluded.week END,
+                   budget=CASE WHEN is_manual_override=1 THEN budget ELSE excluded.budget END,
+                   auction=CASE WHEN is_manual_override=1 THEN auction ELSE COALESCE(excluded.auction, auction) END,
+                   labor_pct=CASE WHEN is_manual_override=1 THEN labor_pct ELSE COALESCE(excluded.labor_pct, labor_pct) END,
+                   -- Phase 2C: Cron-authoritative columns. Existing wins; Sheet only fills NULLs.
+                   total=CASE WHEN is_manual_override=1 THEN total ELSE COALESCE(total, excluded.total) END,
+                   retail=CASE WHEN is_manual_override=1 THEN retail ELSE COALESCE(retail, excluded.retail) END,
+                   bin=CASE WHEN is_manual_override=1 THEN bin ELSE COALESCE(bin, excluded.bin) END,
+                   order_count=CASE WHEN is_manual_override=1 THEN order_count ELSE COALESCE(order_count, excluded.order_count) END,
+                   avg_cart=CASE WHEN is_manual_override=1 THEN avg_cart ELSE COALESCE(avg_cart, excluded.avg_cart) END,
+                   avg_items=CASE WHEN is_manual_override=1 THEN avg_items ELSE COALESCE(avg_items, excluded.avg_items) END,
+                   avg_txn_sec=CASE WHEN is_manual_override=1 THEN avg_txn_sec ELSE COALESCE(avg_txn_sec, excluded.avg_txn_sec) END,
+                   avg_asp=CASE WHEN is_manual_override=1 THEN avg_asp ELSE COALESCE(avg_asp, excluded.avg_asp) END,
+                   snapshot_time=CASE WHEN is_manual_override=1 THEN snapshot_time ELSE COALESCE(snapshot_time, excluded.snapshot_time) END`
               ).bind(
                 storeCode, dateStr, week, bTotal,
                 kvData?.total || aTotal || null, kvData?.retail || aRetail || null, kvData?.bin || aBins || null,
@@ -4218,6 +4226,99 @@ export default {
       } catch (err) {
         return new Response(JSON.stringify({ error: "weekly-t13 failed", detail: err.message }), { status: 500, headers: corsJson });
       }
+    }
+
+    // ── Admin: manual override for daily_sales rows.
+    //    POST  ?action=manual-override
+    //    body: { entries: [ { store, date, total?, retail?, bin?, auction?, labor_pct?, labor_hours? } ] }
+    // Single-entry: pass one element. Bulk: pass many. At least one numeric
+    // field per entry must be provided. Sets is_manual_override=1 so the
+    // cron snapshot and Sheet backfill will not overwrite this row.
+    if (url.searchParams.get("action") === "manual-override") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      }
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const entries = Array.isArray(body.entries) ? body.entries : (body.store && body.date ? [body] : []);
+      if (!entries.length) {
+        return new Response(JSON.stringify({ error: "No entries provided. Send { entries: [...] } or a single object." }), { status: 400, headers: corsJson });
+      }
+
+      const num = (v) => (v === '' || v == null ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
+      const FIELDS = ['total', 'retail', 'bin', 'auction', 'labor_pct', 'labor_hours'];
+      const results = [];
+      for (const e of entries) {
+        const store = (e.store || '').toUpperCase();
+        const date = e.date || '';
+        if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          results.push({ store, date, error: 'invalid store/date' });
+          continue;
+        }
+        // Build the SET list dynamically from provided fields only.
+        const updates = {};
+        for (const f of FIELDS) {
+          if (e[f] !== undefined) {
+            const v = num(e[f]);
+            if (v !== null) updates[f] = v;
+          }
+        }
+        if (!Object.keys(updates).length) {
+          results.push({ store, date, error: 'no numeric fields provided' });
+          continue;
+        }
+
+        // Derive week label from date if D1 has nothing (so T13 can find it).
+        const wk = e.week ? String(e.week) : null;
+        const setCols = Object.keys(updates);
+        const colList = setCols.join(', ');
+        const placeholders = setCols.map(() => '?').join(', ');
+        const updateList = setCols.map((c) => `${c}=excluded.${c}`).join(', ');
+        const values = setCols.map((c) => updates[c]);
+        const snapshotTime = new Date().toISOString();
+
+        try {
+          await env.DB.prepare(
+            `INSERT INTO daily_sales (store, date, week, ${colList}, snapshot_time, is_manual_override)
+             VALUES (?, ?, ?, ${placeholders}, ?, 1)
+             ON CONFLICT(store, date) DO UPDATE SET
+               ${updateList},
+               week=COALESCE(excluded.week, week),
+               snapshot_time=excluded.snapshot_time,
+               is_manual_override=1`
+          ).bind(store, date, wk, ...values, snapshotTime).run();
+          results.push({ store, date, ok: true, fields: updates });
+        } catch (err) {
+          results.push({ store, date, error: err.message });
+        }
+      }
+
+      // Auto-rebuild week summaries for the affected weeks so T13 reflects the change.
+      const affectedWeeks = new Set();
+      for (const r of results) {
+        if (!r.ok) continue;
+        const year = r.date.slice(0, 4);
+        try {
+          const row = await env.DB.prepare(
+            "SELECT DISTINCT week FROM daily_sales WHERE date = ? AND week IS NOT NULL LIMIT 1"
+          ).bind(r.date).first();
+          if (row?.week) affectedWeeks.add(`${row.week}|${year}`);
+        } catch {}
+      }
+      const rebuildResults = [];
+      for (const key of affectedWeeks) {
+        const [wk, year] = key.split('|');
+        const settled = await Promise.allSettled(
+          ALL_STORES.map(s => writeWeekSummary(env, s, wk, year))
+        );
+        rebuildResults.push({ week: wk, year, written: settled.filter(s => s.status === 'fulfilled' && s.value).length });
+      }
+
+      const ok = results.filter(r => r.ok).length;
+      return new Response(JSON.stringify({ ok: true, count: ok, total: results.length, results, rebuilt: rebuildResults }), { headers: corsJson });
     }
 
     // ── Admin: rebuild week-summary KV keys for an entire year (backfill)
