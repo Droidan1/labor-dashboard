@@ -2206,12 +2206,13 @@
             }
           }
         }
-        // Live boost for monthly total: if today is in this month and we
-        // have live data (regardless of which week the user is viewing —
-        // if today's row in D1 is stale or missing, the monthly total
-        // would otherwise undercount).
-        const today = new Date();
-        if (today.getMonth() === refMonth && today.getFullYear() === refYear) {
+        // Live boost for monthly total: if today (ET) falls in the same
+        // month as the selected week, add today's live Clover data.
+        // Anchored to ET via todayStr (matches the rest of the dashboard)
+        // rather than browser-local new Date(), so users in PT etc. don't
+        // see an off-by-one-month error near midnight ET.
+        const [todayYr, todayMo] = todayStr.split('-').map(Number);
+        if ((todayMo - 1) === refMonth && todayYr === refYear) {
           for (const s of STORES) {
             const live = liveCloverData[s];
             if (!live || live.total == null) continue;
