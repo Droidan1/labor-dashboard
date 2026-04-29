@@ -2008,6 +2008,23 @@
       if (m.bTotal != null) tB += m.bTotal;
       if (m.laborPct != null && m.aTotal != null) { lNum += (m.laborPct / 100) * m.aTotal; lDen += m.aTotal; }
     }
+
+    // Live boost: when viewing the current week (full week or today specifically),
+    // replace today's contribution to tA with the fresh live Clover total.
+    // Subtract any stale today-row aTotal from D1 to avoid double-counting.
+    // Same logic applied to mA below.
+    const todayBoostInView = (selectedWeek === currentWeek) && (!dayFilter || dayFilter === todayStr);
+    let liveBoost = 0;
+    if (todayBoostInView) {
+      for (const s of STORES) {
+        const live = liveCloverData[s];
+        if (!live || live.total == null) continue;
+        const todayRow = (allStoreData[s] || []).find(r => r.date && r.date.toISOString().slice(0, 10) === todayStr);
+        const stale = todayRow?.aTotal ?? 0;
+        liveBoost += (live.total - stale);
+      }
+      tA += liveBoost;
+    }
     const laborTot = lDen > 0 ? (lNum / lDen) * 100 : null;
 
     // Today's total live sales across all stores
@@ -2187,6 +2204,20 @@
               if (r.aTotal != null) mA += r.aTotal;
               if (r.bTotal != null) mB += r.bTotal;
             }
+          }
+        }
+        // Live boost for monthly total: if today is in this month and we
+        // have live data (regardless of which week the user is viewing —
+        // if today's row in D1 is stale or missing, the monthly total
+        // would otherwise undercount).
+        const today = new Date();
+        if (today.getMonth() === refMonth && today.getFullYear() === refYear) {
+          for (const s of STORES) {
+            const live = liveCloverData[s];
+            if (!live || live.total == null) continue;
+            const todayRow = (allStoreData[s] || []).find(r => r.date && r.date.toISOString().slice(0, 10) === todayStr);
+            const stale = todayRow?.aTotal ?? 0;
+            mA += (live.total - stale);
           }
         }
       }
