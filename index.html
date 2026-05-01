@@ -2191,15 +2191,33 @@
     el("c-variance").className = `text-xs font-semibold mt-1 ${wkCls}`;
     el("c-variance").textContent = `${wkDiff >= 0 ? '+' : '-'}${fmtDollar(Math.abs(wkDiff))}`;
 
-    // Monthly totals: find which month the selected week falls in, sum all rows in that month
+    // Monthly totals: which month to display depends on context.
+    //   1. If a specific day is selected → that day's month wins (so
+    //      clicking Thu Apr 30 shows April even though we're now in May)
+    //   2. Else if today (ET) falls within the selected week → today's
+    //      month (handles week-18-spanning-Apr-May correctly: at May 1
+    //      with no day filter, monthly = May, not April)
+    //   3. Else fall back to any row in the selected week
     let monthLabel = '';
     let mA = 0, mB = 0;
     {
-      // Find a date from the selected week to determine the month
       let refDate = null;
-      for (const s of STORES) {
-        const row = (allStoreData[s] || []).find(r => r.week === selectedWeek && r.date);
-        if (row) { refDate = row.date; break; }
+      if (dayFilter) {
+        refDate = new Date(dayFilter + 'T12:00:00');
+      } else {
+        // Is today in the selected week?
+        for (const s of STORES) {
+          const todayInWeek = (allStoreData[s] || []).find(r =>
+            r.week === selectedWeek && r.date && r.date.toISOString().slice(0, 10) === todayStr
+          );
+          if (todayInWeek) { refDate = todayInWeek.date; break; }
+        }
+        if (!refDate) {
+          for (const s of STORES) {
+            const row = (allStoreData[s] || []).find(r => r.week === selectedWeek && r.date);
+            if (row) { refDate = row.date; break; }
+          }
+        }
       }
       if (refDate) {
         const refMonth = refDate.getMonth();
@@ -2485,14 +2503,142 @@
     };
   }
 
-  function buildWeeklyTable(storeName) {
+  // Store detail Weekly Breakdown — independent month + week selectors
+  // and a per-store month summary. Defaults align with the dashboard's
+  // selectedWeek but are decoupled so the user can browse history
+  // without changing the dashboard view.
+  let sdMonthFilter = null; // 'YYYY-MM'
+  let sdWeekFilter = null;  // week number as string
+
+  function _ymKey(date) {
+    return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0');
+  }
+
+  // Build dropdown options for month + week in the current store's data.
+  function _buildSdSelectors(storeName) {
     const data = allStoreData[storeName] || [];
-    const weekRows = data.filter(r => r.week === selectedWeek);
+    // Month list: distinct YYYY-MM with at least one row, sorted desc.
+    const monthMap = new Map(); // key -> {label, weeks:Set}
+    for (const r of data) {
+      if (!r.date) continue;
+      const key = _ymKey(r.date);
+      if (!monthMap.has(key)) {
+        monthMap.set(key, {
+          label: r.date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+          weeks: new Set(),
+        });
+      }
+      if (r.week) monthMap.get(key).weeks.add(r.week);
+    }
+    const months = [...monthMap.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+
+    // Default: month + week containing the dashboard's selectedWeek's reference date,
+    // or fall back to the most recent month available.
+    if (!sdMonthFilter || !monthMap.has(sdMonthFilter)) {
+      let defaultMonth = months[0]?.[0] || null;
+      // Prefer month of selectedWeek if available
+      const seedRow = data.find(r => r.week === selectedWeek && r.date);
+      if (seedRow) defaultMonth = _ymKey(seedRow.date);
+      sdMonthFilter = defaultMonth;
+    }
+    const selectedMonthEntry = monthMap.get(sdMonthFilter);
+    const monthWeeks = selectedMonthEntry
+      ? [...selectedMonthEntry.weeks].sort((a, b) => Number(b) - Number(a))
+      : [];
+    if (!sdWeekFilter || !monthWeeks.includes(sdWeekFilter)) {
+      sdWeekFilter = monthWeeks.includes(selectedWeek) ? selectedWeek : (monthWeeks[0] || null);
+    }
+
+    const monthOpts = months.map(([key, v]) =>
+      `<option value="${key}" ${key === sdMonthFilter ? 'selected' : ''}>${escapeHtml(v.label)}</option>`
+    ).join('');
+    const weekOpts = monthWeeks.map(w =>
+      `<option value="${w}" ${w === sdWeekFilter ? 'selected' : ''}>Week ${escapeHtml(w)}</option>`
+    ).join('');
+
+    return `
+      <div class="flex flex-wrap items-end gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-700 bg-gray-50/40 dark:bg-gray-700/20">
+        <div>
+          <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Month</label>
+          <select id="sd-month-select" onchange="onSdMonthChange(this.value)" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+            ${monthOpts || '<option>—</option>'}
+          </select>
+        </div>
+        <div>
+          <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Week</label>
+          <select id="sd-week-select" onchange="onSdWeekChange(this.value)" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+            ${weekOpts || '<option>—</option>'}
+          </select>
+        </div>
+      </div>`;
+  }
+
+  // Aggregate this store's totals across all rows in the selected month,
+  // with a live boost when today is in that month.
+  function _buildSdMonthSummary(storeName) {
+    if (!sdMonthFilter) return '';
+    const data = allStoreData[storeName] || [];
+    let mSales = 0, mBudget = 0, hasBudget = false, hasSales = false;
+    for (const r of data) {
+      if (!r.date) continue;
+      if (_ymKey(r.date) !== sdMonthFilter) continue;
+      if (r.aTotal != null) { mSales += r.aTotal; hasSales = true; }
+      if (r.bTotal != null) { mBudget += r.bTotal; hasBudget = true; }
+    }
+    // Live boost — if today's date (ET) falls in this month
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+    if (todayStr.slice(0, 7) === sdMonthFilter) {
+      const live = liveCloverData[storeName];
+      if (live && live.total != null) {
+        const todayRow = data.find(r => r.date && r.date.toISOString().slice(0, 10) === todayStr);
+        const stale = todayRow?.aTotal ?? 0;
+        mSales += (live.total - stale);
+        hasSales = true;
+      }
+    }
+    const diff = mSales - mBudget;
+    const diffPos = diff >= 0;
+    const monthLabel = (data.find(r => r.date && _ymKey(r.date) === sdMonthFilter)?.date || new Date())
+      .toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+    return `
+      <div class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 bg-[#3BB54A]/5 dark:bg-[#3BB54A]/10">
+        <div class="flex flex-wrap items-baseline gap-3">
+          <div class="text-[10px] font-semibold text-[#3BB54A] uppercase tracking-wider">${escapeHtml(monthLabel)} Total</div>
+          <div class="flex items-baseline gap-1">
+            <span class="text-base font-bold text-gray-900 dark:text-white">${hasSales ? fmtDollar(mSales) : '—'}</span>
+            <span class="text-gray-300 dark:text-gray-600">/</span>
+            <span class="text-sm font-semibold text-gray-500 dark:text-gray-400">${hasBudget ? fmtDollar(mBudget) : '—'}</span>
+          </div>
+          ${hasBudget && hasSales ? `<div class="text-xs font-semibold ${diffPos ? 'text-green-600' : 'text-red-500'}">${diffPos ? '+' : '-'}${fmtDollar(Math.abs(diff))}</div>` : ''}
+        </div>
+      </div>`;
+  }
+
+  function onSdMonthChange(value) {
+    sdMonthFilter = value;
+    sdWeekFilter = null; // re-default to a week in the new month
+    if (currentStoreName) el('sd-content-weekly').innerHTML = buildWeeklyTable(currentStoreName);
+  }
+  window.onSdMonthChange = onSdMonthChange;
+
+  function onSdWeekChange(value) {
+    sdWeekFilter = value;
+    if (currentStoreName) el('sd-content-weekly').innerHTML = buildWeeklyTable(currentStoreName);
+  }
+  window.onSdWeekChange = onSdWeekChange;
+
+  function buildWeeklyTable(storeName) {
+    const selectorsHtml = _buildSdSelectors(storeName);
+    const monthSummaryHtml = _buildSdMonthSummary(storeName);
+    const effectiveWeek = sdWeekFilter || selectedWeek;
+    const data = allStoreData[storeName] || [];
+    const weekRows = data.filter(r => r.week === effectiveWeek);
     const sorted = [...weekRows].sort((a, b) => b.date - a.date);
 
     // Use live Clover data for today if available
     const todayStr = new Date().toDateString();
-    const isCurrentWeek = selectedWeek === currentWeek;
+    const isCurrentWeek = effectiveWeek === currentWeek;
     const liveTotal = isCurrentWeek ? (liveCloverData[storeName]?.total ?? null) : null;
 
     let html = `<table class="w-full text-left table-fixed">
@@ -2537,7 +2683,7 @@
 
     if (sorted.length > 0) {
       html += `</tbody><tfoot class="border-t-2 border-gray-300 dark:border-gray-600"><tr class="font-bold text-xs sm:text-sm">
-        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-gray-900 dark:text-white whitespace-nowrap">Week ${selectedWeek} Total</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-gray-900 dark:text-white whitespace-nowrap">Week ${effectiveWeek} Total</td>
         <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-500 dark:text-gray-400">${fmtDollar(wkBudget)}</td>
         <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-900 dark:text-white">${fmtDollar(wkSales)}</td>
         <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right ${wkDiffPos ? 'text-green-600' : 'text-red-500'}">${wkDiffPos ? '+' : '-'}${fmtDollar(Math.abs(wkDiff))}</td>
@@ -2546,8 +2692,8 @@
     } else {
       html += `</tbody></table>`;
     }
-    if (sorted.length === 0) html = `<div class="p-8 text-center text-gray-400 dark:text-gray-500">No data for Week ${selectedWeek}.</div>`;
-    return html;
+    if (sorted.length === 0) html = `<div class="p-8 text-center text-gray-400 dark:text-gray-500">No data for Week ${effectiveWeek}.</div>`;
+    return selectorsHtml + monthSummaryHtml + html;
   }
 
   function renderDailySalesChart(storeName) {
@@ -2887,9 +3033,16 @@
   }
 
   function showStoreDetail(storeName) {
+    const isStoreSwitch = currentStoreName !== storeName;
     currentPage = 'store-detail';
     currentStoreName = storeName;
     selectedItemDate = null;  // Reset to today when switching stores
+    if (isStoreSwitch) {
+      // Reset month/week selectors so the store detail view defaults to
+      // the dashboard's current selection instead of carrying stale state.
+      sdMonthFilter = null;
+      sdWeekFilter = null;
+    }
     el('mobile-menu-btn').classList.add('hidden');
 
     el('store-detail-title').textContent = shortName(storeName);
