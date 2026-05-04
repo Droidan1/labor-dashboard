@@ -4138,6 +4138,11 @@ export default {
         let liveBuilds = 0;
         const l2UnitsByWeek = []; // one entry per week: { L2Name: combinedQty }
         const l2NetByWeek = [];   // one entry per week: { L2Name: combinedNetSales }
+        // Per-store L2 arrays: one entry per week, each is { storeKey: { L2Name: qty/net } }.
+        // Lets the frontend recompute combined cards when the user filters
+        // to a subset of stores without an extra API round-trip.
+        const perStoreL2UnitsByWeek = [];
+        const perStoreL2NetByWeek = [];
         for (const wkObj of weeks) {
           const wk = wkObj.week;
           const perStore = {};
@@ -4208,6 +4213,13 @@ export default {
             }
           }
           l2NetByWeek.push(Object.fromEntries(Object.entries(wkL2Net).map(([k, v]) => [k, roundCents(v)])));
+
+          perStoreL2UnitsByWeek.push({ ...perStoreL2 });
+          perStoreL2NetByWeek.push(
+            Object.fromEntries(Object.entries(perStoreL2Net).map(([s, cats]) =>
+              [s, Object.fromEntries(Object.entries(cats).map(([k, v]) => [k, roundCents(v)]))]
+            ))
+          );
         }
 
         if (liveBuilds > 0) {
@@ -4221,6 +4233,8 @@ export default {
           total,
           l2Units: l2UnitsByWeek,
           l2Net: l2NetByWeek,
+          perStoreL2Units: perStoreL2UnitsByWeek,
+          perStoreL2Net: perStoreL2NetByWeek,
           liveBuilds,
         }), { headers: corsJson });
       } catch (err) {
