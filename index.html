@@ -4718,6 +4718,27 @@
   // ═══════════════════════════════════════════════════════════════
   //  WEEKLY RETAIL SUMMARY — T13 tab renderer
   // ═══════════════════════════════════════════════════════════════
+  // T13 store filter — user picks which stores to include in the
+  // combined cards. Defaults to "all selected" on first render.
+  let t13StoreFilter = null; // Set<string> of store keys, null = uninitialized
+
+  function setT13StoreFilter(set) {
+    t13StoreFilter = set;
+    renderT13();
+  }
+  window.toggleT13Store = (storeKey) => {
+    if (!t13StoreFilter) return;
+    if (storeKey === '__all__') {
+      const allOn = WRS_STORE_KEYS.every(s => t13StoreFilter.has(s));
+      t13StoreFilter = new Set(allOn ? [] : WRS_STORE_KEYS);
+    } else {
+      const next = new Set(t13StoreFilter);
+      next.has(storeKey) ? next.delete(storeKey) : next.add(storeKey);
+      t13StoreFilter = next;
+    }
+    renderT13();
+  };
+
   function renderT13() {
     if (!wrsT13Data) return;
     const d = wrsT13Data;
@@ -4725,20 +4746,40 @@
     const dates = d.dates || [];
     const total = d.total || {};
     const stores = d.stores || {};
+    const perStoreL2Units = d.perStoreL2Units || [];
+    const perStoreL2Net = d.perStoreL2Net || [];
     const thCls = 'px-2 py-2 text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap';
     const tdCls = 'px-2 py-2 text-xs text-right text-gray-800 dark:text-gray-100 whitespace-nowrap';
     const tdTotCls = 'px-2 py-2 text-xs text-right font-semibold text-gray-900 dark:text-white whitespace-nowrap';
 
-    // ── Top table: weekly totals (Net Sales, all stores + Grand Total + Budget + %Budget) ──
+    // Initialize filter if needed
+    if (!t13StoreFilter) t13StoreFilter = new Set(WRS_STORE_KEYS);
+    const filteredStoreKeys = WRS_STORE_KEYS.filter(s => t13StoreFilter.has(s));
+    const allOn = filteredStoreKeys.length === WRS_STORE_KEYS.length;
+
+    // ── Store filter chips ────────────────────────────────────────
+    const chipBase = 'px-3 py-1.5 text-xs font-medium rounded-full transition-colors cursor-pointer select-none';
+    const chipOn = 'bg-[#3BB54A] text-white border border-[#3BB54A]';
+    const chipOff = 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600';
+    const filterHtml = `<div class="flex items-center flex-wrap gap-2 mb-4">
+      <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mr-1">View:</span>
+      <span class="${chipBase} ${allOn ? chipOn : chipOff}" onclick="toggleT13Store('__all__')">All Stores</span>
+      ${WRS_STORE_KEYS.map(s => {
+        const on = t13StoreFilter.has(s);
+        return `<span class="${chipBase} ${on ? chipOn : chipOff}" onclick="toggleT13Store('${s}')">${escapeHtml(WRS_STORE_NAMES[s] || s)}</span>`;
+      }).join('')}
+    </div>`;
+
+    // ── Top table: weekly totals (only selected stores; recomputed grand total) ──
     let topHtml = `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-x-auto">
       <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700">
-        <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Weekly Net Sales — Trailing 13 Weeks</h3>
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Weekly Net Sales — Trailing 13 Weeks${allOn ? '' : ' · ' + filteredStoreKeys.length + ' store(s)'}</h3>
       </div>
       <table class="w-full text-sm">
         <thead><tr class="border-b border-gray-100 dark:border-gray-700">
           <th class="${thCls} text-left">Week</th>
           <th class="${thCls} text-left">Dates</th>
-          ${WRS_STORE_KEYS.map(s=>`<th class="${thCls}">${escapeHtml(WRS_STORE_NAMES[s])}</th>`).join('')}
+          ${filteredStoreKeys.map(s=>`<th class="${thCls}">${escapeHtml(WRS_STORE_NAMES[s])}</th>`).join('')}
           <th class="${thCls}">Grand Total</th>
           <th class="${thCls}">Budget</th>
           <th class="${thCls}">% Budget</th>
@@ -4747,14 +4788,18 @@
     weeks.forEach((wk, i) => {
       const dObj = dates[i] || {};
       const dateRange = dObj.start && dObj.end ? `${dObj.start.slice(5)} – ${dObj.end.slice(5)}` : '';
-      const gt = (total.netSales || [])[i] || 0;
-      const bud = (total.budget || [])[i] || 0;
+      // Recompute grand total + budget from filtered stores (so % Budget stays meaningful when filtered)
+      let gt = 0, bud = 0;
+      for (const s of filteredStoreKeys) {
+        gt += ((stores[s] || {}).netSales || [])[i] || 0;
+        bud += ((stores[s] || {}).budget || [])[i] || 0;
+      }
       const pctBud = bud > 0 ? ((gt / bud) * 100).toFixed(1) + '%' : '—';
       const pctCls = bud > 0 ? wrsVarianceClass(gt - bud) : '';
       topHtml += `<tr class="border-b border-gray-50 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
         <td class="px-2 py-2 text-xs font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap">Wk ${wk}</td>
         <td class="px-2 py-2 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">${dateRange}</td>
-        ${WRS_STORE_KEYS.map(s => {
+        ${filteredStoreKeys.map(s => {
           const v = ((stores[s] || {}).netSales || [])[i] || 0;
           return `<td class="${tdCls}">${v ? fmtK(v) : '—'}</td>`;
         }).join('')}
@@ -4772,8 +4817,22 @@
       'Softline - Accessories', 'Softline - Apparel', 'Softline - Shoes',
       'Bin Products',
     ];
-    const l2Units = d.l2Units || [];
-    const l2Net = d.l2Net || [];
+    // Recompute combined L2 arrays based on selected stores. If all stores
+    // are selected we can use the precomputed d.l2Units/d.l2Net (saves work);
+    // otherwise sum perStoreL2 arrays across just the selected stores.
+    const sumPerStoreL2 = (perStoreArr) => weeks.map((_, i) => {
+      const wkObj = perStoreArr[i] || {};
+      const out = {};
+      for (const s of filteredStoreKeys) {
+        const cats = wkObj[s] || {};
+        for (const [cat, v] of Object.entries(cats)) {
+          out[cat] = (out[cat] || 0) + v;
+        }
+      }
+      return out;
+    });
+    const l2Units = allOn ? (d.l2Units || []) : sumPerStoreL2(perStoreL2Units);
+    const l2Net = allOn ? (d.l2Net || []) : sumPerStoreL2(perStoreL2Net);
     const wkLabels = weeks.map((wk, i) => {
       const dObj = dates[i] || {};
       return dObj.start ? dObj.start.slice(5) : `Wk ${wk}`;
@@ -4814,10 +4873,21 @@
       return html;
     };
 
-    const unitsHtml = renderL2Card('Combined Store Units Sold', l2Units, fmtUnits);
-    const netHtml = renderL2Card('Combined Stores Category Net Sales', l2Net, fmtMoney);
+    const unitsTitle = allOn ? 'Combined Store Units Sold' :
+      (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} Units Sold` : `Combined Units Sold (${filteredStoreKeys.length} stores)`);
+    const netTitle = allOn ? 'Combined Stores Category Net Sales' :
+      (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} Category Net Sales` : `Combined Category Net Sales (${filteredStoreKeys.length} stores)`);
+    const unitsHtml = renderL2Card(unitsTitle, l2Units, fmtUnits);
+    const netHtml = renderL2Card(netTitle, l2Net, fmtMoney);
 
-    el('wrs-pane-t13').innerHTML = topHtml + unitsHtml + '<div class="mt-6"></div>' + netHtml;
+    // Empty state if user deselected everything
+    if (filteredStoreKeys.length === 0) {
+      el('wrs-pane-t13').innerHTML = filterHtml +
+        '<div class="bg-white dark:bg-gray-800 rounded-xl p-8 shadow-sm border border-gray-100 dark:border-gray-700 text-center text-sm text-gray-400 dark:text-gray-500">Select at least one store to view trends.</div>';
+      return;
+    }
+
+    el('wrs-pane-t13').innerHTML = filterHtml + topHtml + unitsHtml + '<div class="mt-6"></div>' + netHtml;
   }
 
   // ═══════════════════════════════════════════════════════════════
