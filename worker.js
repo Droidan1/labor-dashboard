@@ -2432,7 +2432,10 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
   //     real numbers manually because Clover lost the data).
   //  2) If Clover returned 0 orders AND we already have a non-zero
   //     daily_sales row, refuse to overwrite — protects against
-  //     transient empty responses silently zeroing real revenue.
+  //     transient empty responses silently zeroing or negating real revenue.
+  //     IMPORTANT: when orders = 0 but refunds exist, Phase 2A produces a
+  //     NEGATIVE total. The guard must check orderCount === 0, not just
+  //     total === 0, to catch that case.
   if (env.DB) {
     try {
       const existing = await env.DB.prepare(
@@ -2445,8 +2448,21 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
         data.total = existing.total;
         return data;
       }
-      if (data.total === 0 && existing && existing.total != null && existing.total > 0) {
-        console.warn(`Skipping zero-overwrite for ${store}/${dateStr} (existing total=$${existing.total})`);
+      // Guard: if no real orders came back (orderCount === 0), don't write.
+      // When Clover returns 0 orders for a historical day but refunds exist,
+      // Phase 2A produces a negative total — that's always wrong for a daily
+      // sales figure and must never be persisted regardless of existing data.
+      const noRealOrders = data.orderCount != null && data.orderCount === 0;
+      if (noRealOrders) {
+        console.warn(`Skipping zero-order write for ${store}/${dateStr}: orderCount=${data.orderCount}, computedTotal=${data.total}`);
+        data.skippedZeroOverwrite = true;
+        data.total = existing?.total ?? null;
+        return data;
+      }
+      // Secondary guard: a negative computed total (e.g. 1 tiny order + big
+      // refund) is almost certainly a partial fetch. Protect existing good data.
+      if (data.total < 0 && existing && existing.total != null && existing.total > 0) {
+        console.warn(`Skipping negative-overwrite for ${store}/${dateStr}: computedTotal=${data.total}, existingTotal=${existing.total}`);
         data.skippedZeroOverwrite = true;
         data.total = existing.total;
         return data;
