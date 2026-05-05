@@ -4311,15 +4311,18 @@
     if (!startYear) throw new Error('Could not find a date range in the CSV header.');
 
     // Find header row with month names — first row whose 2nd cell is "Total"
-    let headerCells = null;
-    for (const line of lines) {
-      const cells = _parseCloverCsvLine(line);
-      if (cells[1] && cells[1].toLowerCase() === 'total' && cells[2]) {
-        headerCells = cells;
-        break;
+    // AND has at least one month name in cells [2..]. Track its index so we
+    // search for the per-month "Net sales" row AFTER the header (the CSV has
+    // a separate summary "Net sales" row near the top with only YTD figures).
+    let headerCells = null, headerIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const cells = _parseCloverCsvLine(lines[i]);
+      if (cells[1] && cells[1].toLowerCase() === 'total') {
+        const hasMonth = cells.slice(2).some(c => monthNames.includes(c));
+        if (hasMonth) { headerCells = cells; headerIdx = i; break; }
       }
     }
-    if (!headerCells) throw new Error('Could not find the month header row (looking for "Total" column).');
+    if (!headerCells) throw new Error('Could not find the month header row (looking for "Total" column with month names).');
 
     // Map each month-name column to a YYYY-MM string, advancing year when needed
     const monthCols = [];
@@ -4337,17 +4340,20 @@
     }
     if (!monthCols.length) throw new Error('No month columns recognized in the header row.');
 
-    // Find the Net sales row
-    for (const line of lines) {
-      const cells = _parseCloverCsvLine(line);
-      if ((cells[0] || '').toLowerCase().trim() === 'net sales') {
+    // Find the Net sales row AFTER the header (skip the summary row near the top).
+    // Also require enough cells to actually have month columns — guards against
+    // any trailing rows that happen to start with "Net sales".
+    const minCells = monthCols[monthCols.length - 1].colIndex + 1;
+    for (let i = headerIdx + 1; i < lines.length; i++) {
+      const cells = _parseCloverCsvLine(lines[i]);
+      if ((cells[0] || '').toLowerCase().trim() === 'net sales' && cells.length >= minCells) {
         return monthCols.map(mc => ({
           yearMonth: mc.yearMonth,
           cloverNet: _parseCloverDollar(cells[mc.colIndex]),
         }));
       }
     }
-    throw new Error('Could not find the "Net sales" row in the CSV.');
+    throw new Error('Could not find the per-month "Net sales" row after the header.');
   }
 
   function onSrrFileChosen(evt) {
