@@ -4366,6 +4366,55 @@ export default {
       return new Response(JSON.stringify({ ok: true, count: ok, total: results.length, results, rebuilt: rebuildResults }), { headers: corsJson });
     }
 
+    // ── Admin: item sales L2 totals from KV for a date range.
+    //    ?action=item-l2-totals&store=BL1&start=YYYY-MM-DD&end=YYYY-MM-DD
+    // Fetches every items:<store>:<date> KV snapshot in [start,end], merges
+    // them, and returns L2 category totals (netSales + qty).
+    // Used by the Item Sales Reconciliation tool.
+    if (url.searchParams.get("action") === "item-l2-totals") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      const start = url.searchParams.get("start");
+      const end   = url.searchParams.get("end");
+      if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(start || "") || !/^\d{4}-\d{2}-\d{2}$/.test(end || "")) {
+        return new Response(JSON.stringify({ error: "Missing or invalid store/start/end (use YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+      }
+      // Build list of dates in [start,end]
+      const dates = [];
+      const cur = new Date(start + "T12:00:00Z");
+      const last = new Date(end + "T12:00:00Z");
+      while (cur <= last) {
+        dates.push(cur.toISOString().slice(0, 10));
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+      if (dates.length > 366) {
+        return new Response(JSON.stringify({ error: "Date range too large (max 366 days)" }), { status: 400, headers: corsJson });
+      }
+      const lc = store.toLowerCase();
+      const snaps = await Promise.all(
+        dates.map(d => env.SALES_SNAPSHOTS.get(`items:${lc}:${d}`, "json"))
+      );
+      const validSnaps = snaps.filter(Boolean);
+      const merged = mergeItemSnapshots(validSnaps);
+      // Return L2 categories sorted by netSales desc
+      const categories = (merged.categories || [])
+        .filter(c => c.netSales > 0)
+        .sort((a, b) => b.netSales - a.netSales)
+        .map(c => ({ category: c.category, netSales: roundCents(c.netSales), qty: Math.round(c.qty || 0) }));
+      return new Response(JSON.stringify({
+        ok: true, store, start, end,
+        daysRequested: dates.length,
+        daysWithData: validSnaps.length,
+        categories,
+        totals: { netSales: roundCents(merged.totals?.netSales || 0), qty: Math.round(merged.totals?.qty || 0) },
+      }), { headers: corsJson });
+    }
+
     // ── Admin: aggregated monthly totals from D1 for a store + date range.
     //    ?action=monthly-totals&store=BL1&start=2026-01&end=2026-05
     // Returns [{ yearMonth, total, days, manualOverrides }] grouped by month.

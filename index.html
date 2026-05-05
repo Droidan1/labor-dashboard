@@ -1114,6 +1114,32 @@
           </div>
         </div>
 
+        <!-- Item Sales Reconciliation -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
+          <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Item Sales Reconciliation</h2>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Upload a Clover <strong>Revenue Item Sales</strong> report CSV to compare its L2 category totals against our stored item snapshots for the same date range. Flags categories where our data is off by more than $50. Use <strong>Re-snapshot Range</strong> to re-pull item sales from Clover for the full period.</p>
+          <div class="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
+            <select id="isr-store" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+              <option value="BL1">BL1 – Coliseum</option>
+              <option value="BL2">BL2 – South Bend</option>
+              <option value="BL4">BL4 – Dupont</option>
+              <option value="BL8">BL8 – Holland</option>
+              <option value="BL12">BL12 – Wyoming</option>
+              <option value="BL14">BL14 – Battle Creek</option>
+            </select>
+            <label class="text-xs flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 cursor-pointer hover:border-[#3BB54A] text-gray-600 dark:text-gray-300">
+              <span>📄 Upload CSV file</span>
+              <input id="isr-file" type="file" accept=".csv,text/csv" class="hidden" onchange="onIsrFileChosen(event)">
+            </label>
+            <button onclick="runIsrParse()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
+              Parse &amp; Compare
+            </button>
+          </div>
+          <textarea id="isr-csv" rows="6" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 mb-2" placeholder="Paste a Clover Revenue Item Sales CSV here, or upload a file above…"></textarea>
+          <div id="isr-status" class="hidden text-sm rounded-lg px-4 py-3 border mb-3"></div>
+          <div id="isr-results"></div>
+        </div>
+
         <!-- Item Master Costs -->
         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
           <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Item Master Costs</h2>
@@ -4658,6 +4684,326 @@
     _setSrrStatus(`Re-snapshot complete — ${done}/${dates.length} day(s) refreshed.${errMsg}${sanityWarning}`, (failed.length || sanityWarning) ? 'error' : 'ok');
   }
   window.runSrrResnapshotMonth = runSrrResnapshotMonth;
+
+  // ═══════════════════════════════════════════════════════════════
+  //  ITEM SALES RECONCILIATION (ISR)
+  // ═══════════════════════════════════════════════════════════════
+
+  // L3 Clover category → L2 rollup (mirrors L3_TO_L2 in worker.js)
+  const ISR_L3_TO_L2 = {
+    "BL CONSUMABLES - FOOD - PEPSI": "Consumable Food",
+    "BL CONSUMABLES - FOOD - PEPSI CASE PACK": "Consumable Food",
+    "FG BL CONSUMABLES - FOOD - BEVERAGES": "Consumable Food",
+    "FG BL CONSUMABLES - FOOD - BREAKFAST": "Consumable Food",
+    "FG BL CONSUMABLES - FOOD - CANDY": "Consumable Food",
+    "FG BL CONSUMABLES - FOOD - CANNED GOODS": "Consumable Food",
+    "FG BL CONSUMABLES - FOOD - COFFEE & TEA": "Consumable Food",
+    "FG BL CONSUMABLES - FOOD - CONDIMENTS": "Consumable Food",
+    "FG BL CONSUMABLES - FOOD - FROZEN": "Consumable Food",
+    "FG BL CONSUMABLES - FOOD - PANTRY": "Consumable Food",
+    "FG BL CONSUMABLES - FOOD - SINGLES": "Consumable Food",
+    "FG BL CONSUMABLES - FOOD - SNACKS": "Consumable Food",
+    "FG G CI MIXED CANDY": "Consumable Food",
+    "FG BL CONSUMABLES - FOOD - ENERGY DRINKS": "Consumable Food",
+    "FG BL CONSUMABLES - FOOD - MIXED BAG CANDY": "Consumable Food",
+    "FG BL CONSUMABLES - HBA - ALLERGY/COUGH/FLU": "Consumable HBA",
+    "FG BL CONSUMABLES - HBA - COSMETICS": "Consumable HBA",
+    "FG BL CONSUMABLES - HBA - FACE": "Consumable HBA",
+    "FG BL CONSUMABLES - HBA - HAIRCARE": "Consumable HBA",
+    "FG BL CONSUMABLES - HBA - HYGIENE": "Consumable HBA",
+    "FG BL CONSUMABLES - HBA - MEDS": "Consumable HBA",
+    "FG BL CONSUMABLES - HBA - ORAL": "Consumable HBA",
+    "FG BL CONSUMABLES - HBA - PAIN": "Consumable HBA",
+    "FG BL CONSUMABLES - HBA - SUNCARE": "Consumable HBA",
+    "FG BL CONSUMABLES - HBA - TRAVEL SIZE": "Consumable HBA",
+    "FG BL CONSUMABLES - CHEMICALS": "Consumable Other",
+    "Chemicals": "Consumable Other",
+    "FG BL CONSUMABLES - HOUSEKEEPING": "Consumable Other",
+    "FG BL CONSUMABLES - PAPER": "Consumable Other",
+    "FG BL CONSUMABLES - PET": "Consumable Other",
+    "FG BL FURNITURE - READY TO ASSEMBLE": "Furniture",
+    "FG BL FURNITURE - RTA - CHAIRS": "Furniture",
+    "FG BL FURNITURE - RTA - TABLES/STANDS": "Furniture",
+    "FG BL FURNITURE - UPHOLSTERY": "Furniture",
+    "FG BL FURNITURE - CASEGOODS": "Furniture",
+    "FG BL FURNITURE - MATTRESSES": "Furniture",
+    "FG BL WAYFAIR": "Furniture",
+    "MATTRESS ATLANTA MATTRESSES": "Furniture",
+    "BAILEY'S RECLINER FURNITURE": "Furniture",
+    "BL STORES - COMPTON'S FURNITURE": "Furniture",
+    "FG BL HARDLINES - BABY": "Hardlines",
+    "FG BL HARDLINES - ELECTRONICS": "Hardlines",
+    "FG BL HARDLINES - GENERAL MERCHANDISE": "Hardlines",
+    "FG BL HARDLINES - LUGGAGE": "Hardlines",
+    "FG BL HARDLINES - OFFICE PRODUCTS": "Hardlines",
+    "FG BL HARDLINES - STORAGE": "Hardlines",
+    "FG BL HARDLINES - TOYS": "Hardlines",
+    "FG BL HARDLINES - SPORTING GOODS": "Hardlines",
+    "APPLIANCES - BL STORES": "Hardlines",
+    "FG BL HAMILTON BEACH": "Home",
+    "FG BL HOME - BATH": "Home",
+    "FG BL HOME - BEDDING & PILLOWS": "Home",
+    "FG BL HOME - HOME DECOR": "Home",
+    "FG BL HOME - KITCHEN": "Home",
+    "FG BL HOME - RUGS": "Home",
+    "FG BL SEASONAL - CHRISTMAS - CANDY": "Seasonal",
+    "FG BL SEASONAL - CHRISTMAS - GM": "Seasonal",
+    "FG BL SEASONAL - EASTER - GM": "Seasonal",
+    "FG BL SEASONAL - EASTER - CANDY": "Seasonal",
+    "FG BL SEASONAL - VALENTINES - CANDY": "Seasonal",
+    "FG BL SEASONAL - VALENTINES - GM": "Seasonal",
+    "FG BL SEASONAL - BACK TO SCHOOL": "Seasonal",
+    "FG BL SEASONAL - HALLOWEEN - GM": "Seasonal",
+    "FG BL SEASONAL - HALLOWEEN - CANDY": "Seasonal",
+    "FG BL SEASONAL - HALLOWEEN - SINGLES": "Seasonal",
+    "FG BL SEASONAL - SPRING/SUMMER": "Seasonal",
+    "FG BL SEASONAL - LAWN & GARDEN": "Seasonal",
+    "FG BL SOFTLINES - APPAREL": "Softline - Apparel",
+    "FG BL SOFTLINES - SHOES": "Softline - Shoes",
+    "FG BL SOFTLINES - ACCESSORIES": "Softline - Accessories",
+    "Bin Products": "Bin Products",
+    "Sku Book Items": "Sku Book Items",
+  };
+
+  function parseCloverItemSalesReport(csv) {
+    const lines = csv.split(/\r?\n/);
+    // Parse date range from header (line 2)
+    let start = null, end = null;
+    const monthAbbr = { Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12 };
+    for (const line of lines.slice(0, 5)) {
+      const m = line.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d+),?\s+(\d{4})/g);
+      if (m && m.length >= 2) {
+        const parseDate = s => {
+          const p = s.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d+),?\s+(\d{4})/);
+          if (!p) return null;
+          const mo = String(monthAbbr[p[1]]).padStart(2,'0');
+          const dy = String(p[2]).padStart(2,'0');
+          return `${p[3]}-${mo}-${dy}`;
+        };
+        start = parseDate(m[0]);
+        end   = parseDate(m[1]);
+        break;
+      }
+    }
+    if (!start || !end) throw new Error('Could not find date range in CSV header (expected "Mon D, YYYY - Mon D, YYYY").');
+
+    // Extract Total (Category) rows → {l3: netSales}
+    const l3Totals = {};
+    for (const line of lines) {
+      const cells = _parseCloverCsvLine(line);
+      const label = (cells[0] || '').trim();
+      const catMatch = label.match(/^Total\s+\((.+)\)$/);
+      if (!catMatch) continue;
+      const catName = catMatch[1].trim();
+      if (catName === 'Grand Total') continue;
+      const netSales = _parseCloverDollar(cells[3]);  // col 3 = Net Sales in item report
+      if (netSales == null) continue;
+      l3Totals[catName] = (l3Totals[catName] || 0) + netSales;
+    }
+    if (!Object.keys(l3Totals).length) throw new Error('No "Total (Category)" rows found. Make sure this is a Revenue Item Sales report.');
+
+    // Map L3 → L2, accumulate
+    const l2Totals = {};
+    const unmapped = [];
+    for (const [l3, net] of Object.entries(l3Totals)) {
+      const l2 = ISR_L3_TO_L2[l3];
+      if (l2) {
+        l2Totals[l2] = (l2Totals[l2] || 0) + net;
+      } else if (l3 === 'Uncategorized') {
+        l2Totals['Uncategorized'] = (l2Totals['Uncategorized'] || 0) + net;
+      } else {
+        unmapped.push({ l3, net });
+        l2Totals['Unmapped'] = (l2Totals['Unmapped'] || 0) + net;
+      }
+    }
+
+    return { start, end, l2Totals, unmapped };
+  }
+
+  function onIsrFileChosen(evt) {
+    const file = evt.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { document.getElementById('isr-csv').value = reader.result || ''; };
+    reader.readAsText(file);
+  }
+  window.onIsrFileChosen = onIsrFileChosen;
+
+  function _setIsrStatus(msg, tone) {
+    const s = el('isr-status');
+    const colors = {
+      info:  'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300',
+      ok:    'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-700 dark:text-green-300',
+      error: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300',
+    };
+    s.className = `text-sm rounded-lg px-4 py-3 border mb-3 ${colors[tone] || colors.info}`;
+    s.classList.remove('hidden');
+    s.innerHTML = msg;
+  }
+
+  let _isrLastParsed = null;
+
+  async function runIsrParse() {
+    const csv   = document.getElementById('isr-csv').value || '';
+    const store = document.getElementById('isr-store').value;
+    if (!csv.trim()) { _setIsrStatus('Paste or upload a Revenue Item Sales CSV first.', 'error'); return; }
+
+    let parsed;
+    try {
+      parsed = parseCloverItemSalesReport(csv);
+    } catch (err) {
+      _setIsrStatus(`Parse error: ${err.message}`, 'error');
+      return;
+    }
+
+    const { start, end, l2Totals, unmapped } = parsed;
+    _setIsrStatus(`Parsed CSV (${start} → ${end}) for ${store}. Loading our item snapshots…`, 'info');
+
+    // Fetch our KV item totals for the same date range
+    let ourByL2 = {};
+    let daysWithData = 0;
+    try {
+      const resp = await fetch(
+        `${WORKER_BASE}?action=item-l2-totals&store=${encodeURIComponent(store)}&start=${start}&end=${end}`,
+        { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
+      );
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      daysWithData = data.daysWithData || 0;
+      for (const c of (data.categories || [])) ourByL2[c.category] = c.netSales;
+    } catch (err) {
+      _setIsrStatus(`Failed to load our item totals: ${err.message}`, 'error');
+      return;
+    }
+
+    _isrLastParsed = { store, start, end, l2Totals, ourByL2, unmapped, daysWithData };
+    _renderIsrComparison();
+
+    const unmappedNote = unmapped.length
+      ? ` <strong>${unmapped.length}</strong> L3 categor${unmapped.length === 1 ? 'y' : 'ies'} couldn't be mapped to L2 and are grouped under "Unmapped".`
+      : '';
+    _setIsrStatus(`Loaded ${daysWithData} day(s) of item snapshots for ${store} (${start} → ${end}).${unmappedNote}`, 'ok');
+  }
+  window.runIsrParse = runIsrParse;
+
+  function _renderIsrComparison() {
+    if (!_isrLastParsed) return;
+    const { store, start, end, l2Totals, ourByL2 } = _isrLastParsed;
+    const fmt$ = v => v == null ? '—' : '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    // Collect all L2 categories from either side
+    const allL2 = new Set([...Object.keys(l2Totals), ...Object.keys(ourByL2)]);
+    const rows = [...allL2].map(l2 => {
+      const clover = l2Totals[l2] ?? null;
+      const ours   = ourByL2[l2]  ?? null;
+      const delta  = (clover != null && ours != null) ? ours - clover : null;
+      return { l2, clover, ours, delta };
+    }).sort((a, b) => (b.clover ?? 0) - (a.clover ?? 0));
+
+    const totalClover = rows.reduce((s, r) => s + (r.clover || 0), 0);
+    const totalOurs   = rows.reduce((s, r) => s + (r.ours   || 0), 0);
+    const totalDelta  = totalOurs - totalClover;
+
+    let html = `<table class="w-full text-sm">
+      <thead><tr class="border-b border-gray-200 dark:border-gray-700">
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Category (L2)</th>
+        <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Clover</th>
+        <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Ours</th>
+        <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Δ</th>
+      </tr></thead><tbody>`;
+
+    for (const { l2, clover, ours, delta } of rows) {
+      const off = delta != null && Math.abs(delta) > 50;
+      const deltaCls = delta == null ? 'text-gray-400'
+        : off ? (delta > 0 ? 'text-amber-600 font-semibold' : 'text-red-600 font-semibold')
+               : 'text-green-600';
+      const deltaStr = delta == null ? '—'
+        : (delta >= 0 ? '+' : '−') + '$' + Math.abs(delta).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      html += `<tr class="border-b border-gray-50 dark:border-gray-700/50">
+        <td class="px-3 py-2 text-gray-700 dark:text-gray-200 font-medium">${escapeHtml(l2)}</td>
+        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-200">${fmt$(clover)}</td>
+        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-200">${fmt$(ours)}</td>
+        <td class="px-3 py-2 text-right ${deltaCls}">${deltaStr}</td>
+      </tr>`;
+    }
+
+    // Totals row
+    const totDeltaCls = Math.abs(totalDelta) > 50
+      ? (totalDelta > 0 ? 'text-amber-600 font-bold' : 'text-red-600 font-bold')
+      : 'text-green-600 font-bold';
+    const totDeltaStr = (totalDelta >= 0 ? '+' : '−') + '$' + Math.abs(totalDelta).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    html += `<tr class="border-t-2 border-gray-300 dark:border-gray-500 bg-gray-50 dark:bg-gray-700/30">
+      <td class="px-3 py-2 font-bold text-gray-900 dark:text-white">Total</td>
+      <td class="px-3 py-2 text-right font-bold text-gray-900 dark:text-white">${fmt$(totalClover)}</td>
+      <td class="px-3 py-2 text-right font-bold text-gray-900 dark:text-white">${fmt$(totalOurs)}</td>
+      <td class="px-3 py-2 text-right ${totDeltaCls}">${totDeltaStr}</td>
+    </tr>`;
+
+    html += `</tbody></table>`;
+
+    // Re-snapshot button if there are any significant gaps
+    const hasGaps = rows.some(r => r.delta != null && Math.abs(r.delta) > 50);
+    if (hasGaps) {
+      html += `<div class="mt-3">
+        <button onclick="runIsrResnapshotRange()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg">
+          Re-snapshot Item Sales (${start} → ${end})
+        </button>
+        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Re-pulls item sales from Clover for every day in the range. Manual-override days are preserved.</p>
+      </div>`;
+    }
+
+    el('isr-results').innerHTML = html;
+  }
+
+  async function runIsrResnapshotRange() {
+    if (!_isrLastParsed) return;
+    const { store, start, end } = _isrLastParsed;
+
+    const ok = window.confirm(
+      `Re-snapshot item sales for ${store} from ${start} to ${end}?\n\n` +
+      `This re-pulls item sales from Clover for every day in the range. The comparison will refresh when done.`
+    );
+    if (!ok) return;
+
+    // Build date list
+    const dates = [];
+    const cur = new Date(start + 'T12:00:00Z');
+    const last = new Date(end + 'T12:00:00Z');
+    while (cur <= last) { dates.push(cur.toISOString().slice(0, 10)); cur.setUTCDate(cur.getUTCDate() + 1); }
+
+    let done = 0;
+    const failed = [];
+    _setIsrStatus(`Re-snapshotting item sales for ${store} (0/${dates.length})…`, 'info');
+
+    const BATCH = 2;
+    for (let i = 0; i < dates.length; i += BATCH) {
+      const batch = dates.slice(i, i + BATCH);
+      const settled = await Promise.allSettled(batch.map(date =>
+        fetch(`${WORKER_BASE}?action=items-snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(date)}`,
+          { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } })
+          .then(r => r.json())
+          .then(d => { if (d.error) throw new Error(d.error); return d; })
+      ));
+      settled.forEach((r, j) => { if (r.status === 'fulfilled') done++; else failed.push(batch[j]); });
+      _setIsrStatus(`Re-snapshotting item sales for ${store} (${done}/${dates.length})…`, 'info');
+    }
+
+    // Refresh
+    const resp = await fetch(
+      `${WORKER_BASE}?action=item-l2-totals&store=${encodeURIComponent(store)}&start=${start}&end=${end}`,
+      { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
+    );
+    const data = await resp.json();
+    if (data.categories) {
+      _isrLastParsed.ourByL2 = {};
+      for (const c of data.categories) _isrLastParsed.ourByL2[c.category] = c.netSales;
+      _isrLastParsed.daysWithData = data.daysWithData;
+      _renderIsrComparison();
+    }
+    const errMsg = failed.length ? ` ${failed.length} day(s) failed.` : '';
+    _setIsrStatus(`Re-snapshot complete — ${done}/${dates.length} day(s) refreshed.${errMsg}`, failed.length ? 'error' : 'ok');
+  }
+  window.runIsrResnapshotRange = runIsrResnapshotRange;
 
   // ═══════════════════════════════════════════════════════════════
   //  SETTINGS – CUSTOM SALES CATEGORIZATION
