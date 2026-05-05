@@ -4277,6 +4277,9 @@ export default {
       if (!entries.length) {
         return new Response(JSON.stringify({ error: "No entries provided. Send { entries: [...] } or a single object." }), { status: 400, headers: corsJson });
       }
+      // When true, rows that already have is_manual_override=1 are left untouched.
+      // Used by the daily-CSV import flow to avoid clobbering hand-entered values.
+      const skipIfOverrideExists = !!body.skipIfOverrideExists;
 
       const num = (v) => (v === '' || v == null ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
       const FIELDS = ['total', 'retail', 'bin', 'auction', 'labor_pct', 'labor_hours'];
@@ -4287,6 +4290,18 @@ export default {
         if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
           results.push({ store, date, error: 'invalid store/date' });
           continue;
+        }
+        // Skip rows that are already manual overrides when the caller asks for it.
+        if (skipIfOverrideExists) {
+          try {
+            const existing = await env.DB.prepare(
+              "SELECT is_manual_override FROM daily_sales WHERE store = ? AND date = ?"
+            ).bind(store, date).first();
+            if (existing?.is_manual_override) {
+              results.push({ store, date, skipped: true, reason: 'existing manual override preserved' });
+              continue;
+            }
+          } catch {}
         }
         // Build the SET list dynamically from provided fields only.
         const updates = {};
