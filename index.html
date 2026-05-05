@@ -4293,6 +4293,8 @@
   // Parse a Clover Sales Report CSV. Returns an array of
   // [{ yearMonth: '2026-01', cloverNet: 236900.25 }, ...] for each
   // month column in the report.
+  // Returns { type: 'monthly', monthly: [{yearMonth, cloverNet}] }
+  //      or { type: 'daily',   year, month, daily: [{date, cloverNet}] }
   function parseCloverSalesReport(csv) {
     const lines = csv.split(/\r?\n/);
     const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -4310,21 +4312,52 @@
     }
     if (!startYear) throw new Error('Could not find a date range in the CSV header.');
 
-    // Find header row with month names — first row whose 2nd cell is "Total"
-    // AND has at least one month name in cells [2..]. Track its index so we
-    // search for the per-month "Net sales" row AFTER the header (the CSV has
-    // a separate summary "Net sales" row near the top with only YTD figures).
+    // Find header row — first row whose 2nd cell is "Total". Track its index.
     let headerCells = null, headerIdx = -1;
     for (let i = 0; i < lines.length; i++) {
       const cells = _parseCloverCsvLine(lines[i]);
       if (cells[1] && cells[1].toLowerCase() === 'total') {
-        const hasMonth = cells.slice(2).some(c => monthNames.includes(c));
-        if (hasMonth) { headerCells = cells; headerIdx = i; break; }
+        // Could be monthly (full month names) or daily ("Jan 1", "Feb 3", …)
+        const hasMonthName = cells.slice(2).some(c => monthNames.includes(c));
+        const hasDayCol   = cells.slice(2).some(c => /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+$/.test(c));
+        if (hasMonthName || hasDayCol) { headerCells = cells; headerIdx = i; break; }
       }
     }
-    if (!headerCells) throw new Error('Could not find the month header row (looking for "Total" column with month names).');
+    if (!headerCells) throw new Error('Could not find the header row (looking for "Total" column with month or day columns).');
 
-    // Map each month-name column to a YYYY-MM string, advancing year when needed
+    // ── Daily CSV: headers look like "Jan 1", "Jan 2", … ──────────
+    const hasDayCols = headerCells.slice(2).some(c => /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+$/.test(c));
+    if (hasDayCols) {
+      // Map each "Mon D" column to a YYYY-MM-DD date
+      const dayCols = [];
+      for (let i = 2; i < headerCells.length; i++) {
+        const dm = headerCells[i].match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d+)$/);
+        if (!dm) continue;
+        const mo = monthAbbr[dm[1]];
+        const day = Number(dm[2]);
+        // Resolve year: if month < startMonth, it rolled into the next year
+        const yr = mo < startMonth ? startYear + 1 : startYear;
+        dayCols.push({ date: `${yr}-${String(mo).padStart(2,'0')}-${String(day).padStart(2,'0')}`, colIndex: i });
+      }
+      if (!dayCols.length) throw new Error('No day columns recognised in the header row.');
+
+      const minCells = dayCols[dayCols.length - 1].colIndex + 1;
+      for (let i = headerIdx + 1; i < lines.length; i++) {
+        const cells = _parseCloverCsvLine(lines[i]);
+        if ((cells[0] || '').toLowerCase().trim() === 'net sales' && cells.length >= minCells) {
+          const daily = dayCols.map(dc => ({
+            date: dc.date,
+            cloverNet: _parseCloverDollar(cells[dc.colIndex]),
+          }));
+          // Derive yearMonth from the first day column
+          const ym = dayCols[0].date.slice(0, 7);
+          return { type: 'daily', yearMonth: ym, daily };
+        }
+      }
+      throw new Error('Could not find the per-day "Net sales" row after the header.');
+    }
+
+    // ── Monthly CSV: headers are full month names ─────────────────
     const monthCols = [];
     let curYear = startYear, curMonth = startMonth;
     for (let i = 2; i < headerCells.length; i++) {
@@ -4333,24 +4366,18 @@
       const targetMonth = idx + 1;
       if (targetMonth < curMonth) curYear++;
       curMonth = targetMonth;
-      monthCols.push({
-        yearMonth: `${curYear}-${String(targetMonth).padStart(2, '0')}`,
-        colIndex: i,
-      });
+      monthCols.push({ yearMonth: `${curYear}-${String(targetMonth).padStart(2,'0')}`, colIndex: i });
     }
-    if (!monthCols.length) throw new Error('No month columns recognized in the header row.');
+    if (!monthCols.length) throw new Error('No month columns recognised in the header row.');
 
-    // Find the Net sales row AFTER the header (skip the summary row near the top).
-    // Also require enough cells to actually have month columns — guards against
-    // any trailing rows that happen to start with "Net sales".
     const minCells = monthCols[monthCols.length - 1].colIndex + 1;
     for (let i = headerIdx + 1; i < lines.length; i++) {
       const cells = _parseCloverCsvLine(lines[i]);
       if ((cells[0] || '').toLowerCase().trim() === 'net sales' && cells.length >= minCells) {
-        return monthCols.map(mc => ({
-          yearMonth: mc.yearMonth,
-          cloverNet: _parseCloverDollar(cells[mc.colIndex]),
-        }));
+        return {
+          type: 'monthly',
+          monthly: monthCols.map(mc => ({ yearMonth: mc.yearMonth, cloverNet: _parseCloverDollar(cells[mc.colIndex]) })),
+        };
       }
     }
     throw new Error('Could not find the per-month "Net sales" row after the header.');
@@ -4385,13 +4412,22 @@
     const store = document.getElementById('srr-store').value;
     if (!csv.trim()) { _setSrrStatus('Paste or upload a CSV first.', 'error'); return; }
 
-    let monthly;
+    let parsed;
     try {
-      monthly = parseCloverSalesReport(csv);
+      parsed = parseCloverSalesReport(csv);
     } catch (err) {
       _setSrrStatus(`Parse error: ${err.message}`, 'error');
       return;
     }
+
+    // ── Daily CSV: show import-as-overrides UI ─────────────────────
+    if (parsed.type === 'daily') {
+      _renderSrrDailyImport(store, parsed.yearMonth, parsed.daily);
+      return;
+    }
+
+    // ── Monthly CSV: show month comparison table ───────────────────
+    const { monthly } = parsed;
     if (!monthly.length) { _setSrrStatus('No monthly Net Sales found in the CSV.', 'error'); return; }
 
     _setSrrStatus(`Parsed ${monthly.length} month(s) for ${store}. Loading our totals…`, 'info');
@@ -4401,6 +4437,86 @@
     _setSrrStatus(`Loaded ${monthly.length} month(s) for ${store}. Compare below.`, 'ok');
   }
   window.runSrrParse = runSrrParse;
+
+  // ── Daily import flow ──────────────────────────────────────────────
+  function _renderSrrDailyImport(store, yearMonth, daily) {
+    const [y, m] = yearMonth.split('-').map(Number);
+    const monthLabel = new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    const fmt$ = v => v == null ? '—' : '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const total = daily.reduce((s, d) => s + (d.cloverNet || 0), 0);
+
+    let rows = daily.map(d =>
+      `<tr class="border-b border-gray-50 dark:border-gray-700/50">
+        <td class="px-3 py-1.5 text-gray-600 dark:text-gray-300">${d.date}</td>
+        <td class="px-3 py-1.5 text-right text-gray-700 dark:text-gray-200">${fmt$(d.cloverNet)}</td>
+      </tr>`
+    ).join('');
+
+    el('srr-results').innerHTML = `
+      <div class="mb-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 text-sm text-blue-700 dark:text-blue-300">
+        <strong>Per-day CSV detected</strong> — ${monthLabel} for ${store}
+        (${daily.length} days, total ${fmt$(total)}).
+        Click <strong>Import as Manual Overrides</strong> to write these daily values to the database.
+        Days already marked as manual overrides will be skipped.
+      </div>
+      <table class="w-full text-sm mb-3">
+        <thead><tr class="border-b border-gray-200 dark:border-gray-700">
+          <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Date</th>
+          <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Clover Net Sales</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <button onclick="runSrrImportDaily()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg">
+        Import ${daily.length} days as Manual Overrides
+      </button>`;
+
+    // Stash for the import handler
+    _srrLastParsed = { store, monthly: [{ yearMonth, cloverNet: total }], ourByMonth: {}, _dailyImport: { yearMonth, daily } };
+    _setSrrStatus(`Per-day report for ${monthLabel} parsed. Review the values above, then import.`, 'info');
+  }
+
+  async function runSrrImportDaily() {
+    if (!_srrLastParsed?._dailyImport) return;
+    const { store } = _srrLastParsed;
+    const { yearMonth, daily } = _srrLastParsed._dailyImport;
+    const [y, m] = yearMonth.split('-').map(Number);
+    const monthLabel = new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+    const ok = window.confirm(
+      `Import ${daily.length} days of Clover Net Sales for ${monthLabel} (${store}) as Manual Overrides?\n\n` +
+      `Days already flagged as manual overrides will be skipped.`
+    );
+    if (!ok) return;
+
+    _setSrrStatus(`Importing ${daily.length} days for ${monthLabel}…`, 'info');
+
+    const entries = daily.map(d => ({ store, date: d.date, total: d.cloverNet }));
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=manual-override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        body: JSON.stringify({ entries, skipIfOverrideExists: true }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+
+      const saved   = (data.results || []).filter(r => r.ok).length;
+      const skipped = (data.results || []).filter(r => r.skipped).length;
+      const errors  = (data.results || []).filter(r => r.error).length;
+      const skipMsg = skipped ? ` (${skipped} skipped — already manual overrides)` : '';
+      const errMsg2 = errors  ? ` (${errors} errors)` : '';
+      _setSrrStatus(`Imported ${saved} day(s) for ${monthLabel}.${skipMsg}${errMsg2} Refreshing comparison…`, errors ? 'error' : 'ok');
+
+      // Switch back to monthly view so user can see the reconciled result
+      const monthly = [{ yearMonth, cloverNet: daily.reduce((s, d) => s + (d.cloverNet || 0), 0) }];
+      const ourByMonth = await _srrFetchOurMonths(store, monthly);
+      _srrLastParsed = { store, monthly, ourByMonth };
+      _renderSrrComparison();
+    } catch (err) {
+      _setSrrStatus(`Import failed: ${err.message}`, 'error');
+    }
+  }
+  window.runSrrImportDaily = runSrrImportDaily;
 
   async function _srrFetchOurMonths(store, monthly) {
     const start = monthly[0].yearMonth;
