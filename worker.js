@@ -2448,12 +2448,21 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
         data.total = existing.total;
         return data;
       }
-      // Guard: if no real orders came back (orderCount === 0) OR computed
-      // total is non-positive, and we have good existing data, don't overwrite.
+      // Guard: if no real orders came back (orderCount === 0), don't write.
+      // When Clover returns 0 orders for a historical day but refunds exist,
+      // Phase 2A produces a negative total — that's always wrong for a daily
+      // sales figure and must never be persisted regardless of existing data.
       const noRealOrders = data.orderCount != null && data.orderCount === 0;
-      const nonPositiveTotal = data.total <= 0;
-      if ((noRealOrders || nonPositiveTotal) && existing && existing.total != null && existing.total > 0) {
-        console.warn(`Skipping suspicious-overwrite for ${store}/${dateStr}: orderCount=${data.orderCount}, computedTotal=${data.total}, existingTotal=${existing.total}`);
+      if (noRealOrders) {
+        console.warn(`Skipping zero-order write for ${store}/${dateStr}: orderCount=${data.orderCount}, computedTotal=${data.total}`);
+        data.skippedZeroOverwrite = true;
+        data.total = existing?.total ?? null;
+        return data;
+      }
+      // Secondary guard: a negative computed total (e.g. 1 tiny order + big
+      // refund) is almost certainly a partial fetch. Protect existing good data.
+      if (data.total < 0 && existing && existing.total != null && existing.total > 0) {
+        console.warn(`Skipping negative-overwrite for ${store}/${dateStr}: computedTotal=${data.total}, existingTotal=${existing.total}`);
         data.skippedZeroOverwrite = true;
         data.total = existing.total;
         return data;
