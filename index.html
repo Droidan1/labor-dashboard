@@ -1083,6 +1083,35 @@
               </div>
             </div>
           </div>
+
+          <!-- Sales Report Reconciliation -->
+          <div class="border-t border-gray-100 dark:border-gray-700 mt-6 pt-5 space-y-3">
+            <div>
+              <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Sales Report Reconciliation</p>
+              <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Paste a Clover Sales Report CSV (per store) to compare its monthly Net Sales against our daily totals in D1. For any month that's off by &gt;\$50, click <strong>Re-snapshot This Month</strong> to re-pull from Clover. Manual-override rows are preserved and skipped automatically. Use the <em>Manual Sales Override</em> tool above to revert any specific day if needed.</p>
+
+              <div class="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
+                <select id="srr-store" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                  <option value="BL1">BL1 – Coliseum</option>
+                  <option value="BL2">BL2 – South Bend</option>
+                  <option value="BL4">BL4 – Dupont</option>
+                  <option value="BL8">BL8 – Holland</option>
+                  <option value="BL12">BL12 – Wyoming</option>
+                  <option value="BL14">BL14 – Battle Creek</option>
+                </select>
+                <label class="text-xs flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 cursor-pointer hover:border-[#3BB54A] text-gray-600 dark:text-gray-300">
+                  <span>📄 Upload CSV file</span>
+                  <input id="srr-file" type="file" accept=".csv,text/csv" class="hidden" onchange="onSrrFileChosen(event)">
+                </label>
+                <button onclick="runSrrParse()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
+                  Parse &amp; Compare
+                </button>
+              </div>
+              <textarea id="srr-csv" rows="8" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 mb-2" placeholder="Paste the entire Sales Report CSV here, or upload a file above…"></textarea>
+              <div id="srr-status" class="hidden text-sm rounded-lg px-4 py-3 border mb-3"></div>
+              <div id="srr-results"></div>
+            </div>
+          </div>
         </div>
 
         <!-- Item Master Costs -->
@@ -4233,6 +4262,265 @@
     await _submitOverride(entries, 'mlh-status');
   }
   window.runManualLaborBulk = runManualLaborBulk;
+
+  // ── Sales Report Reconciliation ─────────────────────────────────
+  // Parses a pasted/uploaded Clover Sales Report CSV, compares each
+  // month's Net Sales against our D1 totals, and offers a one-click
+  // 'Re-snapshot This Month' button for any discrepant month.
+
+  // CSV parser tolerant of quoted fields containing commas
+  function _parseCloverCsvLine(line) {
+    const cells = [];
+    let current = '', inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { inQuotes = !inQuotes; continue; }
+      if (c === ',' && !inQuotes) { cells.push(current); current = ''; continue; }
+      current += c;
+    }
+    cells.push(current);
+    return cells.map(c => c.trim());
+  }
+
+  function _parseCloverDollar(s) {
+    if (s == null) return null;
+    const cleaned = String(s).replace(/[$,()"]/g, '').trim();
+    if (cleaned === '' || cleaned === '-') return null;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  // Parse a Clover Sales Report CSV. Returns an array of
+  // [{ yearMonth: '2026-01', cloverNet: 236900.25 }, ...] for each
+  // month column in the report.
+  function parseCloverSalesReport(csv) {
+    const lines = csv.split(/\r?\n/);
+    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const monthAbbr = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
+
+    // Find the start of the date range in the header (line 2 typically)
+    let startYear = null, startMonth = null;
+    for (const line of lines.slice(0, 6)) {
+      const m = line.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d+),?\s+(\d{4})/);
+      if (m) {
+        startMonth = monthAbbr[m[1]];
+        startYear = Number(m[3]);
+        break;
+      }
+    }
+    if (!startYear) throw new Error('Could not find a date range in the CSV header.');
+
+    // Find header row with month names — first row whose 2nd cell is "Total"
+    let headerCells = null;
+    for (const line of lines) {
+      const cells = _parseCloverCsvLine(line);
+      if (cells[1] && cells[1].toLowerCase() === 'total' && cells[2]) {
+        headerCells = cells;
+        break;
+      }
+    }
+    if (!headerCells) throw new Error('Could not find the month header row (looking for "Total" column).');
+
+    // Map each month-name column to a YYYY-MM string, advancing year when needed
+    const monthCols = [];
+    let curYear = startYear, curMonth = startMonth;
+    for (let i = 2; i < headerCells.length; i++) {
+      const idx = monthNames.indexOf(headerCells[i]);
+      if (idx === -1) continue;
+      const targetMonth = idx + 1;
+      if (targetMonth < curMonth) curYear++;
+      curMonth = targetMonth;
+      monthCols.push({
+        yearMonth: `${curYear}-${String(targetMonth).padStart(2, '0')}`,
+        colIndex: i,
+      });
+    }
+    if (!monthCols.length) throw new Error('No month columns recognized in the header row.');
+
+    // Find the Net sales row
+    for (const line of lines) {
+      const cells = _parseCloverCsvLine(line);
+      if ((cells[0] || '').toLowerCase().trim() === 'net sales') {
+        return monthCols.map(mc => ({
+          yearMonth: mc.yearMonth,
+          cloverNet: _parseCloverDollar(cells[mc.colIndex]),
+        }));
+      }
+    }
+    throw new Error('Could not find the "Net sales" row in the CSV.');
+  }
+
+  function onSrrFileChosen(evt) {
+    const file = evt.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { document.getElementById('srr-csv').value = reader.result || ''; };
+    reader.readAsText(file);
+  }
+  window.onSrrFileChosen = onSrrFileChosen;
+
+  function _setSrrStatus(msg, tone) {
+    const statusEl = el('srr-status');
+    const colors = {
+      info:  'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300',
+      ok:    'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-700 dark:text-green-300',
+      error: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300',
+    };
+    statusEl.className = `text-sm rounded-lg px-4 py-3 border mb-3 ${colors[tone] || colors.info}`;
+    statusEl.classList.remove('hidden');
+    statusEl.innerHTML = msg;
+  }
+
+  // Cached parse so re-render after re-snapshot works without re-pasting
+  let _srrLastParsed = null; // { store, monthly: [{yearMonth, cloverNet}], ourByMonth: {...} }
+
+  async function runSrrParse() {
+    const csv = document.getElementById('srr-csv').value || '';
+    const store = document.getElementById('srr-store').value;
+    if (!csv.trim()) { _setSrrStatus('Paste or upload a CSV first.', 'error'); return; }
+
+    let monthly;
+    try {
+      monthly = parseCloverSalesReport(csv);
+    } catch (err) {
+      _setSrrStatus(`Parse error: ${err.message}`, 'error');
+      return;
+    }
+    if (!monthly.length) { _setSrrStatus('No monthly Net Sales found in the CSV.', 'error'); return; }
+
+    _setSrrStatus(`Parsed ${monthly.length} month(s) for ${store}. Loading our totals…`, 'info');
+    const ourByMonth = await _srrFetchOurMonths(store, monthly);
+    _srrLastParsed = { store, monthly, ourByMonth };
+    _renderSrrComparison();
+    _setSrrStatus(`Loaded ${monthly.length} month(s) for ${store}. Compare below.`, 'ok');
+  }
+  window.runSrrParse = runSrrParse;
+
+  async function _srrFetchOurMonths(store, monthly) {
+    const start = monthly[0].yearMonth;
+    const end = monthly[monthly.length - 1].yearMonth;
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=monthly-totals&store=${encodeURIComponent(store)}&start=${start}&end=${end}`,
+        { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      const map = {};
+      for (const r of (data.results || [])) map[r.yearMonth] = r;
+      return map;
+    } catch (err) {
+      _setSrrStatus(`Failed to load our monthly totals: ${err.message}`, 'error');
+      return {};
+    }
+  }
+
+  function _renderSrrComparison() {
+    if (!_srrLastParsed) return;
+    const { store, monthly, ourByMonth } = _srrLastParsed;
+    const fmt$ = v => v == null ? '—' : '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const monthLabel = (ym) => {
+      const [y, m] = ym.split('-').map(Number);
+      return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    };
+    let html = `<table class="w-full text-sm">
+      <thead><tr class="border-b border-gray-200 dark:border-gray-700">
+        <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Month</th>
+        <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Clover</th>
+        <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Ours</th>
+        <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Δ</th>
+        <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Days</th>
+        <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Manual</th>
+        <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Action</th>
+      </tr></thead><tbody>`;
+    for (const m of monthly) {
+      const ours = ourByMonth[m.yearMonth];
+      const ourTotal = ours?.total ?? null;
+      const delta = (m.cloverNet != null && ourTotal != null) ? ourTotal - m.cloverNet : null;
+      const off = delta != null && Math.abs(delta) > 50;
+      const deltaCls = delta == null ? 'text-gray-400'
+        : (off ? (delta > 0 ? 'text-amber-600 font-semibold' : 'text-red-600 font-semibold') : 'text-green-600');
+      const deltaStr = delta == null ? '—' : (delta >= 0 ? '+' : '−') + '$' + Math.abs(delta).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const action = (off && m.cloverNet != null)
+        ? `<button onclick="runSrrResnapshotMonth('${m.yearMonth}')" class="px-2.5 py-1 text-xs font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-md">Re-snapshot</button>`
+        : (delta != null && Math.abs(delta) <= 50 ? '<span class="text-xs text-green-600">✓</span>' : '');
+      html += `<tr class="border-b border-gray-50 dark:border-gray-700/50">
+        <td class="px-3 py-2 text-gray-700 dark:text-gray-200 font-medium">${escapeHtml(monthLabel(m.yearMonth))}</td>
+        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-200">${fmt$(m.cloverNet)}</td>
+        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-200">${fmt$(ourTotal)}</td>
+        <td class="px-3 py-2 text-right ${deltaCls}">${deltaStr}</td>
+        <td class="px-3 py-2 text-right text-gray-500 dark:text-gray-400">${ours?.days ?? '—'}</td>
+        <td class="px-3 py-2 text-right text-gray-500 dark:text-gray-400">${ours?.manualOverrides || 0}</td>
+        <td class="px-3 py-2 text-right">${action}</td>
+      </tr>`;
+    }
+    html += `</tbody></table>`;
+    el('srr-results').innerHTML = html;
+  }
+
+  // Re-snapshot every day in the given month for the chosen store.
+  // Manual-override rows are preserved server-side via existing guards.
+  async function runSrrResnapshotMonth(yearMonth) {
+    if (!_srrLastParsed) return;
+    const { store } = _srrLastParsed;
+
+    // Build date list for the month
+    const [y, m] = yearMonth.split('-').map(Number);
+    const lastDay = new Date(y, m, 0).getDate();
+    const dates = [];
+    for (let d = 1; d <= lastDay; d++) {
+      dates.push(`${yearMonth}-${String(d).padStart(2, '0')}`);
+    }
+
+    const monthLabel = new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    const ok = window.confirm(
+      `Re-snapshot all ${dates.length} days of ${monthLabel} for ${store}?\n\n` +
+      `This pulls fresh data from Clover for each day. Days flagged as manual overrides will be preserved.\n\n` +
+      `Existing values that match Clover will not change.`
+    );
+    if (!ok) return;
+
+    const fetchWithRetry = async (url, opts, attempts = 3) => {
+      let lastErr;
+      for (let i = 0; i < attempts; i++) {
+        try {
+          const resp = await fetch(url, opts);
+          const data = await resp.json();
+          if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+          return data;
+        } catch (err) {
+          lastErr = err;
+          if (i < attempts - 1) await new Promise(r => setTimeout(r, 800 * (i + 1)));
+        }
+      }
+      throw lastErr;
+    };
+
+    let done = 0;
+    const failed = [];
+    _setSrrStatus(`Re-snapshotting ${monthLabel} for ${store} (0/${dates.length})…`, 'info');
+    // 2-wide concurrency to stay gentle on Clover rate limits
+    const BATCH = 2;
+    for (let i = 0; i < dates.length; i += BATCH) {
+      const batch = dates.slice(i, i + BATCH);
+      const settled = await Promise.allSettled(batch.map(date =>
+        fetchWithRetry(
+          `${WORKER_BASE}?action=snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(date)}`,
+          { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
+        )
+      ));
+      settled.forEach((r, j) => {
+        if (r.status === 'fulfilled') done++;
+        else failed.push(batch[j]);
+      });
+      _setSrrStatus(`Re-snapshotting ${monthLabel} for ${store} (${done}/${dates.length})…`, 'info');
+    }
+
+    // Refresh our monthly numbers and re-render
+    _srrLastParsed.ourByMonth = await _srrFetchOurMonths(store, _srrLastParsed.monthly);
+    _renderSrrComparison();
+    const errMsg = failed.length ? ` ${failed.length} day(s) failed: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? '…' : ''}` : '';
+    _setSrrStatus(`Re-snapshot complete — ${done}/${dates.length} day(s) refreshed.${errMsg}`, failed.length ? 'error' : 'ok');
+  }
+  window.runSrrResnapshotMonth = runSrrResnapshotMonth;
 
   // ═══════════════════════════════════════════════════════════════
   //  SETTINGS – CUSTOM SALES CATEGORIZATION

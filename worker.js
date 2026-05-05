@@ -4335,6 +4335,45 @@ export default {
       return new Response(JSON.stringify({ ok: true, count: ok, total: results.length, results, rebuilt: rebuildResults }), { headers: corsJson });
     }
 
+    // ── Admin: aggregated monthly totals from D1 for a store + date range.
+    //    ?action=monthly-totals&store=BL1&start=2026-01&end=2026-05
+    // Returns [{ yearMonth, total, days, manualOverrides }] grouped by month.
+    // Used by the Sales Report Reconciliation tool to compare against a
+    // pasted Clover Sales Report CSV.
+    if (url.searchParams.get("action") === "monthly-totals") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      }
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      const start = url.searchParams.get("start");
+      const end = url.searchParams.get("end");
+      if (!store || !/^\d{4}-\d{2}$/.test(start || "") || !/^\d{4}-\d{2}$/.test(end || "")) {
+        return new Response(JSON.stringify({ error: "Missing or invalid store/start/end (use YYYY-MM)" }), { status: 400, headers: corsJson });
+      }
+      const startDate = `${start}-01`;
+      const [endYr, endMo] = end.split("-").map(Number);
+      const lastDate = new Date(Date.UTC(endYr, endMo, 0));
+      const endDate = lastDate.toISOString().slice(0, 10);
+      try {
+        const { results } = await env.DB.prepare(
+          `SELECT substr(date, 1, 7) AS yearMonth,
+                  ROUND(SUM(total), 2) AS total,
+                  COUNT(*) AS days,
+                  SUM(CASE WHEN is_manual_override = 1 THEN 1 ELSE 0 END) AS manualOverrides
+           FROM daily_sales
+           WHERE store = ? AND date >= ? AND date <= ? AND total IS NOT NULL
+           GROUP BY substr(date, 1, 7)
+           ORDER BY yearMonth`
+        ).bind(store, startDate, endDate).all();
+        return new Response(JSON.stringify({ ok: true, store, start, end, results: results || [] }), { headers: corsJson });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     // ── Admin: rebuild week-summary KV keys for an entire year (backfill)
     //    ?action=rebuild-week-summaries&year=2026
     // Iterates every distinct week in D1 for the given year and writes the
