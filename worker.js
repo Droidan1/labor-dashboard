@@ -3194,6 +3194,21 @@ export default {
           if (!elements) { results[store] = "skipped (no credentials)"; continue; }
           const itemCatMap = await fetchItemCategoryMap(store, env);
           const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts);
+
+          // Zero-order guard: if Clover returned no orders and we already have
+          // a non-empty item snapshot for this date, don't overwrite it.
+          // Clover's API has a ~90-day retention window; historical re-snapshots
+          // return 0 orders and would silently wipe existing good data.
+          if (itemData.orderCount === 0 && env.SALES_SNAPSHOTS) {
+            const existing = await env.SALES_SNAPSHOTS.get(
+              `items:${store.toLowerCase()}:${dateParam}`, "json"
+            );
+            if (existing?.categories?.length > 0) {
+              results[store] = { ok: true, skipped: true, reason: "zero-order guard: existing snapshot preserved", orders: 0 };
+              continue;
+            }
+          }
+
           await saveItemSalesSnapshot(env, store, dateParam, itemData);
           results[store] = { ok: true, orders: itemData.orderCount, netSales: itemData.totals.netSales };
         } catch (e) {
