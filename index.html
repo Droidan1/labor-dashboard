@@ -4523,8 +4523,23 @@
     // Refresh our monthly numbers and re-render
     _srrLastParsed.ourByMonth = await _srrFetchOurMonths(store, _srrLastParsed.monthly);
     _renderSrrComparison();
+
+    // Sanity-check: compare refreshed total vs Clover for this month
+    const cloverEntry = _srrLastParsed.monthly.find(m => m.yearMonth === yearMonth);
+    const newOurEntry = _srrLastParsed.ourByMonth[yearMonth];
+    let sanityWarning = '';
+    if (cloverEntry && newOurEntry) {
+      const newTotal = newOurEntry.total;
+      const cloverTotal = cloverEntry.cloverNet;
+      const diff = Math.abs(newTotal - cloverTotal);
+      const pct = cloverTotal > 0 ? diff / cloverTotal : 0;
+      if (pct > 0.10 && diff > 500) {
+        sanityWarning = ` ⚠️ Warning: refreshed total ($${newTotal.toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2})}) still differs from Clover ($${cloverTotal.toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2})}) by ${(pct*100).toFixed(0)}%. The Clover API may have returned partial data for some historical days. Use Manual Override to correct individual days.`;
+      }
+    }
+
     const errMsg = failed.length ? ` ${failed.length} day(s) failed: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? '…' : ''}` : '';
-    _setSrrStatus(`Re-snapshot complete — ${done}/${dates.length} day(s) refreshed.${errMsg}`, failed.length ? 'error' : 'ok');
+    _setSrrStatus(`Re-snapshot complete — ${done}/${dates.length} day(s) refreshed.${errMsg}${sanityWarning}`, (failed.length || sanityWarning) ? 'error' : 'ok');
   }
   window.runSrrResnapshotMonth = runSrrResnapshotMonth;
 
