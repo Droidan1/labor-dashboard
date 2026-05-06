@@ -2218,6 +2218,10 @@
       // Aggregate historical Clover snapshots, filtered to day if applicable
       let hasAnyHistData = false;
       for (const s of STORES) {
+        // Budget is in the Google Sheets rows — always available regardless of Clover data
+        const filteredBudget = sumRows(filterRows(allStoreData[s] || [])).bTotal;
+        if (filteredBudget != null) todayTotalBudget += filteredBudget;
+
         const storeHist = historicalCloverData[s] || {};
         const weekRows = (allStoreData[s] || []).filter(r => r.week === selectedWeek);
         for (const [dateKey, snap] of Object.entries(storeHist)) {
