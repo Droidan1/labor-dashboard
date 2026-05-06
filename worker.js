@@ -5620,10 +5620,10 @@ export default {
       return;
     }
 
-    // "0 11 * * 1" — 6 AM ET Monday weekly digest (11:00 UTC = EST; 7 AM EDT)
-    // Summarises the Mon–Sun week that just ended.
-    if (event.cron === "0 11 * * 1") {
-      // endDate = yesterday (Sunday), startDate = 6 days before that (Monday)
+    // "0 11 * * 0" — 6 AM ET Sunday weekly digest (11:00 UTC = EST; 7 AM EDT)
+    // Summarises the Sun–Sat week that just ended.
+    if (event.cron === "0 11 * * 0") {
+      // endDate = yesterday (Saturday), startDate = 6 days before that (Sunday)
       const endD = new Date(Date.now() - 24 * 3600 * 1000);
       const startD = new Date(endD.getTime() - 6 * 24 * 3600 * 1000);
       const etFmt = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);
