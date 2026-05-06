@@ -3281,6 +3281,18 @@
 
   let _notifSettingsOpen = false;
 
+  // Sets the toggle button appearance to match subscribed/unsubscribed state.
+  function _setNotifToggleState(isSubscribed) {
+    const btn = el('notif-toggle-btn');
+    if (!btn) return;
+    btn.textContent = isSubscribed ? 'Disable' : 'Enable';
+    btn.className = 'px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ' + (
+      isSubscribed
+        ? 'bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/30 dark:hover:bg-red-900/50 dark:text-red-400'
+        : 'bg-[#3BB54A] hover:bg-[#32a040] text-white'
+    );
+  }
+
   function toggleNotifSettings() {
     const content = el('notif-settings-content');
     const chevron = el('notif-settings-chevron');
@@ -3324,7 +3336,7 @@
 
     // Get server-side subscription count
     try {
-      const resp = await apiFetch(`${API_BASE}?action=push-subscription-status`);
+      const resp = await fetch(`${WORKER_BASE}?action=push-subscription-status`, { credentials: 'include' });
       const data = await resp.json();
       const count = data.deviceCount ?? 0;
       deviceCountEl.textContent = count === 0 ? 'Not enabled on this device' : `${count} device${count !== 1 ? 's' : ''} registered (max 5)`;
@@ -3335,17 +3347,9 @@
       const isSubscribed = !!sub;
 
       toggleBtn.classList.remove('hidden');
-      if (isSubscribed) {
-        toggleBtn.textContent = 'Disable';
-        toggleBtn.className = toggleBtn.className.replace('bg-[#3BB54A] hover:bg-[#32a040] text-white', 'bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/30 dark:hover:bg-red-900/50 dark:text-red-400');
-        testBtn.classList.remove('hidden');
-      } else {
-        toggleBtn.textContent = 'Enable';
-        toggleBtn.className = toggleBtn.className
-          .replace('bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/30 dark:hover:bg-red-900/50 dark:text-red-400', '')
-          + ' bg-[#3BB54A] hover:bg-[#32a040] text-white';
-        testBtn.classList.add('hidden');
-      }
+      _setNotifToggleState(isSubscribed);
+      if (isSubscribed) testBtn.classList.remove('hidden');
+      else testBtn.classList.add('hidden');
     } catch (e) {
       deviceCountEl.textContent = 'Could not load status';
     }
@@ -3369,7 +3373,7 @@
 
       if (sub) {
         // Unsubscribe
-        await fetch(`${API_BASE}?action=push-unsubscribe`, {
+        await fetch(`${WORKER_BASE}?action=push-unsubscribe`, {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ endpoint: sub.endpoint }),
@@ -3378,14 +3382,14 @@
         setStatus('Push notifications disabled for this device.', false);
       } else {
         // Subscribe — fetch VAPID public key first
-        const pkResp = await apiFetch(`${API_BASE}?action=vapid-public-key`);
+        const pkResp = await fetch(`${WORKER_BASE}?action=vapid-public-key`, { credentials: 'include' });
         const { publicKey } = await pkResp.json();
         const newSub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: urlB64ToUint8Array(publicKey),
         });
         const subJson = newSub.toJSON();
-        const saveResp = await fetch(`${API_BASE}?action=push-subscribe`, {
+        const saveResp = await fetch(`${WORKER_BASE}?action=push-subscribe`, {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -3415,7 +3419,7 @@
     testBtn.textContent = 'Sending…';
     statusEl.classList.add('hidden');
     try {
-      const resp = await fetch(`${API_BASE}?action=push-test`, {
+      const resp = await fetch(`${WORKER_BASE}?action=push-test`, {
         method: 'POST', credentials: 'include',
       });
       const data = await resp.json();
