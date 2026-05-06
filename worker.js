@@ -2716,6 +2716,203 @@ async function dispatchDailySummary(env, date) {
   return { ok: true, date, summary };
 }
 
+// Returns { startDate, endDate, stores, totals } for a Mon–Sun week range.
+async function buildWeeklyDigestData(env, startDate, endDate) {
+  const priorStart = new Date(startDate + 'T12:00:00Z');
+  priorStart.setUTCDate(priorStart.getUTCDate() - 7);
+  const priorEnd = new Date(endDate + 'T12:00:00Z');
+  priorEnd.setUTCDate(priorEnd.getUTCDate() - 7);
+  const priorStartStr = priorStart.toISOString().slice(0, 10);
+  const priorEndStr   = priorEnd.toISOString().slice(0, 10);
+
+  const [{ results: thisWeek }, { results: priorWeek }] = await Promise.all([
+    env.DB.prepare(
+      `SELECT store, ROUND(SUM(total),2) AS sales, ROUND(SUM(budget),2) AS budget,
+              SUM(order_count) AS orders
+       FROM daily_sales WHERE date >= ? AND date <= ? AND total IS NOT NULL GROUP BY store`
+    ).bind(startDate, endDate).all(),
+    env.DB.prepare(
+      `SELECT store, ROUND(SUM(total),2) AS sales
+       FROM daily_sales WHERE date >= ? AND date <= ? AND total IS NOT NULL GROUP BY store`
+    ).bind(priorStartStr, priorEndStr).all(),
+  ]);
+
+  const thisMap = {}, priorMap = {};
+  for (const r of (thisWeek  || [])) thisMap[r.store]  = r;
+  for (const r of (priorWeek || [])) priorMap[r.store] = r.sales;
+
+  let totalSales = 0, totalBudget = 0, totalPrior = 0, totalOrders = 0;
+  const stores = ALL_STORES.map(store => {
+    const row    = thisMap[store] || {};
+    const sales  = row.sales  ?? null;
+    const budget = row.budget ?? null;
+    const prior  = priorMap[store] ?? null;
+    const orders = row.orders ?? null;
+    if (sales  != null) totalSales  += sales;
+    if (budget != null) totalBudget += budget;
+    if (prior  != null) totalPrior  += prior;
+    if (orders != null) totalOrders += orders;
+    return { store, label: STORE_LABELS[store] || store, sales, budget, prior, orders };
+  });
+  return { startDate, endDate, stores, totals: { sales: totalSales, budget: totalBudget, prior: totalPrior, orders: totalOrders } };
+}
+
+function buildWeeklyDigestEmailHtml(data) {
+  const { startDate, endDate, stores, totals } = data;
+  const fmt = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const weekLabel = `${fmt(startDate)} – ${fmt(endDate)}, ${new Date(endDate + 'T12:00:00Z').getFullYear()}`;
+
+  const storeRows = stores.map(({ label, sales, budget, prior, orders }) => `
+    <tr style="border-bottom:1px solid #eee">
+      <td style="padding:8px 14px;color:#333">${label}</td>
+      <td style="padding:8px 14px;text-align:right;font-weight:600;color:#111">${_fmtDollars(sales)}</td>
+      <td style="padding:8px 14px;text-align:right;color:${_vsColor(sales,prior)}">${_fmtVsLW(sales,prior)}</td>
+      <td style="padding:8px 14px;text-align:right;color:${_vsColor(sales,budget)}">${_fmtVsBudget(sales,budget)}</td>
+      <td style="padding:8px 14px;text-align:right;color:#555">${orders != null ? orders.toLocaleString('en-US') : '—'}</td>
+    </tr>`).join('');
+
+  const { sales: ts, budget: tb, prior: tp, orders: to } = totals;
+
+  return `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:620px;margin:0 auto;padding:32px 24px;background:#fff">
+      <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:44px;margin-bottom:20px">
+      <h2 style="margin:0 0 4px;font-size:20px;color:#194975">Weekly Sales Digest</h2>
+      <p style="margin:0 0 24px;font-size:14px;color:#666">${weekLabel}</p>
+      <table style="width:100%;border-collapse:collapse;font-size:14px">
+        <thead>
+          <tr style="background:#194975;color:#fff">
+            <th style="padding:9px 14px;text-align:left;font-weight:600">Store</th>
+            <th style="padding:9px 14px;text-align:right;font-weight:600">Net Sales</th>
+            <th style="padding:9px 14px;text-align:right;font-weight:600">vs LW</th>
+            <th style="padding:9px 14px;text-align:right;font-weight:600">vs Budget</th>
+            <th style="padding:9px 14px;text-align:right;font-weight:600">Orders</th>
+          </tr>
+        </thead>
+        <tbody>${storeRows}</tbody>
+        <tfoot>
+          <tr style="background:#f7f7f7;font-weight:700;border-top:2px solid #194975">
+            <td style="padding:9px 14px;color:#111">All Stores</td>
+            <td style="padding:9px 14px;text-align:right;color:#111">${_fmtDollars(ts)}</td>
+            <td style="padding:9px 14px;text-align:right;color:${_vsColor(ts,tp)}">${_fmtVsLW(ts,tp)}</td>
+            <td style="padding:9px 14px;text-align:right;color:${_vsColor(ts,tb)}">${_fmtVsBudget(ts,tb)}</td>
+            <td style="padding:9px 14px;text-align:right;color:#555">${to != null ? to.toLocaleString('en-US') : '—'}</td>
+          </tr>
+        </tfoot>
+      </table>
+      <p style="margin-top:28px;font-size:12px;color:#aaa">
+        <a href="https://www.retjghub.com" style="color:#3BB54A;text-decoration:none">Open Dashboard</a>
+        &nbsp;·&nbsp; Bargain Lane Notification System
+        &nbsp;·&nbsp; To stop receiving these, open Settings → Notifications.
+      </p>
+    </div>`;
+}
+
+async function dispatchWeeklyDigest(env, startDate, endDate) {
+  if (!env.DB) return { error: 'DB not configured' };
+  const data = await buildWeeklyDigestData(env, startDate, endDate);
+  const { sales: ts, budget: tb, prior: tp } = data.totals;
+  const fmt = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+  const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
+  const pushPayload = JSON.stringify({
+    title: `Weekly Digest — ${fmt(startDate)}–${fmt(endDate)}`,
+    body: `${_fmtDollars(ts)} this week${budgetLine}`,
+    tag: 'weekly-digest',
+    url: '/',
+  });
+
+  const { results: superusers } = await env.DB.prepare(
+    "SELECT id, email FROM users WHERE role = 'superuser' AND status = 'active'"
+  ).all();
+  if (!superusers?.length) return { ok: true, skipped: 'no superusers' };
+
+  const userIds = superusers.map(u => u.id);
+  const placeholders = userIds.map(() => '?').join(',');
+  const { results: prefs } = await env.DB.prepare(
+    `SELECT user_id, push_enabled, weekly_digest FROM notification_preferences WHERE user_id IN (${placeholders})`
+  ).bind(...userIds).all();
+  const prefMap = {};
+  for (const p of (prefs || [])) prefMap[p.user_id] = p;
+
+  const summary = { push: { sent: 0, failed: 0, expired: 0 }, email: { sent: 0, failed: 0 } };
+  const now = new Date().toISOString();
+  const weekLabel = `${fmt(startDate)}–${fmt(endDate)}, ${new Date(endDate + 'T12:00:00Z').getFullYear()}`;
+
+  for (const user of superusers) {
+    const pref = prefMap[user.id] || { push_enabled: 1, weekly_digest: 1 };
+    if (!pref.weekly_digest) continue;
+
+    // Push
+    if (pref.push_enabled && env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) {
+      const { results: subs } = await env.DB.prepare(
+        'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?'
+      ).bind(user.id).all();
+      for (const sub of (subs || [])) {
+        try {
+          const res = await sendWebPush(env, sub, pushPayload);
+          if (res.expired) {
+            summary.push.expired++;
+            await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+          } else { summary.push.sent++; }
+        } catch (e) { summary.push.failed++; console.error(`Weekly digest push failed ${user.email}:`, e.message); }
+      }
+    }
+
+    // Email
+    if (env.RESEND_API_KEY) {
+      try {
+        const res = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'noreply@retjghub.com',
+            to: user.email,
+            subject: `Weekly Sales Digest — ${weekLabel}`,
+            html: buildWeeklyDigestEmailHtml(data),
+          }),
+        });
+        if (res.ok) { summary.email.sent++; }
+        else { summary.email.failed++; console.error(`Weekly digest email failed ${user.email}: ${res.status}`); }
+      } catch (e) { summary.email.failed++; }
+    }
+
+    await env.DB.prepare(
+      "INSERT INTO notification_log (id, user_id, type, event_type, status, created_at) VALUES (?, ?, 'push+email', 'weekly-digest', 'sent', ?)"
+    ).bind(randomHex(16), user.id, now).run().catch(() => {});
+  }
+  return { ok: true, startDate, endDate, summary };
+}
+
+// Push-only alert to superusers when the nightly snapshot cron has store errors.
+async function dispatchCronFailureAlert(env, failedStores) {
+  if (!env.DB || !env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return;
+  const storeList = failedStores.join(', ');
+  const payload = JSON.stringify({
+    title: '⚠️ Snapshot Error',
+    body: `${storeList} failed to snapshot. Check the dashboard.`,
+    tag: 'cron-error',
+    url: '/',
+  });
+
+  const { results: superusers } = await env.DB.prepare(
+    "SELECT id FROM users WHERE role = 'superuser' AND status = 'active'"
+  ).all();
+
+  for (const user of (superusers || [])) {
+    const { results: subs } = await env.DB.prepare(
+      'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?'
+    ).bind(user.id).all();
+    for (const sub of (subs || [])) {
+      try {
+        const res = await sendWebPush(env, sub, payload);
+        if (res.expired) {
+          await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+        }
+      } catch (e) { console.error('Cron failure push error:', e.message); }
+    }
+  }
+}
+
 // ─── Web Push / RFC 8291 helpers ────────────────────────────────────────────
 
 function base64urlToBytes(b64url) {
@@ -4793,11 +4990,12 @@ export default {
       try {
         const [subRow, prefRow] = await Promise.all([
           env.DB.prepare("SELECT COUNT(*) AS cnt FROM push_subscriptions WHERE user_id = ?").bind(currentUser.id).first(),
-          env.DB.prepare("SELECT push_enabled, daily_summary FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
+          env.DB.prepare("SELECT push_enabled, daily_summary, weekly_digest FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
         ]);
         const cnt = subRow?.cnt ?? 0;
-        const dailySummary = prefRow ? !!prefRow.daily_summary : true; // default on
-        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary }), { headers: corsJson });
+        const dailySummary  = prefRow ? !!prefRow.daily_summary  : true;
+        const weeklyDigest  = prefRow ? !!prefRow.weekly_digest  : true;
+        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
@@ -4856,6 +5054,7 @@ export default {
         const fields = {};
         if (typeof body.push_enabled  === 'boolean') fields.push_enabled  = body.push_enabled  ? 1 : 0;
         if (typeof body.daily_summary === 'boolean') fields.daily_summary = body.daily_summary ? 1 : 0;
+        if (typeof body.weekly_digest === 'boolean') fields.weekly_digest = body.weekly_digest ? 1 : 0;
         if (!Object.keys(fields).length) return new Response(JSON.stringify({ error: "Nothing to update" }), { status: 400, headers: corsJson });
         const now = new Date().toISOString();
         const setClauses = Object.keys(fields).map(k => `${k} = ?`).join(', ');
@@ -4882,6 +5081,27 @@ export default {
       })();
       try {
         const result = await dispatchDailySummary(env, dateParam);
+        return new Response(JSON.stringify(result), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=send-weekly-digest[&start=YYYY-MM-DD&end=YYYY-MM-DD]
+    // Manually trigger the weekly digest (superuser or admin-secret).
+    if (request.method === "POST" && url.searchParams.get("action") === "send-weekly-digest") {
+      const isAdminReq = request.headers.get('X-Snapshot-Secret') === env.SNAPSHOT_SECRET;
+      if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      // Default: last Mon–Sun
+      const endD   = new Date(Date.now() - 24 * 3600 * 1000);
+      const startD = new Date(endD.getTime() - 6 * 24 * 3600 * 1000);
+      const etFmt  = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);
+      const startDate = url.searchParams.get("start") || etFmt(startD);
+      const endDate   = url.searchParams.get("end")   || etFmt(endD);
+      try {
+        const result = await dispatchWeeklyDigest(env, startDate, endDate);
         return new Response(JSON.stringify(result), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
@@ -5392,11 +5612,24 @@ export default {
 
     // "0 10 * * *" — 5 AM ET daily summary (10:00 UTC = EST; shifts to 6 AM during EDT)
     if (event.cron === "0 10 * * *") {
-      // Summarize yesterday in ET
       const yesterday = new Date(Date.now() - 24 * 3600 * 1000);
       const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(yesterday);
       ctx.waitUntil(
         dispatchDailySummary(env, date).then(r => console.log("Daily summary dispatch:", JSON.stringify(r)))
+      );
+      return;
+    }
+
+    // "0 11 * * 1" — 6 AM ET Monday weekly digest (11:00 UTC = EST; 7 AM EDT)
+    // Summarises the Mon–Sun week that just ended.
+    if (event.cron === "0 11 * * 1") {
+      // endDate = yesterday (Sunday), startDate = 6 days before that (Monday)
+      const endD = new Date(Date.now() - 24 * 3600 * 1000);
+      const startD = new Date(endD.getTime() - 6 * 24 * 3600 * 1000);
+      const etFmt = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);
+      ctx.waitUntil(
+        dispatchWeeklyDigest(env, etFmt(startD), etFmt(endD))
+          .then(r => console.log("Weekly digest dispatch:", JSON.stringify(r)))
       );
       return;
     }
@@ -5445,5 +5678,16 @@ export default {
     }
 
     console.log("Daily snapshot results:", JSON.stringify(results));
+
+    // 6B: Push alert to superusers if any store snapshot errored.
+    const failedStores = ALL_STORES.filter(s =>
+      typeof results[s] === 'string' && results[s].startsWith('error:')
+    );
+    if (failedStores.length > 0) {
+      ctx.waitUntil(
+        dispatchCronFailureAlert(env, failedStores)
+          .catch(e => console.error("Cron failure alert error:", e.message))
+      );
+    }
   },
 };

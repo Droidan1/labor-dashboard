@@ -968,14 +968,22 @@
               </div>
               <div id="notif-action-status" class="hidden text-xs rounded-lg px-3 py-2 border"></div>
 
-              <!-- Daily summary email toggle -->
-              <div class="border-t border-gray-100 dark:border-gray-700 mt-4 pt-4">
+              <!-- Email toggles -->
+              <div class="border-t border-gray-100 dark:border-gray-700 mt-4 pt-4 space-y-3">
                 <label class="flex items-center justify-between cursor-pointer">
                   <div>
                     <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Daily summary email</p>
-                    <p class="text-xs text-gray-500 dark:text-gray-400">5 AM recap of all-store sales, vs last week & budget</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">5 AM recap of all-store sales, vs last week &amp; budget</p>
                   </div>
                   <input type="checkbox" id="notif-daily-summary-toggle" onchange="updateNotifPrefs()"
+                    class="w-4 h-4 accent-[#3BB54A] cursor-pointer ml-4">
+                </label>
+                <label class="flex items-center justify-between cursor-pointer">
+                  <div>
+                    <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Weekly digest email</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Monday morning full-week recap with orders &amp; budget</p>
+                  </div>
+                  <input type="checkbox" id="notif-weekly-digest-toggle" onchange="updateNotifPrefs()"
                     class="w-4 h-4 accent-[#3BB54A] cursor-pointer ml-4">
                 </label>
               </div>
@@ -3359,12 +3367,14 @@
       _setNotifToggleState(false);
       testBtn.classList.add('hidden');
 
-      // Load daily summary preference
+      // Load email preferences
       fetch(`${WORKER_BASE}?action=push-subscription-status`, { credentials: 'include' })
         .then(r => r.json())
         .then(d => {
-          const cb = el('notif-daily-summary-toggle');
-          if (cb) cb.checked = d.dailySummary !== false; // default on
+          const daily  = el('notif-daily-summary-toggle');
+          const weekly = el('notif-weekly-digest-toggle');
+          if (daily)  daily.checked  = d.dailySummary !== false;
+          if (weekly) weekly.checked = d.weeklyDigest !== false;
         }).catch(() => {});
 
       // Background SW check: if an existing subscription is found, flip to
@@ -3469,13 +3479,17 @@
   window.sendTestPush = sendTestPush;
 
   async function updateNotifPrefs() {
-    const cb = el('notif-daily-summary-toggle');
-    if (!cb) return;
+    const daily  = el('notif-daily-summary-toggle');
+    const weekly = el('notif-weekly-digest-toggle');
+    const body = {};
+    if (daily)  body.daily_summary = daily.checked;
+    if (weekly) body.weekly_digest = weekly.checked;
+    if (!Object.keys(body).length) return;
     try {
       await fetch(`${WORKER_BASE}?action=update-notif-prefs`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ daily_summary: cb.checked }),
+        body: JSON.stringify(body),
       });
     } catch (e) {
       console.error('Failed to save notification preference:', e);
