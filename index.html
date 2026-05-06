@@ -3341,24 +3341,21 @@
       const count = data.deviceCount ?? 0;
       deviceCountEl.textContent = count === 0 ? 'Not enabled on this device' : `${count} device${count !== 1 ? 's' : ''} registered (max 5)`;
 
-      // Check browser-side subscription state — with 3 s timeout so the
-      // button always appears even if the SW is still activating.
-      let isSubscribed = false;
-      try {
-        const swReg = await Promise.race([
-          navigator.serviceWorker.ready,
-          new Promise(resolve => setTimeout(() => resolve(null), 3000)),
-        ]);
-        if (swReg) {
-          const sub = await swReg.pushManager.getSubscription();
-          isSubscribed = !!sub;
-        }
-      } catch (_) { /* SW not ready yet — show Enable */ }
-
+      // Show the Enable button immediately — don't wait for SW.
+      // Default to unsubscribed; SW check updates state in the background.
       toggleBtn.classList.remove('hidden');
-      _setNotifToggleState(isSubscribed);
-      if (isSubscribed) testBtn.classList.remove('hidden');
-      else testBtn.classList.add('hidden');
+      _setNotifToggleState(false);
+      testBtn.classList.add('hidden');
+
+      // Background SW check: if an existing subscription is found, flip to
+      // Disable + show Send Test. Uses no timeout — just fires whenever ready.
+      navigator.serviceWorker.ready.then(async swReg => {
+        const sub = await swReg.pushManager.getSubscription();
+        if (sub) {
+          _setNotifToggleState(true);
+          testBtn.classList.remove('hidden');
+        }
+      }).catch(() => { /* SW unavailable — leave Enable state */ });
     } catch (e) {
       deviceCountEl.textContent = 'Could not load status';
     }
