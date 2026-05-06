@@ -769,19 +769,33 @@
     </div><!-- end #page-inventory -->
 
     <div id="page-supply-request" class="hidden">
+      <!-- Sticky header -->
       <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
-        <div class="max-w-7xl mx-auto">
+        <div class="max-w-4xl mx-auto">
           <div class="ml-12 md:ml-0">
             <h1 class="text-2xl font-display text-[#3BB54A]">Supply Request</h1>
-            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Coming soon</p>
+            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5" id="sr-header-sub">Submit and track supply requests for your store</p>
           </div>
         </div>
       </div>
-      <div class="max-w-7xl mx-auto px-6 py-6">
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-12 text-center">
-          <svg class="mx-auto mb-4 text-gray-300 dark:text-gray-600" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/><line x1="9" y1="9" x2="10" y2="9"/></svg>
-          <p class="text-gray-400 dark:text-gray-500 text-sm">Managers submit supply requests and track status; admins get notified on new requests — coming soon.</p>
+
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-5">
+
+        <!-- Budget widget (injected by JS) -->
+        <div id="sr-budget-section"></div>
+
+        <!-- Tab bar -->
+        <div class="flex gap-1 bg-gray-100 dark:bg-gray-700/60 rounded-xl p-1 w-fit">
+          <button id="sr-tab-btn-new"     onclick="srSwitchTab('new')"     class="px-4 py-2 rounded-lg text-sm font-semibold transition-colors">+ New Request</button>
+          <button id="sr-tab-btn-history" onclick="srSwitchTab('history')" class="px-4 py-2 rounded-lg text-sm font-semibold transition-colors">My Requests</button>
         </div>
+
+        <!-- New Request pane (injected by JS) -->
+        <div id="sr-pane-new" class="hidden"></div>
+
+        <!-- History pane (injected by JS) -->
+        <div id="sr-pane-history" class="hidden"></div>
+
       </div>
     </div><!-- end #page-supply-request -->
 
@@ -3268,10 +3282,15 @@
 
   function navigateToPage(page) {
     // Guard admin-only pages
-    const adminOnly = ['inventory', 'supply-request', 'users'];
+    const adminOnly = ['inventory', 'users'];
     if (adminOnly.includes(page)) {
       const role = currentUser && currentUser.role;
       if (role !== 'superuser' && role !== 'admin') return;
+    }
+    if (page === 'supply-request') {
+      const role = currentUser && currentUser.role;
+      const allowed = ['superuser','admin','district_manager','manager'];
+      if (!allowed.includes(role)) return;
     }
     // Guard superuser-only pages
     if (page === 'admin-settings') {
@@ -3303,6 +3322,9 @@
     }
     if (page === 'users') {
       loadUsers();
+    }
+    if (page === 'supply-request') {
+      if (typeof initSRPage === 'function') initSRPage();
     }
 
     // Close mobile sidebar
@@ -3529,6 +3551,510 @@
     }
   }
   window.updateNotifPrefs = updateNotifPrefs;
+
+  // ── Supply Request Module ──────────────────────────────────────────────────
+  (function() {
+    'use strict';
+
+    const SR_LABELS  = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek' };
+    const SR_ALL     = ['BL1','BL2','BL4','BL8','BL12','BL14'];
+    const SR_CATS    = ['Cleaning','Office','Fixtures','Safety','Other'];
+    const SR_UNITS   = ['units','boxes','packs','rolls','cases','bags','pairs','sheets'];
+    const SR_STATUS  = {
+      pending:      { label:'Pending',      pill:'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300' },
+      under_review: { label:'Under Review', pill:'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400' },
+      on_hold:      { label:'On Hold',      pill:'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400' },
+      ordered:      { label:'Ordered',      pill:'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
+    };
+
+    let srItemSeq     = 0;
+    let srFilterStatus = 'all';
+    let srDetailCache  = {};
+    let srLoadingHist  = false;
+
+    // ── Helpers ──
+    function srInp(extra) {
+      return `block w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700/80 text-gray-900 dark:text-white text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]/50 focus:border-[#3BB54A] ${extra||''}`;
+    }
+    function getUserStores() {
+      if (!currentUser) return [];
+      if (currentUser.role === 'superuser' || currentUser.role === 'admin') return SR_ALL;
+      try { return JSON.parse(currentUser.stores || '[]'); } catch(e) { return []; }
+    }
+    function statusBadge(s) {
+      const c = SR_STATUS[s] || SR_STATUS.pending;
+      return `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${c.pill}">${c.label}</span>`;
+    }
+    function priorityBadge(p) {
+      return p === 'urgent'
+        ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400">🚨 Urgent</span>`
+        : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400">Normal</span>`;
+    }
+    function fmtSRDate(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
+           + ' ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+    }
+    function fmtSRMoney(n) {
+      if (n == null) return '—';
+      return new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n);
+    }
+
+    // ── Init (called from navigateToPage) ──
+    function initSRPage() {
+      srDetailCache  = {};
+      srFilterStatus = 'all';
+      srLoadingHist  = false;
+      srRenderForm();
+      srSwitchTab('new');
+      srLoadBudget();
+    }
+    window.initSRPage = initSRPage;
+
+    // ── Tab switching ──
+    function srSwitchTab(tab) {
+      const pNew  = el('sr-pane-new');
+      const pHist = el('sr-pane-history');
+      const bNew  = el('sr-tab-btn-new');
+      const bHist = el('sr-tab-btn-history');
+      if (!pNew) return;
+      pNew .classList.toggle('hidden', tab !== 'new');
+      pHist.classList.toggle('hidden', tab !== 'history');
+      const activeC   = 'px-4 py-2 rounded-lg text-sm font-semibold transition-colors bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm';
+      const inactiveC = 'px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200';
+      bNew .className = tab === 'new'     ? activeC : inactiveC;
+      bHist.className = tab === 'history' ? activeC : inactiveC;
+      if (tab === 'history') srLoadHistory();
+    }
+    window.srSwitchTab = srSwitchTab;
+
+    // ── New Request form ──
+    function srRenderForm() {
+      const pane   = el('sr-pane-new');
+      const stores = getUserStores();
+      if (!pane) return;
+      const multiStore = stores.length > 1;
+      const storeField = multiStore
+        ? `<div class="mb-5">
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Store</label>
+            <select id="sr-store" class="${srInp('max-w-xs')}">
+              ${stores.map(s=>`<option value="${s}">${SR_LABELS[s]||s}</option>`).join('')}
+            </select>
+           </div>`
+        : `<input type="hidden" id="sr-store" value="${stores[0]||''}">`;
+
+      pane.innerHTML = `
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-5">
+          ${storeField}
+
+          <div class="mb-5">
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Priority</label>
+            <div class="flex gap-4">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="sr-priority" value="normal" id="sr-pri-normal" checked class="accent-[#3BB54A]">
+                <span class="text-sm text-gray-700 dark:text-gray-300">Normal</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="sr-priority" value="urgent" id="sr-pri-urgent" class="accent-red-500">
+                <span class="text-sm font-semibold text-red-600 dark:text-red-400">🚨 Urgent</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="mb-5">
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Items</label>
+            <div id="sr-items-container" class="space-y-2"></div>
+            <button onclick="srAddItem()" type="button"
+              class="mt-3 flex items-center gap-1.5 text-sm font-semibold text-[#3BB54A] hover:text-[#2ea042] transition-colors">
+              <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              Add item
+            </button>
+          </div>
+
+          <div class="mb-5">
+            <label for="sr-notes" class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Notes <span class="font-normal normal-case">(optional)</span></label>
+            <textarea id="sr-notes" rows="2" placeholder="Any additional context for this request…" class="${srInp()}"></textarea>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <button onclick="srSubmit()" id="sr-submit-btn" type="button"
+              class="px-5 py-2.5 bg-[#3BB54A] hover:bg-[#2ea042] text-white text-sm font-semibold rounded-lg transition-colors shadow-sm">
+              Submit Request
+            </button>
+            <div id="sr-submit-status" class="text-sm"></div>
+          </div>
+        </div>`;
+
+      srItemSeq = 0;
+      srAddItem();
+    }
+
+    function srAddItem() {
+      const container = el('sr-items-container');
+      if (!container) return;
+      srItemSeq++;
+      const n = srItemSeq;
+      const inp = 'block w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700/80 text-gray-900 dark:text-white text-sm px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]/50 focus:border-[#3BB54A]';
+      const catOpts  = SR_CATS .map(c=>`<option>${c}</option>`).join('');
+      const unitOpts = SR_UNITS.map(u=>`<option>${u}</option>`).join('');
+      const div = document.createElement('div');
+      div.id = `sr-item-${n}`;
+      div.className = 'grid grid-cols-12 gap-2 items-start bg-gray-50 dark:bg-gray-700/40 rounded-lg p-3 border border-gray-100 dark:border-gray-600';
+      div.innerHTML = `
+        <div class="col-span-12 sm:col-span-3">
+          <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Category</label>
+          <select id="sr-cat-${n}" class="${inp}">${catOpts}</select>
+        </div>
+        <div class="col-span-12 sm:col-span-4">
+          <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Item Name <span class="text-red-400">*</span></label>
+          <input id="sr-name-${n}" type="text" placeholder="e.g. Trash bags" class="${inp}">
+        </div>
+        <div class="col-span-4 sm:col-span-1">
+          <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Qty</label>
+          <input id="sr-qty-${n}" type="number" min="1" value="1" class="${inp} text-center">
+        </div>
+        <div class="col-span-8 sm:col-span-2">
+          <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Unit</label>
+          <select id="sr-unit-${n}" class="${inp}">${unitOpts}</select>
+        </div>
+        <div class="col-span-10 sm:col-span-1">
+          <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Notes</label>
+          <input id="sr-inotes-${n}" type="text" placeholder="opt." class="${inp}">
+        </div>
+        <div class="col-span-2 sm:col-span-1 flex items-end pb-0.5">
+          <button onclick="srRemoveItem(${n})" type="button" title="Remove"
+            class="ml-auto p-1.5 rounded text-gray-400 hover:text-red-500 transition-colors">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>`;
+      container.appendChild(div);
+    }
+    window.srAddItem = srAddItem;
+
+    function srRemoveItem(n) {
+      const row = el(`sr-item-${n}`);
+      if (!row) return;
+      row.remove();
+      if (!el('sr-items-container')?.children.length) srAddItem();
+    }
+    window.srRemoveItem = srRemoveItem;
+
+    async function srSubmit() {
+      const store    = el('sr-store')?.value;
+      const priority = document.querySelector('input[name="sr-priority"]:checked')?.value || 'normal';
+      const notes    = el('sr-notes')?.value?.trim() || '';
+      const statusEl = el('sr-submit-status');
+      const btn      = el('sr-submit-btn');
+      const container = el('sr-items-container');
+
+      // Collect + validate items
+      const items = [];
+      let err = false;
+      for (const row of Array.from(container?.children || [])) {
+        const m = row.id.match(/sr-item-(\d+)/);
+        if (!m) continue;
+        const n    = m[1];
+        const name = el(`sr-name-${n}`)?.value?.trim();
+        const nameEl = el(`sr-name-${n}`);
+        if (!name) {
+          if (nameEl) nameEl.classList.add('border-red-500', 'ring-1', 'ring-red-400');
+          err = true; continue;
+        }
+        if (nameEl) nameEl.classList.remove('border-red-500','ring-1','ring-red-400');
+        items.push({
+          category:  el(`sr-cat-${n}`)?.value  || 'Other',
+          item_name: name,
+          quantity:  parseInt(el(`sr-qty-${n}`)?.value   || '1', 10),
+          unit:      el(`sr-unit-${n}`)?.value  || 'units',
+          notes:     el(`sr-inotes-${n}`)?.value?.trim() || '',
+        });
+      }
+      if (!store)         { statusEl.innerHTML='<span class="text-red-500">Select a store.</span>'; return; }
+      if (!items.length || err) { statusEl.innerHTML='<span class="text-red-500">Fill in all item names.</span>'; return; }
+
+      btn.disabled = true; btn.textContent = 'Submitting…'; statusEl.textContent = '';
+      try {
+        const resp = await fetch(`${WORKER_BASE}?action=supply-request-create`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ store, items, notes, priority }),
+        });
+        const data = await resp.json();
+        if (!data.ok) throw new Error(data.error || 'Failed');
+        statusEl.innerHTML = '<span class="text-green-600 dark:text-green-400 font-semibold">✓ Request submitted!</span>';
+        // Reset
+        el('sr-notes').value = '';
+        document.getElementById('sr-pri-normal').checked = true;
+        container.innerHTML = ''; srItemSeq = 0; srAddItem();
+        srLoadBudget();
+        setTimeout(() => {
+          statusEl.innerHTML = '<button onclick="srSwitchTab(\'history\')" class="text-sm text-[#3BB54A] hover:underline font-semibold">View My Requests →</button>';
+        }, 2200);
+      } catch(e) {
+        statusEl.innerHTML = `<span class="text-red-500">Error: ${e.message}</span>`;
+      } finally {
+        btn.disabled = false; btn.textContent = 'Submit Request';
+      }
+    }
+    window.srSubmit = srSubmit;
+
+    // ── Budget widget ──
+    async function srLoadBudget() {
+      const section = el('sr-budget-section');
+      if (!section) return;
+      try {
+        const now = new Date();
+        const resp = await fetch(`${WORKER_BASE}?action=supply-budgets&year=${now.getFullYear()}&month=${now.getMonth()+1}`, { credentials:'include' });
+        const data = await resp.json();
+        if (data.ok) srRenderBudget(data.budgets, data.year, data.month);
+      } catch(e) { /* silent — budget is optional */ }
+    }
+
+    function srRenderBudget(budgets, year, month) {
+      const section = el('sr-budget-section');
+      if (!section) return;
+      const withBudget = budgets.filter(b => b.budget > 0);
+      if (!withBudget.length) { section.innerHTML = ''; return; }
+      const monthName = new Date(year, month-1, 1).toLocaleString('en-US',{month:'long'});
+
+      const cards = withBudget.map(b => {
+        const pct       = b.budget > 0 ? Math.min(100, Math.round((b.spent/b.budget)*100)) : 0;
+        const barColor  = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-[#3BB54A]';
+        const remColor  = b.remaining < 0 ? 'text-red-500 dark:text-red-400' : pct >= 80 ? 'text-amber-600 dark:text-amber-400' : 'text-[#3BB54A]';
+        return `<div class="flex-shrink-0 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 p-4 w-52">
+          <div class="text-xs font-bold text-gray-700 dark:text-gray-200 mb-0.5">${b.label}</div>
+          <div class="text-[11px] text-gray-400 dark:text-gray-500 mb-3">${monthName} Supply Budget</div>
+          <div class="flex justify-between text-xs mb-1">
+            <span class="text-gray-400">Spent</span>
+            <span class="font-semibold text-gray-700 dark:text-gray-200">${fmtSRMoney(b.spent)}</span>
+          </div>
+          <div class="w-full h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full mb-2">
+            <div class="h-1.5 rounded-full transition-all ${barColor}" style="width:${pct}%"></div>
+          </div>
+          <div class="flex justify-between text-xs">
+            <span class="text-gray-400">Budget: ${fmtSRMoney(b.budget)}</span>
+            <span class="font-bold ${remColor}">${b.remaining>=0?fmtSRMoney(b.remaining)+' left':fmtSRMoney(Math.abs(b.remaining))+' over'}</span>
+          </div>
+        </div>`;
+      }).join('');
+
+      section.innerHTML = `
+        <div>
+          <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">Supply Budget — ${monthName} ${year}</div>
+          <div class="flex gap-3 overflow-x-auto pb-1">${cards}</div>
+        </div>`;
+    }
+
+    // ── History / My Requests ──
+    async function srLoadHistory() {
+      const pane = el('sr-pane-history');
+      if (!pane) return;
+      srLoadingHist = true;
+
+      pane.innerHTML = `
+        <div class="space-y-4">
+          <div id="sr-filter-bar" class="flex flex-wrap gap-2"></div>
+          <div id="sr-requests-list">
+            <div class="text-center py-10 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading requests…</div>
+          </div>
+        </div>`;
+      srRenderFilterBar();
+
+      try {
+        const qs = srFilterStatus !== 'all' ? `&status=${srFilterStatus}` : '';
+        const resp = await fetch(`${WORKER_BASE}?action=supply-requests${qs}&limit=100`, { credentials:'include' });
+        const data = await resp.json();
+        srRenderRequestsList(data.requests || []);
+      } catch(e) {
+        const l = el('sr-requests-list');
+        if (l) l.innerHTML = `<div class="text-center py-10 text-red-400 text-sm">Failed to load: ${e.message}</div>`;
+      } finally { srLoadingHist = false; }
+    }
+
+    function srRenderFilterBar() {
+      const bar = el('sr-filter-bar');
+      if (!bar) return;
+      const filters = [
+        {v:'all',label:'All'},{v:'pending',label:'Pending'},
+        {v:'under_review',label:'Under Review'},{v:'on_hold',label:'On Hold'},{v:'ordered',label:'Ordered'},
+      ];
+      bar.innerHTML = filters.map(f => {
+        const active = srFilterStatus === f.v;
+        return `<button onclick="srSetFilter('${f.v}')"
+          class="px-3 py-1 rounded-full text-xs font-semibold transition-colors ${active
+            ? 'bg-[#3BB54A] text-white'
+            : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'}">${f.label}</button>`;
+      }).join('');
+    }
+
+    function srRenderRequestsList(requests) {
+      const list = el('sr-requests-list');
+      if (!list) return;
+      if (!requests.length) {
+        list.innerHTML = `<div class="text-center py-14 text-gray-400 dark:text-gray-500">
+          <svg class="mx-auto mb-3 text-gray-300 dark:text-gray-600" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <p class="text-sm">No requests found</p>
+          <button onclick="srSwitchTab('new')" class="mt-3 text-sm text-[#3BB54A] hover:underline font-semibold">Submit your first request →</button>
+        </div>`;
+        return;
+      }
+      const rows = requests.map(r => {
+        const lbl    = SR_LABELS[r.store] || r.store;
+        const nItems = r.item_count === 1 ? '1 item' : `${r.item_count} items`;
+        const dated  = new Date(r.submitted_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+        return `
+          <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
+            <div class="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors select-none"
+                 onclick="srToggleDetail('${r.id}')">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap mb-1">
+                  <span class="text-sm font-semibold text-gray-900 dark:text-white">${lbl}</span>
+                  ${r.priority==='urgent'?priorityBadge('urgent'):''}
+                  ${statusBadge(r.status)}
+                </div>
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  <span>${dated}</span><span>·</span><span>${nItems}</span>
+                  ${r.invoice_number?`<span>·</span><span class="font-medium">Inv #${r.invoice_number}</span>`:''}
+                  ${r.cost!=null?`<span>·</span><span class="font-semibold text-gray-700 dark:text-gray-200">${fmtSRMoney(r.cost)}</span>`:''}
+                </div>
+              </div>
+              <svg id="sr-chev-${r.id}" class="flex-shrink-0 text-gray-400 transition-transform duration-200" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div id="sr-detail-${r.id}" class="hidden border-t border-gray-100 dark:border-gray-700 px-4 pb-4">
+              <div class="pt-4 text-sm text-gray-400 text-center">Loading…</div>
+            </div>
+          </div>`;
+      }).join('');
+      list.innerHTML = `<div class="space-y-2">${rows}</div>`;
+    }
+
+    async function srToggleDetail(id) {
+      const panel  = el(`sr-detail-${id}`);
+      const chevron = el(`sr-chev-${id}`);
+      if (!panel) return;
+      const isOpen = !panel.classList.contains('hidden');
+      if (isOpen) {
+        panel.classList.add('hidden');
+        if (chevron) chevron.style.transform = '';
+        return;
+      }
+      panel.classList.remove('hidden');
+      if (chevron) chevron.style.transform = 'rotate(180deg)';
+      if (srDetailCache[id]) { srRenderDetail(id, srDetailCache[id]); return; }
+      try {
+        const resp = await fetch(`${WORKER_BASE}?action=supply-request&id=${id}`, { credentials:'include' });
+        const data = await resp.json();
+        if (data.ok) { srDetailCache[id] = data.request; srRenderDetail(id, data.request); }
+        else panel.innerHTML = `<div class="pt-4 text-red-400 text-sm">Error: ${data.error}</div>`;
+      } catch(e) {
+        panel.innerHTML = `<div class="pt-4 text-red-400 text-sm">Failed: ${e.message}</div>`;
+      }
+    }
+    window.srToggleDetail = srToggleDetail;
+
+    function srRenderDetail(id, req) {
+      const panel = el(`sr-detail-${id}`);
+      if (!panel) return;
+
+      // Items table
+      const itemRows = (req.items||[]).map(it=>`
+        <tr class="border-b border-gray-100 dark:border-gray-700/50 last:border-0">
+          <td class="py-1.5 pr-3 text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">${it.category}</td>
+          <td class="py-1.5 pr-3 text-sm font-medium text-gray-800 dark:text-gray-200">${it.item_name}</td>
+          <td class="py-1.5 pr-3 text-sm text-gray-600 dark:text-gray-300 text-center whitespace-nowrap">${it.quantity} ${it.unit}</td>
+          <td class="py-1.5 text-xs text-gray-400">${it.notes||''}</td>
+        </tr>`).join('');
+
+      // Timeline
+      const timeline = (req.history||[]).map(h=>{
+        const isComment = h.type === 'comment';
+        const icon = isComment
+          ? `<div class="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center flex-shrink-0 mt-0.5"><svg width="11" height="11" fill="none" stroke="#3b82f6" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>`
+          : `<div class="w-6 h-6 rounded-full bg-[#3BB54A]/15 flex items-center justify-center flex-shrink-0 mt-0.5"><svg width="11" height="11" fill="none" stroke="#3BB54A" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>`;
+        const statusLabels = {pending:'Pending',under_review:'Under Review',on_hold:'On Hold',ordered:'Ordered'};
+        const body = isComment
+          ? `<p class="text-sm text-gray-700 dark:text-gray-300">${h.note}</p>`
+          : `<p class="text-sm text-gray-700 dark:text-gray-300">Status changed to <span class="font-semibold">${statusLabels[h.new_status]||h.new_status}</span>${h.note?` <span class="text-gray-400">— ${h.note}</span>`:''}</p>`;
+        return `<div class="flex gap-2.5 items-start">
+          ${icon}
+          <div class="flex-1 min-w-0 pt-0.5">
+            <div class="flex flex-wrap gap-x-2 mb-0.5">
+              <span class="text-xs font-medium text-gray-500 dark:text-gray-400">${h.changed_by_email}</span>
+              <span class="text-xs text-gray-400">${fmtSRDate(h.changed_at)}</span>
+            </div>
+            ${body}
+          </div>
+        </div>`;
+      }).join('');
+
+      panel.innerHTML = `
+        <div class="pt-4 space-y-4">
+          ${req.notes?`<div class="bg-gray-50 dark:bg-gray-700/40 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-gray-300">
+            <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Notes: </span>${req.notes}</div>`:''}
+
+          <div>
+            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Items</div>
+            <table class="w-full"><tbody>${itemRows}</tbody></table>
+          </div>
+
+          ${req.invoice_number||req.cost!=null?`
+          <div class="flex flex-wrap gap-5 text-sm">
+            ${req.invoice_number?`<div><span class="text-gray-400">Invoice: </span><span class="font-semibold text-gray-700 dark:text-gray-200">#${req.invoice_number}</span></div>`:''}
+            ${req.cost!=null?`<div><span class="text-gray-400">Cost: </span><span class="font-semibold text-gray-700 dark:text-gray-200">${fmtSRMoney(req.cost)}</span></div>`:''}
+          </div>`:''}
+
+          ${timeline?`<div>
+            <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">History</div>
+            <div class="space-y-3">${timeline}</div>
+          </div>`:''}
+
+          <div class="flex gap-2 pt-1">
+            <input id="sr-cmt-${id}" type="text" placeholder="Add a comment…"
+              class="flex-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700/80 text-gray-900 dark:text-white text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]/50 focus:border-[#3BB54A]"
+              onkeydown="if(event.key==='Enter')srAddComment('${id}')">
+            <button onclick="srAddComment('${id}')" type="button"
+              class="px-4 py-2 bg-[#3BB54A] hover:bg-[#2ea042] text-white text-sm font-semibold rounded-lg transition-colors">
+              Send
+            </button>
+          </div>
+        </div>`;
+    }
+
+    async function srAddComment(reqId) {
+      const inp  = el(`sr-cmt-${reqId}`);
+      const note = inp?.value?.trim();
+      if (!note) return;
+      inp.value = ''; inp.disabled = true;
+      try {
+        const resp = await fetch(`${WORKER_BASE}?action=supply-request-comment`,{
+          method:'POST', credentials:'include',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({id:reqId, note}),
+        });
+        const data = await resp.json();
+        if (!data.ok) throw new Error(data.error);
+        // Refresh detail
+        delete srDetailCache[reqId];
+        const resp2 = await fetch(`${WORKER_BASE}?action=supply-request&id=${reqId}`,{credentials:'include'});
+        const data2 = await resp2.json();
+        if (data2.ok) { srDetailCache[reqId] = data2.request; srRenderDetail(reqId, data2.request); }
+      } catch(e) {
+        inp.value = note;
+        alert(`Failed: ${e.message}`);
+      } finally { if(inp) inp.disabled = false; }
+    }
+    window.srAddComment = srAddComment;
+
+    function srSetFilter(status) {
+      srFilterStatus = status;
+      srLoadingHist  = false;
+      srLoadHistory();
+    }
+    window.srSetFilter = srSetFilter;
+
+  })();
+  // ── End Supply Request Module ──────────────────────────────────────────────
 
   function switchStoreTab(tab) {
     const tabs = { weekly: el('sd-tab-weekly'), chart: el('sd-tab-chart'), items: el('sd-tab-items') };
