@@ -2915,20 +2915,23 @@ async function dispatchCronFailureAlert(env, failedStores) {
 
 // Push-only interval sales summary to opted-in users (1h or 3h cadence).
 // Called from the "0 * * * *" cron. Each user only sees their permitted stores.
+// Only fires between 10 AM and 8 PM ET (inclusive of the 10 AM tick, up to and including 8 PM).
 async function dispatchIntervalSummary(env) {
   if (!env.DB || !env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return;
 
-  // Current ET hour (0-23) to decide whether 3h users should receive this tick
+  // Current ET hour (0-23) to decide window and 3h cadence
   const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const etHour = nowET.getHours();
-  const etMin  = nowET.getMinutes();
 
-  // Today's date string in ET for the snapshot query
+  // Only send between 10 AM (10) and 8 PM (20) ET
+  if (etHour < 10 || etHour > 20) return { ok: true, skipped: 'outside active window' };
+
+  // Today's date string in ET for the sales query
   const todayET = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(nowET);
 
   // Fetch today's running totals from D1 for all stores
   const { results: rows } = await env.DB.prepare(
-    `SELECT store, net_sales, transactions FROM daily_snapshots WHERE date = ? ORDER BY store`
+    `SELECT store, total, order_count FROM daily_sales WHERE date = ? ORDER BY store`
   ).bind(todayET).all();
   const snapshotMap = {};
   for (const r of (rows || [])) snapshotMap[r.store] = r;
@@ -2949,7 +2952,7 @@ async function dispatchIntervalSummary(env) {
   const summary = { sent: 0, skipped: 0 };
 
   for (const user of users) {
-    // 3h users only fire at hours divisible by 3
+    // 3h users only fire at hours divisible by 3 within the window
     if (user.interval_summary === '3h' && etHour % 3 !== 0) { summary.skipped++; continue; }
 
     // Determine which stores this user can see
@@ -2969,8 +2972,8 @@ async function dispatchIntervalSummary(env) {
       const snap = snapshotMap[s];
       const label = STORE_LABELS[s] || s;
       if (!snap) return `${label}: —`;
-      const sales = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(snap.net_sales || 0);
-      return `${label}: ${sales} (${snap.transactions || 0} txn)`;
+      const sales = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(snap.total || 0);
+      return `${label}: ${sales} (${snap.order_count || 0} txn)`;
     });
 
     const timeLabel = nowET.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' });
