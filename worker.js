@@ -2517,6 +2517,142 @@ const roundCents = n => Math.round(n * 100) / 100;
 
 // ─── Auth helpers ─────────────────────────────────────────────────
 
+// ─── Web Push / RFC 8291 helpers ────────────────────────────────────────────
+
+function base64urlToBytes(b64url) {
+  const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b64 + '='.repeat((4 - b64.length % 4) % 4);
+  return Uint8Array.from(atob(padded), c => c.charCodeAt(0));
+}
+
+function bytesToBase64url(buf) {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// Build a VAPID JWT (ES256) for the given push endpoint origin.
+async function buildVapidJwt(env, origin) {
+  const now = Math.floor(Date.now() / 1000);
+  const header  = btoa(JSON.stringify({ typ: 'JWT', alg: 'ES256' })).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  const payload = btoa(JSON.stringify({ aud: origin, exp: now + 43200, sub: env.VAPID_SUBJECT })).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  const sigInput = `${header}.${payload}`;
+
+  // Reconstruct JWK from raw pub/priv bytes
+  const pub = base64urlToBytes(env.VAPID_PUBLIC_KEY);
+  const x = bytesToBase64url(pub.slice(1, 33));
+  const y = bytesToBase64url(pub.slice(33, 65));
+  const sigKey = await crypto.subtle.importKey(
+    'jwk',
+    { kty: 'EC', crv: 'P-256', d: env.VAPID_PRIVATE_KEY, x, y },
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false, ['sign']
+  );
+  const sig = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    sigKey,
+    new TextEncoder().encode(sigInput)
+  );
+  return `${sigInput}.${bytesToBase64url(sig)}`;
+}
+
+// Encrypt a push message payload per RFC 8291 (aes128gcm content encoding).
+async function encryptPushPayload(plaintext, p256dhB64, authB64) {
+  const clientPub  = base64urlToBytes(p256dhB64); // 65-byte uncompressed P-256
+  const authSecret = base64urlToBytes(authB64);   // 16-byte auth secret
+
+  // Ephemeral sender key pair
+  const senderKP = await crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']
+  );
+  const senderPubRaw = new Uint8Array(await crypto.subtle.exportKey('raw', senderKP.publicKey));
+
+  // ECDH shared secret
+  const clientKey = await crypto.subtle.importKey(
+    'raw', clientPub, { name: 'ECDH', namedCurve: 'P-256' }, false, []
+  );
+  const ecdhBits = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'ECDH', public: clientKey }, senderKP.privateKey, 256
+  ));
+
+  // key_info = "WebPush: info\x00" || ua_public || as_public (RFC 8291 §3.3)
+  const label   = new TextEncoder().encode('WebPush: info\x00');
+  const keyInfo = new Uint8Array(label.length + 65 + 65);
+  keyInfo.set(label, 0);
+  keyInfo.set(clientPub, label.length);
+  keyInfo.set(senderPubRaw, label.length + 65);
+
+  // IKM = HKDF(IKM=ecdhBits, salt=authSecret, info=keyInfo, len=32)
+  const ecdhKey = await crypto.subtle.importKey('raw', ecdhBits, 'HKDF', false, ['deriveBits']);
+  const ikm = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: authSecret, info: keyInfo }, ecdhKey, 256
+  ));
+
+  // Random salt (16 bytes) — included in the encrypted body header
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+
+  // CEK and nonce via HKDF (RFC 8291 §3.4)
+  const ikmKey = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+  const cek = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt, info: new TextEncoder().encode('Content-Encoding: aes128gcm\x00') },
+    ikmKey, 128
+  ));
+  const nonce = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt, info: new TextEncoder().encode('Content-Encoding: nonce\x00') },
+    ikmKey, 96
+  ));
+
+  // Encrypt: plaintext || 0x02 (single-record delimiter, no padding)
+  const pt = new TextEncoder().encode(plaintext);
+  const padded = new Uint8Array(pt.length + 1);
+  padded.set(pt);
+  padded[pt.length] = 0x02;
+
+  const cekKey = await crypto.subtle.importKey('raw', cek, { name: 'AES-GCM' }, false, ['encrypt']);
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce, tagLength: 128 }, cekKey, padded
+  ));
+
+  // aes128gcm body: salt(16) + rs(4,BE) + idlen(1) + keyid(65) + ciphertext
+  const out = new Uint8Array(16 + 4 + 1 + 65 + ciphertext.length);
+  out.set(salt, 0);
+  new DataView(out.buffer).setUint32(16, 4096, false);
+  out[20] = 65;
+  out.set(senderPubRaw, 21);
+  out.set(ciphertext, 86);
+  return out;
+}
+
+// Send a Web Push message to a single subscription.
+// subscription = { endpoint, p256dh, auth }; payload = JSON string or null
+async function sendWebPush(env, subscription, payload) {
+  const origin = new URL(subscription.endpoint).origin;
+  const jwt    = await buildVapidJwt(env, origin);
+  const authHeader = `vapid t=${jwt},k=${env.VAPID_PUBLIC_KEY}`;
+
+  let body, contentHeaders;
+  if (payload) {
+    const encrypted = await encryptPushPayload(payload, subscription.p256dh, subscription.auth);
+    body = encrypted;
+    contentHeaders = { 'Content-Type': 'application/octet-stream', 'Content-Encoding': 'aes128gcm' };
+  } else {
+    body = null;
+    contentHeaders = {};
+  }
+
+  const resp = await fetch(subscription.endpoint, {
+    method: 'POST',
+    headers: { Authorization: authHeader, TTL: '86400', ...contentHeaders },
+    body,
+  });
+
+  if (resp.status === 410 || resp.status === 404) return { ok: false, expired: true, status: resp.status };
+  if (!resp.ok) {
+    const err = await resp.text().catch(() => '');
+    throw new Error(`Push ${resp.status}: ${err.slice(0, 120)}`);
+  }
+  return { ok: true, status: resp.status };
+}
+
 function randomHex(bytes) {
   const arr = new Uint8Array(bytes);
   crypto.getRandomValues(arr);
@@ -4379,6 +4515,135 @@ export default {
 
       const ok = results.filter(r => r.ok).length;
       return new Response(JSON.stringify({ ok: true, count: ok, total: results.length, results, rebuilt: rebuildResults }), { headers: corsJson });
+    }
+
+    // ── Push notifications ────────────────────────────────────────────────────
+    // Return the VAPID public key so the client can subscribe.
+    // GET ?action=vapid-public-key  (no auth required — it's a public key)
+    if (url.searchParams.get("action") === "vapid-public-key") {
+      if (!env.VAPID_PUBLIC_KEY) {
+        return new Response(JSON.stringify({ error: "Push not configured" }), { status: 500, headers: corsJson });
+      }
+      return new Response(JSON.stringify({ ok: true, publicKey: env.VAPID_PUBLIC_KEY }), { headers: corsJson });
+    }
+
+    // POST ?action=push-subscribe  { endpoint, p256dh, auth, userAgent? }
+    // Saves a push subscription for the authenticated user (5-device cap).
+    if (request.method === "POST" && url.searchParams.get("action") === "push-subscribe") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      try {
+        const { endpoint, p256dh, auth, userAgent } = await request.json();
+        if (!endpoint || !p256dh || !auth) {
+          return new Response(JSON.stringify({ error: "Missing endpoint/p256dh/auth" }), { status: 400, headers: corsJson });
+        }
+        const DEVICE_CAP = 5;
+        const { results: existing } = await env.DB.prepare(
+          "SELECT id FROM push_subscriptions WHERE user_id = ?"
+        ).bind(currentUser.id).all();
+        // If this exact endpoint already exists for this user, it's a re-subscribe — just update
+        const { results: sameEndpoint } = await env.DB.prepare(
+          "SELECT id FROM push_subscriptions WHERE endpoint = ?"
+        ).bind(endpoint).all();
+        if (!sameEndpoint?.length && (existing?.length || 0) >= DEVICE_CAP) {
+          return new Response(JSON.stringify({ error: `Device cap reached (max ${DEVICE_CAP})` }), { status: 409, headers: corsJson });
+        }
+        const id = randomHex(16);
+        const now = new Date().toISOString();
+        await env.DB.prepare(`
+          INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, user_agent, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(endpoint) DO UPDATE SET
+            user_id    = excluded.user_id,
+            p256dh     = excluded.p256dh,
+            auth       = excluded.auth,
+            user_agent = excluded.user_agent,
+            created_at = excluded.created_at
+        `).bind(id, currentUser.id, endpoint, p256dh, auth, userAgent || null, now).run();
+        // Ensure a notification_preferences row exists
+        await env.DB.prepare(`
+          INSERT INTO notification_preferences (user_id, push_enabled, daily_summary, updated_at)
+          VALUES (?, 1, 1, ?)
+          ON CONFLICT(user_id) DO NOTHING
+        `).bind(currentUser.id, now).run();
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=push-unsubscribe  { endpoint }
+    // Removes a push subscription for the authenticated user.
+    if (request.method === "POST" && url.searchParams.get("action") === "push-unsubscribe") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      try {
+        const { endpoint } = await request.json();
+        if (!endpoint) return new Response(JSON.stringify({ error: "Missing endpoint" }), { status: 400, headers: corsJson });
+        await env.DB.prepare(
+          "DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?"
+        ).bind(endpoint, currentUser.id).run();
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=push-subscription-status
+    // Returns whether the current user has any push subscriptions.
+    if (url.searchParams.get("action") === "push-subscription-status") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      try {
+        const { results } = await env.DB.prepare(
+          "SELECT COUNT(*) AS cnt FROM push_subscriptions WHERE user_id = ?"
+        ).bind(currentUser.id).all();
+        const cnt = results?.[0]?.cnt ?? 0;
+        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5 }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=push-test
+    // Sends a test push notification to all of the current user's subscriptions.
+    if (request.method === "POST" && url.searchParams.get("action") === "push-test") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) {
+        return new Response(JSON.stringify({ error: "Push not configured on server" }), { status: 500, headers: corsJson });
+      }
+      try {
+        const { results: subs } = await env.DB.prepare(
+          "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?"
+        ).bind(currentUser.id).all();
+        if (!subs?.length) {
+          return new Response(JSON.stringify({ ok: false, error: "No subscriptions found for this user" }), { status: 404, headers: corsJson });
+        }
+        const payload = JSON.stringify({
+          title: 'Bargain Lane Dashboard',
+          body: 'Test notification — push is working! ✅',
+          tag: 'test',
+        });
+        let sent = 0, failed = 0, expired = 0;
+        for (const sub of subs) {
+          try {
+            const result = await sendWebPush(env, sub, payload);
+            if (result.expired) {
+              expired++;
+              await env.DB.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").bind(sub.endpoint).run();
+            } else {
+              sent++;
+            }
+          } catch (e) {
+            failed++;
+            console.error(`push-test failed for ${sub.endpoint}: ${e.message}`);
+          }
+        }
+        const logId = randomHex(16);
+        await env.DB.prepare(
+          "INSERT INTO notification_log (id, user_id, type, event_type, status, created_at) VALUES (?, ?, 'push', 'test', ?, ?)"
+        ).bind(logId, currentUser.id, failed ? 'failed' : 'sent', new Date().toISOString()).run().catch(() => {});
+        return new Response(JSON.stringify({ ok: true, sent, failed, expired }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
     }
 
     // ── Admin: item sales L2 totals from KV for a date range.

@@ -22,6 +22,10 @@ BL12_API_TOKEN = "cdcb4c4b-831f-3934-351a-4f276d7858d3"
 BL14_MERCHANT_ID = "1RBVSDGEQYA21"
 BL14_API_TOKEN = "48ba6534-724a-9bdc-a0ff-a21e73b2d69c"
 SNAPSHOT_SECRET = "mapcaj-saTxa2-1"
+VAPID_SUBJECT = "mailto:noreply@retjghub.com"
+# VAPID key pair — set as secrets, NOT vars:
+#   npx wrangler secret put VAPID_PUBLIC_KEY
+#   npx wrangler secret put VAPID_PRIVATE_KEY
 
 # KV namespace for storing daily sales snapshots
 # Create with: npx wrangler kv:namespace create SALES_SNAPSHOTS

@@ -931,6 +931,46 @@
           </div>
         </div>
 
+        <!-- Notifications row -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
+          <button onclick="toggleNotifSettings()" class="w-full flex items-center gap-4 px-5 py-4 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+            <span class="flex-shrink-0 w-8 h-8 rounded-lg bg-[#3BB54A]/10 flex items-center justify-center">
+              <svg class="w-4 h-4 text-[#3BB54A]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            </span>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-semibold text-gray-900 dark:text-white">Notifications</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400" id="notif-settings-subtitle">Push alerts for this device</p>
+            </div>
+            <svg id="notif-settings-chevron" class="w-4 h-4 text-gray-400 transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          <div id="notif-settings-content" class="hidden border-t border-gray-100 dark:border-gray-700 px-5 py-5 space-y-4">
+            <!-- iOS PWA banner — only visible on iOS outside standalone mode -->
+            <div id="notif-ios-banner" class="hidden rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 p-3">
+              <p class="text-xs font-semibold text-blue-800 dark:text-blue-300 mb-1">iPhone / iPad — add to Home Screen first</p>
+              <p class="text-xs text-blue-700 dark:text-blue-400">iOS only supports push notifications for apps added to your Home Screen. Tap the Share button → <em>Add to Home Screen</em>, then return here to enable.</p>
+            </div>
+            <!-- Not supported banner -->
+            <div id="notif-unsupported-banner" class="hidden rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3">
+              <p class="text-xs text-amber-800 dark:text-amber-300">Push notifications are not supported in this browser.</p>
+            </div>
+            <!-- Main controls area -->
+            <div id="notif-supported-area">
+              <div class="flex items-center justify-between mb-3">
+                <div>
+                  <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Push notifications</p>
+                  <p class="text-xs text-gray-500 dark:text-gray-400" id="notif-device-count">Loading…</p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button id="notif-toggle-btn" onclick="togglePushSubscription()" class="px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors hidden">Enable</button>
+                  <button id="notif-test-btn" onclick="sendTestPush()" class="hidden px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Send test</button>
+                </div>
+              </div>
+              <div id="notif-action-status" class="hidden text-xs rounded-lg px-3 py-2 border"></div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div><!-- end #page-settings -->
 
@@ -3236,6 +3276,164 @@
     chevron.style.transform = open ? '' : 'rotate(180deg)';
   }
   window.toggleChangelog = toggleChangelog;
+
+  // ── Notification Settings ─────────────────────────────────────────────────
+
+  let _notifSettingsOpen = false;
+
+  function toggleNotifSettings() {
+    const content = el('notif-settings-content');
+    const chevron = el('notif-settings-chevron');
+    _notifSettingsOpen = content.classList.contains('hidden');
+    content.classList.toggle('hidden', !_notifSettingsOpen);
+    chevron.style.transform = _notifSettingsOpen ? 'rotate(180deg)' : '';
+    if (_notifSettingsOpen) initNotifSettings();
+  }
+  window.toggleNotifSettings = toggleNotifSettings;
+
+  // Convert base64url → Uint8Array for pushManager.subscribe applicationServerKey
+  function urlB64ToUint8Array(b64url) {
+    const b64 = (b64url + '===').slice(0, b64url.length + (4 - b64url.length % 4) % 4).replace(/-/g,'+').replace(/_/g,'/');
+    const raw = atob(b64);
+    return Uint8Array.from(raw, c => c.charCodeAt(0));
+  }
+
+  async function initNotifSettings() {
+    const iosBanner        = el('notif-ios-banner');
+    const unsupBanner      = el('notif-unsupported-banner');
+    const supportedArea    = el('notif-supported-area');
+    const deviceCountEl    = el('notif-device-count');
+    const toggleBtn        = el('notif-toggle-btn');
+    const testBtn          = el('notif-test-btn');
+
+    // Detect iOS non-standalone
+    const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const isStandalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+    if (isIos && !isStandalone) {
+      iosBanner.classList.remove('hidden');
+      supportedArea.classList.add('hidden');
+      return;
+    }
+
+    // Check browser support
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      unsupBanner.classList.remove('hidden');
+      supportedArea.classList.add('hidden');
+      return;
+    }
+
+    // Get server-side subscription count
+    try {
+      const resp = await apiFetch(`${API_BASE}?action=push-subscription-status`);
+      const data = await resp.json();
+      const count = data.deviceCount ?? 0;
+      deviceCountEl.textContent = count === 0 ? 'Not enabled on this device' : `${count} device${count !== 1 ? 's' : ''} registered (max 5)`;
+
+      // Check browser-side subscription state
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      const isSubscribed = !!sub;
+
+      toggleBtn.classList.remove('hidden');
+      if (isSubscribed) {
+        toggleBtn.textContent = 'Disable';
+        toggleBtn.className = toggleBtn.className.replace('bg-[#3BB54A] hover:bg-[#32a040] text-white', 'bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/30 dark:hover:bg-red-900/50 dark:text-red-400');
+        testBtn.classList.remove('hidden');
+      } else {
+        toggleBtn.textContent = 'Enable';
+        toggleBtn.className = toggleBtn.className
+          .replace('bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/30 dark:hover:bg-red-900/50 dark:text-red-400', '')
+          + ' bg-[#3BB54A] hover:bg-[#32a040] text-white';
+        testBtn.classList.add('hidden');
+      }
+    } catch (e) {
+      deviceCountEl.textContent = 'Could not load status';
+    }
+  }
+
+  async function togglePushSubscription() {
+    const statusEl = el('notif-action-status');
+    const toggleBtn = el('notif-toggle-btn');
+    const testBtn = el('notif-test-btn');
+
+    function setStatus(msg, isError) {
+      statusEl.textContent = msg;
+      statusEl.className = `text-xs rounded-lg px-3 py-2 border ${isError ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400' : 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400'}`;
+      statusEl.classList.remove('hidden');
+    }
+
+    toggleBtn.disabled = true;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+
+      if (sub) {
+        // Unsubscribe
+        await fetch(`${API_BASE}?action=push-unsubscribe`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoint: sub.endpoint }),
+        });
+        await sub.unsubscribe();
+        setStatus('Push notifications disabled for this device.', false);
+      } else {
+        // Subscribe — fetch VAPID public key first
+        const pkResp = await apiFetch(`${API_BASE}?action=vapid-public-key`);
+        const { publicKey } = await pkResp.json();
+        const newSub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlB64ToUint8Array(publicKey),
+        });
+        const subJson = newSub.toJSON();
+        const saveResp = await fetch(`${API_BASE}?action=push-subscribe`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            endpoint: subJson.endpoint,
+            p256dh: subJson.keys.p256dh,
+            auth: subJson.keys.auth,
+            userAgent: navigator.userAgent,
+          }),
+        });
+        const saveData = await saveResp.json();
+        if (!saveData.ok) throw new Error(saveData.error || 'Save failed');
+        setStatus('Push notifications enabled! Send a test to confirm.', false);
+      }
+      await initNotifSettings(); // refresh state
+    } catch (e) {
+      setStatus(`Error: ${e.message}`, true);
+    } finally {
+      toggleBtn.disabled = false;
+    }
+  }
+  window.togglePushSubscription = togglePushSubscription;
+
+  async function sendTestPush() {
+    const statusEl = el('notif-action-status');
+    const testBtn = el('notif-test-btn');
+    testBtn.disabled = true;
+    testBtn.textContent = 'Sending…';
+    statusEl.classList.add('hidden');
+    try {
+      const resp = await fetch(`${API_BASE}?action=push-test`, {
+        method: 'POST', credentials: 'include',
+      });
+      const data = await resp.json();
+      statusEl.textContent = data.ok
+        ? `Test sent to ${data.sent} device${data.sent !== 1 ? 's' : ''}. Check your notifications!`
+        : `Failed: ${data.error}`;
+      statusEl.className = `text-xs rounded-lg px-3 py-2 border ${data.ok ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'}`;
+      statusEl.classList.remove('hidden');
+    } catch (e) {
+      statusEl.textContent = `Error: ${e.message}`;
+      statusEl.className = 'text-xs rounded-lg px-3 py-2 border bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400';
+      statusEl.classList.remove('hidden');
+    } finally {
+      testBtn.disabled = false;
+      testBtn.textContent = 'Send test';
+    }
+  }
+  window.sendTestPush = sendTestPush;
 
   function switchStoreTab(tab) {
     const tabs = { weekly: el('sd-tab-weekly'), chart: el('sd-tab-chart'), items: el('sd-tab-items') };

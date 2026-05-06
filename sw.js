@@ -21,6 +21,40 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
+// ── Push notification handlers ────────────────────────────────────────────────
+
+self.addEventListener('push', event => {
+  let data = { title: 'Bargain Lane Dashboard', body: 'New update', tag: 'default' };
+  if (event.data) {
+    try { data = { ...data, ...JSON.parse(event.data.text()) }; }
+    catch (e) { data.body = event.data.text(); }
+  }
+  const options = {
+    body: data.body,
+    tag: data.tag || 'default',
+    icon: '/BLlogo.svg',
+    badge: '/BLlogo.svg',
+    requireInteraction: false,
+    data: data.url ? { url: data.url } : {},
+  };
+  event.waitUntil(self.registration.showNotification(data.title, options));
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const url = event.notification.data?.url || '/';
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
+      // Focus existing open window if available
+      for (const client of windowClients) {
+        if (client.url === url && 'focus' in client) return client.focus();
+      }
+      // Otherwise open a new window
+      if (clients.openWindow) return clients.openWindow(url);
+    })
+  );
+});
+
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
