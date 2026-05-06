@@ -2517,6 +2517,205 @@ const roundCents = n => Math.round(n * 100) / 100;
 
 // ─── Auth helpers ─────────────────────────────────────────────────
 
+// ─── Daily notification helpers ──────────────────────────────────────────────
+
+const STORE_LABELS = {
+  BL1: 'Coliseum', BL2: 'South Bend', BL4: 'Dupont',
+  BL8: 'Holland', BL12: 'Wyoming', BL14: 'Battle Creek',
+};
+
+// Returns { date, priorDate, stores: [{store,label,sales,budget,prior}], totals }
+async function buildDailySummaryData(env, date) {
+  const priorD = new Date(date + 'T12:00:00Z');
+  priorD.setUTCDate(priorD.getUTCDate() - 7);
+  const priorDate = priorD.toISOString().slice(0, 10);
+
+  const [{ results: todayRows }, { results: priorRows }] = await Promise.all([
+    env.DB.prepare('SELECT store, total, budget FROM daily_sales WHERE date = ? AND total IS NOT NULL').bind(date).all(),
+    env.DB.prepare('SELECT store, total FROM daily_sales WHERE date = ? AND total IS NOT NULL').bind(priorDate).all(),
+  ]);
+
+  const todayMap = {}, priorMap = {};
+  for (const r of (todayRows || [])) todayMap[r.store] = r;
+  for (const r of (priorRows  || [])) priorMap[r.store] = r.total;
+
+  let totalSales = 0, totalBudget = 0, totalPrior = 0;
+  const stores = ALL_STORES.map(store => {
+    const row    = todayMap[store] || {};
+    const sales  = row.total  ?? null;
+    const budget = row.budget ?? null;
+    const prior  = priorMap[store] ?? null;
+    if (sales  != null) totalSales  += sales;
+    if (budget != null) totalBudget += budget;
+    if (prior  != null) totalPrior  += prior;
+    return { store, label: STORE_LABELS[store] || store, sales, budget, prior };
+  });
+
+  return { date, priorDate, stores, totals: { sales: totalSales, budget: totalBudget, prior: totalPrior } };
+}
+
+function _fmtDollars(v) {
+  if (v == null) return '—';
+  return '$' + Math.round(v).toLocaleString('en-US');
+}
+function _fmtVsLW(sales, prior) {
+  if (sales == null || prior == null || prior === 0) return '—';
+  const pct = ((sales - prior) / prior) * 100;
+  const sign = pct >= 0 ? '+' : '';
+  return `${sign}${pct.toFixed(1)}%`;
+}
+function _fmtVsBudget(sales, budget) {
+  if (sales == null || budget == null || budget === 0) return '—';
+  const pct = (sales / budget) * 100;
+  return `${pct.toFixed(0)}%`;
+}
+function _vsColor(sales, ref) {
+  if (sales == null || ref == null || ref === 0) return '#888';
+  return sales >= ref ? '#2d8a2d' : '#c0392b';
+}
+
+function buildSummaryEmailHtml(data) {
+  const { date, stores, totals } = data;
+  const displayDate = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+  const storeRows = stores.map(({ label, sales, budget, prior }) => `
+    <tr style="border-bottom:1px solid #eee">
+      <td style="padding:8px 14px;color:#333">${label}</td>
+      <td style="padding:8px 14px;text-align:right;font-weight:600;color:#111">${_fmtDollars(sales)}</td>
+      <td style="padding:8px 14px;text-align:right;color:${_vsColor(sales,prior)}">${_fmtVsLW(sales,prior)}</td>
+      <td style="padding:8px 14px;text-align:right;color:${_vsColor(sales,budget)}">${_fmtVsBudget(sales,budget)}</td>
+    </tr>`).join('');
+
+  const { sales: ts, budget: tb, prior: tp } = totals;
+
+  return `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:32px 24px;background:#fff">
+      <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:44px;margin-bottom:20px">
+      <h2 style="margin:0 0 4px;font-size:20px;color:#194975">Daily Sales Summary</h2>
+      <p style="margin:0 0 24px;font-size:14px;color:#666">${displayDate}</p>
+      <table style="width:100%;border-collapse:collapse;font-size:14px">
+        <thead>
+          <tr style="background:#3BB54A;color:#fff">
+            <th style="padding:9px 14px;text-align:left;font-weight:600">Store</th>
+            <th style="padding:9px 14px;text-align:right;font-weight:600">Net Sales</th>
+            <th style="padding:9px 14px;text-align:right;font-weight:600">vs LW</th>
+            <th style="padding:9px 14px;text-align:right;font-weight:600">vs Budget</th>
+          </tr>
+        </thead>
+        <tbody>${storeRows}</tbody>
+        <tfoot>
+          <tr style="background:#f7f7f7;font-weight:700;border-top:2px solid #3BB54A">
+            <td style="padding:9px 14px;color:#111">All Stores</td>
+            <td style="padding:9px 14px;text-align:right;color:#111">${_fmtDollars(ts)}</td>
+            <td style="padding:9px 14px;text-align:right;color:${_vsColor(ts,tp)}">${_fmtVsLW(ts,tp)}</td>
+            <td style="padding:9px 14px;text-align:right;color:${_vsColor(ts,tb)}">${_fmtVsBudget(ts,tb)}</td>
+          </tr>
+        </tfoot>
+      </table>
+      <p style="margin-top:28px;font-size:12px;color:#aaa">
+        <a href="https://www.retjghub.com" style="color:#3BB54A;text-decoration:none">Open Dashboard</a>
+        &nbsp;·&nbsp; Bargain Lane Notification System
+        &nbsp;·&nbsp; To stop receiving these, open Settings → Notifications.
+      </p>
+    </div>`;
+}
+
+// Fan out push + email daily summary to all opted-in superusers.
+async function dispatchDailySummary(env, date) {
+  if (!env.DB) return { error: 'DB not configured' };
+
+  const data = await buildDailySummaryData(env, date);
+  const { sales: ts, budget: tb, prior: tp } = data.totals;
+
+  // Short push body
+  const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
+  const pushPayload = JSON.stringify({
+    title: `Sales Summary — ${new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`,
+    body: `${_fmtDollars(ts)} across all stores${budgetLine}`,
+    tag: 'daily-summary',
+    url: '/',
+  });
+
+  // All active superusers
+  const { results: superusers } = await env.DB.prepare(
+    "SELECT u.id, u.email FROM users u WHERE u.role = 'superuser' AND u.status = 'active'"
+  ).all();
+  if (!superusers?.length) return { ok: true, skipped: 'no superusers' };
+
+  const userIds = superusers.map(u => u.id);
+  const placeholders = userIds.map(() => '?').join(',');
+
+  // Preferences (default: both enabled if no row)
+  const { results: prefs } = await env.DB.prepare(
+    `SELECT user_id, push_enabled, daily_summary FROM notification_preferences WHERE user_id IN (${placeholders})`
+  ).bind(...userIds).all();
+  const prefMap = {};
+  for (const p of (prefs || [])) prefMap[p.user_id] = p;
+
+  const summary = { push: { sent: 0, failed: 0, expired: 0 }, email: { sent: 0, failed: 0 } };
+  const now = new Date().toISOString();
+
+  for (const user of superusers) {
+    const pref = prefMap[user.id] || { push_enabled: 1, daily_summary: 1 };
+    if (!pref.daily_summary) continue;
+
+    // ── Push ──────────────────────────────────────────────────────────────
+    if (pref.push_enabled && env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) {
+      const { results: subs } = await env.DB.prepare(
+        'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?'
+      ).bind(user.id).all();
+      for (const sub of (subs || [])) {
+        try {
+          const res = await sendWebPush(env, sub, pushPayload);
+          if (res.expired) {
+            summary.push.expired++;
+            await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+          } else {
+            summary.push.sent++;
+          }
+        } catch (e) {
+          summary.push.failed++;
+          console.error(`Push failed for ${user.email}:`, e.message);
+        }
+      }
+    }
+
+    // ── Email ─────────────────────────────────────────────────────────────
+    if (pref.daily_summary && env.RESEND_API_KEY) {
+      try {
+        const displayDate = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        const res = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'noreply@retjghub.com',
+            to: user.email,
+            subject: `Sales Summary — ${displayDate}`,
+            html: buildSummaryEmailHtml(data),
+          }),
+        });
+        if (res.ok) {
+          summary.email.sent++;
+        } else {
+          const err = await res.text().catch(() => '');
+          console.error(`Email failed for ${user.email}: ${res.status} ${err.slice(0,100)}`);
+          summary.email.failed++;
+        }
+      } catch (e) {
+        summary.email.failed++;
+        console.error(`Email exception for ${user.email}:`, e.message);
+      }
+    }
+
+    // Log one entry per user
+    await env.DB.prepare(
+      "INSERT INTO notification_log (id, user_id, type, event_type, status, created_at) VALUES (?, ?, 'push+email', 'daily-summary', 'sent', ?)"
+    ).bind(randomHex(16), user.id, now).run().catch(() => {});
+  }
+
+  return { ok: true, date, summary };
+}
+
 // ─── Web Push / RFC 8291 helpers ────────────────────────────────────────────
 
 function base64urlToBytes(b64url) {
@@ -4592,11 +4791,13 @@ export default {
     if (url.searchParams.get("action") === "push-subscription-status") {
       if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
       try {
-        const { results } = await env.DB.prepare(
-          "SELECT COUNT(*) AS cnt FROM push_subscriptions WHERE user_id = ?"
-        ).bind(currentUser.id).all();
-        const cnt = results?.[0]?.cnt ?? 0;
-        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5 }), { headers: corsJson });
+        const [subRow, prefRow] = await Promise.all([
+          env.DB.prepare("SELECT COUNT(*) AS cnt FROM push_subscriptions WHERE user_id = ?").bind(currentUser.id).first(),
+          env.DB.prepare("SELECT push_enabled, daily_summary FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
+        ]);
+        const cnt = subRow?.cnt ?? 0;
+        const dailySummary = prefRow ? !!prefRow.daily_summary : true; // default on
+        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
@@ -4641,6 +4842,47 @@ export default {
           "INSERT INTO notification_log (id, user_id, type, event_type, status, created_at) VALUES (?, ?, 'push', 'test', ?, ?)"
         ).bind(logId, currentUser.id, failed ? 'failed' : 'sent', new Date().toISOString()).run().catch(() => {});
         return new Response(JSON.stringify({ ok: true, sent, failed, expired }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=update-notif-prefs  { push_enabled?, daily_summary? }
+    // Updates notification_preferences for the authenticated user.
+    if (request.method === "POST" && url.searchParams.get("action") === "update-notif-prefs") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      try {
+        const body = await request.json();
+        const fields = {};
+        if (typeof body.push_enabled  === 'boolean') fields.push_enabled  = body.push_enabled  ? 1 : 0;
+        if (typeof body.daily_summary === 'boolean') fields.daily_summary = body.daily_summary ? 1 : 0;
+        if (!Object.keys(fields).length) return new Response(JSON.stringify({ error: "Nothing to update" }), { status: 400, headers: corsJson });
+        const now = new Date().toISOString();
+        const setClauses = Object.keys(fields).map(k => `${k} = ?`).join(', ');
+        await env.DB.prepare(
+          `INSERT INTO notification_preferences (user_id, push_enabled, daily_summary, updated_at) VALUES (?, 1, 1, ?)
+           ON CONFLICT(user_id) DO UPDATE SET ${setClauses}, updated_at = ?`
+        ).bind(currentUser.id, now, ...Object.values(fields), now).run();
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=send-daily-summary[&date=YYYY-MM-DD]
+    // Manually trigger the daily summary dispatch (superuser or admin-secret).
+    if (request.method === "POST" && url.searchParams.get("action") === "send-daily-summary") {
+      const isAdminReq = request.headers.get('X-Snapshot-Secret') === env.SNAPSHOT_SECRET;
+      if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      const dateParam = url.searchParams.get("date") || (() => {
+        const y = new Date(); y.setUTCDate(y.getUTCDate() - 1);
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(y);
+      })();
+      try {
+        const result = await dispatchDailySummary(env, dateParam);
+        return new Response(JSON.stringify(result), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
@@ -5147,6 +5389,18 @@ export default {
       ctx.waitUntil(processSaleSchedules(env, new Date()));
       return;
     }
+
+    // "0 10 * * *" — 5 AM ET daily summary (10:00 UTC = EST; shifts to 6 AM during EDT)
+    if (event.cron === "0 10 * * *") {
+      // Summarize yesterday in ET
+      const yesterday = new Date(Date.now() - 24 * 3600 * 1000);
+      const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(yesterday);
+      ctx.waitUntil(
+        dispatchDailySummary(env, date).then(r => console.log("Daily summary dispatch:", JSON.stringify(r)))
+      );
+      return;
+    }
+
     // "55 3 * * *" — nightly end-of-day snapshot rollup (fall-through below)
     const { dateStr: todayStr, startOfDay } = getETToday();
 
