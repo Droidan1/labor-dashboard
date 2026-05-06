@@ -967,6 +967,18 @@
                 </div>
               </div>
               <div id="notif-action-status" class="hidden text-xs rounded-lg px-3 py-2 border"></div>
+
+              <!-- Daily summary email toggle -->
+              <div class="border-t border-gray-100 dark:border-gray-700 mt-4 pt-4">
+                <label class="flex items-center justify-between cursor-pointer">
+                  <div>
+                    <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Daily summary email</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">5 AM recap of all-store sales, vs last week & budget</p>
+                  </div>
+                  <input type="checkbox" id="notif-daily-summary-toggle" onchange="updateNotifPrefs()"
+                    class="w-4 h-4 accent-[#3BB54A] cursor-pointer ml-4">
+                </label>
+              </div>
             </div>
           </div>
         </div>
@@ -3347,6 +3359,14 @@
       _setNotifToggleState(false);
       testBtn.classList.add('hidden');
 
+      // Load daily summary preference
+      fetch(`${WORKER_BASE}?action=push-subscription-status`, { credentials: 'include' })
+        .then(r => r.json())
+        .then(d => {
+          const cb = el('notif-daily-summary-toggle');
+          if (cb) cb.checked = d.dailySummary !== false; // default on
+        }).catch(() => {});
+
       // Background SW check: if an existing subscription is found, flip to
       // Disable + show Send Test. Uses no timeout — just fires whenever ready.
       navigator.serviceWorker.ready.then(async swReg => {
@@ -3447,6 +3467,21 @@
     }
   }
   window.sendTestPush = sendTestPush;
+
+  async function updateNotifPrefs() {
+    const cb = el('notif-daily-summary-toggle');
+    if (!cb) return;
+    try {
+      await fetch(`${WORKER_BASE}?action=update-notif-prefs`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ daily_summary: cb.checked }),
+      });
+    } catch (e) {
+      console.error('Failed to save notification preference:', e);
+    }
+  }
+  window.updateNotifPrefs = updateNotifPrefs;
 
   function switchStoreTab(tab) {
     const tabs = { weekly: el('sd-tab-weekly'), chart: el('sd-tab-chart'), items: el('sd-tab-items') };
