@@ -3341,10 +3341,19 @@
       const count = data.deviceCount ?? 0;
       deviceCountEl.textContent = count === 0 ? 'Not enabled on this device' : `${count} device${count !== 1 ? 's' : ''} registered (max 5)`;
 
-      // Check browser-side subscription state
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.getSubscription();
-      const isSubscribed = !!sub;
+      // Check browser-side subscription state — with 3 s timeout so the
+      // button always appears even if the SW is still activating.
+      let isSubscribed = false;
+      try {
+        const swReg = await Promise.race([
+          navigator.serviceWorker.ready,
+          new Promise(resolve => setTimeout(() => resolve(null), 3000)),
+        ]);
+        if (swReg) {
+          const sub = await swReg.pushManager.getSubscription();
+          isSubscribed = !!sub;
+        }
+      } catch (_) { /* SW not ready yet — show Enable */ }
 
       toggleBtn.classList.remove('hidden');
       _setNotifToggleState(isSubscribed);
@@ -3368,7 +3377,10 @@
 
     toggleBtn.disabled = true;
     try {
-      const reg = await navigator.serviceWorker.ready;
+      const reg = await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Service worker not ready — try refreshing the page.')), 8000)),
+      ]);
       const sub = await reg.pushManager.getSubscription();
 
       if (sub) {
@@ -7423,12 +7435,11 @@
   window.logout = logout;
 
   document.addEventListener("DOMContentLoaded", () => {
-    // Unregister any old service workers and clear caches
+    // Register service worker (needed for push notifications and offline cache)
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(regs => {
-        for (const reg of regs) reg.unregister();
+      navigator.serviceWorker.register('/sw.js').catch(err => {
+        console.warn('SW registration failed:', err);
       });
-      caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
     }
     initSidebar();
     initDarkMode();
