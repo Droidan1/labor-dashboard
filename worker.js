@@ -2913,6 +2913,93 @@ async function dispatchCronFailureAlert(env, failedStores) {
   }
 }
 
+// Push-only interval sales summary to opted-in users (1h or 3h cadence).
+// Called from the "0 * * * *" cron. Each user only sees their permitted stores.
+async function dispatchIntervalSummary(env) {
+  if (!env.DB || !env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return;
+
+  // Current ET hour (0-23) to decide whether 3h users should receive this tick
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const etHour = nowET.getHours();
+  const etMin  = nowET.getMinutes();
+
+  // Today's date string in ET for the snapshot query
+  const todayET = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(nowET);
+
+  // Fetch today's running totals from D1 for all stores
+  const { results: rows } = await env.DB.prepare(
+    `SELECT store, net_sales, transactions FROM daily_snapshots WHERE date = ? ORDER BY store`
+  ).bind(todayET).all();
+  const snapshotMap = {};
+  for (const r of (rows || [])) snapshotMap[r.store] = r;
+
+  // Pull all users with interval_summary != 'off' who have push_enabled
+  const { results: users } = await env.DB.prepare(
+    `SELECT u.id, u.email, u.role, u.stores, u.status,
+            np.interval_summary, np.push_enabled
+     FROM users u
+     JOIN notification_preferences np ON np.user_id = u.id
+     WHERE u.status = 'active'
+       AND np.push_enabled = 1
+       AND np.interval_summary != 'off'`
+  ).all();
+
+  if (!users?.length) return { ok: true, skipped: 'no opted-in users' };
+
+  const summary = { sent: 0, skipped: 0 };
+
+  for (const user of users) {
+    // 3h users only fire at hours divisible by 3
+    if (user.interval_summary === '3h' && etHour % 3 !== 0) { summary.skipped++; continue; }
+
+    // Determine which stores this user can see
+    const isSuper = user.role === 'superuser' || user.role === 'admin';
+    let userStores;
+    if (isSuper) {
+      userStores = ALL_STORES;
+    } else {
+      let parsed = [];
+      try { parsed = user.stores ? JSON.parse(user.stores) : []; } catch (_) {}
+      userStores = ALL_STORES.filter(s => parsed.includes(s));
+    }
+    if (!userStores.length) { summary.skipped++; continue; }
+
+    // Build compact summary lines
+    const lines = userStores.map(s => {
+      const snap = snapshotMap[s];
+      const label = STORE_LABELS[s] || s;
+      if (!snap) return `${label}: —`;
+      const sales = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(snap.net_sales || 0);
+      return `${label}: ${sales} (${snap.transactions || 0} txn)`;
+    });
+
+    const timeLabel = nowET.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' });
+    const payload = JSON.stringify({
+      title: `Sales Update — ${timeLabel}`,
+      body: lines.join('\n'),
+      tag: 'interval-summary',
+      url: '/',
+    });
+
+    // Fetch this user's subscriptions
+    const { results: subs } = await env.DB.prepare(
+      'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?'
+    ).bind(user.id).all();
+
+    for (const sub of (subs || [])) {
+      try {
+        const res = await sendWebPush(env, sub, payload);
+        if (res.expired) {
+          await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+        }
+      } catch (e) { console.error('Interval summary push error:', e.message); }
+    }
+    summary.sent++;
+  }
+
+  return { ok: true, ...summary };
+}
+
 // ─── Web Push / RFC 8291 helpers ────────────────────────────────────────────
 
 function base64urlToBytes(b64url) {
@@ -4990,12 +5077,13 @@ export default {
       try {
         const [subRow, prefRow] = await Promise.all([
           env.DB.prepare("SELECT COUNT(*) AS cnt FROM push_subscriptions WHERE user_id = ?").bind(currentUser.id).first(),
-          env.DB.prepare("SELECT push_enabled, daily_summary, weekly_digest FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
+          env.DB.prepare("SELECT push_enabled, daily_summary, weekly_digest, interval_summary FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
         ]);
         const cnt = subRow?.cnt ?? 0;
-        const dailySummary  = prefRow ? !!prefRow.daily_summary  : true;
-        const weeklyDigest  = prefRow ? !!prefRow.weekly_digest  : true;
-        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest }), { headers: corsJson });
+        const dailySummary   = prefRow ? !!prefRow.daily_summary  : true;
+        const weeklyDigest   = prefRow ? !!prefRow.weekly_digest  : true;
+        const intervalSummary = prefRow?.interval_summary ?? 'off';
+        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest, intervalSummary }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
@@ -5045,16 +5133,17 @@ export default {
       }
     }
 
-    // POST ?action=update-notif-prefs  { push_enabled?, daily_summary? }
+    // POST ?action=update-notif-prefs  { push_enabled?, daily_summary?, weekly_digest?, interval_summary? }
     // Updates notification_preferences for the authenticated user.
     if (request.method === "POST" && url.searchParams.get("action") === "update-notif-prefs") {
       if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
       try {
         const body = await request.json();
         const fields = {};
-        if (typeof body.push_enabled  === 'boolean') fields.push_enabled  = body.push_enabled  ? 1 : 0;
-        if (typeof body.daily_summary === 'boolean') fields.daily_summary = body.daily_summary ? 1 : 0;
-        if (typeof body.weekly_digest === 'boolean') fields.weekly_digest = body.weekly_digest ? 1 : 0;
+        if (typeof body.push_enabled   === 'boolean') fields.push_enabled   = body.push_enabled   ? 1 : 0;
+        if (typeof body.daily_summary  === 'boolean') fields.daily_summary  = body.daily_summary  ? 1 : 0;
+        if (typeof body.weekly_digest  === 'boolean') fields.weekly_digest  = body.weekly_digest  ? 1 : 0;
+        if (['off', '1h', '3h'].includes(body.interval_summary)) fields.interval_summary = body.interval_summary;
         if (!Object.keys(fields).length) return new Response(JSON.stringify({ error: "Nothing to update" }), { status: 400, headers: corsJson });
         const now = new Date().toISOString();
         const setClauses = Object.keys(fields).map(k => `${k} = ?`).join(', ');
@@ -5604,6 +5693,14 @@ export default {
   // ── Cron trigger handler ───────────────────────────────────────
   async scheduled(event, env, ctx) {
     // Route by cron expression.
+    // "0 * * * *" — top-of-hour interval sales summary push notifications
+    if (event.cron === "0 * * * *") {
+      ctx.waitUntil(
+        dispatchIntervalSummary(env).then(r => console.log("Interval summary dispatch:", JSON.stringify(r)))
+      );
+      return;
+    }
+
     // "* * * * *" — every-minute sale scheduler
     if (event.cron === "* * * * *") {
       ctx.waitUntil(processSaleSchedules(env, new Date()));

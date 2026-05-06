@@ -981,11 +981,33 @@
                 <label class="flex items-center justify-between cursor-pointer">
                   <div>
                     <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Weekly digest email</p>
-                    <p class="text-xs text-gray-500 dark:text-gray-400">Monday morning full-week recap with orders &amp; budget</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Sunday morning full-week recap with orders &amp; budget</p>
                   </div>
                   <input type="checkbox" id="notif-weekly-digest-toggle" onchange="updateNotifPrefs()"
                     class="w-4 h-4 accent-[#3BB54A] cursor-pointer ml-4">
                 </label>
+                <!-- Interval summary -->
+                <div class="pt-1">
+                  <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Interval sales updates</p>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">Push notification with running totals for your stores</p>
+                  <div class="flex gap-3">
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="radio" name="interval-summary" value="off" id="interval-off"
+                        onchange="updateNotifPrefs()" class="accent-[#3BB54A]">
+                      <span class="text-sm text-gray-700 dark:text-gray-300">Off</span>
+                    </label>
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="radio" name="interval-summary" value="1h" id="interval-1h"
+                        onchange="updateNotifPrefs()" class="accent-[#3BB54A]">
+                      <span class="text-sm text-gray-700 dark:text-gray-300">Every hour</span>
+                    </label>
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="radio" name="interval-summary" value="3h" id="interval-3h"
+                        onchange="updateNotifPrefs()" class="accent-[#3BB54A]">
+                      <span class="text-sm text-gray-700 dark:text-gray-300">Every 3 hours</span>
+                    </label>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -3367,7 +3389,7 @@
       _setNotifToggleState(false);
       testBtn.classList.add('hidden');
 
-      // Load email preferences
+      // Load notification preferences
       fetch(`${WORKER_BASE}?action=push-subscription-status`, { credentials: 'include' })
         .then(r => r.json())
         .then(d => {
@@ -3375,6 +3397,11 @@
           const weekly = el('notif-weekly-digest-toggle');
           if (daily)  daily.checked  = d.dailySummary !== false;
           if (weekly) weekly.checked = d.weeklyDigest !== false;
+          // Interval summary radio
+          const interval = d.intervalSummary || 'off';
+          const radio = document.querySelector(`input[name="interval-summary"][value="${interval}"]`);
+          if (radio) radio.checked = true;
+          else { const off = el('interval-off'); if (off) off.checked = true; }
         }).catch(() => {});
 
       // Background SW check: if an existing subscription is found, flip to
@@ -3479,11 +3506,13 @@
   window.sendTestPush = sendTestPush;
 
   async function updateNotifPrefs() {
-    const daily  = el('notif-daily-summary-toggle');
-    const weekly = el('notif-weekly-digest-toggle');
+    const daily    = el('notif-daily-summary-toggle');
+    const weekly   = el('notif-weekly-digest-toggle');
+    const intervalRadio = document.querySelector('input[name="interval-summary"]:checked');
     const body = {};
     if (daily)  body.daily_summary = daily.checked;
     if (weekly) body.weekly_digest = weekly.checked;
+    if (intervalRadio) body.interval_summary = intervalRadio.value;
     if (!Object.keys(body).length) return;
     try {
       await fetch(`${WORKER_BASE}?action=update-notif-prefs`, {
