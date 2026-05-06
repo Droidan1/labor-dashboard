@@ -3003,6 +3003,228 @@ async function dispatchIntervalSummary(env) {
   return { ok: true, ...summary };
 }
 
+// ─── Supply Request helpers ──────────────────────────────────────────────────
+
+// HTML email sent to superusers when a new supply request is submitted.
+function buildSupplyRequestEmailHtml({ requesterEmail, store, priority, notes, items, requestId }) {
+  const storeLabel = STORE_LABELS[store] || store;
+  const priorityBadge = priority === 'urgent'
+    ? '<span style="background:#dc2626;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;text-transform:uppercase;">URGENT</span>'
+    : '<span style="background:#6b7280;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;text-transform:uppercase;">Normal</span>';
+
+  const itemRows = items.map(it => `
+    <tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #1e293b;color:#e2e8f0;">${it.category}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #1e293b;color:#e2e8f0;">${it.item_name}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #1e293b;color:#e2e8f0;text-align:center;">${it.quantity} ${it.unit}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #1e293b;color:#94a3b8;">${it.notes || '—'}</td>
+    </tr>`).join('');
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<div style="max-width:600px;margin:0 auto;padding:24px 16px;">
+  <div style="background:#1e3a5f;border-radius:12px 12px 0 0;padding:24px 28px;">
+    <div style="font-size:13px;font-weight:700;color:#94a3b8;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">New Supply Request</div>
+    <div style="font-size:26px;font-weight:800;color:#ffffff;margin-bottom:4px;">${storeLabel}</div>
+    <div style="font-size:14px;color:#93c5fd;">Requested by ${requesterEmail}</div>
+  </div>
+  <div style="background:#1e293b;padding:20px 28px;">
+    <div style="display:flex;gap:12px;margin-bottom:20px;align-items:center;">
+      <span style="font-size:13px;color:#94a3b8;">Priority:</span> ${priorityBadge}
+    </div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+      <thead>
+        <tr style="background:#0f172a;">
+          <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;">Category</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;">Item</th>
+          <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;">Qty</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;">Notes</th>
+        </tr>
+      </thead>
+      <tbody>${itemRows}</tbody>
+    </table>
+    ${notes ? `<div style="background:#0f172a;border-radius:8px;padding:14px 16px;margin-bottom:16px;"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Request Notes</div><div style="font-size:14px;color:#e2e8f0;">${notes}</div></div>` : ''}
+  </div>
+  <div style="background:#0f172a;border-radius:0 0 12px 12px;padding:16px 28px;text-align:center;">
+    <div style="font-size:12px;color:#475569;">Bargain Lane Dashboard · Supply Requests</div>
+  </div>
+</div></body></html>`;
+}
+
+// HTML email sent to requester when their request status changes.
+function buildStatusUpdateEmailHtml({ store, oldStatus, newStatus, note, requestId }) {
+  const storeLabel = STORE_LABELS[store] || store;
+  const statusColors = { pending: '#6b7280', under_review: '#d97706', on_hold: '#ea580c', ordered: '#16a34a' };
+  const statusLabels = { pending: 'Pending', under_review: 'Under Review', on_hold: 'On Hold', ordered: 'Ordered' };
+  const color = statusColors[newStatus] || '#6b7280';
+  const label = statusLabels[newStatus] || newStatus;
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<div style="max-width:600px;margin:0 auto;padding:24px 16px;">
+  <div style="background:#1e3a5f;border-radius:12px 12px 0 0;padding:24px 28px;">
+    <div style="font-size:13px;font-weight:700;color:#94a3b8;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">Supply Request Update</div>
+    <div style="font-size:26px;font-weight:800;color:#ffffff;margin-bottom:4px;">${storeLabel}</div>
+  </div>
+  <div style="background:#1e293b;padding:24px 28px;">
+    <div style="font-size:15px;color:#e2e8f0;margin-bottom:20px;">Your supply request status has been updated.</div>
+    <div style="display:flex;gap:24px;margin-bottom:20px;">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Previous Status</div>
+        <div style="font-size:14px;color:#94a3b8;">${statusLabels[oldStatus] || oldStatus}</div>
+      </div>
+      <div style="font-size:20px;color:#475569;align-self:flex-end;margin-bottom:2px;">→</div>
+      <div>
+        <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">New Status</div>
+        <div style="font-size:16px;font-weight:700;color:${color};">${label}</div>
+      </div>
+    </div>
+    ${note ? `<div style="background:#0f172a;border-radius:8px;padding:14px 16px;"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Note from Admin</div><div style="font-size:14px;color:#e2e8f0;">${note}</div></div>` : ''}
+  </div>
+  <div style="background:#0f172a;border-radius:0 0 12px 12px;padding:16px 28px;text-align:center;">
+    <div style="font-size:12px;color:#475569;">Bargain Lane Dashboard · Supply Requests</div>
+  </div>
+</div></body></html>`;
+}
+
+// Notify all superusers (push + email) when a new supply request is submitted.
+async function notifySupplyRequestNew(env, { requestId, requesterEmail, store, priority, notes, items }) {
+  if (!env.DB) return;
+  const storeLabel = STORE_LABELS[store] || store;
+  const itemSummary = items.slice(0, 3).map(i => `${i.item_name} ×${i.quantity}`).join(', ')
+    + (items.length > 3 ? ` +${items.length - 3} more` : '');
+  const urgentPrefix = priority === 'urgent' ? '🚨 URGENT — ' : '';
+
+  const pushPayload = JSON.stringify({
+    title: `${urgentPrefix}New Supply Request — ${storeLabel}`,
+    body: `${requesterEmail}: ${itemSummary}`,
+    tag: `supply-new-${requestId}`,
+    url: '/index.html#supply-request',
+  });
+
+  const { results: superusers } = await env.DB.prepare(
+    "SELECT id, email FROM users WHERE role = 'superuser' AND status = 'active'"
+  ).all();
+  if (!superusers?.length) return;
+
+  const userIds = superusers.map(u => u.id);
+  const placeholders = userIds.map(() => '?').join(',');
+  const { results: subs } = await env.DB.prepare(
+    `SELECT ps.endpoint, ps.p256dh, ps.auth
+     FROM push_subscriptions ps
+     JOIN notification_preferences np ON np.user_id = ps.user_id
+     WHERE ps.user_id IN (${placeholders}) AND np.push_enabled = 1`
+  ).bind(...userIds).all();
+
+  for (const sub of (subs || [])) {
+    try {
+      const res = await sendWebPush(env, sub, pushPayload);
+      if (res.expired) {
+        await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+      }
+    } catch (e) { console.error('Supply new push error:', e.message); }
+  }
+
+  // Email
+  if (env.RESEND_API_KEY) {
+    const html = buildSupplyRequestEmailHtml({ requesterEmail, store, priority, notes, items, requestId });
+    for (const u of superusers) {
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: 'Bargain Lane Dashboard <noreply@retjghub.com>',
+          to: u.email,
+          subject: `${urgentPrefix}New Supply Request — ${storeLabel}`,
+          html,
+        }),
+      }).catch(e => console.error('Supply email error:', e.message));
+    }
+  }
+}
+
+// Notify the requester (push + email) when their request status changes.
+async function notifySupplyStatusChange(env, { requestId, requesterId, requesterEmail, store, oldStatus, newStatus, note }) {
+  if (!env.DB) return;
+  const storeLabel = STORE_LABELS[store] || store;
+  const statusLabels = { pending: 'Pending', under_review: 'Under Review', on_hold: 'On Hold', ordered: 'Ordered' };
+
+  // Push
+  const pushPayload = JSON.stringify({
+    title: `Supply Request Update — ${storeLabel}`,
+    body: `Status changed to ${statusLabels[newStatus] || newStatus}${note ? ': ' + note : ''}`,
+    tag: `supply-status-${requestId}`,
+    url: '/index.html#supply-request',
+  });
+
+  const { results: subs } = await env.DB.prepare(
+    `SELECT ps.endpoint, ps.p256dh, ps.auth
+     FROM push_subscriptions ps
+     JOIN notification_preferences np ON np.user_id = ps.user_id
+     WHERE ps.user_id = ? AND np.push_enabled = 1`
+  ).bind(requesterId).all();
+
+  for (const sub of (subs || [])) {
+    try {
+      const res = await sendWebPush(env, sub, pushPayload);
+      if (res.expired) {
+        await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+      }
+    } catch (e) { console.error('Supply status push error:', e.message); }
+  }
+
+  // Email
+  if (env.RESEND_API_KEY && requesterEmail) {
+    const html = buildStatusUpdateEmailHtml({ store, oldStatus, newStatus, note, requestId });
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Bargain Lane Dashboard <noreply@retjghub.com>',
+        to: requesterEmail,
+        subject: `Supply Request Update — ${storeLabel}`,
+        html,
+      }),
+    }).catch(e => console.error('Supply status email error:', e.message));
+  }
+}
+
+// Push alert to superusers when a store hits 80% of its monthly supply budget.
+async function notifySupplyBudget80(env, { store, year, month, budget, spent }) {
+  if (!env.DB || !env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return;
+  const storeLabel = STORE_LABELS[store] || store;
+  const pct = Math.round((spent / budget) * 100);
+  const monthName = new Date(year, month - 1, 1).toLocaleString('en-US', { month: 'long' });
+
+  const pushPayload = JSON.stringify({
+    title: `⚠️ Supply Budget Alert — ${storeLabel}`,
+    body: `${monthName} budget is at ${pct}% ($${spent.toFixed(0)} of $${budget.toFixed(0)})`,
+    tag: `supply-budget-${store}-${year}-${month}`,
+    url: '/index.html#supply-request',
+  });
+
+  const { results: superusers } = await env.DB.prepare(
+    "SELECT id FROM users WHERE role = 'superuser' AND status = 'active'"
+  ).all();
+  if (!superusers?.length) return;
+
+  const userIds = superusers.map(u => u.id);
+  const placeholders = userIds.map(() => '?').join(',');
+  const { results: subs } = await env.DB.prepare(
+    `SELECT ps.endpoint, ps.p256dh, ps.auth
+     FROM push_subscriptions ps
+     JOIN notification_preferences np ON np.user_id = ps.user_id
+     WHERE ps.user_id IN (${placeholders}) AND np.push_enabled = 1`
+  ).bind(...userIds).all();
+
+  for (const sub of (subs || [])) {
+    try {
+      const res = await sendWebPush(env, sub, pushPayload);
+      if (res.expired) {
+        await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+      }
+    } catch (e) { console.error('Supply budget push error:', e.message); }
+  }
+}
+
 // ─── Web Push / RFC 8291 helpers ────────────────────────────────────────────
 
 function base64urlToBytes(b64url) {
@@ -5195,6 +5417,346 @@ export default {
       try {
         const result = await dispatchWeeklyDigest(env, startDate, endDate);
         return new Response(JSON.stringify(result), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Supply Request endpoints ──────────────────────────────────────────────
+
+    // POST ?action=supply-request-create
+    // Body: { store, items: [{category,item_name,quantity,unit,notes}], notes?, priority? }
+    // Any authenticated user may submit; managers/DMs restricted to their allowed stores.
+    if (request.method === "POST" && url.searchParams.get("action") === "supply-request-create") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      try {
+        const body = await request.json();
+        const { store, items, notes, priority = 'normal' } = body;
+        if (!store || !Array.isArray(items) || !items.length) {
+          return new Response(JSON.stringify({ error: "store and at least one item required" }), { status: 400, headers: corsJson });
+        }
+        // Validate store access
+        const allowed = allowedStores(currentUser);
+        if (allowed !== null && !allowed.includes(store)) {
+          return new Response(JSON.stringify({ error: "Store not permitted" }), { status: 403, headers: corsJson });
+        }
+        if (!['normal','urgent'].includes(priority)) {
+          return new Response(JSON.stringify({ error: "Invalid priority" }), { status: 400, headers: corsJson });
+        }
+        const VALID_CATEGORIES = ['Cleaning','Office','Fixtures','Safety','Other'];
+        for (const it of items) {
+          if (!it.item_name?.trim()) return new Response(JSON.stringify({ error: "Each item requires item_name" }), { status: 400, headers: corsJson });
+          if (!VALID_CATEGORIES.includes(it.category)) it.category = 'Other';
+        }
+        const now = new Date().toISOString();
+        const requestId = randomHex(16);
+
+        // Insert request
+        await env.DB.prepare(
+          `INSERT INTO supply_requests (id, user_id, user_email, store, status, priority, notes, submitted_at, updated_at)
+           VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`
+        ).bind(requestId, currentUser.id, currentUser.email, store, priority, notes || null, now, now).run();
+
+        // Insert items
+        const itemStmts = items.map(it =>
+          env.DB.prepare(
+            `INSERT INTO supply_request_items (id, request_id, category, item_name, quantity, unit, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).bind(randomHex(12), requestId, it.category || 'Other', it.item_name.trim(),
+                 it.quantity || 1, it.unit || 'units', it.notes || null)
+        );
+        await env.DB.batch(itemStmts);
+
+        // Initial history entry
+        await env.DB.prepare(
+          `INSERT INTO supply_request_history (id, request_id, type, changed_by_id, changed_by_email, old_status, new_status, note, changed_at)
+           VALUES (?, ?, 'status_change', ?, ?, null, 'pending', 'Request submitted', ?)`
+        ).bind(randomHex(12), requestId, currentUser.id, currentUser.email, now).run();
+
+        // Notify superusers (fire-and-forget)
+        const fullItems = await env.DB.prepare('SELECT * FROM supply_request_items WHERE request_id = ?').bind(requestId).all();
+        ctx.waitUntil(notifySupplyRequestNew(env, {
+          requestId, requesterEmail: currentUser.email, store, priority,
+          notes: notes || '', items: fullItems.results || [],
+        }));
+
+        return new Response(JSON.stringify({ ok: true, id: requestId }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=supply-requests[&store=BL1][&status=pending][&limit=50][&offset=0]
+    // Superuser/admin: all requests. Others: own store(s) only.
+    if (request.method === "GET" && url.searchParams.get("action") === "supply-requests") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      try {
+        const filterStore  = url.searchParams.get("store") || null;
+        const filterStatus = url.searchParams.get("status") || null;
+        const limit  = Math.min(parseInt(url.searchParams.get("limit")  || "100", 10), 200);
+        const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+
+        const allowed = allowedStores(currentUser); // null = all stores
+        const conditions = [];
+        const binds = [];
+
+        if (allowed !== null) {
+          // Restrict to user's own requests for their stores
+          if (allowed.length === 0) {
+            return new Response(JSON.stringify({ ok: true, requests: [], total: 0 }), { headers: corsJson });
+          }
+          conditions.push(`r.store IN (${allowed.map(() => '?').join(',')})`);
+          binds.push(...allowed);
+        }
+        if (filterStore) { conditions.push('r.store = ?'); binds.push(filterStore); }
+        if (filterStatus) { conditions.push('r.status = ?'); binds.push(filterStatus); }
+
+        const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+        const rows = await env.DB.prepare(
+          `SELECT r.id, r.user_email, r.store, r.status, r.priority, r.invoice_number,
+                  r.cost, r.notes, r.submitted_at, r.updated_at,
+                  (SELECT COUNT(*) FROM supply_request_items WHERE request_id = r.id) AS item_count
+           FROM supply_requests r
+           ${where}
+           ORDER BY
+             CASE r.priority WHEN 'urgent' THEN 0 ELSE 1 END,
+             r.submitted_at DESC
+           LIMIT ? OFFSET ?`
+        ).bind(...binds, limit, offset).all();
+
+        const countRow = await env.DB.prepare(
+          `SELECT COUNT(*) AS total FROM supply_requests r ${where}`
+        ).bind(...binds).first();
+
+        return new Response(JSON.stringify({ ok: true, requests: rows.results || [], total: countRow?.total ?? 0 }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=supply-request&id=xxx
+    // Returns full request: items array + history array.
+    if (request.method === "GET" && url.searchParams.get("action") === "supply-request") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      try {
+        const id = url.searchParams.get("id");
+        if (!id) return new Response(JSON.stringify({ error: "Missing id" }), { status: 400, headers: corsJson });
+
+        const req = await env.DB.prepare('SELECT * FROM supply_requests WHERE id = ?').bind(id).first();
+        if (!req) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+
+        // Access check: non-superusers can only see requests for their stores
+        const allowed = allowedStores(currentUser);
+        if (allowed !== null && !allowed.includes(req.store)) {
+          return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+        }
+
+        const [{ results: items }, { results: history }] = await Promise.all([
+          env.DB.prepare('SELECT * FROM supply_request_items WHERE request_id = ? ORDER BY rowid').bind(id).all(),
+          env.DB.prepare('SELECT * FROM supply_request_history WHERE request_id = ? ORDER BY changed_at ASC').bind(id).all(),
+        ]);
+
+        return new Response(JSON.stringify({ ok: true, request: { ...req, items: items || [], history: history || [] } }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // PATCH ?action=supply-request-status
+    // Body: { id, status, note? }  — superuser only.
+    if (request.method === "PATCH" && url.searchParams.get("action") === "supply-request-status") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const { id, status, note } = await request.json();
+        const VALID = ['pending','under_review','on_hold','ordered'];
+        if (!id || !VALID.includes(status)) {
+          return new Response(JSON.stringify({ error: "id and valid status required" }), { status: 400, headers: corsJson });
+        }
+        const existing = await env.DB.prepare('SELECT * FROM supply_requests WHERE id = ?').bind(id).first();
+        if (!existing) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        if (existing.status === status) return new Response(JSON.stringify({ ok: true, unchanged: true }), { headers: corsJson });
+
+        const now = new Date().toISOString();
+        await env.DB.prepare(
+          'UPDATE supply_requests SET status = ?, updated_at = ? WHERE id = ?'
+        ).bind(status, now, id).run();
+
+        await env.DB.prepare(
+          `INSERT INTO supply_request_history (id, request_id, type, changed_by_id, changed_by_email, old_status, new_status, note, changed_at)
+           VALUES (?, ?, 'status_change', ?, ?, ?, ?, ?, ?)`
+        ).bind(randomHex(12), id, currentUser.id, currentUser.email, existing.status, status, note || null, now).run();
+
+        // Notify requester
+        ctx.waitUntil(notifySupplyStatusChange(env, {
+          requestId: id,
+          requesterId: existing.user_id,
+          requesterEmail: existing.user_email,
+          store: existing.store,
+          oldStatus: existing.status,
+          newStatus: status,
+          note: note || '',
+        }));
+
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // PATCH ?action=supply-request-fulfillment
+    // Body: { id, invoice_number?, cost?, note? }  — superuser only.
+    // Setting cost deducts from store's monthly budget and may trigger 80% alert.
+    if (request.method === "PATCH" && url.searchParams.get("action") === "supply-request-fulfillment") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const { id, invoice_number, cost, note } = await request.json();
+        if (!id) return new Response(JSON.stringify({ error: "Missing id" }), { status: 400, headers: corsJson });
+
+        const existing = await env.DB.prepare('SELECT * FROM supply_requests WHERE id = ?').bind(id).first();
+        if (!existing) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+
+        const updates = [];
+        const binds = [];
+        if (invoice_number !== undefined) { updates.push('invoice_number = ?'); binds.push(invoice_number); }
+        if (cost !== undefined)           { updates.push('cost = ?');           binds.push(cost); }
+        if (!updates.length) return new Response(JSON.stringify({ error: "Nothing to update" }), { status: 400, headers: corsJson });
+
+        const now = new Date().toISOString();
+        updates.push('updated_at = ?'); binds.push(now);
+        binds.push(id);
+        await env.DB.prepare(`UPDATE supply_requests SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
+
+        if (note) {
+          await env.DB.prepare(
+            `INSERT INTO supply_request_history (id, request_id, type, changed_by_id, changed_by_email, note, changed_at)
+             VALUES (?, ?, 'comment', ?, ?, ?, ?)`
+          ).bind(randomHex(12), id, currentUser.id, currentUser.email, note, now).run();
+        }
+
+        // Budget threshold check when cost is set
+        if (cost != null) {
+          const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+          const year = etNow.getFullYear();
+          const month = etNow.getMonth() + 1;
+          const budgetRow = await env.DB.prepare(
+            'SELECT budget FROM supply_budgets WHERE store = ? AND year = ? AND month = ?'
+          ).bind(existing.store, year, month).first();
+
+          if (budgetRow?.budget > 0) {
+            const spentRow = await env.DB.prepare(
+              `SELECT COALESCE(SUM(cost),0) AS spent FROM supply_requests
+               WHERE store = ? AND status = 'ordered' AND cost IS NOT NULL
+               AND strftime('%Y', submitted_at) = ? AND strftime('%m', submitted_at) = ?`
+            ).bind(existing.store, String(year), String(month).padStart(2,'0')).first();
+            const prevCost = existing.cost || 0;
+            const prevSpent = (spentRow?.spent || 0) - cost + prevCost; // before this update
+            const newSpent  = (spentRow?.spent || 0);
+            const pct = budgetRow.budget > 0 ? newSpent / budgetRow.budget : 0;
+            const prevPct = budgetRow.budget > 0 ? prevSpent / budgetRow.budget : 0;
+            // Fire alert only when crossing 80% threshold
+            if (pct >= 0.8 && prevPct < 0.8) {
+              ctx.waitUntil(notifySupplyBudget80(env, {
+                store: existing.store, year, month, budget: budgetRow.budget, spent: newSpent,
+              }));
+            }
+          }
+        }
+
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=supply-budgets[&year=2026][&month=5]
+    // Returns budget + spent for each store. Managers see only their stores.
+    if (request.method === "GET" && url.searchParams.get("action") === "supply-budgets") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      try {
+        const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const year  = parseInt(url.searchParams.get("year")  || String(etNow.getFullYear()), 10);
+        const month = parseInt(url.searchParams.get("month") || String(etNow.getMonth() + 1), 10);
+
+        const allowed = allowedStores(currentUser); // null = all
+        const storeList = allowed === null ? ALL_STORES : ALL_STORES.filter(s => allowed.includes(s));
+
+        const monthStr = String(month).padStart(2, '0');
+        const yearStr  = String(year);
+
+        const budgets = await Promise.all(storeList.map(async store => {
+          const budgetRow = await env.DB.prepare(
+            'SELECT budget FROM supply_budgets WHERE store = ? AND year = ? AND month = ?'
+          ).bind(store, year, month).first();
+
+          const spentRow = await env.DB.prepare(
+            `SELECT COALESCE(SUM(cost), 0) AS spent FROM supply_requests
+             WHERE store = ? AND status = 'ordered' AND cost IS NOT NULL
+             AND strftime('%Y', submitted_at) = ? AND strftime('%m', submitted_at) = ?`
+          ).bind(store, yearStr, monthStr).first();
+
+          const budget = budgetRow?.budget ?? 0;
+          const spent  = spentRow?.spent  ?? 0;
+          return { store, label: STORE_LABELS[store] || store, budget, spent, remaining: budget - spent };
+        }));
+
+        return new Response(JSON.stringify({ ok: true, year, month, budgets }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=supply-budget-set
+    // Body: { store, year, month, budget }  — superuser only.
+    if (request.method === "POST" && url.searchParams.get("action") === "supply-budget-set") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const { store, year, month, budget } = await request.json();
+        if (!store || !year || !month || budget == null) {
+          return new Response(JSON.stringify({ error: "store, year, month, budget required" }), { status: 400, headers: corsJson });
+        }
+        if (!ALL_STORES.includes(store)) {
+          return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+        }
+        await env.DB.prepare(
+          `INSERT INTO supply_budgets (store, year, month, budget) VALUES (?, ?, ?, ?)
+           ON CONFLICT(store, year, month) DO UPDATE SET budget = excluded.budget`
+        ).bind(store, year, month, budget).run();
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=supply-request-comment
+    // Body: { id, note }  — any authenticated user (superuser or requester's store).
+    if (request.method === "POST" && url.searchParams.get("action") === "supply-request-comment") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      try {
+        const { id, note } = await request.json();
+        if (!id || !note?.trim()) return new Response(JSON.stringify({ error: "id and note required" }), { status: 400, headers: corsJson });
+
+        const existing = await env.DB.prepare('SELECT * FROM supply_requests WHERE id = ?').bind(id).first();
+        if (!existing) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+
+        const allowed = allowedStores(currentUser);
+        if (allowed !== null && !allowed.includes(existing.store)) {
+          return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+        }
+
+        const now = new Date().toISOString();
+        await env.DB.prepare(
+          `INSERT INTO supply_request_history (id, request_id, type, changed_by_id, changed_by_email, note, changed_at)
+           VALUES (?, ?, 'comment', ?, ?, ?, ?)`
+        ).bind(randomHex(12), id, currentUser.id, currentUser.email, note.trim(), now).run();
+        await env.DB.prepare('UPDATE supply_requests SET updated_at = ? WHERE id = ?').bind(now, id).run();
+
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }

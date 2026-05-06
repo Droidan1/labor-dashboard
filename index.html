@@ -7204,7 +7204,7 @@
     const isAdmin = user.role === 'superuser' || user.role === 'admin';
     const isSuperuser = user.role === 'superuser';
     el('nav-inventory').classList.toggle('hidden', !isAdmin);
-    el('nav-supply-request').classList.toggle('hidden', !isAdmin);
+    el('nav-supply-request').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');
     el('nav-users').classList.toggle('hidden', !isAdmin);
     el('nav-admin-settings').classList.toggle('hidden', !isSuperuser);
     el('nav-settings').classList.remove('hidden');
