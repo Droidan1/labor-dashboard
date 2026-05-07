@@ -3608,7 +3608,7 @@
       srLoadingHist  = false;
       srAllFilters   = { store:'all', status:'all', priority:'all' };
       const isSu = currentUser?.role === 'superuser';
-      srRenderTabBar(isSu ? ['all','new','budget','reports'] : ['new','history']);
+      srRenderTabBar(isSu ? ['all','budget','reports'] : ['new','history']);
       srRenderForm();
       srSwitchTab(isSu ? 'all' : 'new');
       if (!isSu) srLoadBudget();
