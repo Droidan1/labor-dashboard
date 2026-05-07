@@ -329,20 +329,24 @@
             </div>
           </div>
         </div>
-        <div id="today-total-card" class="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors order-2">
+        <div id="today-total-card" class="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors order-2 cursor-pointer select-none" onclick="toggleAllStoresBreakdown()">
           <div class="flex justify-between items-start gap-2">
             <div class="min-w-0">
               <div id="c-today-card-label" class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Today's Net Sales</div>
               <div id="c-today-total" class="text-xl font-bold text-gray-900 dark:text-white leading-none mb-1 truncate">—</div>
               <div id="c-today-sub" class="text-[10px] text-gray-400 dark:text-gray-500">All stores</div>
             </div>
-            <div class="text-right min-w-0 flex-shrink-0">
-              <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Total Budget</div>
-              <div id="c-today-budget" class="text-lg font-bold text-gray-500 dark:text-gray-300 leading-none truncate">—</div>
-              <div id="c-today-diff" class="text-[10px] font-semibold mt-1"></div>
+            <div class="flex items-start gap-3">
+              <div class="text-right min-w-0 flex-shrink-0">
+                <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Total Budget</div>
+                <div id="c-today-budget" class="text-lg font-bold text-gray-500 dark:text-gray-300 leading-none truncate">—</div>
+                <div id="c-today-diff" class="text-[10px] font-semibold mt-1"></div>
+              </div>
+              <svg id="c-expand-chevron" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" class="text-gray-400 dark:text-gray-500 mt-1 flex-shrink-0 transition-transform duration-200"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
           </div>
           <div id="c-today-breakdown"></div>
+          <div id="c-weekly-expand" class="hidden mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 overflow-x-auto"></div>
         </div>
       </div>
 
@@ -2341,6 +2345,12 @@
       diffEl.textContent = '';
     }
 
+    // Refresh the all-stores weekly breakdown if it's currently open
+    if (allStoresBreakdownOpen) {
+      const expandEl = el('c-weekly-expand');
+      if (expandEl) expandEl.innerHTML = buildAllStoresWeeklyTable();
+    }
+
     // Always show Weekly (week-to-date, live-boosted) — even when a
     // specific day is selected. The day selector affects per-store cards
     // and charts, but the All Stores Budget left panel intentionally
@@ -2856,6 +2866,91 @@
     }
     if (sorted.length === 0) html = `<div class="p-8 text-center text-gray-400 dark:text-gray-500">No data for Week ${effectiveWeek}.</div>`;
     return selectorsHtml + monthSummaryHtml + html;
+  }
+
+  // ── All-stores weekly breakdown (today-total-card expand/collapse) ───────────
+  let allStoresBreakdownOpen = false;
+
+  function toggleAllStoresBreakdown() {
+    const expandEl = el('c-weekly-expand');
+    const chevron  = el('c-expand-chevron');
+    if (!expandEl) return;
+    allStoresBreakdownOpen = !allStoresBreakdownOpen;
+    if (allStoresBreakdownOpen) {
+      expandEl.innerHTML = buildAllStoresWeeklyTable();
+      expandEl.classList.remove('hidden');
+      if (chevron) chevron.style.transform = 'rotate(180deg)';
+    } else {
+      expandEl.classList.add('hidden');
+      expandEl.innerHTML = '';
+      if (chevron) chevron.style.transform = '';
+    }
+  }
+  window.toggleAllStoresBreakdown = toggleAllStoresBreakdown;
+
+  function buildAllStoresWeeklyTable() {
+    const todayStr = new Date().toDateString();
+    const isCurrentWeek = selectedWeek === currentWeek;
+
+    // Collect all dates in the selected week across all stores
+    const dayMap = {}; // dateKey → { dateObj, budget, sales }
+    for (const storeName of STORES) {
+      const rows = (allStoreData[storeName] || []).filter(r => r.week === selectedWeek);
+      for (const r of rows) {
+        if (!r.date) continue;
+        const key = r.date.toISOString().slice(0, 10);
+        if (!dayMap[key]) dayMap[key] = { dateObj: r.date, budget: 0, sales: 0 };
+        if (r.bTotal != null) dayMap[key].budget += r.bTotal;
+        // Use live Clover total for today's row if available
+        const liveTotal = isCurrentWeek ? (liveCloverData[storeName]?.total ?? null) : null;
+        const sales = (isCurrentWeek && r.date.toDateString() === todayStr && liveTotal > 0) ? liveTotal : r.aTotal;
+        if (sales != null) dayMap[key].sales += sales;
+      }
+    }
+
+    const sorted = Object.values(dayMap).sort((a, b) => b.dateObj - a.dateObj);
+    if (!sorted.length) return `<div class="py-4 text-center text-xs text-gray-400 dark:text-gray-500">No data for Week ${selectedWeek}.</div>`;
+
+    let html = `<table class="w-full text-left table-fixed text-xs sm:text-sm">
+      <colgroup><col class="w-[30%]"><col class="w-[23%]"><col class="w-[23%]"><col class="w-[24%]"></colgroup>
+      <thead>
+        <tr class="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+          <th class="py-1.5 pr-2 font-semibold">Date</th>
+          <th class="py-1.5 px-1 font-semibold text-right">Budget</th>
+          <th class="py-1.5 px-1 font-semibold text-right">Sales</th>
+          <th class="py-1.5 pl-1 font-semibold text-right">+/−</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100 dark:divide-gray-700">`;
+
+    let totBudget = 0, totSales = 0;
+    for (const d of sorted) {
+      const dateLabel = d.dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      const diff = d.sales - d.budget;
+      const pos  = diff >= 0;
+      totBudget += d.budget;
+      totSales  += d.sales;
+      html += `<tr class="hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors">
+        <td class="py-1.5 pr-2 text-gray-600 dark:text-gray-300 font-medium whitespace-nowrap">${dateLabel}</td>
+        <td class="py-1.5 px-1 text-right text-gray-500 dark:text-gray-400">${fmtDollar(d.budget)}</td>
+        <td class="py-1.5 px-1 text-right font-semibold text-gray-900 dark:text-white">${fmtDollar(d.sales)}</td>
+        <td class="py-1.5 pl-1 text-right font-bold ${pos ? 'text-green-600' : 'text-red-500'}">${pos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</td>
+      </tr>`;
+    }
+
+    const totDiff = totSales - totBudget;
+    const totPos  = totDiff >= 0;
+    html += `</tbody>
+      <tfoot class="border-t-2 border-gray-300 dark:border-gray-600">
+        <tr class="font-bold">
+          <td class="py-1.5 pr-2 text-gray-900 dark:text-white whitespace-nowrap">Week ${selectedWeek}</td>
+          <td class="py-1.5 px-1 text-right text-gray-500 dark:text-gray-400">${fmtDollar(totBudget)}</td>
+          <td class="py-1.5 px-1 text-right text-gray-900 dark:text-white">${fmtDollar(totSales)}</td>
+          <td class="py-1.5 pl-1 text-right ${totPos ? 'text-green-600' : 'text-red-500'}">${totPos ? '+' : '−'}${fmtDollar(Math.abs(totDiff))}</td>
+        </tr>
+      </tfoot>
+    </table>`;
+    return html;
   }
 
   function renderDailySalesChart(storeName) {
