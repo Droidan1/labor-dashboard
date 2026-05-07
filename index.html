@@ -342,6 +342,7 @@
                 <div id="c-today-budget" class="text-lg font-bold text-gray-500 dark:text-gray-300 leading-none truncate">—</div>
                 <div id="c-today-diff" class="text-[10px] font-semibold mt-1"></div>
               </div>
+              <button onclick="event.stopPropagation(); showAllStoresDetail()" class="text-[10px] font-semibold text-[#3BB54A] hover:underline whitespace-nowrap flex-shrink-0 mt-0.5">View Details →</button>
               <svg id="c-expand-chevron" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" class="text-gray-400 dark:text-gray-500 mt-1 flex-shrink-0 transition-transform duration-200"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
           </div>
@@ -416,6 +417,38 @@
         </div>
       </div>
     </div><!-- end #page-store-detail -->
+
+    <div id="page-all-stores-detail" class="hidden">
+      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+        <div class="flex items-center gap-3 max-w-7xl mx-auto">
+          <button onclick="navigateToDashboard()" class="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-700 grid place-content-center hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" aria-label="Back to dashboard">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600 dark:text-gray-300"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <div>
+            <h1 class="text-2xl font-display text-[#3BB54A]">All Stores</h1>
+            <p id="as-subtitle" class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Week X · All Stores Combined</p>
+          </div>
+        </div>
+      </div>
+      <div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+        <div id="as-metrics"></div>
+        <!-- Tabs -->
+        <div class="flex border-b border-gray-200 dark:border-gray-700">
+          <button id="as-tab-weekly" onclick="switchAllStoresTab('weekly')" class="px-5 py-2.5 text-sm font-semibold border-b-2 border-[#3BB54A] text-[#194975] dark:text-[#3BB54A] transition-colors">Weekly Breakdown</button>
+          <button id="as-tab-chart"  onclick="switchAllStoresTab('chart')"  class="px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Daily Sales Chart</button>
+          <button id="as-tab-items"  onclick="switchAllStoresTab('items')"  class="px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Item Sales</button>
+        </div>
+        <!-- Tab content -->
+        <div id="as-content-weekly" class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden"></div>
+        <div id="as-content-chart" class="hidden bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700">
+          <div class="h-[340px]"><canvas id="as-daily-chart"></canvas></div>
+        </div>
+        <div id="as-content-items" class="hidden bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700">
+          <div id="as-items-day-selector" class="flex items-center gap-1 mb-3 overflow-x-auto"></div>
+          <div id="as-items-table"></div>
+        </div>
+      </div>
+    </div><!-- end #page-all-stores-detail -->
 
     <div id="page-weekly-summary" class="hidden">
       <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
@@ -3398,7 +3431,7 @@
     if (page === 'admin-settings') {
       if (!currentUser || currentUser.role !== 'superuser') return;
     }
-    const pages = ['dashboard', 'store-detail', 'weekly-summary', 'inventory', 'supply-request', 'settings', 'users', 'admin-settings'];
+    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'inventory', 'supply-request', 'settings', 'users', 'admin-settings'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
       if (pageEl) pageEl.classList.toggle('hidden', p !== page);
@@ -5082,10 +5115,317 @@
     container.innerHTML = html;
   }
 
+  // ── All-Stores Detail Page ───────────────────────────────────────────────────
+  let asAllStoresChart = null;
+  let asSelectedItemDate = null; // YYYY-MM-DD | 'WEEK' | null
+
+  function showAllStoresDetail() {
+    el('as-subtitle').textContent = `Week ${selectedWeek} · All Stores Combined`;
+    el('as-metrics').innerHTML = buildAllStoresMetrics();
+
+    const pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','inventory','supply-request','settings','users','admin-settings'];
+    for (const p of pages) {
+      const pageEl = el('page-' + p);
+      if (pageEl) pageEl.classList.toggle('hidden', p !== 'all-stores-detail');
+    }
+    document.querySelectorAll('.nav-item[data-page]').forEach(item => item.classList.remove('active'));
+    currentPage = 'all-stores-detail';
+    el('mobile-menu-btn').classList.toggle('hidden', true);
+
+    switchAllStoresTab('weekly');
+    el('page-all-stores-detail').scrollIntoView({ behavior: 'instant' });
+    history.pushState({ page: 'all-stores-detail' }, '');
+  }
+  window.showAllStoresDetail = showAllStoresDetail;
+
+  function buildAllStoresMetrics() {
+    const todayStr = new Date().toDateString();
+    const isCurrentWeek = selectedWeek === currentWeek;
+    let totalSales = 0, totalBudget = 0;
+    let rows = '';
+    for (const s of STORES) {
+      const data = allStoreData[s] || [];
+      const weekRows = data.filter(r => r.week === selectedWeek);
+      let storeSales = 0, storeBudget = 0;
+      for (const r of weekRows) {
+        const liveTotal = isCurrentWeek ? (liveCloverData[s]?.total ?? null) : null;
+        const sales = (isCurrentWeek && r.date && r.date.toDateString() === todayStr && liveTotal > 0) ? liveTotal : r.aTotal;
+        if (sales != null) storeSales += sales;
+        if (r.bTotal != null) storeBudget += r.bTotal;
+      }
+      totalSales += storeSales;
+      totalBudget += storeBudget;
+      const diff = storeSales - storeBudget;
+      const pos = diff >= 0;
+      const label = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek' }[s] || s;
+      rows += `<tr class="border-b border-gray-100 dark:border-gray-700 last:border-0">
+        <td class="py-2 pr-4 pl-4 text-sm font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap">${label}</td>
+        <td class="py-2 pr-4 text-sm text-right text-gray-500 dark:text-gray-400">${fmtDollar(storeBudget)}</td>
+        <td class="py-2 pr-4 text-sm text-right font-semibold text-gray-900 dark:text-white">${fmtDollar(storeSales)}</td>
+        <td class="py-2 pr-4 text-sm text-right font-bold ${pos ? 'text-green-600' : 'text-red-500'}">${pos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</td>
+      </tr>`;
+    }
+    const totDiff = totalSales - totalBudget, totPos = totDiff >= 0;
+    const totalRow = `<tr class="font-bold border-t-2 border-gray-300 dark:border-gray-600">
+      <td class="py-2 pr-4 pl-4 text-sm text-gray-900 dark:text-white">All Stores</td>
+      <td class="py-2 pr-4 text-sm text-right text-gray-500 dark:text-gray-400">${fmtDollar(totalBudget)}</td>
+      <td class="py-2 pr-4 text-sm text-right text-gray-900 dark:text-white">${fmtDollar(totalSales)}</td>
+      <td class="py-2 pr-4 text-sm text-right ${totPos ? 'text-green-600' : 'text-red-500'}">${totPos ? '+' : '−'}${fmtDollar(Math.abs(totDiff))}</td>
+    </tr>`;
+    return `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
+      <table class="w-full text-left">
+        <thead class="bg-gray-50 dark:bg-gray-700/50">
+          <tr class="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            <th class="py-2 pr-4 px-4 font-semibold">Store</th>
+            <th class="py-2 pr-4 font-semibold text-right">Budget</th>
+            <th class="py-2 pr-4 font-semibold text-right">Sales</th>
+            <th class="py-2 pr-4 font-semibold text-right">+/−</th>
+          </tr>
+        </thead>
+        <tbody class="px-4">${rows}${totalRow}</tbody>
+      </table>
+    </div>`;
+  }
+
+  function switchAllStoresTab(tab) {
+    const tabs   = { weekly: el('as-tab-weekly'), chart: el('as-tab-chart'), items: el('as-tab-items') };
+    const panels = { weekly: el('as-content-weekly'), chart: el('as-content-chart'), items: el('as-content-items') };
+    const active   = 'px-5 py-2.5 text-sm font-semibold border-b-2 border-[#3BB54A] text-[#194975] dark:text-[#3BB54A] transition-colors';
+    const inactive = 'px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors';
+    for (const [key, btn] of Object.entries(tabs)) {
+      btn.className = key === tab ? active : inactive;
+      panels[key].classList.toggle('hidden', key !== tab);
+    }
+    if (tab === 'weekly') {
+      el('as-content-weekly').innerHTML = buildAllStoresWeeklyTable();
+    }
+    if (tab === 'chart') renderAllStoresDailyChart();
+    if (tab === 'items') {
+      asSelectedItemDate = null;
+      renderAllStoresItemDaySelector();
+      loadAllStoresItemSales(null);
+    }
+  }
+  window.switchAllStoresTab = switchAllStoresTab;
+
+  function renderAllStoresDailyChart() {
+    const todayStr = new Date().toDateString();
+    const isCurrentWeek = selectedWeek === currentWeek;
+    const isDark = document.documentElement.classList.contains('dark');
+    const textColor = isDark ? '#9ca3af' : '#6b7280';
+    const gridColor = isDark ? 'rgba(75,85,99,0.3)' : 'rgba(0,0,0,0.1)';
+
+    if (asAllStoresChart) { asAllStoresChart.destroy(); asAllStoresChart = null; }
+
+    const dateMap = {};
+    for (const s of STORES) {
+      const rows = (allStoreData[s] || []).filter(r => r.week === selectedWeek && r.date);
+      for (const r of rows) {
+        const key = r.date.toISOString().slice(0, 10);
+        if (!dateMap[key]) dateMap[key] = { dateObj: r.date, budget: 0, sales: 0 };
+        if (r.bTotal != null) dateMap[key].budget += r.bTotal;
+        const liveTotal = isCurrentWeek ? (liveCloverData[s]?.total ?? null) : null;
+        const sales = (isCurrentWeek && r.date.toDateString() === todayStr && liveTotal > 0) ? liveTotal : (r.aTotal || 0);
+        dateMap[key].sales += sales;
+      }
+    }
+    const sorted = Object.values(dateMap).sort((a, b) => a.dateObj - b.dateObj);
+    if (!sorted.length) return;
+
+    const labels     = sorted.map(d => d.dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
+    const budgetData = sorted.map(d => d.budget);
+    const salesData  = sorted.map(d => d.sales);
+
+    asAllStoresChart = new Chart(el('as-daily-chart'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Budget',       data: budgetData, backgroundColor: isDark ? 'rgba(107,114,128,0.5)' : 'rgba(156,163,175,0.5)', borderColor: isDark ? '#6b7280' : '#9ca3af', borderWidth: 1 },
+          { label: 'Actual Sales', data: salesData,  backgroundColor: 'rgba(59,181,74,0.7)', borderColor: '#3BB54A', borderWidth: 1 },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: textColor } },
+          tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': $' + ctx.parsed.y.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) } }
+        },
+        scales: {
+          x: { ticks: { color: textColor }, grid: { color: gridColor } },
+          y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } }
+        }
+      }
+    });
+  }
+
+  function renderAllStoresItemDaySelector() {
+    const container = el('as-items-day-selector');
+    if (!container) return;
+    const todayStr = getETTodayStr();
+
+    const dateSet = new Map();
+    for (const s of STORES) {
+      const rows = (allStoreData[s] || []).filter(r => r.week === selectedWeek && r.date);
+      for (const r of rows) {
+        const key = r.date.toISOString().slice(0, 10);
+        if (!dateSet.has(key)) dateSet.set(key, r.date);
+      }
+    }
+    const sortedDates = [...dateSet.entries()].sort(([a], [b]) => a.localeCompare(b));
+    const activeDate = asSelectedItemDate || todayStr;
+
+    let html = '';
+    for (const [fmtDate, dateObj] of sortedDates) {
+      const dayLabel  = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+      const dateLabel = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
+      const isToday   = fmtDate === todayStr;
+      const isFuture  = fmtDate > todayStr;
+      const isSelected = fmtDate === activeDate;
+      if (isFuture) {
+        html += `<button disabled class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs opacity-40 text-gray-400 cursor-not-allowed"><span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span></button>`;
+      } else if (isSelected) {
+        html += `<button class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs bg-[#3BB54A] text-white font-semibold shadow-sm"><span>${dayLabel}</span><span>${dateLabel}</span>${isToday ? '<span class="text-[8px] uppercase tracking-wider">Live</span>' : ''}</button>`;
+      } else {
+        html += `<button onclick="selectAllStoresItemDay('${fmtDate}')" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"><span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span></button>`;
+      }
+    }
+    if (sortedDates.length) {
+      const [fd] = sortedDates[0];
+      const [ld] = sortedDates[sortedDates.length - 1];
+      const fdObj = dateSet.get(fd), ldObj = dateSet.get(ld);
+      const rangeLabel = `${fdObj.getMonth()+1}/${fdObj.getDate()}–${ldObj.getMonth()+1}/${ldObj.getDate()}`;
+      const isWeek = activeDate === 'WEEK';
+      if (isWeek) {
+        html += `<button class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs bg-[#3BB54A] text-white font-semibold shadow-sm"><span>Week</span><span>${rangeLabel}</span></button>`;
+      } else {
+        html += `<button onclick="selectAllStoresItemDay('WEEK')" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-dashed border-gray-300 dark:border-gray-600"><span class="font-semibold">Week</span><span>${rangeLabel}</span></button>`;
+      }
+    }
+    container.innerHTML = html;
+  }
+
+  async function loadAllStoresItemSales(dateStr) {
+    const container = el('as-items-table');
+    if (!container) return;
+    const todayStr = getETTodayStr();
+    const targetDate = dateStr || todayStr;
+    const isToday = targetDate === todayStr;
+
+    if (targetDate === 'WEEK') {
+      let weekStart = '', weekEnd = '';
+      container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">Aggregating all stores…</div></div>`;
+      try {
+        const allDayResponses = [];
+        const storePromises = STORES.map(async s => {
+          const rows = (allStoreData[s] || []).filter(r => r.week === selectedWeek && r.date).sort((a,b) => a.date - b.date);
+          const days = rows.map(r => r.date.toISOString().slice(0,10)).filter(d => d <= todayStr);
+          if (!days.length) return [];
+          if (!weekStart || days[0] < weekStart) weekStart = days[0];
+          if (!weekEnd || days[days.length-1] > weekEnd) weekEnd = days[days.length-1];
+          return Promise.all(days.map(d => {
+            const live = d === todayStr;
+            const url = `${WORKER_BASE}?action=items&store=${s}` + (live ? '' : `&date=${d}`);
+            return fetch(url, { credentials: 'include' }).then(r => r.ok ? r.json() : null).catch(() => null);
+          }));
+        });
+        const allResults = await Promise.all(storePromises);
+        for (const storeResults of allResults) allDayResponses.push(...(storeResults || []));
+        const validResponses = allDayResponses.filter(r => r && !r.error);
+        const merged = mergeItemSalesData(validResponses, weekStart, weekEnd);
+        renderAllStoresItemTable(merged, true);
+      } catch(err) {
+        container.innerHTML = `<div class="p-8 text-center text-red-400 text-sm">${escapeHtml(err.message)}</div>`;
+      }
+      return;
+    }
+
+    container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">${isToday ? 'Loading live data from all stores…' : 'Loading historical data…'}</div></div>`;
+    try {
+      const responses = await Promise.all(STORES.map(s => {
+        const url = `${WORKER_BASE}?action=items&store=${s}` + (isToday ? '' : `&date=${targetDate}`);
+        return fetch(url, { credentials: 'include' }).then(r => r.ok ? r.json() : null).catch(() => null);
+      }));
+      const valid = responses.filter(r => r && !r.error);
+      const merged = mergeItemSalesData(valid, targetDate, targetDate);
+      renderAllStoresItemTable(merged, isToday);
+    } catch(err) {
+      container.innerHTML = `<div class="p-8 text-center text-red-400 text-sm">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderAllStoresItemTable(data, isToday) {
+    const container = el('as-items-table');
+    if (!container) return;
+    const cats = [...(data.categories || [])];
+    const t = data.totals || {};
+    if (!cats.length) {
+      container.innerHTML = `<div class="p-8 text-center text-gray-400 text-sm">No item sales data available.</div>`;
+      return;
+    }
+    cats.sort((a, b) => b.netSales - a.netSales);
+    const refreshBtn = isToday ? `<button onclick="refreshAllStoresItemSales()" class="text-xs text-[#3BB54A] hover:underline font-medium">Refresh</button>` : '';
+    let html = `<div class="flex items-center justify-between mb-3"><div class="text-xs text-gray-500 dark:text-gray-400">${data.date} · ${data.orderCount} orders · ${isToday ? 'Live from Clover' : 'Historical snapshot'}</div>${refreshBtn}</div>`;
+    html += `<div class="overflow-x-auto"><table class="w-full text-left">
+      <thead class="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
+        <tr class="text-[10px] sm:text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold">Category</th>
+          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right">Qty</th>
+          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right hidden sm:table-cell">% Qty</th>
+          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right hidden sm:table-cell">Discounts</th>
+          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right hidden sm:table-cell">Refunds</th>
+          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right">Net Sales</th>
+          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right">ASP</th>
+        </tr>
+      </thead>
+      <tbody class="text-xs sm:text-sm divide-y divide-gray-100 dark:divide-gray-700">`;
+    for (const c of cats) {
+      const discStr = c.discounts < 0 ? `-${fmtDollar(Math.abs(c.discounts))}` : fmtDollar(c.discounts);
+      const refStr  = c.refunds < 0   ? `-${fmtDollar(Math.abs(c.refunds))}`  : '$0.00';
+      html += `<tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 font-medium text-gray-700 dark:text-gray-200">${escapeHtml(c.category)}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-600 dark:text-gray-300">${c.qty.toLocaleString()}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-500 dark:text-gray-400 hidden sm:table-cell">${c.pctQty.toFixed(1)}%</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.discounts < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'} hidden sm:table-cell">${discStr}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.refunds < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'} hidden sm:table-cell">${refStr}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right font-medium text-gray-900 dark:text-white">${fmtDollar(c.netSales)}</td>
+        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-600 dark:text-gray-300">${fmtDollar(c.asp)}</td>
+      </tr>`;
+    }
+    const totDiscStr = t.discounts < 0 ? `-${fmtDollar(Math.abs(t.discounts))}` : fmtDollar(t.discounts||0);
+    const totRefStr  = t.refunds  < 0  ? `-${fmtDollar(Math.abs(t.refunds))}`  : '$0.00';
+    html += `</tbody><tfoot class="border-t-2 border-gray-300 dark:border-gray-600"><tr class="font-bold text-xs sm:text-sm">
+      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-gray-900 dark:text-white">Grand Total</td>
+      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${(t.qty||0).toLocaleString()}</td>
+      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-500 dark:text-gray-400 hidden sm:table-cell">100%</td>
+      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${(t.discounts||0) < 0 ? 'text-red-500' : ''} hidden sm:table-cell">${totDiscStr}</td>
+      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${(t.refunds||0) < 0 ? 'text-red-500' : ''} hidden sm:table-cell">${totRefStr}</td>
+      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${fmtDollar(t.netSales||0)}</td>
+      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${fmtDollar(t.asp||0)}</td>
+    </tr></tfoot></table></div>`;
+    container.innerHTML = html;
+  }
+
+  function selectAllStoresItemDay(dateStr) {
+    asSelectedItemDate = dateStr;
+    renderAllStoresItemDaySelector();
+    loadAllStoresItemSales(dateStr);
+  }
+  window.selectAllStoresItemDay = selectAllStoresItemDay;
+
+  function refreshAllStoresItemSales() {
+    asSelectedItemDate = null;
+    renderAllStoresItemDaySelector();
+    loadAllStoresItemSales(null);
+  }
+  window.refreshAllStoresItemSales = refreshAllStoresItemSales;
+
   window.addEventListener('popstate', (event) => {
     if (event.state?.page === 'store-detail' && event.state?.store) {
       showStoreDetail(event.state.store);
-    } else if (currentPage === 'store-detail') {
+    } else if (event.state?.page === 'all-stores-detail') {
+      showAllStoresDetail();
+    } else if (currentPage === 'store-detail' || currentPage === 'all-stores-detail') {
       navigateToDashboard();
     }
   });
