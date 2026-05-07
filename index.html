@@ -5323,9 +5323,10 @@
           if (!days.length) return [];
           if (!weekStart || days[0] < weekStart) weekStart = days[0];
           if (!weekEnd || days[days.length-1] > weekEnd) weekEnd = days[days.length-1];
+          const storeCode = s.split('/')[0];
           return Promise.all(days.map(d => {
             const live = d === todayStr;
-            const url = `${WORKER_BASE}?action=items&store=${s}` + (live ? '' : `&date=${d}`);
+            const url = `${WORKER_BASE}?action=items&store=${storeCode}` + (live ? '' : `&date=${d}`);
             return fetch(url, { credentials: 'include' }).then(r => r.ok ? r.json() : null).catch(() => null);
           }));
         });
@@ -5343,7 +5344,8 @@
     container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">${isToday ? 'Loading live data from all stores…' : 'Loading historical data…'}</div></div>`;
     try {
       const responses = await Promise.all(STORES.map(s => {
-        const url = `${WORKER_BASE}?action=items&store=${s}` + (isToday ? '' : `&date=${targetDate}`);
+        const storeCode = s.split('/')[0];
+        const url = `${WORKER_BASE}?action=items&store=${storeCode}` + (isToday ? '' : `&date=${targetDate}`);
         return fetch(url, { credentials: 'include' }).then(r => r.ok ? r.json() : null).catch(() => null);
       }));
       const valid = responses.filter(r => r && !r.error);
