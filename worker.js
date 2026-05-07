@@ -3086,57 +3086,81 @@ function buildStatusUpdateEmailHtml({ store, oldStatus, newStatus, note, request
 }
 
 // Notify all superusers (push + email) when a new supply request is submitted.
-async function notifySupplyRequestNew(env, { requestId, requesterEmail, store, priority, notes, items }) {
+async function notifySupplyRequestNew(env, { requestId, requesterId, requesterEmail, store, priority, notes, items }) {
   if (!env.DB) return;
   const storeLabel = STORE_LABELS[store] || store;
   const itemSummary = items.slice(0, 3).map(i => `${i.item_name} ×${i.quantity}`).join(', ')
     + (items.length > 3 ? ` +${items.length - 3} more` : '');
   const urgentPrefix = priority === 'urgent' ? '🚨 URGENT — ' : '';
 
-  const pushPayload = JSON.stringify({
+  const suPushPayload = JSON.stringify({
     title: `${urgentPrefix}New Supply Request — ${storeLabel}`,
     body: `${requesterEmail}: ${itemSummary}`,
     tag: `supply-new-${requestId}`,
     url: '/index.html#supply-request',
   });
 
+  // Notify superusers (respects supply_notifications preference)
   const { results: superusers } = await env.DB.prepare(
     "SELECT id, email FROM users WHERE role = 'superuser' AND status = 'active'"
   ).all();
-  if (!superusers?.length) return;
+  if (superusers?.length) {
+    const userIds = superusers.map(u => u.id);
+    const placeholders = userIds.map(() => '?').join(',');
+    const { results: subs } = await env.DB.prepare(
+      `SELECT ps.endpoint, ps.p256dh, ps.auth
+       FROM push_subscriptions ps
+       JOIN notification_preferences np ON np.user_id = ps.user_id
+       WHERE ps.user_id IN (${placeholders}) AND np.push_enabled = 1 AND np.supply_notifications != 0`
+    ).bind(...userIds).all();
+    for (const sub of (subs || [])) {
+      try {
+        const res = await sendWebPush(env, sub, suPushPayload);
+        if (res.expired) {
+          await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+        }
+      } catch (e) { console.error('Supply new push error:', e.message); }
+    }
 
-  const userIds = superusers.map(u => u.id);
-  const placeholders = userIds.map(() => '?').join(',');
-  const { results: subs } = await env.DB.prepare(
-    `SELECT ps.endpoint, ps.p256dh, ps.auth
-     FROM push_subscriptions ps
-     JOIN notification_preferences np ON np.user_id = ps.user_id
-     WHERE ps.user_id IN (${placeholders}) AND np.push_enabled = 1`
-  ).bind(...userIds).all();
-
-  for (const sub of (subs || [])) {
-    try {
-      const res = await sendWebPush(env, sub, pushPayload);
-      if (res.expired) {
-        await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+    // Email superusers
+    if (env.RESEND_API_KEY) {
+      const html = buildSupplyRequestEmailHtml({ requesterEmail, store, priority, notes, items, requestId });
+      for (const u of superusers) {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'Bargain Lane Dashboard <noreply@retjghub.com>',
+            to: u.email,
+            subject: `${urgentPrefix}New Supply Request — ${storeLabel}`,
+            html,
+          }),
+        }).catch(e => console.error('Supply email error:', e.message));
       }
-    } catch (e) { console.error('Supply new push error:', e.message); }
+    }
   }
 
-  // Email
-  if (env.RESEND_API_KEY) {
-    const html = buildSupplyRequestEmailHtml({ requesterEmail, store, priority, notes, items, requestId });
-    for (const u of superusers) {
-      await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: 'Bargain Lane Dashboard <noreply@retjghub.com>',
-          to: u.email,
-          subject: `${urgentPrefix}New Supply Request — ${storeLabel}`,
-          html,
-        }),
-      }).catch(e => console.error('Supply email error:', e.message));
+  // Confirmation push to the requester (respects supply_notifications preference)
+  if (requesterId) {
+    const confirmPayload = JSON.stringify({
+      title: `✅ Supply Request Received — ${storeLabel}`,
+      body: `Your request (${itemSummary}) was submitted successfully.`,
+      tag: `supply-confirm-${requestId}`,
+      url: '/index.html#supply-request',
+    });
+    const { results: requesterSubs } = await env.DB.prepare(
+      `SELECT ps.endpoint, ps.p256dh, ps.auth
+       FROM push_subscriptions ps
+       JOIN notification_preferences np ON np.user_id = ps.user_id
+       WHERE ps.user_id = ? AND np.push_enabled = 1 AND np.supply_notifications != 0`
+    ).bind(requesterId).all();
+    for (const sub of (requesterSubs || [])) {
+      try {
+        const res = await sendWebPush(env, sub, confirmPayload);
+        if (res.expired) {
+          await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+        }
+      } catch (e) { console.error('Supply confirm push error:', e.message); }
     }
   }
 }
@@ -3159,7 +3183,7 @@ async function notifySupplyStatusChange(env, { requestId, requesterId, requester
     `SELECT ps.endpoint, ps.p256dh, ps.auth
      FROM push_subscriptions ps
      JOIN notification_preferences np ON np.user_id = ps.user_id
-     WHERE ps.user_id = ? AND np.push_enabled = 1`
+     WHERE ps.user_id = ? AND np.push_enabled = 1 AND np.supply_notifications != 0`
   ).bind(requesterId).all();
 
   for (const sub of (subs || [])) {
@@ -3212,7 +3236,7 @@ async function notifySupplyBudget80(env, { store, year, month, budget, spent }) 
     `SELECT ps.endpoint, ps.p256dh, ps.auth
      FROM push_subscriptions ps
      JOIN notification_preferences np ON np.user_id = ps.user_id
-     WHERE ps.user_id IN (${placeholders}) AND np.push_enabled = 1`
+     WHERE ps.user_id IN (${placeholders}) AND np.push_enabled = 1 AND np.supply_notifications != 0`
   ).bind(...userIds).all();
 
   for (const sub of (subs || [])) {
@@ -3222,6 +3246,68 @@ async function notifySupplyBudget80(env, { store, year, month, budget, spent }) 
         await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
       }
     } catch (e) { console.error('Supply budget push error:', e.message); }
+  }
+}
+
+// Push notification when someone adds a comment on a supply request.
+// Superuser comment → notify the requester.
+// Requester/manager comment → notify all superusers.
+async function notifySupplyComment(env, { requestId, store, commenterId, commenterEmail, note, requesterId, requesterEmail }) {
+  if (!env.DB) return;
+  const storeLabel = STORE_LABELS[store] || store;
+  const preview = note.length > 80 ? note.slice(0, 77) + '…' : note;
+  const isSuperCommenter = commenterId !== requesterId;
+
+  if (isSuperCommenter) {
+    // Superuser commented — push to requester
+    const pushPayload = JSON.stringify({
+      title: `💬 Comment on your supply request — ${storeLabel}`,
+      body: preview,
+      tag: `supply-comment-${requestId}-${Date.now()}`,
+      url: '/index.html#supply-request',
+    });
+    const { results: subs } = await env.DB.prepare(
+      `SELECT ps.endpoint, ps.p256dh, ps.auth
+       FROM push_subscriptions ps
+       JOIN notification_preferences np ON np.user_id = ps.user_id
+       WHERE ps.user_id = ? AND np.push_enabled = 1 AND np.supply_notifications != 0`
+    ).bind(requesterId).all();
+    for (const sub of (subs || [])) {
+      try {
+        const res = await sendWebPush(env, sub, pushPayload);
+        if (res.expired) {
+          await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+        }
+      } catch (e) { console.error('Supply comment push error:', e.message); }
+    }
+  } else {
+    // Requester commented — push to all superusers
+    const pushPayload = JSON.stringify({
+      title: `💬 New comment on supply request — ${storeLabel}`,
+      body: `${commenterEmail}: ${preview}`,
+      tag: `supply-comment-${requestId}-${Date.now()}`,
+      url: '/index.html#supply-request',
+    });
+    const { results: superusers } = await env.DB.prepare(
+      "SELECT id FROM users WHERE role = 'superuser' AND status = 'active'"
+    ).all();
+    if (!superusers?.length) return;
+    const userIds = superusers.map(u => u.id);
+    const placeholders = userIds.map(() => '?').join(',');
+    const { results: subs } = await env.DB.prepare(
+      `SELECT ps.endpoint, ps.p256dh, ps.auth
+       FROM push_subscriptions ps
+       JOIN notification_preferences np ON np.user_id = ps.user_id
+       WHERE ps.user_id IN (${placeholders}) AND np.push_enabled = 1 AND np.supply_notifications != 0`
+    ).bind(...userIds).all();
+    for (const sub of (subs || [])) {
+      try {
+        const res = await sendWebPush(env, sub, pushPayload);
+        if (res.expired) {
+          await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+        }
+      } catch (e) { console.error('Supply comment push error:', e.message); }
+    }
   }
 }
 
@@ -5302,13 +5388,14 @@ export default {
       try {
         const [subRow, prefRow] = await Promise.all([
           env.DB.prepare("SELECT COUNT(*) AS cnt FROM push_subscriptions WHERE user_id = ?").bind(currentUser.id).first(),
-          env.DB.prepare("SELECT push_enabled, daily_summary, weekly_digest, interval_summary FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
+          env.DB.prepare("SELECT push_enabled, daily_summary, weekly_digest, interval_summary, supply_notifications FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
         ]);
         const cnt = subRow?.cnt ?? 0;
-        const dailySummary   = prefRow ? !!prefRow.daily_summary  : true;
-        const weeklyDigest   = prefRow ? !!prefRow.weekly_digest  : true;
-        const intervalSummary = prefRow?.interval_summary ?? 'off';
-        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest, intervalSummary }), { headers: corsJson });
+        const dailySummary       = prefRow ? !!prefRow.daily_summary       : true;
+        const weeklyDigest       = prefRow ? !!prefRow.weekly_digest       : true;
+        const intervalSummary    = prefRow?.interval_summary               ?? 'off';
+        const supplyNotifications = prefRow ? !!prefRow.supply_notifications : true;
+        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest, intervalSummary, supplyNotifications }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
@@ -5369,6 +5456,7 @@ export default {
         if (typeof body.daily_summary  === 'boolean') fields.daily_summary  = body.daily_summary  ? 1 : 0;
         if (typeof body.weekly_digest  === 'boolean') fields.weekly_digest  = body.weekly_digest  ? 1 : 0;
         if (['off', '1h', '3h'].includes(body.interval_summary)) fields.interval_summary = body.interval_summary;
+        if (typeof body.supply_notifications === 'boolean') fields.supply_notifications = body.supply_notifications ? 1 : 0;
         if (!Object.keys(fields).length) return new Response(JSON.stringify({ error: "Nothing to update" }), { status: 400, headers: corsJson });
         const now = new Date().toISOString();
         const setClauses = Object.keys(fields).map(k => `${k} = ?`).join(', ');
@@ -5476,8 +5564,8 @@ export default {
         // Notify superusers (fire-and-forget)
         const fullItems = await env.DB.prepare('SELECT * FROM supply_request_items WHERE request_id = ?').bind(requestId).all();
         ctx.waitUntil(notifySupplyRequestNew(env, {
-          requestId, requesterEmail: currentUser.email, store, priority,
-          notes: notes || '', items: fullItems.results || [],
+          requestId, requesterId: currentUser.id, requesterEmail: currentUser.email,
+          store, priority, notes: notes || '', items: fullItems.results || [],
         }));
 
         return new Response(JSON.stringify({ ok: true, id: requestId }), { headers: corsJson });
@@ -5770,6 +5858,17 @@ export default {
            VALUES (?, ?, 'comment', ?, ?, ?, ?)`
         ).bind(randomHex(12), id, currentUser.id, currentUser.email, note.trim(), now).run();
         await env.DB.prepare('UPDATE supply_requests SET updated_at = ? WHERE id = ?').bind(now, id).run();
+
+        // Notify the other party (fire-and-forget, respects supply_notifications)
+        ctx.waitUntil(notifySupplyComment(env, {
+          requestId: id,
+          store: existing.store,
+          commenterId: currentUser.id,
+          commenterEmail: currentUser.email,
+          note: note.trim(),
+          requesterId: existing.user_id,
+          requesterEmail: existing.user_email,
+        }));
 
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {

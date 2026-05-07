@@ -1020,6 +1020,15 @@
                     </label>
                   </div>
                 </div>
+                <!-- Supply request notifications -->
+                <label class="flex items-center justify-between cursor-pointer pt-1">
+                  <div>
+                    <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Supply request alerts</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Submissions, status updates &amp; comment replies</p>
+                  </div>
+                  <input type="checkbox" id="notif-supply-toggle" onchange="updateNotifPrefs()"
+                    class="w-4 h-4 accent-[#3BB54A] cursor-pointer ml-4">
+                </label>
               </div>
             </div>
           </div>
@@ -3419,8 +3428,10 @@
         .then(d => {
           const daily  = el('notif-daily-summary-toggle');
           const weekly = el('notif-weekly-digest-toggle');
+          const supply = el('notif-supply-toggle');
           if (daily)  daily.checked  = d.dailySummary !== false;
           if (weekly) weekly.checked = d.weeklyDigest !== false;
+          if (supply) supply.checked = d.supplyNotifications !== false;
           // Interval summary radio
           const interval = d.intervalSummary || 'off';
           const radio = document.querySelector(`input[name="interval-summary"][value="${interval}"]`);
@@ -3532,10 +3543,12 @@
   async function updateNotifPrefs() {
     const daily    = el('notif-daily-summary-toggle');
     const weekly   = el('notif-weekly-digest-toggle');
+    const supply   = el('notif-supply-toggle');
     const intervalRadio = document.querySelector('input[name="interval-summary"]:checked');
     const body = {};
     if (daily)  body.daily_summary = daily.checked;
     if (weekly) body.weekly_digest = weekly.checked;
+    if (supply) body.supply_notifications = supply.checked;
     if (intervalRadio) body.interval_summary = intervalRadio.value;
     if (!Object.keys(body).length) return;
     try {
@@ -8596,6 +8609,13 @@
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(err => {
         console.warn('SW registration failed:', err);
+      });
+      // Deep-link: notification tap focuses the window then SW posts a navigate message
+      navigator.serviceWorker.addEventListener('message', e => {
+        if (e.data?.type === 'sw-navigate' && e.data.url) {
+          const hash = e.data.url.split('#')[1];
+          if (hash && typeof navigateToPage === 'function') navigateToPage(hash);
+        }
       });
     }
     initSidebar();

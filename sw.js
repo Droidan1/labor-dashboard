@@ -42,15 +42,25 @@ self.addEventListener('push', event => {
 
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  const url = event.notification.data?.url || '/';
+  const targetUrl = event.notification.data?.url || null;
+
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
-      // Focus existing open window if available
-      for (const client of windowClients) {
-        if (client.url === url && 'focus' in client) return client.focus();
+      // Find any open app window (same scope/origin — ignore hash differences)
+      const appClient = windowClients.find(c =>
+        c.url.startsWith(self.registration.scope) || c.url.includes('/index.html')
+      );
+      if (appClient) {
+        // Focus the existing window, then tell the app to navigate
+        return appClient.focus().then(() => {
+          if (targetUrl) appClient.postMessage({ type: 'sw-navigate', url: targetUrl });
+        });
       }
-      // Otherwise open a new window
-      if (clients.openWindow) return clients.openWindow(url);
+      // No window open — open a new one at the target URL
+      const openUrl = targetUrl
+        ? (targetUrl.startsWith('/') ? self.registration.scope.replace(/\/$/, '') + targetUrl : targetUrl)
+        : self.registration.scope;
+      if (clients.openWindow) return clients.openWindow(openUrl);
     })
   );
 });
