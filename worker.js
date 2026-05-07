@@ -5733,6 +5733,21 @@ export default {
       }
     }
 
+    // GET ?action=supply-budgets-all  — superuser only. Returns all supply_budgets rows.
+    if (request.method === "GET" && url.searchParams.get("action") === "supply-budgets-all") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const { results: budgets } = await env.DB.prepare(
+          `SELECT store, year, month, budget FROM supply_budgets ORDER BY year DESC, month DESC, store`
+        ).all();
+        return new Response(JSON.stringify({ ok: true, budgets }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     // POST ?action=supply-request-comment
     // Body: { id, note }  — any authenticated user (superuser or requester's store).
     if (request.method === "POST" && url.searchParams.get("action") === "supply-request-comment") {
