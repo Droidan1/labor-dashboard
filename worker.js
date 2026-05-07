@@ -2204,6 +2204,8 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         ? Number(costRecord.cost) : 0;
 
       if (priceCents < 0) {
+        // Negative-price line items (manual return entries) — attribute to this
+        // item's own category so the Refunds column shows against the right row.
         cat.refunds -= grossCents / 100;
         cat.net -= grossCents / 100;
         l3Cat.refunds -= grossCents / 100;
@@ -2222,6 +2224,22 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         l3Cat.net += (grossCents - discCents) / 100;
         l3Cat.cost += lineCost;
         orderLineItemNetCents += (grossCents - discCents);
+
+        // ── Clover structured line-item refunds (li.refunds.elements) ─────────
+        // These are refunds Clover ties to a specific line item. Amount is in
+        // cents and includes tax; subtract taxAmount to stay on a pre-tax basis
+        // consistent with how we compute net sales.
+        for (const ref of (li.refunds?.elements || [])) {
+          const refGross = ref.amount || 0;
+          const refTax   = ref.taxAmount || 0;
+          const refNet   = refGross - refTax;   // pre-tax refund, in cents
+          if (refNet <= 0) continue;
+          cat.refunds -= refNet / 100;
+          cat.net     -= refNet / 100;
+          l3Cat.refunds -= refNet / 100;
+          l3Cat.net     -= refNet / 100;
+          orderLineItemNetCents -= refNet;
+        }
       }
     }
 
@@ -2333,7 +2351,7 @@ async function fetchItemOrders(store, env, sinceTimestamp, untilTimestamp = null
     let cloverUrl = `https://api.clover.com/v3/merchants/${merchantId}/orders`
       + `?filter=createdTime>=${sinceTimestamp}`
       + `&filter=state=locked`
-      + `&expand=payments,lineItems.item,lineItems.discounts,discounts`
+      + `&expand=payments,lineItems.item,lineItems.discounts,lineItems.refunds,discounts`
       + `&limit=${limit}&offset=${offset}`;
     if (untilTimestamp) cloverUrl += `&filter=createdTime<${untilTimestamp}`;
     const resp = await fetch(cloverUrl, {
