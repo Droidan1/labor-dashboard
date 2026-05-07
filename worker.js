@@ -5836,6 +5836,24 @@ export default {
       }
     }
 
+    // DELETE ?action=supply-request-delete
+    // Body: { id }  — superuser only. Cascades to items + history via FK.
+    if (request.method === "DELETE" && url.searchParams.get("action") === "supply-request-delete") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const { id } = await request.json();
+        if (!id) return new Response(JSON.stringify({ error: "Missing id" }), { status: 400, headers: corsJson });
+        const existing = await env.DB.prepare('SELECT id FROM supply_requests WHERE id = ?').bind(id).first();
+        if (!existing) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        await env.DB.prepare('DELETE FROM supply_requests WHERE id = ?').bind(id).run();
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     // POST ?action=supply-request-comment
     // Body: { id, note }  — any authenticated user (superuser or requester's store).
     if (request.method === "POST" && url.searchParams.get("action") === "supply-request-comment") {
