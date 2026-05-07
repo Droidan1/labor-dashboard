@@ -6443,19 +6443,47 @@ export default {
     const startOfToday = since ? Number(since) : et.startOfDay;
 
     try {
-      // Fetch orders + refunds in parallel. Refunds (from /v3/refunds) live on
-      // a separate Clover endpoint and are NOT subtracted from order.total, so
-      // the dashboard needs the refunds total to compute Net Sales correctly.
-      // Without this, the dashboard shows gross-of-refunds while the hourly
-      // notification — which reads daily_sales.total (already refund-adjusted) —
-      // shows the correct figure.
-      const [elements, refundCents] = await Promise.all([
-        fetchCloverOrders(targetStore, env, startOfToday),
-        fetchRefundsTotal(targetStore, env, startOfToday),
+      // Fetch orders + refunds + item-categorization inputs in parallel.
+      //
+      // Refunds (from /v3/refunds) live on a separate Clover endpoint and are
+      // NOT subtracted from order.total, so the dashboard needs the refunds
+      // total to compute Net Sales correctly.
+      //
+      // Bin/retail split: the frontend used to classify line items by name
+      // regex (\bbin\b, etc.), but Clover items in the "Bin Products" L3
+      // category don't necessarily have "bin" in their name. We now run the
+      // proper category-based aggregation server-side and return binNet /
+      // retailNet so the dashboard matches the Item Sales breakdown.
+      const [elements, refundElements, itemCatMap, overrides, itemCosts] = await Promise.all([
+        fetchItemOrders(targetStore, env, startOfToday),
+        fetchRefundElements(targetStore, env, startOfToday),
+        fetchItemCategoryMap(targetStore, env),
+        fetchItemOverrides(env),
+        fetchItemCosts(env),
       ]);
+      const refundCents = (refundElements || []).reduce(
+        (s, r) => s + ((r.amount || 0) - (r.taxAmount || 0)), 0
+      );
+
+      // Server-side category-based bin/retail split. aggregateItemSales returns
+      // categories[] keyed by L2; pull "Bin Products" netSales and treat the
+      // remainder of revenue-bearing categories as retail.
+      let binNet = 0, retailNet = 0;
+      if (elements && elements.length > 0) {
+        const itemAgg = aggregateItemSales(
+          elements, itemCatMap, targetStore, et.dateStr, overrides, itemCosts, refundElements
+        );
+        for (const c of (itemAgg.categories || [])) {
+          if (c.category === "Bin Products") binNet += c.netSales;
+          else retailNet += c.netSales;
+        }
+      }
+
       const result = JSON.stringify({
         elements: elements || [],
         refundCents: refundCents || 0,
+        binNet,
+        retailNet,
       });
       const response = new Response(result, {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -6465,6 +6493,10 @@ export default {
       if (env.SALES_SNAPSHOTS && elements && elements.length > 0) {
         const aggregated = aggregateOrders(elements, startOfToday);
         applyRefundsToAggregate(aggregated, refundCents);
+        // Override the regex-based bin/retail with the category-based figures
+        // computed above so daily_sales matches the Item Sales view.
+        aggregated.bin = +binNet.toFixed(2);
+        aggregated.retail = +retailNet.toFixed(2);
         ctx.waitUntil(saveSnapshot(env, targetStore, et.dateStr, aggregated));
       }
 

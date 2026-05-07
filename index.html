@@ -1924,24 +1924,43 @@
           }
         }
       }
-      // Subtract refunds (pre-tax) from total + proportionally from retail/bin
-      // so the live dashboard matches Clover's Sales Summary and the hourly
-      // notification (which reads daily_sales.total, already refund-adjusted).
+      // Subtract refunds (pre-tax) from totalNet so the live dashboard matches
+      // Clover's Sales Summary and the hourly notification (which reads
+      // daily_sales.total, already refund-adjusted).
       const refundCents = data?.refundCents || 0;
-      if (refundCents > 0 && totalNet > 0) {
-        const retailShare = retailNet / totalNet;
-        const binShare    = binNet    / totalNet;
-        retailNet -= refundCents * retailShare;
-        binNet    -= refundCents * binShare;
-        totalNet  -= refundCents;
-      } else if (refundCents > 0) {
-        totalNet -= refundCents;
+      if (refundCents > 0) totalNet -= refundCents;
+
+      // Bin/retail split: prefer the worker's category-based figures (in
+      // dollars). The legacy regex-on-name client-side classification missed
+      // items in Clover's "Bin Products" L3 category whose names don't
+      // contain "bin"/"fill a bag"/"glass case", causing a sizable undercount
+      // (e.g. dashboard $27.93 vs actual $121.15). Fall back to the in-loop
+      // numbers when the worker doesn't return them.
+      const totalDollars = totalNet / 100;
+      let binDollars, retailDollars;
+      if (typeof data?.binNet === 'number' && typeof data?.retailNet === 'number'
+          && (data.binNet + data.retailNet) > 0) {
+        binDollars = data.binNet;
+        retailDollars = data.retailNet;
+      } else {
+        // Fallback path: keep the proportional refund subtraction the old
+        // code did, just to keep totals consistent if binNet/retailNet absent.
+        if (refundCents > 0 && (retailNet + binNet) > 0) {
+          const totBeforeRef = retailNet + binNet;
+          const retailShare = retailNet / totBeforeRef;
+          const binShare    = binNet    / totBeforeRef;
+          retailNet -= refundCents * retailShare;
+          binNet    -= refundCents * binShare;
+        }
+        retailDollars = Math.round(retailNet) / 100;
+        binDollars    = Math.round(binNet)    / 100;
       }
+
       const avgCart = cartCount > 0 ? (cartNet / cartCount) / 100 : 0;
       const avgItems = orderCount > 0 ? totalItemCount / orderCount : 0;
       const avgTxnSec = txnTimeCount > 0 ? Math.round(totalTxnTimeMs / txnTimeCount / 1000) : null;
       const avgASP = retailItemCount > 0 ? retailNet / retailItemCount / 100 : null;
-      return { total: totalNet / 100, retail: Math.round(retailNet) / 100, bin: Math.round(binNet) / 100, avgCart, avgItems, orderCount, avgTxnSec, avgASP };
+      return { total: totalDollars, retail: retailDollars, bin: binDollars, avgCart, avgItems, orderCount, avgTxnSec, avgASP };
     } catch (error) {
       console.warn(`Clover API error for ${storeKey}:`, error.message);
       return null;
