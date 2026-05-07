@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dashboard-cache-v3';
+const CACHE_NAME = 'dashboard-cache-v4';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -68,10 +68,11 @@ self.addEventListener('notificationclick', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // Never cache API requests – always go to network
+  // Never intercept API requests — pass straight to network
   if (url.hostname.includes('google') ||
       url.hostname.includes('clover') ||
-      url.hostname.includes('workers.dev')) {
+      url.hostname.includes('workers.dev') ||
+      url.hostname.includes('retjghub.com')) {
     return;
   }
 
@@ -82,6 +83,8 @@ self.addEventListener('fetch', event => {
         caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         return response;
       })
-      .catch(() => caches.match(event.request))
+      .catch(() => caches.match(event.request)
+        .then(r => r || new Response('Network error — offline', { status: 503, statusText: 'Service Unavailable' }))
+      )
   );
 });
