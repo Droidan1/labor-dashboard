@@ -2973,7 +2973,7 @@ async function dispatchIntervalSummary(env) {
       const label = STORE_LABELS[s] || s;
       if (!snap) return `${label}: —`;
       const sales = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(snap.total || 0);
-      return `${label}: ${sales} (${snap.order_count || 0} txn)`;
+      return `${label}: ${sales}`;
     });
 
     const timeLabel = nowET.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' });
