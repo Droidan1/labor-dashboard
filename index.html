@@ -3577,7 +3577,9 @@
     function getUserStores() {
       if (!currentUser) return [];
       if (currentUser.role === 'superuser' || currentUser.role === 'admin') return SR_ALL;
-      try { return JSON.parse(currentUser.stores || '[]'); } catch(e) { return []; }
+      const s = currentUser.stores;
+      if (Array.isArray(s)) return s;
+      try { return JSON.parse(s || '[]'); } catch(e) { return []; }
     }
     function statusBadge(s) {
       const c = SR_STATUS[s] || SR_STATUS.pending;
