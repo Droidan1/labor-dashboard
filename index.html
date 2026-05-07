@@ -329,7 +329,7 @@
             </div>
           </div>
         </div>
-        <div id="today-total-card" class="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors order-2 cursor-pointer select-none" onclick="toggleAllStoresBreakdown()">
+        <div id="today-total-card" class="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors order-2">
           <div class="flex justify-between items-start gap-2">
             <div class="min-w-0">
               <div id="c-today-card-label" class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Today's Net Sales</div>
@@ -342,12 +342,10 @@
                 <div id="c-today-budget" class="text-lg font-bold text-gray-500 dark:text-gray-300 leading-none truncate">—</div>
                 <div id="c-today-diff" class="text-[10px] font-semibold mt-1"></div>
               </div>
-              <button onclick="event.stopPropagation(); showAllStoresDetail()" class="text-[10px] font-semibold text-[#3BB54A] hover:underline whitespace-nowrap flex-shrink-0 mt-0.5">View Details →</button>
-              <svg id="c-expand-chevron" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" class="text-gray-400 dark:text-gray-500 mt-1 flex-shrink-0 transition-transform duration-200"><polyline points="6 9 12 15 18 9"/></svg>
+              <button onclick="showAllStoresDetail()" class="text-[10px] font-semibold text-[#3BB54A] hover:underline whitespace-nowrap flex-shrink-0 mt-0.5">View Details →</button>
             </div>
           </div>
           <div id="c-today-breakdown"></div>
-          <div id="c-weekly-expand" class="hidden mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 overflow-x-auto"></div>
         </div>
       </div>
 
@@ -2378,12 +2376,6 @@
       diffEl.textContent = '';
     }
 
-    // Refresh the all-stores weekly breakdown if it's currently open
-    if (allStoresBreakdownOpen) {
-      const expandEl = el('c-weekly-expand');
-      if (expandEl) expandEl.innerHTML = buildAllStoresWeeklyTable();
-    }
-
     // Always show Weekly (week-to-date, live-boosted) — even when a
     // specific day is selected. The day selector affects per-store cards
     // and charts, but the All Stores Budget left panel intentionally
@@ -2900,26 +2892,6 @@
     if (sorted.length === 0) html = `<div class="p-8 text-center text-gray-400 dark:text-gray-500">No data for Week ${effectiveWeek}.</div>`;
     return selectorsHtml + monthSummaryHtml + html;
   }
-
-  // ── All-stores weekly breakdown (today-total-card expand/collapse) ───────────
-  let allStoresBreakdownOpen = false;
-
-  function toggleAllStoresBreakdown() {
-    const expandEl = el('c-weekly-expand');
-    const chevron  = el('c-expand-chevron');
-    if (!expandEl) return;
-    allStoresBreakdownOpen = !allStoresBreakdownOpen;
-    if (allStoresBreakdownOpen) {
-      expandEl.innerHTML = buildAllStoresWeeklyTable();
-      expandEl.classList.remove('hidden');
-      if (chevron) chevron.style.transform = 'rotate(180deg)';
-    } else {
-      expandEl.classList.add('hidden');
-      expandEl.innerHTML = '';
-      if (chevron) chevron.style.transform = '';
-    }
-  }
-  window.toggleAllStoresBreakdown = toggleAllStoresBreakdown;
 
   function buildAllStoresWeeklyTable() {
     const todayStr = new Date().toDateString();
