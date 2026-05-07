@@ -2492,7 +2492,7 @@ function resolveCors(request) {
   const origin = request.headers.get("Origin") || "";
   const allowed = ALLOWED_ORIGINS.includes(origin) || LOCALHOST_RE.test(origin);
   const headers = {
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, X-Snapshot-Secret",
     "Vary": "Origin",
   };
