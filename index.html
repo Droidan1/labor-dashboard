@@ -1924,6 +1924,19 @@
           }
         }
       }
+      // Subtract refunds (pre-tax) from total + proportionally from retail/bin
+      // so the live dashboard matches Clover's Sales Summary and the hourly
+      // notification (which reads daily_sales.total, already refund-adjusted).
+      const refundCents = data?.refundCents || 0;
+      if (refundCents > 0 && totalNet > 0) {
+        const retailShare = retailNet / totalNet;
+        const binShare    = binNet    / totalNet;
+        retailNet -= refundCents * retailShare;
+        binNet    -= refundCents * binShare;
+        totalNet  -= refundCents;
+      } else if (refundCents > 0) {
+        totalNet -= refundCents;
+      }
       const avgCart = cartCount > 0 ? (cartNet / cartCount) / 100 : 0;
       const avgItems = orderCount > 0 ? totalItemCount / orderCount : 0;
       const avgTxnSec = txnTimeCount > 0 ? Math.round(totalTxnTimeMs / txnTimeCount / 1000) : null;

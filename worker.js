@@ -1401,6 +1401,36 @@ async function fetchItemCategoryMap(store, env) {
 //
 // Defensive: returns 0 on any failure (rate limit, network) — better to
 // over-report a single day than to break the snapshot pipeline.
+// Fetches raw /v3/refunds elements for a window — used by aggregateItemSales
+// to attribute refunds back to the originating line-item categories. Returns
+// [] on failure (consistent with fetchRefundsTotal returning 0).
+async function fetchRefundElements(store, env, sinceTimestamp, untilTimestamp = null) {
+  const merchantId = env[`${store}_MERCHANT_ID`];
+  const apiToken = env[`${store}_API_TOKEN`];
+  if (!merchantId || !apiToken) return [];
+  const all = [];
+  let offset = 0;
+  const limit = 1000;
+  const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
+  try {
+    while (true) {
+      let url = `https://api.clover.com/v3/merchants/${merchantId}/refunds`
+        + `?filter=createdTime>=${sinceTimestamp}`
+        + `&limit=${limit}&offset=${offset}`;
+      if (untilTimestamp) url += `&filter=createdTime<${untilTimestamp}`;
+      const data = await cloverFetchWithRetry(url, headers, `Clover refunds(items) ${store}`);
+      if (!data?.elements?.length) break;
+      all.push(...data.elements);
+      if (data.elements.length < limit) break;
+      offset += limit;
+    }
+  } catch (e) {
+    console.warn(`fetchRefundElements(${store}) error:`, e.message);
+    return [];
+  }
+  return all;
+}
+
 async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = null) {
   const merchantId = env[`${store}_MERCHANT_ID`];
   const apiToken = env[`${store}_API_TOKEN`];
@@ -1963,7 +1993,7 @@ function matchOverridePattern(rawName, imNum, patterns) {
 // undefined / EMPTY_OVERRIDES — caller threads it in for live + snapshot paths.
 // `itemCosts` is the shape returned by fetchItemCosts(); used to enrich each
 // line-item with cost so we can emit cost / extCost / grossProfit / gpmPct.
-function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, itemCosts) {
+function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements = []) {
   const ov = overrides || EMPTY_OVERRIDES;
   const ovItems = ov.items || {};
   const ovPatterns = ov.patterns || [];
@@ -1973,6 +2003,10 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   const l3Cats = {};      // L2 → L3 → { qty, gross, discounts, refunds, net, cost }
   const unmappedL3 = {};
   const noCategory = {};
+  // Map line-item id → { l2, l3Key } for refund attribution after the main loop.
+  // Built during the per-order line-item walk so refunds from /v3/refunds (which
+  // reference lineItem.id) can be attributed back to the originating category.
+  const lineItemCatMap = new Map();
   function getCat(name) {
     if (!cats[name]) cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0 };
     return cats[name];
@@ -2183,6 +2217,10 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       const l3Cat = getL3(l2, l3Key);
       const grossCents = Math.abs(priceCents);
 
+      // Record this line item's category so refunds from /v3/refunds (which
+      // reference lineItem.id) can be attributed back to the right L2/L3.
+      if (li.id) lineItemCatMap.set(li.id, { l2, l3Key });
+
       // Phase 2B: line-level discount (resolved above, handles % case)
       let discCents = liDiscCache.get(li) || 0;
 
@@ -2204,8 +2242,6 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         ? Number(costRecord.cost) : 0;
 
       if (priceCents < 0) {
-        // Negative-price line items (manual return entries) — attribute to this
-        // item's own category so the Refunds column shows against the right row.
         cat.refunds -= grossCents / 100;
         cat.net -= grossCents / 100;
         l3Cat.refunds -= grossCents / 100;
@@ -2224,22 +2260,6 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         l3Cat.net += (grossCents - discCents) / 100;
         l3Cat.cost += lineCost;
         orderLineItemNetCents += (grossCents - discCents);
-
-        // ── Clover structured line-item refunds (li.refunds.elements) ─────────
-        // These are refunds Clover ties to a specific line item. Amount is in
-        // cents and includes tax; subtract taxAmount to stay on a pre-tax basis
-        // consistent with how we compute net sales.
-        for (const ref of (li.refunds?.elements || [])) {
-          const refGross = ref.amount || 0;
-          const refTax   = ref.taxAmount || 0;
-          const refNet   = refGross - refTax;   // pre-tax refund, in cents
-          if (refNet <= 0) continue;
-          cat.refunds -= refNet / 100;
-          cat.net     -= refNet / 100;
-          l3Cat.refunds -= refNet / 100;
-          l3Cat.net     -= refNet / 100;
-          orderLineItemNetCents -= refNet;
-        }
       }
     }
 
@@ -2253,6 +2273,39 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     if (residualCents !== 0) {
       const cat = getCat("Other / Non-Item");
       cat.net += residualCents / 100;
+    }
+  }
+
+  // ── Process refunds from /v3/refunds endpoint ───────────────────────────
+  // Clover's refunds live on a separate endpoint and are NOT subtracted from
+  // order.total. Each refund references a lineItem by id. We attribute the
+  // refund back to that line item's L2/L3 category. Cross-day refunds (refund
+  // posted today against a prior-day line item not in our current fetch) get
+  // bucketed into a generic "Refund" L2 row as a fallback.
+  for (const ref of (refundElements || [])) {
+    const refGross = ref.amount || 0;
+    const refTax   = ref.taxAmount || 0;
+    const refNet   = refGross - refTax;  // pre-tax, in cents
+    if (refNet <= 0) continue;
+
+    const liId = ref.lineItem?.id || ref.lineItemRef?.id || null;
+    const hit  = liId ? lineItemCatMap.get(liId) : null;
+
+    if (hit) {
+      const cat   = getCat(hit.l2);
+      const l3Cat = getL3(hit.l2, hit.l3Key);
+      cat.refunds   -= refNet / 100;
+      cat.net       -= refNet / 100;
+      l3Cat.refunds -= refNet / 100;
+      l3Cat.net     -= refNet / 100;
+    } else {
+      // Cross-day or unmappable refund — collect under generic "Refund" L2.
+      const cat   = getCat("Refund");
+      const l3Cat = getL3("Refund", "Cross-day refunds");
+      cat.refunds   -= refNet / 100;
+      cat.net       -= refNet / 100;
+      l3Cat.refunds -= refNet / 100;
+      l3Cat.net     -= refNet / 100;
     }
   }
 
@@ -2351,7 +2404,7 @@ async function fetchItemOrders(store, env, sinceTimestamp, untilTimestamp = null
     let cloverUrl = `https://api.clover.com/v3/merchants/${merchantId}/orders`
       + `?filter=createdTime>=${sinceTimestamp}`
       + `&filter=state=locked`
-      + `&expand=payments,lineItems.item,lineItems.discounts,lineItems.refunds,discounts`
+      + `&expand=payments,lineItems.item,lineItems.discounts,discounts`
       + `&limit=${limit}&offset=${offset}`;
     if (untilTimestamp) cloverUrl += `&filter=createdTime<${untilTimestamp}`;
     const resp = await fetch(cloverUrl, {
@@ -4138,10 +4191,13 @@ export default {
       const results = {};
       for (const store of stores) {
         try {
-          const elements = await fetchItemOrders(store, env, sinceTs, untilTs);
+          const [elements, refundElements] = await Promise.all([
+            fetchItemOrders(store, env, sinceTs, untilTs),
+            fetchRefundElements(store, env, sinceTs, untilTs),
+          ]);
           if (!elements) { results[store] = "skipped (no credentials)"; continue; }
           const itemCatMap = await fetchItemCategoryMap(store, env);
-          const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts);
+          const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts, refundElements);
 
           // Zero-order guard: if Clover returned no orders and we already have
           // a non-empty item snapshot for this date, don't overwrite it.
@@ -4478,9 +4534,12 @@ export default {
               nextDay.setUTCDate(nextDay.getUTCDate() + 1);
               untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
             }
-            const elements = await fetchItemOrders(store, env, sinceTs, untilTs);
+            const [elements, refundElements] = await Promise.all([
+              fetchItemOrders(store, env, sinceTs, untilTs),
+              fetchRefundElements(store, env, sinceTs, untilTs),
+            ]);
             if (!elements) { storeOut.details.push({ date: dateStr, note: "no credentials" }); continue; }
-            const itemData = aggregateItemSales(elements, catMapCache[store], store, dateStr, overrides, itemCosts);
+            const itemData = aggregateItemSales(elements, catMapCache[store], store, dateStr, overrides, itemCosts, refundElements);
             await saveItemSalesSnapshot(env, store, dateStr, itemData);
             storeOut.written++;
           } catch (e) {
@@ -6083,7 +6142,10 @@ export default {
       const untilTs = sinceTs + 3600000;
 
       try {
-        const elements = await fetchItemOrders(store, env, sinceTs, untilTs);
+        const [elements, refundElements] = await Promise.all([
+          fetchItemOrders(store, env, sinceTs, untilTs),
+          fetchRefundElements(store, env, sinceTs, untilTs),
+        ]);
         if (!elements) {
           return new Response(JSON.stringify({ error: "Store keys not found" }), { status: 404, headers: corsJson });
         }
@@ -6092,7 +6154,7 @@ export default {
           fetchItemOverrides(env),
           fetchItemCosts(env),
         ]);
-        const result = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts);
+        const result = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts, refundElements);
         result.hour = hourParam;
         return new Response(JSON.stringify(result), { headers: corsJson });
       } catch (err) {
@@ -6199,13 +6261,14 @@ export default {
       }
 
       try {
-        const allElements = await fetchItemOrders(store, env, startOfDay);
-        const itemCatMap = await fetchItemCategoryMap(store, env);
-        const [overrides, itemCosts] = await Promise.all([
+        const [allElements, refundElements, itemCatMap, overrides, itemCosts] = await Promise.all([
+          fetchItemOrders(store, env, startOfDay),
+          fetchRefundElements(store, env, startOfDay),
+          fetchItemCategoryMap(store, env),
           fetchItemOverrides(env),
           fetchItemCosts(env),
         ]);
-        const result = aggregateItemSales(allElements || [], itemCatMap, store, todayStr, overrides, itemCosts);
+        const result = aggregateItemSales(allElements || [], itemCatMap, store, todayStr, overrides, itemCosts, refundElements);
         return new Response(JSON.stringify(result), { headers: corsJson });
       } catch (err) {
         return new Response(JSON.stringify({ error: "Items fetch failed", detail: err.message }), {
@@ -6380,8 +6443,20 @@ export default {
     const startOfToday = since ? Number(since) : et.startOfDay;
 
     try {
-      const elements = await fetchCloverOrders(targetStore, env, startOfToday);
-      const result = JSON.stringify({ elements: elements || [] });
+      // Fetch orders + refunds in parallel. Refunds (from /v3/refunds) live on
+      // a separate Clover endpoint and are NOT subtracted from order.total, so
+      // the dashboard needs the refunds total to compute Net Sales correctly.
+      // Without this, the dashboard shows gross-of-refunds while the hourly
+      // notification — which reads daily_sales.total (already refund-adjusted) —
+      // shows the correct figure.
+      const [elements, refundCents] = await Promise.all([
+        fetchCloverOrders(targetStore, env, startOfToday),
+        fetchRefundsTotal(targetStore, env, startOfToday),
+      ]);
+      const result = JSON.stringify({
+        elements: elements || [],
+        refundCents: refundCents || 0,
+      });
       const response = new Response(result, {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -6389,12 +6464,8 @@ export default {
       // Snapshot-on-fetch: save today's aggregated data to KV in background
       if (env.SALES_SNAPSHOTS && elements && elements.length > 0) {
         const aggregated = aggregateOrders(elements, startOfToday);
-        // Phase 2A: also subtract refunds (pre-tax) to match Clover Sales Summary.
-        ctx.waitUntil((async () => {
-          const refundCents = await fetchRefundsTotal(targetStore, env, startOfToday);
-          applyRefundsToAggregate(aggregated, refundCents);
-          await saveSnapshot(env, targetStore, et.dateStr, aggregated);
-        })());
+        applyRefundsToAggregate(aggregated, refundCents);
+        ctx.waitUntil(saveSnapshot(env, targetStore, et.dateStr, aggregated));
       }
 
       return response;
@@ -6463,10 +6534,13 @@ export default {
 
         // Item sales snapshot (new)
         try {
-          const elements = await fetchItemOrders(store, env, startOfDay);
+          const [elements, refundElements] = await Promise.all([
+            fetchItemOrders(store, env, startOfDay),
+            fetchRefundElements(store, env, startOfDay),
+          ]);
           if (elements) {
             const itemCatMap = await fetchItemCategoryMap(store, env);
-            const itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides, itemCosts);
+            const itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides, itemCosts, refundElements);
             await saveItemSalesSnapshot(env, store, todayStr, itemData);
             results[store].items = "ok";
           } else {
