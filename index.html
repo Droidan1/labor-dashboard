@@ -5278,12 +5278,13 @@
 
     if (asAllStoresChart) { asAllStoresChart.destroy(); asAllStoresChart = null; }
 
+    // ── Current week: keyed by day-of-week (0=Sun…6=Sat) ──
     const dateMap = {};
     for (const s of STORES) {
       const rows = (allStoreData[s] || []).filter(r => r.week === selectedWeek && r.date);
       for (const r of rows) {
         const key = r.date.toISOString().slice(0, 10);
-        if (!dateMap[key]) dateMap[key] = { dateObj: r.date, budget: 0, sales: 0 };
+        if (!dateMap[key]) dateMap[key] = { dateObj: r.date, dow: r.date.getDay(), budget: 0, sales: 0 };
         if (r.bTotal != null) dateMap[key].budget += r.bTotal;
         const liveTotal = isCurrentWeek ? (liveCloverData[s]?.total ?? null) : null;
         const sales = (isCurrentWeek && r.date.toDateString() === todayStr && liveTotal > 0) ? liveTotal : (r.aTotal || 0);
@@ -5293,19 +5294,41 @@
     const sorted = Object.values(dateMap).sort((a, b) => a.dateObj - b.dateObj);
     if (!sorted.length) return;
 
+    // ── Last year: same week number, prior-year dates, aligned by day-of-week ──
+    // Determine the year of the selected week from its dates
+    const selectedYear = sorted[0].dateObj.getFullYear();
+    const lyYear = selectedYear - 1;
+    // Build a dow→sales map for the same week number last year
+    const lyDowMap = {}; // dow → total sales
+    for (const s of STORES) {
+      const lyRows = (allStoreData[s] || []).filter(r =>
+        r.week === selectedWeek && r.date &&
+        r.date.getFullYear() === lyYear
+      );
+      for (const r of lyRows) {
+        const dow = r.date.getDay();
+        if (!lyDowMap[dow]) lyDowMap[dow] = 0;
+        lyDowMap[dow] += r.aTotal || 0;
+      }
+    }
+    const hasLYData = Object.keys(lyDowMap).length > 0;
+
     const labels     = sorted.map(d => d.dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
     const budgetData = sorted.map(d => d.budget);
     const salesData  = sorted.map(d => d.sales);
+    const lyData     = sorted.map(d => lyDowMap[d.dow] ?? 0);
+
+    const datasets = [
+      { label: 'Budget',       data: budgetData, backgroundColor: isDark ? 'rgba(107,114,128,0.5)' : 'rgba(156,163,175,0.5)', borderColor: isDark ? '#6b7280' : '#9ca3af', borderWidth: 1 },
+      { label: 'Actual Sales', data: salesData,  backgroundColor: 'rgba(59,181,74,0.7)', borderColor: '#3BB54A', borderWidth: 1 },
+    ];
+    if (hasLYData) {
+      datasets.push({ label: `Last Year (${lyYear})`, data: lyData, backgroundColor: 'rgba(251,146,60,0.55)', borderColor: '#f97316', borderWidth: 1 });
+    }
 
     asAllStoresChart = new Chart(el('as-daily-chart'), {
       type: 'bar',
-      data: {
-        labels,
-        datasets: [
-          { label: 'Budget',       data: budgetData, backgroundColor: isDark ? 'rgba(107,114,128,0.5)' : 'rgba(156,163,175,0.5)', borderColor: isDark ? '#6b7280' : '#9ca3af', borderWidth: 1 },
-          { label: 'Actual Sales', data: salesData,  backgroundColor: 'rgba(59,181,74,0.7)', borderColor: '#3BB54A', borderWidth: 1 },
-        ]
-      },
+      data: { labels, datasets },
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: {
