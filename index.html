@@ -5294,16 +5294,18 @@
     const sorted = Object.values(dateMap).sort((a, b) => a.dateObj - b.dateObj);
     if (!sorted.length) return;
 
-    // ── Last year: same week number, prior-year dates, aligned by day-of-week ──
-    // Determine the year of the selected week from its dates
-    const selectedYear = sorted[0].dateObj.getFullYear();
-    const lyYear = selectedYear - 1;
-    // Build a dow→sales map for the same week number last year
+    // ── Last year: 52 weeks back (364 days), aligned by day-of-week ──
+    // Using 364-day offset keeps the same day-of-week alignment exactly.
+    const DAYS_364 = 364 * 24 * 60 * 60 * 1000;
     const lyDowMap = {}; // dow → total sales
+    // Build a set of LY date strings from the current week's dates shifted back 364 days
+    const lyDateSet = new Set(sorted.map(d => {
+      const lyDate = new Date(d.dateObj.getTime() - DAYS_364);
+      return lyDate.toISOString().slice(0, 10);
+    }));
     for (const s of STORES) {
       const lyRows = (allStoreData[s] || []).filter(r =>
-        r.week === selectedWeek && r.date &&
-        r.date.getFullYear() === lyYear
+        r.date && lyDateSet.has(r.date.toISOString().slice(0, 10))
       );
       for (const r of lyRows) {
         const dow = r.date.getDay();
@@ -5311,7 +5313,8 @@
         lyDowMap[dow] += r.aTotal || 0;
       }
     }
-    const hasLYData = Object.keys(lyDowMap).length > 0;
+    const hasLYData = Object.values(lyDowMap).some(v => v > 0);
+    const lyYear = sorted[0].dateObj.getFullYear() - 1;
 
     const labels     = sorted.map(d => d.dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
     const budgetData = sorted.map(d => d.budget);
