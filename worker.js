@@ -3000,9 +3000,9 @@ async function dispatchIntervalSummary(env) {
   // Today's date string in ET for the sales query
   const todayET = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(nowET);
 
-  // Fetch today's running totals from D1 for all stores
+  // Fetch today's running totals + budget from D1 for all stores
   const { results: rows } = await env.DB.prepare(
-    `SELECT store, total, order_count FROM daily_sales WHERE date = ? ORDER BY store`
+    `SELECT store, total, order_count, budget FROM daily_sales WHERE date = ? ORDER BY store`
   ).bind(todayET).all();
   const snapshotMap = {};
   for (const r of (rows || [])) snapshotMap[r.store] = r;
@@ -3038,13 +3038,21 @@ async function dispatchIntervalSummary(env) {
     }
     if (!userStores.length) { summary.skipped++; continue; }
 
-    // Build compact summary lines
+    // Build compact summary lines: "Label: $sales / $budget ±N%"
+    const fmtMoney = v => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0);
     const lines = userStores.map(s => {
       const snap = snapshotMap[s];
       const label = STORE_LABELS[s] || s;
       if (!snap) return `${label}: —`;
-      const sales = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(snap.total || 0);
-      return `${label}: ${sales}`;
+      const sales  = Number(snap.total)  || 0;
+      const budget = Number(snap.budget) || 0;
+      const salesStr = fmtMoney(sales);
+      if (budget > 0) {
+        const diffPct = Math.round(((sales - budget) / budget) * 100);
+        const sign = diffPct >= 0 ? '+' : '';
+        return `${label}: ${salesStr} / ${fmtMoney(budget)} ${sign}${diffPct}%`;
+      }
+      return `${label}: ${salesStr}`;
     });
 
     const timeLabel = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' });
