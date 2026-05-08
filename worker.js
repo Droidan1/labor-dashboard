@@ -3532,6 +3532,84 @@ function randomHex(bytes) {
   return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// ─── WebAuthn / Passkey Utilities ────────────────────────────────
+
+/** Minimal CBOR decoder sufficient for WebAuthn attestationObject / COSE keys */
+function decodeCBOR(buffer) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer instanceof ArrayBuffer ? buffer : buffer.buffer);
+  let offset = 0;
+
+  function read8() { return bytes[offset++]; }
+  function read16() { const v = (bytes[offset] << 8) | bytes[offset+1]; offset += 2; return v; }
+  function read32() { const v = (bytes[offset]<<24|bytes[offset+1]<<16|bytes[offset+2]<<8|bytes[offset+3])>>>0; offset += 4; return v; }
+
+  function decode() {
+    const first = read8();
+    const mt = (first & 0xe0) >> 5;
+    const ai = first & 0x1f;
+    let len;
+    if (ai <= 23)      { len = ai; }
+    else if (ai === 24){ len = read8(); }
+    else if (ai === 25){ len = read16(); }
+    else if (ai === 26){ len = read32(); }
+    else if (ai === 27){ const hi=read32(), lo=read32(); len = hi*0x100000000+lo; }
+
+    switch (mt) {
+      case 0: return len;
+      case 1: return -(len + 1);
+      case 2: { const b = bytes.slice(offset, offset+len); offset+=len; return b; }
+      case 3: { const b = bytes.slice(offset, offset+len); offset+=len; return new TextDecoder().decode(b); }
+      case 4: { const a = []; for (let i=0;i<len;i++) a.push(decode()); return a; }
+      case 5: { const m = {}; for (let i=0;i<len;i++) { const k=decode(); m[k]=decode(); } return m; }
+      case 7: { if (ai===20) return false; if (ai===21) return true; if (ai===22) return null; break; }
+    }
+    throw new Error(`Unsupported CBOR: mt=${mt} ai=${ai}`);
+  }
+  return decode();
+}
+
+function bufToBase64url(buf) {
+  const u = buf instanceof Uint8Array ? buf : new Uint8Array(buf instanceof ArrayBuffer ? buf : buf.buffer);
+  let s = '';
+  for (const b of u) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+}
+
+function bytesEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i=0;i<a.length;i++) if (a[i]!==b[i]) return false;
+  return true;
+}
+
+/** Convert DER-encoded ECDSA signature → IEEE P1363 (raw r||s, 64 bytes for P-256) */
+function derToP1363(der) {
+  let o = 0;
+  if (der[o++] !== 0x30) throw new Error('Expected SEQUENCE');
+  let seqLen = der[o++];
+  if (seqLen & 0x80) { const lb = seqLen&0x7f; seqLen=0; for(let i=0;i<lb;i++) seqLen=(seqLen<<8)|der[o++]; }
+  if (der[o++] !== 0x02) throw new Error('Expected INTEGER r');
+  let rLen = der[o++]; let rStart = o; if (der[rStart]===0x00){rStart++;rLen--;} const r = der.slice(rStart, rStart+rLen); o = rStart+rLen;
+  if (der[o++] !== 0x02) throw new Error('Expected INTEGER s');
+  let sLen = der[o++]; let sStart = o; if (der[sStart]===0x00){sStart++;sLen--;} const s = der.slice(sStart, sStart+sLen);
+  const out = new Uint8Array(64);
+  out.set(r, 32 - r.length);
+  out.set(s, 64 - s.length);
+  return out;
+}
+
+/** Import a CBOR COSE ES256 public key for Web Crypto verify */
+async function importCOSEPublicKey(coseBuf) {
+  const coseKey = decodeCBOR(coseBuf instanceof Uint8Array ? coseBuf : new Uint8Array(coseBuf));
+  const kty = coseKey[1], alg = coseKey[3], crv = coseKey[-1];
+  const xBuf = coseKey[-2], yBuf = coseKey[-3];
+  if (kty !== 2 || alg !== -7 || crv !== 1) throw new Error(`Unsupported COSE key kty=${kty} alg=${alg} crv=${crv}`);
+  const jwk = { kty:'EC', crv:'P-256', x:bufToBase64url(xBuf), y:bufToBase64url(yBuf) };
+  return crypto.subtle.importKey('jwk', jwk, { name:'ECDSA', namedCurve:'P-256' }, false, ['verify']);
+}
+
+const WEBAUTHN_ORIGIN = 'https://www.retjghub.com';
+const WEBAUTHN_RP_ID  = 'retjghub.com';
+
 function getSessionCookie(request) {
   const cookie = request.headers.get('Cookie') || '';
   const match = cookie.match(/(?:^|;\s*)session=([^;]+)/);
@@ -3786,6 +3864,199 @@ export default {
         role: user.role,
         stores: user.stores,
       }), { headers: corsJson });
+    }
+
+    // ── Passkey: POST ?action=passkey-register-begin ─────────────
+    // Requires active session. Generates challenge for credential creation.
+    if (request.method === "POST" && url.searchParams.get("action") === "passkey-register-begin") {
+      try {
+        const user = await getAuthUser(request, env);
+        if (!user) return new Response(JSON.stringify({error:"Not authenticated"}), {status:401,headers:corsJson});
+        const challenge = crypto.getRandomValues(new Uint8Array(32));
+        const challengeB64 = bufToBase64url(challenge);
+        await env.SALES_SNAPSHOTS.put(`webauthn:reg:${user.id}`, challengeB64, { expirationTtl: 300 });
+        const { results: existing } = await env.DB.prepare(
+          "SELECT credential_id FROM webauthn_credentials WHERE user_id = ?"
+        ).bind(user.id).all();
+        const body2 = await request.json().catch(() => ({}));
+        const deviceName = body2.deviceName || 'This device';
+        await env.SALES_SNAPSHOTS.put(`webauthn:devname:${user.id}`, deviceName, { expirationTtl: 300 });
+        return new Response(JSON.stringify({
+          challenge: challengeB64,
+          rp: { name: "RETJG Hub", id: WEBAUTHN_RP_ID },
+          user: { id: bufToBase64url(new TextEncoder().encode(user.id)), name: user.email, displayName: user.email },
+          pubKeyCredParams: [{ type:"public-key", alg:-7 }],
+          authenticatorSelection: { authenticatorAttachment:"platform", userVerification:"required", residentKey:"preferred" },
+          timeout: 60000,
+          excludeCredentials: existing.map(c => ({ type:"public-key", id: c.credential_id })),
+          attestation: "none",
+        }), { headers: corsJson });
+      } catch(e) {
+        return new Response(JSON.stringify({error:e.message}), {status:500, headers:corsJson});
+      }
+    }
+
+    // ── Passkey: POST ?action=passkey-register-finish ────────────
+    if (request.method === "POST" && url.searchParams.get("action") === "passkey-register-finish") {
+      try {
+        const user = await getAuthUser(request, env);
+        if (!user) return new Response(JSON.stringify({error:"Not authenticated"}), {status:401,headers:corsJson});
+        const body2 = await request.json();
+        const { id: credId, response: credResp } = body2;
+        // Verify clientDataJSON
+        const clientDataBytes = base64urlToBytes(credResp.clientDataJSON);
+        const clientData = JSON.parse(new TextDecoder().decode(clientDataBytes));
+        if (clientData.type !== 'webauthn.create') throw new Error('Wrong type');
+        if (clientData.origin !== WEBAUTHN_ORIGIN) throw new Error(`Bad origin: ${clientData.origin}`);
+        const storedChallenge = await env.SALES_SNAPSHOTS.get(`webauthn:reg:${user.id}`);
+        if (!storedChallenge || storedChallenge !== clientData.challenge) throw new Error('Challenge mismatch');
+        await env.SALES_SNAPSHOTS.delete(`webauthn:reg:${user.id}`);
+        const deviceName = (await env.SALES_SNAPSHOTS.get(`webauthn:devname:${user.id}`)) || 'This device';
+        await env.SALES_SNAPSHOTS.delete(`webauthn:devname:${user.id}`);
+        // Parse attestationObject
+        const attObjBytes = base64urlToBytes(credResp.attestationObject);
+        const attObj = decodeCBOR(attObjBytes);
+        const authDataBytes = attObj['authData'] instanceof Uint8Array ? attObj['authData'] : new Uint8Array(attObj['authData']);
+        // Verify RP ID hash (first 32 bytes of authData)
+        const rpIdHash = authDataBytes.slice(0, 32);
+        const expectedHash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(WEBAUTHN_RP_ID)));
+        if (!bytesEqual(rpIdHash, expectedHash)) throw new Error('RP ID hash mismatch');
+        // Parse authenticatorData
+        const flags = authDataBytes[32];
+        const AT = !!(flags & 0x40);
+        if (!AT) throw new Error('No attested credential data');
+        const signCount = (authDataBytes[33]<<24|authDataBytes[34]<<16|authDataBytes[35]<<8|authDataBytes[36])>>>0;
+        const credIdLen = (authDataBytes[53]<<8)|authDataBytes[54];
+        const credentialId = bufToBase64url(authDataBytes.slice(55, 55+credIdLen));
+        const coseKeyBytes = authDataBytes.slice(55+credIdLen);
+        const publicKeyCose = bufToBase64url(coseKeyBytes);
+        // Verify the key is importable
+        await importCOSEPublicKey(coseKeyBytes);
+        const now2 = new Date().toISOString();
+        await env.DB.prepare(
+          "INSERT OR REPLACE INTO webauthn_credentials (id, user_id, credential_id, public_key_cose, sign_count, created_at, device_name) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        ).bind(randomHex(16), user.id, credentialId, publicKeyCose, signCount, now2, deviceName).run();
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch(e) {
+        return new Response(JSON.stringify({error: e.message}), {status:400, headers:corsJson});
+      }
+    }
+
+    // ── Passkey: POST ?action=passkey-auth-begin ─────────────────
+    // No session required (this is the login flow)
+    if (request.method === "POST" && url.searchParams.get("action") === "passkey-auth-begin") {
+      try {
+        const body2 = await request.json().catch(() => ({}));
+        const email = body2.email ? body2.email.toLowerCase().trim() : null;
+        const challenge = crypto.getRandomValues(new Uint8Array(32));
+        const challengeB64 = bufToBase64url(challenge);
+        await env.SALES_SNAPSHOTS.put(`webauthn:auth:${challengeB64}`, '1', { expirationTtl: 300 });
+        let allowCredentials = [];
+        if (email) {
+          const { results: creds } = await env.DB.prepare(
+            "SELECT wc.credential_id FROM webauthn_credentials wc JOIN users u ON wc.user_id = u.id WHERE u.email = ? AND u.status = 'active'"
+          ).bind(email).all();
+          allowCredentials = creds.map(c => ({ type:'public-key', id: c.credential_id }));
+        }
+        return new Response(JSON.stringify({
+          challenge: challengeB64,
+          rpId: WEBAUTHN_RP_ID,
+          allowCredentials,
+          userVerification: 'required',
+          timeout: 60000,
+        }), { headers: corsJson });
+      } catch(e) {
+        return new Response(JSON.stringify({error:e.message}), {status:500, headers:corsJson});
+      }
+    }
+
+    // ── Passkey: POST ?action=passkey-auth-finish ────────────────
+    // No session required. Verifies assertion, creates session.
+    if (request.method === "POST" && url.searchParams.get("action") === "passkey-auth-finish") {
+      try {
+        const body2 = await request.json();
+        const { id: credId, response: credResp } = body2;
+        // Verify clientDataJSON
+        const clientDataBytes = base64urlToBytes(credResp.clientDataJSON);
+        const clientData = JSON.parse(new TextDecoder().decode(clientDataBytes));
+        if (clientData.type !== 'webauthn.get') throw new Error('Wrong type');
+        if (clientData.origin !== WEBAUTHN_ORIGIN) throw new Error(`Bad origin: ${clientData.origin}`);
+        const storedChallenge = await env.SALES_SNAPSHOTS.get(`webauthn:auth:${clientData.challenge}`);
+        if (!storedChallenge) throw new Error('Challenge expired or not found');
+        await env.SALES_SNAPSHOTS.delete(`webauthn:auth:${clientData.challenge}`);
+        // Look up credential + user
+        const { results: creds } = await env.DB.prepare(
+          `SELECT wc.id as wcId, wc.user_id, wc.credential_id, wc.public_key_cose, wc.sign_count,
+                  u.email, u.role, u.stores, u.status
+           FROM webauthn_credentials wc JOIN users u ON wc.user_id = u.id
+           WHERE wc.credential_id = ? AND u.status = 'active'`
+        ).bind(credId).all();
+        if (!creds.length) return new Response(JSON.stringify({error:'Credential not found'}), {status:401,headers:corsJson});
+        const cred = creds[0];
+        // Verify RP ID hash
+        const authDataBytes = base64urlToBytes(credResp.authenticatorData);
+        const rpIdHash = authDataBytes.slice(0, 32);
+        const expectedHash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(WEBAUTHN_RP_ID)));
+        if (!bytesEqual(rpIdHash, expectedHash)) throw new Error('RP ID hash mismatch');
+        // Verify flags: UP required
+        const flags = authDataBytes[32];
+        if (!(flags & 0x01)) throw new Error('User presence flag not set');
+        // Verify signature
+        const clientDataHash = new Uint8Array(await crypto.subtle.digest('SHA-256', clientDataBytes));
+        const signedData = new Uint8Array(authDataBytes.length + clientDataHash.length);
+        signedData.set(authDataBytes, 0);
+        signedData.set(clientDataHash, authDataBytes.length);
+        const coseKeyBytes = base64urlToBytes(cred.public_key_cose);
+        const publicKey = await importCOSEPublicKey(coseKeyBytes);
+        const sigBytes = base64urlToBytes(credResp.signature);
+        const p1363Sig = derToP1363(sigBytes);
+        const valid = await crypto.subtle.verify({ name:'ECDSA', hash:'SHA-256' }, publicKey, p1363Sig, signedData);
+        if (!valid) throw new Error('Signature verification failed');
+        // Update sign count + last_used
+        const signCount = (authDataBytes[33]<<24|authDataBytes[34]<<16|authDataBytes[35]<<8|authDataBytes[36])>>>0;
+        const now2 = new Date().toISOString();
+        await env.DB.prepare("UPDATE webauthn_credentials SET sign_count=?, last_used=? WHERE id=?")
+          .bind(signCount, now2, cred.wcId).run().catch(()=>{});
+        await env.DB.prepare("UPDATE users SET last_login=? WHERE id=?").bind(now2, cred.user_id).run().catch(()=>{});
+        // Create session
+        const sessionId = randomHex(32);
+        const expiry = new Date(Date.now() + 7*24*60*60*1000).toISOString();
+        await env.DB.prepare("INSERT INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)")
+          .bind(sessionId, cred.user_id, expiry, now2).run();
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { ...corsJson, 'Set-Cookie': sessionCookie(sessionId, 7*24*60*60) },
+        });
+      } catch(e) {
+        return new Response(JSON.stringify({error: e.message}), {status:400, headers:corsJson});
+      }
+    }
+
+    // ── Passkey: GET ?action=passkey-list ────────────────────────
+    // Returns user's registered passkeys (requires session)
+    if (url.searchParams.get("action") === "passkey-list") {
+      try {
+        const user = await getAuthUser(request, env);
+        if (!user) return new Response(JSON.stringify({error:"Not authenticated"}), {status:401,headers:corsJson});
+        const { results } = await env.DB.prepare(
+          "SELECT id, credential_id, device_name, created_at, last_used FROM webauthn_credentials WHERE user_id = ? ORDER BY created_at DESC"
+        ).bind(user.id).all();
+        return new Response(JSON.stringify({ passkeys: results }), { headers: corsJson });
+      } catch(e) {
+        return new Response(JSON.stringify({error:e.message}), {status:500,headers:corsJson});
+      }
+    }
+
+    // ── Passkey: POST ?action=passkey-delete ─────────────────────
+    if (request.method === "POST" && url.searchParams.get("action") === "passkey-delete") {
+      try {
+        const user = await getAuthUser(request, env);
+        if (!user) return new Response(JSON.stringify({error:"Not authenticated"}), {status:401,headers:corsJson});
+        const { id: pkId } = await request.json();
+        await env.DB.prepare("DELETE FROM webauthn_credentials WHERE id = ? AND user_id = ?").bind(pkId, user.id).run();
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch(e) {
+        return new Response(JSON.stringify({error:e.message}), {status:500,headers:corsJson});
+      }
     }
 
     // ── Auth: POST /auth/logout ───────────────────────────────────

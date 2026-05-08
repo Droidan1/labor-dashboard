@@ -157,6 +157,15 @@
           Already have an account? Sign in →
         </button>
       </div>
+      <!-- Passkey / Face ID login button -->
+      <div id="passkey-login-wrap" class="hidden mt-4">
+        <button id="passkey-login-btn" onclick="passkeyLogin()"
+          class="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-gray-700 hover:bg-gray-800 dark:hover:bg-gray-600 text-white font-semibold text-sm py-2.5 rounded-lg transition-colors border border-gray-700 dark:border-gray-600">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M3 20c0-4 4-7 9-7s9 3 9 7"/><path d="M15 13l1.5 1.5L19 12" stroke-width="2.5"/></svg>
+          Sign in with Face ID / Biometrics
+        </button>
+        <div id="passkey-login-error" class="hidden text-xs text-red-500 mt-2 text-center"></div>
+      </div>
       <!-- Sign-in form (shown for returning users) -->
       <div id="login-form-wrap" class="hidden">
         <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Email address</label>
@@ -1065,6 +1074,37 @@
                     class="w-4 h-4 accent-[#3BB54A] cursor-pointer ml-4">
                 </label>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Face Unlock / Passkey card -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
+          <button onclick="togglePasskeySettings()" class="w-full flex items-center gap-4 px-5 py-4 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+            <span class="flex-shrink-0 w-8 h-8 rounded-lg bg-[#3BB54A]/10 flex items-center justify-center">
+              <svg class="w-4 h-4 text-[#3BB54A]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M3 20c0-4 4-7 9-7s9 3 9 7"/><path d="M15 13l1.5 1.5L19 12" stroke-width="2.5"/></svg>
+            </span>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-semibold text-gray-900 dark:text-white">Face Unlock / Biometrics</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400" id="passkey-settings-subtitle">Sign in without a code</p>
+            </div>
+            <svg id="passkey-settings-chevron" class="w-4 h-4 text-gray-400 transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div id="passkey-settings-content" class="hidden border-t border-gray-100 dark:border-gray-700 px-5 py-5 space-y-4">
+            <p class="text-sm text-gray-600 dark:text-gray-300">Use Face ID, Touch ID, or your device's biometrics to sign in without a code. Each device registers separately.</p>
+            <!-- Registered passkeys list -->
+            <div id="passkey-list" class="space-y-2"></div>
+            <!-- Register new -->
+            <div class="pt-2">
+              <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Device nickname (optional)</label>
+              <input id="passkey-device-name" type="text" placeholder="e.g. iPhone 16 Pro"
+                class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#3BB54A] mb-3" />
+              <button id="passkey-register-btn" onclick="registerPasskey()"
+                class="w-full bg-[#3BB54A] hover:bg-[#32a040] text-white font-semibold text-sm py-2.5 rounded-lg transition-colors">
+                Enable Face Unlock on this device
+              </button>
+              <div id="passkey-register-error" class="hidden text-xs text-red-500 mt-2"></div>
+              <div id="passkey-register-success" class="hidden text-xs text-green-600 dark:text-green-400 mt-2 font-medium"></div>
             </div>
           </div>
         </div>
@@ -8868,6 +8908,214 @@
     location.reload();
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  //  PASSKEY / FACE ID
+  // ═══════════════════════════════════════════════════════════════
+
+  /** Check if platform authenticator is available and show the login button */
+  async function initPasskeyLoginButton() {
+    if (!window.PublicKeyCredential) return;
+    try {
+      const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      if (available) {
+        el('passkey-login-wrap')?.classList.remove('hidden');
+      }
+    } catch(e) { /* ignore */ }
+  }
+
+  async function passkeyLogin() {
+    const btn = el('passkey-login-btn');
+    const errEl = el('passkey-login-error');
+    errEl.classList.add('hidden');
+    btn.disabled = true;
+    btn.textContent = 'Waiting for biometrics…';
+    try {
+      // Get challenge from server (no email = discoverable credential)
+      const beginResp = await fetch(`${WORKER_BASE}?action=passkey-auth-begin`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({}),
+      });
+      const opts = await beginResp.json();
+      if (opts.error) throw new Error(opts.error);
+
+      // Convert base64url strings to ArrayBuffers for the API
+      opts.challenge = base64urlToBuffer(opts.challenge);
+      if (opts.allowCredentials) {
+        opts.allowCredentials = opts.allowCredentials.map(c => ({ ...c, id: base64urlToBuffer(c.id) }));
+      }
+
+      const credential = await navigator.credentials.get({ publicKey: opts });
+      if (!credential) throw new Error('Authentication cancelled');
+
+      // Send assertion to server
+      const finishResp = await fetch(`${WORKER_BASE}?action=passkey-auth-finish`, {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          id: credential.id,
+          rawId: bufToBase64url(credential.rawId),
+          type: credential.type,
+          response: {
+            clientDataJSON: bufToBase64url(credential.response.clientDataJSON),
+            authenticatorData: bufToBase64url(credential.response.authenticatorData),
+            signature: bufToBase64url(credential.response.signature),
+            userHandle: credential.response.userHandle ? bufToBase64url(credential.response.userHandle) : null,
+          },
+        }),
+      });
+      const result = await finishResp.json();
+      if (result.ok) {
+        location.reload();
+      } else {
+        throw new Error(result.error || 'Authentication failed');
+      }
+    } catch(e) {
+      if (e.name !== 'NotAllowedError') {
+        errEl.textContent = e.message;
+        errEl.classList.remove('hidden');
+      }
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = `<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M3 20c0-4 4-7 9-7s9 3 9 7"/><path d="M15 13l1.5 1.5L19 12" stroke-width="2.5"/></svg>Sign in with Face ID / Biometrics`;
+    }
+  }
+
+  async function registerPasskey() {
+    const btn = el('passkey-register-btn');
+    const errEl = el('passkey-register-error');
+    const successEl = el('passkey-register-success');
+    errEl.classList.add('hidden');
+    successEl.classList.add('hidden');
+    if (!window.PublicKeyCredential) {
+      errEl.textContent = 'Your browser does not support passkeys.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+    const rawName = el('passkey-device-name').value.trim();
+    const deviceName = rawName || (navigator.userAgent.includes('iPhone') ? 'iPhone' : navigator.userAgent.includes('iPad') ? 'iPad' : navigator.userAgent.includes('Android') ? 'Android device' : 'This device');
+    btn.disabled = true;
+    btn.textContent = 'Waiting for biometrics…';
+    try {
+      // Get creation options
+      const beginResp = await fetch(`${WORKER_BASE}?action=passkey-register-begin`, {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ deviceName }),
+      });
+      const opts = await beginResp.json();
+      if (opts.error) throw new Error(opts.error);
+
+      // Convert base64url to ArrayBuffer for WebAuthn API
+      opts.challenge = base64urlToBuffer(opts.challenge);
+      opts.user.id = base64urlToBuffer(opts.user.id);
+      if (opts.excludeCredentials) {
+        opts.excludeCredentials = opts.excludeCredentials.map(c => ({ ...c, id: base64urlToBuffer(c.id) }));
+      }
+
+      const credential = await navigator.credentials.create({ publicKey: opts });
+      if (!credential) throw new Error('Registration cancelled');
+
+      // Send to server
+      const finishResp = await fetch(`${WORKER_BASE}?action=passkey-register-finish`, {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          id: credential.id,
+          rawId: bufToBase64url(credential.rawId),
+          type: credential.type,
+          response: {
+            clientDataJSON: bufToBase64url(credential.response.clientDataJSON),
+            attestationObject: bufToBase64url(credential.response.attestationObject),
+          },
+        }),
+      });
+      const result = await finishResp.json();
+      if (result.ok) {
+        successEl.textContent = '✓ Face Unlock enabled on this device!';
+        successEl.classList.remove('hidden');
+        el('passkey-device-name').value = '';
+        loadPasskeyList();
+      } else {
+        throw new Error(result.error || 'Registration failed');
+      }
+    } catch(e) {
+      if (e.name !== 'NotAllowedError') {
+        errEl.textContent = e.message;
+        errEl.classList.remove('hidden');
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Enable Face Unlock on this device';
+    }
+  }
+
+  async function loadPasskeyList() {
+    const listEl = el('passkey-list');
+    if (!listEl) return;
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=passkey-list`, { credentials: 'include' });
+      const data = await resp.json();
+      if (!data.passkeys || !data.passkeys.length) {
+        listEl.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500">No passkeys registered yet.</p>';
+        return;
+      }
+      listEl.innerHTML = data.passkeys.map(pk => `
+        <div class="flex items-center justify-between bg-gray-50 dark:bg-gray-700/50 rounded-lg px-4 py-3">
+          <div>
+            <p class="text-sm font-medium text-gray-900 dark:text-white">${escHtml(pk.device_name || 'Device')}</p>
+            <p class="text-xs text-gray-400">Added ${pk.created_at ? new Date(pk.created_at).toLocaleDateString() : '—'}${pk.last_used ? ' · Last used ' + new Date(pk.last_used).toLocaleDateString() : ''}</p>
+          </div>
+          <button onclick="deletePasskey('${pk.id}')" class="text-xs text-red-500 hover:text-red-700 font-medium ml-4 whitespace-nowrap">Remove</button>
+        </div>
+      `).join('');
+    } catch(e) {
+      listEl.innerHTML = '<p class="text-xs text-red-400">Failed to load passkeys.</p>';
+    }
+  }
+
+  async function deletePasskey(pkId) {
+    if (!confirm('Remove this passkey? You will need to use email login instead.')) return;
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=passkey-delete`, {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ id: pkId }),
+      });
+      const data = await resp.json();
+      if (data.ok) loadPasskeyList();
+    } catch(e) { /* ignore */ }
+  }
+
+  let _passkeySettingsOpen = false;
+  function togglePasskeySettings() {
+    const content = el('passkey-settings-content');
+    const chevron = el('passkey-settings-chevron');
+    _passkeySettingsOpen = content.classList.contains('hidden');
+    content.classList.toggle('hidden', !_passkeySettingsOpen);
+    chevron.style.transform = _passkeySettingsOpen ? 'rotate(180deg)' : '';
+    if (_passkeySettingsOpen) loadPasskeyList();
+  }
+
+  // Helpers for WebAuthn ArrayBuffer ↔ base64url conversion
+  function base64urlToBuffer(str) {
+    if (!str) return new ArrayBuffer(0);
+    const pad = str.length % 4 ? 4 - (str.length % 4) : 0;
+    const b64 = str.replace(/-/g,'+').replace(/_/g,'/') + '='.repeat(pad);
+    const bin = atob(b64);
+    const buf = new Uint8Array(bin.length);
+    for (let i=0;i<bin.length;i++) buf[i] = bin.charCodeAt(i);
+    return buf.buffer;
+  }
+  function bufToBase64url(buf) {
+    const bytes = buf instanceof ArrayBuffer ? new Uint8Array(buf) : new Uint8Array(buf);
+    let s = '';
+    for (const b of bytes) s += String.fromCharCode(b);
+    return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+  }
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
   // Allow Enter key on email input
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && document.activeElement?.id === 'login-email') sendLoginLink();
@@ -9164,6 +9412,7 @@
       }
     } catch(e) {}
 
+    initPasskeyLoginButton();
     checkAuth().then(authed => {
       if (authed) loadAll();
     });
