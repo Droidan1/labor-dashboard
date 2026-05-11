@@ -2781,16 +2781,16 @@
           </div>
         </div>
         ${!liveDataLoading && liveSales != null && liveSales > 0 ? `
-        <div class="flex gap-4 mb-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
-          <div>
+        <div class="flex justify-between gap-3 mb-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
+          <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60">
             <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(liveRetail)}</div>
           </div>
-          <div>
+          <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60">
             <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(liveBin)}</div>
           </div>
-          <div>
+          <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60">
             <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(storeAuction || 0)}</div>
           </div>
@@ -2815,16 +2815,16 @@
           </div>
         </div>
         ${(m.aRetail != null || m.aBins != null || m.aAuction != null) ? `
-        <div class="flex gap-4 mb-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40 text-center">
-          <div class="flex-1">
+        <div class="flex justify-between gap-3 mb-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
+          <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60">
             <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aRetail || 0)}</div>
           </div>
-          <div class="flex-1">
+          <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60">
             <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aBins || 0)}</div>
           </div>
-          <div class="flex-1">
+          <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60">
             <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aAuction || 0)}</div>
           </div>
