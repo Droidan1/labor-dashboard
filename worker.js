@@ -112,6 +112,8 @@ const L3_TO_L2 = {
   "BL Shoe Event": "Softline - Shoes",
   "Apparel": "Softline - Apparel",
   "Bin Products": "Bin Products",
+  "Gift Cards": "Gift Cards",
+  "Gift Card": "Gift Cards",
   "Sku Book Items": "Sku Book Items",
 };
 
@@ -1921,7 +1923,8 @@ const VALID_L2 = new Set([
   "Softline - Apparel", "Softline - Shoes", "Softline - Accessories",
   "Home", "Furniture", "Hardlines",
   "Consumable Food", "Consumable HBA", "Consumable Other",
-  "Seasonal", "Bin Products", "Sku Book Items", "Custom Sales", "Refund",
+  "Seasonal", "Bin Products", "Gift Cards",
+  "Sku Book Items", "Custom Sales", "Refund",
 ]);
 
 // Normalize an item name for lookup: trim, lowercase, collapse whitespace,
@@ -2138,7 +2141,10 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
             l2Source = "im";
           } else {
             const n = (li.name || "").toUpperCase();
-            if (/\bBIN\b|FILL A BAG|GLASS CASE/i.test(li.name || "")) {
+            if (/\bGIFT\s*CARD\b/i.test(li.name || "")) {
+              l2 = "Gift Cards";
+              l2Source = "heuristic";
+            } else if (/\bBIN\b|FILL A BAG|GLASS CASE/i.test(li.name || "")) {
               // Matches "Bin", "$3 Bin", "Fill a Bag", etc. — same patterns as
               // the live-tile isBinItem(). Safety net when Clover catalog loses
               // the "Bin Products" category assignment (e.g. after item edit).
