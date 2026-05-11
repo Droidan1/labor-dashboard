@@ -899,6 +899,94 @@
             <div>
               <div class="flex items-center gap-2 mb-2">
                 <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">New</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">Face ID / Biometric Login</span>
+                <span class="ml-auto text-xs text-gray-400 whitespace-nowrap">May 2026</span>
+              </div>
+              <ul class="text-sm text-gray-600 dark:text-gray-300 space-y-1 list-disc list-inside">
+                <li>Sign in with Face ID, Touch ID, or Android biometrics — no code required</li>
+                <li>Register any device from Settings → Face Unlock / Biometrics</li>
+                <li>Each device registers separately; remove passkeys any time from Settings</li>
+                <li>Falls back to email sign-in if biometrics are unavailable</li>
+              </ul>
+            </div>
+
+            <div class="border-t border-gray-100 dark:border-gray-700 pt-4">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">New</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">Pull to Refresh (Mobile)</span>
+                <span class="ml-auto text-xs text-gray-400 whitespace-nowrap">May 2026</span>
+              </div>
+              <ul class="text-sm text-gray-600 dark:text-gray-300 space-y-1 list-disc list-inside">
+                <li>Drag down from the top of the page to refresh dashboard data</li>
+                <li>Indicator slides in showing "Pull to refresh" → "Release to refresh"</li>
+                <li>Refresh button removed on mobile; remains on desktop</li>
+              </ul>
+            </div>
+
+            <div class="border-t border-gray-100 dark:border-gray-700 pt-4">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">New</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">Gift Cards Sales Tracking</span>
+                <span class="ml-auto text-xs text-gray-400 whitespace-nowrap">May 2026</span>
+              </div>
+              <ul class="text-sm text-gray-600 dark:text-gray-300 space-y-1 list-disc list-inside">
+                <li>Gift card sales now tracked as their own L2 category — "Gift Cards"</li>
+                <li>Counts toward each store's net sales total</li>
+                <li>Visible in Item Sales breakdown and T13 combined category charts</li>
+              </ul>
+            </div>
+
+            <div class="border-t border-gray-100 dark:border-gray-700 pt-4">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">Improved</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">All Stores Chart — Last Year Comparison</span>
+                <span class="ml-auto text-xs text-gray-400 whitespace-nowrap">May 2026</span>
+              </div>
+              <ul class="text-sm text-gray-600 dark:text-gray-300 space-y-1 list-disc list-inside">
+                <li>Daily Sales Chart now shows a third orange bar — same week from last year</li>
+                <li>Aligned by day of week so Monday lines up with Monday</li>
+              </ul>
+            </div>
+
+            <div class="border-t border-gray-100 dark:border-gray-700 pt-4">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300">Fixed</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">Weekly Digest Sent on Correct Day</span>
+                <span class="ml-auto text-xs text-gray-400 whitespace-nowrap">May 2026</span>
+              </div>
+              <ul class="text-sm text-gray-600 dark:text-gray-300 space-y-1 list-disc list-inside">
+                <li>Weekly Sales Digest was firing Saturday morning due to a cron day-of-week bug</li>
+                <li>Now correctly sends Sunday morning as intended, covering the full Sun–Sat week</li>
+              </ul>
+            </div>
+
+            <div class="border-t border-gray-100 dark:border-gray-700 pt-4">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300">Fixed</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">Bin Products Categorization Reliability</span>
+                <span class="ml-auto text-xs text-gray-400 whitespace-nowrap">May 2026</span>
+              </div>
+              <ul class="text-sm text-gray-600 dark:text-gray-300 space-y-1 list-disc list-inside">
+                <li>Items named "$3 Bin", "Fill a Bag", etc. now always route to Bin Products even if Clover loses the catalog category (e.g. after an item edit)</li>
+                <li>Matches the same name patterns already used by the live dashboard tile</li>
+              </ul>
+            </div>
+
+            <div class="border-t border-gray-100 dark:border-gray-700 pt-4">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">Improved</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">Hourly Notifications — Budget vs Actual</span>
+                <span class="ml-auto text-xs text-gray-400 whitespace-nowrap">May 2026</span>
+              </div>
+              <ul class="text-sm text-gray-600 dark:text-gray-300 space-y-1 list-disc list-inside">
+                <li>Hourly push notifications now show budget alongside sales (e.g. $2,170 / $6,043 −64%)</li>
+                <li>Percentage shows how far ahead or behind budget each store is at that hour</li>
+              </ul>
+            </div>
+
+            <div class="border-t border-gray-100 dark:border-gray-700 pt-4">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">New</span>
                 <span class="text-sm font-semibold text-gray-900 dark:text-white">Weekly Summary PDF &amp; CSV Export</span>
                 <span class="ml-auto text-xs text-gray-400 whitespace-nowrap">Apr 2026</span>
               </div>
