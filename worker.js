@@ -6904,9 +6904,10 @@ export default {
       return;
     }
 
-    // "0 11 * * 1" — 7 AM ET Sunday weekly digest (11:00 UTC = EDT / 6 AM EST)
-    // Cloudflare cron: 1=Sun, 7=Sat. Summarises the Sun–Sat week that just ended.
-    if (event.cron === "0 11 * * 1") {
+    // "0 11 * * 0" — 7 AM ET Sunday weekly digest (11:00 UTC = EDT / 6 AM EST)
+    // Cloudflare cron uses standard POSIX day-of-week: 0=Sunday, 6=Saturday.
+    // Summarises the Sun–Sat week that just ended.
+    if (event.cron === "0 11 * * 0") {
       // endDate = yesterday (Saturday), startDate = 6 days before that (Sunday)
       const endD = new Date(Date.now() - 24 * 3600 * 1000);
       const startD = new Date(endD.getTime() - 6 * 24 * 3600 * 1000);
