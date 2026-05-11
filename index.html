@@ -1951,9 +1951,7 @@
   async function loadStoreFromD1(storeName) {
     const storeKey = storeName.split('/')[0]; // "BL1/BL6 Coliseum" → "BL1"
     const url = `${WORKER_BASE}?history_d1=true&store=${storeKey}&from=2025-01-01&to=2026-12-31`;
-    const resp = await fetch(url, { credentials: 'include' });
-    if (!resp.ok) throw new Error(`D1 fetch failed: ${resp.status}`);
-    const data = await resp.json();
+    const data = await cachedFetch(url, { credentials: 'include' });
 
     const rows = [];
     const cloverHistory = {};
@@ -1991,9 +1989,7 @@
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const workerUrl = `${WORKER_BASE}?store=${storeKey}&since=${startOfToday}`;
     try {
-      const response = await fetch(workerUrl, { credentials: 'include' });
-      if (!response.ok) throw new Error(`Worker returned ${response.status}`);
-      const data = await response.json();
+      const data = await cachedFetch(workerUrl, { credentials: 'include' });
       let totalNet = 0, binNet = 0, retailNet = 0, orderCount = 0, totalItemCount = 0, retailItemCount = 0, totalTxnTimeMs = 0, txnTimeCount = 0;
       let cartNet = 0, cartCount = 0; // avg cart excludes bin-only orders
 
@@ -2116,9 +2112,7 @@
   async function fetchHistoricalCloverData(storeKey, fromDate, toDate) {
     const workerUrl = `${WORKER_BASE}?history=true&store=${storeKey}&from=${fromDate}&to=${toDate}`;
     try {
-      const response = await fetch(workerUrl, { credentials: 'include' });
-      if (!response.ok) return {};
-      return await response.json();
+      return await cachedFetch(workerUrl, { credentials: 'include' });
     } catch (error) {
       console.warn(`Historical data error for ${storeKey}:`, error.message);
       return {};
@@ -3249,10 +3243,10 @@
     const lwUrl = `${base}&store=${storeKey}&date=${lastWeekStr}`;
 
     try {
-      const [curResp, lwResp] = await Promise.all([fetch(curUrl, { credentials: 'include' }), fetch(lwUrl, { credentials: 'include' })]);
-      if (!curResp.ok) throw new Error(`Current day HTTP ${curResp.status}`);
-      if (!lwResp.ok) throw new Error(`Last week HTTP ${lwResp.status}`);
-      const [curData, lwData] = await Promise.all([curResp.json(), lwResp.json()]);
+      const [curData, lwData] = await Promise.all([
+        cachedFetch(curUrl, { credentials: 'include' }),
+        cachedFetch(lwUrl, { credentials: 'include' }),
+      ]);
       if (curData.error) throw new Error(curData.error);
       if (lwData.error) throw new Error(lwData.error);
 
@@ -3403,9 +3397,7 @@
     const fmt$ = v => '$' + (v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     try {
-      const resp = await fetch(`${WORKER_BASE}?action=items-hour&store=${storeKey}&date=${dateStr}&hour=${hour}`, { credentials: 'include' });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
+      const data = await cachedFetch(`${WORKER_BASE}?action=items-hour&store=${storeKey}&date=${dateStr}&hour=${hour}`, { credentials: 'include' });
       if (data.error) throw new Error(data.error);
 
       loadingEl.classList.add('hidden');
@@ -7081,6 +7073,30 @@
   const SNAPSHOT_SECRET = 'mapcaj-saTxa2-1';
   const WORKER_BASE = 'https://api.retjghub.com/';
 
+  // ── Client-side API response cache (5-minute TTL) ────────────────────────────
+  // Keyed by full URL string. Only caches successful, non-error responses.
+  // Mutations and auth calls always bypass this via raw fetch().
+  const _apiCache = new Map();
+  const API_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  async function cachedFetch(url, opts = {}) {
+    const hit = _apiCache.get(url);
+    if (hit && Date.now() < hit.expiresAt) return hit.data;
+    const resp = await fetch(url, opts);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (!data.error) _apiCache.set(url, { data, expiresAt: Date.now() + API_CACHE_TTL });
+    return data;
+  }
+
+  // Call after a mutation to ensure subsequent reads reflect the change.
+  function invalidateApiCache(urlSubstring) {
+    for (const key of _apiCache.keys()) {
+      if (key.includes(urlSubstring)) _apiCache.delete(key);
+    }
+  }
+  // ────────────────────────────────────────────────────────────────────────────
+
   // Auto-detect a reusable prefix rule from an item name. Matches the leading
   // digit run (e.g. "50418 VCF Recliner" → "50418"). Returns null if no prefix
   // can reasonably be pulled out.
@@ -7378,9 +7394,8 @@
     if (!week || !year) return;
     wrsShowLoading(true);
     try {
-      const resp = await fetch(`${WORKER_BASE}?action=weekly-summary&week=${encodeURIComponent(week)}&year=${encodeURIComponent(year)}`, { credentials: 'include' });
-      const data = await resp.json();
-      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      const data = await cachedFetch(`${WORKER_BASE}?action=weekly-summary&week=${encodeURIComponent(week)}&year=${encodeURIComponent(year)}`, { credentials: 'include' });
+      if (data.error) throw new Error(data.error);
       wrsData = data;
       wrsExpandedL2.clear();
       el('wrs-subtitle').textContent = `Week ${week} · ${year}`;
@@ -7397,9 +7412,8 @@
     if (!week || !year) return;
     el('wrs-pane-t13').innerHTML = '<p class="text-sm text-gray-400 py-8 text-center">Loading T13…</p>';
     try {
-      const resp = await fetch(`${WORKER_BASE}?action=weekly-t13&endWeek=${encodeURIComponent(week)}&year=${encodeURIComponent(year)}`, { credentials: 'include' });
-      const data = await resp.json();
-      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      const data = await cachedFetch(`${WORKER_BASE}?action=weekly-t13&endWeek=${encodeURIComponent(week)}&year=${encodeURIComponent(year)}`, { credentials: 'include' });
+      if (data.error) throw new Error(data.error);
       wrsT13Data = data;
     } catch(e) {
       el('wrs-pane-t13').innerHTML = `<p class="text-sm text-red-500 py-8 text-center">T13 load failed: ${escapeHtml(e.message)}</p>`;
