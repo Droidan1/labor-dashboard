@@ -3137,8 +3137,6 @@
     const textColor = isDark ? '#9ca3af' : '#6b7280';
     const gridColor = isDark ? 'rgba(75,85,99,0.3)' : 'rgba(0,0,0,0.1)';
 
-    if (dailySalesChart) { dailySalesChart.destroy(); dailySalesChart = null; }
-
     const labels = weekRows.map(r => r.date.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'}));
     const budgetData = weekRows.map(r => r.bTotal || 0);
 
@@ -3165,47 +3163,64 @@
       return match?.aTotal ?? null;
     });
 
-    dailySalesChart = new Chart(el('daily-sales-chart'), {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [
-          { label: 'Budget', data: budgetData, backgroundColor: isDark ? 'rgba(107,114,128,0.5)' : 'rgba(156,163,175,0.5)', borderColor: isDark ? '#6b7280' : '#9ca3af', borderWidth: 1 },
-          { label: 'Actual Sales', data: salesData, backgroundColor: 'rgba(59,181,74,0.7)', borderColor: '#3BB54A', borderWidth: 1 },
-          { label: 'Last Week', data: lastWeekData, backgroundColor: 'rgba(59,130,246,0.5)', borderColor: '#3b82f6', borderWidth: 1 },
-          { label: 'Last Year', data: lastYearData, backgroundColor: 'rgba(249,115,22,0.5)', borderColor: '#f97316', borderWidth: 1 }
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        onClick: (_evt, elements, chart) => {
-          // Resolve clicked bar via Chart.js helpers so clicking anywhere in a bar column works.
-          let idx = elements?.[0]?.index;
-          if (idx == null) {
-            const pts = chart.getElementsAtEventForMode(_evt, 'index', { intersect: false }, true);
-            idx = pts?.[0]?.index;
-          }
-          if (idx == null) return;
-          const row = weekRows[idx];
-          if (!row || !row.date) return;
-          const y = row.date.getFullYear();
-          const m = String(row.date.getMonth() + 1).padStart(2, '0');
-          const d = String(row.date.getDate()).padStart(2, '0');
-          showHourlyModal(storeName, `${y}-${m}-${d}`, row.date);
-        },
-        onHover: (evt, elements) => {
-          evt.native.target.style.cursor = elements?.length ? 'pointer' : 'default';
-        },
-        plugins: {
-          legend: { labels: { color: textColor } },
-          tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? '$' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : 'N/A') } }
-        },
-        scales: {
-          x: { ticks: { color: textColor }, grid: { color: gridColor } },
-          y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } }
-        }
+    // Shared onClick — refreshed on every update so it closes over current weekRows
+    const dailyChartOnClick = (_evt, elements, chart) => {
+      let idx = elements?.[0]?.index;
+      if (idx == null) {
+        const pts = chart.getElementsAtEventForMode(_evt, 'index', { intersect: false }, true);
+        idx = pts?.[0]?.index;
       }
-    });
+      if (idx == null) return;
+      const row = weekRows[idx];
+      if (!row || !row.date) return;
+      const y = row.date.getFullYear();
+      const m = String(row.date.getMonth() + 1).padStart(2, '0');
+      const d = String(row.date.getDate()).padStart(2, '0');
+      showHourlyModal(storeName, `${y}-${m}-${d}`, row.date);
+    };
+
+    if (dailySalesChart) {
+      dailySalesChart.data.labels = labels;
+      dailySalesChart.data.datasets[0].data = budgetData;
+      dailySalesChart.data.datasets[0].backgroundColor = isDark ? 'rgba(107,114,128,0.5)' : 'rgba(156,163,175,0.5)';
+      dailySalesChart.data.datasets[0].borderColor = isDark ? '#6b7280' : '#9ca3af';
+      dailySalesChart.data.datasets[1].data = salesData;
+      dailySalesChart.data.datasets[2].data = lastWeekData;
+      dailySalesChart.data.datasets[3].data = lastYearData;
+      dailySalesChart.options.scales.x = { ticks: { color: textColor }, grid: { color: gridColor } };
+      dailySalesChart.options.scales.y = { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } };
+      dailySalesChart.options.plugins.legend.labels.color = textColor;
+      dailySalesChart.options.onClick = dailyChartOnClick;
+      dailySalesChart.update();
+    } else {
+      dailySalesChart = new Chart(el('daily-sales-chart'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Budget', data: budgetData, backgroundColor: isDark ? 'rgba(107,114,128,0.5)' : 'rgba(156,163,175,0.5)', borderColor: isDark ? '#6b7280' : '#9ca3af', borderWidth: 1 },
+            { label: 'Actual Sales', data: salesData, backgroundColor: 'rgba(59,181,74,0.7)', borderColor: '#3BB54A', borderWidth: 1 },
+            { label: 'Last Week', data: lastWeekData, backgroundColor: 'rgba(59,130,246,0.5)', borderColor: '#3b82f6', borderWidth: 1 },
+            { label: 'Last Year', data: lastYearData, backgroundColor: 'rgba(249,115,22,0.5)', borderColor: '#f97316', borderWidth: 1 }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          onClick: dailyChartOnClick,
+          onHover: (evt, elements) => {
+            evt.native.target.style.cursor = elements?.length ? 'pointer' : 'default';
+          },
+          plugins: {
+            legend: { labels: { color: textColor } },
+            tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? '$' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : 'N/A') } }
+          },
+          scales: {
+            x: { ticks: { color: textColor }, grid: { color: gridColor } },
+            y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } }
+          }
+        }
+      });
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -3223,7 +3238,6 @@
     loadingEl.classList.remove('hidden');
     errorEl.classList.add('hidden');
     chartWrap.classList.add('hidden');
-    if (hourlyChart) { hourlyChart.destroy(); hourlyChart = null; }
 
     const storeKey = storeName.split('/')[0];
     el('hourly-modal-title').textContent = `${shortName(storeName)} — Hourly Sales`;
@@ -3298,68 +3312,53 @@
       loadingEl.classList.add('hidden');
       chartWrap.classList.remove('hidden');
 
-      hourlyChart = new Chart(el('hourly-chart'), {
-        type: 'line',
-        data: {
-          labels,
-          datasets: [
-            {
-              label: 'This Day',
-              data: curSeries,
-              borderColor: '#3BB54A',
-              backgroundColor: 'rgba(59,181,74,0.15)',
-              borderWidth: 2,
-              tension: 0.3,
-              fill: true,
-              pointRadius: 3,
-            },
-            {
-              label: 'Last Week',
-              data: lwSeries,
-              borderColor: '#3b82f6',
-              backgroundColor: 'rgba(59,130,246,0.1)',
-              borderWidth: 2,
-              borderDash: [5, 4],
-              tension: 0.3,
-              fill: false,
-              pointRadius: 3,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          interaction: { mode: 'index', intersect: false },
-          onClick: (evt, _elements, chart) => {
-            // Resolve clicked x index in 'index' mode so clicking anywhere in the column works.
-            const pts = chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, true);
-            const idx = pts?.[0]?.index;
-            if (idx == null) return;
-            const absHour = start + idx;
-            showHourlyItemsModal(storeName, dateStr, absHour, rowDate);
+      // onClick closes over start/storeName/dateStr/rowDate — refresh on every call
+      const hourlyOnClick = (evt, _elements, chart) => {
+        const pts = chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, true);
+        const idx = pts?.[0]?.index;
+        if (idx == null) return;
+        showHourlyItemsModal(storeName, dateStr, start + idx, rowDate);
+      };
+
+      if (hourlyChart) {
+        hourlyChart.data.labels = labels;
+        hourlyChart.data.datasets[0].data = curSeries;
+        hourlyChart.data.datasets[1].data = lwSeries;
+        hourlyChart.options.scales.x = { ticks: { color: textColor }, grid: { color: gridColor } };
+        hourlyChart.options.scales.y = { beginAtZero: true, ticks: { color: textColor, callback: v => '$' + (v >= 1000 ? (v / 1000).toFixed(1) + 'K' : v) }, grid: { color: gridColor } };
+        hourlyChart.options.plugins.legend.labels.color = textColor;
+        hourlyChart.options.onClick = hourlyOnClick;
+        hourlyChart.update();
+      } else {
+        hourlyChart = new Chart(el('hourly-chart'), {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [
+              { label: 'This Day', data: curSeries, borderColor: '#3BB54A', backgroundColor: 'rgba(59,181,74,0.15)', borderWidth: 2, tension: 0.3, fill: true, pointRadius: 3 },
+              { label: 'Last Week', data: lwSeries, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', borderWidth: 2, borderDash: [5, 4], tension: 0.3, fill: false, pointRadius: 3 },
+            ],
           },
-          onHover: (evt, _elements, chart) => {
-            const pts = chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, true);
-            evt.native.target.style.cursor = pts?.length ? 'pointer' : 'default';
-          },
-          plugins: {
-            legend: { labels: { color: textColor } },
-            tooltip: {
-              callbacks: {
-                label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? fmt$(ctx.parsed.y) : 'N/A'),
-              },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            onClick: hourlyOnClick,
+            onHover: (evt, _elements, chart) => {
+              const pts = chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, true);
+              evt.native.target.style.cursor = pts?.length ? 'pointer' : 'default';
+            },
+            plugins: {
+              legend: { labels: { color: textColor } },
+              tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? fmt$(ctx.parsed.y) : 'N/A') } },
+            },
+            scales: {
+              x: { ticks: { color: textColor }, grid: { color: gridColor } },
+              y: { beginAtZero: true, ticks: { color: textColor, callback: v => '$' + (v >= 1000 ? (v / 1000).toFixed(1) + 'K' : v) }, grid: { color: gridColor } },
             },
           },
-          scales: {
-            x: { ticks: { color: textColor }, grid: { color: gridColor } },
-            y: {
-              beginAtZero: true,
-              ticks: { color: textColor, callback: v => '$' + (v >= 1000 ? (v / 1000).toFixed(1) + 'K' : v) },
-              grid: { color: gridColor },
-            },
-          },
-        },
-      });
+        });
+      }
     } catch (err) {
       loadingEl.classList.add('hidden');
       chartWrap.classList.add('hidden');
@@ -5374,8 +5373,6 @@
     const textColor = isDark ? '#9ca3af' : '#6b7280';
     const gridColor = isDark ? 'rgba(75,85,99,0.3)' : 'rgba(0,0,0,0.1)';
 
-    if (asAllStoresChart) { asAllStoresChart.destroy(); asAllStoresChart = null; }
-
     // ── Current week: keyed by day-of-week (0=Sun…6=Sat) ──
     const dateMap = {};
     for (const s of STORES) {
@@ -5427,21 +5424,43 @@
       datasets.push({ label: `Last Year (${lyYear})`, data: lyData, backgroundColor: 'rgba(251,146,60,0.55)', borderColor: '#f97316', borderWidth: 1 });
     }
 
-    asAllStoresChart = new Chart(el('as-daily-chart'), {
-      type: 'bar',
-      data: { labels, datasets },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: {
-          legend: { labels: { color: textColor } },
-          tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': $' + ctx.parsed.y.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) } }
-        },
-        scales: {
-          x: { ticks: { color: textColor }, grid: { color: gridColor } },
-          y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } }
+    if (asAllStoresChart) {
+      asAllStoresChart.data.labels = labels;
+      asAllStoresChart.data.datasets[0].data = budgetData;
+      asAllStoresChart.data.datasets[0].backgroundColor = isDark ? 'rgba(107,114,128,0.5)' : 'rgba(156,163,175,0.5)';
+      asAllStoresChart.data.datasets[0].borderColor = isDark ? '#6b7280' : '#9ca3af';
+      asAllStoresChart.data.datasets[1].data = salesData;
+      if (hasLYData) {
+        if (asAllStoresChart.data.datasets.length < 3) {
+          asAllStoresChart.data.datasets.push({ label: `Last Year (${lyYear})`, data: lyData, backgroundColor: 'rgba(251,146,60,0.55)', borderColor: '#f97316', borderWidth: 1 });
+        } else {
+          asAllStoresChart.data.datasets[2].label = `Last Year (${lyYear})`;
+          asAllStoresChart.data.datasets[2].data = lyData;
         }
+      } else {
+        asAllStoresChart.data.datasets.splice(2);
       }
-    });
+      asAllStoresChart.options.scales.x = { ticks: { color: textColor }, grid: { color: gridColor } };
+      asAllStoresChart.options.scales.y = { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } };
+      asAllStoresChart.options.plugins.legend.labels.color = textColor;
+      asAllStoresChart.update();
+    } else {
+      asAllStoresChart = new Chart(el('as-daily-chart'), {
+        type: 'bar',
+        data: { labels, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { labels: { color: textColor } },
+            tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': $' + ctx.parsed.y.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) } }
+          },
+          scales: {
+            x: { ticks: { color: textColor }, grid: { color: gridColor } },
+            y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } }
+          }
+        }
+      });
+    }
   }
 
   function renderAllStoresItemDaySelector() {
