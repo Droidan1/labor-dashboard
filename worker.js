@@ -1553,11 +1553,38 @@ function aggregateOrders(elements, sinceTimestamp) {
       }
     }
     const orderNet = totalCents - taxCents;
-    totalNet += orderNet;
-    if (orderNet > 0) orderCount++;
+
+    // Classify line items as bin vs retail vs gift card.
+    // Gift card purchases are excluded from net revenue (they are deferred
+    // revenue / liabilities) — matching Clover's own Sales Summary behaviour.
+    // Gift card amounts are subtracted before accumulating any totals.
+    let binItemTotal = 0, retailItemTotal = 0, giftCardTotal = 0, orderItemCount = 0;
+    if (order.lineItems?.elements) {
+      for (const item of order.lineItems.elements) {
+        const qty = item.unitQty != null ? item.unitQty / 1000 : 1;
+        const price = (item.price || 0) * qty;
+        orderItemCount += qty;
+        if (/\bGIFT\s*CARD\b/i.test(item.name || "")) {
+          giftCardTotal += price;
+        } else if (isBinItem(item.name || "")) {
+          binItemTotal += price;
+        } else {
+          retailItemTotal += price;
+        }
+      }
+    }
+
+    // Adjusted order net: strip out gift card face value (not taxed, not earned revenue)
+    const adjustedOrderNet = orderNet - giftCardTotal;
+    if (adjustedOrderNet <= 0) continue; // pure gift-card order — skip entirely
+
+    totalNet += adjustedOrderNet;
+    orderCount++;
+    if (orderNet > 0) retailItemCount += retailItemTotal > 0 ? 1 : 0;
+    totalItemCount += orderItemCount;
 
     // Transaction time
-    if (orderNet > 0 && order.createdTime && order.payments?.elements?.length) {
+    if (order.createdTime && order.payments?.elements?.length) {
       let lastPaymentTime = 0;
       for (const pmt of order.payments.elements) {
         if (pmt.createdTime > lastPaymentTime) lastPaymentTime = pmt.createdTime;
@@ -1571,44 +1598,25 @@ function aggregateOrders(elements, sinceTimestamp) {
       }
     }
 
-    // Classify line items as bin vs retail
-    let binItemTotal = 0, retailItemTotal = 0, orderItemCount = 0;
-    if (order.lineItems?.elements) {
-      for (const item of order.lineItems.elements) {
-        const qty = item.unitQty != null ? item.unitQty / 1000 : 1;
-        const price = (item.price || 0) * qty;
-        orderItemCount += qty;
-        if (isBinItem(item.name || "")) {
-          binItemTotal += price;
-        } else {
-          retailItemTotal += price;
-          if (orderNet > 0) retailItemCount += qty;
-        }
-      }
-    }
-    if (orderNet > 0) totalItemCount += orderItemCount;
-
-    // Distribute net proportionally
-    const itemGross = binItemTotal + retailItemTotal;
+    // Distribute adjusted net proportionally across bin / retail
+    const itemGross = binItemTotal + retailItemTotal; // excludes gift cards
     if (itemGross > 0) {
-      binNet += orderNet * (binItemTotal / itemGross);
-      retailNet += orderNet * (retailItemTotal / itemGross);
+      binNet    += adjustedOrderNet * (binItemTotal    / itemGross);
+      retailNet += adjustedOrderNet * (retailItemTotal / itemGross);
     } else {
-      retailNet += orderNet;
+      retailNet += adjustedOrderNet;
     }
 
-    // Avg cart: count only orders with retail items; use retail portion only
-    if (orderNet > 0) {
-      if (itemGross === 0) {
-        // No line items (manual entry) — treat as retail
-        cartNet += orderNet;
-        cartCount++;
-      } else if (retailItemTotal > 0) {
-        cartNet += orderNet * (retailItemTotal / itemGross);
-        cartCount++;
-      }
-      // Pure bin orders (retailItemTotal === 0) are excluded
+    // Avg cart: retail portion only; exclude bin-only and gift-card-only orders
+    if (itemGross === 0) {
+      // No categorisable line items (manual entry) — treat as retail
+      cartNet += adjustedOrderNet;
+      cartCount++;
+    } else if (retailItemTotal > 0) {
+      cartNet += adjustedOrderNet * (retailItemTotal / itemGross);
+      cartCount++;
     }
+    // Pure bin orders (retailItemTotal === 0) are excluded from avg cart
   }
 
   const avgCart = cartCount > 0 ? (cartNet / cartCount) / 100 : 0;
