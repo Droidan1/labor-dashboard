@@ -1584,6 +1584,7 @@ async function fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp = nu
 function aggregateOrders(elements, sinceTimestamp) {
   let totalNet = 0, binNet = 0, retailNet = 0;
   let orderCount = 0, totalItemCount = 0, retailItemCount = 0;
+  let retailOnlyItemCount = 0, retailOrderCount = 0; // avg items: retail orders only
   let totalTxnTimeMs = 0, txnTimeCount = 0;
   let cartNet = 0, cartCount = 0; // avg cart excludes bin-only orders
 
@@ -1606,7 +1607,7 @@ function aggregateOrders(elements, sinceTimestamp) {
     // Gift card purchases are excluded from net revenue (they are deferred
     // revenue / liabilities) — matching Clover's own Sales Summary behaviour.
     // Gift card amounts are subtracted before accumulating any totals.
-    let binItemTotal = 0, retailItemTotal = 0, giftCardTotal = 0, orderItemCount = 0;
+    let binItemTotal = 0, retailItemTotal = 0, giftCardTotal = 0, orderItemCount = 0, retailQty = 0;
     if (order.lineItems?.elements) {
       for (const item of order.lineItems.elements) {
         const qty = item.unitQty != null ? item.unitQty / 1000 : 1;
@@ -1618,6 +1619,7 @@ function aggregateOrders(elements, sinceTimestamp) {
           binItemTotal += price;
         } else {
           retailItemTotal += price;
+          retailQty += qty;
         }
       }
     }
@@ -1655,20 +1657,24 @@ function aggregateOrders(elements, sinceTimestamp) {
       retailNet += adjustedOrderNet;
     }
 
-    // Avg cart: retail portion only; exclude bin-only and gift-card-only orders
+    // Avg cart + avg items: retail portion only; exclude bin-only and gift-card-only orders
     if (itemGross === 0) {
       // No categorisable line items (manual entry) — treat as retail
       cartNet += adjustedOrderNet;
       cartCount++;
+      retailOnlyItemCount += orderItemCount;
+      retailOrderCount++;
     } else if (retailItemTotal > 0) {
       cartNet += adjustedOrderNet * (retailItemTotal / itemGross);
       cartCount++;
+      retailOnlyItemCount += retailQty;
+      retailOrderCount++;
     }
-    // Pure bin orders (retailItemTotal === 0) are excluded from avg cart
+    // Pure bin orders (retailItemTotal === 0) are excluded from avg cart and avg items
   }
 
   const avgCart = cartCount > 0 ? (cartNet / cartCount) / 100 : 0;
-  const avgItems = orderCount > 0 ? totalItemCount / orderCount : 0;
+  const avgItems = retailOrderCount > 0 ? retailOnlyItemCount / retailOrderCount : 0;
   const avgTxnSec = txnTimeCount > 0 ? Math.round(totalTxnTimeMs / txnTimeCount / 1000) : null;
   const avgASP = retailItemCount > 0 ? retailNet / retailItemCount / 100 : null;
 
