@@ -7,7 +7,7 @@ compatibility_date = "2024-01-01"
 #   - "* * * * *"   — every minute: sale scheduler (activate pending, revert expired)
 #   - "0 * * * *"   — top of every hour: interval sales summary push notifications
 [triggers]
-crons = ["55 3 * * *", "* * * * *", "0 10 * * *", "0 11 * * 7", "0 * * * *"]
+crons = ["55 3 * * *", "* * * * *", "0 10 * * *", "0 11 * * 1", "0 * * * *"]
 
 [vars]
 BL1_MERCHANT_ID = "T3M0E73JKKF11"
