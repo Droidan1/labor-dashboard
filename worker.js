@@ -2138,7 +2138,13 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
             l2Source = "im";
           } else {
             const n = (li.name || "").toUpperCase();
-            if (/EASTER|VALENTINE|CHRISTMAS|HALLOWEEN|FOURTH OF JULY|4TH OF JULY|ST[.\s]*PATRICK|HOLIDAY|SEASONAL/i.test(n)) {
+            if (/\bBIN\b|FILL A BAG|GLASS CASE/i.test(li.name || "")) {
+              // Matches "Bin", "$3 Bin", "Fill a Bag", etc. — same patterns as
+              // the live-tile isBinItem(). Safety net when Clover catalog loses
+              // the "Bin Products" category assignment (e.g. after item edit).
+              l2 = "Bin Products";
+              l2Source = "heuristic";
+            } else if (/EASTER|VALENTINE|CHRISTMAS|HALLOWEEN|FOURTH OF JULY|4TH OF JULY|ST[.\s]*PATRICK|HOLIDAY|SEASONAL/i.test(n)) {
               l2 = "Seasonal";
               l2Source = "heuristic";
             } else if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV|RECLINER|LOVESEAT|OTTOMAN|MATTRESS/i.test(n)) {
