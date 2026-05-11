@@ -23,6 +23,18 @@
     .loading-dot { animation: pulse 1.2s infinite; }
     @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
 
+    /* Skeleton shimmer */
+    .skeleton-shimmer {
+      background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,0.35) 50%, transparent 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s infinite;
+    }
+    .dark .skeleton-shimmer {
+      background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,0.06) 50%, transparent 75%);
+      background-size: 200% 100%;
+    }
+    @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
     /* Dark mode toggle switch */
     .toggle-track {
       width: 56px; height: 28px; border-radius: 14px; position: relative; cursor: pointer;
@@ -2154,10 +2166,41 @@
     renderDashboard();
   }
 
+  function renderSkeletonCards() {
+    const skCard = () => `
+      <div class="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700 animate-pulse">
+        <div class="flex items-start justify-between mb-4">
+          <div>
+            <div class="h-4 w-28 bg-gray-200 dark:bg-gray-700 rounded mb-1.5 skeleton-shimmer"></div>
+            <div class="h-3 w-16 bg-gray-100 dark:bg-gray-600 rounded skeleton-shimmer"></div>
+          </div>
+        </div>
+        <div class="flex justify-between items-start mt-2 mb-3">
+          <div>
+            <div class="h-2.5 w-20 bg-gray-100 dark:bg-gray-700 rounded mb-2 skeleton-shimmer"></div>
+            <div class="h-8 w-32 bg-gray-200 dark:bg-gray-600 rounded skeleton-shimmer"></div>
+          </div>
+          <div class="text-right">
+            <div class="h-2.5 w-20 bg-gray-100 dark:bg-gray-700 rounded mb-2 skeleton-shimmer"></div>
+            <div class="h-8 w-28 bg-gray-200 dark:bg-gray-600 rounded skeleton-shimmer"></div>
+          </div>
+        </div>
+        <div class="h-px bg-gray-100 dark:bg-gray-700 w-full my-3"></div>
+        <div class="grid grid-cols-3 gap-2">
+          <div class="rounded-lg bg-gray-50 dark:bg-gray-700/50 h-12 skeleton-shimmer"></div>
+          <div class="rounded-lg bg-gray-50 dark:bg-gray-700/50 h-12 skeleton-shimmer"></div>
+          <div class="rounded-lg bg-gray-50 dark:bg-gray-700/50 h-12 skeleton-shimmer"></div>
+        </div>
+      </div>`;
+    el('store-cards').innerHTML = skCard().repeat(STORES.length);
+  }
+
   async function loadAll() {
-    el("splash").classList.remove("hidden");
-    el("app").classList.add("hidden");
+    // Show app shell + skeleton cards immediately — no full-screen splash
+    el("splash").classList.add("hidden");
+    el("app").classList.remove("hidden");
     el("error-banner").classList.add("hidden");
+    renderSkeletonCards();
     const results = {}, errors = {};
     let loaded = 0;
 
@@ -2169,7 +2212,7 @@
         historicalCloverData[s] = cloverHistory;
       } catch (e) { errors[s] = e.message; results[s] = []; }
       loaded++;
-      el("splash-msg").textContent = `Loading stores… (${loaded}/${STORES.length})`;
+      el("last-updated").textContent = `Loading stores… (${loaded}/${STORES.length})`;
     }));
 
     liveDataLoading = true;
@@ -2241,8 +2284,6 @@
     renderDashDaySelector();
     if (selectedWeek) renderDashboard();
 
-    el("splash").classList.add("hidden");
-    el("app").classList.remove("hidden");
   }
 
   // ═══════════════════════════════════════════════════════════════
