@@ -17,8 +17,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+
 
   <style>
     .loading-dot { animation: pulse 1.2s infinite; }
@@ -5823,9 +5822,27 @@
   // Render the currently visible WRS pane to a true native PDF using
   // jsPDF + jspdf-autotable. Walks the on-screen tables and KPI cards to
   // emit vector text (selectable, crisp at any zoom). No html-to-image.
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+      const s = document.createElement('script');
+      s.src = src; s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
   async function downloadWrsAsPdf() {
+    // Lazy-load jsPDF + autotable only when the user first requests a PDF
+    if (!(window.jspdf?.jsPDF || window.jsPDF)) {
+      try {
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js');
+      } catch (e) {
+        alert('Failed to load PDF library. Check your connection and try again.'); return;
+      }
+    }
     const jsPDFCtor = window.jspdf?.jsPDF || window.jsPDF;
-    if (!jsPDFCtor) { alert('PDF library is still loading — please try again in a moment.'); return; }
+    if (!jsPDFCtor) { alert('PDF library failed to initialize — please try again.'); return; }
 
     let activeLabel = 'Summary';
     const activeBtn = document.querySelector('#wrs-tabs .wrs-tab.text-\\[\\#3BB54A\\]')
