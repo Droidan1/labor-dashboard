@@ -1433,12 +1433,49 @@ async function fetchRefundElements(store, env, sinceTimestamp, untilTimestamp = 
   return all;
 }
 
-async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = null) {
+// sameDayOrders: the locked-order elements already fetched for this day window.
+// When provided, same-day refunds (where Clover has already zeroed or reduced
+// order.total before the snapshot runs) are detected and skipped to avoid
+// double-deducting. Cross-day refunds (original order in a prior snapshot)
+// are still deducted normally.
+//
+// Detection strategy:
+//   Full refund  → order.total === 0 AND payment sum ≈ refund.amount
+//   Partial refund → order has an order-level refund attached (delta between
+//                    payment sum and order.total equals the refund amount)
+async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = null, sameDayOrders = null) {
   const merchantId = env[`${store}_MERCHANT_ID`];
   const apiToken = env[`${store}_API_TOKEN`];
   if (!merchantId || !apiToken) return 0;
 
+  // Build a multiset of pre-tax refund amounts that are already reflected in
+  // this day's order.total values, so we don't subtract them a second time.
+  // Key: pre-tax cents amount. Value: count of how many times it appears
+  // (handles the rare case of two refunds with the same dollar amount).
+  const alreadyReflected = new Map(); // preTaxCents → remaining skip count
+  if (sameDayOrders) {
+    for (const order of sameDayOrders) {
+      const pmtSum = (order.payments?.elements || [])
+        .reduce((s, p) => s + (p.amount || 0), 0);
+      const pmtTax = (order.payments?.elements || [])
+        .reduce((s, p) => s + (p.taxAmount || 0), 0);
+
+      if (order.total === 0 && pmtSum > 0) {
+        // Full same-day refund: Clover zeroed order.total; the original sale
+        // gross (pre-tax) equals pmtSum - pmtTax.
+        const preTax = pmtSum - pmtTax;
+        if (preTax > 0) alreadyReflected.set(preTax, (alreadyReflected.get(preTax) || 0) + 1);
+      } else if (order.total > 0 && pmtSum > order.total) {
+        // Partial same-day refund: customer paid more than order.total,
+        // difference is the refunded amount (pre-tax, no tax on partial).
+        const delta = pmtSum - order.total;
+        if (delta > 0) alreadyReflected.set(delta, (alreadyReflected.get(delta) || 0) + 1);
+      }
+    }
+  }
+
   let total = 0;
+  let skipped = 0;
   let offset = 0;
   const limit = 1000;
   const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
@@ -1454,7 +1491,15 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
         // refund.amount includes tax; subtract tax to match Clover's pre-tax "Refunds" line.
         const gross = r.amount || 0;
         const tax = r.taxAmount || 0;
-        total += (gross - tax);
+        const preTax = gross - tax;
+
+        // Skip if this amount is already reflected in a same-day order.total.
+        if (alreadyReflected.has(preTax) && alreadyReflected.get(preTax) > 0) {
+          alreadyReflected.set(preTax, alreadyReflected.get(preTax) - 1);
+          skipped += preTax;
+          continue;
+        }
+        total += preTax;
       }
       if (data.elements.length < limit) break;
       offset += limit;
@@ -1465,6 +1510,9 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
     // behavior). The defensive D1 guard still prevents accidental zeroing.
     console.warn(`fetchRefundsTotal(${store}) error:`, e.message);
     return 0;
+  }
+  if (skipped > 0) {
+    console.log(`fetchRefundsTotal(${store}): skipped ${skipped/100} same-day refunds (already in order.total), deducting ${total/100}`);
   }
   return total;
 }
@@ -2515,7 +2563,9 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
   const data = aggregateOrders(elements, sinceTimestamp);
 
   // Phase 2A: subtract /v3/refunds total (pre-tax) to match Clover Sales Summary.
-  const refundCents = await fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp);
+  // Pass sameDayOrders so same-day refunds (already reflected in order.total)
+  // are not double-deducted.
+  const refundCents = await fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp, elements);
   applyRefundsToAggregate(data, refundCents);
 
   // Defensive guards before persisting:
@@ -6760,9 +6810,29 @@ export default {
         fetchItemOverrides(env),
         fetchItemCosts(env),
       ]);
-      const refundCents = (refundElements || []).reduce(
-        (s, r) => s + ((r.amount || 0) - (r.taxAmount || 0)), 0
-      );
+      // Filter out same-day refunds whose amounts are already reflected in
+      // order.total (Clover updates the order before our snapshot runs).
+      // Same logic as fetchRefundsTotal's sameDayOrders path.
+      const _sameDayReflected = new Map();
+      for (const order of (elements || [])) {
+        const pmtSum = (order.payments?.elements || []).reduce((s, p) => s + (p.amount || 0), 0);
+        const pmtTax = (order.payments?.elements || []).reduce((s, p) => s + (p.taxAmount || 0), 0);
+        if (order.total === 0 && pmtSum > 0) {
+          const preTax = pmtSum - pmtTax;
+          if (preTax > 0) _sameDayReflected.set(preTax, (_sameDayReflected.get(preTax) || 0) + 1);
+        } else if (order.total > 0 && pmtSum > order.total) {
+          const delta = pmtSum - order.total;
+          if (delta > 0) _sameDayReflected.set(delta, (_sameDayReflected.get(delta) || 0) + 1);
+        }
+      }
+      const refundCents = (refundElements || []).reduce((s, r) => {
+        const preTax = (r.amount || 0) - (r.taxAmount || 0);
+        if (_sameDayReflected.has(preTax) && _sameDayReflected.get(preTax) > 0) {
+          _sameDayReflected.set(preTax, _sameDayReflected.get(preTax) - 1);
+          return s; // already in order.total — skip
+        }
+        return s + preTax;
+      }, 0);
 
       // Server-side category-based bin/retail split. aggregateItemSales returns
       // categories[] keyed by L2; pull "Bin Products" netSales and treat the
