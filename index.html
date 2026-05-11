@@ -2195,7 +2195,9 @@
     el('store-cards').innerHTML = skCard().repeat(STORES.length);
   }
 
-  async function loadAll() {
+  async function loadAll(force = false) {
+    // Manual refresh: bust the cache so users get fresh data, not the 5-min cached copy
+    if (force) _apiCache.clear();
     // Show app shell + skeleton cards immediately — no full-screen splash
     el("splash").classList.add("hidden");
     el("app").classList.remove("hidden");
@@ -9582,7 +9584,7 @@
     }
     initSidebar();
     initDarkMode();
-    el("refresh-btn").onclick = loadAll;
+    el("refresh-btn").onclick = () => loadAll(true);
 
     // Wire Weekly Retail tab clicks once
     document.querySelectorAll('#wrs-tabs .wrs-tab').forEach(btn => {
@@ -9710,7 +9712,7 @@
         ptr.classList.remove('ptr-ready');
         ptrLabel.textContent = 'Refreshing…';
 
-        loadAll().finally(() => {
+        loadAll(true).finally(() => {
           refreshing = false;
           ptr.classList.remove('ptr-loading', 'ptr-visible');
           ptr.classList.add('ptr-hide');
