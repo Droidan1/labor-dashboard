@@ -2777,11 +2777,11 @@ async function dispatchDailySummary(env, date) {
     url: '/',
   });
 
-  // All active superusers
+  // All active users (notification_preferences controls per-user opt-in)
   const { results: superusers } = await env.DB.prepare(
-    "SELECT u.id, u.email FROM users u WHERE u.role = 'superuser' AND u.status = 'active'"
+    "SELECT u.id, u.email FROM users u WHERE u.status = 'active'"
   ).all();
-  if (!superusers?.length) return { ok: true, skipped: 'no superusers' };
+  if (!superusers?.length) return { ok: true, skipped: 'no active users' };
 
   const userIds = superusers.map(u => u.id);
   const placeholders = userIds.map(() => '?').join(',');
@@ -2963,9 +2963,9 @@ async function dispatchWeeklyDigest(env, startDate, endDate) {
   });
 
   const { results: superusers } = await env.DB.prepare(
-    "SELECT id, email FROM users WHERE role = 'superuser' AND status = 'active'"
+    "SELECT id, email FROM users WHERE status = 'active'"
   ).all();
-  if (!superusers?.length) return { ok: true, skipped: 'no superusers' };
+  if (!superusers?.length) return { ok: true, skipped: 'no active users' };
 
   const userIds = superusers.map(u => u.id);
   const placeholders = userIds.map(() => '?').join(',');
