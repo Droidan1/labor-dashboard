@@ -1601,14 +1601,22 @@ function aggregateOrders(elements, sinceTimestamp) {
     if (order.state !== "locked") continue;
     if (order.createdTime < sinceTimestamp) continue;
 
-    const totalCents = order.total;
-
+    // Phase 2G: same fix as aggregateItemSales — use payment.amount instead
+    // of order.total for the gross figure. For same-day refunded orders,
+    // Clover reduces order.total by the refund amount but leaves
+    // payment.amount at its original value. Using payment.amount gives us
+    // the ORIGINAL pre-refund net, and the refund subtraction step
+    // (applyRefundsToAggregate) handles deducting the refund. Without
+    // this, same-day refunded orders contribute too little to total.
     let taxCents = 0;
+    let pmtSumCents = 0;
     if (order.payments?.elements) {
       for (const pmt of order.payments.elements) {
         taxCents += (pmt.taxAmount || 0);
+        pmtSumCents += (pmt.amount || 0);
       }
     }
+    const totalCents = pmtSumCents > 0 ? pmtSumCents : order.total;
     const orderNet = totalCents - taxCents;
 
     // Classify line items as bin vs retail vs gift card.
@@ -2099,13 +2107,25 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     if (order.total == null || order.total === 0) continue;
     if (order.state !== "locked") continue;
 
+    // Phase 2G: compute orderNetCents from payment.amount (original, pre-refund)
+    // rather than order.total (which Clover reduces by gross refund amounts for
+    // same-day refunds). For unrefunded orders payment.amount === order.total so
+    // the value is unchanged. For refunded orders this gives us the ORIGINAL
+    // pre-tax net that matches the line-item sum — the refund attribution loop
+    // below handles deducting refunds per category. Without this, the residual
+    // reconciliation dumps the refund-gross into "Other / Non-Item".
     let taxCents = 0;
+    let pmtSumCents = 0;
     if (order.payments?.elements) {
       for (const pmt of order.payments.elements) {
         taxCents += (pmt.taxAmount || 0);
+        pmtSumCents += (pmt.amount || 0);
       }
     }
-    const orderNetCents = order.total - taxCents;
+    // Use payment sum when available (covers refunded orders); fall back to
+    // order.total for orders with no payment data (rare — usually voids).
+    const grossOrderCents = pmtSumCents > 0 ? pmtSumCents : order.total;
+    const orderNetCents = grossOrderCents - taxCents;
 
     const lineItems = order.lineItems?.elements || [];
     let orderLineItemNetCents = 0;
@@ -2738,10 +2758,13 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
 
   const data = aggregateOrders(elements, sinceTimestamp);
 
-  // Phase 2A: subtract /v3/refunds total (pre-tax) to match Clover Sales Summary.
-  // Pass sameDayOrders so same-day refunds (already reflected in order.total)
-  // are not double-deducted.
-  const refundCents = await fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp, elements);
+  // Phase 2G: aggregateOrders now uses payment.amount (ORIGINAL pre-refund net)
+  // instead of order.total. That means same-day refunds are NOT reflected in
+  // data.total — they need to be subtracted explicitly here. Pass null for
+  // sameDayOrders so fetchRefundsTotal returns ALL refunds (same-day + cross-day),
+  // not just cross-day. Without this, refunded orders contribute their original
+  // pre-refund revenue and the refund deduction would be missing.
+  const refundCents = await fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp, null);
   applyRefundsToAggregate(data, refundCents);
 
   // Phase 2D: when caller provides category-based bin/retail (computed via
@@ -4543,7 +4566,9 @@ export default {
         if (order.state !== "locked") continue;
 
         const taxCents = (order.payments?.elements || []).reduce((s, p) => s + (p.taxAmount || 0), 0);
-        const orderNetCents = order.total - taxCents;
+        const pmtSumCents = (order.payments?.elements || []).reduce((s, p) => s + (p.amount || 0), 0);
+        const grossOrderCents = pmtSumCents > 0 ? pmtSumCents : order.total;
+        const orderNetCents = grossOrderCents - taxCents;
 
         const lineItems = order.lineItems?.elements || [];
         let liGrossSum = 0;
