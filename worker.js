@@ -1416,8 +1416,13 @@ async function fetchRefundElements(store, env, sinceTimestamp, untilTimestamp = 
   const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
   try {
     while (true) {
+      // Phase 2E: expand=lineItem,lineItem.item lets cross-day refund attribution
+      // resolve the L2 category from the original line item's catalog reference
+      // (via itemCatMap[lineItem.item.id]) instead of dumping everything into a
+      // generic "Refund" L2 bucket.
       let url = `https://api.clover.com/v3/merchants/${merchantId}/refunds`
         + `?filter=createdTime>=${sinceTimestamp}`
+        + `&expand=lineItem,lineItem.item`
         + `&limit=${limit}&offset=${offset}`;
       if (untilTimestamp) url += `&filter=createdTime<${untilTimestamp}`;
       const data = await cloverFetchWithRetry(url, headers, `Clover refunds(items) ${store}`);
@@ -2373,9 +2378,88 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       l3Cat.refunds -= refNet / 100;
       l3Cat.net     -= refNet / 100;
     } else {
-      // Cross-day or unmappable refund — collect under generic "Refund" L2.
-      const cat   = getCat("Refund");
-      const l3Cat = getL3("Refund", "Cross-day refunds");
+      // Phase 2E: cross-day refund — original line item isn't in today's
+      // orders, so lineItemCatMap doesn't have it. Use the expanded refund
+      // data (fetchRefundElements expand=lineItem.item) to resolve the L2
+      // category via the same tiered logic the main loop uses. Falls back
+      // to a generic "Refund" L2 only when no tier resolves.
+      const refLi = ref.lineItem || {};
+      const refItemId = refLi.item?.id || null;
+      const refName = refLi.name || "";
+      const refNameKey = normalizeItemName(refName);
+      let resolvedL2 = null;
+      let resolvedL3Key = "Cross-day refunds";
+
+      // Tier 0: admin per-item override (id: or name: key)
+      if (refItemId && ovItems["id:" + refItemId] && VALID_L2.has(ovItems["id:" + refItemId])) {
+        resolvedL2 = ovItems["id:" + refItemId];
+        resolvedL3Key = "[Override] " + resolvedL2 + " (cross-day)";
+      } else if (refNameKey && ovItems["name:" + refNameKey] && VALID_L2.has(ovItems["name:" + refNameKey])) {
+        resolvedL2 = ovItems["name:" + refNameKey];
+        resolvedL3Key = "[Override] " + resolvedL2 + " (cross-day)";
+      }
+
+      // Tier 1: Clover L3 category from itemCatMap
+      if (!resolvedL2 && refItemId && itemCatMap[refItemId]) {
+        const refL3 = itemCatMap[refItemId];
+        let l2FromL3 = null;
+        if (refL3 === "Sku Book Items") {
+          l2FromL3 = SKU_BOOK_TO_L2[refName] || "Hardlines";
+        } else if (ov.l3Map && ov.l3Map[refL3] && VALID_L2.has(ov.l3Map[refL3])) {
+          l2FromL3 = ov.l3Map[refL3];
+        } else if (L3_TO_L2[refL3]) {
+          l2FromL3 = L3_TO_L2[refL3];
+        }
+        if (l2FromL3) {
+          resolvedL2 = l2FromL3;
+          resolvedL3Key = refL3 + " (cross-day)";
+        }
+      }
+
+      // Tier 2: name-based heuristics (same patterns the main loop uses)
+      if (!resolvedL2 && refName) {
+        const n = refName.toUpperCase();
+        if (/\bGIFT\s*CARD\b/i.test(refName)) {
+          resolvedL2 = "Gift Cards"; resolvedL3Key = "[Heuristic] Gift Cards (cross-day)";
+        } else if (/\bBIN\b|FILL A BAG|GLASS CASE/i.test(refName)) {
+          resolvedL2 = "Bin Products"; resolvedL3Key = "[Heuristic] Bin Products (cross-day)";
+        } else if (/EASTER|VALENTINE|CHRISTMAS|HALLOWEEN|FOURTH OF JULY|4TH OF JULY|ST[.\s]*PATRICK|HOLIDAY|SEASONAL/i.test(n)) {
+          resolvedL2 = "Seasonal"; resolvedL3Key = "[Heuristic] Seasonal (cross-day)";
+        } else if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV|RECLINER|LOVESEAT|OTTOMAN|MATTRESS/i.test(n)) {
+          resolvedL2 = "Furniture"; resolvedL3Key = "[Heuristic] Furniture (cross-day)";
+        } else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE/i.test(n)) {
+          resolvedL2 = "Home"; resolvedL3Key = "[Heuristic] Home (cross-day)";
+        } else if (/SHOE|BOOT|SANDAL|SLIPPER|SNEAKER/i.test(n)) {
+          resolvedL2 = "Softline - Shoes"; resolvedL3Key = "[Heuristic] Softline - Shoes (cross-day)";
+        } else if (/APPAREL|SHIRT|PANT|DRESS|JACKET|COAT|BLOUSE|SWEATER/i.test(n)) {
+          resolvedL2 = "Softline - Apparel"; resolvedL3Key = "[Heuristic] Softline - Apparel (cross-day)";
+        } else if (/CHEMICAL|CLEANING|DETERGENT/i.test(n)) {
+          resolvedL2 = "Consumable Other"; resolvedL3Key = "[Heuristic] Consumable Other (cross-day)";
+        } else if (/MASK|HEMP|OIL|LOTION|CREAM|SOAP|SHAMPOO|BODY|NAIL POLISH|COSMETIC/i.test(n)) {
+          resolvedL2 = "Consumable HBA"; resolvedL3Key = "[Heuristic] Consumable HBA (cross-day)";
+        } else if (/FOOD|SNACK|CANDY|BEVERAGE|DRINK/i.test(n)) {
+          resolvedL2 = "Consumable Food"; resolvedL3Key = "[Heuristic] Consumable Food (cross-day)";
+        } else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY|HAMILTON BEACH|FIRE PIT/i.test(n)) {
+          resolvedL2 = "Hardlines"; resolvedL3Key = "[Heuristic] Hardlines (cross-day)";
+        }
+      }
+
+      // Tier 3: admin pattern rules (prefix / contains / im-number)
+      if (!resolvedL2 && refName) {
+        const blM = refName.match(/BL[-\s]*(\d{4,5})/i);
+        const bareM = !blM && refName.match(/\b(\d{4,5})\b/);
+        const imNum = blM?.[1] || bareM?.[1];
+        const patternL2 = matchOverridePattern(refName, imNum, ovPatterns);
+        if (patternL2) {
+          resolvedL2 = patternL2;
+          resolvedL3Key = "[Pattern] " + patternL2 + " (cross-day)";
+        }
+      }
+
+      // Apply the resolved category, or fall back to generic "Refund" L2.
+      const targetL2 = resolvedL2 || "Refund";
+      const cat   = getCat(targetL2);
+      const l3Cat = getL3(targetL2, resolvedL3Key);
       cat.refunds   -= refNet / 100;
       cat.net       -= refNet / 100;
       l3Cat.refunds -= refNet / 100;
