@@ -1352,7 +1352,10 @@ async function fetchItemCategoryMap(store, env) {
 
   if (env.SALES_SNAPSHOTS) {
     const cached = await env.SALES_SNAPSHOTS.get(cacheKey, "json");
-    if (cached) return cached;
+    // Don't trust an empty cached map — it was likely written before items
+    // were categorized in Clover, or from a transient empty Clover response.
+    // Refetch instead so L3-based category resolution can actually work.
+    if (cached && Object.keys(cached).length > 0) return cached;
   }
 
   const merchantId = env[`${store}_MERCHANT_ID`];
@@ -2063,7 +2066,7 @@ function matchOverridePattern(rawName, imNum, patterns) {
 // undefined / EMPTY_OVERRIDES — caller threads it in for live + snapshot paths.
 // `itemCosts` is the shape returned by fetchItemCosts(); used to enrich each
 // line-item with cost so we can emit cost / extCost / grossProfit / gpmPct.
-function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements = []) {
+function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements = [], extraOrdersForRefundLookup = []) {
   const ov = overrides || EMPTY_OVERRIDES;
   const ovItems = ov.items || {};
   const ovPatterns = ov.patterns || [];
@@ -2369,6 +2372,74 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     }
   }
 
+  // ── Phase 2F: cross-day order line-item lookup ─────────────────────────
+  // Populates orderLineItemMap for orders fetched specifically to resolve
+  // cross-day refunds (refunds posted today against orders from prior days).
+  // These orders are NOT added to revenue/qty/disc totals — they exist only
+  // so the refund-attribution loop below can find their line items by ID.
+  for (const order of (extraOrdersForRefundLookup || [])) {
+    if (!order?.id || order.state !== "locked") continue;
+    const lineItems = order.lineItems?.elements || [];
+    for (const li of lineItems) {
+      const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
+      const priceCents = (li.price || 0) * qty;
+      if (priceCents <= 0) continue;
+
+      const itemId = li.item?.id;
+      const nameKey = normalizeItemName(li.name);
+      let l2 = null;
+
+      // Tier 0: admin override (id: or name: key)
+      if (itemId && ovItems["id:" + itemId] && VALID_L2.has(ovItems["id:" + itemId])) {
+        l2 = ovItems["id:" + itemId];
+      } else if (nameKey && ovItems["name:" + nameKey] && VALID_L2.has(ovItems["name:" + nameKey])) {
+        l2 = ovItems["name:" + nameKey];
+      }
+
+      // Tier 1: Clover L3 → L2
+      if (!l2 && itemId && itemCatMap[itemId]) {
+        const l3 = itemCatMap[itemId];
+        if (l3 === "Sku Book Items") l2 = SKU_BOOK_TO_L2[li.name] || "Hardlines";
+        else if (ov.l3Map && ov.l3Map[l3] && VALID_L2.has(ov.l3Map[l3])) l2 = ov.l3Map[l3];
+        else if (L3_TO_L2[l3]) l2 = L3_TO_L2[l3];
+      }
+
+      // Tier 2: name heuristics (same patterns as main loop)
+      if (!l2) {
+        const liName = li.name || "";
+        const n = liName.toUpperCase();
+        if (/\bGIFT\s*CARD\b/i.test(liName)) l2 = "Gift Cards";
+        else if (/\bBIN\b|FILL A BAG|GLASS CASE/i.test(liName)) l2 = "Bin Products";
+        else if (/EASTER|VALENTINE|CHRISTMAS|HALLOWEEN|FOURTH OF JULY|4TH OF JULY|ST[.\s]*PATRICK|HOLIDAY|SEASONAL/i.test(n)) l2 = "Seasonal";
+        else if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV|RECLINER|LOVESEAT|OTTOMAN|MATTRESS/i.test(n)) l2 = "Furniture";
+        else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE/i.test(n)) l2 = "Home";
+        else if (/SHOE|BOOT|SANDAL|SLIPPER|SNEAKER/i.test(n)) l2 = "Softline - Shoes";
+        else if (/APPAREL|SHIRT|PANT|DRESS|JACKET|COAT|BLOUSE|SWEATER/i.test(n)) l2 = "Softline - Apparel";
+        else if (/CHEMICAL|CLEANING|DETERGENT/i.test(n)) l2 = "Consumable Other";
+        else if (/MASK|HEMP|OIL|LOTION|CREAM|SOAP|SHAMPOO|BODY|NAIL POLISH|COSMETIC/i.test(n)) l2 = "Consumable HBA";
+        else if (/FOOD|SNACK|CANDY|BEVERAGE|DRINK/i.test(n)) l2 = "Consumable Food";
+        else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY|HAMILTON BEACH|FIRE PIT/i.test(n)) l2 = "Hardlines";
+      }
+
+      // Tier 3: admin pattern rules
+      if (!l2) {
+        const blM = (li.name || "").match(/BL[-\s]*(\d{4,5})/i);
+        const bareM = !blM && (li.name || "").match(/\b(\d{4,5})\b/);
+        const imNum = blM?.[1] || bareM?.[1];
+        const patternL2 = matchOverridePattern(li.name, imNum, ovPatterns);
+        if (patternL2) l2 = patternL2;
+      }
+
+      // Fallback
+      if (!l2) l2 = "Custom Sales";
+
+      const l3Key = "[Cross-day refund source] " + l2;
+      let arr = orderLineItemMap.get(order.id);
+      if (!arr) { arr = []; orderLineItemMap.set(order.id, arr); }
+      arr.push({ l2, l3Key, grossCents: priceCents });
+    }
+  }
+
   // ── Process refunds from /v3/refunds endpoint ───────────────────────────
   // Clover's refunds live on a separate endpoint and are NOT subtracted from
   // order.total. Each refund returns orderRef.id (or payment.order.id) but
@@ -2545,6 +2616,51 @@ async function fetchItemOrders(store, env, sinceTimestamp, untilTimestamp = null
     offset += limit;
   }
   return allElements;
+}
+
+// ─── Fetch specific orders by ID (parallel) ─────────────────────
+// Used to resolve cross-day refunds: refunds reference orders, but if the
+// original order is from a prior day it won't be in today's fetch window.
+// We fetch each missing order individually with full line-item details so
+// the refund can be attributed to the original product categories instead
+// of dumping into a generic "Refund" L2 bucket.
+async function fetchOrdersByIds(store, env, orderIds) {
+  if (!orderIds?.length) return [];
+  const merchantId = env[`${store}_MERCHANT_ID`];
+  const apiToken = env[`${store}_API_TOKEN`];
+  if (!merchantId || !apiToken) return [];
+
+  const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
+  const results = await Promise.allSettled(orderIds.map(async (id) => {
+    const url = `https://api.clover.com/v3/merchants/${merchantId}/orders/${id}`
+      + `?expand=lineItems.item,lineItems.discounts,discounts,payments`;
+    const resp = await fetch(url, { headers });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return await resp.json();
+  }));
+  return results
+    .filter(r => r.status === "fulfilled" && r.value)
+    .map(r => r.value);
+}
+
+// ─── Identify + fetch cross-day refund source orders ────────────
+// Given today's fetched orders and refund elements, returns the orders
+// referenced by refunds whose original sale is NOT in today's fetch
+// (i.e. true cross-day refunds). Caller passes the result to
+// aggregateItemSales as extraOrdersForRefundLookup.
+async function fetchCrossDayOrdersForRefunds(store, env, elements, refundElements) {
+  if (!refundElements?.length) return [];
+  const todayOrderIds = new Set();
+  for (const o of (elements || [])) {
+    if (o?.id) todayOrderIds.add(o.id);
+  }
+  const crossDayIds = new Set();
+  for (const r of refundElements) {
+    const oid = r.orderRef?.id || r.payment?.order?.id;
+    if (oid && !todayOrderIds.has(oid)) crossDayIds.add(oid);
+  }
+  if (crossDayIds.size === 0) return [];
+  return await fetchOrdersByIds(store, env, [...crossDayIds]);
 }
 
 // ─── Save a snapshot to KV + D1 ─────────────────────────────────
@@ -4396,6 +4512,35 @@ export default {
       return new Response(JSON.stringify(out), { headers: corsJson });
     }
 
+    // ── Admin: force-refresh the item category map cache for a store.
+    // ?action=refresh-item-cats&store=BL1   (or store=all)
+    // Deletes the cached KV map and refetches from Clover.
+    if (url.searchParams.get("action") === "refresh-item-cats") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+
+      const storeParam = (url.searchParams.get("store") || "").toUpperCase();
+      if (!storeParam) {
+        return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
+      }
+      const targets = storeParam === "ALL" ? ALL_STORES : [storeParam];
+      const results = {};
+
+      for (const store of targets) {
+        try {
+          if (env.SALES_SNAPSHOTS) {
+            await env.SALES_SNAPSHOTS.delete(`item-cats:${store.toLowerCase()}`);
+          }
+          const map = await fetchItemCategoryMap(store, env);
+          results[store] = { ok: true, size: Object.keys(map || {}).length };
+        } catch (e) {
+          results[store] = { ok: false, error: e.message };
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, results }, null, 2), { headers: corsJson });
+    }
+
     // ── Debug endpoint: inspect raw refund payload structure from Clover.
     // Use to diagnose cross-day refund attribution failures — shows whether
     // expand=lineItem,lineItem.item is actually returning the line-item name
@@ -4445,18 +4590,36 @@ export default {
         };
       });
 
-      const willAttributeCount = summary.filter(s => s.orderInTodaysFetch).length;
+      const sameDayCount = summary.filter(s => s.orderInTodaysFetch).length;
       const totalRefundsCents = summary.reduce((s, x) => s + x.netCents, 0);
-      const willAttributeCents = summary.filter(s => s.orderInTodaysFetch).reduce((s, x) => s + x.netCents, 0);
+      const sameDayCents = summary.filter(s => s.orderInTodaysFetch).reduce((s, x) => s + x.netCents, 0);
+
+      // Phase 2F: also confirm cross-day orders can be fetched + attributed.
+      const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
+      const crossDayFetched = new Set(extraOrders.map(o => o?.id).filter(Boolean));
+      for (const s of summary) {
+        if (!s.orderInTodaysFetch && s.orderId && crossDayFetched.has(s.orderId)) {
+          s.willAttribute = "CROSS-DAY-FETCHED (proportional across original order's line items)";
+          s.crossDayFetched = true;
+        } else if (!s.orderInTodaysFetch) {
+          s.crossDayFetched = false;
+          s.willAttribute = "UNRESOLVABLE (original order not fetchable, falls to generic Refund L2)";
+        }
+      }
+      const crossDayFetchedCount = summary.filter(s => s.crossDayFetched).length;
+      const crossDayFetchedCents = summary.filter(s => s.crossDayFetched).reduce((s, x) => s + x.netCents, 0);
+      const unresolvableCents = totalRefundsCents - sameDayCents - crossDayFetchedCents;
 
       return new Response(JSON.stringify({
         store, dateStr,
         refundCount: refundElements?.length || 0,
         ordersFetched: elements?.length || 0,
         itemCatMapSize: Object.keys(itemCatMap || {}).length,
+        crossDayOrdersFetched: extraOrders.length,
         refundsTotal: `$${(totalRefundsCents / 100).toFixed(2)}`,
-        refundsAttributable: `$${(willAttributeCents / 100).toFixed(2)} (${willAttributeCount}/${summary.length})`,
-        refundsCrossDay: `$${((totalRefundsCents - willAttributeCents) / 100).toFixed(2)} (${summary.length - willAttributeCount}/${summary.length})`,
+        refundsSameDay: `$${(sameDayCents / 100).toFixed(2)} (${sameDayCount}/${summary.length})`,
+        refundsCrossDayFetched: `$${(crossDayFetchedCents / 100).toFixed(2)} (${crossDayFetchedCount}/${summary.length})`,
+        refundsUnresolvable: `$${(unresolvableCents / 100).toFixed(2)} (${summary.length - sameDayCount - crossDayFetchedCount}/${summary.length})`,
         sample: summary.slice(0, 20),
         rawSample: refundElements?.[0] || null,
       }, null, 2), { headers: corsJson });
@@ -4514,7 +4677,10 @@ export default {
             ]);
             if (elements && elements.length > 0) {
               const itemCatMap = await fetchItemCategoryMap(store, env);
-              const itemAgg = aggregateItemSales(elements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements);
+              // Phase 2F: fetch original orders for cross-day refunds so they
+              // attribute by category instead of falling to the Refund L2 bucket.
+              const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
+              const itemAgg = aggregateItemSales(elements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements, extraOrders);
               let binNet = 0, retailNet = 0;
               for (const c of (itemAgg.categories || [])) {
                 if (c.category === "Bin Products") binNet += c.netSales;
@@ -4722,7 +4888,8 @@ export default {
           ]);
           if (!elements) { results[store] = "skipped (no credentials)"; continue; }
           const itemCatMap = await fetchItemCategoryMap(store, env);
-          const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts, refundElements);
+          const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
+          const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts, refundElements, extraOrders);
 
           // Zero-order guard: if Clover returned no orders and we already have
           // a non-empty item snapshot for this date, don't overwrite it.
@@ -6675,11 +6842,12 @@ export default {
           return new Response(JSON.stringify({ error: "Store keys not found" }), { status: 404, headers: corsJson });
         }
         const itemCatMap = await fetchItemCategoryMap(store, env);
-        const [overrides, itemCosts] = await Promise.all([
+        const [overrides, itemCosts, extraOrders] = await Promise.all([
           fetchItemOverrides(env),
           fetchItemCosts(env),
+          fetchCrossDayOrdersForRefunds(store, env, elements, refundElements),
         ]);
-        const result = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts, refundElements);
+        const result = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts, refundElements, extraOrders);
         result.hour = hourParam;
         return new Response(JSON.stringify(result), { headers: corsJson });
       } catch (err) {
@@ -7122,7 +7290,8 @@ export default {
           ]);
           if (elements && elements.length > 0) {
             const itemCatMap = await fetchItemCategoryMap(store, env);
-            itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides, itemCosts, refundElements);
+            const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
+            itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides, itemCosts, refundElements, extraOrders);
             let binNet = 0, retailNet = 0;
             for (const c of (itemData.categories || [])) {
               if (c.category === "Bin Products") binNet += c.netSales;
