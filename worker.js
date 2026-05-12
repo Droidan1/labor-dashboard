@@ -4426,6 +4426,60 @@ export default {
       return new Response(JSON.stringify(out), { headers: corsJson });
     }
 
+    // ── Debug endpoint: inspect raw refund payload structure from Clover.
+    // Use to diagnose cross-day refund attribution failures — shows whether
+    // expand=lineItem,lineItem.item is actually returning the line-item name
+    // and catalog item.id we need for category resolution.
+    // ?action=debug-refunds&store=BL1&date=2026-05-11
+    if (url.searchParams.get("action") === "debug-refunds") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      const dateStr = url.searchParams.get("date") || getETToday().dateStr;
+      if (!store) {
+        return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
+      }
+      const startOfDay = getStartOfDayET(dateStr);
+      const nextDay = new Date(dateStr + 'T12:00:00Z');
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      const untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
+
+      const refundElements = await fetchRefundElements(store, env, startOfDay, untilTs);
+      const itemCatMap = await fetchItemCategoryMap(store, env);
+
+      // Summarize each refund: present fields, line item details, category resolution outcome.
+      const summary = (refundElements || []).map(r => {
+        const li = r.lineItem || {};
+        const itemId = li.item?.id || null;
+        const l3 = itemId ? (itemCatMap[itemId] || null) : null;
+        return {
+          id: r.id,
+          amount: r.amount,
+          taxAmount: r.taxAmount,
+          orderId: r.order?.id || null,
+          hasLineItem: !!r.lineItem,
+          lineItemId: li.id || null,
+          lineItemName: li.name || null,
+          lineItemKeys: Object.keys(li),
+          itemRef: li.item || null,
+          itemId,
+          itemCatMapHit: !!l3,
+          resolvedL3: l3,
+        };
+      });
+
+      return new Response(JSON.stringify({
+        store, dateStr,
+        refundCount: refundElements?.length || 0,
+        itemCatMapSize: Object.keys(itemCatMap || {}).length,
+        sample: summary.slice(0, 10),
+        // Also include one raw refund object so we see all fields Clover returns
+        rawSample: refundElements?.[0] || null,
+      }, null, 2), { headers: corsJson });
+    }
+
     // ── Manual snapshot endpoint: ?action=snapshot&store=BL1[&date=2026-04-26]
     // store=all snapshots every store. date defaults to today (ET, not UTC).
     if (url.searchParams.get("action") === "snapshot") {
