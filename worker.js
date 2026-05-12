@@ -4503,7 +4503,9 @@ export default {
       const settled = await Promise.allSettled(
         stores.map(async (store) => {
           // Compute category-based bin/retail override (best-effort — falls
-          // back to name-based aggregateOrders split on failure).
+          // back to name-based aggregateOrders split on failure). Also writes
+          // the full item-sales snapshot to KV so the Item Sales tab reflects
+          // the latest aggregateItemSales output (refund attribution etc.).
           let binRetailOverride = null;
           try {
             const [elements, refundElements] = await Promise.all([
@@ -4519,6 +4521,14 @@ export default {
                 else retailNet += c.netSales;
               }
               binRetailOverride = { bin: binNet, retail: retailNet };
+              // Persist item snapshot to KV — this is what the Item Sales tab reads.
+              // Previously the admin re-snapshot path skipped this write and only
+              // updated D1, so item-tab refunds never reflected admin re-runs.
+              try {
+                await saveItemSalesSnapshot(env, store, dateStr, itemAgg);
+              } catch (saveErr) {
+                console.warn(`Admin item-snapshot save failed for ${store}: ${saveErr.message}`);
+              }
             }
           } catch (e) {
             console.warn(`Admin snapshot override prep failed for ${store}: ${e.message}`);
