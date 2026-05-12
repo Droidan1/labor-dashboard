@@ -1416,13 +1416,13 @@ async function fetchRefundElements(store, env, sinceTimestamp, untilTimestamp = 
   const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
   try {
     while (true) {
-      // Phase 2E: expand=lineItem,lineItem.item lets cross-day refund attribution
-      // resolve the L2 category from the original line item's catalog reference
-      // (via itemCatMap[lineItem.item.id]) instead of dumping everything into a
-      // generic "Refund" L2 bucket.
+      // Phase 2E: /v3/refunds does NOT return lineItem refs even when expanded
+      // (confirmed via debug-refunds endpoint — lineItemKeys is []). It DOES
+      // return orderRef.id and payment.order.id, so refund attribution uses
+      // order-ID lookup against the line-item map built during the main loop.
       let url = `https://api.clover.com/v3/merchants/${merchantId}/refunds`
         + `?filter=createdTime>=${sinceTimestamp}`
-        + `&expand=lineItem,lineItem.item`
+        + `&expand=payment,orderRef`
         + `&limit=${limit}&offset=${offset}`;
       if (untilTimestamp) url += `&filter=createdTime<${untilTimestamp}`;
       const data = await cloverFetchWithRetry(url, headers, `Clover refunds(items) ${store}`);
@@ -2077,6 +2077,11 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   // Built during the per-order line-item walk so refunds from /v3/refunds (which
   // reference lineItem.id) can be attributed back to the originating category.
   const lineItemCatMap = new Map();
+  // Phase 2E: orderId → [{ l2, l3Key, grossCents }] for order-ID-based refund
+  // attribution. Clover's /v3/refunds endpoint doesn't return lineItem refs,
+  // so we look refunds up by order ID and distribute them proportionally
+  // across that order's line items by gross value.
+  const orderLineItemMap = new Map();
   function getCat(name) {
     if (!cats[name]) cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0 };
     return cats[name];
@@ -2300,6 +2305,15 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       // reference lineItem.id) can be attributed back to the right L2/L3.
       if (li.id) lineItemCatMap.set(li.id, { l2, l3Key });
 
+      // Phase 2E: track positive-priced line items per order for refund
+      // attribution. Refund rows (priceCents < 0) are skipped — refunds get
+      // attributed BY this map, not pushed to it.
+      if (order.id && priceCents > 0) {
+        let arr = orderLineItemMap.get(order.id);
+        if (!arr) { arr = []; orderLineItemMap.set(order.id, arr); }
+        arr.push({ l2, l3Key, grossCents: priceCents });
+      }
+
       // Phase 2B: line-level discount (resolved above, handles % case)
       let discCents = liDiscCache.get(li) || 0;
 
@@ -2357,113 +2371,69 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
 
   // ── Process refunds from /v3/refunds endpoint ───────────────────────────
   // Clover's refunds live on a separate endpoint and are NOT subtracted from
-  // order.total. Each refund references a lineItem by id. We attribute the
-  // refund back to that line item's L2/L3 category. Cross-day refunds (refund
-  // posted today against a prior-day line item not in our current fetch) get
-  // bucketed into a generic "Refund" L2 row as a fallback.
+  // order.total. Each refund returns orderRef.id (or payment.order.id) but
+  // does NOT return lineItem refs — even with expand=lineItem,lineItem.item
+  // it returns nothing. Confirmed via debug-refunds endpoint.
+  //
+  // Strategy: build orderLineItemMap (orderId → [{l2, l3Key, grossCents}])
+  // during the main loop above, then for each refund:
+  //   1. Look up the original order's line items by orderRef.id.
+  //   2. Distribute the refund proportionally across that order's line items
+  //      by their gross-value share.
+  //   3. If the order isn't in our fetched data (true cross-day refund),
+  //      fall back to a generic "Refund" L2 bucket.
   for (const ref of (refundElements || [])) {
     const refGross = ref.amount || 0;
     const refTax   = ref.taxAmount || 0;
-    const refNet   = refGross - refTax;  // pre-tax, in cents
-    if (refNet <= 0) continue;
+    const refNetCents = refGross - refTax;
+    if (refNetCents <= 0) continue;
 
-    const liId = ref.lineItem?.id || ref.lineItemRef?.id || null;
-    const hit  = liId ? lineItemCatMap.get(liId) : null;
+    const orderId = ref.orderRef?.id || ref.payment?.order?.id || null;
+    const orderLineItems = orderId ? orderLineItemMap.get(orderId) : null;
 
-    if (hit) {
-      const cat   = getCat(hit.l2);
-      const l3Cat = getL3(hit.l2, hit.l3Key);
-      cat.refunds   -= refNet / 100;
-      cat.net       -= refNet / 100;
-      l3Cat.refunds -= refNet / 100;
-      l3Cat.net     -= refNet / 100;
+    if (orderLineItems && orderLineItems.length > 0) {
+      // Distribute the refund proportionally across this order's line items
+      // by their gross-value share. Most refunds will be same-day so the
+      // original order is in our fetched data and we can do an exact split.
+      const totalGrossCents = orderLineItems.reduce((s, li) => s + li.grossCents, 0);
+      if (totalGrossCents > 0) {
+        let remainingCents = refNetCents;
+        for (let i = 0; i < orderLineItems.length; i++) {
+          const li = orderLineItems[i];
+          const isLast = i === orderLineItems.length - 1;
+          // Last line item absorbs any rounding residual so the total
+          // refund attribution equals refNetCents exactly.
+          const shareCents = isLast
+            ? remainingCents
+            : Math.round(refNetCents * li.grossCents / totalGrossCents);
+          remainingCents -= shareCents;
+          const cat   = getCat(li.l2);
+          const l3Cat = getL3(li.l2, li.l3Key);
+          cat.refunds   -= shareCents / 100;
+          cat.net       -= shareCents / 100;
+          l3Cat.refunds -= shareCents / 100;
+          l3Cat.net     -= shareCents / 100;
+        }
+      } else {
+        // Order has no positive-gross line items (rare — perhaps already
+        // fully refunded earlier). Fall through to generic Refund L2.
+        const cat   = getCat("Refund");
+        const l3Cat = getL3("Refund", "Order has no positive line items");
+        cat.refunds   -= refNetCents / 100;
+        cat.net       -= refNetCents / 100;
+        l3Cat.refunds -= refNetCents / 100;
+        l3Cat.net     -= refNetCents / 100;
+      }
     } else {
-      // Phase 2E: cross-day refund — original line item isn't in today's
-      // orders, so lineItemCatMap doesn't have it. Use the expanded refund
-      // data (fetchRefundElements expand=lineItem.item) to resolve the L2
-      // category via the same tiered logic the main loop uses. Falls back
-      // to a generic "Refund" L2 only when no tier resolves.
-      const refLi = ref.lineItem || {};
-      const refItemId = refLi.item?.id || null;
-      const refName = refLi.name || "";
-      const refNameKey = normalizeItemName(refName);
-      let resolvedL2 = null;
-      let resolvedL3Key = "Cross-day refunds";
-
-      // Tier 0: admin per-item override (id: or name: key)
-      if (refItemId && ovItems["id:" + refItemId] && VALID_L2.has(ovItems["id:" + refItemId])) {
-        resolvedL2 = ovItems["id:" + refItemId];
-        resolvedL3Key = "[Override] " + resolvedL2 + " (cross-day)";
-      } else if (refNameKey && ovItems["name:" + refNameKey] && VALID_L2.has(ovItems["name:" + refNameKey])) {
-        resolvedL2 = ovItems["name:" + refNameKey];
-        resolvedL3Key = "[Override] " + resolvedL2 + " (cross-day)";
-      }
-
-      // Tier 1: Clover L3 category from itemCatMap
-      if (!resolvedL2 && refItemId && itemCatMap[refItemId]) {
-        const refL3 = itemCatMap[refItemId];
-        let l2FromL3 = null;
-        if (refL3 === "Sku Book Items") {
-          l2FromL3 = SKU_BOOK_TO_L2[refName] || "Hardlines";
-        } else if (ov.l3Map && ov.l3Map[refL3] && VALID_L2.has(ov.l3Map[refL3])) {
-          l2FromL3 = ov.l3Map[refL3];
-        } else if (L3_TO_L2[refL3]) {
-          l2FromL3 = L3_TO_L2[refL3];
-        }
-        if (l2FromL3) {
-          resolvedL2 = l2FromL3;
-          resolvedL3Key = refL3 + " (cross-day)";
-        }
-      }
-
-      // Tier 2: name-based heuristics (same patterns the main loop uses)
-      if (!resolvedL2 && refName) {
-        const n = refName.toUpperCase();
-        if (/\bGIFT\s*CARD\b/i.test(refName)) {
-          resolvedL2 = "Gift Cards"; resolvedL3Key = "[Heuristic] Gift Cards (cross-day)";
-        } else if (/\bBIN\b|FILL A BAG|GLASS CASE/i.test(refName)) {
-          resolvedL2 = "Bin Products"; resolvedL3Key = "[Heuristic] Bin Products (cross-day)";
-        } else if (/EASTER|VALENTINE|CHRISTMAS|HALLOWEEN|FOURTH OF JULY|4TH OF JULY|ST[.\s]*PATRICK|HOLIDAY|SEASONAL/i.test(n)) {
-          resolvedL2 = "Seasonal"; resolvedL3Key = "[Heuristic] Seasonal (cross-day)";
-        } else if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV|RECLINER|LOVESEAT|OTTOMAN|MATTRESS/i.test(n)) {
-          resolvedL2 = "Furniture"; resolvedL3Key = "[Heuristic] Furniture (cross-day)";
-        } else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE/i.test(n)) {
-          resolvedL2 = "Home"; resolvedL3Key = "[Heuristic] Home (cross-day)";
-        } else if (/SHOE|BOOT|SANDAL|SLIPPER|SNEAKER/i.test(n)) {
-          resolvedL2 = "Softline - Shoes"; resolvedL3Key = "[Heuristic] Softline - Shoes (cross-day)";
-        } else if (/APPAREL|SHIRT|PANT|DRESS|JACKET|COAT|BLOUSE|SWEATER/i.test(n)) {
-          resolvedL2 = "Softline - Apparel"; resolvedL3Key = "[Heuristic] Softline - Apparel (cross-day)";
-        } else if (/CHEMICAL|CLEANING|DETERGENT/i.test(n)) {
-          resolvedL2 = "Consumable Other"; resolvedL3Key = "[Heuristic] Consumable Other (cross-day)";
-        } else if (/MASK|HEMP|OIL|LOTION|CREAM|SOAP|SHAMPOO|BODY|NAIL POLISH|COSMETIC/i.test(n)) {
-          resolvedL2 = "Consumable HBA"; resolvedL3Key = "[Heuristic] Consumable HBA (cross-day)";
-        } else if (/FOOD|SNACK|CANDY|BEVERAGE|DRINK/i.test(n)) {
-          resolvedL2 = "Consumable Food"; resolvedL3Key = "[Heuristic] Consumable Food (cross-day)";
-        } else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY|HAMILTON BEACH|FIRE PIT/i.test(n)) {
-          resolvedL2 = "Hardlines"; resolvedL3Key = "[Heuristic] Hardlines (cross-day)";
-        }
-      }
-
-      // Tier 3: admin pattern rules (prefix / contains / im-number)
-      if (!resolvedL2 && refName) {
-        const blM = refName.match(/BL[-\s]*(\d{4,5})/i);
-        const bareM = !blM && refName.match(/\b(\d{4,5})\b/);
-        const imNum = blM?.[1] || bareM?.[1];
-        const patternL2 = matchOverridePattern(refName, imNum, ovPatterns);
-        if (patternL2) {
-          resolvedL2 = patternL2;
-          resolvedL3Key = "[Pattern] " + patternL2 + " (cross-day)";
-        }
-      }
-
-      // Apply the resolved category, or fall back to generic "Refund" L2.
-      const targetL2 = resolvedL2 || "Refund";
-      const cat   = getCat(targetL2);
-      const l3Cat = getL3(targetL2, resolvedL3Key);
-      cat.refunds   -= refNet / 100;
-      cat.net       -= refNet / 100;
-      l3Cat.refunds -= refNet / 100;
-      l3Cat.net     -= refNet / 100;
+      // True cross-day refund: original order isn't in today's fetched
+      // data. Without the order's line items we can't attribute by
+      // category — bucket into generic Refund L2.
+      const cat   = getCat("Refund");
+      const l3Cat = getL3("Refund", "Cross-day refunds");
+      cat.refunds   -= refNetCents / 100;
+      cat.net       -= refNetCents / 100;
+      l3Cat.refunds -= refNetCents / 100;
+      l3Cat.net     -= refNetCents / 100;
     }
   }
 
@@ -4446,36 +4416,48 @@ export default {
       nextDay.setUTCDate(nextDay.getUTCDate() + 1);
       const untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
 
-      const refundElements = await fetchRefundElements(store, env, startOfDay, untilTs);
+      const [elements, refundElements] = await Promise.all([
+        fetchItemOrders(store, env, startOfDay, untilTs),
+        fetchRefundElements(store, env, startOfDay, untilTs),
+      ]);
       const itemCatMap = await fetchItemCategoryMap(store, env);
 
-      // Summarize each refund: present fields, line item details, category resolution outcome.
+      // Build the set of orderIds we have line items for (same logic the
+      // main loop uses) so we can tell which refunds will resolve via the
+      // order-ID path vs fall back to cross-day Refund L2.
+      const fetchedOrderIds = new Set();
+      for (const o of (elements || [])) {
+        if (o.id && o.total != null && o.total !== 0 && o.state === "locked") {
+          fetchedOrderIds.add(o.id);
+        }
+      }
+
       const summary = (refundElements || []).map(r => {
-        const li = r.lineItem || {};
-        const itemId = li.item?.id || null;
-        const l3 = itemId ? (itemCatMap[itemId] || null) : null;
+        const orderId = r.orderRef?.id || r.payment?.order?.id || null;
         return {
           id: r.id,
           amount: r.amount,
           taxAmount: r.taxAmount,
-          orderId: r.order?.id || null,
-          hasLineItem: !!r.lineItem,
-          lineItemId: li.id || null,
-          lineItemName: li.name || null,
-          lineItemKeys: Object.keys(li),
-          itemRef: li.item || null,
-          itemId,
-          itemCatMapHit: !!l3,
-          resolvedL3: l3,
+          netCents: (r.amount || 0) - (r.taxAmount || 0),
+          orderId,
+          orderInTodaysFetch: orderId ? fetchedOrderIds.has(orderId) : false,
+          willAttribute: orderId && fetchedOrderIds.has(orderId) ? "BY-ORDER (proportional across line items)" : "CROSS-DAY (generic Refund L2)",
         };
       });
+
+      const willAttributeCount = summary.filter(s => s.orderInTodaysFetch).length;
+      const totalRefundsCents = summary.reduce((s, x) => s + x.netCents, 0);
+      const willAttributeCents = summary.filter(s => s.orderInTodaysFetch).reduce((s, x) => s + x.netCents, 0);
 
       return new Response(JSON.stringify({
         store, dateStr,
         refundCount: refundElements?.length || 0,
+        ordersFetched: elements?.length || 0,
         itemCatMapSize: Object.keys(itemCatMap || {}).length,
-        sample: summary.slice(0, 10),
-        // Also include one raw refund object so we see all fields Clover returns
+        refundsTotal: `$${(totalRefundsCents / 100).toFixed(2)}`,
+        refundsAttributable: `$${(willAttributeCents / 100).toFixed(2)} (${willAttributeCount}/${summary.length})`,
+        refundsCrossDay: `$${((totalRefundsCents - willAttributeCents) / 100).toFixed(2)} (${summary.length - willAttributeCount}/${summary.length})`,
+        sample: summary.slice(0, 20),
         rawSample: refundElements?.[0] || null,
       }, null, 2), { headers: corsJson });
     }
