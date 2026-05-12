@@ -2562,7 +2562,7 @@ function applyRefundsToAggregate(data, refundCents) {
 }
 
 // ─── Fetch and aggregate for a store, then snapshot ──────────────
-async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, untilTimestamp = null) {
+async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, untilTimestamp = null, binRetailOverride = null) {
   const elements = await fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp);
   if (!elements) return null;
 
@@ -2573,6 +2573,16 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
   // are not double-deducted.
   const refundCents = await fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp, elements);
   applyRefundsToAggregate(data, refundCents);
+
+  // Phase 2D: when caller provides category-based bin/retail (computed via
+  // aggregateItemSales using Clover's L3 category map), override the name-based
+  // split from aggregateOrders. This keeps D1 daily_sales bin/retail aligned
+  // with the Item Sales tab — they otherwise diverge because aggregateOrders
+  // uses isBinItem() name regex while aggregateItemSales uses Clover categories.
+  if (binRetailOverride && typeof binRetailOverride.bin === 'number' && typeof binRetailOverride.retail === 'number') {
+    data.bin = +binRetailOverride.bin.toFixed(2);
+    data.retail = +binRetailOverride.retail.toFixed(2);
+  }
 
   // Defensive guards before persisting:
   //  1) If row is_manual_override = 1, NEVER overwrite (admin entered
@@ -4359,12 +4369,42 @@ export default {
         untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
       }
 
+      // Phase 2D: fetch overrides + costs ONCE for the category-based
+      // bin/retail override computation (shared across all stores).
+      const [overrides, itemCosts] = await Promise.all([
+        fetchItemOverrides(env),
+        fetchItemCosts(env),
+      ]);
+
       // Run all stores in parallel — each store is independent and the
       // subrequest budget is per-store-per-day (~30), so 6 in parallel
       // stays well under Cloudflare's 1,000-per-invocation cap while
       // dropping wall-clock from ~12s to ~2s per date.
       const settled = await Promise.allSettled(
-        stores.map(store => fetchAggregateAndSnapshot(store, env, startOfDay, dateStr, untilTs))
+        stores.map(async (store) => {
+          // Compute category-based bin/retail override (best-effort — falls
+          // back to name-based aggregateOrders split on failure).
+          let binRetailOverride = null;
+          try {
+            const [elements, refundElements] = await Promise.all([
+              fetchItemOrders(store, env, startOfDay, untilTs),
+              fetchRefundElements(store, env, startOfDay, untilTs),
+            ]);
+            if (elements && elements.length > 0) {
+              const itemCatMap = await fetchItemCategoryMap(store, env);
+              const itemAgg = aggregateItemSales(elements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements);
+              let binNet = 0, retailNet = 0;
+              for (const c of (itemAgg.categories || [])) {
+                if (c.category === "Bin Products") binNet += c.netSales;
+                else retailNet += c.netSales;
+              }
+              binRetailOverride = { bin: binNet, retail: retailNet };
+            }
+          } catch (e) {
+            console.warn(`Admin snapshot override prep failed for ${store}: ${e.message}`);
+          }
+          return fetchAggregateAndSnapshot(store, env, startOfDay, dateStr, untilTs, binRetailOverride);
+        })
       );
       const results = {};
       settled.forEach((r, i) => {
@@ -6936,26 +6976,51 @@ export default {
 
     for (const store of ALL_STORES) {
       try {
-        // Sales snapshot (existing)
-        const data = await fetchAggregateAndSnapshot(store, env, startOfDay, todayStr);
-        results[store] = { sales: data ? "ok" : "skipped" };
-
-        // Item sales snapshot (new)
+        // Phase 2D: compute item-snapshot FIRST so we can pass category-based
+        // bin/retail into the sales snapshot. Previously these ran independently
+        // and D1 daily_sales.bin used name-based isBinItem() regex while the
+        // Item Sales tab used Clover's "Bin Products" L3 category → numbers
+        // diverged. By running aggregateItemSales here and threading the
+        // result into fetchAggregateAndSnapshot, both stores read from a
+        // single source of truth.
+        let itemData = null;
+        let binRetailOverride = null;
         try {
           const [elements, refundElements] = await Promise.all([
             fetchItemOrders(store, env, startOfDay),
             fetchRefundElements(store, env, startOfDay),
           ]);
-          if (elements) {
+          if (elements && elements.length > 0) {
             const itemCatMap = await fetchItemCategoryMap(store, env);
-            const itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides, itemCosts, refundElements);
-            await saveItemSalesSnapshot(env, store, todayStr, itemData);
-            results[store].items = "ok";
-          } else {
-            results[store].items = "skipped";
+            itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides, itemCosts, refundElements);
+            let binNet = 0, retailNet = 0;
+            for (const c of (itemData.categories || [])) {
+              if (c.category === "Bin Products") binNet += c.netSales;
+              else retailNet += c.netSales;
+            }
+            binRetailOverride = { bin: binNet, retail: retailNet };
           }
         } catch (itemErr) {
-          results[store].items = `error: ${itemErr.message}`;
+          // Item-snapshot prep failure should not block the sales snapshot —
+          // fall through with binRetailOverride = null so fetchAggregateAndSnapshot
+          // still runs with its (less accurate) name-based bin classification.
+          console.warn(`Item snapshot prep failed for ${store}: ${itemErr.message}`);
+        }
+
+        // Sales snapshot (now with category-based bin/retail if available)
+        const data = await fetchAggregateAndSnapshot(store, env, startOfDay, todayStr, null, binRetailOverride);
+        results[store] = { sales: data ? "ok" : "skipped" };
+
+        // Persist the item snapshot we already computed above.
+        if (itemData) {
+          try {
+            await saveItemSalesSnapshot(env, store, todayStr, itemData);
+            results[store].items = "ok";
+          } catch (saveErr) {
+            results[store].items = `error: ${saveErr.message}`;
+          }
+        } else {
+          results[store].items = "skipped";
         }
       } catch (err) {
         results[store] = `error: ${err.message}`;
