@@ -4512,6 +4512,110 @@ export default {
       return new Response(JSON.stringify(out), { headers: corsJson });
     }
 
+    // ── Debug endpoint: show per-order residuals feeding "Other / Non-Item".
+    // ?action=debug-residuals&store=BL1&date=2026-05-11
+    // For each order: compute orderNet (total - tax) vs sum of line-item nets.
+    // Returns the top N orders by absolute residual + breakdown of why.
+    if (url.searchParams.get("action") === "debug-residuals") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      const dateStr = url.searchParams.get("date") || getETToday().dateStr;
+      const limit = parseInt(url.searchParams.get("limit") || "15", 10);
+      if (!store) {
+        return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
+      }
+      const startOfDay = getStartOfDayET(dateStr);
+      const nextDay = new Date(dateStr + 'T12:00:00Z');
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      const untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
+
+      const elements = await fetchItemOrders(store, env, startOfDay, untilTs);
+      let totalResidualCents = 0;
+      let positiveResidualCents = 0;
+      let negativeResidualCents = 0;
+      const perOrder = [];
+
+      for (const order of (elements || [])) {
+        if (order.total == null || order.total === 0) continue;
+        if (order.state !== "locked") continue;
+
+        const taxCents = (order.payments?.elements || []).reduce((s, p) => s + (p.taxAmount || 0), 0);
+        const orderNetCents = order.total - taxCents;
+
+        const lineItems = order.lineItems?.elements || [];
+        let liGrossSum = 0;
+        let liDiscSum = 0;
+        let liRefundSum = 0;
+        let lineDetail = [];
+        for (const li of lineItems) {
+          const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
+          const priceCents = (li.price || 0) * qty;
+          const grossCents = Math.abs(priceCents);
+          let lineDiscCents = 0;
+          for (const d of (li.discounts?.elements || [])) {
+            if (d.amount != null && d.amount !== 0) lineDiscCents += Math.abs(d.amount);
+            else if (d.percentage) lineDiscCents += Math.round(grossCents * Number(d.percentage) / 100);
+          }
+          if (priceCents < 0) {
+            liRefundSum += grossCents;
+          } else {
+            liGrossSum += grossCents;
+            liDiscSum += lineDiscCents;
+          }
+          lineDetail.push({
+            name: li.name, priceCents, qty, lineDiscCents,
+          });
+        }
+        // Order-level discount
+        let orderDiscCents = 0;
+        for (const d of (order.discounts?.elements || [])) {
+          if (d.amount != null && d.amount !== 0) orderDiscCents += Math.abs(d.amount);
+          else if (d.percentage) orderDiscCents += Math.round((liGrossSum - liDiscSum) * Number(d.percentage) / 100);
+        }
+        const liNetSum = liGrossSum - liDiscSum - orderDiscCents - liRefundSum;
+        const residualCents = Math.round(orderNetCents - liNetSum);
+        totalResidualCents += residualCents;
+        if (residualCents > 0) positiveResidualCents += residualCents;
+        else if (residualCents < 0) negativeResidualCents += residualCents;
+
+        if (residualCents !== 0) {
+          perOrder.push({
+            orderId: order.id,
+            orderTotal: order.total / 100,
+            taxCents,
+            orderNet: orderNetCents / 100,
+            lineItemCount: lineItems.length,
+            liGross: liGrossSum / 100,
+            liDisc: liDiscSum / 100,
+            orderDisc: orderDiscCents / 100,
+            liRefund: liRefundSum / 100,
+            liNetSum: liNetSum / 100,
+            residual: residualCents / 100,
+            lineItems: lineDetail.slice(0, 6).map(l => ({
+              name: l.name, price: l.priceCents / 100, qty: l.qty, disc: l.lineDiscCents / 100,
+            })),
+            hasOrderServiceCharge: !!order.serviceCharge,
+            hasCredits: !!(order.credits?.elements?.length),
+            modifiedTime: order.modifiedTime,
+          });
+        }
+      }
+      perOrder.sort((a, b) => Math.abs(b.residual) - Math.abs(a.residual));
+
+      return new Response(JSON.stringify({
+        store, dateStr,
+        ordersFetched: elements?.length || 0,
+        ordersWithResidual: perOrder.length,
+        totalResidual: `$${(totalResidualCents / 100).toFixed(2)}`,
+        positiveResidual: `$${(positiveResidualCents / 100).toFixed(2)}`,
+        negativeResidual: `$${(negativeResidualCents / 100).toFixed(2)}`,
+        top: perOrder.slice(0, limit),
+      }, null, 2), { headers: corsJson });
+    }
+
     // ── Admin: force-refresh the item category map cache for a store.
     // ?action=refresh-item-cats&store=BL1   (or store=all)
     // Deletes the cached KV map and refetches from Clover.
