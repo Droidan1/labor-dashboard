@@ -9677,7 +9677,13 @@
       const dampedTravel = (dy) => MAX_PULL * Math.tanh(Math.max(0, dy) / DAMP);
 
       function canStart() {
-        return window.scrollY === 0 && !appEl.classList.contains('hidden');
+        // <= 2 instead of === 0 — mobile browsers can report tiny non-zero
+        // scrollY values (subpixel offsets, momentum residual) while visually
+        // at top.
+        const scrollTop = window.scrollY ||
+                         document.documentElement.scrollTop ||
+                         document.body.scrollTop || 0;
+        return scrollTop <= 2 && !appEl.classList.contains('hidden');
       }
 
       // Drag-time write: no transition so element follows finger 1:1
@@ -9749,7 +9755,10 @@
         }
 
         // Page scrolled away from top mid-gesture — abort
-        if (window.scrollY > 0) {
+        const scrollTop = window.scrollY ||
+                         document.documentElement.scrollTop ||
+                         document.body.scrollTop || 0;
+        if (scrollTop > 5) {
           state = 'idle';
           reset();
           return;
@@ -9760,18 +9769,40 @@
       }
 
       function onTouchEnd() {
-        if (state === 'ready') {
+        // Compute travel from the last-known dy directly — don't rely on rAF
+        // callback having fired before release. A fast pull-and-release can
+        // leave state as 'pulling' even when currentDy is past threshold.
+        const wasEngaged = state === 'pulling' || state === 'ready';
+        const finalTravel = wasEngaged ? dampedTravel(currentDy) : 0;
+        const shouldRefresh = wasEngaged && finalTravel >= THRESHOLD;
+
+        if (shouldRefresh) {
           state = 'loading';
           animateTo('translateY(0)', true);
-          Promise.resolve(loadAll(true)).finally(() => {
+          // Defensive: cap the loading state at 30s so a hung/failed loadAll
+          // can't leave the indicator stuck visible.
+          let settled = false;
+          const watchdog = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            console.warn('PTR: loadAll timeout — resetting indicator');
             reset();
             state = 'idle';
-          });
+          }, 30000);
+          Promise.resolve()
+            .then(() => loadAll(true))
+            .catch(err => console.warn('PTR: loadAll failed', err))
+            .finally(() => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(watchdog);
+              reset();
+              state = 'idle';
+            });
           return;
         }
-        if (state === 'pulling' || state === 'tracking') {
-          reset();
-        }
+
+        if (wasEngaged) reset();
         if (state !== 'loading') state = 'idle';
       }
 
