@@ -84,18 +84,22 @@
       transition: opacity 0.2s 0.1s;
     }
     .refresh-btn:hover .refresh-label { opacity: 1; }
-    /* Pull-to-refresh indicator */
+    /* Disable browser native pull-to-refresh + bounce so our custom PTR is
+       the only feedback the user sees. Without this, Chrome's native PTR
+       fights ours, and iOS Safari's rubber-band bounce overlays the indicator. */
+    html, body { overscroll-behavior-y: none; }
+    /* Pull-to-refresh indicator — transform is controlled inline by JS so
+       drag follows the finger 1:1 (no CSS transition during drag), and
+       transition is set inline only during snap-back / release animations. */
     #ptr-indicator {
       position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
       display: flex; align-items: center; justify-content: center; gap: 8px;
       height: 52px; background: #3BB54A; color: white;
       font-size: 0.8rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
       transform: translateY(-100%);
-      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
       pointer-events: none; user-select: none;
+      will-change: transform;
     }
-    #ptr-indicator.ptr-visible { transform: translateY(0); }
-    #ptr-indicator.ptr-hide    { transform: translateY(-100%); }
     #ptr-spinner {
       width: 18px; height: 18px; border: 2.5px solid rgba(255,255,255,0.35);
       border-top-color: white; border-radius: 50%;
@@ -9644,82 +9648,141 @@
     });
 
     // ── Pull-to-refresh (mobile only) ────────────────────────────
+    // State machine: idle → tracking → pulling → ready → loading → idle
+    // - All transform writes are inline + rAF-batched (1:1 finger tracking)
+    // - Exponential damping for native-feeling resistance
+    // - touchcancel + scroll-position guards prevent stuck states
     (function initPullToRefresh() {
-      // Only wire up on touch devices
       if (!('ontouchstart' in window)) return;
 
-      const THRESHOLD   = 72;  // px pulled before "ready to release"
-      const MAX_PULL    = 100; // max visual travel in px
-      const ptr         = el('ptr-indicator');
-      const ptrLabel    = el('ptr-label');
-      const ptrArrow    = el('ptr-arrow');
+      const THRESHOLD = 72;   // damped travel px at which "Release to refresh" engages
+      const MAX_PULL  = 100;  // asymptotic max travel
+      const MIN_MOVE  = 8;    // ignore taps + jitter below this dy
+      const DAMP      = 180;  // exponential damping coefficient (higher = more resistance)
+      const EASE      = 'cubic-bezier(0.4, 0, 0.2, 1)';
 
-      let startY        = 0;
-      let pulling       = false;
-      let refreshing    = false;
+      const ptr      = el('ptr-indicator');
+      const ptrLabel = el('ptr-label');
+      const appEl    = el('app');
+      if (!ptr || !appEl) return;
 
-      function canPull() {
-        // Only trigger when scrolled to the very top and app is visible
-        return window.scrollY === 0 &&
-               !el('app').classList.contains('hidden') &&
-               !refreshing;
+      let state       = 'idle';   // idle | tracking | pulling | ready | loading
+      let startY      = 0;
+      let currentDy   = 0;
+      let rafPending  = false;
+
+      // Asymptotic exponential damping — easy at first, increasingly resistant
+      const dampedTravel = (dy) => MAX_PULL * (1 - Math.exp(-Math.max(0, dy) / DAMP));
+
+      function canStart() {
+        return window.scrollY === 0 && !appEl.classList.contains('hidden');
       }
 
-      document.addEventListener('touchstart', (e) => {
-        if (!canPull()) return;
-        startY  = e.touches[0].clientY;
-        pulling = false;
-      }, { passive: true });
-
-      document.addEventListener('touchmove', (e) => {
-        if (refreshing) return;
-        const dy = e.touches[0].clientY - startY;
-        if (dy <= 0) { pulling = false; return; }
-        if (!canPull() && !pulling) return;
-
-        pulling = true;
-        // Rubber-band: resistance increases as dy grows
-        const travel = Math.min(dy * 0.45, MAX_PULL);
-        const ready  = travel >= THRESHOLD * 0.45;
-
-        ptr.style.transform = `translateY(${travel - 52}px)`;
-        ptr.classList.remove('ptr-hide', 'ptr-loading');
+      // Drag-time write: no transition so element follows finger 1:1
+      function applyDrag(travel, ready) {
+        ptr.style.transition = 'none';
+        ptr.style.transform  = `translateY(${travel - 52}px)`;
         ptr.classList.add('ptr-visible');
         ptr.classList.toggle('ptr-ready', ready);
         ptrLabel.textContent = ready ? 'Release to refresh' : 'Pull to refresh';
-      }, { passive: true });
+      }
 
-      document.addEventListener('touchend', (e) => {
-        if (!pulling) return;
-        pulling = false;
+      function animateTo(targetTransform, withLoading) {
+        ptr.style.transition = `transform 0.25s ${EASE}`;
+        ptr.style.transform  = targetTransform;
+        if (withLoading) {
+          ptr.classList.add('ptr-loading', 'ptr-visible');
+          ptr.classList.remove('ptr-ready');
+          ptrLabel.textContent = 'Refreshing…';
+        }
+      }
 
-        const dy     = e.changedTouches[0].clientY - startY;
-        const travel = Math.min(dy * 0.45, MAX_PULL);
-        const ready  = travel >= THRESHOLD * 0.45;
+      function reset() {
+        // Animate back to hidden, then clear inline overrides so the next
+        // gesture starts from a clean default state.
+        ptr.style.transition = `transform 0.25s ${EASE}`;
+        ptr.style.transform  = '';
+        ptr.classList.remove('ptr-visible', 'ptr-ready', 'ptr-loading');
+        ptrLabel.textContent = 'Pull to refresh';
+      }
 
-        if (!ready) {
-          // Not pulled far enough — snap back
-          ptr.style.transform = '';
-          ptr.classList.remove('ptr-visible', 'ptr-ready');
-          ptr.classList.add('ptr-hide');
+      function scheduleUpdate() {
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(() => {
+          rafPending = false;
+          if (state !== 'pulling' && state !== 'ready') return;
+          const travel = dampedTravel(currentDy);
+          const ready  = travel >= THRESHOLD;
+          state = ready ? 'ready' : 'pulling';
+          applyDrag(travel, ready);
+        });
+      }
+
+      function onTouchStart(e) {
+        // ALWAYS capture startY — even when we can't start a pull yet.
+        // This prevents stale-startY bugs when a gesture begins outside
+        // the pull window then moves into it.
+        startY    = e.touches[0].clientY;
+        currentDy = 0;
+        state     = canStart() ? 'tracking' : 'idle';
+      }
+
+      function onTouchMove(e) {
+        if (state === 'idle' || state === 'loading') return;
+        const dy = e.touches[0].clientY - startY;
+
+        // Finger moved up or back — re-enter tracking so a downward pull
+        // starts fresh from this point.
+        if (dy <= 0) {
+          if (state === 'pulling' || state === 'ready') reset();
+          state = 'tracking';
           return;
         }
 
-        // Trigger refresh
-        refreshing = true;
-        ptr.style.transform = '';
-        ptr.classList.add('ptr-loading');
-        ptr.classList.remove('ptr-ready');
-        ptrLabel.textContent = 'Refreshing…';
+        if (state === 'tracking') {
+          if (dy < MIN_MOVE) return;     // ignore tap / micro-jitter
+          if (!canStart()) { state = 'idle'; return; }
+          state = 'pulling';
+        }
 
-        loadAll(true).finally(() => {
-          refreshing = false;
-          ptr.classList.remove('ptr-loading', 'ptr-visible');
-          ptr.classList.add('ptr-hide');
-          ptrLabel.textContent = 'Pull to refresh';
-          ptrArrow.style.transform = '';
-        });
-      }, { passive: true });
+        // Page scrolled away from top mid-gesture — abort
+        if (window.scrollY > 0) {
+          state = 'idle';
+          reset();
+          return;
+        }
+
+        currentDy = dy;
+        scheduleUpdate();
+      }
+
+      function onTouchEnd() {
+        if (state === 'ready') {
+          state = 'loading';
+          animateTo('translateY(0)', true);
+          Promise.resolve(loadAll(true)).finally(() => {
+            reset();
+            state = 'idle';
+          });
+          return;
+        }
+        if (state === 'pulling' || state === 'tracking') {
+          reset();
+        }
+        if (state !== 'loading') state = 'idle';
+      }
+
+      function onTouchCancel() {
+        if (state === 'loading') return;   // let in-flight refresh complete
+        reset();
+        state = 'idle';
+      }
+
+      document.addEventListener('touchstart',  onTouchStart,  { passive: true });
+      document.addEventListener('touchmove',   onTouchMove,   { passive: true });
+      document.addEventListener('touchend',    onTouchEnd,    { passive: true });
+      document.addEventListener('touchcancel', onTouchCancel, { passive: true });
     })();
   });
   </script>
