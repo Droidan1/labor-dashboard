@@ -1441,6 +1441,42 @@ async function fetchRefundElements(store, env, sinceTimestamp, untilTimestamp = 
   return all;
 }
 
+// ─── Fetch "manual refunds" from Clover ─────────────────────────
+// Manual Refunds are a SEPARATE Clover concept from regular Refunds.
+// They're manager-initiated cash/card-back transactions that are NOT
+// linked to a specific order — they don't appear in /v3/refunds, they
+// have their own endpoint and their own line on Clover's Sales Summary.
+// Without them, our totals over-report by the manual-refund amount.
+async function fetchManualRefunds(store, env, sinceTimestamp, untilTimestamp = null) {
+  const merchantId = env[`${store}_MERCHANT_ID`];
+  const apiToken = env[`${store}_API_TOKEN`];
+  if (!merchantId || !apiToken) return [];
+  const all = [];
+  let offset = 0;
+  const limit = 1000;
+  const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
+  try {
+    while (true) {
+      let url = `https://api.clover.com/v3/merchants/${merchantId}/manual_refunds`
+        + `?filter=createdTime>=${sinceTimestamp}`
+        + `&limit=${limit}&offset=${offset}`;
+      if (untilTimestamp) url += `&filter=createdTime<${untilTimestamp}`;
+      const data = await cloverFetchWithRetry(url, headers, `Clover manual_refunds ${store}`);
+      if (!data?.elements?.length) break;
+      // Filter to SUCCESS only — failed manual refunds didn't actually move money.
+      for (const r of data.elements) {
+        if (!r.result || r.result === "SUCCESS") all.push(r);
+      }
+      if (data.elements.length < limit) break;
+      offset += limit;
+    }
+  } catch (e) {
+    console.warn(`fetchManualRefunds(${store}) error:`, e.message);
+    return [];
+  }
+  return all;
+}
+
 // sameDayOrders: the locked-order elements already fetched for this day window.
 // When provided, same-day refunds (where Clover has already zeroed or reduced
 // order.total before the snapshot runs) are detected and skipped to avoid
@@ -1522,6 +1558,27 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
   if (skipped > 0) {
     console.log(`fetchRefundsTotal(${store}): skipped ${skipped/100} same-day refunds (already in order.total), deducting ${total/100}`);
   }
+
+  // Phase 2H: also subtract Manual Refunds (a separate Clover concept,
+  // not in /v3/refunds — manager-initiated cash/card-back transactions
+  // not linked to a specific order). Without this, totals over-report
+  // by the manual-refund total.
+  try {
+    const mrElements = await fetchManualRefunds(store, env, sinceTimestamp, untilTimestamp);
+    let manualTotalCents = 0;
+    for (const mr of mrElements) {
+      const gross = mr.amount || 0;
+      const tax = mr.taxAmount || 0;
+      manualTotalCents += (gross - tax);
+    }
+    if (manualTotalCents > 0) {
+      console.log(`fetchRefundsTotal(${store}): adding manual refunds ${manualTotalCents/100}`);
+      total += manualTotalCents;
+    }
+  } catch (e) {
+    console.warn(`fetchRefundsTotal(${store}) manual_refunds error:`, e.message);
+  }
+
   return total;
 }
 
@@ -2074,7 +2131,7 @@ function matchOverridePattern(rawName, imNum, patterns) {
 // undefined / EMPTY_OVERRIDES — caller threads it in for live + snapshot paths.
 // `itemCosts` is the shape returned by fetchItemCosts(); used to enrich each
 // line-item with cost so we can emit cost / extCost / grossProfit / gpmPct.
-function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements = [], extraOrdersForRefundLookup = []) {
+function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements = [], extraOrdersForRefundLookup = [], manualRefundElements = []) {
   const ov = overrides || EMPTY_OVERRIDES;
   const ovItems = ov.items || {};
   const ovPatterns = ov.patterns || [];
@@ -2526,6 +2583,25 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       l3Cat.refunds -= refNetCents / 100;
       l3Cat.net     -= refNetCents / 100;
     }
+  }
+
+  // ── Phase 2H: process Manual Refunds (not in /v3/refunds) ──────────────
+  // Manual Refunds are manager-initiated cash/card-back transactions that
+  // aren't linked to any order — they have no line items, so they can't
+  // attribute to a product category. Bucket them into a "Manual Refund" L2
+  // row so the Grand Total reconciles with Clover's Sales Summary.
+  for (const mr of (manualRefundElements || [])) {
+    if (mr.result && mr.result !== "SUCCESS") continue;
+    const gross = mr.amount || 0;
+    const tax = mr.taxAmount || 0;
+    const preTaxCents = gross - tax;
+    if (preTaxCents <= 0) continue;
+    const cat = getCat("Manual Refund");
+    const l3Cat = getL3("Manual Refund", "Manual cash/card-back");
+    cat.refunds   -= preTaxCents / 100;
+    cat.net       -= preTaxCents / 100;
+    l3Cat.refunds -= preTaxCents / 100;
+    l3Cat.net     -= preTaxCents / 100;
   }
 
   // Calculate totals and format response
@@ -4800,16 +4876,17 @@ export default {
           // the latest aggregateItemSales output (refund attribution etc.).
           let binRetailOverride = null;
           try {
-            const [elements, refundElements] = await Promise.all([
+            const [elements, refundElements, manualRefundElements] = await Promise.all([
               fetchItemOrders(store, env, startOfDay, untilTs),
               fetchRefundElements(store, env, startOfDay, untilTs),
+              fetchManualRefunds(store, env, startOfDay, untilTs),
             ]);
             if (elements && elements.length > 0) {
               const itemCatMap = await fetchItemCategoryMap(store, env);
               // Phase 2F: fetch original orders for cross-day refunds so they
               // attribute by category instead of falling to the Refund L2 bucket.
               const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
-              const itemAgg = aggregateItemSales(elements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements, extraOrders);
+              const itemAgg = aggregateItemSales(elements, itemCatMap, store, dateStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements);
               let binNet = 0, retailNet = 0;
               for (const c of (itemAgg.categories || [])) {
                 if (c.category === "Bin Products") binNet += c.netSales;
@@ -5011,14 +5088,15 @@ export default {
       const results = {};
       for (const store of stores) {
         try {
-          const [elements, refundElements] = await Promise.all([
+          const [elements, refundElements, manualRefundElements] = await Promise.all([
             fetchItemOrders(store, env, sinceTs, untilTs),
             fetchRefundElements(store, env, sinceTs, untilTs),
+            fetchManualRefunds(store, env, sinceTs, untilTs),
           ]);
           if (!elements) { results[store] = "skipped (no credentials)"; continue; }
           const itemCatMap = await fetchItemCategoryMap(store, env);
           const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
-          const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts, refundElements, extraOrders);
+          const itemData = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts, refundElements, extraOrders, manualRefundElements);
 
           // Zero-order guard: if Clover returned no orders and we already have
           // a non-empty item snapshot for this date, don't overwrite it.
@@ -6963,9 +7041,10 @@ export default {
       const untilTs = sinceTs + 3600000;
 
       try {
-        const [elements, refundElements] = await Promise.all([
+        const [elements, refundElements, manualRefundElements] = await Promise.all([
           fetchItemOrders(store, env, sinceTs, untilTs),
           fetchRefundElements(store, env, sinceTs, untilTs),
+          fetchManualRefunds(store, env, sinceTs, untilTs),
         ]);
         if (!elements) {
           return new Response(JSON.stringify({ error: "Store keys not found" }), { status: 404, headers: corsJson });
@@ -6976,7 +7055,7 @@ export default {
           fetchItemCosts(env),
           fetchCrossDayOrdersForRefunds(store, env, elements, refundElements),
         ]);
-        const result = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts, refundElements, extraOrders);
+        const result = aggregateItemSales(elements, itemCatMap, store, dateParam, overrides, itemCosts, refundElements, extraOrders, manualRefundElements);
         result.hour = hourParam;
         return new Response(JSON.stringify(result), { headers: corsJson });
       } catch (err) {
@@ -7413,14 +7492,15 @@ export default {
         let itemData = null;
         let binRetailOverride = null;
         try {
-          const [elements, refundElements] = await Promise.all([
+          const [elements, refundElements, manualRefundElements] = await Promise.all([
             fetchItemOrders(store, env, startOfDay),
             fetchRefundElements(store, env, startOfDay),
+            fetchManualRefunds(store, env, startOfDay),
           ]);
           if (elements && elements.length > 0) {
             const itemCatMap = await fetchItemCategoryMap(store, env);
             const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
-            itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides, itemCosts, refundElements, extraOrders);
+            itemData = aggregateItemSales(elements, itemCatMap, store, todayStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements);
             let binNet = 0, retailNet = 0;
             for (const c of (itemData.categories || [])) {
               if (c.category === "Bin Products") binNet += c.netSales;
