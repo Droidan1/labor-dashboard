@@ -4717,6 +4717,57 @@ export default {
       }, null, 2), { headers: corsJson });
     }
 
+    // ── Debug endpoint: show raw response from Clover's manual_refunds endpoint.
+    // Tries multiple URL variants to find the correct path. Use to diagnose
+    // why fetchManualRefunds returns empty when manual refunds clearly exist
+    // on Clover's Sales Summary.
+    // ?action=debug-manual-refunds&store=BL14&date=2026-05-12
+    if (url.searchParams.get("action") === "debug-manual-refunds") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      const dateStr = url.searchParams.get("date") || getETToday().dateStr;
+      const merchantId = env[`${store}_MERCHANT_ID`];
+      const apiToken = env[`${store}_API_TOKEN`];
+      if (!merchantId || !apiToken) {
+        return new Response(JSON.stringify({ error: "Store keys not found" }), { status: 404, headers: corsJson });
+      }
+      const startOfDay = getStartOfDayET(dateStr);
+      const nextDay = new Date(dateStr + 'T12:00:00Z');
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      const untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
+
+      const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
+      const variants = [
+        `https://api.clover.com/v3/merchants/${merchantId}/manual_refunds?filter=createdTime>=${startOfDay}&filter=createdTime<${untilTs}&limit=100`,
+        `https://api.clover.com/v3/merchants/${merchantId}/manualRefunds?filter=createdTime>=${startOfDay}&filter=createdTime<${untilTs}&limit=100`,
+        `https://api.clover.com/v3/merchants/${merchantId}/manual_refunds?limit=10`,
+        `https://api.clover.com/v3/merchants/${merchantId}/manualRefunds?limit=10`,
+      ];
+      const results = [];
+      for (const u of variants) {
+        try {
+          const resp = await fetch(u, { headers });
+          const text = await resp.text();
+          let parsed = null;
+          try { parsed = JSON.parse(text); } catch {}
+          results.push({
+            url: u,
+            status: resp.status,
+            ok: resp.ok,
+            count: parsed?.elements?.length ?? null,
+            firstElement: parsed?.elements?.[0] || null,
+            errorBody: !resp.ok ? text.slice(0, 500) : null,
+          });
+        } catch (e) {
+          results.push({ url: u, error: e.message });
+        }
+      }
+      return new Response(JSON.stringify({ store, dateStr, results }, null, 2), { headers: corsJson });
+    }
+
     // ── Admin: force-refresh the item category map cache for a store.
     // ?action=refresh-item-cats&store=BL1   (or store=all)
     // Deletes the cached KV map and refetches from Clover.
