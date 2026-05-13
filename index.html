@@ -9660,9 +9660,38 @@
       if (PTR_DEBUG) {
         dbgEl = document.createElement('div');
         dbgEl.id = 'ptr-debug';
-        dbgEl.style.cssText = 'position:fixed;bottom:8px;left:8px;z-index:99999;background:rgba(0,0,0,0.85);color:#0f0;font:11px monospace;padding:6px 10px;border-radius:4px;pointer-events:none;max-width:90vw;line-height:1.4';
+        dbgEl.style.cssText = 'position:fixed;bottom:8px;left:8px;z-index:99999;background:rgba(0,0,0,0.9);color:#0f0;font:11px monospace;padding:6px 10px;border-radius:4px;pointer-events:none;max-width:90vw;line-height:1.4;white-space:pre-wrap';
         dbgEl.textContent = 'PTR debug ready';
         document.body.appendChild(dbgEl);
+
+        // Catch ALL errors + rejected promises so we can see why fetches fail
+        const recentMsgs = [];
+        const logToBanner = (msg) => {
+          recentMsgs.push(msg);
+          if (recentMsgs.length > 3) recentMsgs.shift();
+          dbgEl.textContent = recentMsgs.join('\n');
+        };
+        window.addEventListener('error', (e) => {
+          logToBanner('❌ ERR: ' + (e.message || 'unknown') + (e.filename ? ' @' + e.filename.split('/').pop() : ''));
+        });
+        window.addEventListener('unhandledrejection', (e) => {
+          const reason = e.reason?.message || e.reason || 'unknown';
+          logToBanner('❌ REJ: ' + String(reason).slice(0, 100));
+        });
+
+        // Wrap fetch to show network errors live
+        const origFetch = window.fetch;
+        window.fetch = async function(...args) {
+          const url = String(args[0]).slice(-50);
+          try {
+            const resp = await origFetch.apply(this, args);
+            if (!resp.ok) logToBanner(`⚠️ ${resp.status} ${url}`);
+            return resp;
+          } catch (e) {
+            logToBanner('🔌 FETCH FAIL: ' + url + ' — ' + e.message);
+            throw e;
+          }
+        };
       }
       const dbg = (msg) => { if (dbgEl) dbgEl.textContent = msg; };
 
