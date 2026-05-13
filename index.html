@@ -9655,10 +9655,10 @@
     (function initPullToRefresh() {
       if (!('ontouchstart' in window)) return;
 
-      const THRESHOLD = 72;   // damped travel px at which "Release to refresh" engages
+      const THRESHOLD = 44;   // damped travel px at which "Release to refresh" engages
       const MAX_PULL  = 100;  // asymptotic max travel
       const MIN_MOVE  = 8;    // ignore taps + jitter below this dy
-      const DAMP      = 180;  // exponential damping coefficient (higher = more resistance)
+      const DAMP      = 150;  // tanh divisor — lower = faster engagement
       const EASE      = 'cubic-bezier(0.4, 0, 0.2, 1)';
 
       const ptr      = el('ptr-indicator');
@@ -9671,8 +9671,10 @@
       let currentDy   = 0;
       let rafPending  = false;
 
-      // Asymptotic exponential damping — easy at first, increasingly resistant
-      const dampedTravel = (dy) => MAX_PULL * (1 - Math.exp(-Math.max(0, dy) / DAMP));
+      // tanh damping — initial slope ≈ MAX_PULL/DAMP (so ~0.67 here), asymptote
+      // at MAX_PULL. ~72px of finger movement reaches threshold (44 damped px),
+      // matching the original PTR's "ready" engagement point.
+      const dampedTravel = (dy) => MAX_PULL * Math.tanh(Math.max(0, dy) / DAMP);
 
       function canStart() {
         return window.scrollY === 0 && !appEl.classList.contains('hidden');
