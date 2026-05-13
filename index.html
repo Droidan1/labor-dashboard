@@ -9653,7 +9653,20 @@
     // - Exponential damping for native-feeling resistance
     // - touchcancel + scroll-position guards prevent stuck states
     (function initPullToRefresh() {
-      if (!('ontouchstart' in window)) return;
+      // DEBUG: visible on-screen diagnostic banner. Remove once PTR is verified
+      // working in production. Set PTR_DEBUG to false to disable.
+      const PTR_DEBUG = true;
+      let dbgEl = null;
+      if (PTR_DEBUG) {
+        dbgEl = document.createElement('div');
+        dbgEl.id = 'ptr-debug';
+        dbgEl.style.cssText = 'position:fixed;bottom:8px;left:8px;z-index:99999;background:rgba(0,0,0,0.85);color:#0f0;font:11px monospace;padding:6px 10px;border-radius:4px;pointer-events:none;max-width:90vw;line-height:1.4';
+        dbgEl.textContent = 'PTR debug ready';
+        document.body.appendChild(dbgEl);
+      }
+      const dbg = (msg) => { if (dbgEl) dbgEl.textContent = msg; };
+
+      if (!('ontouchstart' in window)) { dbg('no touch support'); return; }
 
       const THRESHOLD = 44;   // damped travel px at which "Release to refresh" engages
       const MAX_PULL  = 100;  // asymptotic max travel
@@ -9728,17 +9741,19 @@
       }
 
       function onTouchStart(e) {
-        // ALWAYS capture startY — even when we can't start a pull yet.
-        // This prevents stale-startY bugs when a gesture begins outside
-        // the pull window then moves into it.
         startY    = e.touches[0].clientY;
         currentDy = 0;
         state     = canStart() ? 'tracking' : 'idle';
+        dbg(`start: y=${startY|0} state=${state} scrollY=${window.scrollY|0}`);
       }
 
       function onTouchMove(e) {
-        if (state === 'idle' || state === 'loading') return;
+        if (state === 'idle' || state === 'loading') {
+          dbg(`move blocked: state=${state}`);
+          return;
+        }
         const dy = e.touches[0].clientY - startY;
+        dbg(`move: dy=${dy|0} state=${state}`);
 
         // Finger moved up or back — re-enter tracking so a downward pull
         // starts fresh from this point.
@@ -9769,12 +9784,10 @@
       }
 
       function onTouchEnd() {
-        // Compute travel from the last-known dy directly — don't rely on rAF
-        // callback having fired before release. A fast pull-and-release can
-        // leave state as 'pulling' even when currentDy is past threshold.
         const wasEngaged = state === 'pulling' || state === 'ready';
         const finalTravel = wasEngaged ? dampedTravel(currentDy) : 0;
         const shouldRefresh = wasEngaged && finalTravel >= THRESHOLD;
+        dbg(`end: dy=${currentDy|0} travel=${finalTravel|0} state=${state} refresh=${shouldRefresh}`);
 
         if (shouldRefresh) {
           state = 'loading';
