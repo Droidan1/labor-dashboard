@@ -4741,15 +4741,18 @@ export default {
 
       const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
       const variants = [
-        // Payments endpoint — manual refunds may appear here with a refund flag or negative amount
-        `https://api.clover.com/v3/merchants/${merchantId}/payments?filter=createdTime>=${startOfDay}&filter=createdTime<${untilTs}&limit=100`,
-        // Payments with expand for tender/refund info
-        `https://api.clover.com/v3/merchants/${merchantId}/payments?filter=createdTime>=${startOfDay}&filter=createdTime<${untilTs}&expand=tender,refunds&limit=100`,
-        // Cash events (cash drawer log)
-        `https://api.clover.com/v3/merchants/${merchantId}/cash_events?filter=timestamp>=${startOfDay}&filter=timestamp<${untilTs}&limit=100`,
-        // Try to fetch one of the known manual refund IDs directly
-        `https://api.clover.com/v3/merchants/${merchantId}/manual_refunds/F88E35ZXJYNCP`,
-        `https://api.clover.com/v3/merchants/${merchantId}/payments/F88E35ZXJYNCP`,
+        // Try the specific manual refund ID in various endpoints
+        `https://api.clover.com/v3/merchants/${merchantId}/refunds/F88E35ZXJYNCP`,
+        `https://api.clover.com/v3/merchants/${merchantId}/credit_refunds/F88E35ZXJYNCP`,
+        `https://api.clover.com/v3/merchants/${merchantId}/credits/F88E35ZXJYNCP`,
+        `https://api.clover.com/v3/merchants/${merchantId}/orders/F88E35ZXJYNCP`,
+        // List endpoints to find manual refund records
+        `https://api.clover.com/v3/merchants/${merchantId}/credit_refunds?limit=10`,
+        `https://api.clover.com/v3/merchants/${merchantId}/credits?limit=10`,
+        // Refunds without date filter to see if manual ones show up at all
+        `https://api.clover.com/v3/merchants/${merchantId}/refunds?limit=20`,
+        // POST to manual_refunds (some Clover endpoints support GET via POST)
+        `https://api.clover.com/v3/merchants/${merchantId}/manual_refunds`,
       ];
       const results = [];
       for (const u of variants) {
