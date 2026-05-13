@@ -9772,6 +9772,10 @@
           if (state !== 'pulling' && state !== 'ready') return;
           const travel = dampedTravel(currentDy);
           const ready  = travel >= THRESHOLD;
+          // Fire haptic on the rising edge — only when transitioning into
+          // 'ready', not on every rAF tick while we stay above threshold.
+          // navigator.vibrate is a no-op on iOS Safari, fires on Android.
+          if (ready && state !== 'ready') navigator.vibrate?.(10);
           state = ready ? 'ready' : 'pulling';
           applyDrag(travel, ready);
         });
