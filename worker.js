@@ -4741,10 +4741,15 @@ export default {
 
       const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
       const variants = [
-        `https://api.clover.com/v3/merchants/${merchantId}/manual_refunds?filter=createdTime>=${startOfDay}&filter=createdTime<${untilTs}&limit=100`,
-        `https://api.clover.com/v3/merchants/${merchantId}/manualRefunds?filter=createdTime>=${startOfDay}&filter=createdTime<${untilTs}&limit=100`,
-        `https://api.clover.com/v3/merchants/${merchantId}/manual_refunds?limit=10`,
-        `https://api.clover.com/v3/merchants/${merchantId}/manualRefunds?limit=10`,
+        // Payments endpoint — manual refunds may appear here with a refund flag or negative amount
+        `https://api.clover.com/v3/merchants/${merchantId}/payments?filter=createdTime>=${startOfDay}&filter=createdTime<${untilTs}&limit=100`,
+        // Payments with expand for tender/refund info
+        `https://api.clover.com/v3/merchants/${merchantId}/payments?filter=createdTime>=${startOfDay}&filter=createdTime<${untilTs}&expand=tender,refunds&limit=100`,
+        // Cash events (cash drawer log)
+        `https://api.clover.com/v3/merchants/${merchantId}/cash_events?filter=timestamp>=${startOfDay}&filter=timestamp<${untilTs}&limit=100`,
+        // Try to fetch one of the known manual refund IDs directly
+        `https://api.clover.com/v3/merchants/${merchantId}/manual_refunds/F88E35ZXJYNCP`,
+        `https://api.clover.com/v3/merchants/${merchantId}/payments/F88E35ZXJYNCP`,
       ];
       const results = [];
       for (const u of variants) {
@@ -4753,12 +4758,28 @@ export default {
           const text = await resp.text();
           let parsed = null;
           try { parsed = JSON.parse(text); } catch {}
+
+          // For payments endpoint, find any with negative amounts or refund-like properties
+          let negativePayments = null;
+          let refundPayments = null;
+          if (parsed?.elements && Array.isArray(parsed.elements)) {
+            negativePayments = parsed.elements.filter(e => (e.amount || 0) < 0).slice(0, 3);
+            refundPayments = parsed.elements.filter(e =>
+              e.tender?.label?.toLowerCase().includes('refund') ||
+              e.tender?.labelKey?.toLowerCase().includes('refund') ||
+              e.tender?.label?.toLowerCase().includes('manual')
+            ).slice(0, 3);
+          }
           results.push({
             url: u,
             status: resp.status,
             ok: resp.ok,
-            count: parsed?.elements?.length ?? null,
-            firstElement: parsed?.elements?.[0] || null,
+            totalElements: parsed?.elements?.length ?? null,
+            firstElement: parsed?.elements?.[0] ?? (parsed && !parsed.elements ? parsed : null),
+            negativeAmountCount: negativePayments?.length ?? null,
+            negativeAmountSample: negativePayments,
+            refundLikeCount: refundPayments?.length ?? null,
+            refundLikeSample: refundPayments,
             errorBody: !resp.ok ? text.slice(0, 500) : null,
           });
         } catch (e) {
