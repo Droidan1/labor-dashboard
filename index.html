@@ -1972,6 +1972,13 @@
 
     for (const [dateStr, d] of Object.entries(data)) {
       const date = new Date(dateStr + "T12:00:00");
+      // Safari throws "Invalid Date" when toISOString() is called on an invalid
+      // Date object. Filter out malformed date keys from the D1 response so
+      // downstream toISOString() calls don't crash the render path.
+      if (isNaN(date.getTime())) {
+        console.warn(`loadStoreFromD1(${storeName}): skipping invalid date key:`, dateStr);
+        continue;
+      }
       const isToday = dateStr === todayStr;
       rows.push({
         date,
