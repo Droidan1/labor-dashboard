@@ -1442,11 +1442,12 @@ async function fetchRefundElements(store, env, sinceTimestamp, untilTimestamp = 
 }
 
 // ─── Fetch "manual refunds" from Clover ─────────────────────────
-// Manual Refunds are a SEPARATE Clover concept from regular Refunds.
-// They're manager-initiated cash/card-back transactions that are NOT
-// linked to a specific order — they don't appear in /v3/refunds, they
-// have their own endpoint and their own line on Clover's Sales Summary.
-// Without them, our totals over-report by the manual-refund amount.
+// "Manual Refunds" in Clover's UI = "Credits" in the API. They're
+// manager-initiated card-back transactions. The /v3/credits endpoint
+// returns them with the same structure as refunds: { id, amount,
+// taxAmount, orderRef, voided, result, ... }. Confirmed via debug
+// probe — /v3/manual_refunds is 405 GET-not-allowed, while
+// /v3/credits/{id} returns the record matching the UI screenshot.
 async function fetchManualRefunds(store, env, sinceTimestamp, untilTimestamp = null) {
   const merchantId = env[`${store}_MERCHANT_ID`];
   const apiToken = env[`${store}_API_TOKEN`];
@@ -1457,15 +1458,17 @@ async function fetchManualRefunds(store, env, sinceTimestamp, untilTimestamp = n
   const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
   try {
     while (true) {
-      let url = `https://api.clover.com/v3/merchants/${merchantId}/manual_refunds`
+      let url = `https://api.clover.com/v3/merchants/${merchantId}/credits`
         + `?filter=createdTime>=${sinceTimestamp}`
         + `&limit=${limit}&offset=${offset}`;
       if (untilTimestamp) url += `&filter=createdTime<${untilTimestamp}`;
-      const data = await cloverFetchWithRetry(url, headers, `Clover manual_refunds ${store}`);
+      const data = await cloverFetchWithRetry(url, headers, `Clover credits ${store}`);
       if (!data?.elements?.length) break;
-      // Filter to SUCCESS only — failed manual refunds didn't actually move money.
+      // Filter: SUCCESS result only, and skip voided ones.
       for (const r of data.elements) {
-        if (!r.result || r.result === "SUCCESS") all.push(r);
+        if (r.voided) continue;
+        if (r.result && r.result !== "SUCCESS") continue;
+        all.push(r);
       }
       if (data.elements.length < limit) break;
       offset += limit;
