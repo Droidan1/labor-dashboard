@@ -2861,6 +2861,23 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
   if (binRetailOverride && typeof binRetailOverride.bin === 'number' && typeof binRetailOverride.retail === 'number') {
     data.bin = +binRetailOverride.bin.toFixed(2);
     data.retail = +binRetailOverride.retail.toFixed(2);
+
+    // Phase 3: also adopt the category-derived TOTAL when provided. After the
+    // Phase 2H fix both totals should agree, but this makes the relationship
+    // explicit: D1.total = sum of all category netSales (visible in the Item
+    // Sales tab) = D1.bin + D1.retail + other categories. Logs a warning if
+    // the values drift more than a dollar so future regressions are obvious.
+    if (typeof binRetailOverride.total === 'number') {
+      const drift = Math.abs(data.total - binRetailOverride.total);
+      if (drift > 1) {
+        console.warn(
+          `[aggregator-drift] ${store}/${dateStr}: aggregateOrders=$${data.total.toFixed(2)} ` +
+          `vs aggregateItemSales=$${binRetailOverride.total.toFixed(2)} ` +
+          `(diff $${drift.toFixed(2)}) — using item-sales value for D1.total`
+        );
+      }
+      data.total = +binRetailOverride.total.toFixed(2);
+    }
   }
 
   // Defensive guards before persisting:
@@ -5129,7 +5146,13 @@ export default {
                 if (c.category === "Bin Products") binNet += c.netSales;
                 else retailNet += c.netSales;
               }
-              binRetailOverride = { bin: binNet, retail: retailNet };
+              // Phase 3: include grand total so D1.total = sum of categories,
+              // matching what the user sees in the Item Sales breakdown.
+              binRetailOverride = {
+                bin: binNet,
+                retail: retailNet,
+                total: itemAgg.totals?.netSales,
+              };
               // Persist item snapshot to KV — this is what the Item Sales tab reads.
               // Previously the admin re-snapshot path skipped this write and only
               // updated D1, so item-tab refunds never reflected admin re-runs.
@@ -7743,7 +7766,12 @@ export default {
               if (c.category === "Bin Products") binNet += c.netSales;
               else retailNet += c.netSales;
             }
-            binRetailOverride = { bin: binNet, retail: retailNet };
+            // Phase 3: include grand total so D1.total = sum of categories.
+            binRetailOverride = {
+              bin: binNet,
+              retail: retailNet,
+              total: itemData.totals?.netSales,
+            };
           }
         } catch (itemErr) {
           // Item-snapshot prep failure should not block the sales snapshot —
