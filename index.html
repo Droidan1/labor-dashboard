@@ -2491,6 +2491,12 @@
         const filteredBudget = sumRows(filterRows(allStoreData[s] || [])).bTotal;
         if (filteredBudget != null) todayTotalBudget += filteredBudget;
 
+        // Auction is manually entered in the Google Sheet, not in Clover snapshots.
+        // Sum it from the filtered rows so historical totals include auction sales.
+        for (const r of filterRows(allStoreData[s] || [])) {
+          if (r.aAuction != null) todayAuction += r.aAuction;
+        }
+
         const storeHist = historicalCloverData[s] || {};
         const weekRows = (allStoreData[s] || []).filter(r => r.week === selectedWeek);
         for (const [dateKey, snap] of Object.entries(storeHist)) {
@@ -2545,7 +2551,7 @@
       el("c-today-sub").textContent = showLive ? 'Fetching live data' : 'Loading stored data';
       el("c-today-breakdown").innerHTML = '';
     } else {
-      el("c-today-total").textContent = storesWithData > 0 ? fmtDollar(todayTotal) : '—';
+      el("c-today-total").textContent = storesWithData > 0 ? fmtDollar(todayTotal + todayAuction) : '—';
       el("c-today-sub").textContent = storesWithData > 0 ? `${storesWithData} of ${STORES.length} stores reporting` : 'All stores';
       if (storesWithData > 0) {
         el("c-today-breakdown").innerHTML = `
@@ -2583,8 +2589,8 @@
     el("c-today-budget").innerHTML = todayTotalBudget > 0 ? fmtDollar(todayTotalBudget) : '<span class="text-gray-300 font-medium">—</span>';
 
     const diffEl = el("c-today-diff");
-    if (!isLoading && todayTotal > 0 && todayTotalBudget > 0) {
-      const diff = todayTotal - todayTotalBudget;
+    if (!isLoading && (todayTotal + todayAuction) > 0 && todayTotalBudget > 0) {
+      const diff = (todayTotal + todayAuction) - todayTotalBudget;
       const isPositive = diff >= 0;
       diffEl.className = `text-[10px] font-semibold mt-1 ${isPositive ? 'text-green-600' : 'text-red-500'}`;
       diffEl.textContent = `${isPositive ? '+' : '-'}${fmtDollar(Math.abs(diff))}`;
@@ -2731,12 +2737,18 @@
       const histAvgTxnSec = histTxnTimeCount > 0 ? Math.round(histTxnTimeTotal / histTxnTimeCount) : null;
       const histAvgASP = histASPCount > 0 ? histASPTotal / histASPCount : null;
 
-      // Add live sales to the total only when showing live data
-      const combinedTotal = (m.aTotal || 0) + (liveSales != null && liveSales > 0 ? liveSales : 0);
-
       // Budget for today's row (only when showing live)
       const todayBudget = cardShowLive ? (getTodayRow(m.store)?.bTotal ?? null) : null;
       const storeAuction = cardShowLive ? (getTodayRow(m.store)?.aAuction ?? null) : null;
+
+      // Add live sales + manually-entered auction to the total. m.aAuction
+      // sums non-today rows; storeAuction picks up today's auction when
+      // showing live (loadStoreFromD1 sets aAuction=null for today's row to
+      // avoid double-counting between historical sum and live display).
+      const combinedTotal = (m.aTotal || 0)
+        + (m.aAuction || 0)
+        + (liveSales != null && liveSales > 0 ? liveSales : 0)
+        + (cardShowLive && storeAuction != null ? storeAuction : 0);
 
       // Label for the "total" section when not showing live
       const periodLabel = isDayView
