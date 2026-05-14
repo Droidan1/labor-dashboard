@@ -4614,6 +4614,158 @@ export default {
       return new Response(JSON.stringify(out), { headers: corsJson });
     }
 
+    // ── Debug endpoint: explain why aggregateOrders.totalNet diverges from
+    // aggregateItemSales.grandTotal. Returns side-by-side totals + per-order
+    // diffs + refund/credit dedup check.
+    // ?action=debug-revenue-mismatch&store=BL2&date=2026-05-13
+    if (url.searchParams.get("action") === "debug-revenue-mismatch") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      const dateStr = url.searchParams.get("date") || getETToday().dateStr;
+      if (!store) {
+        return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
+      }
+      const startOfDay = getStartOfDayET(dateStr);
+      const nextDay = new Date(dateStr + 'T12:00:00Z');
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      const untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
+
+      // Fetch everything aggregateItemSales would see
+      const [elements, refundElements, manualRefundElements, itemCatMap, overrides, itemCosts] = await Promise.all([
+        fetchItemOrders(store, env, startOfDay, untilTs),
+        fetchRefundElements(store, env, startOfDay, untilTs),
+        fetchManualRefunds(store, env, startOfDay, untilTs),
+        fetchItemCategoryMap(store, env),
+        fetchItemOverrides(env),
+        fetchItemCosts(env),
+      ]);
+      const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
+
+      // ── Path A: aggregateOrders ─────────────────────────
+      const aggOrders = aggregateOrders(elements, startOfDay);
+      const refundsTotalCents = await fetchRefundsTotal(store, env, startOfDay, untilTs, null);
+      const aggOrdersTotalPostRefunds = aggOrders.total - (refundsTotalCents / 100);
+
+      // ── Path B: aggregateItemSales ──────────────────────
+      const aggItems = aggregateItemSales(
+        elements, itemCatMap, store, dateStr, overrides, itemCosts,
+        refundElements, extraOrders, manualRefundElements
+      );
+      const itemGrandTotal = (aggItems.categories || []).reduce((s, c) => s + (c.netSales || 0), 0);
+
+      // ── Per-order diff: payment-based net vs line-item net ──────
+      const perOrderDiffs = [];
+      for (const order of (elements || [])) {
+        if (order.total == null || order.total === 0) continue;
+        if (order.state !== "locked") continue;
+
+        const taxCents = (order.payments?.elements || []).reduce((s, p) => s + (p.taxAmount || 0), 0);
+        const pmtSumCents = (order.payments?.elements || []).reduce((s, p) => s + (p.amount || 0), 0);
+        const grossOrderCents = pmtSumCents > 0 ? pmtSumCents : order.total;
+        const orderNetCents = grossOrderCents - taxCents;
+
+        // Compute line item net the way aggregateItemSales does
+        let liGrossCents = 0, liDiscCents = 0, liRefundCents = 0;
+        const lineItems = order.lineItems?.elements || [];
+        // First pass: line-level discounts + post-line subtotal
+        let subAfterLineDisc = 0;
+        const liDiscCache = new Map();
+        for (const li of lineItems) {
+          const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
+          const grossC = Math.abs((li.price || 0) * qty);
+          let d = 0;
+          for (const dd of (li.discounts?.elements || [])) {
+            if (dd.amount != null && dd.amount !== 0) d += Math.abs(dd.amount);
+            else if (dd.percentage) d += Math.round(grossC * Number(dd.percentage) / 100);
+          }
+          liDiscCache.set(li, d);
+          if ((li.price || 0) >= 0) subAfterLineDisc += (grossC - d);
+        }
+        let orderDiscCents = 0;
+        for (const dd of (order.discounts?.elements || [])) {
+          if (dd.amount != null && dd.amount !== 0) orderDiscCents += Math.abs(dd.amount);
+          else if (dd.percentage && subAfterLineDisc > 0) orderDiscCents += Math.round(subAfterLineDisc * Number(dd.percentage) / 100);
+        }
+        // Second pass: total per-line net contribution
+        for (const li of lineItems) {
+          const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
+          const priceC = (li.price || 0) * qty;
+          const grossC = Math.abs(priceC);
+          let d = liDiscCache.get(li) || 0;
+          if (priceC >= 0 && orderDiscCents > 0 && subAfterLineDisc > 0) {
+            const lineNet = grossC - d;
+            if (lineNet > 0) d += Math.round(orderDiscCents * lineNet / subAfterLineDisc);
+          }
+          if (priceC < 0) liRefundCents += grossC;
+          else { liGrossCents += grossC; liDiscCents += d; }
+        }
+        const itemNetCents = liGrossCents - liDiscCents - liRefundCents;
+        const diffCents = orderNetCents - itemNetCents;
+        if (Math.abs(diffCents) > 1) {
+          perOrderDiffs.push({
+            orderId: order.id,
+            orderTotal: order.total / 100,
+            pmtSum: pmtSumCents / 100,
+            taxCents: taxCents / 100,
+            orderNet: orderNetCents / 100,
+            liGross: liGrossCents / 100,
+            liDisc: liDiscCents / 100,
+            liRefund: liRefundCents / 100,
+            itemNet: itemNetCents / 100,
+            diff: diffCents / 100,
+            lineItemCount: lineItems.length,
+            hasServiceCharge: !!order.serviceCharge,
+            sampleItems: lineItems.slice(0, 3).map(li => ({ name: li.name, price: (li.price || 0) / 100, qty: li.unitQty != null ? li.unitQty / 1000 : 1 })),
+          });
+        }
+      }
+      perOrderDiffs.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+
+      // ── Dedup check: any refund.id matches a credit.id? Or same amount+createdTime? ──
+      const refundIds = new Set((refundElements || []).map(r => r.id));
+      const creditIds = new Set((manualRefundElements || []).map(r => r.id));
+      const sharedIds = [...refundIds].filter(id => creditIds.has(id));
+      // Amount+time match (within 5min)
+      const refundFingerprints = (refundElements || []).map(r => ({ id: r.id, amount: r.amount, t: r.createdTime }));
+      const creditFingerprints = (manualRefundElements || []).map(r => ({ id: r.id, amount: r.amount, t: r.createdTime }));
+      const possibleDupes = [];
+      for (const r of refundFingerprints) {
+        for (const c of creditFingerprints) {
+          if (r.amount === c.amount && Math.abs(r.t - c.t) < 300000) {
+            possibleDupes.push({ refundId: r.id, creditId: c.id, amount: r.amount, secondsApart: Math.abs(r.t - c.t) / 1000 });
+          }
+        }
+      }
+
+      return new Response(JSON.stringify({
+        store, dateStr,
+        summary: {
+          aggregateOrders_totalNet_preRefund: aggOrders.total,
+          aggregateOrders_totalNet_postRefund: +aggOrdersTotalPostRefunds.toFixed(2),
+          aggregateItemSales_grandTotal: +itemGrandTotal.toFixed(2),
+          refundsCents_subtracted: refundsTotalCents / 100,
+          gap_postRefund: +(aggOrdersTotalPostRefunds - itemGrandTotal).toFixed(2),
+          // Per category breakdown for sanity-check
+          categoryTotals: (aggItems.categories || []).map(c => ({ category: c.category, qty: c.qty, gross: c.gross, discounts: c.discounts, refunds: c.refunds, netSales: c.netSales })),
+        },
+        refundDedupCheck: {
+          refundCount: refundElements?.length || 0,
+          creditCount: manualRefundElements?.length || 0,
+          sharedIdsCount: sharedIds.length,
+          sharedIdsSample: sharedIds.slice(0, 5),
+          possibleDuplicates_amountTimeMatch: possibleDupes,
+        },
+        ordersWithRevenueDiff: {
+          count: perOrderDiffs.length,
+          totalDiff: +(perOrderDiffs.reduce((s, o) => s + o.diff, 0)).toFixed(2),
+          top10: perOrderDiffs.slice(0, 10),
+        },
+      }, null, 2), { headers: corsJson });
+    }
+
     // ── Debug endpoint: show per-order residuals feeding "Other / Non-Item".
     // ?action=debug-residuals&store=BL1&date=2026-05-11
     // For each order: compute orderNet (total - tax) vs sum of line-item nets.
