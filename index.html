@@ -391,16 +391,6 @@
 
       <div id="store-cards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
 
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div class="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors">
-          <h3 class="font-display text-gray-800 dark:text-gray-200 mb-4" id="labor-chart-title">Labor % by Store</h3>
-          <div class="h-60"><canvas id="labor-chart" role="img" aria-label="Horizontal bar chart showing labor percentage by store"></canvas></div>
-        </div>
-        <div class="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors">
-          <h3 class="font-display text-gray-800 dark:text-gray-200 mb-4" id="budget-chart-title">Actual vs Budget — Net Sales</h3>
-          <div class="h-60"><canvas id="budget-chart" role="img" aria-label="Bar chart comparing actual vs budget net sales by store"></canvas></div>
-        </div>
-      </div>
       <div class="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors">
         <div class="flex justify-between items-center mb-4">
           <h3 class="font-display text-gray-800 dark:text-gray-200">Weekly Sales Trend — All Stores</h3>
@@ -1762,7 +1752,7 @@
   let liveDataLoading = false;
   let historicalDataLoading = false;
   let weeklyTotalsCache = {}; // { storeName: { weekNum: aTotal } }
-  let laborChart=null, budgetChart=null, trendChart=null;
+  let trendChart=null;
   let currentPage = 'dashboard';   // 'dashboard' | 'store-detail'
   let currentStoreName = null;
   let dailySalesChart = null;
@@ -5703,49 +5693,6 @@
       ticks: { color: textColor },
       grid: { color: gridColor }
     };
-
-    // --- Labor chart ---
-    const laborData = metrics.map(m => m.laborPct);
-    const laborColors = metrics.map(m => m.laborPct > LABOR_TARGET ? "#ef4444" : "#10b981");
-    if (laborChart) {
-      laborChart.data.labels = names;
-      laborChart.data.datasets[0].data = laborData;
-      laborChart.data.datasets[0].backgroundColor = laborColors;
-      laborChart.options.scales.x = scaleDefaults;
-      laborChart.options.scales.y = scaleDefaults;
-      laborChart.update();
-    } else {
-      laborChart = new Chart(el("labor-chart"), {
-        type: "bar",
-        data: { labels: names, datasets: [{ data: laborData, backgroundColor: laborColors }] },
-        options: {
-          indexAxis: "y",
-          plugins: { legend: { display: false } },
-          scales: { x: scaleDefaults, y: scaleDefaults }
-        }
-      });
-    }
-
-    // --- Budget chart ---
-    const budgetData = metrics.map(m => m.aTotal);
-    const budgetColors = metrics.map(m => m.color);
-    if (budgetChart) {
-      budgetChart.data.labels = names;
-      budgetChart.data.datasets[0].data = budgetData;
-      budgetChart.data.datasets[0].backgroundColor = budgetColors;
-      budgetChart.options.scales.x = scaleDefaults;
-      budgetChart.options.scales.y = scaleDefaults;
-      budgetChart.update();
-    } else {
-      budgetChart = new Chart(el("budget-chart"), {
-        type: "bar",
-        data: { labels: names, datasets: [{ label: "Actual", data: budgetData, backgroundColor: budgetColors }] },
-        options: {
-          plugins: { legend: { display: false } },
-          scales: { x: scaleDefaults, y: scaleDefaults }
-        }
-      });
-    }
 
     // --- Trend chart ---
     const trendWeeks = allWeeks.filter(w => w !== currentWeek);
