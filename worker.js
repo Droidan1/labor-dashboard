@@ -2164,7 +2164,14 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   }
 
   for (const order of allElements) {
-    if (order.total == null || order.total === 0) continue;
+    // Skip null / zero / NEGATIVE orders. Negative-total orders are Clover's
+    // representation of manual refunds (an "order" with a "Manual Transaction"
+    // negative line item). aggregateOrders skips these via adjustedOrderNet<=0
+    // and accounts for the refund via /v3/credits in fetchRefundsTotal. If we
+    // process them here, the negative line items get dumped into "Refund" L2
+    // AND the same dollars get subtracted AGAIN as "Manual Refund" L2 — a
+    // double-deduction equal to the manual-refund total per day.
+    if (order.total == null || order.total <= 0) continue;
     if (order.state !== "locked") continue;
 
     // Phase 2G: compute orderNetCents from payment.amount (original, pre-refund)
