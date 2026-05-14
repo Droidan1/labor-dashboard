@@ -1945,28 +1945,61 @@ async function buildStoreWeekly(env, store, dates) {
       : Promise.resolve(null))
   );
 
-  // KPI totals from D1 daily rows. Use D1 `total` (= aggregated sales) as the
-  // single source of truth for net sales, mirroring the dashboard's behavior
-  // — keeps Weekly Retail's Net Sales identical to the Dashboard's week total.
+  // KPI totals from D1 daily rows. netSales = D1.total + D1.auction
+  // ("all revenue"), mirroring the Dashboard's store-card total which now
+  // includes manually-entered auction sales. D1.total alone is just POS
+  // revenue (aggregateItemSales grand total); auction is a separate manual
+  // entry from the Google Sheet that isn't part of any Clover category but
+  // IS part of the store's actual daily revenue.
   let netSales = 0, retail = 0, bin = 0, auction = 0, budget = 0, transactions = 0;
   let laborNumerator = 0, laborDenominator = 0;
   for (const r of dailyRows) {
-    netSales += Number(r.total) || 0;
+    const rowTotal = Number(r.total) || 0;
+    const rowAuction = Number(r.auction) || 0;
+    const rowRevenue = rowTotal + rowAuction;
+    netSales += rowRevenue;
     retail += Number(r.retail) || 0;
     bin += Number(r.bin) || 0;
-    auction += Number(r.auction) || 0;
+    auction += rowAuction;
     budget += Number(r.budget) || 0;
     transactions += Number(r.order_count) || 0;
     const lp = Number(r.labor_pct);
-    const t = Number(r.total);
-    if (Number.isFinite(lp) && Number.isFinite(t) && t > 0) {
-      laborNumerator += lp * t;
-      laborDenominator += t;
+    if (Number.isFinite(lp) && rowRevenue > 0) {
+      laborNumerator += lp * rowRevenue;
+      laborDenominator += rowRevenue;
     }
   }
   const merged = mergeItemSnapshots(itemSnaps.filter(Boolean));
+  // Inject a synthetic "Auction" row into the item-sales categories so the
+  // per-store L2 table sums to netSales (auction included). Without this,
+  // the L2 Total in the footer wouldn't match the Net Sales tile in the
+  // header for any store with auction sales.
+  if (auction > 0) {
+    merged.categories.push({
+      category: "Auction",
+      qty: 0,
+      gross: roundCents(auction),
+      discounts: 0,
+      refunds: 0,
+      netSales: roundCents(auction),
+      asp: 0,
+      cost: 0,
+      extCost: 0,
+      grossProfit: roundCents(auction),
+      gpmPct: 100,
+      pctQty: 0,
+      l3Rows: [],
+    });
+    merged.categories.sort((a, b) => b.netSales - a.netSales);
+    merged.totals.netSales = roundCents(merged.totals.netSales + auction);
+    merged.totals.gross = roundCents(merged.totals.gross + auction);
+    merged.totals.grossProfit = roundCents((merged.totals.grossProfit || 0) + auction);
+  }
   const qty = merged.totals.qty;
-  const asp = qty > 0 ? netSales / qty : 0;
+  // ASP = per-item average price. Auction sales have no item count (qty=0),
+  // so including auction in the numerator would inflate the per-Clover-item
+  // ASP. Use POS revenue only here.
+  const asp = qty > 0 ? (netSales - auction) / qty : 0;
   const variance = netSales - budget;
   const variancePct = budget > 0 ? (variance / budget) * 100 : 0;
   const laborPct = laborDenominator > 0 ? laborNumerator / laborDenominator : 0;
@@ -6221,12 +6254,16 @@ export default {
             cLaborDen += b.totals.netSales;
           }
         }
-        const cAsp = cQty > 0 ? cNet / cQty : 0;
+        // ASP excludes auction (auction has no qty — would inflate per-item avg)
+        const cAsp = cQty > 0 ? (cNet - cAuction) / cQty : 0;
         const cVar = cNet - cBudget;
         const cVarPct = cBudget > 0 ? (cVar / cBudget) * 100 : 0;
         const cLabor = cLaborDen > 0 ? cLaborNum / cLaborDen : 0;
 
-        // L2 × store matrix (scoped stores only)
+        // L2 × store matrix (scoped stores only). Since buildStoreWeekly now
+        // injects an "Auction" row into each bundle's itemSales.categories,
+        // the matrix automatically includes it — no special-case needed here.
+        // The matrix grand total now equals the KPI table Net Sales.
         const l2Set = new Set();
         for (const b of bundles) {
           for (const c of b.itemSales.categories) l2Set.add(c.category);
@@ -6367,7 +6404,7 @@ export default {
             perStoreL2Net[s] = summary.l2Net || {};
           }));
 
-          let wkNet = 0, wkQty = 0, wkTxn = 0, wkBudget = 0, wkLaborNum = 0, wkLaborDen = 0;
+          let wkNet = 0, wkQty = 0, wkTxn = 0, wkBudget = 0, wkLaborNum = 0, wkLaborDen = 0, wkAuction = 0;
           for (const s of scopedStoresT13) {
             const t = perStore[s] || {};
             stores[s].netSales.push(Number(t.netSales) || 0);
@@ -6380,6 +6417,7 @@ export default {
             wkQty += Number(t.qty) || 0;
             wkTxn += Number(t.transactions) || 0;
             wkBudget += Number(t.budget) || 0;
+            wkAuction += Number(t.auction) || 0;
             const tn = Number(t.netSales) || 0;
             if (tn > 0) {
               wkLaborNum += (Number(t.laborPct) || 0) * tn;
@@ -6389,7 +6427,8 @@ export default {
           total.netSales.push(roundCents(wkNet));
           total.qty.push(wkQty);
           total.transactions.push(wkTxn);
-          total.asp.push(wkQty > 0 ? roundCents(wkNet / wkQty) : 0);
+          // ASP excludes auction so per-item averages aren't inflated
+          total.asp.push(wkQty > 0 ? roundCents((wkNet - wkAuction) / wkQty) : 0);
           total.laborPct.push(wkLaborDen > 0 ? Math.round((wkLaborNum / wkLaborDen) * 10) / 10 : 0);
           total.budget.push(roundCents(wkBudget));
 
