@@ -98,6 +98,124 @@
     /* Pull-to-refresh indicator — transform is controlled inline by JS so
        drag follows the finger 1:1 (no CSS transition during drag), and
        transition is set inline only during snap-back / release animations. */
+    /* ── Hourly Snapshot overlay (Phase 3 — notification deep-link target) ── */
+    #hourly-overlay{
+      position:fixed; inset:0; z-index:10000;
+      background:
+        radial-gradient(circle at 50% 0%,rgba(59,181,74,.07),transparent 55%),
+        #0e1117;
+      display:flex; flex-direction:column; align-items:center;
+      overflow-y:auto; padding:20px 16px 32px;
+      animation:hs-fade .3s ease both;
+    }
+    #hourly-overlay.hidden{ display:none; }
+    @keyframes hs-fade{ from{opacity:0} to{opacity:1} }
+    @keyframes hs-drop{ from{opacity:0;transform:translateY(-14px) scale(.97)} to{opacity:1;transform:none} }
+    @keyframes hs-row{ from{opacity:0;transform:translateX(-6px)} to{opacity:1;transform:none} }
+    @keyframes hs-pulse{
+      0%{box-shadow:0 0 0 0 rgba(59,181,74,.5)}
+      70%{box-shadow:0 0 0 8px rgba(59,181,74,0)}
+      100%{box-shadow:0 0 0 0 rgba(59,181,74,0)}
+    }
+    .hs-card{
+      width:100%; max-width:440px; margin-top:8px;
+      background:linear-gradient(180deg,rgba(22,27,36,.65),rgba(14,17,23,.65));
+      border:1px solid rgba(255,255,255,.07); border-radius:22px; overflow:hidden;
+      box-shadow:0 24px 64px rgba(0,0,0,.55);
+      animation:hs-drop .5s cubic-bezier(.22,1,.36,1) both;
+      font-family:'Poppins',system-ui,sans-serif;
+    }
+    .hs-head{
+      display:flex; align-items:center; gap:11px;
+      padding:16px 18px 13px; border-bottom:1px solid rgba(255,255,255,.07);
+    }
+    .hs-logo{
+      width:36px; height:36px; border-radius:9px; flex-shrink:0;
+      background:#fff; display:flex; align-items:center; justify-content:center;
+      overflow:hidden; box-shadow:0 4px 14px rgba(59,181,74,.3);
+    }
+    .hs-logo img{ width:78%; height:78%; object-fit:contain; }
+    .hs-brand{ flex:1; min-width:0; }
+    .hs-brand .nm{
+      font-family:'Luckiest Guy',cursive; font-size:16px; letter-spacing:.03em;
+      color:#e8eef5; line-height:1;
+    }
+    .hs-brand .sub{
+      font-size:10px; color:#5a6573; letter-spacing:.1em;
+      text-transform:uppercase; margin-top:4px;
+    }
+    .hs-time{ font-size:12px; color:#5a6573; font-variant-numeric:tabular-nums; }
+    .hs-close{
+      width:30px; height:30px; border-radius:8px; flex-shrink:0;
+      background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.08);
+      color:#8a96a8; font-size:16px; cursor:pointer; margin-left:4px;
+      display:flex; align-items:center; justify-content:center; transition:.15s;
+    }
+    .hs-close:hover{ color:#e8eef5; border-color:rgba(255,255,255,.18); }
+    .hs-summary{ padding:18px 18px 14px; }
+    .hs-summary .lbl{
+      font-size:10px; font-weight:600; letter-spacing:.14em;
+      text-transform:uppercase; color:#5a6573; margin-bottom:8px;
+    }
+    .hs-summary .row{ display:flex; align-items:baseline; gap:9px; }
+    .hs-total{
+      font-family:'Luckiest Guy',cursive; font-size:34px; letter-spacing:.01em;
+      color:#e8eef5; line-height:1;
+    }
+    .hs-of{ font-size:14px; color:#5a6573; font-variant-numeric:tabular-nums; }
+    .hs-badge{
+      margin-left:auto; font-size:12px; font-weight:600; padding:5px 12px;
+      border-radius:99px; font-variant-numeric:tabular-nums;
+    }
+    .hs-list{ padding:6px 0 4px; }
+    .hs-srow{ padding:11px 18px; animation:hs-row .45s ease both; }
+    .hs-srow:nth-child(1){animation-delay:.05s} .hs-srow:nth-child(2){animation-delay:.09s}
+    .hs-srow:nth-child(3){animation-delay:.13s} .hs-srow:nth-child(4){animation-delay:.17s}
+    .hs-srow:nth-child(5){animation-delay:.21s} .hs-srow:nth-child(6){animation-delay:.25s}
+    .hs-stop{ display:flex; align-items:center; gap:9px; margin-bottom:8px; }
+    .hs-dot{ width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+    .hs-name{ font-size:14px; font-weight:600; color:#e8eef5; flex:1; min-width:0;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .hs-money{ font-size:13px; font-variant-numeric:tabular-nums;
+      display:flex; gap:5px; align-items:baseline; }
+    .hs-money .a{ color:#e8eef5; font-weight:600; }
+    .hs-money .sl{ color:#5a6573; }
+    .hs-money .b{ color:#8a96a8; }
+    .hs-pct{
+      font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px;
+      min-width:48px; text-align:center; font-variant-numeric:tabular-nums; flex-shrink:0;
+    }
+    .hs-track{ height:5px; background:rgba(255,255,255,.06);
+      border-radius:99px; overflow:hidden; }
+    .hs-fill{ height:100%; border-radius:99px; }
+    .hs-red  { background:rgba(239,68,68,.14);  color:#f87171; border:1px solid rgba(239,68,68,.28); }
+    .hs-amber{ background:rgba(245,158,11,.14); color:#fbbf24; border:1px solid rgba(245,158,11,.28); }
+    .hs-green{ background:rgba(59,181,74,.16);  color:#4fd361; border:1px solid rgba(59,181,74,.32); }
+    .hs-d-red{background:#ef4444}  .hs-d-amber{background:#f59e0b}  .hs-d-green{background:#3BB54A}
+    .hs-f-red{background:linear-gradient(90deg,#ef4444,#f87171)}
+    .hs-f-amber{background:linear-gradient(90deg,#f59e0b,#fbbf24)}
+    .hs-f-green{background:linear-gradient(90deg,#3BB54A,#4fd361)}
+    .hs-foot{
+      padding:13px 18px; display:flex; justify-content:space-between;
+      align-items:center; border-top:1px solid rgba(255,255,255,.07);
+    }
+    .hs-foot .l{ font-size:11px; color:#5a6573; font-variant-numeric:tabular-nums; }
+    .hs-foot .r{
+      font-size:11px; font-weight:600; color:#4fd361; cursor:pointer;
+      background:none; border:none; font-family:inherit;
+    }
+    .hs-foot .r:hover{ text-decoration:underline; }
+    .hs-refresh{
+      width:100%; max-width:440px; margin:14px 0 0;
+      display:flex; align-items:center; justify-content:center; gap:7px;
+      color:#5a6573; font-size:11px; font-family:'Poppins',system-ui,sans-serif;
+      background:none; border:none; cursor:pointer;
+    }
+    .hs-refresh:hover{ color:#8a96a8; }
+    .hs-pulse{ width:6px; height:6px; border-radius:50%; background:#3BB54A;
+      animation:hs-pulse 2s infinite; }
+    .hs-empty{ color:#5a6573; font-size:13px; padding:48px 24px; text-align:center; }
+
     #ptr-indicator {
       position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
       display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -243,6 +361,9 @@
   </div>
 
   <div id="error-banner" class="hidden bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm px-6 py-3 rounded-lg mx-6 mt-4"></div>
+
+  <!-- Hourly Snapshot overlay (Phase 3) — populated by openHourlySnapshot() -->
+  <div id="hourly-overlay" class="hidden" role="dialog" aria-modal="true" aria-label="Hourly sales snapshot"></div>
 
   <div id="app" class="hidden min-h-screen flex">
     <!-- Sidebar -->
@@ -3657,6 +3778,155 @@
     }
   }
   window.handleDeepLink = handleDeepLink;
+
+  // ══════════════════════════════════════════════════════════════
+  //  HOURLY SNAPSHOT (Phase 3) — the notification deep-link target.
+  //  Renders the reviewed preview card from data the dashboard has
+  //  already loaded (liveCloverData + today's budget/auction), so the
+  //  numbers stay identical to the store cards. No extra fetch.
+  // ══════════════════════════════════════════════════════════════
+  let hsTimer = null;
+
+  function hsStatusClass(pct) {
+    if (pct == null) return 'amber';
+    if (pct >= 0)   return 'green';
+    if (pct > -25)  return 'amber';
+    return 'red';
+  }
+  function hsMoney(v) {
+    return '$' + Math.round(v || 0).toLocaleString('en-US');
+  }
+
+  function buildHourlyCard() {
+    const nowET = new Date();
+    const timeLabel = nowET.toLocaleTimeString('en-US',
+      { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' });
+    const dateLabel = nowET.toLocaleDateString('en-US',
+      { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' });
+
+    let chainSales = 0, chainBudget = 0, anyData = false;
+    const rows = STORES.map(s => {
+      const live = liveCloverData[s];
+      const today = getTodayRow(s);
+      const auction = today?.aAuction || 0;
+      const sales  = (live?.total || 0) + auction;
+      const budget = today?.bTotal || 0;
+      if (live?.total != null) anyData = true;
+      chainSales += sales;
+      if (budget > 0) chainBudget += budget;
+      const pct = budget > 0 ? Math.round(((sales - budget) / budget) * 100) : null;
+      const cls = hsStatusClass(pct);
+      const barW = budget > 0 ? Math.max(0, Math.min(100, Math.round((sales / budget) * 100))) : 0;
+      const sign = pct == null ? '' : (pct >= 0 ? '+' : '');
+      return `
+        <div class="hs-srow">
+          <div class="hs-stop">
+            <span class="hs-dot hs-d-${cls}"></span>
+            <span class="hs-name">${escapeHtml(shortName(s))}</span>
+            <span class="hs-money">
+              <span class="a">${hsMoney(sales)}</span>
+              ${budget > 0 ? `<span class="sl">/</span><span class="b">${hsMoney(budget)}</span>` : ''}
+            </span>
+            <span class="hs-pct hs-${cls}">${pct == null ? '—' : sign + pct + '%'}</span>
+          </div>
+          <div class="hs-track"><div class="hs-fill hs-f-${cls}" style="width:${barW}%"></div></div>
+        </div>`;
+    }).join('');
+
+    const chainPct = chainBudget > 0
+      ? Math.round(((chainSales - chainBudget) / chainBudget) * 100) : null;
+    const chainCls = hsStatusClass(chainPct);
+    const chainSign = chainPct == null ? '' : (chainPct >= 0 ? '+' : '');
+
+    if (!anyData) {
+      return `<div class="hs-card"><div class="hs-empty">
+        Loading live sales…<br><span style="font-size:11px">If this persists, pull to refresh the dashboard.</span>
+      </div></div>
+      <button class="hs-refresh" onclick="closeHourlySnapshot()">Close</button>`;
+    }
+
+    return `
+      <div class="hs-card">
+        <div class="hs-head">
+          <div class="hs-logo"><img src="BLlogo.svg" alt="BL"></div>
+          <div class="hs-brand">
+            <div class="nm">Hourly Snapshot</div>
+            <div class="sub">Bargain Lane · Chain-wide</div>
+          </div>
+          <div class="hs-time">${timeLabel}</div>
+          <button class="hs-close" onclick="closeHourlySnapshot()" aria-label="Close">✕</button>
+        </div>
+
+        <div class="hs-summary">
+          <div class="lbl">Sales vs Budget · Day-to-date</div>
+          <div class="row">
+            <div class="hs-total">${fmtK(chainSales)}</div>
+            <div class="hs-of">${chainBudget > 0 ? '/ ' + fmtK(chainBudget) : ''}</div>
+            ${chainPct == null ? '' :
+              `<div class="hs-badge hs-${chainCls}">${chainSign}${chainPct}%</div>`}
+          </div>
+        </div>
+
+        <div class="hs-list">${rows}</div>
+
+        <div class="hs-foot">
+          <div class="l">${dateLabel} · ${timeLabel} ET</div>
+          <button class="r" onclick="closeHourlySnapshot()">Open dashboard →</button>
+        </div>
+      </div>
+      <button class="hs-refresh" onclick="refreshHourlySnapshot(this)">
+        <span class="hs-pulse"></span> Live · tap to refresh
+      </button>`;
+  }
+
+  function renderHourlySnapshot() {
+    const o = el('hourly-overlay');
+    if (!o || o.classList.contains('hidden')) return;
+    o.innerHTML = buildHourlyCard();
+  }
+
+  function openHourlySnapshot() {
+    const o = el('hourly-overlay');
+    if (!o) return;
+    o.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+    renderHourlySnapshot();
+    // If the app opened cold with no live data yet, pull it then re-render.
+    const hasData = STORES.some(s => liveCloverData[s]?.total != null);
+    if (!hasData && typeof loadAll === 'function') {
+      Promise.resolve(loadAll()).finally(renderHourlySnapshot);
+    }
+    // Light auto-refresh from in-memory data while the screen is open.
+    clearInterval(hsTimer);
+    hsTimer = setInterval(renderHourlySnapshot, 60000);
+  }
+  window.openHourlySnapshot = openHourlySnapshot;
+
+  function closeHourlySnapshot() {
+    const o = el('hourly-overlay');
+    if (!o) return;
+    o.classList.add('hidden');
+    o.innerHTML = '';
+    document.body.style.overflow = '';
+    clearInterval(hsTimer);
+    hsTimer = null;
+    if (typeof navigateToPage === 'function') navigateToPage('dashboard');
+  }
+  window.closeHourlySnapshot = closeHourlySnapshot;
+
+  function refreshHourlySnapshot(btn) {
+    if (btn) btn.innerHTML = '<span class="hs-pulse"></span> Refreshing…';
+    Promise.resolve(typeof loadAll === 'function' ? loadAll(true) : null)
+      .finally(renderHourlySnapshot);
+  }
+  window.refreshHourlySnapshot = refreshHourlySnapshot;
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      const o = el('hourly-overlay');
+      if (o && !o.classList.contains('hidden')) closeHourlySnapshot();
+    }
+  });
 
   function navigateToPage(page) {
     // Guard admin-only pages
