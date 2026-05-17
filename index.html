@@ -3612,6 +3612,45 @@
     navigateToPage('dashboard');
   }
 
+  // ── Deep-link router ─────────────────────────────────────────────
+  // Single entry point for notification taps. Handles both the warm path
+  // (SW postMessage 'sw-navigate' while the PWA is open) and cold start
+  // (SW openWindow at /?view=hourly). Parses ?view= query params AND
+  // legacy #hash links. Phase 2: routing contract only — openHourlySnapshot
+  // is implemented in Phase 3; until then we degrade gracefully to the
+  // dashboard so a notification tap is never broken.
+  function handleDeepLink(rawUrl) {
+    if (!rawUrl) return;
+    let view = null, hash = null;
+    try {
+      const u = new URL(rawUrl, window.location.origin);
+      view = u.searchParams.get('view');
+      hash = u.hash ? u.hash.slice(1) : null;
+    } catch (_) {
+      const qIdx = rawUrl.indexOf('?');
+      if (qIdx !== -1) {
+        const amp = rawUrl.slice(qIdx + 1).split('#')[0];
+        view = new URLSearchParams(amp).get('view');
+      }
+      const hIdx = rawUrl.indexOf('#');
+      if (hIdx !== -1) hash = rawUrl.slice(hIdx + 1);
+    }
+
+    if (view === 'hourly') {
+      if (typeof window.openHourlySnapshot === 'function') {
+        window.openHourlySnapshot();
+      } else if (typeof navigateToPage === 'function') {
+        // Phase 3 not yet shipped — land on the dashboard rather than nowhere.
+        navigateToPage('dashboard');
+      }
+      return;
+    }
+    if (hash && typeof navigateToPage === 'function') {
+      navigateToPage(hash);
+    }
+  }
+  window.handleDeepLink = handleDeepLink;
+
   function navigateToPage(page) {
     // Guard admin-only pages
     const adminOnly = ['inventory', 'users'];
@@ -9547,8 +9586,7 @@
       // Deep-link: notification tap focuses the window then SW posts a navigate message
       navigator.serviceWorker.addEventListener('message', e => {
         if (e.data?.type === 'sw-navigate' && e.data.url) {
-          const hash = e.data.url.split('#')[1];
-          if (hash && typeof navigateToPage === 'function') navigateToPage(hash);
+          handleDeepLink(e.data.url);
         }
       });
     }
@@ -9610,7 +9648,18 @@
 
     initPasskeyLoginButton();
     checkAuth().then(authed => {
-      if (authed) loadAll();
+      if (!authed) return;
+      const dlView = new URLSearchParams(window.location.search).get('view');
+      const loaded = loadAll();
+      // Cold-start deep link: SW opened a fresh window at /?view=hourly.
+      // Route after initial data loads so Phase 3's screen has live data,
+      // then strip the param so a manual refresh doesn't re-trigger it.
+      if (dlView) {
+        Promise.resolve(loaded).finally(() => {
+          handleDeepLink(window.location.href);
+          history.replaceState({}, '', window.location.pathname);
+        });
+      }
     });
 
     // ── Pull-to-refresh (mobile only) ────────────────────────────
