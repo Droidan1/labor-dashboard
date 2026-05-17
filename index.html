@@ -7,7 +7,14 @@
   
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#3BB54A">
-  <link rel="apple-touch-icon" href="BLlogo.svg">
+  <!-- iOS ignores SVG apple-touch-icon AND uses the home-screen icon for
+       web-push notifications. Must be PNG. 180px is the iOS sweet spot. -->
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="RETJG Hub">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

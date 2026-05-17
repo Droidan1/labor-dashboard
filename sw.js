@@ -1,10 +1,12 @@
-const CACHE_NAME = 'dashboard-cache-v7';
+const CACHE_NAME = 'dashboard-cache-v8';
 
 // Pre-fetched and cached on install
 const PRECACHE_ASSETS = [
   './',
   './index.html',
   './tailwind.css',
+  './apple-touch-icon.png',
+  './icon-192.png',
 ];
 
 // CDN + font hosts: versioned/immutable — serve cache-first
@@ -56,8 +58,8 @@ self.addEventListener('push', event => {
   const options = {
     body: data.body,
     tag: data.tag || 'default',
-    icon: '/BLlogo.svg',
-    badge: '/BLlogo.svg',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
     requireInteraction: false,
     data: data.url ? { url: data.url } : {},
   };
