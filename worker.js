@@ -3453,29 +3453,51 @@ async function dispatchIntervalSummary(env) {
     }
     if (!userStores.length) { summary.skipped++; continue; }
 
-    // Build compact summary lines: "Label: $sales / $budget ±N%"
+    // Build summary lines (notification-preview-v3 format):
+    //   All Stores $26.0K / $37.6K  -31%      ← compact $K headline
+    //   Coliseum $10,214 / $11,899  -14%      ← full dollars per store
+    //   ...
     const fmtMoney = v => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0);
-    const lines = userStores.map(s => {
+    // Compact $K form for the headline (matches the reviewed preview).
+    const fmtK = v => {
+      const n = Number(v) || 0;
+      return Math.abs(n) >= 1000 ? `$${(n / 1000).toFixed(1)}K` : fmtMoney(n);
+    };
+
+    let chainSales = 0, chainBudget = 0;
+    const storeLines = userStores.map(s => {
       const snap = snapshotMap[s];
       const label = STORE_LABELS[s] || s;
-      if (!snap) return `${label}: —`;
+      if (!snap) return `${label} —`;
       const sales  = Number(snap.total)  || 0;
       const budget = Number(snap.budget) || 0;
-      const salesStr = fmtMoney(sales);
+      chainSales += sales;
+      if (budget > 0) chainBudget += budget;
       if (budget > 0) {
         const diffPct = Math.round(((sales - budget) / budget) * 100);
         const sign = diffPct >= 0 ? '+' : '';
-        return `${label}: ${salesStr} / ${fmtMoney(budget)} ${sign}${diffPct}%`;
+        return `${label} ${fmtMoney(sales)} / ${fmtMoney(budget)} ${sign}${diffPct}%`;
       }
-      return `${label}: ${salesStr}`;
+      return `${label} ${fmtMoney(sales)}`;
     });
+
+    // "All Stores" headline = sum across this user's permitted stores.
+    let headline;
+    if (chainBudget > 0) {
+      const cPct = Math.round(((chainSales - chainBudget) / chainBudget) * 100);
+      const cSign = cPct >= 0 ? '+' : '';
+      headline = `All Stores ${fmtK(chainSales)} / ${fmtK(chainBudget)} ${cSign}${cPct}%`;
+    } else {
+      headline = `All Stores ${fmtK(chainSales)}`;
+    }
+    const lines = [headline, ...storeLines];
 
     const timeLabel = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' });
     const payload = JSON.stringify({
       title: `Sales Update — ${timeLabel}`,
       body: lines.join('\n'),
       tag: 'interval-summary',
-      url: '/',
+      url: '/?view=hourly',
     });
 
     // Fetch this user's subscriptions
@@ -6673,6 +6695,20 @@ export default {
         return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest, intervalSummary, supplyNotifications }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+        // GET/POST ?action=test-interval-summary  (admin secret)
+    // Fires dispatchIntervalSummary on demand so the v3 notification format
+    // can be verified without waiting for the top-of-hour cron.
+    if (url.searchParams.get("action") === "test-interval-summary") {
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+      try {
+        const result = await dispatchIntervalSummary(env);
+        return new Response(JSON.stringify({ ok: true, result }, null, 2), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: "dispatch failed", detail: e.message }), { status: 500, headers: corsJson });
       }
     }
 
