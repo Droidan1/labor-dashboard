@@ -215,6 +215,10 @@
     .hs-pulse{ width:6px; height:6px; border-radius:50%; background:#3BB54A;
       animation:hs-pulse 2s infinite; }
     .hs-empty{ color:#5a6573; font-size:13px; padding:48px 24px; text-align:center; }
+    /* Suppress the entrance animation on poll/steady re-renders so rows
+       don't replay their slide-in every refresh. */
+    #hourly-overlay.hs-no-anim .hs-card,
+    #hourly-overlay.hs-no-anim .hs-srow{ animation:none !important; }
 
     #ptr-indicator {
       position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
@@ -3785,7 +3789,11 @@
   //  already loaded (liveCloverData + today's budget/auction), so the
   //  numbers stay identical to the store cards. No extra fetch.
   // ══════════════════════════════════════════════════════════════
-  let hsTimer = null;
+  let hsTimer = null;   // steady 60s refresh while open
+  let hsPoll  = null;   // readiness poll while live Clover data loads
+  function liveDataReady() {
+    return STORES.some(s => liveCloverData[s]?.total != null);
+  }
 
   function hsStatusClass(pct) {
     if (pct == null) return 'amber';
@@ -3879,10 +3887,18 @@
       </button>`;
   }
 
-  function renderHourlySnapshot() {
+  // animate=true plays the entrance animation; false (poll/steady
+  // re-renders) suppresses it so rows don't replay their slide-in.
+  function renderHourlySnapshot(animate) {
     const o = el('hourly-overlay');
     if (!o || o.classList.contains('hidden')) return;
+    o.classList.toggle('hs-no-anim', !animate);
     o.innerHTML = buildHourlyCard();
+  }
+
+  function startHsSteady() {
+    clearInterval(hsTimer);
+    hsTimer = setInterval(() => renderHourlySnapshot(false), 60000);
   }
 
   function openHourlySnapshot() {
@@ -3890,15 +3906,35 @@
     if (!o) return;
     o.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
-    renderHourlySnapshot();
-    // If the app opened cold with no live data yet, pull it then re-render.
-    const hasData = STORES.some(s => liveCloverData[s]?.total != null);
-    if (!hasData && typeof loadAll === 'function') {
-      Promise.resolve(loadAll()).finally(renderHourlySnapshot);
+    clearInterval(hsTimer); clearInterval(hsPoll); hsTimer = hsPoll = null;
+
+    if (liveDataReady()) {
+      renderHourlySnapshot(true);
+      startHsSteady();
+      return;
     }
-    // Light auto-refresh from in-memory data while the screen is open.
-    clearInterval(hsTimer);
-    hsTimer = setInterval(renderHourlySnapshot, 60000);
+
+    // No live data yet (typical on a cold notification tap — loadAll()'s
+    // promise resolves on the D1/sheets fetch, but liveCloverData is filled
+    // by a separate un-awaited Clover fetch). Show the loading state, then
+    // poll the readiness flag instead of re-calling loadAll().
+    renderHourlySnapshot(true);
+    // Only force a load if nothing is already in flight; otherwise just
+    // wait for the in-flight loadAll()/cloverPromise to land.
+    if (!liveDataLoading && typeof loadAll === 'function') loadAll(true);
+
+    let waited = 0;
+    hsPoll = setInterval(() => {
+      waited += 800;
+      if (liveDataReady()) {
+        clearInterval(hsPoll); hsPoll = null;
+        renderHourlySnapshot(true);   // animate the real card in once
+        startHsSteady();
+      } else if (waited >= 30000) {
+        clearInterval(hsPoll); hsPoll = null;
+        renderHourlySnapshot(false);  // give up — leaves loading + Close
+      }
+    }, 800);
   }
   window.openHourlySnapshot = openHourlySnapshot;
 
@@ -3908,8 +3944,7 @@
     o.classList.add('hidden');
     o.innerHTML = '';
     document.body.style.overflow = '';
-    clearInterval(hsTimer);
-    hsTimer = null;
+    clearInterval(hsTimer); clearInterval(hsPoll); hsTimer = hsPoll = null;
     if (typeof navigateToPage === 'function') navigateToPage('dashboard');
   }
   window.closeHourlySnapshot = closeHourlySnapshot;
@@ -3917,7 +3952,19 @@
   function refreshHourlySnapshot(btn) {
     if (btn) btn.innerHTML = '<span class="hs-pulse"></span> Refreshing…';
     Promise.resolve(typeof loadAll === 'function' ? loadAll(true) : null)
-      .finally(renderHourlySnapshot);
+      .finally(() => {
+        // loadAll() resolves before the Clover fetch finishes — poll
+        // briefly for the fresh numbers, then re-render.
+        let waited = 0;
+        clearInterval(hsPoll);
+        hsPoll = setInterval(() => {
+          waited += 800;
+          renderHourlySnapshot(false);
+          if ((liveDataReady() && !liveDataLoading) || waited >= 15000) {
+            clearInterval(hsPoll); hsPoll = null;
+          }
+        }, 800);
+      });
   }
   window.refreshHourlySnapshot = refreshHourlySnapshot;
 
