@@ -2896,8 +2896,8 @@
     // and charts, but the All Stores Budget left panel intentionally
     // ignores it so the user can always see the week-level pacing.
     el("c-period-label").textContent = "Weekly";
-    el("c-total").textContent = fmtK(tA);
-    el("c-budget").textContent = fmtK(tB);
+    el("c-total").textContent = fmtDollar(tA);
+    el("c-budget").textContent = fmtDollar(tB);
     const wkDiff = tA - tB;
     const wkCls = wkDiff >= 0 ? 'text-green-600' : 'text-red-500';
     el("c-variance").className = `text-xs font-semibold mt-1 ${wkCls}`;
@@ -2960,8 +2960,8 @@
         }
       }
     }
-    el("c-month-total").textContent = fmtK(mA);
-    el("c-month-budget").textContent = fmtK(mB);
+    el("c-month-total").textContent = fmtDollar(mA);
+    el("c-month-budget").textContent = fmtDollar(mB);
     el("c-month-label").textContent = monthLabel ? `Monthly · ${monthLabel}` : 'Monthly';
     const mDiff = mA - mB;
     const mCls = mDiff >= 0 ? 'text-green-600' : 'text-red-500';
