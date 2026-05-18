@@ -482,46 +482,90 @@
         <div id="dash-day-selector" class="flex items-center gap-1 overflow-x-auto"></div>
       </div>
 
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div class="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors order-1">
-          <div class="text-xs font-display text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">All Stores Budget</div>
-          <div class="grid grid-cols-2 gap-4 min-w-0">
+      <!-- V1 Operator hero strip -->
+      <section class="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr_1fr] gap-4">
+        <!-- Today · All Stores -->
+        <div id="today-total-card" class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-6 transition-colors">
+          <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
+          <div class="relative flex items-start justify-between gap-6">
             <div class="min-w-0">
-              <div id="c-period-label" class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Weekly</div>
-              <div class="flex items-baseline gap-1 mt-1 flex-wrap">
-                <span id="c-total" class="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">—</span>
-                <span class="text-gray-300 dark:text-gray-600">/</span>
-                <span id="c-budget" class="text-base sm:text-lg font-semibold text-gray-500 dark:text-gray-400">—</span>
+              <div id="c-today-card-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Today · All Stores</div>
+              <div id="c-today-total" class="mt-2 font-geist font-bold tabular-nums tracking-tight leading-none text-4xl sm:text-5xl text-opl-ink dark:text-op-ink truncate">—</div>
+              <div class="mt-2 flex items-center gap-2 text-sm">
+                <span id="c-today-diff" class="font-semibold"></span>
+                <span id="c-today-sub" class="text-opl-inkDim dark:text-op-inkDim">All stores</span>
               </div>
-              <div id="c-variance" class="text-xs font-semibold mt-1">—</div>
             </div>
-            <div class="min-w-0">
-              <div id="c-month-label" class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Monthly</div>
-              <div class="flex items-baseline gap-1 mt-1 flex-wrap">
-                <span id="c-month-total" class="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">—</span>
-                <span class="text-gray-300 dark:text-gray-600">/</span>
-                <span id="c-month-budget" class="text-base sm:text-lg font-semibold text-gray-500 dark:text-gray-400">—</span>
-              </div>
-              <div id="c-month-variance" class="text-xs font-semibold mt-1">—</div>
+            <div class="text-right flex-shrink-0">
+              <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Pace</div>
+              <div id="h-pace" class="mt-2 font-geist font-bold tabular-nums leading-none text-3xl sm:text-4xl text-accent-green">—</div>
+              <div id="h-reporting" class="mt-1 text-[11px] text-opl-inkDim dark:text-op-inkDim"></div>
+            </div>
+          </div>
+          <div class="relative mt-5">
+            <div class="h-2.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+              <div id="h-bar-fill" class="h-full rounded-full bg-accent-green transition-[width] duration-500" style="width:0%"></div>
+            </div>
+            <div class="mt-2 flex justify-between text-[11px] text-opl-inkDim dark:text-op-inkDim">
+              <span>$0</span>
+              <span><span id="c-today-budget">—</span> target</span>
+            </div>
+          </div>
+          <div class="relative flex justify-end mt-3">
+            <button onclick="showAllStoresDetail()" class="text-xs font-semibold text-accent-green hover:underline">View Details →</button>
+          </div>
+        </div>
+        <!-- Channel Mix -->
+        <div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
+          <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Channel Mix</div>
+          <div class="mt-4 flex flex-col gap-3.5">
+            <div>
+              <div class="flex justify-between mb-1.5 text-[13px]"><span class="text-opl-inkDim dark:text-op-inkDim font-medium">Retail</span><span id="cm-retail-val" class="font-bold tabular-nums text-opl-ink dark:text-op-ink">—</span></div>
+              <div class="h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]"><div id="cm-retail-bar" class="h-full rounded-full bg-accent-green" style="width:0%"></div></div>
+            </div>
+            <div>
+              <div class="flex justify-between mb-1.5 text-[13px]"><span class="text-opl-inkDim dark:text-op-inkDim font-medium">BIN</span><span id="cm-bin-val" class="font-bold tabular-nums text-opl-ink dark:text-op-ink">—</span></div>
+              <div class="h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]"><div id="cm-bin-bar" class="h-full rounded-full bg-accent-blue" style="width:0%"></div></div>
+            </div>
+            <div>
+              <div class="flex justify-between mb-1.5 text-[13px]"><span class="text-opl-inkDim dark:text-op-inkDim font-medium">Auction</span><span id="cm-auction-val" class="font-bold tabular-nums text-opl-ink dark:text-op-ink">—</span></div>
+              <div class="h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]"><div id="cm-auction-bar" class="h-full rounded-full bg-accent-violet" style="width:0%"></div></div>
             </div>
           </div>
         </div>
-        <div id="today-total-card" class="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors order-2">
-          <div class="flex justify-between items-start gap-2">
-            <div class="min-w-0">
-              <div id="c-today-card-label" class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Today's Net Sales</div>
-              <div id="c-today-total" class="text-xl font-bold text-gray-900 dark:text-white leading-none mb-1 truncate">—</div>
-              <div id="c-today-sub" class="text-[10px] text-gray-400 dark:text-gray-500">All stores</div>
-            </div>
-            <div class="text-right min-w-0 flex-shrink-0">
-              <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Total Budget</div>
-              <div id="c-today-budget" class="text-lg font-bold text-gray-500 dark:text-gray-300 leading-none truncate">—</div>
-              <div id="c-today-diff" class="text-[10px] font-semibold mt-1"></div>
-            </div>
+        <!-- Matrix -->
+        <div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
+          <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Matrix · Today</div>
+          <div class="mt-3.5 grid grid-cols-2 gap-2">
+            <div class="rounded-[10px] border border-accent-green/30 bg-accent-green/10 px-3 py-2.5"><div class="text-[11px] font-semibold uppercase tracking-[0.06em] text-accent-green">Avg Cart</div><div id="mx-cart" class="mt-1 text-xl font-bold tabular-nums tracking-tight text-accent-green">—</div></div>
+            <div class="rounded-[10px] border border-accent-green/30 bg-accent-green/10 px-3 py-2.5"><div class="text-[11px] font-semibold uppercase tracking-[0.06em] text-accent-green">Avg Items</div><div id="mx-items" class="mt-1 text-xl font-bold tabular-nums tracking-tight text-accent-green">—</div></div>
+            <div class="rounded-[10px] border border-accent-green/30 bg-accent-green/10 px-3 py-2.5"><div class="text-[11px] font-semibold uppercase tracking-[0.06em] text-accent-green">Orders</div><div id="mx-orders" class="mt-1 text-xl font-bold tabular-nums tracking-tight text-accent-green">—</div></div>
+            <div class="rounded-[10px] border border-accent-green/30 bg-accent-green/10 px-3 py-2.5"><div class="text-[11px] font-semibold uppercase tracking-[0.06em] text-accent-green">ASP</div><div id="mx-asp" class="mt-1 text-xl font-bold tabular-nums tracking-tight text-accent-green">—</div></div>
           </div>
-          <div id="c-today-breakdown"></div>
         </div>
-      </div>
+      </section>
+
+      <!-- All-stores weekly / monthly budget -->
+      <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
+          <div id="c-period-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Weekly</div>
+          <div class="flex items-baseline gap-2 mt-2 flex-wrap">
+            <span id="c-total" class="text-2xl font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span>
+            <span class="text-opl-inkDim dark:text-op-inkDim">/</span>
+            <span id="c-budget" class="text-base font-semibold text-opl-inkDim dark:text-op-inkDim">—</span>
+            <span id="c-variance" class="ml-auto text-sm font-bold">—</span>
+          </div>
+        </div>
+        <div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
+          <div id="c-month-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Monthly</div>
+          <div class="flex items-baseline gap-2 mt-2 flex-wrap">
+            <span id="c-month-total" class="text-2xl font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span>
+            <span class="text-opl-inkDim dark:text-op-inkDim">/</span>
+            <span id="c-month-budget" class="text-base font-semibold text-opl-inkDim dark:text-op-inkDim">—</span>
+            <span id="c-month-variance" class="ml-auto text-sm font-bold">—</span>
+          </div>
+        </div>
+      </section>
 
       <div id="store-cards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
 
@@ -2680,57 +2724,65 @@
 
     el("c-today-card-label").textContent = cardLabel;
 
+    const grandTotal = todayTotal + todayAuction;
+    const hasData = !isLoading && storesWithData > 0;
+
     if (isLoading) {
-      el("c-today-total").innerHTML = '<span class="loading-dot text-[#3BB54A] text-lg">Loading...</span>';
+      el("c-today-total").innerHTML = '<span class="loading-dot text-accent-green text-2xl">Loading…</span>';
       el("c-today-sub").textContent = showLive ? 'Fetching live data' : 'Loading stored data';
-      el("c-today-breakdown").innerHTML = '';
     } else {
-      el("c-today-total").textContent = storesWithData > 0 ? fmtDollar(todayTotal + todayAuction) : '—';
-      el("c-today-sub").textContent = storesWithData > 0 ? `${storesWithData} of ${STORES.length} stores reporting` : 'All stores';
-      if (storesWithData > 0) {
-        el("c-today-breakdown").innerHTML = `
-          <div class="flex justify-between gap-3 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
-            <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60"><div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayRetail)}</div></div>
-            <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60"><div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayBin)}</div></div>
-            <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60"><div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div><div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(todayAuction)}</div></div>
-          </div>
-          <div class="flex gap-4 mt-3 text-center">
-            <div class="flex-1 py-2.5 px-3 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-              <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Avg Cart</div>
-              <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(totalAvgCart)}</div>
-            </div>
-            <div class="flex-1 py-2.5 px-3 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-              <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Avg Items</div>
-              <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${totalAvgItems.toFixed(1)}</div>
-            </div>
-            <div class="flex-1 py-2.5 px-3 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-              <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">Orders</div>
-              <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${allOrderCount}</div>
-            </div>
-            <div class="flex-1 py-2.5 px-3 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-              <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider mb-1">ASP</div>
-              <div class="text-base font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(totalAvgASP)}</div>
-            </div>
-          </div>
-          <div class="flex justify-end mt-2">
-            <button onclick="showAllStoresDetail()" class="text-xs font-semibold text-[#3BB54A] hover:underline">View Details →</button>
-          </div>`;
-      } else {
-        el("c-today-breakdown").innerHTML = '';
-      }
+      el("c-today-total").textContent = hasData ? fmtDollar(grandTotal) : '—';
+      el("c-today-sub").textContent = 'all stores';
     }
 
-    el("c-today-budget").innerHTML = todayTotalBudget > 0 ? fmtDollar(todayTotalBudget) : '<span class="text-gray-300 font-medium">—</span>';
+    // Pace % + progress bar (good ≥ budget, warn below)
+    const paceEl = el("h-pace");
+    const barEl = el("h-bar-fill");
+    if (hasData && todayTotalBudget > 0) {
+      const pacePct = Math.round(grandTotal / todayTotalBudget * 100);
+      const ahead = grandTotal >= todayTotalBudget;
+      paceEl.textContent = pacePct + '%';
+      paceEl.className = ahead
+        ? 'mt-2 font-geist font-bold tabular-nums leading-none text-3xl sm:text-4xl text-accent-green'
+        : 'mt-2 font-geist font-bold tabular-nums leading-none text-3xl sm:text-4xl text-op-warn';
+      barEl.style.width = Math.min(100, Math.max(0, pacePct)) + '%';
+      barEl.className = ahead
+        ? 'h-full rounded-full transition-[width] duration-500 bg-accent-green'
+        : 'h-full rounded-full transition-[width] duration-500 bg-op-warn';
+    } else {
+      paceEl.textContent = '—';
+      paceEl.className = 'mt-2 font-geist font-bold tabular-nums leading-none text-3xl sm:text-4xl text-accent-green';
+      barEl.style.width = '0%';
+    }
+    el("h-reporting").textContent = hasData ? `${storesWithData} of ${STORES.length} reporting` : '';
+
+    el("c-today-budget").textContent = todayTotalBudget > 0 ? fmtDollar(todayTotalBudget) : '—';
 
     const diffEl = el("c-today-diff");
-    if (!isLoading && (todayTotal + todayAuction) > 0 && todayTotalBudget > 0) {
-      const diff = (todayTotal + todayAuction) - todayTotalBudget;
+    if (hasData && todayTotalBudget > 0) {
+      const diff = grandTotal - todayTotalBudget;
       const isPositive = diff >= 0;
-      diffEl.className = `text-[10px] font-semibold mt-1 ${isPositive ? 'text-green-600' : 'text-red-500'}`;
-      diffEl.textContent = `${isPositive ? '+' : '-'}${fmtDollar(Math.abs(diff))}`;
+      diffEl.className = isPositive ? 'font-semibold text-accent-green' : 'font-semibold text-op-bad';
+      diffEl.textContent = `${isPositive ? '+' : '−'}${fmtDollar(Math.abs(diff))} vs target`;
     } else {
       diffEl.textContent = '';
     }
+
+    // Channel mix bars (relative to the largest channel / total)
+    const cmMax = Math.max(grandTotal, todayRetail, todayBin, todayAuction, 1);
+    const setCm = (valId, barId, v) => {
+      el(valId).textContent = hasData ? fmtDollar(v) : '—';
+      el(barId).style.width = (hasData ? Math.min(100, v / cmMax * 100) : 0) + '%';
+    };
+    setCm('cm-retail-val', 'cm-retail-bar', todayRetail);
+    setCm('cm-bin-val', 'cm-bin-bar', todayBin);
+    setCm('cm-auction-val', 'cm-auction-bar', todayAuction);
+
+    // Matrix · Today
+    el('mx-cart').textContent = hasData ? fmtDollar(totalAvgCart) : '—';
+    el('mx-items').textContent = hasData ? totalAvgItems.toFixed(1) : '—';
+    el('mx-orders').textContent = hasData ? allOrderCount.toLocaleString() : '—';
+    el('mx-asp').textContent = (hasData && totalAvgASP != null) ? fmtDollar(totalAvgASP) : '—';
 
     // Always show Weekly (week-to-date, live-boosted) — even when a
     // specific day is selected. The day selector affects per-store cards
