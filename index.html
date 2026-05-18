@@ -505,7 +505,7 @@
           class="pl-3 pr-8 py-1.5 rounded-[8px] text-sm font-semibold bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink border border-[rgba(20,16,8,0.08)] dark:border-op-border focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors cursor-pointer appearance-none"
           style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 20 20%22 fill=%22%238893a7%22%3E%3Cpath fill-rule=%22evenodd%22 d=%22M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z%22 clip-rule=%22evenodd%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 0.5rem center; background-size: 1.1rem;">
         </select>
-        <div id="dash-day-selector" class="flex items-center gap-1.5 flex-wrap"></div>
+        <div id="dash-day-selector" class="flex items-stretch gap-1.5 max-lg:w-full max-lg:overflow-x-auto max-lg:flex-nowrap lg:flex-wrap"></div>
       </section>
 
       <!-- V1 Operator hero strip -->
@@ -2609,43 +2609,37 @@
     const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
     const activeDay = selectedDashDay; // null means "Week" is selected
 
+    // V1 chip: inline pill on desktop, stacked on mobile. No "Week" chip —
+    // the Week dropdown is the week control; clicking the active day again
+    // toggles back to the week-aggregate view.
+    const BASE = 'flex flex-col lg:flex-row items-center justify-center gap-0.5 lg:gap-1.5 leading-tight px-3 py-1.5 rounded-[8px] text-[11px] whitespace-nowrap flex-shrink-0 transition-colors';
+    const GREEN = `${BASE} bg-accent-green text-[#0b1220] font-semibold`;
+    const DASH = `${BASE} text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink`;
+    const TODAY = `${BASE} text-accent-green border border-accent-green/50 hover:bg-accent-green/10 font-semibold`;
+    const FUTURE = `${BASE} opacity-40 text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.12)] dark:border-op-border cursor-not-allowed`;
+    const live = `<span class="text-[8px] font-bold uppercase tracking-[0.12em]">● LIVE</span>`;
+
     let html = '';
-
-    // "Week" button (aggregate — the default)
-    if (activeDay === null) {
-      html += `<button class="flex flex-col items-center leading-tight px-3 py-1.5 rounded-[8px] text-[11px] transition-colors bg-accent-green text-[#0b1220] font-bold">
-        <span>Week</span><span>${selectedWeek}</span>
-      </button>`;
-    } else {
-      html += `<button onclick="selectDashDay(null)" class="flex flex-col items-center leading-tight px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink">
-        <span class="font-semibold">Week</span><span>${selectedWeek}</span>
-      </button>`;
-    }
-
     for (const dateStr of dates) {
-      const d = new Date(dateStr + 'T12:00:00'); // noon to avoid timezone issues
+      const d = new Date(dateStr + 'T12:00:00'); // noon to avoid TZ drift
       const dayLabel = d.toLocaleDateString('en-US', { weekday: 'short' });
       const dateLabel = `${d.getMonth() + 1}/${d.getDate()}`;
       const isFuture = dateStr > todayStr;
       const isSelected = dateStr === activeDay;
       const isToday = dateStr === todayStr;
+      // Green when explicitly selected, or (default week view) today is the live day.
+      const isGreen = isSelected || (activeDay === null && isToday);
+      const inner = `<span>${dayLabel}</span><span class="font-bold">${dateLabel}</span>${isToday ? live : ''}`;
 
       if (isFuture) {
-        html += `<button disabled class="flex flex-col items-center leading-tight px-3 py-1.5 rounded-[8px] text-[11px] opacity-40 text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.12)] dark:border-op-border cursor-not-allowed">
-          <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
-        </button>`;
-      } else if (isSelected) {
-        html += `<button class="flex flex-col items-center leading-tight px-3 py-1.5 rounded-[8px] text-[11px] transition-colors bg-accent-green text-[#0b1220] font-bold">
-          <span>${dayLabel}</span><span>${dateLabel}</span>${isToday ? '<span class="text-[8px] font-bold uppercase tracking-[0.1em] mt-0.5">● LIVE</span>' : ''}
-        </button>`;
+        html += `<button disabled class="${FUTURE}">${inner}</button>`;
+      } else if (isGreen) {
+        // Clicking the active day toggles back to the week-aggregate view.
+        html += `<button onclick="selectDashDay(${isSelected ? 'null' : `'${dateStr}'`})" class="${GREEN}">${inner}</button>`;
       } else if (isToday) {
-        html += `<button onclick="selectDashDay('${dateStr}')" class="flex flex-col items-center leading-tight px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-accent-green border border-accent-green/40 hover:bg-accent-green/10 font-semibold">
-          <span>${dayLabel}</span><span>${dateLabel}</span><span class="text-[8px] font-bold uppercase tracking-[0.1em] mt-0.5">● LIVE</span>
-        </button>`;
+        html += `<button onclick="selectDashDay('${dateStr}')" class="${TODAY}">${inner}</button>`;
       } else {
-        html += `<button onclick="selectDashDay('${dateStr}')" class="flex flex-col items-center leading-tight px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink">
-          <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
-        </button>`;
+        html += `<button onclick="selectDashDay('${dateStr}')" class="${DASH}">${inner}</button>`;
       }
     }
     container.innerHTML = html;
