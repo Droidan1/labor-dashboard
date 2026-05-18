@@ -499,13 +499,16 @@
       <div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
       
       <section class="flex items-center gap-3 flex-wrap bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card px-4 py-2.5 transition-colors">
-        <span class="text-[10px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim">Viewing</span>
         <label for="week-select" class="sr-only">Viewing Week</label>
         <select id="week-select"
-          class="pl-3 pr-8 py-1.5 rounded-[8px] text-sm font-semibold bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink border border-[rgba(20,16,8,0.08)] dark:border-op-border focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors cursor-pointer appearance-none"
+          class="lg:order-1 pl-3 pr-8 py-1.5 rounded-[8px] text-sm font-semibold bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink border border-[rgba(20,16,8,0.08)] dark:border-op-border focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors cursor-pointer appearance-none"
           style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 20 20%22 fill=%22%238893a7%22%3E%3Cpath fill-rule=%22evenodd%22 d=%22M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z%22 clip-rule=%22evenodd%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 0.5rem center; background-size: 1.1rem;">
         </select>
-        <div id="dash-day-selector" class="flex items-stretch gap-1.5 max-lg:w-full max-lg:overflow-x-auto max-lg:flex-nowrap lg:flex-wrap"></div>
+        <button id="dash-week-btn" type="button" onclick="selectDashDay(null)"
+          class="lg:order-3 lg:ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-[11px] whitespace-nowrap flex-shrink-0 transition-colors text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink">
+          <span class="font-semibold">View Week</span>
+        </button>
+        <div id="dash-day-selector" class="flex items-stretch gap-1.5 max-lg:w-full max-lg:overflow-x-auto max-lg:flex-nowrap lg:flex-wrap lg:order-2"></div>
       </section>
 
       <!-- V1 Operator hero strip -->
@@ -2643,6 +2646,15 @@
       }
     }
     container.innerHTML = html;
+
+    // "Week" button — selects the whole-week aggregate view (activeDay === null)
+    const wkBtn = el('dash-week-btn');
+    if (wkBtn) {
+      const POS = 'lg:order-3 lg:ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-[11px] whitespace-nowrap flex-shrink-0 transition-colors';
+      wkBtn.className = (activeDay === null)
+        ? `${POS} bg-accent-green text-[#0b1220] font-semibold`
+        : `${POS} text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink`;
+    }
   }
 
   function selectDashDay(dateStr) {
