@@ -257,32 +257,33 @@
     .sidebar.collapsed .nav-label { opacity: 0; transition: opacity 0.1s; pointer-events: none; width: 0; overflow: hidden; }
     .sidebar .logo-text { opacity: 1; transition: opacity 0.2s 0.1s; white-space: nowrap; }
     .sidebar.collapsed .logo-text { opacity: 0; transition: opacity 0.1s; }
+    /* V1 Operator shell */
     .sidebar .nav-item {
       display: flex; align-items: center; height: 44px; width: 100%;
-      border-radius: 8px; cursor: pointer;
+      border-radius: 10px; cursor: pointer;
       transition: background 0.2s, color 0.2s;
-      color: #4b5563; font-size: 0.875rem; font-weight: 500;
+      color: #6b6453; font-size: 0.875rem; font-weight: 500;
       border-left: 2px solid transparent; padding: 0;
     }
-    .dark .sidebar .nav-item { color: #9ca3af; }
-    .sidebar .nav-item:hover { background: #f9fafb; color: #111827; }
-    .dark .sidebar .nav-item:hover { background: #1f2937; color: #e5e7eb; }
+    .dark .sidebar .nav-item { color: #8893a7; }
+    .sidebar .nav-item:hover { background: rgba(20,16,8,0.035); color: #14110a; }
+    .dark .sidebar .nav-item:hover { background: rgba(255,255,255,0.04); color: #e7ecf3; }
     .sidebar .nav-item.active {
-      background: rgba(59,181,74,0.08); color: #194975;
-      border-left-color: #3BB54A; font-weight: 600;
+      background: rgba(34,197,94,0.10); color: #22c55e;
+      border-left-color: transparent; font-weight: 600;
     }
-    .dark .sidebar .nav-item.active { background: rgba(59,181,74,0.15); color: #3BB54A; }
+    .dark .sidebar .nav-item.active { background: rgba(34,197,94,0.12); color: #22c55e; }
     .sidebar.collapsed .nav-item { justify-content: center; border-left-color: transparent; overflow: hidden; }
     .sidebar.collapsed .nav-icon { width: 100%; }
     .sidebar .nav-icon { flex-shrink: 0; width: 48px; display: grid; place-content: center; }
     .sidebar .nav-icon svg { width: 18px; height: 18px; }
     .sidebar-toggle-bottom {
-      border-top: 1px solid #e5e7eb; transition: background 0.15s;
+      border-top: 1px solid rgba(20,16,8,0.08); transition: background 0.15s;
       cursor: pointer; display: flex; align-items: center; padding: 12px;
     }
-    .dark .sidebar-toggle-bottom { border-top-color: #1f2937; }
-    .sidebar-toggle-bottom:hover { background: #f9fafb; }
-    .dark .sidebar-toggle-bottom:hover { background: #1f2937; }
+    .dark .sidebar-toggle-bottom { border-top-color: rgba(255,255,255,0.06); }
+    .sidebar-toggle-bottom:hover { background: rgba(20,16,8,0.035); }
+    .dark .sidebar-toggle-bottom:hover { background: rgba(255,255,255,0.04); }
     .sidebar-toggle-bottom .chevron {
       transition: transform 0.3s; width: 48px; display: grid; place-content: center;
     }
@@ -295,7 +296,7 @@
     if (localStorage.getItem('darkMode') === 'true') document.documentElement.classList.add('dark');
   </script>
 </head>
-<body class="bg-[#F6F6F6] dark:bg-gray-900 font-body relative transition-colors">
+<body class="bg-opl-bg dark:bg-op-bg font-geist relative transition-colors">
 
   <!-- Pull-to-refresh indicator (mobile only) -->
   <div id="ptr-indicator">
@@ -309,7 +310,7 @@
     <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 w-full max-w-sm mx-4">
       <div class="flex flex-col items-center mb-6">
         <img src="BLlogo.svg" alt="Bargain Lane" class="w-16 h-16 rounded-full shadow mb-3">
-        <h1 class="text-2xl font-display text-[#3BB54A]">Bargain Lane</h1>
+        <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Bargain Lane</h1>
         <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Dashboard</p>
       </div>
       <!-- Invite-only landing (default) -->
@@ -372,7 +373,7 @@
 
   <div id="app" class="hidden min-h-screen flex">
     <!-- Sidebar -->
-    <aside id="sidebar" class="sidebar bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col h-screen sticky top-0 z-20 overflow-hidden transition-colors shadow-sm">
+    <aside id="sidebar" class="sidebar bg-opl-sidebar dark:bg-op-sidebar border-r border-[rgba(20,16,8,0.08)] dark:border-op-border flex flex-col h-screen sticky top-0 z-20 overflow-hidden transition-colors">
       <!-- Title Section -->
       <div class="px-2 pt-4 pb-4 mb-2 border-b border-gray-200 dark:border-gray-800">
         <div class="flex items-center gap-3 p-2 rounded-lg">
@@ -455,10 +456,10 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-600 dark:text-gray-300"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <div id="page-dashboard">
-      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-0 z-10 transition-colors">
         <div class="flex items-center justify-between max-w-7xl mx-auto">
           <div class="ml-12 md:ml-0">
-            <h1 class="text-2xl font-display text-[#3BB54A]">Dashboard</h1>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Dashboard</h1>
             <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5" id="last-updated"></p>
           </div>
           <div class="flex items-center gap-3">
@@ -540,13 +541,13 @@
 
     <!-- Store Detail Page -->
     <div id="page-store-detail" class="hidden">
-      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-0 z-10 transition-colors">
         <div class="flex items-center gap-3 max-w-7xl mx-auto">
           <button onclick="navigateToDashboard()" class="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-700 grid place-content-center hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" aria-label="Back to dashboard">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600 dark:text-gray-300"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
           <div>
-            <h1 id="store-detail-title" class="text-2xl font-display text-[#3BB54A]">Store Name</h1>
+            <h1 id="store-detail-title" class="text-2xl font-brand text-accent-green uppercase tracking-wide">Store Name</h1>
             <p id="store-detail-subtitle" class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Week X Daily Breakdown</p>
           </div>
         </div>
@@ -612,11 +613,11 @@
     </div><!-- end #page-all-stores-detail -->
 
     <div id="page-weekly-summary" class="hidden">
-      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-0 z-10 transition-colors">
         <div class="max-w-7xl mx-auto">
           <div class="ml-12 md:ml-0 flex flex-wrap items-end justify-between gap-3">
             <div>
-              <h1 class="text-2xl font-display text-[#3BB54A]">Weekly Retail Summary</h1>
+              <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Weekly Retail Summary</h1>
               <p id="wrs-subtitle" class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Loading…</p>
             </div>
             <div class="flex gap-3 items-end">
@@ -657,10 +658,10 @@
     </div><!-- end #page-weekly-summary -->
 
     <div id="page-inventory" class="hidden">
-      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-0 z-10 transition-colors">
         <div class="max-w-7xl mx-auto">
           <div class="ml-12 md:ml-0">
-            <h1 class="text-2xl font-display text-[#3BB54A]">Inventory</h1>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Inventory</h1>
             <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Add items to Clover POS</p>
           </div>
         </div>
@@ -968,10 +969,10 @@
 
     <div id="page-supply-request" class="hidden">
       <!-- Sticky header -->
-      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-0 z-10 transition-colors">
         <div class="max-w-4xl mx-auto">
           <div class="ml-12 md:ml-0">
-            <h1 class="text-2xl font-display text-[#3BB54A]">Supply Request</h1>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Supply Request</h1>
             <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5" id="sr-header-sub">Submit and track supply requests for your store</p>
           </div>
         </div>
@@ -996,10 +997,10 @@
     </div><!-- end #page-supply-request -->
 
     <div id="page-settings" class="hidden">
-      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-0 z-10 transition-colors">
         <div class="max-w-3xl mx-auto">
           <div class="ml-12 md:ml-0">
-            <h1 class="text-2xl font-display text-[#3BB54A]">Settings</h1>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Settings</h1>
           </div>
         </div>
       </div>
@@ -1356,10 +1357,10 @@
 
     <!-- ── Admin Settings page ──────────────────────────────────── -->
     <div id="page-admin-settings" class="hidden">
-      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-0 z-10 transition-colors">
         <div class="max-w-3xl mx-auto">
           <div class="ml-12 md:ml-0">
-            <h1 class="text-2xl font-display text-[#3BB54A]">Admin Settings</h1>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Admin Settings</h1>
           </div>
         </div>
       </div>
@@ -1669,10 +1670,10 @@
 
     <!-- ── Users page ────────────────────────────────────────────── -->
     <div id="page-users" class="hidden">
-      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 sticky top-0 z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-0 z-10 transition-colors">
         <div class="max-w-3xl mx-auto flex items-center justify-between">
           <div class="ml-12 md:ml-0">
-            <h1 class="text-2xl font-display text-[#3BB54A]">Users</h1>
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Users</h1>
           </div>
           <button onclick="openInviteModal()" class="flex items-center gap-2 bg-[#3BB54A] hover:bg-[#2ea040] text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
