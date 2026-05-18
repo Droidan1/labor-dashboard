@@ -1,4 +1,4 @@
-name = "clover-sales-api"
+name = "labor-dashboard"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
