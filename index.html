@@ -302,6 +302,19 @@
       #hero-extra, #hero-extra > .hero-inner { display: contents; }
       #hero-toggle { display: none !important; }
     }
+    /* All-stores budget: collapsible card on mobile, two cards on desktop */
+    @media (max-width: 1023px) {
+      #budget-detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.28s ease; }
+      #budget-sec.bgt-open #budget-detail { grid-template-rows: 1fr; }
+      #budget-detail > .budget-inner { overflow: hidden; min-height: 0; }
+      #budget-sec.bgt-open #budget-summary { display: none; }
+      #budget-sec .bgt-chev { transition: transform 0.25s; }
+      #budget-sec.bgt-open .bgt-chev { transform: rotate(180deg); }
+    }
+    @media (min-width: 1024px) {
+      #budget-detail, #budget-detail > .budget-inner { display: contents; }
+      #budget-summary { display: none !important; }
+    }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -563,26 +576,63 @@
         </div></div><!-- /hero-extra -->
       </section>
 
-      <!-- All-stores weekly / monthly budget -->
-      <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div class="lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 max-lg:border-t max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border transition-colors">
-          <div id="c-period-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Weekly</div>
-          <div class="flex items-baseline gap-2 mt-2 flex-wrap">
-            <span id="c-total" class="text-2xl font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span>
-            <span class="text-opl-inkDim dark:text-op-inkDim">/</span>
-            <span id="c-budget" class="text-base font-semibold text-opl-inkDim dark:text-op-inkDim">—</span>
-            <span id="c-variance" class="ml-auto text-sm font-bold">—</span>
+      <!-- All-stores weekly / monthly budget — collapsible card on mobile, two cards on desktop -->
+      <section id="budget-sec" class="grid grid-cols-1 lg:grid-cols-2 lg:gap-4 max-lg:bg-opl-panel max-lg:dark:bg-op-panel max-lg:border max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border max-lg:rounded-card max-lg:overflow-hidden">
+
+        <!-- Collapsed summary (mobile only; hidden when expanded / on desktop) -->
+        <div id="budget-summary" class="lg:hidden p-5 flex items-start gap-3 cursor-pointer" onclick="toggleBudget()">
+          <div class="flex-1 min-w-0">
+            <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Weekly · <span id="bgt-sum-wk">Wk —</span></div>
+            <div class="mt-1.5 whitespace-nowrap"><span id="bgt-sum-wt" class="text-xl font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span> <span class="text-[13px] font-semibold text-opl-inkDim dark:text-op-inkDim">/ <span id="bgt-sum-wb">—</span></span></div>
           </div>
-        </div>
-        <div class="lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 max-lg:border-t max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border transition-colors">
-          <div id="c-month-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Monthly</div>
-          <div class="flex items-baseline gap-2 mt-2 flex-wrap">
-            <span id="c-month-total" class="text-2xl font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span>
-            <span class="text-opl-inkDim dark:text-op-inkDim">/</span>
-            <span id="c-month-budget" class="text-base font-semibold text-opl-inkDim dark:text-op-inkDim">—</span>
-            <span id="c-month-variance" class="ml-auto text-sm font-bold">—</span>
+          <div class="flex-1 min-w-0 pl-3 border-l border-[rgba(20,16,8,0.08)] dark:border-op-border text-right">
+            <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim"><span id="bgt-sum-mo">Monthly</span></div>
+            <div class="mt-1.5 whitespace-nowrap"><span id="bgt-sum-mt" class="text-xl font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span> <span class="text-[13px] font-semibold text-opl-inkDim dark:text-op-inkDim">/ <span id="bgt-sum-mb">—</span></span></div>
           </div>
+          <svg class="bgt-chev w-[18px] h-[18px] mt-0.5 flex-shrink-0 text-opl-inkDim dark:text-op-inkDim" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
+
+        <!-- Detail: mobile = collapsible body (display:contents on desktop → two cards) -->
+        <div id="budget-detail"><div class="budget-inner">
+          <!-- mobile-only collapse handle (no header text, just chevron) -->
+          <div class="lg:hidden flex justify-end px-5 pt-4 cursor-pointer" onclick="toggleBudget()">
+            <svg class="bgt-chev w-[18px] h-[18px] text-opl-inkDim dark:text-op-inkDim" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+
+          <!-- Weekly block -->
+          <div class="lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 transition-colors">
+            <div id="c-period-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Weekly</div>
+            <div class="flex items-baseline gap-2 mt-1.5">
+              <span id="c-total" class="text-2xl font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span>
+              <span class="text-opl-inkDim dark:text-op-inkDim text-sm">/</span>
+              <span id="c-budget" class="text-base font-semibold text-opl-inkDim dark:text-op-inkDim">—</span>
+              <span id="c-variance" class="ml-auto text-sm font-bold">—</span>
+            </div>
+            <div class="mt-3 h-2 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+              <div id="bgt-w-bar" class="h-full rounded-full bg-accent-green transition-[width] duration-500" style="width:0%"></div>
+            </div>
+            <div class="flex justify-between mt-1.5 text-[10.5px] tracking-[0.04em] text-opl-inkDim dark:text-op-inkDim">
+              <span id="bgt-w-pct">—</span><span id="bgt-w-rem"></span>
+            </div>
+          </div>
+
+          <!-- Monthly block -->
+          <div class="lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 max-lg:border-t max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border transition-colors">
+            <div id="c-month-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Monthly</div>
+            <div class="flex items-baseline gap-2 mt-1.5">
+              <span id="c-month-total" class="text-2xl font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span>
+              <span class="text-opl-inkDim dark:text-op-inkDim text-sm">/</span>
+              <span id="c-month-budget" class="text-base font-semibold text-opl-inkDim dark:text-op-inkDim">—</span>
+              <span id="c-month-variance" class="ml-auto text-sm font-bold">—</span>
+            </div>
+            <div class="mt-3 h-2 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+              <div id="bgt-m-bar" class="h-full rounded-full bg-accent-green transition-[width] duration-500" style="width:0%"></div>
+            </div>
+            <div class="flex justify-between mt-1.5 text-[10.5px] tracking-[0.04em] text-opl-inkDim dark:text-op-inkDim">
+              <span id="bgt-m-pct">—</span><span id="bgt-m-rem"></span>
+            </div>
+          </div>
+        </div></div><!-- /budget-detail -->
       </section>
 
       <div id="store-cards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
@@ -2878,6 +2928,36 @@
     const mCls = mDiff >= 0 ? 'text-green-600' : 'text-red-500';
     el("c-month-variance").className = `text-xs font-semibold mt-1 ${mCls}`;
     el("c-month-variance").textContent = `${mDiff >= 0 ? '+' : '-'}${fmtDollar(Math.abs(mDiff))}`;
+
+    // Combined budget card: collapsed-summary mirrors + pace bars + footers
+    {
+      const wkPct = tB > 0 ? Math.round(tA / tB * 100) : 0;
+      const moPct = mB > 0 ? Math.round(mA / mB * 100) : 0;
+      const wkAhead = tB > 0 && tA >= tB;
+      const moAhead = mB > 0 && mA >= mB;
+      el("bgt-sum-wk").textContent = selectedWeek ? `Wk ${selectedWeek}` : 'Wk —';
+      el("bgt-sum-wt").textContent = fmtK(tA);
+      el("bgt-sum-wb").textContent = fmtK(tB);
+      el("bgt-sum-mo").textContent = monthLabel ? `Monthly · ${monthLabel}` : 'Monthly';
+      el("bgt-sum-mt").textContent = fmtK(mA);
+      el("bgt-sum-mb").textContent = fmtK(mB);
+      const barCls = (ahead) => ahead
+        ? 'h-full rounded-full transition-[width] duration-500 bg-accent-green'
+        : 'h-full rounded-full transition-[width] duration-500 bg-op-warn';
+      const wb = el("bgt-w-bar");
+      wb.style.width = Math.min(100, Math.max(0, wkPct)) + '%';
+      wb.className = barCls(wkAhead);
+      const mb = el("bgt-m-bar");
+      mb.style.width = Math.min(100, Math.max(0, moPct)) + '%';
+      mb.className = barCls(moAhead);
+      el("bgt-w-pct").textContent = tB > 0 ? `${wkPct}% of target` : '—';
+      el("bgt-w-rem").textContent = tB > 0 ? ((tB - tA) > 0 ? `${fmtK(tB - tA)} remaining` : 'Target met') : '';
+      el("bgt-m-pct").textContent = mB > 0 ? `${moPct}% of target` : '—';
+      const tp = todayStr.split('-').map(Number);
+      const daysLeft = Math.max(0, new Date(tp[0], tp[1], 0).getDate() - tp[2]);
+      const moRem = (mB > 0 && (mB - mA) > 0) ? `${fmtK(mB - mA)} remaining · ` : '';
+      el("bgt-m-rem").textContent = `${moRem}${daysLeft} days left`;
+    }
 
     renderCards(metrics);
     renderCharts(metrics);
@@ -10293,6 +10373,14 @@
     if (document.readyState !== 'loading') init();
     else document.addEventListener('DOMContentLoaded', init);
   })();
+  </script>
+  <script>
+  /* Combined budget card toggle (mobile only; default collapsed, no persistence).
+     Desktop ≥1024px ignores this — CSS shows two separate cards. */
+  window.toggleBudget = function () {
+    var s = document.getElementById('budget-sec');
+    if (s) s.classList.toggle('bgt-open');
+  };
   </script>
 </body>
 </html>
