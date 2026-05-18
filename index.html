@@ -294,7 +294,7 @@
     @media (max-width: 1023px) {
       #hero-extra { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.28s ease; }
       #hero-extra.hero-open { grid-template-rows: 1fr; }
-      #hero-extra > .hero-inner { overflow: hidden; min-height: 0; display: flex; flex-direction: column; gap: 1rem; }
+      #hero-extra > .hero-inner { overflow: hidden; min-height: 0; display: flex; flex-direction: column; gap: 0; }
       #hero-toggle .chev { transition: transform 0.25s; }
       #hero-toggle.open .chev { transform: rotate(180deg); }
     }
@@ -495,9 +495,9 @@
       </div>
 
       <!-- V1 Operator hero strip -->
-      <section class="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr_1fr] gap-4">
+      <section class="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr_1fr] lg:gap-4 max-lg:bg-opl-panel max-lg:dark:bg-op-panel max-lg:border max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border max-lg:rounded-card max-lg:overflow-hidden">
         <!-- Today · All Stores -->
-        <div id="today-total-card" class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-6 transition-colors">
+        <div id="today-total-card" class="relative overflow-hidden lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 lg:p-6 transition-colors">
           <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
           <div class="relative flex items-start justify-between gap-6">
             <div class="min-w-0">
@@ -533,7 +533,7 @@
         </div>
         <div id="hero-extra"><div class="hero-inner">
         <!-- Channel Mix -->
-        <div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
+        <div class="lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 max-lg:border-t max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border transition-colors">
           <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Channel Mix</div>
           <div class="mt-4 flex flex-col gap-3.5">
             <div>
@@ -551,7 +551,7 @@
           </div>
         </div>
         <!-- Matrix -->
-        <div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
+        <div class="lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 max-lg:border-t max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border transition-colors">
           <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Matrix · Today</div>
           <div class="mt-3.5 grid grid-cols-2 gap-2">
             <div class="rounded-[10px] border border-accent-green/30 bg-accent-green/10 px-3 py-2.5"><div class="text-[11px] font-semibold uppercase tracking-[0.06em] text-accent-green">Avg Cart</div><div id="mx-cart" class="mt-1 text-xl font-bold tabular-nums tracking-tight text-accent-green">—</div></div>
@@ -565,7 +565,7 @@
 
       <!-- All-stores weekly / monthly budget -->
       <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
+        <div class="lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 max-lg:border-t max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border transition-colors">
           <div id="c-period-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Weekly</div>
           <div class="flex items-baseline gap-2 mt-2 flex-wrap">
             <span id="c-total" class="text-2xl font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span>
@@ -574,7 +574,7 @@
             <span id="c-variance" class="ml-auto text-sm font-bold">—</span>
           </div>
         </div>
-        <div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
+        <div class="lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 max-lg:border-t max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border transition-colors">
           <div id="c-month-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Monthly</div>
           <div class="flex items-baseline gap-2 mt-2 flex-wrap">
             <span id="c-month-total" class="text-2xl font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink">—</span>
