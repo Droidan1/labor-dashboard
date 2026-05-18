@@ -498,14 +498,15 @@
 
       <div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
       
-      <div class="flex items-center gap-3 flex-wrap">
-        <label for="week-select" class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Viewing Week:</label>
+      <section class="flex items-center gap-3 flex-wrap bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card px-4 py-2.5 transition-colors">
+        <span class="text-[10px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim">Viewing</span>
+        <label for="week-select" class="sr-only">Viewing Week</label>
         <select id="week-select"
-          class="px-4 py-2 rounded-lg text-sm font-medium bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-600 shadow-sm hover:border-[#3BB54A] focus:outline-none focus:ring-2 focus:ring-[#3BB54A] focus:border-[#3BB54A] transition-colors cursor-pointer appearance-none"
-          style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 20 20%22 fill=%22%236b7280%22%3E%3Cpath fill-rule=%22evenodd%22 d=%22M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z%22 clip-rule=%22evenodd%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 0.5rem center; background-size: 1.25rem; padding-right: 2rem;">
+          class="pl-3 pr-8 py-1.5 rounded-[8px] text-sm font-semibold bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink border border-[rgba(20,16,8,0.08)] dark:border-op-border focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors cursor-pointer appearance-none"
+          style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 20 20%22 fill=%22%238893a7%22%3E%3Cpath fill-rule=%22evenodd%22 d=%22M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z%22 clip-rule=%22evenodd%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 0.5rem center; background-size: 1.1rem;">
         </select>
-        <div id="dash-day-selector" class="flex items-center gap-1 overflow-x-auto"></div>
-      </div>
+        <div id="dash-day-selector" class="flex items-center gap-1.5 flex-wrap"></div>
+      </section>
 
       <!-- V1 Operator hero strip -->
       <section class="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr_1fr] lg:gap-4 max-lg:bg-opl-panel max-lg:dark:bg-op-panel max-lg:border max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border max-lg:rounded-card max-lg:overflow-hidden">
@@ -2612,11 +2613,11 @@
 
     // "Week" button (aggregate — the default)
     if (activeDay === null) {
-      html += `<button class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs bg-[#3BB54A] text-white font-semibold shadow-sm">
+      html += `<button class="flex flex-col items-center leading-tight px-3 py-1.5 rounded-[8px] text-[11px] transition-colors bg-accent-green text-[#0b1220] font-bold">
         <span>Week</span><span>${selectedWeek}</span>
       </button>`;
     } else {
-      html += `<button onclick="selectDashDay(null)" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-dashed border-gray-300 dark:border-gray-600">
+      html += `<button onclick="selectDashDay(null)" class="flex flex-col items-center leading-tight px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink">
         <span class="font-semibold">Week</span><span>${selectedWeek}</span>
       </button>`;
     }
@@ -2630,15 +2631,19 @@
       const isToday = dateStr === todayStr;
 
       if (isFuture) {
-        html += `<button disabled class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs opacity-40 text-gray-400 dark:text-gray-600 cursor-not-allowed">
+        html += `<button disabled class="flex flex-col items-center leading-tight px-3 py-1.5 rounded-[8px] text-[11px] opacity-40 text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.12)] dark:border-op-border cursor-not-allowed">
           <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
         </button>`;
       } else if (isSelected) {
-        html += `<button class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs bg-[#3BB54A] text-white font-semibold shadow-sm">
-          <span>${dayLabel}</span><span>${dateLabel}</span>${isToday ? '<span class="text-[8px] uppercase tracking-wider">Live</span>' : ''}
+        html += `<button class="flex flex-col items-center leading-tight px-3 py-1.5 rounded-[8px] text-[11px] transition-colors bg-accent-green text-[#0b1220] font-bold">
+          <span>${dayLabel}</span><span>${dateLabel}</span>${isToday ? '<span class="text-[8px] font-bold uppercase tracking-[0.1em] mt-0.5">● LIVE</span>' : ''}
+        </button>`;
+      } else if (isToday) {
+        html += `<button onclick="selectDashDay('${dateStr}')" class="flex flex-col items-center leading-tight px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-accent-green border border-accent-green/40 hover:bg-accent-green/10 font-semibold">
+          <span>${dayLabel}</span><span>${dateLabel}</span><span class="text-[8px] font-bold uppercase tracking-[0.1em] mt-0.5">● LIVE</span>
         </button>`;
       } else {
-        html += `<button onclick="selectDashDay('${dateStr}')" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+        html += `<button onclick="selectDashDay('${dateStr}')" class="flex flex-col items-center leading-tight px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink">
           <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
         </button>`;
       }
