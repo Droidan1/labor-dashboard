@@ -8,9 +8,15 @@ cd "$(dirname "$0")/.."
 rm -rf dist
 mkdir -p dist/html
 
-cp index.html sw.js manifest.json tailwind.css \
+cp index.html sw.js manifest.json \
    BLlogo.svg icon-192.png icon-512.png apple-touch-icon.png \
    dist/
+
+# Regenerate Tailwind from config so design tokens actually compile.
+# (Previously the stale committed tailwind.css was copied verbatim — any
+# new token/class added to the config never made it into the bundle.)
+echo "Building tailwind.css from tailwind.config.js…"
+npx tailwindcss -i tailwind.input.css -o dist/tailwind.css --minify
 
 # Per-store pages + their stylesheet (filenames contain spaces).
 find html -type f ! -name '.DS_Store' -exec cp {} dist/html/ \;
