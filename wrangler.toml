@@ -75,6 +75,9 @@ BL14_MERCHANT_ID = "1RBVSDGEQYA21"
 BL14_API_TOKEN = "48ba6534-724a-9bdc-a0ff-a21e73b2d69c"
 SNAPSHOT_SECRET = "mapcaj-saTxa2-1"
 VAPID_SUBJECT = "mailto:noreply@retjghub.com"
+# Env-aware hosts (worker.js falls back to prod literals when unset).
+APP_ORIGIN = "https://staging.retjghub.com"
+API_ORIGIN = "https://api-staging.retjghub.com"
 
 [[env.staging.kv_namespaces]]
 binding = "SALES_SNAPSHOTS"

@@ -2970,9 +2970,18 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
 const ALLOWED_ORIGINS = [
   "https://www.retjghub.com",
   "https://retjghub.com",
+  "https://staging.retjghub.com",
 ];
 // localhost on any port for dev (http://localhost:1234, http://127.0.0.1:5500, etc.)
 const LOCALHOST_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
+// Environment-driven hosts. Unset (prod) → prod literals, so prod behavior is
+// byte-identical. Set per-env in wrangler.toml [env.staging.vars].
+function appOrigin(env)  { return (env && env.APP_ORIGIN) || "https://www.retjghub.com"; }
+function apiOrigin(env)  { return (env && env.API_ORIGIN) || "https://api.retjghub.com"; }
+// A clientDataJSON origin is acceptable if it's an allowlisted host (covers
+// www + staging) or localhost. Replaces the old single-origin equality check.
+function isAllowedWebauthnOrigin(o) { return ALLOWED_ORIGINS.includes(o) || LOCALHOST_RE.test(o); }
 
 function resolveCors(request) {
   const origin = request.headers.get("Origin") || "";
@@ -4044,7 +4053,6 @@ async function importCOSEPublicKey(coseBuf) {
   return crypto.subtle.importKey('jwk', jwk, { name:'ECDSA', namedCurve:'P-256' }, false, ['verify']);
 }
 
-const WEBAUTHN_ORIGIN = 'https://www.retjghub.com';
 const WEBAUTHN_RP_ID  = 'retjghub.com';
 
 function getSessionCookie(request) {
@@ -4107,7 +4115,7 @@ function sessionCookie(id, maxAge) {
 }
 
 async function sendMagicLinkEmail(email, token, otpCode, env) {
-  const link = `https://api.retjghub.com/?action=auth-verify&token=${token}`;
+  const link = `${apiOrigin(env)}/?action=auth-verify&token=${token}`;
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -4139,7 +4147,7 @@ async function sendMagicLinkEmail(email, token, otpCode, env) {
 }
 
 async function sendInviteEmail(email, token, env) {
-  const link = `https://api.retjghub.com/?action=auth-verify&token=${token}`;
+  const link = `${apiOrigin(env)}/?action=auth-verify&token=${token}`;
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -4208,14 +4216,14 @@ export default {
     // ── Auth: GET /auth/verify — consume magic link, create session ──
     if (url.searchParams.get("action") === "auth-verify") {
       const token = url.searchParams.get("token");
-      if (!token) return Response.redirect("https://www.retjghub.com/?auth_error=invalid", 302);
+      if (!token) return Response.redirect(`${appOrigin(env)}/?auth_error=invalid`, 302);
       try {
         const now = new Date().toISOString();
         const { results } = await env.DB.prepare(
           "SELECT email, expires_at, used_at FROM magic_links WHERE token = ?"
         ).bind(token).all();
         if (!results || !results.length || results[0].used_at || results[0].expires_at < now) {
-          return Response.redirect("https://www.retjghub.com/?auth_error=expired", 302);
+          return Response.redirect(`${appOrigin(env)}/?auth_error=expired`, 302);
         }
         const { email } = results[0];
         // Mark token used
@@ -4226,7 +4234,7 @@ export default {
           "SELECT id FROM users WHERE email = ? AND status = 'active'"
         ).bind(email).all();
         if (!users || !users.length) {
-          return Response.redirect("https://www.retjghub.com/?auth_error=nouser", 302);
+          return Response.redirect(`${appOrigin(env)}/?auth_error=nouser`, 302);
         }
         const userId = users[0].id;
         // Create session (7 days)
@@ -4241,12 +4249,12 @@ export default {
         return new Response(null, {
           status: 302,
           headers: {
-            "Location": "https://www.retjghub.com/",
+            "Location": `${appOrigin(env)}/`,
             "Set-Cookie": sessionCookie(sessionId, 7 * 24 * 60 * 60),
           },
         });
       } catch (e) {
-        return Response.redirect("https://www.retjghub.com/?auth_error=server", 302);
+        return Response.redirect(`${appOrigin(env)}/?auth_error=server`, 302);
       }
     }
 
@@ -4344,7 +4352,7 @@ export default {
         const clientDataBytes = base64urlToBytes(credResp.clientDataJSON);
         const clientData = JSON.parse(new TextDecoder().decode(clientDataBytes));
         if (clientData.type !== 'webauthn.create') throw new Error('Wrong type');
-        if (clientData.origin !== WEBAUTHN_ORIGIN) throw new Error(`Bad origin: ${clientData.origin}`);
+        if (!isAllowedWebauthnOrigin(clientData.origin)) throw new Error(`Bad origin: ${clientData.origin}`);
         const storedChallenge = await env.SALES_SNAPSHOTS.get(`webauthn:reg:${user.id}`);
         if (!storedChallenge || storedChallenge !== clientData.challenge) throw new Error('Challenge mismatch');
         await env.SALES_SNAPSHOTS.delete(`webauthn:reg:${user.id}`);
@@ -4417,7 +4425,7 @@ export default {
         const clientDataBytes = base64urlToBytes(credResp.clientDataJSON);
         const clientData = JSON.parse(new TextDecoder().decode(clientDataBytes));
         if (clientData.type !== 'webauthn.get') throw new Error('Wrong type');
-        if (clientData.origin !== WEBAUTHN_ORIGIN) throw new Error(`Bad origin: ${clientData.origin}`);
+        if (!isAllowedWebauthnOrigin(clientData.origin)) throw new Error(`Bad origin: ${clientData.origin}`);
         const storedChallenge = await env.SALES_SNAPSHOTS.get(`webauthn:auth:${clientData.challenge}`);
         if (!storedChallenge) throw new Error('Challenge expired or not found');
         await env.SALES_SNAPSHOTS.delete(`webauthn:auth:${clientData.challenge}`);
