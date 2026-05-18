@@ -2015,6 +2015,34 @@
   //  HELPERS & MATH
   // ═══════════════════════════════════════════════════════════════
   function shortName(s) { const m = s.match(/\/\w+\s+(.+)$/); return m ? m[1] : s; }
+
+  // V1 inline-SVG sparkline (port of the redesign Sparkline). Returns an SVG
+  // string for a numeric series; null-safe; renders nothing for < 2 points.
+  function v1Sparkline(series, color, w, h) {
+    w = w || 104; h = h || 44;
+    const pts = (series || []).filter(v => v != null && isFinite(v));
+    if (pts.length < 2) return `<div style="width:${w}px;height:${h}px"></div>`;
+    const min = Math.min(...pts), max = Math.max(...pts), range = (max - min) || 1;
+    const n = series.length, stepX = w / (n - 1);
+    const coords = series.map((v, i) =>
+      (v == null || !isFinite(v)) ? null : [i * stepX, h - 4 - ((v - min) / range) * (h - 8)]);
+    const real = coords.filter(Boolean);
+    const path = real.map((c, i) => (i === 0 ? 'M' : 'L') + c[0].toFixed(1) + ' ' + c[1].toFixed(1)).join(' ');
+    const last = real[real.length - 1];
+    const area = `${path} L ${last[0].toFixed(1)} ${h} L ${real[0][0].toFixed(1)} ${h} Z`;
+    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;flex:0 0 auto">`
+      + `<path d="${area}" fill="${color}" fill-opacity="0.15"/>`
+      + `<path d="${path}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+  }
+
+  // Trailing-13-week net series for a store from the precomputed cache.
+  function storeTrend(storeKey) {
+    const cache = (typeof weeklyTotalsCache !== 'undefined' && weeklyTotalsCache[storeKey]) || null;
+    if (!cache) return [];
+    const sel = Number(selectedWeek);
+    const weeks = Object.keys(cache).map(Number).filter(w => isFinite(w) && (!sel || w <= sel)).sort((a, b) => a - b);
+    return weeks.slice(-13).map(w => cache[w] != null ? Number(cache[w]) : null);
+  }
   function el(id) { return document.getElementById(id); }
   function escapeHtml(str) {
     const div = document.createElement("div");
@@ -3040,136 +3068,80 @@
         : `Week ${selectedWeek}`;
       const budgetLabel = isDayView ? 'Day Budget' : 'Week Budget';
 
+      // ── Unified V1 store card values (works across live / historical / day) ──
+      const v1Loading = cardShowLive ? liveDataLoading : historicalDataLoading;
+      const v1Live = cardShowLive && !liveDataLoading && liveSales != null && liveSales > 0;
+      const v1Total = combinedTotal;
+      const v1Budget = cardShowLive ? todayBudget : m.bTotal;
+      const v1Retail = cardShowLive ? (liveRetail || 0) : (m.aRetail != null ? m.aRetail : (histRetail || 0));
+      const v1Bin = cardShowLive ? (liveBin || 0) : (m.aBins != null ? m.aBins : (histBin || 0));
+      const v1Auction = cardShowLive ? (storeAuction || 0) : (m.aAuction || 0);
+      const v1Cart = cardShowLive ? liveAvgCart : histAvgCart;
+      const v1Items = cardShowLive ? liveAvgItems : histAvgItems;
+      const v1Orders = cardShowLive ? liveOrderCount : histOrderCount;
+      const v1Asp = cardShowLive ? liveAvgASP : histAvgASP;
+      const v1HasBudget = v1Budget != null && v1Budget > 0;
+      const v1Pct = v1HasBudget ? Math.round(v1Total / v1Budget * 100) : null;
+      const v1Ahead = v1HasBudget && v1Total >= v1Budget;
+      const v1Delta = (v1Budget != null) ? (v1Total - v1Budget) : null;
+      const V1G = '#22c55e', V1B = '#ef4444', V1W = '#f59e0b';
+      const v1PaceColor = v1Ahead ? V1G : (v1Pct != null && v1Pct >= 80 ? V1W : V1B);
+      const v1SparkColor = v1Ahead ? V1G : V1B;
+      const v1BarW = v1Pct != null ? Math.min(100, Math.max(0, v1Pct / 120 * 100)) : 0;
+      const v1NetLabel = cardShowLive ? "Today's Net" : `${periodLabel} Net`;
+      const v1Spark = v1Sparkline(storeTrend(m.store), v1SparkColor);
+      const tile = (l, v) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
+      const mtile = (l, v) => `<div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
+
       const div = document.createElement("div");
-      div.className = `bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700 hover:border-[#3BB54A] hover:shadow-md transition-all cursor-pointer group`;
+      div.className = `bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors cursor-pointer group hover:border-accent-green/40`;
       div.onclick = () => showStoreDetail(m.store);
 
       div.innerHTML = `
-        <div class="flex items-start justify-between mb-2">
-          <div>
-            <div class="font-display text-gray-900 dark:text-white group-hover:text-[#194975] dark:group-hover:text-[#3BB54A] transition-colors">${escapeHtml(m.name)}</div>
-            <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">${escapeHtml(m.store.split("/")[0])}</div>
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="font-brand text-2xl leading-none tracking-wide text-opl-ink dark:text-op-ink truncate">${escapeHtml(m.name)}</div>
+            <div class="mt-1.5 text-xs tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(m.store.split("/")[0])}</div>
           </div>
-          ${cardShowLive ? `<span class="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-100 dark:border-green-800 flex items-center gap-1">
-            <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span> Live
-          </span>` : ''}
+          <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-[0.06em]"
+                style="border:1px solid ${v1Live ? 'rgba(34,197,94,0.4)' : 'rgba(136,147,167,0.35)'};color:${v1Live ? V1G : '#8893a7'}">
+            <span style="width:6px;height:6px;border-radius:9999px;background:${v1Live ? V1G : '#8893a7'}"></span>${v1Live ? 'LIVE' : 'OFFLINE'}
+          </span>
         </div>
 
-        ${cardShowLive ? `<div class="mt-4 mb-3 flex justify-between items-start">
-          <div>
-            <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Today's Net Sales</div>
-            <div class="text-3xl font-bold text-gray-900 dark:text-white">
-              ${liveDataLoading ? '<span class="loading-dot text-[#3BB54A] text-lg">Loading...</span>' :
-                (liveSales != null && liveSales > 0 ? fmtDollar(liveSales) : '<span class="text-gray-300 dark:text-gray-600 text-xl font-medium">No Live Data</span>')}
-            </div>
+        <div class="mt-4 flex items-end justify-between gap-3">
+          <div class="min-w-0">
+            <div class="text-[11px] font-semibold uppercase tracking-[0.08em] text-opl-inkDim dark:text-op-inkDim">${v1NetLabel}</div>
+            <div class="mt-1 font-geist font-bold tabular-nums tracking-tight leading-none text-[28px] text-opl-ink dark:text-op-ink truncate">
+              ${v1Loading ? '<span class="loading-dot text-accent-green text-lg">Loading…</span>' : fmtDollar(v1Total)}</div>
+            ${v1Delta != null ? `<div class="mt-1.5 text-xs font-semibold" style="color:${v1Ahead ? V1G : V1B}">${v1Delta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(v1Delta))} vs ${fmtK(v1Budget)}</div>` : `<div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim">no budget</div>`}
           </div>
-          <div class="text-right">
-            <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Day Budget</div>
-            <div class="text-3xl font-bold text-gray-400 dark:text-gray-500">
-              ${todayBudget != null ? fmtDollar(todayBudget) : '<span class="text-gray-300 dark:text-gray-600 text-lg font-medium">—</span>'}
-            </div>
-            ${(() => {
-              if (liveDataLoading || todayBudget == null || liveSales == null || liveSales <= 0) return '';
-              const diff = liveSales - todayBudget;
-              const cls = diff >= 0 ? 'text-green-600' : 'text-red-500';
-              const sign = diff >= 0 ? '+' : '-';
-              return `<div class="text-xs font-semibold mt-1 ${cls}">${sign}${fmtDollar(Math.abs(diff))}</div>`;
-            })()}
+          ${v1Spark}
+        </div>
+
+        <div class="mt-4">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-[11px] font-semibold uppercase tracking-[0.08em] text-opl-inkDim dark:text-op-inkDim">Pace</span>
+            <span class="text-xs font-bold tabular-nums" style="color:${v1PaceColor}">${v1Pct != null ? v1Pct + '%' : '—'}</span>
+          </div>
+          <div class="h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+            <div class="h-full rounded-full transition-[width] duration-500" style="width:${v1BarW}%;background:${v1PaceColor}"></div>
           </div>
         </div>
-        ${!liveDataLoading && liveSales != null && liveSales > 0 ? `
-        <div class="flex justify-between gap-3 mb-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
-          <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60">
-            <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div>
-            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(liveRetail)}</div>
-          </div>
-          <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60">
-            <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
-            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(liveBin)}</div>
-          </div>
-          <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60">
-            <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div>
-            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(storeAuction || 0)}</div>
-          </div>
-        </div>` : ''}
-        <div class="h-px bg-gray-100 dark:bg-gray-700 w-full mb-3"></div>` : ''}
 
-        ${!cardShowLive ? `<div class="mt-4 mb-3 flex justify-between items-start">
-          <div>
-            <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">${periodLabel} Total</div>
-            <div class="text-3xl font-bold text-gray-900 dark:text-white">${fmtDollar(combinedTotal)}</div>
-          </div>
-          <div class="text-right">
-            <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">${budgetLabel}</div>
-            <div class="text-3xl font-bold text-gray-400 dark:text-gray-500">${m.bTotal != null ? fmtDollar(m.bTotal) : '<span class="text-gray-300 dark:text-gray-600 text-lg font-medium">—</span>'}</div>
-            ${(() => {
-              if (m.bTotal == null || m.aTotal == null) return '';
-              const diff = combinedTotal - m.bTotal;
-              const cls = diff >= 0 ? 'text-green-600' : 'text-red-500';
-              const sign = diff >= 0 ? '+' : '-';
-              return `<div class="text-xs font-semibold mt-1 ${cls}">${sign}${fmtDollar(Math.abs(diff))}</div>`;
-            })()}
-          </div>
+        <div class="mt-4 grid grid-cols-3 gap-2">
+          ${tile('Retail', fmtK(v1Retail))}${tile('BIN', fmtK(v1Bin))}${tile('Auction', fmtK(v1Auction))}
         </div>
-        ${(m.aRetail != null || m.aBins != null || m.aAuction != null) ? `
-        <div class="flex justify-between gap-3 mb-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700/40">
-          <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60">
-            <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Retail</div>
-            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aRetail || 0)}</div>
-          </div>
-          <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60">
-            <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Bin</div>
-            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aBins || 0)}</div>
-          </div>
-          <div class="flex-1 text-center py-2 px-3 rounded-lg bg-gray-100 dark:bg-gray-700/60">
-            <div class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Auction</div>
-            <div class="text-sm font-bold text-gray-700 dark:text-gray-200">${fmtDollar(m.aAuction || 0)}</div>
-          </div>
-        </div>` : ''}
-        ${hasHistData ? `
-        <div class="flex gap-4 mb-3 text-center">
-          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Cart</div>
-            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(histAvgCart)}</div>
-          </div>
-          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Items</div>
-            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${histAvgItems.toFixed(1)}</div>
-          </div>
-          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Orders</div>
-            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${histOrderCount}</div>
-          </div>
-          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">ASP</div>
-            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(histAvgASP)}</div>
-          </div>
-        </div>` : (historicalDataLoading ? '<div class="text-xs text-gray-400 dark:text-gray-500 mb-3 text-center">Loading historical data...</div>' : '')}
-        <div class="h-px bg-gray-100 dark:bg-gray-700 w-full mb-3"></div>` : ''}
 
-        ${cardShowLive && !liveDataLoading && liveSales != null && liveSales > 0 ? `
-        <div class="flex gap-4 mb-3 text-center">
-          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Cart</div>
-            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(liveAvgCart)}</div>
-          </div>
-          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Avg Items</div>
-            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${liveAvgItems.toFixed(1)}</div>
-          </div>
-          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">Orders</div>
-            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${liveOrderCount}</div>
-          </div>
-          <div class="flex-1 py-2 px-2 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30">
-            <div class="text-[10px] font-semibold text-[#3BB54A] dark:text-[#3BB54A] uppercase tracking-wider">ASP</div>
-            <div class="text-sm font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(liveAvgASP)}</div>
-          </div>
-        </div>` : ''}
+        <div class="mt-2 grid grid-cols-4 gap-2">
+          ${mtile('Cart', v1Cart != null ? '$' + Number(v1Cart).toFixed(2) : '—')}
+          ${mtile('Items', v1Items != null ? Number(v1Items).toFixed(1) : '—')}
+          ${mtile('Orders', v1Orders != null ? Number(v1Orders).toLocaleString() : '—')}
+          ${mtile('ASP', v1Asp != null ? '$' + Number(v1Asp).toFixed(2) : '—')}
+        </div>
 
-        <div class="flex justify-between items-center text-sm text-gray-500 dark:text-gray-400">
-          ${cardShowLive && !isDayView ? `<span>Wk${selectedWeek} WTD: <strong class="text-gray-700 dark:text-gray-200">${fmtK(combinedTotal)}</strong>${m.bTotal != null ? ` <span class="text-gray-400 dark:text-gray-500">/ ${fmtK(m.bTotal)}</span> ${(() => { const d = combinedTotal - m.bTotal; const cls = d >= 0 ? 'text-green-600' : 'text-red-500'; const sign = d >= 0 ? '+' : '-'; return `<span class="${cls} font-semibold">${sign}${fmtK(Math.abs(d))}</span>`; })()}` : ''}</span>` : '<span></span>'}
-          <span class="text-[#194975] dark:text-[#3BB54A] font-medium group-hover:translate-x-1 transition-transform">View Details &rarr;</span>
+        <div class="mt-4 flex justify-end">
+          <span class="text-xs font-semibold text-accent-green group-hover:translate-x-1 transition-transform">View Details →</span>
         </div>`;
       container.appendChild(div);
     }
