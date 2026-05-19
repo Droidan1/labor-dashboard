@@ -2048,6 +2048,8 @@
   let allStoreData   = {};
   let liveCloverData = {}; // Stores our live API numbers: { total, retail, bin }
   let historicalCloverData = {}; // { storeName: { "YYYY-MM-DD": { total, retail, bin, avgCart, ... } } }
+  let liveCloverErrors = {}; // { storeName: message } — set on fetch failure, cleared on success
+  let histErrors = {};       // { storeName: message } — same, for D1/historical fetch
   let selectedWeek   = null;
   let currentWeek    = null;
   let selectedDashDay = null;  // null = full week, 'YYYY-MM-DD' = single day
@@ -2558,7 +2560,8 @@
         const { rows, cloverHistory } = await loadStoreFromD1(s);
         results[s] = rows;
         historicalCloverData[s] = cloverHistory;
-      } catch (e) { errors[s] = e.message; results[s] = []; }
+        delete histErrors[s];
+      } catch (e) { errors[s] = e.message; results[s] = []; histErrors[s] = e.message || "Couldn't load"; }
       loaded++;
       el("last-updated").textContent = `Loading stores… (${loaded}/${STORES.length})`;
     }));
@@ -2568,7 +2571,13 @@
     // Start loading Clover API data concurrently
     const cloverPromise = Promise.all(STORES.map(async (s) => {
       const storeKey = s.split('/')[0].toLowerCase();
-      liveCloverData[s] = await fetchLiveCloverSales(storeKey);
+      try {
+        liveCloverData[s] = await fetchLiveCloverSales(storeKey);
+        delete liveCloverErrors[s];
+      } catch (err) {
+        liveCloverData[s] = null;
+        liveCloverErrors[s] = err.message || "Couldn't load";
+      }
     })).then(() => {
       liveDataLoading = false;
       if (selectedWeek === currentWeek) renderDashboard();
@@ -2633,6 +2642,44 @@
     if (selectedWeek) renderDashboard();
 
   }
+
+  // Retry a single store's failed fetches (live + historical), then re-render.
+  // Wired to the inline "Retry" button on store cards in error state.
+  async function retryStore(storeName) {
+    const storeKey = storeName.split('/')[0].toLowerCase();
+    // Bust the cached failures so we actually re-hit the network.
+    if (typeof _apiCache !== 'undefined' && _apiCache.clear) {
+      // _apiCache is keyed by URL; clearing all is the safe minimum here.
+      _apiCache.clear();
+    }
+    if (liveCloverErrors[storeName]) {
+      liveDataLoading = true;
+      try { renderDashboard(); } catch (e) {}
+      try {
+        liveCloverData[storeName] = await fetchLiveCloverSales(storeKey);
+        delete liveCloverErrors[storeName];
+      } catch (err) {
+        liveCloverData[storeName] = null;
+        liveCloverErrors[storeName] = err.message || "Couldn't load";
+      }
+      liveDataLoading = false;
+    }
+    if (histErrors[storeName]) {
+      historicalDataLoading = true;
+      try { renderDashboard(); } catch (e) {}
+      try {
+        const { rows, cloverHistory } = await loadStoreFromD1(storeName);
+        allStoreData[storeName] = rows;
+        historicalCloverData[storeName] = cloverHistory;
+        delete histErrors[storeName];
+      } catch (err) {
+        histErrors[storeName] = err.message || "Couldn't load";
+      }
+      historicalDataLoading = false;
+    }
+    try { renderDashboard(); } catch (e) {}
+  }
+  window.retryStore = retryStore;
 
   // ═══════════════════════════════════════════════════════════════
   //  RENDER UI
@@ -3155,6 +3202,8 @@
       // Truly "offline today" — in live view with no live sales. Don't dim
       // historical/day views (no live signal there is normal).
       const v1OfflineNow = cardShowLive && !liveDataLoading && (liveSales == null || liveSales <= 0);
+      // Per-store fetch failure → show inline retry instead of zeros.
+      const v1Error = cardShowLive ? !!liveCloverErrors[m.store] : !!histErrors[m.store];
       // Live mode: today's net only (live sales + today's manual auction).
       // combinedTotal includes m.aTotal which already holds today-to-date,
       // so using it in live mode double-counts today. Non-live: period sum.
@@ -3209,10 +3258,12 @@
             <div class="mt-1 font-geist font-bold tabular-nums tracking-tight leading-none text-[28px] text-opl-ink dark:text-op-ink truncate">
               ${v1Loading
                 ? '<span class="skel" style="width:7ch;height:0.85em"></span>'
-                : (v1OfflineNow
-                  ? '<span class="text-base font-medium text-opl-inkDim dark:text-op-inkDim">No transactions yet</span>'
-                  : fmtDollar(v1Total))}</div>
-            ${v1Delta != null ? `<div class="mt-1.5 text-xs font-semibold" style="color:${v1Ahead ? V1G : V1B}">${v1Delta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(v1Delta))} vs ${fmtK(v1Budget)}</div>` : `<div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim">no budget</div>`}
+                : v1Error
+                  ? `<div class="text-sm font-medium text-op-bad">Couldn’t load</div><button type="button" onclick="event.stopPropagation();retryStore(${JSON.stringify(m.store)})" class="mt-1 text-xs font-bold text-accent-green hover:underline">Retry</button>`
+                  : (v1OfflineNow
+                    ? '<span class="text-base font-medium text-opl-inkDim dark:text-op-inkDim">No transactions yet</span>'
+                    : fmtDollar(v1Total))}</div>
+            ${v1Error ? '' : (v1Delta != null ? `<div class="mt-1.5 text-xs font-semibold" style="color:${v1Ahead ? V1G : V1B}">${v1Delta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(v1Delta))} vs ${fmtK(v1Budget)}</div>` : `<div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim">no budget</div>`)}
           </div>
           ${v1Spark}
         </div>
