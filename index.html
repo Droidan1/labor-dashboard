@@ -2091,6 +2091,23 @@
     const weeks = Object.keys(cache).map(Number).filter(w => isFinite(w) && (!sel || w <= sel)).sort((a, b) => a - b);
     return weeks.slice(-13).map(w => cache[w] != null ? Number(cache[w]) : null);
   }
+
+  // Fetch a store's hourly net sales for a date and draw it into the card's
+  // sparkline slot (async; leaves the slot empty on no-data / failure).
+  async function loadStoreHourlySpark(storeKey, dateStr, color, elId) {
+    try {
+      const d = await cachedFetch(`${WORKER_BASE}?action=hourly&store=${storeKey}&date=${dateStr}`, { credentials: 'include' });
+      const slot = document.getElementById(elId);
+      if (!slot) return;
+      let hrs = (d && Array.isArray(d.hours)) ? d.hours.slice() : [];
+      if (!hrs.length || hrs.every(v => !v)) { slot.innerHTML = ''; return; }
+      let s = 0, e = hrs.length - 1;
+      while (s < e && !hrs[s]) s++;
+      while (e > s && !hrs[e]) e--;
+      slot.innerHTML = v1Sparkline(hrs.slice(s, e + 1), color, 104, 44);
+    } catch (_) { /* keep placeholder empty */ }
+  }
+
   function el(id) { return document.getElementById(id); }
   function escapeHtml(str) {
     const div = document.createElement("div");
@@ -3149,7 +3166,12 @@
       const v1SparkColor = v1Ahead ? V1G : V1B;
       const v1BarW = v1Pct != null ? Math.min(100, Math.max(0, v1Pct / 120 * 100)) : 0;
       const v1NetLabel = cardShowLive ? "Today's Net" : `${periodLabel} Net`;
-      const v1Spark = v1Sparkline(storeTrend(m.store), v1SparkColor);
+      // Sparkline = today's (or selected day's) hourly net sales, fetched
+      // per store after the card mounts (?action=hourly).
+      const v1SparkKey = m.store.split('/')[0];
+      const v1SparkId = 'v1-spark-' + v1SparkKey;
+      const v1SparkDate = selectedDashDay || todayStr;
+      const v1Spark = '<div id="' + v1SparkId + '" style="width:104px;height:44px;flex:0 0 auto"></div>';
       const tile = (l, v) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
       const mtile = (l, v) => `<div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
 
@@ -3204,6 +3226,7 @@
           <span class="text-xs font-semibold text-accent-green group-hover:translate-x-1 transition-transform">View Details →</span>
         </div>`;
       container.appendChild(div);
+      loadStoreHourlySpark(v1SparkKey, v1SparkDate, v1SparkColor, v1SparkId);
     }
   }
 
