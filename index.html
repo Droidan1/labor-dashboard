@@ -3173,7 +3173,7 @@
       const v1SparkDate = selectedDashDay || todayStr;
       const v1Spark = '<div id="' + v1SparkId + '" style="width:104px;height:44px;flex:0 0 auto"></div>';
       const tile = (l, v) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
-      const mtile = (l, v) => `<div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
+      const mtile = (l, v) => `<div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
 
       const div = document.createElement("div");
       div.className = `bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors cursor-pointer group hover:border-accent-green/40`;
@@ -3215,7 +3215,7 @@
           ${tile('Retail', fmtK(v1Retail))}${tile('BIN', fmtK(v1Bin))}${tile('Auction', fmtK(v1Auction))}
         </div>
 
-        <div class="mt-2 grid grid-cols-4 gap-2">
+        <div class="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
           ${mtile('Cart', v1Cart != null ? '$' + Number(v1Cart).toFixed(2) : '—')}
           ${mtile('Items', v1Items != null ? Number(v1Items).toFixed(1) : '—')}
           ${mtile('Orders', v1Orders != null ? Number(v1Orders).toLocaleString() : '—')}
