@@ -3126,7 +3126,12 @@
       // ── Unified V1 store card values (works across live / historical / day) ──
       const v1Loading = cardShowLive ? liveDataLoading : historicalDataLoading;
       const v1Live = cardShowLive && !liveDataLoading && liveSales != null && liveSales > 0;
-      const v1Total = combinedTotal;
+      // Live mode: today's net only (live sales + today's manual auction).
+      // combinedTotal includes m.aTotal which already holds today-to-date,
+      // so using it in live mode double-counts today. Non-live: period sum.
+      const v1Total = cardShowLive
+        ? ((liveSales != null && liveSales > 0 ? liveSales : 0) + (storeAuction != null ? storeAuction : 0))
+        : combinedTotal;
       const v1Budget = cardShowLive ? todayBudget : m.bTotal;
       const v1Retail = cardShowLive ? (liveRetail || 0) : (m.aRetail != null ? m.aRetail : (histRetail || 0));
       const v1Bin = cardShowLive ? (liveBin || 0) : (m.aBins != null ? m.aBins : (histBin || 0));
