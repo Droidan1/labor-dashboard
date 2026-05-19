@@ -3152,6 +3152,9 @@
       // ── Unified V1 store card values (works across live / historical / day) ──
       const v1Loading = cardShowLive ? liveDataLoading : historicalDataLoading;
       const v1Live = cardShowLive && !liveDataLoading && liveSales != null && liveSales > 0;
+      // Truly "offline today" — in live view with no live sales. Don't dim
+      // historical/day views (no live signal there is normal).
+      const v1OfflineNow = cardShowLive && !liveDataLoading && (liveSales == null || liveSales <= 0);
       // Live mode: today's net only (live sales + today's manual auction).
       // combinedTotal includes m.aTotal which already holds today-to-date,
       // so using it in live mode double-counts today. Non-live: period sum.
@@ -3185,7 +3188,7 @@
       const mtile = (l, v) => `<div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
 
       const div = document.createElement("div");
-      div.className = `bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors cursor-pointer group hover:border-accent-green/40`;
+      div.className = `bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors cursor-pointer group hover:border-accent-green/40${v1OfflineNow ? ' opacity-60' : ''}`;
       div.onclick = () => showStoreDetail(m.store);
 
       div.innerHTML = `
@@ -3204,7 +3207,11 @@
           <div class="min-w-0">
             <div class="text-[11px] font-semibold uppercase tracking-[0.08em] text-opl-inkDim dark:text-op-inkDim">${v1NetLabel}</div>
             <div class="mt-1 font-geist font-bold tabular-nums tracking-tight leading-none text-[28px] text-opl-ink dark:text-op-ink truncate">
-              ${v1Loading ? '<span class="skel" style="width:7ch;height:0.85em"></span>' : fmtDollar(v1Total)}</div>
+              ${v1Loading
+                ? '<span class="skel" style="width:7ch;height:0.85em"></span>'
+                : (v1OfflineNow
+                  ? '<span class="text-base font-medium text-opl-inkDim dark:text-op-inkDim">No transactions yet</span>'
+                  : fmtDollar(v1Total))}</div>
             ${v1Delta != null ? `<div class="mt-1.5 text-xs font-semibold" style="color:${v1Ahead ? V1G : V1B}">${v1Delta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(v1Delta))} vs ${fmtK(v1Budget)}</div>` : `<div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim">no budget</div>`}
           </div>
           ${v1Spark}
