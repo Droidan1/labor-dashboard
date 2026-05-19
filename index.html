@@ -96,8 +96,6 @@
        the only feedback the user sees. Without this, Chrome's native PTR
        fights ours, and iOS Safari's rubber-band bounce overlays the indicator. */
     html, body { overscroll-behavior-y: none; }
-    /* viewport-fit=cover extends content under the iOS status bar — reserve it */
-    body { padding-top: env(safe-area-inset-top); }
     /* Pull-to-refresh indicator — transform is controlled inline by JS so
        drag follows the finger 1:1 (no CSS transition during drag), and
        transition is set inline only during snap-back / release animations. */
@@ -527,7 +525,7 @@
       </nav>
 
       <div id="page-dashboard">
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-[env(safe-area-inset-top)] z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="flex items-center justify-between max-w-7xl mx-auto">
           <div class="ml-12 md:ml-0">
             <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Dashboard</h1>
@@ -703,7 +701,7 @@
 
     <!-- Store Detail Page -->
     <div id="page-store-detail" class="hidden">
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-[env(safe-area-inset-top)] z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="flex items-center gap-3 max-w-7xl mx-auto">
           <button onclick="navigateToDashboard()" class="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-700 grid place-content-center hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" aria-label="Back to dashboard">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600 dark:text-gray-300"><polyline points="15 18 9 12 15 6"/></svg>
@@ -743,7 +741,7 @@
     </div><!-- end #page-store-detail -->
 
     <div id="page-all-stores-detail" class="hidden">
-      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 sm:px-6 py-4 sticky top-[env(safe-area-inset-top)] z-10 transition-colors">
+      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="flex items-center gap-3 max-w-7xl mx-auto">
           <button onclick="navigateToDashboard()" class="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-700 grid place-content-center hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors flex-shrink-0" aria-label="Back to dashboard">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600 dark:text-gray-300"><polyline points="15 18 9 12 15 6"/></svg>
@@ -775,7 +773,7 @@
     </div><!-- end #page-all-stores-detail -->
 
     <div id="page-weekly-summary" class="hidden">
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-[env(safe-area-inset-top)] z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-7xl mx-auto">
           <div class="ml-12 md:ml-0 flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -820,7 +818,7 @@
     </div><!-- end #page-weekly-summary -->
 
     <div id="page-inventory" class="hidden">
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-[env(safe-area-inset-top)] z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-7xl mx-auto">
           <div class="ml-12 md:ml-0">
             <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Inventory</h1>
@@ -1131,7 +1129,7 @@
 
     <div id="page-supply-request" class="hidden">
       <!-- Sticky header -->
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-[env(safe-area-inset-top)] z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-4xl mx-auto">
           <div class="ml-12 md:ml-0">
             <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Supply Request</h1>
@@ -1159,7 +1157,7 @@
     </div><!-- end #page-supply-request -->
 
     <div id="page-settings" class="hidden">
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-[env(safe-area-inset-top)] z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-3xl mx-auto">
           <div class="ml-12 md:ml-0">
             <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Settings</h1>
@@ -1519,7 +1517,7 @@
 
     <!-- ── Admin Settings page ──────────────────────────────────── -->
     <div id="page-admin-settings" class="hidden">
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-[env(safe-area-inset-top)] z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-3xl mx-auto">
           <div class="ml-12 md:ml-0">
             <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Admin Settings</h1>
@@ -1832,7 +1830,7 @@
 
     <!-- ── Users page ────────────────────────────────────────────── -->
     <div id="page-users" class="hidden">
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 py-4 sticky top-[env(safe-area-inset-top)] z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-3xl mx-auto flex items-center justify-between">
           <div class="ml-12 md:ml-0">
             <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Users</h1>
