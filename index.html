@@ -475,7 +475,7 @@
     <div id="sidebar-overlay" class="sidebar-overlay" onclick="document.getElementById('sidebar').classList.add('collapsed');this.style.display='none';localStorage.setItem('sidebarCollapsed','true')"></div>
 
     <!-- Main content -->
-    <div id="main-scroll" class="flex-1 min-w-0 overflow-y-auto overscroll-contain max-lg:pb-24">
+    <div id="main-scroll" class="flex-1 min-w-0 overflow-y-auto max-lg:overscroll-contain max-lg:pb-24">
       <!-- Mobile hamburger (retired on mobile — bottom nav replaces it) -->
       <button id="mobile-menu-btn" class="!hidden fixed top-4 left-4 z-30 w-10 h-10 rounded-lg bg-white dark:bg-gray-800 shadow-md border border-gray-200 dark:border-gray-700 grid place-content-center" onclick="document.getElementById('sidebar').classList.remove('collapsed');document.getElementById('sidebar-overlay').style.display='block';localStorage.setItem('sidebarCollapsed','false')">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-600 dark:text-gray-300"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
