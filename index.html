@@ -30,6 +30,15 @@
   <style>
     .loading-dot { animation: pulse 1.2s infinite; }
     @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
+    /* Skeleton shimmer — same dimensions as the final content */
+    .skel {
+      display: inline-block; border-radius: 6px; background-size: 200% 100%;
+      background-image: linear-gradient(90deg, rgba(20,16,8,0.06) 0%, rgba(20,16,8,0.14) 50%, rgba(20,16,8,0.06) 100%);
+      animation: skel-shimmer 1.6s linear infinite; vertical-align: middle;
+    }
+    .dark .skel { background-image: linear-gradient(90deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.13) 50%, rgba(255,255,255,0.05) 100%); }
+    @keyframes skel-shimmer { from { background-position: 100% 0 } to { background-position: -100% 0 } }
+    @media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
 
     /* Skeleton shimmer */
     .skeleton-shimmer {
@@ -2896,7 +2905,7 @@
     const hasData = !isLoading && storesWithData > 0;
 
     if (isLoading) {
-      el("c-today-total").innerHTML = '<span class="loading-dot text-accent-green text-2xl">Loading…</span>';
+      el("c-today-total").innerHTML = '<span class="skel" style="width:9ch;height:0.92em"></span>';
       el("c-today-sub").textContent = showLive ? 'Fetching live data' : 'Loading stored data';
     } else {
       el("c-today-total").textContent = hasData ? fmtDollar(grandTotal) : '—';
@@ -3195,7 +3204,7 @@
           <div class="min-w-0">
             <div class="text-[11px] font-semibold uppercase tracking-[0.08em] text-opl-inkDim dark:text-op-inkDim">${v1NetLabel}</div>
             <div class="mt-1 font-geist font-bold tabular-nums tracking-tight leading-none text-[28px] text-opl-ink dark:text-op-ink truncate">
-              ${v1Loading ? '<span class="loading-dot text-accent-green text-lg">Loading…</span>' : fmtDollar(v1Total)}</div>
+              ${v1Loading ? '<span class="skel" style="width:7ch;height:0.85em"></span>' : fmtDollar(v1Total)}</div>
             ${v1Delta != null ? `<div class="mt-1.5 text-xs font-semibold" style="color:${v1Ahead ? V1G : V1B}">${v1Delta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(v1Delta))} vs ${fmtK(v1Budget)}</div>` : `<div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim">no budget</div>`}
           </div>
           ${v1Spark}
