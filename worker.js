@@ -1706,7 +1706,10 @@ function aggregateOrders(elements, sinceTimestamp) {
 
     totalNet += adjustedOrderNet;
     orderCount++;
-    if (orderNet > 0) retailItemCount += retailItemTotal > 0 ? 1 : 0;
+    // ASP denominator must be the actual retail item count, not "1 per
+    // order that had retail items" (that made ASP ≈ avgCart). retailQty
+    // already accumulates per-line-item qty above.
+    if (orderNet > 0) retailItemCount += retailQty;
     totalItemCount += orderItemCount;
 
     // Transaction time
