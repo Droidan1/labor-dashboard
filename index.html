@@ -571,11 +571,11 @@
           <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
           <div class="relative flex items-start justify-between gap-6">
             <div class="min-w-0">
-              <div id="c-today-card-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Today · All Stores</div>
+              <div id="c-today-card-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Today's Sales · All Stores</div>
               <div id="c-today-total" class="mt-2 font-geist font-bold tabular-nums tracking-tight leading-none text-4xl sm:text-5xl text-opl-ink dark:text-op-ink truncate">—</div>
               <div class="mt-2 flex items-center gap-2 text-sm">
                 <span id="c-today-diff" class="font-semibold"></span>
-                <span id="c-today-sub" class="text-opl-inkDim dark:text-op-inkDim">All stores</span>
+                <span id="c-today-sub" class="text-opl-inkDim dark:text-op-inkDim"></span>
               </div>
             </div>
             <div class="text-right flex-shrink-0">
@@ -590,7 +590,7 @@
             </div>
             <div class="mt-2 flex justify-between text-[11px] text-opl-inkDim dark:text-op-inkDim">
               <span>$0</span>
-              <span><span id="c-today-budget">—</span> target</span>
+              <span id="c-today-budget">—</span>
             </div>
           </div>
           <div class="relative flex justify-end mt-3">
@@ -3004,7 +3004,7 @@
       cardLabel = isCurrentWeek ? "Today's Sales" : `Week ${selectedWeek} Clover Data`;
     }
 
-    el("c-today-card-label").textContent = cardLabel;
+    el("c-today-card-label").textContent = `${cardLabel} · All Stores`;
 
     const grandTotal = todayTotal + todayAuction;
     const hasData = !isLoading && storesWithData > 0;
@@ -3014,7 +3014,7 @@
       el("c-today-sub").textContent = showLive ? 'Fetching live data' : 'Loading stored data';
     } else {
       el("c-today-total").textContent = hasData ? fmtDollar(grandTotal) : '—';
-      el("c-today-sub").textContent = 'all stores';
+      el("c-today-sub").textContent = '';
     }
 
     // Pace % + progress bar (good ≥ budget, warn below)
@@ -3045,7 +3045,7 @@
       const diff = grandTotal - todayTotalBudget;
       const isPositive = diff >= 0;
       diffEl.className = isPositive ? 'font-semibold text-accent-green' : 'font-semibold text-op-bad';
-      diffEl.textContent = `${isPositive ? '+' : '−'}${fmtDollar(Math.abs(diff))} vs target`;
+      diffEl.textContent = `${isPositive ? '+' : '−'}${fmtDollar(Math.abs(diff))} vs ${fmtDollar(todayTotalBudget)}`;
     } else {
       diffEl.textContent = '';
     }
