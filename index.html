@@ -3322,7 +3322,7 @@
                   : (v1OfflineNow
                     ? '<span class="text-base font-medium text-opl-inkDim dark:text-op-inkDim">No transactions yet</span>'
                     : fmtDollar(v1Total))}</div>
-            ${v1Error ? '' : (v1Delta != null ? `<div class="mt-1.5 text-xs font-semibold" style="color:${v1Ahead ? V1G : V1B}">${v1Delta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(v1Delta))} vs ${fmtK(v1Budget)}</div>` : `<div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim">no budget</div>`)}
+            ${v1Error ? '' : (v1Delta != null ? `<div class="mt-1.5 text-xs font-semibold" style="color:${v1Ahead ? V1G : V1B}">${v1Delta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(v1Delta))} vs ${fmtDollar(v1Budget)}</div>` : `<div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim">no budget</div>`)}
           </div>
           ${v1Spark}
         </div>
@@ -3338,7 +3338,7 @@
         </div>
 
         <div class="mt-4 grid grid-cols-3 gap-2">
-          ${tile('Retail', fmtK(v1Retail))}${tile('BIN', fmtK(v1Bin))}${tile('Auction', fmtK(v1Auction))}
+          ${tile('Retail', fmtDollar(v1Retail))}${tile('BIN', fmtDollar(v1Bin))}${tile('Auction', fmtDollar(v1Auction))}
         </div>
 
         <div class="mt-2 grid grid-cols-4 gap-2">
