@@ -2115,8 +2115,66 @@
       let s = 0, e = hrs.length - 1;
       while (s < e && !hrs[s]) s++;
       while (e > s && !hrs[e]) e--;
-      slot.innerHTML = v1Sparkline(hrs.slice(s, e + 1), color, 104, 44);
+      const series = hrs.slice(s, e + 1);
+      const labels = series.map((_, i) => fmtHour(s + i));
+      const W = 104, H = 44;
+      slot.innerHTML = v1Sparkline(series, color, W, H);
+      attachSparkTooltip(slot, series, labels, W, H, color);
     } catch (_) { /* keep placeholder empty */ }
+  }
+
+  function fmtHour(h) {
+    return h === 0 ? '12 AM' : h < 12 ? h + ' AM' : h === 12 ? '12 PM' : (h - 12) + ' PM';
+  }
+
+  // Attach (or refresh) hover/tap tooltip on a sparkline slot. Works for
+  // mouse + touch via Pointer Events. Cleans up prior listeners so repeated
+  // calls (renderCards re-renders) don't leak handlers.
+  function attachSparkTooltip(slot, series, labels, W, H, color) {
+    if (slot.__sparkOnMove) {
+      slot.removeEventListener('pointermove', slot.__sparkOnMove);
+      slot.removeEventListener('pointerleave', slot.__sparkOnLeave);
+      slot.removeEventListener('pointercancel', slot.__sparkOnLeave);
+    }
+    slot.style.position = 'relative';
+    slot.style.overflow = 'visible';
+    slot.style.touchAction = 'pan-y';
+    const ind = document.createElement('div');
+    ind.style.cssText = 'position:absolute;top:0;width:1px;height:' + H + 'px;background:' + color + ';opacity:0;pointer-events:none;transition:opacity .15s';
+    slot.appendChild(ind);
+    const dot = document.createElement('div');
+    dot.style.cssText = 'position:absolute;width:7px;height:7px;border-radius:50%;background:' + color + ';transform:translate(-50%,-50%);opacity:0;pointer-events:none;box-shadow:0 0 0 2px rgba(10,15,26,0.9);transition:opacity .15s';
+    slot.appendChild(dot);
+    const tip = document.createElement('div');
+    tip.style.cssText = 'position:absolute;bottom:' + (H + 6) + 'px;background:rgba(16,24,38,0.95);color:#e7ecf3;font:600 10px Geist,system-ui;padding:4px 7px;border-radius:6px;white-space:nowrap;pointer-events:none;opacity:0;transform:translateX(-50%);transition:opacity .15s;z-index:20';
+    slot.appendChild(tip);
+    const n = series.length;
+    const valid = series.filter(v => v != null && isFinite(v));
+    const min = valid.length ? Math.min.apply(null, valid) : 0;
+    const max = valid.length ? Math.max.apply(null, valid) : 1;
+    const range = (max - min) || 1;
+    function onMove(ev) {
+      const rect = slot.getBoundingClientRect();
+      let frac = (ev.clientX - rect.left) / rect.width;
+      frac = Math.max(0, Math.min(1, frac));
+      const idx = n > 1 ? Math.round(frac * (n - 1)) : 0;
+      const v = series[idx];
+      if (v == null || !isFinite(v)) { onLeave(); return; }
+      const x = n > 1 ? (idx / (n - 1)) * W : W / 2;
+      const y = H - 4 - ((v - min) / range) * (H - 8);
+      ind.style.left = x + 'px'; ind.style.opacity = '0.45';
+      dot.style.left = x + 'px'; dot.style.top = y + 'px'; dot.style.opacity = '1';
+      tip.style.left = x + 'px'; tip.style.opacity = '1';
+      tip.textContent = labels[idx] + ' · $' + Math.round(v).toLocaleString('en-US');
+    }
+    function onLeave() {
+      ind.style.opacity = '0'; dot.style.opacity = '0'; tip.style.opacity = '0';
+    }
+    slot.__sparkOnMove = onMove;
+    slot.__sparkOnLeave = onLeave;
+    slot.addEventListener('pointermove', onMove);
+    slot.addEventListener('pointerleave', onLeave);
+    slot.addEventListener('pointercancel', onLeave);
   }
 
   function el(id) { return document.getElementById(id); }
