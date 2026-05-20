@@ -3352,7 +3352,7 @@
         </div>
 
         <div class="mt-4 flex justify-end">
-          <button type="button" onclick="showStoreDetail(${JSON.stringify(m.store)})" class="text-xs font-semibold text-accent-green hover:underline group-hover:translate-x-1 transition-transform">View Details →</button>
+          <button type="button" onclick="showStoreDetail(${JSON.stringify(m.store).replace(/"/g, '&quot;')})" class="text-xs font-semibold text-accent-green hover:underline group-hover:translate-x-1 transition-transform">View Details →</button>
         </div>`;
       container.appendChild(div);
       loadStoreHourlySpark(v1SparkKey, v1SparkDate, v1SparkColor, v1SparkId);
