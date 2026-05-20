@@ -590,7 +590,7 @@
             </div>
             <div class="mt-2 flex justify-between text-[11px] text-opl-inkDim dark:text-op-inkDim">
               <span>$0</span>
-              <span id="c-today-budget">—</span>
+              <span id="c-today-budget" class="text-sm font-semibold text-opl-ink dark:text-op-ink">—</span>
             </div>
           </div>
           <div class="relative flex justify-end mt-3">
@@ -3044,8 +3044,10 @@
     if (hasData && todayTotalBudget > 0) {
       const diff = grandTotal - todayTotalBudget;
       const isPositive = diff >= 0;
-      diffEl.className = isPositive ? 'font-semibold text-accent-green' : 'font-semibold text-op-bad';
-      diffEl.textContent = `${isPositive ? '+' : '−'}${fmtDollar(Math.abs(diff))} vs ${fmtDollar(todayTotalBudget)}`;
+      diffEl.className = 'font-semibold';
+      diffEl.innerHTML =
+        `<span class="${isPositive ? 'text-accent-green' : 'text-op-bad'}">${isPositive ? '+' : '−'}${fmtDollar(Math.abs(diff))}</span>` +
+        ` <span class="text-base font-semibold text-opl-ink dark:text-op-ink">vs ${fmtDollar(todayTotalBudget)}</span>`;
     } else {
       diffEl.textContent = '';
     }
@@ -3322,7 +3324,7 @@
                   : (v1OfflineNow
                     ? '<span class="text-base font-medium text-opl-inkDim dark:text-op-inkDim">No transactions yet</span>'
                     : fmtDollar(v1Total))}</div>
-            ${v1Error ? '' : (v1Delta != null ? `<div class="mt-1.5 text-xs font-semibold" style="color:${v1Ahead ? V1G : V1B}">${v1Delta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(v1Delta))} vs ${fmtDollar(v1Budget)}</div>` : `<div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim">no budget</div>`)}
+            ${v1Error ? '' : (v1Delta != null ? `<div class="mt-1.5 text-xs font-semibold"><span style="color:${v1Ahead ? V1G : V1B}">${v1Delta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(v1Delta))}</span> <span class="text-sm font-semibold text-opl-ink dark:text-op-ink">vs ${fmtDollar(v1Budget)}</span></div>` : `<div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim">no budget</div>`)}
           </div>
           ${v1Spark}
         </div>
