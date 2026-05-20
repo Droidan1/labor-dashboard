@@ -792,11 +792,11 @@
             <div class="flex gap-3 items-end">
               <div>
                 <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Year</label>
-                <select id="wrs-year-select" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]"></select>
+                <select id="wrs-year-select" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors"></select>
               </div>
               <div>
                 <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Week</label>
-                <select id="wrs-week-select" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]"></select>
+                <select id="wrs-week-select" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors"></select>
               </div>
               <button id="wrs-refresh" onclick="loadWeeklyRetail(true)" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Refresh</button>
               <button id="wrs-download-pdf" onclick="downloadWrsAsPdf()" class="px-4 py-2 text-sm font-semibold bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg transition-colors">Download PDF</button>
@@ -849,7 +849,7 @@
             <!-- Location -->
             <div>
               <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Location</label>
-              <select id="inv-store" onchange="loadCategoriesForStore(this.value)" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              <select id="inv-store" onchange="loadCategoriesForStore(this.value)" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
                 <option value="all">All Locations</option>
                 <option value="BL1">BL1</option>
                 <option value="BL2">BL2</option>
@@ -862,34 +862,34 @@
             <!-- Name -->
             <div>
               <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Name <span class="text-red-400">*</span></label>
-              <input id="inv-name" type="text" placeholder="Item name" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              <input id="inv-name" type="text" placeholder="Item name" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
             </div>
             <!-- Code/SKU -->
             <div>
               <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Code / SKU <span class="text-red-400">*</span></label>
-              <input id="inv-code" type="text" placeholder="e.g. 12345" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              <input id="inv-code" type="text" placeholder="e.g. 12345" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
             </div>
             <!-- Price -->
             <div>
               <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Price ($) <span class="text-red-400">*</span></label>
-              <input id="inv-price" type="number" min="0.01" step="0.01" placeholder="9.99" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              <input id="inv-price" type="number" min="0.01" step="0.01" placeholder="9.99" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
             </div>
             <!-- Unit Cost -->
             <div>
               <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Unit Cost ($) <span class="text-gray-400 font-normal normal-case tracking-normal text-[10px]">optional</span></label>
-              <input id="inv-cost" type="number" min="0" step="0.01" placeholder="3.00" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              <input id="inv-cost" type="number" min="0" step="0.01" placeholder="3.00" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
             </div>
             <!-- Category (L2) -->
             <div>
               <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Category (L2) <span class="text-red-400">*</span></label>
-              <select id="inv-l2" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              <select id="inv-l2" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
                 <option value="">— select —</option>
               </select>
             </div>
             <!-- Sub-category (L3) -->
             <div>
               <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Sub-category (L3) <span class="text-red-400">*</span></label>
-              <input id="inv-l3" type="text" list="inv-cat-datalist" placeholder="Type or pick existing Clover category" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              <input id="inv-l3" type="text" list="inv-cat-datalist" placeholder="Type or pick existing Clover category" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
               <datalist id="inv-cat-datalist"></datalist>
             </div>
             <!-- Flags -->
@@ -1544,7 +1544,7 @@
             <div class="flex flex-wrap gap-4 items-end">
               <div>
                 <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Store</label>
-                <select id="resnapshot-store" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+                <select id="resnapshot-store" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
                   <option value="all">All Stores</option>
                   <option value="BL1">BL1 – Coliseum</option>
                   <option value="BL2">BL2 – South Bend</option>
@@ -1556,11 +1556,11 @@
               </div>
               <div>
                 <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">End Date</label>
-                <input id="resnapshot-date" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+                <input id="resnapshot-date" type="date" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
               </div>
               <div>
                 <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Days back (incl. end date)</label>
-                <input id="resnapshot-days" type="number" min="1" max="30" value="1" class="w-24 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+                <input id="resnapshot-days" type="number" min="1" max="30" value="1" class="w-24 text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
               </div>
               <button onclick="runReSnapshot()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
                 Re-snapshot Item Sales
@@ -1758,7 +1758,7 @@
             <div class="flex flex-wrap gap-4 items-end">
               <div>
                 <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Store</label>
-                <select id="overrides-store" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+                <select id="overrides-store" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
                   <option value="BL1">BL1 – Coliseum</option>
                   <option value="BL2">BL2 – South Bend</option>
                   <option value="BL4">BL4 – Dupont</option>
@@ -1769,11 +1769,11 @@
               </div>
               <div>
                 <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Start</label>
-                <input id="overrides-start" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+                <input id="overrides-start" type="date" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
               </div>
               <div>
                 <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">End</label>
-                <input id="overrides-end" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+                <input id="overrides-end" type="date" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
               </div>
               <button onclick="loadUncategorized()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
                 Load Uncategorized Items
@@ -3449,13 +3449,13 @@
       <div class="flex flex-wrap items-end gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-700 bg-gray-50/40 dark:bg-gray-700/20">
         <div>
           <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Month</label>
-          <select id="sd-month-select" onchange="onSdMonthChange(this.value)" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+          <select id="sd-month-select" onchange="onSdMonthChange(this.value)" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
             ${monthOpts || '<option>—</option>'}
           </select>
         </div>
         <div>
           <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Week</label>
-          <select id="sd-week-select" onchange="onSdWeekChange(this.value)" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+          <select id="sd-week-select" onchange="onSdWeekChange(this.value)" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
             ${weekOpts || '<option>—</option>'}
           </select>
         </div>
@@ -5892,15 +5892,15 @@
       const isSelected = fmtDate === activeDate;
 
       if (isFuture) {
-        html += `<button disabled class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs opacity-40 text-gray-400 dark:text-gray-600 cursor-not-allowed">
+        html += `<button disabled class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] opacity-40 text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.12)] dark:border-op-border cursor-not-allowed">
           <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
         </button>`;
       } else if (isSelected) {
-        html += `<button class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs bg-[#3BB54A] text-white font-semibold shadow-sm">
-          <span>${dayLabel}</span><span>${dateLabel}</span>${isToday ? '<span class="text-[8px] uppercase tracking-wider">Live</span>' : ''}
+        html += `<button class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors bg-accent-green text-[#0b1220] font-semibold">
+          <span>${dayLabel}</span><span>${dateLabel}</span>${isToday ? '<span class="text-[8px] font-bold uppercase tracking-[0.1em] mt-0.5">● LIVE</span>' : ''}
         </button>`;
       } else {
-        html += `<button onclick="selectItemDay('${fmtDate}')" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+        html += `<button onclick="selectItemDay('${fmtDate}')" class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink">
           <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
         </button>`;
       }
@@ -5913,11 +5913,11 @@
       const rangeLabel = `${firstDate.getMonth() + 1}/${firstDate.getDate()}–${lastDate.getMonth() + 1}/${lastDate.getDate()}`;
       const isWeekSelected = activeDate === 'WEEK';
       if (isWeekSelected) {
-        html += `<button class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs bg-[#3BB54A] text-white font-semibold shadow-sm">
+        html += `<button class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors bg-accent-green text-[#0b1220] font-semibold">
           <span>Week</span><span>${rangeLabel}</span>
         </button>`;
       } else {
-        html += `<button onclick="selectItemDay('WEEK')" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-dashed border-gray-300 dark:border-gray-600">
+        html += `<button onclick="selectItemDay('WEEK')" class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink">
           <span class="font-semibold">Week</span><span>${rangeLabel}</span>
         </button>`;
       }
@@ -6240,9 +6240,9 @@
       if (isFuture) {
         html += `<button disabled class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs opacity-40 text-gray-400 cursor-not-allowed"><span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span></button>`;
       } else if (isSelected) {
-        html += `<button class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs bg-[#3BB54A] text-white font-semibold shadow-sm"><span>${dayLabel}</span><span>${dateLabel}</span>${isToday ? '<span class="text-[8px] uppercase tracking-wider">Live</span>' : ''}</button>`;
+        html += `<button class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors bg-accent-green text-[#0b1220] font-semibold"><span>${dayLabel}</span><span>${dateLabel}</span>${isToday ? '<span class="text-[8px] font-bold uppercase tracking-[0.1em] mt-0.5">● LIVE</span>' : ''}</button>`;
       } else {
-        html += `<button onclick="selectAllStoresItemDay('${fmtDate}')" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"><span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span></button>`;
+        html += `<button onclick="selectAllStoresItemDay('${fmtDate}')" class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink"><span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span></button>`;
       }
     }
     if (sortedDates.length) {
@@ -6252,9 +6252,9 @@
       const rangeLabel = `${fdObj.getMonth()+1}/${fdObj.getDate()}–${ldObj.getMonth()+1}/${ldObj.getDate()}`;
       const isWeek = activeDate === 'WEEK';
       if (isWeek) {
-        html += `<button class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs bg-[#3BB54A] text-white font-semibold shadow-sm"><span>Week</span><span>${rangeLabel}</span></button>`;
+        html += `<button class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors bg-accent-green text-[#0b1220] font-semibold"><span>Week</span><span>${rangeLabel}</span></button>`;
       } else {
-        html += `<button onclick="selectAllStoresItemDay('WEEK')" class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-dashed border-gray-300 dark:border-gray-600"><span class="font-semibold">Week</span><span>${rangeLabel}</span></button>`;
+        html += `<button onclick="selectAllStoresItemDay('WEEK')" class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink"><span class="font-semibold">Week</span><span>${rangeLabel}</span></button>`;
       }
     }
     container.innerHTML = html;
