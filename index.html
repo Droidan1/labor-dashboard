@@ -3074,9 +3074,9 @@
     el('cm-retail-pct').textContent = hasData ? Math.round(rPct) + '%' : '—';
     el('cm-bin-pct').textContent = hasData ? Math.round(bPct) + '%' : '—';
     el('cm-auction-pct').textContent = hasData ? Math.round(aPct) + '%' : '—';
-    el('cm-retail-val').textContent = hasData ? fmtK(todayRetail) : '—';
-    el('cm-bin-val').textContent = hasData ? fmtK(todayBin) : '—';
-    el('cm-auction-val').textContent = hasData ? fmtK(todayAuction) : '—';
+    el('cm-retail-val').textContent = hasData ? fmtDollar(todayRetail) : '—';
+    el('cm-bin-val').textContent = hasData ? fmtDollar(todayBin) : '—';
+    el('cm-auction-val').textContent = hasData ? fmtDollar(todayAuction) : '—';
     el('cm-auction-val').style.opacity = (hasData && todayAuction > 0) ? '1' : '0.5';
 
     // Matrix · Today
