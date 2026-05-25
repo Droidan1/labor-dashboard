@@ -3162,6 +3162,10 @@
     let mA = 0, mB = 0;
     {
       let refDate = null;
+      // For the monthly card, a selected day picks the month (multi-day → the
+      // latest selected day wins, so a selection spanning a month boundary
+      // resolves to the most recent month).
+      const dayFilter = isDayView ? [...dayDays].sort().slice(-1)[0] : null;
       if (dayFilter) {
         refDate = new Date(dayFilter + 'T12:00:00');
       } else {
