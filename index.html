@@ -299,18 +299,6 @@
     .sidebar:not(.collapsed) .sidebar-toggle-bottom .chevron { transform: rotate(180deg); }
     .sidebar.collapsed #sidebar-dark-toggle { display: none; }
     .toggle-scale { transform: scale(0.8); transform-origin: left center; }
-    /* V1 mobile hero accordion (only below lg = 1024px; desktop unchanged) */
-    @media (max-width: 1023px) {
-      #hero-extra { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.28s ease; }
-      #hero-extra.hero-open { grid-template-rows: 1fr; }
-      #hero-extra > .hero-inner { overflow: hidden; min-height: 0; display: flex; flex-direction: column; gap: 0; }
-      #hero-toggle .chev { transition: transform 0.25s; }
-      #hero-toggle.open .chev { transform: rotate(180deg); }
-    }
-    @media (min-width: 1024px) {
-      #hero-extra, #hero-extra > .hero-inner { display: contents; }
-      #hero-toggle { display: none !important; }
-    }
     /* All-stores budget: collapsible card on mobile, two cards on desktop */
     @media (max-width: 1023px) {
       #budget-detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.28s ease; }
@@ -564,73 +552,86 @@
         <div id="dash-day-selector" class="flex items-stretch gap-1.5 max-lg:w-full max-lg:overflow-x-auto max-lg:flex-nowrap lg:flex-wrap lg:order-2"></div>
       </section>
 
-      <!-- V1 Operator hero strip -->
-      <section class="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr_1fr] lg:gap-4 max-lg:bg-opl-panel max-lg:dark:bg-op-panel max-lg:border max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border max-lg:rounded-card max-lg:overflow-hidden">
-        <!-- Today · All Stores -->
-        <div id="today-total-card" class="relative overflow-hidden lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 lg:p-6 transition-colors">
-          <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
-          <div class="relative flex items-start justify-between gap-6">
+      <!-- V1 Operator hero — unified "Today's Sales · All Stores" card -->
+      <section id="today-total-card" class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 lg:p-6 transition-colors">
+        <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
+        <div class="relative">
+          <!-- top row: LIVE pill + label -->
+          <div class="flex items-center gap-2.5">
+            <span id="hero-live-pill" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-[0.06em]" style="border:1px solid rgba(34,197,94,0.4);color:#22c55e">
+              <span class="w-1.5 h-1.5 rounded-full" style="background:#22c55e"></span><span id="hero-live-text">LIVE</span>
+            </span>
+            <span id="c-today-card-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Today's Sales · All Stores</span>
+          </div>
+
+          <!-- hero row: total + pace -->
+          <div class="mt-3 flex items-start justify-between gap-4">
             <div class="min-w-0">
-              <div id="c-today-card-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Today's Sales · All Stores</div>
-              <div id="c-today-total" class="mt-2 font-geist font-bold tabular-nums tracking-tight leading-none text-4xl sm:text-5xl text-opl-ink dark:text-op-ink truncate">—</div>
-              <div class="mt-2 flex items-center gap-2 text-sm">
-                <span id="c-today-diff" class="font-semibold"></span>
-                <span id="c-today-sub" class="text-opl-inkDim dark:text-op-inkDim"></span>
-              </div>
+              <div id="c-today-total" class="font-geist font-bold tabular-nums tracking-tight leading-none text-4xl sm:text-5xl text-opl-ink dark:text-op-ink truncate">—</div>
+              <div class="mt-3 text-sm"><span id="c-today-diff" class="font-semibold"></span></div>
             </div>
             <div class="text-right flex-shrink-0">
               <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Pace</div>
-              <div id="h-pace" class="mt-2 font-geist font-bold tabular-nums leading-none text-3xl sm:text-4xl text-accent-green">—</div>
-              <div id="h-reporting" class="mt-1 text-[11px] text-opl-inkDim dark:text-op-inkDim"></div>
+              <div id="h-pace" class="mt-1 font-geist font-extrabold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight text-accent-green">—</div>
+              <div id="h-reporting" class="mt-1.5 text-[11px] text-opl-inkDim dark:text-op-inkDim"></div>
             </div>
           </div>
-          <div class="relative mt-5">
+
+          <!-- progress bar + $0 / budget axis -->
+          <div class="mt-4">
             <div class="h-2.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
               <div id="h-bar-fill" class="h-full rounded-full bg-accent-green transition-[width] duration-500" style="width:0%"></div>
             </div>
-            <div class="mt-2 flex justify-between text-[11px] text-opl-inkDim dark:text-op-inkDim">
+            <div class="mt-2 flex items-baseline justify-between text-[13px] text-opl-inkDim dark:text-op-inkDim">
               <span>$0</span>
               <span id="c-today-budget" class="text-sm font-semibold text-opl-ink dark:text-op-ink">—</span>
             </div>
           </div>
-          <div class="relative flex justify-end mt-3">
+
+          <!-- lower: channel mix + matrix (stacked on mobile, 2-col on desktop) -->
+          <div class="mt-5 pt-5 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border lg:grid lg:grid-cols-2 lg:gap-8">
+            <!-- Channel Mix -->
+            <div>
+              <div class="flex items-center justify-between">
+                <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Channel Mix</div>
+                <div id="cm-count" class="text-[11px] text-opl-inkDimmer dark:text-op-inkDimmer">3 channels</div>
+              </div>
+              <div class="mt-4 flex gap-[2px] h-2.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+                <span id="cm-retail-seg" class="h-full bg-accent-green transition-[width] duration-500" style="width:0%"></span>
+                <span id="cm-bin-seg" class="h-full bg-accent-blue transition-[width] duration-500" style="width:0%"></span>
+                <span id="cm-auction-seg" class="h-full bg-accent-violet transition-[width] duration-500" style="width:0%"></span>
+              </div>
+              <div class="mt-4 grid grid-cols-3 gap-2 text-[13px]">
+                <div>
+                  <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-green flex-shrink-0"></span>Retail · <span id="cm-retail-pct">—</span></div>
+                  <div id="cm-retail-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
+                </div>
+                <div class="text-center">
+                  <div class="flex items-center justify-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-blue flex-shrink-0"></span>BIN · <span id="cm-bin-pct">—</span></div>
+                  <div id="cm-bin-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
+                </div>
+                <div class="text-right">
+                  <div class="flex items-center justify-end gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction · <span id="cm-auction-pct">—</span></div>
+                  <div id="cm-auction-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
+                </div>
+              </div>
+            </div>
+            <!-- Matrix -->
+            <div class="mt-5 pt-5 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border lg:mt-0 lg:pt-0 lg:border-t-0">
+              <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Matrix · Today</div>
+              <div class="mt-3.5 grid grid-cols-4 gap-2">
+                <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Cart</div><div id="mx-cart" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
+                <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Items</div><div id="mx-items" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
+                <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Orders</div><div id="mx-orders" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
+                <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">ASP</div><div id="mx-asp" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex justify-end mt-4">
             <button onclick="showAllStoresDetail()" class="text-xs font-semibold text-accent-green hover:underline">View Details →</button>
           </div>
-          <button id="hero-toggle" type="button" onclick="toggleHeroExtra()" class="lg:hidden relative mt-4 w-full flex items-center justify-center gap-2 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim py-2.5 text-xs font-semibold transition-colors">
-            <span id="hero-toggle-label">Show channel mix &amp; matrix</span>
-            <svg class="chev w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
         </div>
-        <div id="hero-extra"><div class="hero-inner">
-        <!-- Channel Mix -->
-        <div class="lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 max-lg:border-t max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border transition-colors">
-          <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Channel Mix</div>
-          <div class="mt-4 flex flex-col gap-3.5">
-            <div>
-              <div class="flex justify-between mb-1.5 text-[13px]"><span class="text-opl-inkDim dark:text-op-inkDim font-medium">Retail</span><span id="cm-retail-val" class="font-bold tabular-nums text-opl-ink dark:text-op-ink">—</span></div>
-              <div class="h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]"><div id="cm-retail-bar" class="h-full rounded-full bg-accent-green" style="width:0%"></div></div>
-            </div>
-            <div>
-              <div class="flex justify-between mb-1.5 text-[13px]"><span class="text-opl-inkDim dark:text-op-inkDim font-medium">BIN</span><span id="cm-bin-val" class="font-bold tabular-nums text-opl-ink dark:text-op-ink">—</span></div>
-              <div class="h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]"><div id="cm-bin-bar" class="h-full rounded-full bg-accent-blue" style="width:0%"></div></div>
-            </div>
-            <div>
-              <div class="flex justify-between mb-1.5 text-[13px]"><span class="text-opl-inkDim dark:text-op-inkDim font-medium">Auction</span><span id="cm-auction-val" class="font-bold tabular-nums text-opl-ink dark:text-op-ink">—</span></div>
-              <div class="h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]"><div id="cm-auction-bar" class="h-full rounded-full bg-accent-violet" style="width:0%"></div></div>
-            </div>
-          </div>
-        </div>
-        <!-- Matrix -->
-        <div class="lg:bg-opl-panel lg:dark:bg-op-panel lg:border lg:border-[rgba(20,16,8,0.08)] lg:dark:border-op-border lg:rounded-card p-5 max-lg:border-t max-lg:border-[rgba(20,16,8,0.08)] max-lg:dark:border-op-border transition-colors">
-          <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Matrix · Today</div>
-          <div class="mt-3.5 grid grid-cols-4 lg:grid-cols-2 gap-2">
-            <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Cart</div><div id="mx-cart" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
-            <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Items</div><div id="mx-items" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
-            <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Orders</div><div id="mx-orders" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
-            <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">ASP</div><div id="mx-asp" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
-          </div>
-        </div>
-        </div></div><!-- /hero-extra -->
       </section>
 
       <!-- All-stores weekly / monthly budget — collapsible card on mobile, two cards on desktop -->
@@ -3009,31 +3010,42 @@
     const grandTotal = todayTotal + todayAuction;
     const hasData = !isLoading && storesWithData > 0;
 
+    // LIVE pill — green LIVE on the current-day live view, dim OFFLINE on
+    // past-day / historical views.
+    const pill = el("hero-live-pill");
+    if (pill) {
+      const dot = pill.querySelector("span");
+      const txt = el("hero-live-text");
+      const liveCol = "#22c55e", offCol = "#8893a7";
+      const on = showLive;
+      pill.style.border = `1px solid ${on ? "rgba(34,197,94,0.4)" : "rgba(136,147,167,0.35)"}`;
+      pill.style.color = on ? liveCol : offCol;
+      if (dot) dot.style.background = on ? liveCol : offCol;
+      if (txt) txt.textContent = on ? "LIVE" : "OFFLINE";
+    }
+
     if (isLoading) {
       el("c-today-total").innerHTML = '<span class="skel" style="width:9ch;height:0.92em"></span>';
-      el("c-today-sub").textContent = showLive ? 'Fetching live data' : 'Loading stored data';
     } else {
       el("c-today-total").textContent = hasData ? fmtDollar(grandTotal) : '—';
-      el("c-today-sub").textContent = '';
     }
 
     // Pace % + progress bar (good ≥ budget, warn below)
+    const paceBase = 'mt-1 font-geist font-extrabold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight ';
     const paceEl = el("h-pace");
     const barEl = el("h-bar-fill");
     if (hasData && todayTotalBudget > 0) {
       const pacePct = Math.round(grandTotal / todayTotalBudget * 100);
       const ahead = grandTotal >= todayTotalBudget;
       paceEl.textContent = pacePct + '%';
-      paceEl.className = ahead
-        ? 'mt-2 font-geist font-bold tabular-nums leading-none text-3xl sm:text-4xl text-accent-green'
-        : 'mt-2 font-geist font-bold tabular-nums leading-none text-3xl sm:text-4xl text-op-warn';
+      paceEl.className = paceBase + (ahead ? 'text-accent-green' : 'text-op-warn');
       barEl.style.width = Math.min(100, Math.max(0, pacePct)) + '%';
       barEl.className = ahead
         ? 'h-full rounded-full transition-[width] duration-500 bg-accent-green'
         : 'h-full rounded-full transition-[width] duration-500 bg-op-warn';
     } else {
       paceEl.textContent = '—';
-      paceEl.className = 'mt-2 font-geist font-bold tabular-nums leading-none text-3xl sm:text-4xl text-accent-green';
+      paceEl.className = paceBase + 'text-accent-green';
       barEl.style.width = '0%';
     }
     el("h-reporting").textContent = hasData ? `${storesWithData} of ${STORES.length} reporting` : '';
@@ -3052,15 +3064,20 @@
       diffEl.textContent = '';
     }
 
-    // Channel mix bars (relative to the largest channel / total)
-    const cmMax = Math.max(grandTotal, todayRetail, todayBin, todayAuction, 1);
-    const setCm = (valId, barId, v) => {
-      el(valId).textContent = hasData ? fmtDollar(v) : '—';
-      el(barId).style.width = (hasData ? Math.min(100, v / cmMax * 100) : 0) + '%';
-    };
-    setCm('cm-retail-val', 'cm-retail-bar', todayRetail);
-    setCm('cm-bin-val', 'cm-bin-bar', todayBin);
-    setCm('cm-auction-val', 'cm-auction-bar', todayAuction);
+    // Channel mix — single stacked bar + legend (% of grand total).
+    const cmTotal = grandTotal > 0 ? grandTotal : 0;
+    const cmPct = (v) => cmTotal > 0 ? (v / cmTotal * 100) : 0;
+    const rPct = cmPct(todayRetail), bPct = cmPct(todayBin), aPct = cmPct(todayAuction);
+    el('cm-retail-seg').style.width = (hasData ? rPct : 0) + '%';
+    el('cm-bin-seg').style.width = (hasData ? bPct : 0) + '%';
+    el('cm-auction-seg').style.width = (hasData ? aPct : 0) + '%';
+    el('cm-retail-pct').textContent = hasData ? Math.round(rPct) + '%' : '—';
+    el('cm-bin-pct').textContent = hasData ? Math.round(bPct) + '%' : '—';
+    el('cm-auction-pct').textContent = hasData ? Math.round(aPct) + '%' : '—';
+    el('cm-retail-val').textContent = hasData ? fmtK(todayRetail) : '—';
+    el('cm-bin-val').textContent = hasData ? fmtK(todayBin) : '—';
+    el('cm-auction-val').textContent = hasData ? fmtK(todayAuction) : '—';
+    el('cm-auction-val').style.opacity = (hasData && todayAuction > 0) ? '1' : '0.5';
 
     // Matrix · Today
     el('mx-cart').textContent = hasData ? fmtDollar(totalAvgCart) : '—';
@@ -10538,29 +10555,6 @@
       document.addEventListener('touchcancel', onTouchCancel, { passive: true });
     })();
   });
-  </script>
-  <script>
-  /* Mobile hero accordion (Option 1). Desktop ≥1024px ignores this — CSS forces it open. */
-  (function () {
-    function apply(open) {
-      var ex = document.getElementById('hero-extra'),
-          btn = document.getElementById('hero-toggle'),
-          lbl = document.getElementById('hero-toggle-label');
-      if (!ex) return;
-      ex.classList.toggle('hero-open', open);
-      if (btn) btn.classList.toggle('open', open);
-      if (lbl) lbl.textContent = open ? 'Hide channel mix & matrix' : 'Show channel mix & matrix';
-    }
-    window.toggleHeroExtra = function () {
-      var ex = document.getElementById('hero-extra');
-      var open = !(ex && ex.classList.contains('hero-open'));
-      try { localStorage.setItem('heroExpanded', open ? '1' : '0'); } catch (e) {}
-      apply(open);
-    };
-    function init() { apply(localStorage.getItem('heroExpanded') === '1'); }
-    if (document.readyState !== 'loading') init();
-    else document.addEventListener('DOMContentLoaded', init);
-  })();
   </script>
   <script>
   /* Combined budget card toggle (mobile only; default collapsed, no persistence).
