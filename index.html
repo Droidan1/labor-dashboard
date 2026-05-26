@@ -781,31 +781,49 @@
     </div><!-- end #page-store-detail -->
 
     <div id="page-all-stores-detail" class="hidden">
-      <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="flex items-center gap-3 max-w-7xl mx-auto">
-          <button onclick="navigateToDashboard()" class="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-700 grid place-content-center hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors flex-shrink-0" aria-label="Back to dashboard">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600 dark:text-gray-300"><polyline points="15 18 9 12 15 6"/></svg>
-          </button>
-          <div class="min-w-0">
-            <h1 class="text-xl sm:text-2xl font-display text-[#3BB54A] leading-tight">All Stores</h1>
-            <p id="as-subtitle" class="text-xs sm:text-sm text-gray-400 dark:text-gray-500 mt-0.5 truncate">Week X · All Stores Combined</p>
+      <!-- Header: back · title/sub · week chip -->
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="flex items-center justify-between gap-3 max-w-7xl mx-auto">
+          <div class="flex items-center gap-3 min-w-0">
+            <button onclick="navigateToDashboard()" aria-label="Back to dashboard"
+              class="w-9 h-9 flex-shrink-0 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors grid place-content-center">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <div class="min-w-0">
+              <h1 class="text-xl sm:text-2xl font-brand text-accent-green uppercase tracking-wide truncate">All Stores</h1>
+              <p id="as-subtitle" class="text-xs sm:text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5 truncate">Week — · Combined</p>
+            </div>
           </div>
+          <span id="as-week-chip" class="hidden sm:inline-flex items-center gap-1.5 flex-shrink-0 px-3 py-1.5 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink text-[12.5px] font-bold whitespace-nowrap">
+            <svg class="w-3.5 h-3.5 text-accent-green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span id="as-week-chip-label">Week —</span>
+          </span>
         </div>
       </div>
-      <div class="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
+
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        <!-- Hero card (populated by showAllStoresDetail) -->
         <div id="as-metrics"></div>
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-200 dark:border-gray-700">
-          <button id="as-tab-weekly" onclick="switchAllStoresTab('weekly')" class="flex-1 sm:flex-initial px-2 sm:px-5 py-2.5 text-xs sm:text-sm font-semibold border-b-2 border-[#3BB54A] text-[#194975] dark:text-[#3BB54A] transition-colors whitespace-nowrap"><span class="sm:hidden">Weekly</span><span class="hidden sm:inline">Weekly Breakdown</span></button>
-          <button id="as-tab-chart"  onclick="switchAllStoresTab('chart')"  class="flex-1 sm:flex-initial px-2 sm:px-5 py-2.5 text-xs sm:text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors whitespace-nowrap"><span class="sm:hidden">Chart</span><span class="hidden sm:inline">Daily Sales Chart</span></button>
-          <button id="as-tab-items"  onclick="switchAllStoresTab('items')"  class="flex-1 sm:flex-initial px-2 sm:px-5 py-2.5 text-xs sm:text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors whitespace-nowrap"><span class="sm:hidden">Items</span><span class="hidden sm:inline">Item Sales</span></button>
+
+        <!-- Segmented tabs -->
+        <div class="inline-flex items-center gap-1 p-1 bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-[12px] w-fit">
+          <button id="as-tab-stores" type="button" onclick="switchAllStoresTab('stores')"
+            class="px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold bg-accent-green text-[#0b1220] transition-colors">Stores</button>
+          <button id="as-tab-weekly" type="button" onclick="switchAllStoresTab('weekly')"
+            class="px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Daily</button>
+          <button id="as-tab-chart" type="button" onclick="switchAllStoresTab('chart')"
+            class="px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Chart</button>
+          <button id="as-tab-items" type="button" onclick="switchAllStoresTab('items')"
+            class="px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Items</button>
         </div>
-        <!-- Tab content -->
-        <div id="as-content-weekly" class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden"></div>
-        <div id="as-content-chart" class="hidden bg-white dark:bg-gray-800 rounded-xl p-3 sm:p-5 shadow-sm border border-gray-100 dark:border-gray-700">
+
+        <!-- Tab panels -->
+        <div id="as-content-stores" class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors"></div>
+        <div id="as-content-weekly" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors"></div>
+        <div id="as-content-chart" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
           <div class="h-[280px] sm:h-[340px]"><canvas id="as-daily-chart"></canvas></div>
         </div>
-        <div id="as-content-items" class="hidden bg-white dark:bg-gray-800 rounded-xl p-3 sm:p-5 shadow-sm border border-gray-100 dark:border-gray-700">
+        <div id="as-content-items" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
           <div id="as-items-day-selector" class="flex items-center gap-1 mb-3 overflow-x-auto"></div>
           <div id="as-items-table"></div>
         </div>
@@ -3829,67 +3847,134 @@
 
   function buildAllStoresWeeklyTable() {
     const todayStr = new Date().toDateString();
+    const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
     const isCurrentWeek = selectedWeek === currentWeek;
 
     // Collect all dates in the selected week across all stores
-    const dayMap = {}; // dateKey → { dateObj, budget, sales }
+    const dayMap = {}; // dateKey → { dateObj, budget, sales, hasSales, hasLive }
     for (const storeName of STORES) {
       const rows = (allStoreData[storeName] || []).filter(r => r.week === selectedWeek);
       for (const r of rows) {
         if (!r.date) continue;
         const key = r.date.toISOString().slice(0, 10);
-        if (!dayMap[key]) dayMap[key] = { dateObj: r.date, budget: 0, sales: 0 };
+        if (!dayMap[key]) dayMap[key] = { dateObj: r.date, budget: 0, sales: 0, hasSales: false, hasLive: false };
         if (r.bTotal != null) dayMap[key].budget += r.bTotal;
-        // Use live Clover total for today's row if available
         const liveTotal = isCurrentWeek ? (liveCloverData[storeName]?.total ?? null) : null;
-        const sales = (isCurrentWeek && r.date.toDateString() === todayStr && liveTotal > 0) ? liveTotal : r.aTotal;
-        if (sales != null) dayMap[key].sales += sales;
+        const isToday = isCurrentWeek && r.date.toDateString() === todayStr;
+        const sales = (isToday && liveTotal != null && liveTotal > 0) ? liveTotal : r.aTotal;
+        if (sales != null) {
+          dayMap[key].sales += sales;
+          dayMap[key].hasSales = true;
+          if (isToday && liveTotal != null && liveTotal > 0) dayMap[key].hasLive = true;
+        }
       }
     }
 
-    const sorted = Object.values(dayMap).sort((a, b) => b.dateObj - a.dateObj);
-    if (!sorted.length) return `<div class="py-4 text-center text-xs text-gray-400 dark:text-gray-500">No data for Week ${selectedWeek}.</div>`;
+    // Sun-first (ascending) for visual consistency with the day chips.
+    const sorted = Object.values(dayMap).sort((a, b) => a.dateObj - b.dateObj);
+    if (!sorted.length) {
+      return `<div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim">No data for Week ${escapeHtml(String(selectedWeek))}.</div>`;
+    }
 
-    let html = `<table class="w-full text-left table-fixed text-xs sm:text-sm">
-      <colgroup><col class="w-[30%]"><col class="w-[23%]"><col class="w-[23%]"><col class="w-[24%]"></colgroup>
-      <thead>
-        <tr class="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-          <th class="py-2 pl-3 sm:pl-4 pr-2 font-semibold">Date</th>
-          <th class="py-2 px-1 font-semibold text-right">Budget</th>
-          <th class="py-2 px-1 font-semibold text-right">Sales</th>
-          <th class="py-2 pl-1 pr-3 sm:pr-4 font-semibold text-right">+/−</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-gray-100 dark:divide-gray-700">`;
+    const firstDate = sorted[0].dateObj, lastDate = sorted[sorted.length - 1].dateObj;
+    const mo = (d) => d.toLocaleDateString('en-US', { month: 'short' });
+    const rangeStr = (mo(firstDate) === mo(lastDate))
+      ? `${mo(firstDate)} ${firstDate.getDate()} – ${lastDate.getDate()}`
+      : `${mo(firstDate)} ${firstDate.getDate()} – ${mo(lastDate)} ${lastDate.getDate()}`;
 
+    let rowsHtml = '';
     let totBudget = 0, totSales = 0;
+    let reportedDays = 0;
+
     for (const d of sorted) {
-      const dateLabel = d.dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      const dateKey = d.dateObj.toISOString().slice(0, 10);
+      const isToday = isCurrentWeek && d.dateObj.toDateString() === todayStr;
+      const isFuture = dateKey > todayKey;
       const diff = d.sales - d.budget;
-      const pos  = diff >= 0;
+      const diffPos = diff >= 0;
+      const pct = d.budget > 0 ? Math.round(d.sales / d.budget * 100) : null;
+      const barW = pct != null ? Math.min(100, Math.max(0, pct)) : 0;
+      const barCls = pct == null ? 'bg-[rgba(255,255,255,0)]'
+        : pct >= 100 ? 'bg-accent-green'
+        : pct >= 80 ? 'bg-op-warn'
+        : 'bg-op-bad';
+      const pctCls = pct == null ? 'text-opl-inkDimmer dark:text-op-inkDimmer'
+        : pct >= 100 ? 'text-accent-green bg-accent-green/10'
+        : pct >= 80 ? 'text-op-warn bg-op-warn/10'
+        : 'text-op-bad bg-op-bad/10';
+
       totBudget += d.budget;
-      totSales  += d.sales;
-      html += `<tr class="hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors">
-        <td class="py-2 pl-3 sm:pl-4 pr-2 text-gray-600 dark:text-gray-300 font-medium whitespace-nowrap">${dateLabel}</td>
-        <td class="py-2 px-1 text-right text-gray-500 dark:text-gray-400 tabular-nums">${fmtDollar(d.budget)}</td>
-        <td class="py-2 px-1 text-right font-semibold text-gray-900 dark:text-white tabular-nums">${fmtDollar(d.sales)}</td>
-        <td class="py-2 pl-1 pr-3 sm:pr-4 text-right font-bold tabular-nums ${pos ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}">${pos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</td>
-      </tr>`;
+      if (d.hasSales) { totSales += d.sales; reportedDays++; }
+
+      const wd = d.dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+      const dn = d.dateObj.getDate();
+
+      const chipCls = isToday
+        ? 'bg-accent-green border-accent-green'
+        : 'bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] border-[rgba(20,16,8,0.08)] dark:border-op-border';
+      const wdCls = isToday ? 'text-[#0b1220]/70' : 'text-opl-inkDim dark:text-op-inkDim';
+      const dnCls = isToday ? 'text-[#0b1220]' : 'text-opl-ink dark:text-op-ink';
+      const rowCls = isToday ? 'bg-accent-green/5'
+        : isFuture ? 'opacity-40'
+        : 'hover:bg-[rgba(20,16,8,0.02)] dark:hover:bg-[rgba(255,255,255,0.018)]';
+
+      const liveTag = d.hasLive
+        ? `<span class="inline-flex items-center gap-1 text-[9.5px] font-bold tracking-[0.06em] uppercase text-accent-green ml-1.5"><span class="w-1.5 h-1.5 rounded-full bg-accent-green"></span>Live</span>`
+        : '';
+      const salesHtml = d.hasSales
+        ? `<span class="text-base sm:text-lg font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(d.sales)}</span>${liveTag}`
+        : `<span class="text-sm text-opl-inkDim dark:text-op-inkDim font-medium">—</span>`;
+
+      rowsHtml += `
+        <div class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3 sm:py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border last:border-b-0 ${rowCls} transition-colors" style="grid-template-columns:60px 1fr auto">
+          <div class="relative flex flex-col items-center justify-center py-1.5 rounded-[9px] border ${chipCls}">
+            <span class="text-[9.5px] font-bold uppercase tracking-[0.05em] ${wdCls}">${wd}</span>
+            <span class="text-[18px] font-extrabold leading-none tabular-nums ${dnCls}">${dn}</span>
+          </div>
+          <div class="min-w-0 flex flex-col gap-1.5">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center min-w-0">${salesHtml}</div>
+              <span class="text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums whitespace-nowrap">vs <b class="text-opl-ink dark:text-op-ink font-semibold">${d.budget > 0 ? fmtDollar(d.budget) : '—'}</b></span>
+            </div>
+            <div class="h-1 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+              <div class="h-full rounded-full transition-[width] duration-500 ${barCls}" style="width:${barW}%"></div>
+            </div>
+          </div>
+          <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
+            ${d.hasSales ? `<span class="text-[12.5px] font-bold tabular-nums ${diffPos ? 'text-accent-green' : 'text-op-bad'}">${diffPos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</span>` : '<span class="text-[12.5px] text-opl-inkDimmer dark:text-op-inkDimmer">—</span>'}
+            ${pct != null && d.hasSales ? `<span class="text-[10.5px] font-bold tabular-nums px-1.5 py-0.5 rounded ${pctCls}">${pct}%</span>` : ''}
+          </div>
+        </div>`;
     }
 
     const totDiff = totSales - totBudget;
-    const totPos  = totDiff >= 0;
-    html += `</tbody>
-      <tfoot class="border-t-2 border-gray-300 dark:border-gray-600">
-        <tr class="font-bold bg-gray-50/40 dark:bg-gray-700/30">
-          <td class="py-2.5 pl-3 sm:pl-4 pr-2 text-gray-900 dark:text-white whitespace-nowrap">Week ${selectedWeek}</td>
-          <td class="py-2.5 px-1 text-right text-gray-500 dark:text-gray-400 tabular-nums">${fmtDollar(totBudget)}</td>
-          <td class="py-2.5 px-1 text-right text-gray-900 dark:text-white tabular-nums">${fmtDollar(totSales)}</td>
-          <td class="py-2.5 pl-1 pr-3 sm:pr-4 text-right tabular-nums ${totPos ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}">${totPos ? '+' : '−'}${fmtDollar(Math.abs(totDiff))}</td>
-        </tr>
-      </tfoot>
-    </table>`;
-    return html;
+    const totPos = totDiff >= 0;
+    const totPct = totBudget > 0 ? Math.round(totSales / totBudget * 100) : null;
+    const totPctCls = totPct == null ? 'text-opl-inkDimmer dark:text-op-inkDimmer'
+      : totPct >= 100 ? 'text-accent-green bg-accent-green/10'
+      : totPct >= 80 ? 'text-op-warn bg-op-warn/10'
+      : 'text-op-bad bg-op-bad/10';
+
+    const totalRow = `
+      <div class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 border-t border-[rgba(20,16,8,0.16)] dark:border-op-borderHi bg-[rgba(20,16,8,0.02)] dark:bg-[rgba(255,255,255,0.025)]" style="grid-template-columns:60px 1fr auto">
+        <div class="text-center text-[10px] font-bold uppercase tracking-[0.08em] text-opl-inkDim dark:text-op-inkDim leading-tight">Week ${escapeHtml(String(selectedWeek))}<br/>Total</div>
+        <div class="min-w-0">
+          <div class="text-lg sm:text-xl font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(totSales)}</div>
+          <div class="mt-0.5 text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums">vs <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(totBudget)}</b> · ${reportedDays} of ${sorted.length} days reported</div>
+        </div>
+        <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
+          <span class="text-[13px] font-bold tabular-nums ${totPos ? 'text-accent-green' : 'text-op-bad'}">${totPos ? '+' : '−'}${fmtDollar(Math.abs(totDiff))}</span>
+          ${totPct != null ? `<span class="text-[10.5px] font-bold tabular-nums px-1.5 py-0.5 rounded ${totPctCls}">${totPct}%</span>` : ''}
+        </div>
+      </div>`;
+
+    const headerHtml = `
+      <div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <h3 class="text-[14px] font-extrabold tracking-[0.01em] text-opl-ink dark:text-op-ink">Daily Breakdown · Combined</h3>
+        <span class="text-[12px] text-opl-inkDim dark:text-op-inkDim tabular-nums">${escapeHtml(rangeStr)} · ${sorted.length} days</span>
+      </div>`;
+
+    return headerHtml + rowsHtml + totalRow;
   }
 
   function renderDailySalesChart(storeName) {
@@ -6342,8 +6427,10 @@
   let asSelectedItemDate = null; // YYYY-MM-DD | 'WEEK' | null
 
   function showAllStoresDetail() {
-    el('as-subtitle').textContent = `Week ${selectedWeek} · All Stores Combined`;
-    el('as-metrics').innerHTML = buildAllStoresMetrics();
+    el('as-subtitle').textContent = `Week ${selectedWeek} · Combined`;
+    const chip = el('as-week-chip-label');
+    if (chip) chip.textContent = `Week ${selectedWeek}`;
+    el('as-metrics').innerHTML = buildAllStoresHero();
 
     const pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','inventory','supply-request','settings','users','admin-settings'];
     for (const p of pages) {
@@ -6354,86 +6441,204 @@
     currentPage = 'all-stores-detail';
     el('mobile-menu-btn').classList.toggle('hidden', true);
 
-    switchAllStoresTab('weekly');
+    // Default to the per-store comparison view.
+    switchAllStoresTab('stores');
     el('page-all-stores-detail').scrollIntoView({ behavior: 'instant' });
     history.pushState({ page: 'all-stores-detail' }, '');
   }
   window.showAllStoresDetail = showAllStoresDetail;
 
-  function buildAllStoresMetrics() {
+  // Aggregate per-store totals for the selected week. Live-boosts today.
+  // Returns { perStore: [...], totalSales, totalBudget, daysReported, daysInWeek, storesReporting }.
+  function _asWeekTotals() {
     const todayStr = new Date().toDateString();
     const isCurrentWeek = selectedWeek === currentWeek;
     const SHORT_LABEL = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek' };
+    const perStore = [];
     let totalSales = 0, totalBudget = 0;
-    let rows = '';
+    let storesReporting = 0;
+    let anyLive = false;
+    const dateKeysReported = new Set(); // days with at least one store posting sales
+    let daysInWeek = 0;
     for (const s of STORES) {
       const data = allStoreData[s] || [];
       const weekRows = data.filter(r => r.week === selectedWeek);
+      daysInWeek = Math.max(daysInWeek, weekRows.length);
       let storeSales = 0, storeBudget = 0;
+      let reported = false;
       for (const r of weekRows) {
         const liveTotal = isCurrentWeek ? (liveCloverData[s]?.total ?? null) : null;
-        const sales = (isCurrentWeek && r.date && r.date.toDateString() === todayStr && liveTotal > 0) ? liveTotal : r.aTotal;
-        if (sales != null) storeSales += sales;
+        const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
+        const sales = (isToday && liveTotal != null && liveTotal > 0) ? liveTotal : r.aTotal;
+        if (isToday && liveTotal != null && liveTotal > 0) anyLive = true;
+        if (sales != null) {
+          storeSales += sales;
+          reported = true;
+          if (r.date) dateKeysReported.add(r.date.toISOString().slice(0,10));
+        }
         if (r.bTotal != null) storeBudget += r.bTotal;
       }
+      if (reported) storesReporting++;
       totalSales += storeSales;
       totalBudget += storeBudget;
-      const diff = storeSales - storeBudget;
-      const pos = diff >= 0;
-      // Friendly label lookup: STORES entries are "BL1/BL6 Coliseum", so split
-      // on "/" and take the first segment ("BL1") for the lookup. Falls back
-      // to the trailing word if the map doesn't have it.
-      const code  = s.split('/')[0];
+      const code = s.split('/')[0];
       const label = SHORT_LABEL[code] || s.replace(/^BL\d+(\/B?L?\d+)?\s*/, '') || s;
-      // Sales cell color tracks the diff sign so we can drop the +/- column
-      // on narrow viewports without losing the variance signal.
-      const salesColor = pos ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400';
-      rows += `<tr class="border-b border-gray-100 dark:border-gray-700 last:border-0">
-        <td class="py-2.5 pl-3 pr-2 sm:pl-4 sm:pr-4 text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap">${label}</td>
-        <td class="py-2.5 px-2 sm:pr-4 text-xs sm:text-sm text-right text-gray-500 dark:text-gray-400 tabular-nums">${fmtDollar(storeBudget)}</td>
-        <td class="py-2.5 pl-2 pr-3 sm:pr-4 text-xs sm:text-sm text-right font-semibold ${salesColor} tabular-nums">${fmtDollar(storeSales)}</td>
-        <td class="hidden sm:table-cell py-2.5 pr-4 text-sm text-right font-bold ${pos ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'} tabular-nums">${pos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</td>
-      </tr>`;
+      perStore.push({ store: s, code, label, sales: storeSales, budget: storeBudget });
     }
-    const totDiff = totalSales - totalBudget, totPos = totDiff >= 0;
-    const totSalesColor = totPos ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400';
-    const totalRow = `<tr class="font-bold border-t-2 border-gray-300 dark:border-gray-600 bg-gray-50/40 dark:bg-gray-700/30">
-      <td class="py-3 pl-3 pr-2 sm:pl-4 sm:pr-4 text-xs sm:text-sm text-gray-900 dark:text-white">All Stores</td>
-      <td class="py-3 px-2 sm:pr-4 text-xs sm:text-sm text-right text-gray-500 dark:text-gray-400 tabular-nums">${fmtDollar(totalBudget)}</td>
-      <td class="py-3 pl-2 pr-3 sm:pr-4 text-xs sm:text-sm text-right ${totSalesColor} tabular-nums">${fmtDollar(totalSales)}</td>
-      <td class="hidden sm:table-cell py-3 pr-4 text-sm text-right ${totPos ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'} tabular-nums">${totPos ? '+' : '−'}${fmtDollar(Math.abs(totDiff))}</td>
-    </tr>`;
-    return `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
-      <table class="w-full text-left table-fixed">
-        <colgroup>
-          <col class="w-[40%] sm:w-[28%]">
-          <col class="w-[28%] sm:w-[24%]">
-          <col class="w-[32%] sm:w-[24%]">
-          <col class="hidden sm:table-column sm:w-[24%]">
-        </colgroup>
-        <thead class="bg-gray-50 dark:bg-gray-700/50">
-          <tr class="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">
-            <th class="py-2 pl-3 pr-2 sm:pl-4 sm:pr-4 font-semibold">Store</th>
-            <th class="py-2 px-2 sm:pr-4 font-semibold text-right">Budget</th>
-            <th class="py-2 pl-2 pr-3 sm:pr-4 font-semibold text-right">Sales</th>
-            <th class="hidden sm:table-cell py-2 pr-4 font-semibold text-right">+/−</th>
-          </tr>
-        </thead>
-        <tbody>${rows}${totalRow}</tbody>
-      </table>
-    </div>`;
+    return {
+      perStore, totalSales, totalBudget,
+      storesReporting, daysReported: dateKeysReported.size,
+      daysInWeek: daysInWeek || 7, isCurrentWeek, anyLive,
+    };
+  }
+
+  // Hero card (mirrors the dashboard + store-detail hero pattern).
+  function buildAllStoresHero() {
+    const t = _asWeekTotals();
+    const delta = t.totalBudget > 0 ? t.totalSales - t.totalBudget : null;
+    const pct = t.totalBudget > 0 ? Math.round(t.totalSales / t.totalBudget * 100) : null;
+    const ahead = pct != null && pct >= 100;
+    const barW = pct != null ? Math.min(100, Math.max(0, pct)) : 0;
+    const avgStore = t.storesReporting > 0 ? t.totalSales / t.storesReporting : 0;
+    const showLive = t.isCurrentWeek && t.anyLive;
+    const liveCol = showLive ? '#22c55e' : '#8893a7';
+    const liveBorder = showLive ? 'rgba(34,197,94,0.4)' : 'rgba(136,147,167,0.35)';
+    const wkLbl = t.isCurrentWeek ? 'This Week' : `Week ${selectedWeek}`;
+
+    return `
+      <section class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 lg:p-6 transition-colors">
+        <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
+        <div class="relative">
+          <div class="flex items-center justify-between gap-2.5">
+            <span class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(wkLbl)} · All Stores</span>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-[0.06em] flex-shrink-0"
+              style="border:1px solid ${liveBorder};color:${liveCol}">
+              <span class="w-1.5 h-1.5 rounded-full" style="background:${liveCol}"></span>${showLive ? 'LIVE' : 'OFFLINE'}
+            </span>
+          </div>
+
+          <div class="mt-3 flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <div class="font-geist font-bold tabular-nums tracking-tight leading-none text-4xl sm:text-5xl text-opl-ink dark:text-op-ink truncate">${t.totalSales > 0 ? fmtDollar(t.totalSales) : '—'}</div>
+              ${delta != null ? `<div class="mt-2.5 text-sm"><span class="font-semibold ${delta >= 0 ? 'text-accent-green' : 'text-op-bad'}">${delta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(delta))}</span> <span class="text-base font-semibold text-opl-ink dark:text-op-ink">vs ${fmtDollar(t.totalBudget)}</span></div>` : ''}
+            </div>
+            <div class="text-right flex-shrink-0">
+              <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Pace</div>
+              <div class="mt-1 font-geist font-extrabold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight ${ahead ? 'text-accent-green' : 'text-op-warn'}">${pct != null ? pct + '%' : '—'}</div>
+              <div class="mt-1.5 text-[11px] text-opl-inkDim dark:text-op-inkDim">${t.daysReported} of ${t.daysInWeek} days</div>
+            </div>
+          </div>
+
+          <div class="mt-4">
+            <div class="h-2.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+              <div class="h-full rounded-full transition-[width] duration-500 ${ahead ? 'bg-accent-green' : 'bg-op-warn'}" style="width:${barW}%"></div>
+            </div>
+            <div class="mt-2 flex items-baseline justify-between text-[13px] text-opl-inkDim dark:text-op-inkDim">
+              <span>$0</span>
+              <span class="text-sm font-semibold text-opl-ink dark:text-op-ink">${t.totalBudget > 0 ? fmtDollar(t.totalBudget) : '—'}</span>
+            </div>
+          </div>
+
+          <div class="mt-5 pt-5 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border grid grid-cols-3 gap-2">
+            <div class="rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
+              <div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Stores Reporting</div>
+              <div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${t.storesReporting} / ${STORES.length}</div>
+            </div>
+            <div class="rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
+              <div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Days Reported</div>
+              <div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${t.daysReported} / ${t.daysInWeek}</div>
+            </div>
+            <div class="rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
+              <div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg / Store</div>
+              <div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${t.storesReporting > 0 ? fmtDollar(avgStore) : '—'}</div>
+            </div>
+          </div>
+        </div>
+      </section>`;
+  }
+
+  // Per-store card-row list. Each row is clickable → drills into store detail.
+  function buildAllStoresList() {
+    const t = _asWeekTotals();
+    let rowsHtml = '';
+    for (const s of t.perStore) {
+      const pct = s.budget > 0 ? Math.round(s.sales / s.budget * 100) : null;
+      const diff = s.sales - s.budget;
+      const diffPos = diff >= 0;
+      const barW = pct != null ? Math.min(100, Math.max(0, pct)) : 0;
+      const barCls = pct == null ? 'bg-[rgba(255,255,255,0)]'
+        : pct >= 100 ? 'bg-accent-green'
+        : pct >= 80 ? 'bg-op-warn'
+        : 'bg-op-bad';
+      const pctCls = pct == null ? 'text-opl-inkDimmer dark:text-op-inkDimmer'
+        : pct >= 100 ? 'text-accent-green bg-accent-green/10'
+        : pct >= 80 ? 'text-op-warn bg-op-warn/10'
+        : 'text-op-bad bg-op-bad/10';
+      const onClick = `onclick="showStoreDetail(${JSON.stringify(s.store).replace(/"/g, '&quot;')})"`;
+      rowsHtml += `
+        <div ${onClick} class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3 sm:py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border last:border-b-0 hover:bg-[rgba(20,16,8,0.02)] dark:hover:bg-[rgba(255,255,255,0.018)] transition-colors cursor-pointer" style="grid-template-columns:1fr auto">
+          <div class="min-w-0 flex flex-col gap-1.5">
+            <div class="flex items-baseline gap-2"><span class="text-[14px] font-bold text-opl-ink dark:text-op-ink truncate">${escapeHtml(s.label)}</span><span class="text-[10px] font-bold uppercase tracking-[0.04em] text-opl-inkDimmer dark:text-op-inkDimmer">${escapeHtml(s.code)}</span></div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-base sm:text-lg font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(s.sales)}</span>
+              <span class="text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums whitespace-nowrap">vs <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(s.budget)}</b></span>
+            </div>
+            <div class="h-1 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+              <div class="h-full rounded-full transition-[width] duration-500 ${barCls}" style="width:${barW}%"></div>
+            </div>
+          </div>
+          <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
+            <span class="text-[12.5px] font-bold tabular-nums ${diffPos ? 'text-accent-green' : 'text-op-bad'}">${diffPos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</span>
+            <span class="text-[10.5px] font-bold tabular-nums px-1.5 py-0.5 rounded ${pctCls}">${pct != null ? pct + '%' : '—'}</span>
+          </div>
+        </div>`;
+    }
+
+    const totalDiff = t.totalSales - t.totalBudget;
+    const totalPos = totalDiff >= 0;
+    const totalPct = t.totalBudget > 0 ? Math.round(t.totalSales / t.totalBudget * 100) : null;
+    const totalPctCls = totalPct == null ? 'text-opl-inkDimmer dark:text-op-inkDimmer'
+      : totalPct >= 100 ? 'text-accent-green bg-accent-green/10'
+      : totalPct >= 80 ? 'text-op-warn bg-op-warn/10'
+      : 'text-op-bad bg-op-bad/10';
+
+    const totalRow = `
+      <div class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 border-t border-[rgba(20,16,8,0.16)] dark:border-op-borderHi bg-[rgba(20,16,8,0.02)] dark:bg-[rgba(255,255,255,0.025)]" style="grid-template-columns:1fr auto">
+        <div class="min-w-0 flex flex-col gap-1">
+          <div class="text-[11px] font-bold uppercase tracking-[0.08em] text-accent-green">All Stores Total</div>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-lg sm:text-xl font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(t.totalSales)}</span>
+            <span class="text-[12px] text-opl-inkDim dark:text-op-inkDim tabular-nums whitespace-nowrap">vs <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(t.totalBudget)}</b></span>
+          </div>
+        </div>
+        <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
+          <span class="text-[13px] font-bold tabular-nums ${totalPos ? 'text-accent-green' : 'text-op-bad'}">${totalPos ? '+' : '−'}${fmtDollar(Math.abs(totalDiff))}</span>
+          <span class="text-[10.5px] font-bold tabular-nums px-1.5 py-0.5 rounded ${totalPctCls}">${totalPct != null ? totalPct + '%' : '—'}</span>
+        </div>
+      </div>`;
+
+    const headerHtml = `
+      <div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <h3 class="text-[14px] font-extrabold tracking-[0.01em] text-opl-ink dark:text-op-ink">By Store · Week ${escapeHtml(String(selectedWeek))}</h3>
+        <span class="text-[12px] text-opl-inkDim dark:text-op-inkDim">tap a store to drill in</span>
+      </div>`;
+
+    return headerHtml + rowsHtml + totalRow;
   }
 
   function switchAllStoresTab(tab) {
-    const tabs   = { weekly: el('as-tab-weekly'), chart: el('as-tab-chart'), items: el('as-tab-items') };
-    const panels = { weekly: el('as-content-weekly'), chart: el('as-content-chart'), items: el('as-content-items') };
-    // Shared sizing classes (mobile-first: even split, tighter padding/font)
-    const base     = 'flex-1 sm:flex-initial px-2 sm:px-5 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors whitespace-nowrap';
-    const active   = `${base} border-[#3BB54A] text-[#194975] dark:text-[#3BB54A]`;
-    const inactive = `${base} border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300`;
+    const tabs   = { stores: el('as-tab-stores'), weekly: el('as-tab-weekly'), chart: el('as-tab-chart'), items: el('as-tab-items') };
+    const panels = { stores: el('as-content-stores'), weekly: el('as-content-weekly'), chart: el('as-content-chart'), items: el('as-content-items') };
+    const base = 'px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold transition-colors';
+    const active = `${base} bg-accent-green text-[#0b1220]`;
+    const inactive = `${base} text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink`;
     for (const [key, btn] of Object.entries(tabs)) {
+      if (!btn) continue;
       btn.className = key === tab ? active : inactive;
-      panels[key].classList.toggle('hidden', key !== tab);
+      panels[key]?.classList.toggle('hidden', key !== tab);
+    }
+    if (tab === 'stores') {
+      el('as-content-stores').innerHTML = buildAllStoresList();
     }
     if (tab === 'weekly') {
       el('as-content-weekly').innerHTML = buildAllStoresWeeklyTable();
