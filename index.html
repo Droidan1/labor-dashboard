@@ -730,38 +730,49 @@
 
     <!-- Store Detail Page -->
     <div id="page-store-detail" class="hidden">
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="flex items-center gap-3 max-w-7xl mx-auto">
-          <button onclick="navigateToDashboard()" class="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-700 grid place-content-center hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" aria-label="Back to dashboard">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600 dark:text-gray-300"><polyline points="15 18 9 12 15 6"/></svg>
-          </button>
-          <div>
-            <h1 id="store-detail-title" class="text-2xl font-brand text-accent-green uppercase tracking-wide">Store Name</h1>
-            <p id="store-detail-subtitle" class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Week X Daily Breakdown</p>
+      <!-- Header: back · title/sub · week chip -->
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="flex items-center justify-between gap-3 max-w-7xl mx-auto">
+          <div class="flex items-center gap-3 min-w-0">
+            <button onclick="navigateToDashboard()" aria-label="Back to dashboard"
+              class="w-9 h-9 flex-shrink-0 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors grid place-content-center">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <div class="min-w-0">
+              <h1 id="store-detail-title" class="text-xl sm:text-2xl font-brand text-accent-green uppercase tracking-wide truncate">Store</h1>
+              <p id="store-detail-subtitle" class="text-xs sm:text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Week — · Daily Breakdown</p>
+            </div>
           </div>
+          <span id="sd-week-chip" class="hidden sm:inline-flex items-center gap-1.5 flex-shrink-0 px-3 py-1.5 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink text-[12.5px] font-bold whitespace-nowrap">
+            <svg class="w-3.5 h-3.5 text-accent-green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span id="sd-week-chip-label">Week —</span>
+          </span>
         </div>
       </div>
 
-      <div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
-        <!-- Sales metrics summary -->
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        <!-- Hero card (populated by showStoreDetail) -->
         <div id="store-detail-metrics"></div>
 
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-200 dark:border-gray-700">
-          <button id="sd-tab-weekly" onclick="switchStoreTab('weekly')" class="px-5 py-2.5 text-sm font-semibold border-b-2 border-[#3BB54A] text-[#194975] dark:text-[#3BB54A] transition-colors">Weekly Breakdown</button>
-          <button id="sd-tab-chart" onclick="switchStoreTab('chart')" class="px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Daily Sales Chart</button>
-          <button id="sd-tab-items" onclick="switchStoreTab('items')" class="px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Item Sales</button>
+        <!-- Segmented tabs -->
+        <div class="inline-flex items-center gap-1 p-1 bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-[12px] w-fit">
+          <button id="sd-tab-weekly" type="button" onclick="switchStoreTab('weekly')"
+            class="px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold bg-accent-green text-[#0b1220] transition-colors">Daily</button>
+          <button id="sd-tab-chart" type="button" onclick="switchStoreTab('chart')"
+            class="px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Chart</button>
+          <button id="sd-tab-items" type="button" onclick="switchStoreTab('items')"
+            class="px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Item Sales</button>
         </div>
 
-        <!-- Tab content -->
-        <div id="sd-content-weekly" class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden"></div>
-        <div id="sd-content-chart" class="hidden bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700">
+        <!-- Tab panels -->
+        <div id="sd-content-weekly" class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors"></div>
+        <div id="sd-content-chart" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
           <div class="h-[340px]"><canvas id="daily-sales-chart"></canvas></div>
         </div>
-        <div id="sd-content-items" class="hidden bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700">
+        <div id="sd-content-items" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
           <div id="items-day-selector" class="flex items-center gap-1 mb-3 overflow-x-auto"></div>
           <div id="items-table-container">
-            <div class="p-8 text-center text-gray-400 dark:text-gray-500">
+            <div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim">
               <div class="text-sm">Select a day to view category breakdown.</div>
             </div>
           </div>
@@ -3608,19 +3619,16 @@
     ).join('');
 
     return `
-      <div class="flex flex-wrap items-end gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-700 bg-gray-50/40 dark:bg-gray-700/20">
-        <div>
-          <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Month</label>
-          <select id="sd-month-select" onchange="onSdMonthChange(this.value)" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-            ${monthOpts || '<option>—</option>'}
-          </select>
-        </div>
-        <div>
-          <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Week</label>
-          <select id="sd-week-select" onchange="onSdWeekChange(this.value)" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
-            ${weekOpts || '<option>—</option>'}
-          </select>
-        </div>
+      <div class="flex flex-wrap items-center gap-2.5 px-4 sm:px-5 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.015)] dark:bg-[rgba(255,255,255,0.015)]">
+        <label for="sd-month-select" class="sr-only">Month</label>
+        <select id="sd-month-select" onchange="onSdMonthChange(this.value)" class="text-[12px] font-bold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors cursor-pointer">
+          ${monthOpts || '<option>—</option>'}
+        </select>
+        <label for="sd-week-select" class="sr-only">Week</label>
+        <select id="sd-week-select" onchange="onSdWeekChange(this.value)" class="text-[12px] font-bold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors cursor-pointer">
+          ${weekOpts || '<option>—</option>'}
+        </select>
+        <span class="ml-auto text-[11px] text-opl-inkDimmer dark:text-op-inkDimmer hidden sm:inline">vs Last Week · vs Last Year</span>
       </div>`;
   }
 
@@ -3653,15 +3661,15 @@
       .toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
     return `
-      <div class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 bg-[#3BB54A]/5 dark:bg-[#3BB54A]/10">
-        <div class="flex flex-wrap items-baseline gap-3">
-          <div class="text-[10px] font-semibold text-[#3BB54A] uppercase tracking-wider">${escapeHtml(monthLabel)} Total</div>
-          <div class="flex items-baseline gap-1">
-            <span class="text-base font-bold text-gray-900 dark:text-white">${hasSales ? fmtDollar(mSales) : '—'}</span>
-            <span class="text-gray-300 dark:text-gray-600">/</span>
-            <span class="text-sm font-semibold text-gray-500 dark:text-gray-400">${hasBudget ? fmtDollar(mBudget) : '—'}</span>
+      <div class="px-4 sm:px-5 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border bg-accent-green/5 dark:bg-accent-green/10">
+        <div class="flex flex-wrap items-baseline gap-2.5">
+          <div class="text-[10px] font-bold text-accent-green uppercase tracking-[0.06em]">${escapeHtml(monthLabel)} Total</div>
+          <div class="flex items-baseline gap-1.5 tabular-nums">
+            <span class="text-[15px] font-bold text-opl-ink dark:text-op-ink">${hasSales ? fmtDollar(mSales) : '—'}</span>
+            <span class="text-opl-inkDimmer dark:text-op-inkDimmer">/</span>
+            <span class="text-[12.5px] font-semibold text-opl-inkDim dark:text-op-inkDim">${hasBudget ? fmtDollar(mBudget) : '—'}</span>
           </div>
-          ${hasBudget && hasSales ? `<div class="text-xs font-semibold ${diffPos ? 'text-green-600' : 'text-red-500'}">${diffPos ? '+' : '-'}${fmtDollar(Math.abs(diff))}</div>` : ''}
+          ${hasBudget && hasSales ? `<div class="text-[12px] font-bold tabular-nums ${diffPos ? 'text-accent-green' : 'text-op-bad'}">${diffPos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</div>` : ''}
         </div>
       </div>`;
   }
@@ -3685,66 +3693,138 @@
     const effectiveWeek = sdWeekFilter || selectedWeek;
     const data = allStoreData[storeName] || [];
     const weekRows = data.filter(r => r.week === effectiveWeek);
-    const sorted = [...weekRows].sort((a, b) => b.date - a.date);
+    // Render Sun-first (ascending) so the breakdown reads the same direction
+    // as the dashboard's day chips.
+    const sorted = [...weekRows].sort((a, b) => a.date - b.date);
 
-    // Use live Clover data for today if available
+    if (sorted.length === 0) {
+      return selectorsHtml + monthSummaryHtml
+        + `<div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim">No data for Week ${escapeHtml(String(effectiveWeek))}.</div>`;
+    }
+
+    // Live boost for today.
     const todayStr = new Date().toDateString();
+    const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
     const isCurrentWeek = effectiveWeek === currentWeek;
     const liveTotal = isCurrentWeek ? (liveCloverData[storeName]?.total ?? null) : null;
 
-    let html = `<table class="w-full text-left table-fixed">
-      <colgroup><col class="w-[22%]"><col class="w-[20%]"><col class="w-[22%]"><col class="w-[22%]"><col class="w-[14%]"></colgroup>
-      <thead class="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
-        <tr class="text-[10px] sm:text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-          <th class="py-2 px-1.5 sm:px-4 sm:py-3 font-semibold">Date</th>
-          <th class="py-2 px-1.5 sm:px-4 sm:py-3 font-semibold text-right">Budget</th>
-          <th class="py-2 px-1.5 sm:px-4 sm:py-3 font-semibold text-right">Sales</th>
-          <th class="py-2 px-1.5 sm:px-4 sm:py-3 font-semibold text-right">+/−</th>
-          <th class="py-2 px-1.5 sm:px-4 sm:py-3 font-semibold text-right">Labor</th>
-        </tr>
-      </thead>
-      <tbody class="text-xs sm:text-sm divide-y divide-gray-100 dark:divide-gray-700">`;
+    // Header row inside the card (date range)
+    const firstDate = sorted[0].date, lastDate = sorted[sorted.length - 1].date;
+    const mo = (d) => d.toLocaleDateString('en-US', { month: 'short' });
+    const rangeStr = (mo(firstDate) === mo(lastDate))
+      ? `${mo(firstDate)} ${firstDate.getDate()} – ${lastDate.getDate()}`
+      : `${mo(firstDate)} ${firstDate.getDate()} – ${mo(lastDate)} ${lastDate.getDate()}`;
+
+    let rowsHtml = '';
+    let wkSales = 0, wkBudget = 0, wkLaborNum = 0, wkLaborDen = 0;
 
     for (const r of sorted) {
-      const dateStr = r.date.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'});
+      const dateKey = r.date.toISOString().slice(0, 10);
       const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
-      const sales = (isToday && liveTotal > 0) ? liveTotal : r.aTotal;
+      const isFuture = dateKey > todayKey;
+      const sales = (isToday && liveTotal != null && liveTotal > 0) ? liveTotal : r.aTotal;
       const dailyLabor = (r.aLabor != null && sales != null && sales > 0) ? normalizeLaborPct(r.aLabor) : null;
       const diff = (sales != null && r.bTotal != null) ? sales - r.bTotal : null;
-      const diffPositive = diff != null && diff >= 0;
-      html += `<tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-gray-600 dark:text-gray-300 font-medium whitespace-nowrap">${escapeHtml(dateStr)}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-500 dark:text-gray-400">${r.bTotal != null ? fmtDollar(r.bTotal) : '—'}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right font-medium text-gray-900 dark:text-white">${sales != null ? fmtDollar(sales) : '—'}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right font-semibold ${diff != null ? (diffPositive ? 'text-green-600' : 'text-red-500') : 'text-gray-300 dark:text-gray-600'}">${diff != null ? (diffPositive ? '+' : '-') + fmtDollar(Math.abs(diff)) : '—'}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right font-bold ${dailyLabor > LABOR_TARGET ? 'text-red-500' : 'text-green-500'}">${fmtPct(dailyLabor)}</td>
-      </tr>`;
-    }
+      const diffPos = diff != null && diff >= 0;
+      const pct = (r.bTotal && r.bTotal > 0 && sales != null) ? (sales / r.bTotal * 100) : null;
+      const barW = pct != null ? Math.min(100, Math.max(0, pct)) : 0;
+      const barCls = pct == null ? 'bg-[rgba(255,255,255,0)]'
+        : pct >= 100 ? 'bg-accent-green'
+        : pct >= 80 ? 'bg-op-warn'
+        : 'bg-op-bad';
 
-    let wkSales=0, wkBudget=0, wkLaborNum=0, wkLaborDen=0;
-    for (const r of sorted) {
-      const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
-      const sales = (isToday && liveTotal > 0) ? liveTotal : r.aTotal;
       if (sales != null) wkSales += sales;
       if (r.bTotal != null) wkBudget += r.bTotal;
-      if (r.aLabor != null && sales != null) { const lp = normalizeLaborPct(r.aLabor); if (lp != null) { wkLaborNum += (lp/100)*sales; wkLaborDen += sales; } }
-    }
-    const wkDiff = wkSales - wkBudget, wkDiffPos = wkDiff >= 0;
-    const wkLabor = wkLaborDen > 0 ? (wkLaborNum/wkLaborDen)*100 : null;
+      if (r.aLabor != null && sales != null) {
+        const lp = normalizeLaborPct(r.aLabor);
+        if (lp != null) { wkLaborNum += (lp / 100) * sales; wkLaborDen += sales; }
+      }
 
-    if (sorted.length > 0) {
-      html += `</tbody><tfoot class="border-t-2 border-gray-300 dark:border-gray-600"><tr class="font-bold text-xs sm:text-sm">
-        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-gray-900 dark:text-white whitespace-nowrap">Week ${effectiveWeek} Total</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-500 dark:text-gray-400">${fmtDollar(wkBudget)}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right text-gray-900 dark:text-white">${fmtDollar(wkSales)}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right ${wkDiffPos ? 'text-green-600' : 'text-red-500'}">${wkDiffPos ? '+' : '-'}${fmtDollar(Math.abs(wkDiff))}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-4 text-right ${wkLabor != null && wkLabor > LABOR_TARGET ? 'text-red-500' : 'text-green-500'}">${fmtPct(wkLabor)}</td>
-      </tr></tfoot></table>`;
-    } else {
-      html += `</tbody></table>`;
+      const wd = r.date.toLocaleDateString('en-US', { weekday: 'short' });
+      const dn = r.date.getDate();
+
+      // Date chip — today = solid green, past = neutral, future = dim.
+      const chipCls = isToday
+        ? 'bg-accent-green border-accent-green'
+        : 'bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] border-[rgba(20,16,8,0.08)] dark:border-op-border';
+      const wdCls = isToday
+        ? 'text-[#0b1220]/70'
+        : 'text-opl-inkDim dark:text-op-inkDim';
+      const dnCls = isToday
+        ? 'text-[#0b1220]'
+        : 'text-opl-ink dark:text-op-ink';
+
+      const rowCls = isToday
+        ? 'bg-accent-green/5'
+        : isFuture
+          ? 'opacity-40'
+          : 'hover:bg-[rgba(20,16,8,0.02)] dark:hover:bg-[rgba(255,255,255,0.018)]';
+
+      const liveTag = isToday && liveTotal != null && liveTotal > 0
+        ? `<span class="inline-flex items-center gap-1 text-[9.5px] font-bold tracking-[0.06em] uppercase text-accent-green ml-1.5"><span class="w-1.5 h-1.5 rounded-full bg-accent-green"></span>Live</span>`
+        : '';
+
+      const salesHtml = sales != null
+        ? `<span class="text-base sm:text-lg font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(sales)}</span>${liveTag}`
+        : `<span class="text-sm text-opl-inkDim dark:text-op-inkDim font-medium">—</span>`;
+
+      const deltaHtml = diff != null
+        ? `<span class="text-[12.5px] font-bold tabular-nums ${diffPos ? 'text-accent-green' : 'text-op-bad'}">${diffPos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</span>`
+        : '<span class="text-[12.5px] text-opl-inkDimmer dark:text-op-inkDimmer">—</span>';
+
+      const laborHtml = dailyLabor != null
+        ? `<span class="text-[11px] font-bold tabular-nums px-1.5 py-0.5 rounded ${dailyLabor > LABOR_TARGET ? 'text-op-bad bg-op-bad/10' : 'text-accent-green bg-accent-green/10'}">${fmtPct(dailyLabor)}</span>`
+        : '<span class="text-[11px] text-opl-inkDimmer dark:text-op-inkDimmer">—</span>';
+
+      rowsHtml += `
+        <div class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3 sm:py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border last:border-b-0 ${rowCls} transition-colors" style="grid-template-columns:60px 1fr auto">
+          <div class="relative flex flex-col items-center justify-center py-1.5 rounded-[9px] border ${chipCls}">
+            <span class="text-[9.5px] font-bold uppercase tracking-[0.05em] ${wdCls}">${wd}</span>
+            <span class="text-[18px] font-extrabold leading-none tabular-nums ${dnCls}">${dn}</span>
+          </div>
+          <div class="min-w-0 flex flex-col gap-1.5">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center min-w-0">${salesHtml}</div>
+              <span class="text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums whitespace-nowrap">vs <b class="text-opl-ink dark:text-op-ink font-semibold">${r.bTotal != null ? fmtDollar(r.bTotal) : '—'}</b></span>
+            </div>
+            <div class="h-1 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+              <div class="h-full rounded-full transition-[width] duration-500 ${barCls}" style="width:${barW}%"></div>
+            </div>
+          </div>
+          <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
+            ${deltaHtml}
+            ${laborHtml}
+          </div>
+        </div>`;
     }
-    if (sorted.length === 0) html = `<div class="p-8 text-center text-gray-400 dark:text-gray-500">No data for Week ${effectiveWeek}.</div>`;
-    return selectorsHtml + monthSummaryHtml + html;
+
+    const wkDiff = wkSales - wkBudget, wkDiffPos = wkDiff >= 0;
+    const wkLabor = wkLaborDen > 0 ? (wkLaborNum / wkLaborDen) * 100 : null;
+    const reportedDays = sorted.filter(r => {
+      const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
+      return r.aTotal != null || (isToday && liveTotal != null && liveTotal > 0);
+    }).length;
+
+    const totalRow = `
+      <div class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 border-t border-[rgba(20,16,8,0.16)] dark:border-op-borderHi bg-[rgba(20,16,8,0.02)] dark:bg-[rgba(255,255,255,0.025)]" style="grid-template-columns:60px 1fr auto">
+        <div class="text-center text-[10px] font-bold uppercase tracking-[0.08em] text-opl-inkDim dark:text-op-inkDim leading-tight">Week ${escapeHtml(String(effectiveWeek))}<br/>Total</div>
+        <div class="min-w-0">
+          <div class="text-lg sm:text-xl font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(wkSales)}</div>
+          <div class="mt-0.5 text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums">vs <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(wkBudget)}</b> · ${reportedDays} of ${sorted.length} days reported</div>
+        </div>
+        <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
+          <span class="text-[13px] font-bold tabular-nums ${wkDiffPos ? 'text-accent-green' : 'text-op-bad'}">${wkDiffPos ? '+' : '−'}${fmtDollar(Math.abs(wkDiff))}</span>
+          ${wkLabor != null ? `<span class="text-[11px] font-bold tabular-nums px-1.5 py-0.5 rounded ${wkLabor > LABOR_TARGET ? 'text-op-bad bg-op-bad/10' : 'text-accent-green bg-accent-green/10'}">${fmtPct(wkLabor)}</span>` : ''}
+        </div>
+      </div>`;
+
+    const headerHtml = `
+      <div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <h3 class="text-[14px] font-extrabold tracking-[0.01em] text-opl-ink dark:text-op-ink">Daily Breakdown</h3>
+        <span class="text-[12px] text-opl-inkDim dark:text-op-inkDim tabular-nums">${escapeHtml(rangeStr)} · ${sorted.length} days</span>
+      </div>`;
+
+    return headerHtml + selectorsHtml + monthSummaryHtml + rowsHtml + totalRow;
   }
 
   function buildAllStoresWeeklyTable() {
@@ -4159,7 +4239,9 @@
     el('mobile-menu-btn').classList.add('hidden');
 
     el('store-detail-title').textContent = shortName(storeName);
-    el('store-detail-subtitle').textContent = `Week ${selectedWeek} Daily Breakdown`;
+    el('store-detail-subtitle').textContent = `Week ${selectedWeek} · Daily Breakdown`;
+    const wkChip = el('sd-week-chip-label');
+    if (wkChip) wkChip.textContent = `Week ${selectedWeek}`;
 
     // Sales metrics summary
     const sm = getStoreMetrics(storeName);
@@ -4178,43 +4260,128 @@
     const lwMetrics = getLastWeekCloverMetrics(storeName);
     const lyMetrics = getLastYearCloverMetrics(storeName);
 
+    // Week total + days-reported. m.aTotal/m.aAuction are the stored sums
+    // (today's row is null in loadStoreFromD1, so live boost adds today's
+    // sales without double-counting).
+    const wkSales = (m.aTotal || 0) + (m.aAuction || 0)
+      + (sm.isCurrentWeek && sm.liveSales != null && sm.liveSales > 0 ? sm.liveSales : 0)
+      + (sm.isCurrentWeek && sm.storeAuction != null ? sm.storeAuction : 0);
+    const wkBudget = m.bTotal || 0;
+    const wkDelta = wkBudget > 0 ? wkSales - wkBudget : null;
+    const wkPct = wkBudget > 0 ? Math.round(wkSales / wkBudget * 100) : null;
+    const wkAhead = wkPct != null && wkPct >= 100;
+    const wkBarW = wkPct != null ? Math.min(100, Math.max(0, wkPct)) : 0;
+    // Days with stored sales + today if live.
+    const weekRowsArr = (allStoreData[storeName] || []).filter(r => r.week === selectedWeek);
+    const daysReported = weekRowsArr.filter(r => r.aTotal != null).length
+      + (sm.isCurrentWeek && sm.liveSales != null && sm.liveSales > 0 ? 1 : 0);
+    const daysInWeek = weekRowsArr.length || 7;
+
+    // Channel mix (Retail / BIN / Auction)
+    const cmTotal = retail + bin + auction;
+    const cmPct = (v) => cmTotal > 0 ? Math.round(v / cmTotal * 100) : 0;
+    const rPct = cmPct(retail), bPct = cmPct(bin), aPct = cmPct(auction);
+
+    // LIVE pill — green when current week + live sales present.
+    const showLive = sm.isCurrentWeek && sm.liveSales != null && sm.liveSales > 0;
+    const liveCol = showLive ? '#22c55e' : '#8893a7';
+    const liveBorder = showLive ? 'rgba(34,197,94,0.4)' : 'rgba(136,147,167,0.35)';
+    const wkLbl = sm.isCurrentWeek ? 'This Week' : `Week ${selectedWeek}`;
+
     el('store-detail-metrics').innerHTML = `
-      <div class="grid grid-cols-3 gap-4 mb-4">
-        <div class="py-3 px-4 rounded-lg bg-gray-100 dark:bg-gray-700/60 text-center">
-          <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Retail</div>
-          <div class="text-lg font-bold text-gray-700 dark:text-gray-200">${fmtDollar(retail)}</div>
+      <section class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 lg:p-6 transition-colors">
+        <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
+        <div class="relative">
+          <div class="flex items-center justify-between gap-2.5">
+            <span class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(wkLbl)} · ${escapeHtml(shortName(storeName))}</span>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-[0.06em] flex-shrink-0"
+              style="border:1px solid ${liveBorder};color:${liveCol}">
+              <span class="w-1.5 h-1.5 rounded-full" style="background:${liveCol}"></span>${showLive ? 'LIVE' : 'OFFLINE'}
+            </span>
+          </div>
+
+          <div class="mt-3 flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <div class="font-geist font-bold tabular-nums tracking-tight leading-none text-4xl sm:text-5xl text-opl-ink dark:text-op-ink truncate">${hasMetrics || wkSales > 0 ? fmtDollar(wkSales) : '—'}</div>
+              ${wkDelta != null ? `<div class="mt-2.5 text-sm"><span class="font-semibold ${wkDelta >= 0 ? 'text-accent-green' : 'text-op-bad'}">${wkDelta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(wkDelta))}</span> <span class="text-base font-semibold text-opl-ink dark:text-op-ink">vs ${fmtDollar(wkBudget)}</span></div>` : ''}
+            </div>
+            <div class="text-right flex-shrink-0">
+              <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Pace</div>
+              <div class="mt-1 font-geist font-extrabold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight ${wkAhead ? 'text-accent-green' : 'text-op-warn'}">${wkPct != null ? wkPct + '%' : '—'}</div>
+              <div class="mt-1.5 text-[11px] text-opl-inkDim dark:text-op-inkDim">${daysReported} of ${daysInWeek} days</div>
+            </div>
+          </div>
+
+          <div class="mt-4">
+            <div class="h-2.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+              <div class="h-full rounded-full transition-[width] duration-500 ${wkAhead ? 'bg-accent-green' : 'bg-op-warn'}" style="width:${wkBarW}%"></div>
+            </div>
+            <div class="mt-2 flex items-baseline justify-between text-[13px] text-opl-inkDim dark:text-op-inkDim">
+              <span>$0</span>
+              <span class="text-sm font-semibold text-opl-ink dark:text-op-ink">${wkBudget > 0 ? fmtDollar(wkBudget) : '—'}</span>
+            </div>
+          </div>
+
+          <div class="mt-5 pt-5 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border lg:grid lg:grid-cols-2 lg:gap-8">
+            <!-- Channel Mix -->
+            <div>
+              <div class="flex items-center justify-between">
+                <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Channel Mix</div>
+                <div class="text-[11px] text-opl-inkDimmer dark:text-op-inkDimmer">3 channels</div>
+              </div>
+              <div class="mt-4 flex gap-[2px] h-2.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+                <span class="h-full bg-accent-green transition-[width] duration-500" style="width:${rPct}%"></span>
+                <span class="h-full bg-accent-blue transition-[width] duration-500" style="width:${bPct}%"></span>
+                <span class="h-full bg-accent-violet transition-[width] duration-500" style="width:${aPct}%"></span>
+              </div>
+              <div class="mt-3 grid grid-cols-3 gap-3 text-[11px]">
+                <div>
+                  <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-green flex-shrink-0"></span>Retail · ${rPct}%</div>
+                  <div class="mt-0.5 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(retail)}</div>
+                </div>
+                <div>
+                  <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-blue flex-shrink-0"></span>BIN · ${bPct}%</div>
+                  <div class="mt-0.5 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(bin)}</div>
+                </div>
+                <div>
+                  <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction · ${aPct}%</div>
+                  <div class="mt-0.5 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink" style="opacity:${auction > 0 ? 1 : 0.5}">${fmtDollar(auction)}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Matrix · Week (Cart / Items / Orders / ASP with LW/LY badges) -->
+            <div class="mt-5 lg:mt-0">
+              <div class="flex items-center justify-between">
+                <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Matrix · ${escapeHtml(wkLbl)}</div>
+                <div class="text-[11px] text-opl-inkDimmer dark:text-op-inkDimmer">vs LW · LY</div>
+              </div>
+              <div class="mt-3 grid grid-cols-4 lg:grid-cols-2 gap-2">
+                <div class="rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
+                  <div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Cart</div>
+                  <div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${hasMetrics ? fmtDollar(avgCart) : '—'}</div>
+                  ${hasMetrics ? `<div class="mt-1 flex justify-center gap-1">${renderComparisonBadge(avgCart, lwMetrics?.avgCart, 'LW', false)}${renderComparisonBadge(avgCart, lyMetrics?.avgCart, 'LY', false)}</div>` : ''}
+                </div>
+                <div class="rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
+                  <div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Items</div>
+                  <div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${hasMetrics ? (avgItems || 0).toFixed(1) : '—'}</div>
+                  ${hasMetrics ? `<div class="mt-1 flex justify-center gap-1">${renderComparisonBadge(avgItems, lwMetrics?.avgItems, 'LW', false)}${renderComparisonBadge(avgItems, lyMetrics?.avgItems, 'LY', false)}</div>` : ''}
+                </div>
+                <div class="rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
+                  <div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Orders</div>
+                  <div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${hasMetrics ? Number(orderCount || 0).toLocaleString() : '—'}</div>
+                  ${hasMetrics ? `<div class="mt-1 flex justify-center gap-1">${renderComparisonBadge(orderCount, lwMetrics?.orderCount, 'LW', false)}${renderComparisonBadge(orderCount, lyMetrics?.orderCount, 'LY', false)}</div>` : ''}
+                </div>
+                <div class="rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
+                  <div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">ASP</div>
+                  <div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${hasMetrics && avgASP != null ? fmtDollar(avgASP) : '—'}</div>
+                  ${hasMetrics ? `<div class="mt-1 flex justify-center gap-1">${renderComparisonBadge(avgASP, lwMetrics?.avgASP, 'LW', false)}${renderComparisonBadge(avgASP, lyMetrics?.avgASP, 'LY', false)}</div>` : ''}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="py-3 px-4 rounded-lg bg-gray-100 dark:bg-gray-700/60 text-center">
-          <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Bin</div>
-          <div class="text-lg font-bold text-gray-700 dark:text-gray-200">${fmtDollar(bin)}</div>
-        </div>
-        <div class="py-3 px-4 rounded-lg bg-gray-100 dark:bg-gray-700/60 text-center">
-          <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Auction</div>
-          <div class="text-lg font-bold text-gray-700 dark:text-gray-200">${fmtDollar(auction)}</div>
-        </div>
-      </div>
-      ${hasMetrics ? `<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
-          <div class="text-[10px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Cart</div>
-          <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(avgCart)}</div>
-          <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(avgCart, lwMetrics?.avgCart, 'LW', false)}${renderComparisonBadge(avgCart, lyMetrics?.avgCart, 'LY', false)}</div>
-        </div>
-        <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
-          <div class="text-[10px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Avg Items</div>
-          <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${(avgItems || 0).toFixed(1)}</div>
-          <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(avgItems, lwMetrics?.avgItems, 'LW', false)}${renderComparisonBadge(avgItems, lyMetrics?.avgItems, 'LY', false)}</div>
-        </div>
-        <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
-          <div class="text-[10px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">Orders</div>
-          <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${orderCount || 0}</div>
-          <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(orderCount, lwMetrics?.orderCount, 'LW', false)}${renderComparisonBadge(orderCount, lyMetrics?.orderCount, 'LY', false)}</div>
-        </div>
-        <div class="py-3 px-4 rounded-lg bg-[#3BB54A]/10 dark:bg-[#3BB54A]/20 border border-[#3BB54A]/20 dark:border-[#3BB54A]/30 text-center">
-          <div class="text-[10px] font-semibold text-[#3BB54A] uppercase tracking-wider mb-1">ASP</div>
-          <div class="text-lg font-bold text-[#194975] dark:text-[#00B8FF]">${fmtDollar(avgASP)}</div>
-          <div class="flex justify-center gap-2 mt-1">${renderComparisonBadge(avgASP, lwMetrics?.avgASP, 'LW', false)}${renderComparisonBadge(avgASP, lyMetrics?.avgASP, 'LY', false)}</div>
-        </div>
-      </div>` : ''}`;
+      </section>`;
 
     // Weekly table
     el('sd-content-weekly').innerHTML = buildWeeklyTable(storeName);
@@ -5838,8 +6005,9 @@
   function switchStoreTab(tab) {
     const tabs = { weekly: el('sd-tab-weekly'), chart: el('sd-tab-chart'), items: el('sd-tab-items') };
     const panels = { weekly: el('sd-content-weekly'), chart: el('sd-content-chart'), items: el('sd-content-items') };
-    const active = 'px-5 py-2.5 text-sm font-semibold border-b-2 border-[#3BB54A] text-[#194975] dark:text-[#3BB54A] transition-colors';
-    const inactive = 'px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors';
+    const base = 'px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold transition-colors';
+    const active = `${base} bg-accent-green text-[#0b1220]`;
+    const inactive = `${base} text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink`;
     for (const [key, btn] of Object.entries(tabs)) {
       btn.className = key === tab ? active : inactive;
       panels[key].classList.toggle('hidden', key !== tab);
