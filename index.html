@@ -4310,7 +4310,7 @@
     el('items-hour-modal-body').innerHTML = '';
   }
 
-  function showStoreDetail(storeName) {
+  function showStoreDetail(storeName, fromHistory) {
     const isStoreSwitch = currentStoreName !== storeName;
     currentPage = 'store-detail';
     currentStoreName = storeName;
@@ -4483,7 +4483,11 @@
     // Scroll to top
     el('page-store-detail').scrollIntoView({ behavior: 'instant' });
 
-    history.pushState({ page: 'store-detail', store: storeName }, '');
+    // Only push state on a forward navigation. When called from popstate
+    // (swipe-back / browser back), the browser already moved through the
+    // stack — pushing here would re-stack the same page and break
+    // subsequent back navigations.
+    if (!fromHistory) history.pushState({ page: 'store-detail', store: storeName }, '');
   }
 
   function navigateToDashboard() {
@@ -6426,7 +6430,7 @@
   let asAllStoresChart = null;
   let asSelectedItemDate = null; // YYYY-MM-DD | 'WEEK' | null
 
-  function showAllStoresDetail() {
+  function showAllStoresDetail(fromHistory) {
     el('as-subtitle').textContent = `Week ${selectedWeek} · Combined`;
     const chip = el('as-week-chip-label');
     if (chip) chip.textContent = `Week ${selectedWeek}`;
@@ -6444,7 +6448,8 @@
     // Default to the per-store comparison view.
     switchAllStoresTab('stores');
     el('page-all-stores-detail').scrollIntoView({ behavior: 'instant' });
-    history.pushState({ page: 'all-stores-detail' }, '');
+    // Only push state on a forward navigation — see showStoreDetail.
+    if (!fromHistory) history.pushState({ page: 'all-stores-detail' }, '');
   }
   window.showAllStoresDetail = showAllStoresDetail;
 
@@ -6914,9 +6919,9 @@
 
   window.addEventListener('popstate', (event) => {
     if (event.state?.page === 'store-detail' && event.state?.store) {
-      showStoreDetail(event.state.store);
+      showStoreDetail(event.state.store, /*fromHistory=*/true);
     } else if (event.state?.page === 'all-stores-detail') {
-      showAllStoresDetail();
+      showAllStoresDetail(/*fromHistory=*/true);
     } else if (currentPage === 'store-detail' || currentPage === 'all-stores-detail') {
       navigateToDashboard();
     }
