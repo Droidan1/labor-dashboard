@@ -725,18 +725,6 @@
       </section>
 
       <div id="store-cards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
-
-      <div class="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors">
-        <div class="flex justify-between items-center mb-4">
-          <h3 class="font-display text-gray-800 dark:text-gray-200">Weekly Sales Trend — All Stores</h3>
-          <div class="flex gap-1">
-            <button onclick="if(trendChart) { trendChart.zoom(1.3); el('reset-zoom-btn').classList.remove('hidden'); }" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" title="Zoom In" aria-label="Zoom in">+</button>
-            <button onclick="if(trendChart) { trendChart.zoom(0.7); }" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" title="Zoom Out" aria-label="Zoom out">−</button>
-            <button id="reset-zoom-btn" onclick="if(trendChart) { trendChart.resetZoom(); this.classList.add('hidden'); }" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors hidden" aria-label="Reset zoom">Reset</button>
-          </div>
-        </div>
-        <div class="h-[340px]"><canvas id="trend-chart" role="img" aria-label="Line chart showing weekly sales trend across all stores"></canvas></div>
-      </div>
     </div>
     </div><!-- end #page-dashboard -->
 
@@ -2090,7 +2078,6 @@
   let liveDataLoading = false;
   let historicalDataLoading = false;
   let weeklyTotalsCache = {}; // { storeName: { weekNum: aTotal } }
-  let trendChart=null;
   let currentPage = 'dashboard';   // 'dashboard' | 'store-detail'
   let currentStoreName = null;
   let dailySalesChart = null;
@@ -3324,7 +3311,6 @@
     }
 
     renderCards(metrics);
-    renderCharts(metrics);
   }
 
   function renderCards(metrics) {
@@ -6562,83 +6548,6 @@
       navigateToDashboard();
     }
   });
-
-  // ═══════════════════════════════════════════════════════════════
-  //  CHARTS (Minimalized for space)
-  // ═══════════════════════════════════════════════════════════════
-  function renderCharts(metrics) {
-    const names = metrics.map(m => m.name);
-    const isDark = document.documentElement.classList.contains('dark');
-    const textColor = isDark ? '#9ca3af' : '#6b7280';
-    const gridColor = isDark ? 'rgba(75,85,99,0.3)' : 'rgba(0,0,0,0.1)';
-
-    const scaleDefaults = {
-      ticks: { color: textColor },
-      grid: { color: gridColor }
-    };
-
-    // --- Trend chart ---
-    const trendWeeks = allWeeks.filter(w => w !== currentWeek);
-    const trendLabels = trendWeeks.map(w => `Wk ${w}`);
-    const trendDatasets = STORES.map((s, i) => ({
-      label: shortName(s),
-      data: trendWeeks.map(w => (weeklyTotalsCache[s] && weeklyTotalsCache[s][w]) || null),
-      borderColor: COLORS[i],
-      backgroundColor: COLORS[i] + '20',
-      borderWidth: 2.5,
-      pointRadius: 3,
-      pointHoverRadius: 6,
-      tension: 0.3,
-      fill: false
-    }));
-    if (trendChart) {
-      trendChart.data.labels = trendLabels;
-      trendChart.data.datasets = trendDatasets;
-      trendChart.options.scales.x = { ...scaleDefaults, ticks: { ...scaleDefaults.ticks, maxRotation: 0 } };
-      trendChart.options.scales.y = {
-        ...scaleDefaults,
-        ticks: { ...scaleDefaults.ticks, callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(0) + 'K' : v) }
-      };
-      trendChart.options.plugins.legend.labels.color = textColor;
-      trendChart.update();
-    } else {
-      trendChart = new Chart(el("trend-chart"), {
-        type: "line",
-        data: { labels: trendLabels, datasets: trendDatasets },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          interaction: { mode: 'nearest', intersect: true },
-          scales: {
-            x: { ...scaleDefaults, ticks: { ...scaleDefaults.ticks, maxRotation: 0 } },
-            y: {
-              ...scaleDefaults,
-              ticks: { ...scaleDefaults.ticks, callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(0) + 'K' : v) }
-            }
-          },
-          plugins: {
-            legend: {
-              labels: { color: textColor, usePointStyle: true, pointStyle: 'circle', padding: 16 }
-            },
-            tooltip: {
-              callbacks: {
-                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y != null ? fmtDollar(ctx.parsed.y) : '—'}`
-              }
-            },
-            zoom: {
-              pan: { enabled: true, mode: 'x', onPanComplete: () => el('reset-zoom-btn').classList.remove('hidden') },
-              zoom: {
-                wheel: { enabled: false },
-                pinch: { enabled: false },
-                mode: 'x',
-                onZoomComplete: () => el('reset-zoom-btn').classList.remove('hidden')
-              }
-            }
-          }
-        }
-      });
-    }
-  }
 
   // ═══════════════════════════════════════════════════════════════
   //  SETTINGS – ADMIN RE-SNAPSHOT
