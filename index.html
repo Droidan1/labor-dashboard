@@ -472,7 +472,7 @@
     <div id="sidebar-overlay" class="sidebar-overlay" onclick="document.getElementById('sidebar').classList.add('collapsed');this.style.display='none';localStorage.setItem('sidebarCollapsed','true')"></div>
 
     <!-- Main content -->
-    <div id="main-scroll" class="flex-1 min-w-0 overflow-y-auto max-lg:overscroll-contain max-lg:pb-24">
+    <div id="main-scroll" class="flex-1 min-w-0 overflow-y-auto max-lg:overflow-x-hidden max-lg:overscroll-contain max-lg:pb-24">
       <!-- Mobile hamburger (retired on mobile — bottom nav replaces it) -->
       <button id="mobile-menu-btn" class="!hidden fixed top-4 left-4 z-30 w-10 h-10 rounded-lg bg-white dark:bg-gray-800 shadow-md border border-gray-200 dark:border-gray-700 grid place-content-center" onclick="document.getElementById('sidebar').classList.remove('collapsed');document.getElementById('sidebar-overlay').style.display='block';localStorage.setItem('sidebarCollapsed','false')">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-600 dark:text-gray-300"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -4310,15 +4310,27 @@
     el('items-hour-modal-body').innerHTML = '';
   }
 
-  // Where to return to when swipe-back fires from #page-store-detail.
-  // Captured on every forward navigation so we don't depend on history.state
-  // (which can be polluted by stale duplicates across sessions).
-  let storeDetailReturnTo = 'dashboard'; // 'dashboard' | 'all-stores-detail'
+  // In-memory page-navigation stack. Most recent at top. Used by the
+  // swipe-back gesture to return the user to the prior page. Forward
+  // navigations push the OUTGOING page onto the stack; goBack pops.
+  // Each entry: { page: string, store: string|null }.
+  let navStack = [];
+
+  function pushNavHistory() {
+    if (!currentPage) return;
+    const entry = {
+      page: currentPage,
+      store: currentPage === 'store-detail' ? currentStoreName : null,
+    };
+    // De-dup consecutive identical entries.
+    const top = navStack[navStack.length - 1];
+    if (top && top.page === entry.page && top.store === entry.store) return;
+    navStack.push(entry);
+  }
+  window.__navStack = navStack; // exposed for debugging
 
   function showStoreDetail(storeName, fromHistory) {
-    if (!fromHistory) {
-      storeDetailReturnTo = (currentPage === 'all-stores-detail') ? 'all-stores-detail' : 'dashboard';
-    }
+    if (!fromHistory) pushNavHistory();
     const isStoreSwitch = currentStoreName !== storeName;
     currentPage = 'store-detail';
     currentStoreName = storeName;
@@ -4733,7 +4745,7 @@
     }
   });
 
-  function navigateToPage(page) {
+  function navigateToPage(page, pushHistory = true) {
     // Guard admin-only pages
     const adminOnly = ['inventory', 'users'];
     if (adminOnly.includes(page)) {
@@ -4748,6 +4760,12 @@
     // Guard superuser-only pages
     if (page === 'admin-settings') {
       if (!currentUser || currentUser.role !== 'superuser') return;
+    }
+    // Push the outgoing page onto the back stack — but only on forward
+    // navigations (taps), not on goBack() restores. Skip when staying on
+    // the same page (re-renders) or when there's no prior page yet.
+    if (pushHistory && currentPage && currentPage !== page) {
+      pushNavHistory();
     }
     const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'inventory', 'supply-request', 'settings', 'users', 'admin-settings'];
     for (const p of pages) {
@@ -6439,6 +6457,7 @@
   let asSelectedItemDate = null; // YYYY-MM-DD | 'WEEK' | null
 
   function showAllStoresDetail(fromHistory) {
+    if (!fromHistory) pushNavHistory();
     el('as-subtitle').textContent = `Week ${selectedWeek} · Combined`;
     const chip = el('as-week-chip-label');
     if (chip) chip.textContent = `Week ${selectedWeek}`;
@@ -11006,44 +11025,90 @@
     })();
 
     // ── Swipe-from-left-edge → back ────────────────────────────────────
-    // Minimal swipe-back gesture for the detail pages. iOS Safari disables
-    // its native edge-swipe in standalone PWA mode, so we replicate it here.
-    // Active ONLY on store-detail / all-stores-detail (where "back" is
-    // unambiguous). Uses an explicit "came from" routing — not history.back()
-    // — because the browser history can be polluted by stale duplicates from
-    // earlier sessions / pre-fix builds. history.back() is then called as a
-    // follow-up to keep the browser back button consistent.
+    // Live page-follow swipe-back gesture. The active page translates with
+    // the finger; on commit it slides off-screen and we navigate to the
+    // previous page from our in-memory navStack. iOS Safari disables its
+    // native edge-swipe in standalone PWA mode, so this replicates it across
+    // every non-dashboard page (Inventory, Supply, Weekly, store detail,
+    // all-stores detail, etc.).
     (function initSwipeBack() {
-      const EDGE_ZONE = 24;     // px from left edge where the swipe must start
-      const COMMIT_DX = 80;     // px horizontal distance to commit
-      const MAX_DURATION = 800; // ms — slower than this and we treat it as a scroll/pause
+      const EDGE_ZONE = 24;        // px from left edge where the swipe must start
+      const ENGAGE_DX = 6;         // px before we lock in "this is a horizontal swipe"
+      const COMMIT_DX_MIN = 80;    // px minimum horizontal travel for a slow swipe
+      const COMMIT_RATIO = 0.32;   // fraction of viewport width to commit a slow swipe
+      const FLICK_MS = 280;        // anything under this with >COMMIT_DX_MIN travel auto-commits
+      const FLICK_VELOCITY = 0.6;  // px/ms — fast flick threshold
+
       let startX = 0, startY = 0, startT = 0;
-      let armed = false;
+      let armed = false;       // touchstart fell in the edge zone, gesture is being watched
+      let engaged = false;     // we've decided this is a horizontal swipe — capturing it
+      let activeEl = null;     // the page element being dragged
 
       function activePage() {
-        return currentPage === 'store-detail' || currentPage === 'all-stores-detail';
+        return currentPage && currentPage !== 'dashboard';
+      }
+      function getActivePageEl() {
+        return document.getElementById('page-' + currentPage);
       }
 
+      function applyTransform(el, x) {
+        if (!el) return;
+        el.style.transform = x ? `translate3d(${x}px,0,0)` : '';
+      }
+      function clearStyles(el) {
+        if (!el) return;
+        el.style.transition = '';
+        el.style.transform = '';
+        el.style.willChange = '';
+      }
+
+      // Goes one entry back in the navStack. If empty, defaults to dashboard.
+      // Always invoked with the "this is a back, don't push history" semantics
+      // for each navigation function.
       function goBack() {
-        if (currentPage === 'store-detail') {
-          if (storeDetailReturnTo === 'all-stores-detail') {
-            showAllStoresDetail(/*fromHistory=*/true);
-            // Overwrite the current history entry so the browser back button
-            // matches what the user sees. (Not pop — pop would fire popstate
-            // and our handler can mis-route if the popped state is null.)
-            try { history.replaceState({ page: 'all-stores-detail' }, ''); } catch (_) {}
-          } else {
-            navigateToDashboard();
-            try { history.replaceState(null, ''); } catch (_) {}
-          }
-        } else if (currentPage === 'all-stores-detail') {
-          navigateToDashboard();
-          try { history.replaceState(null, ''); } catch (_) {}
+        const prev = navStack.pop();
+        if (!prev) {
+          // No history — fall back to dashboard (no-op if already there).
+          if (currentPage !== 'dashboard') navigateToPage('dashboard', /*pushHistory=*/false);
+          return;
         }
+        if (prev.page === 'store-detail' && prev.store) {
+          showStoreDetail(prev.store, /*fromHistory=*/true);
+        } else if (prev.page === 'all-stores-detail') {
+          showAllStoresDetail(/*fromHistory=*/true);
+        } else {
+          navigateToPage(prev.page, /*pushHistory=*/false);
+        }
+      }
+
+      function commit(el) {
+        if (!el) { goBack(); return; }
+        const w = window.innerWidth;
+        el.style.transition = 'transform .22s cubic-bezier(.2,.7,.3,1)';
+        applyTransform(el, w);
+        const finish = () => {
+          el.removeEventListener('transitionend', finish);
+          clearStyles(el);
+          goBack();
+        };
+        el.addEventListener('transitionend', finish);
+        // Safety: transitionend can miss if the page is hidden/destroyed.
+        setTimeout(() => { el.removeEventListener('transitionend', finish); clearStyles(el); }, 400);
+      }
+
+      function springBack(el) {
+        if (!el) return;
+        el.style.transition = 'transform .2s ease-out';
+        applyTransform(el, 0);
+        const finish = () => { el.removeEventListener('transitionend', finish); clearStyles(el); };
+        el.addEventListener('transitionend', finish);
+        setTimeout(() => { el.removeEventListener('transitionend', finish); clearStyles(el); }, 300);
       }
 
       document.addEventListener('touchstart', (e) => {
         armed = false;
+        engaged = false;
+        activeEl = null;
         if (!activePage()) return;
         if (e.touches.length !== 1) return;
         const t = e.touches[0];
@@ -11052,22 +11117,61 @@
         startY = t.clientY;
         startT = Date.now();
         armed = true;
+        activeEl = getActivePageEl();
       }, { passive: true });
+
+      // Non-passive so we can preventDefault() once we've decided this is a
+      // horizontal swipe (stops the browser from scrolling under us).
+      document.addEventListener('touchmove', (e) => {
+        if (!armed) return;
+        const t = e.touches[0];
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+
+        if (!engaged) {
+          if (Math.abs(dx) < ENGAGE_DX && Math.abs(dy) < ENGAGE_DX) return; // still ambiguous
+          if (Math.abs(dx) <= Math.abs(dy) * 1.5) {
+            // Mostly vertical — let the page scroll, abandon the gesture.
+            armed = false;
+            activeEl = null;
+            return;
+          }
+          engaged = true;
+          if (activeEl) {
+            activeEl.style.transition = 'none';
+            activeEl.style.willChange = 'transform';
+          }
+        }
+
+        // Engaged: track the finger, only rightward, with a soft cap.
+        e.preventDefault();
+        const clamped = Math.max(0, dx);
+        applyTransform(activeEl, clamped);
+      }, { passive: false });
 
       document.addEventListener('touchend', (e) => {
         if (!armed) return;
         armed = false;
-        if (!activePage()) return;
+        const wasEngaged = engaged;
+        engaged = false;
+        const el = activeEl;
+        activeEl = null;
+        if (!wasEngaged) return;
         const t = e.changedTouches[0];
-        const dx = t.clientX - startX;
-        const dy = t.clientY - startY;
+        const dx = Math.max(0, t.clientX - startX);
         const dt = Date.now() - startT;
-        if (dx >= COMMIT_DX && Math.abs(dx) > Math.abs(dy) * 1.5 && dt <= MAX_DURATION) {
-          goBack();
-        }
+        const w = window.innerWidth;
+        const isFlick = dt < FLICK_MS && dx >= COMMIT_DX_MIN && (dx / dt) >= FLICK_VELOCITY;
+        const isFar   = dx >= COMMIT_DX_MIN && dx >= w * COMMIT_RATIO;
+        if (isFlick || isFar) commit(el); else springBack(el);
       }, { passive: true });
 
-      document.addEventListener('touchcancel', () => { armed = false; }, { passive: true });
+      document.addEventListener('touchcancel', () => {
+        if (engaged && activeEl) springBack(activeEl);
+        armed = false;
+        engaged = false;
+        activeEl = null;
+      }, { passive: true });
     })();
   });
   </script>
