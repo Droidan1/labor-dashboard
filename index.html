@@ -4498,6 +4498,7 @@
     el('page-supply-request').classList.add('hidden');
     el('page-store-detail').classList.remove('hidden');
     document.querySelectorAll('.nav-item[data-page]').forEach(item => item.classList.remove('active'));
+    if (typeof window.__syncBottomNav === 'function') try { window.__syncBottomNav('store-detail'); } catch (_) {}
     switchStoreTab('weekly');
 
     // Scroll to top
@@ -6470,6 +6471,7 @@
     }
     document.querySelectorAll('.nav-item[data-page]').forEach(item => item.classList.remove('active'));
     currentPage = 'all-stores-detail';
+    if (typeof window.__syncBottomNav === 'function') try { window.__syncBottomNav('all-stores-detail'); } catch (_) {}
     el('mobile-menu-btn').classList.toggle('hidden', true);
 
     // Default to the per-store comparison view.
@@ -11215,7 +11217,9 @@
       gate('more-settings', vis('nav-settings'));
       // active tab
       var morePages = { 'users': 1, 'admin-settings': 1, 'settings': 1 };
-      var activeTab = morePages[page] ? 'more' : page;
+      // Detail pages are sub-pages of Dashboard — keep that tab highlighted.
+      var detailPages = { 'store-detail': 1, 'all-stores-detail': 1 };
+      var activeTab = morePages[page] ? 'more' : (detailPages[page] ? 'dashboard' : page);
       (nav ? nav.querySelectorAll('.bn-tab') : []).forEach(function (t) {
         var on = (t.id === 'bn-more') ? (activeTab === 'more') : (t.getAttribute('data-tab') === activeTab);
         t.classList.toggle(ACTIVE, on);
