@@ -4491,12 +4491,14 @@
     // Weekly table
     el('sd-content-weekly').innerHTML = buildWeeklyTable(storeName);
 
-    // Show page
-    el('page-dashboard').classList.add('hidden');
-    el('page-weekly-summary').classList.add('hidden');
-    el('page-inventory').classList.add('hidden');
-    el('page-supply-request').classList.add('hidden');
-    el('page-store-detail').classList.remove('hidden');
+    // Show page — hide every other top-level page (previously only some were
+    // listed, so drilling into a store from All Stores left both pages
+    // visible stacked in the DOM).
+    const _pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','inventory','supply-request','settings','users','admin-settings'];
+    for (const _p of _pages) {
+      const _pe = el('page-' + _p);
+      if (_pe) _pe.classList.toggle('hidden', _p !== 'store-detail');
+    }
     document.querySelectorAll('.nav-item[data-page]').forEach(item => item.classList.remove('active'));
     if (typeof window.__syncBottomNav === 'function') try { window.__syncBottomNav('store-detail'); } catch (_) {}
     switchStoreTab('weekly');
