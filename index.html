@@ -769,12 +769,13 @@
         <div id="sd-content-chart" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
           <div class="h-[340px]"><canvas id="daily-sales-chart"></canvas></div>
         </div>
-        <div id="sd-content-items" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
-          <div id="items-day-selector" class="flex items-center gap-1 mb-3 overflow-x-auto"></div>
+        <div id="sd-content-items" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors">
+          <!-- Populated by renderItemSalesTable. Inner #items-day-selector and
+               #items-table-container divs are kept as named regions so the
+               loading helper and drill / sort handlers can target them. -->
+          <div id="items-day-selector"></div>
           <div id="items-table-container">
-            <div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim">
-              <div class="text-sm">Select a day to view category breakdown.</div>
-            </div>
+            <div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim text-sm">Select a day to view category breakdown.</div>
           </div>
         </div>
       </div>
@@ -823,8 +824,8 @@
         <div id="as-content-chart" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
           <div class="h-[280px] sm:h-[340px]"><canvas id="as-daily-chart"></canvas></div>
         </div>
-        <div id="as-content-items" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
-          <div id="as-items-day-selector" class="flex items-center gap-1 mb-3 overflow-x-auto"></div>
+        <div id="as-content-items" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors">
+          <div id="as-items-day-selector"></div>
           <div id="as-items-table"></div>
         </div>
       </div>
@@ -6134,7 +6135,7 @@
     if (tab === 'chart' && currentStoreName) renderDailySalesChart(currentStoreName);
     // Lazy-load item sales on first tab switch
     if (tab === 'items' && currentStoreName) {
-      renderItemDaySelector(currentStoreName);
+      drilledCategory = null; // reset drill on tab re-entry
       loadItemSales(currentStoreName, selectedItemDate);
     }
   }
@@ -6149,10 +6150,26 @@
     return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
   }
 
+  // Inject the day strip + a centered status message into the items card.
+  // Used for loading / error / empty states so the day picker stays visible.
+  function _itemsLoadingState(storeName, dateStr, message, isError) {
+    const stripContainer = el('items-day-selector');
+    const container = el('items-table-container');
+    const todayStr = getETTodayStr();
+    const activeDate = dateStr || todayStr;
+    if (stripContainer) {
+      stripContainer.innerHTML = _buildItemsDayStripHTML(storeName, activeDate, /*drilled=*/false, 'selectItemDay');
+    }
+    if (container) {
+      const cls = isError ? 'text-op-bad' : 'text-opl-inkDim dark:text-op-inkDim';
+      const wrap = isError ? '' : 'animate-pulse';
+      container.innerHTML = `<div class="p-8 text-center ${cls}"><div class="${wrap} text-sm">${escapeHtml(message)}</div></div>`;
+    }
+  }
+
   async function loadItemSales(storeName, dateStr) {
     const storeKey = storeName.split('/')[0];
     const todayStr = getETTodayStr();
-    const container = el('items-table-container');
 
     // Week aggregate: fetch every selectable day in the current week, then merge.
     if (dateStr === 'WEEK') {
@@ -6163,7 +6180,7 @@
         .map(r => r.date.toISOString().slice(0, 10))
         .filter(d => d <= todayStr);  // skip future days
       if (days.length === 0) {
-        container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="text-sm">No days in this week have data yet.</div></div>`;
+        _itemsLoadingState(storeName, 'WEEK', 'No days in this week have data yet.', false);
         return;
       }
 
@@ -6175,7 +6192,7 @@
         return;
       }
 
-      container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">Aggregating ${days.length} day${days.length === 1 ? '' : 's'} of item sales…</div></div>`;
+      _itemsLoadingState(storeName, 'WEEK', `Aggregating ${days.length} day${days.length === 1 ? '' : 's'} of item sales…`, false);
 
       try {
         const responses = await Promise.all(days.map(d => {
@@ -6193,7 +6210,7 @@
         itemSalesCache[cacheKey] = merged;
         renderItemSalesTable(merged, true);
       } catch (err) {
-        container.innerHTML = `<div class="p-8 text-center text-red-400"><div class="font-semibold mb-1">Failed to load week total</div><div class="text-sm">${escapeHtml(err.message)}</div></div>`;
+        _itemsLoadingState(storeName, 'WEEK', `Failed to load week total: ${err.message}`, true);
       }
       return;
     }
@@ -6207,7 +6224,7 @@
       return;
     }
 
-    container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">${isToday ? 'Loading category data from Clover…' : 'Loading historical data…'}</div></div>`;
+    _itemsLoadingState(storeName, dateStr, isToday ? 'Loading category data from Clover…' : 'Loading historical data…', false);
 
     try {
       let url = `${WORKER_BASE}?action=items&store=${storeKey}`;
@@ -6219,7 +6236,7 @@
       itemSalesCache[cacheKey] = data;
       renderItemSalesTable(data, isToday);
     } catch (err) {
-      container.innerHTML = `<div class="p-8 text-center text-red-400"><div class="font-semibold mb-1">Failed to load</div><div class="text-sm">${escapeHtml(err.message)}</div></div>`;
+      _itemsLoadingState(storeName, dateStr, `Failed to load: ${err.message}`, true);
     }
   }
 
@@ -6241,12 +6258,25 @@
       for (const c of (day.categories || [])) {
         const existing = byCategory.get(c.category) || {
           category: c.category, qty: 0, gross: 0, discounts: 0, refunds: 0, netSales: 0,
+          _l3: new Map(), // L3 name → aggregate {qty,gross,discounts,refunds,netSales}
         };
         existing.qty += c.qty || 0;
         existing.gross += c.gross || 0;
         existing.discounts += c.discounts || 0;
         existing.refunds += c.refunds || 0;
         existing.netSales += c.netSales || 0;
+        // Preserve sub-category (L3) rollups so the Items-tab drill works on
+        // the week-aggregate view too.
+        for (const l of (c.l3Rows || [])) {
+          const lk = l.l3 || '(uncategorized)';
+          const le = existing._l3.get(lk) || { l3: lk, qty: 0, gross: 0, discounts: 0, refunds: 0, netSales: 0 };
+          le.qty       += l.qty       || 0;
+          le.gross     += l.gross     || 0;
+          le.discounts += l.discounts || 0;
+          le.refunds   += l.refunds   || 0;
+          le.netSales  += l.netSales  || 0;
+          existing._l3.set(lk, le);
+        }
         byCategory.set(c.category, existing);
       }
     }
@@ -6254,6 +6284,12 @@
     for (const c of byCategory.values()) {
       c.pctQty = totalQty > 0 ? (c.qty / totalQty) * 100 : 0;
       c.asp = c.qty > 0 ? c.netSales / c.qty : 0;
+      c.l3Rows = [...c._l3.values()].map(l => ({
+        ...l,
+        asp: l.qty > 0 ? l.netSales / l.qty : 0,
+        pctQty: totalQty > 0 ? (l.qty / totalQty) * 100 : 0,
+      })).sort((a, b) => b.netSales - a.netSales);
+      delete c._l3;
       categories.push(c);
     }
     return {
@@ -6270,30 +6306,6 @@
       },
     };
   }
-
-  function sortItemSales(col) {
-    if (itemSortCol === col) {
-      itemSortAsc = !itemSortAsc;
-    } else {
-      itemSortCol = col;
-      itemSortAsc = col === 'category';
-    }
-    const storeKey = currentStoreName?.split('/')[0];
-    if (!storeKey) return;
-    const todayStr = getETTodayStr();
-    if (selectedItemDate === 'WEEK') {
-      // Find the cached week aggregate (key shape: STORE:WEEK:start:end)
-      const prefix = `${storeKey}:WEEK:`;
-      const hit = Object.keys(itemSalesCache).find(k => k.startsWith(prefix));
-      if (hit) renderItemSalesTable(itemSalesCache[hit], true);
-      return;
-    }
-    const targetDate = selectedItemDate || todayStr;
-    const cacheKey = `${storeKey}:${targetDate}`;
-    const isToday = targetDate === todayStr;
-    if (itemSalesCache[cacheKey]) renderItemSalesTable(itemSalesCache[cacheKey], isToday);
-  }
-  window.sortItemSales = sortItemSales;
 
   function refreshItemSales() {
     const storeKey = currentStoreName?.split('/')[0];
@@ -6317,142 +6329,278 @@
   }
   window.refreshItemSales = refreshItemSales;
 
-  function renderItemDaySelector(storeName) {
-    const container = el('items-day-selector');
-    if (!container) return;
+  // ── Shared Items-tab helpers (used by store-detail + All Stores) ────
+  // Stable palette: same category name always maps to the same color.
+  const _ITEM_PALETTE = ['#22c55e','#3b82f6','#8b5cf6','#f59e0b','#ec4899','#10b981','#06b6d4','#b5ff3c'];
+  function colorForCategory(name) {
+    let h = 0;
+    for (let i = 0; i < (name || '').length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+    return _ITEM_PALETTE[Math.abs(h) % _ITEM_PALETTE.length];
+  }
 
+  // Drill state for the Items tab. null = category list, else a category name.
+  let drilledCategory = null;
+
+  // Build the Sun-first day chip strip + "View Whole Week" dashed button.
+  // Returns HTML (does NOT inject). When drilled, returns '' so the strip hides.
+  function _buildItemsDayStripHTML(storeName, activeDate, isDrilled, onClickPrefix) {
+    if (isDrilled) return '';
     const data = allStoreData[storeName] || [];
-    const weekRows = data.filter(r => r.week === selectedWeek);
-    const sorted = [...weekRows].sort((a, b) => a.date - b.date); // Sun → Sat
-
+    const sorted = [...data.filter(r => r.week === selectedWeek)].sort((a, b) => a.date - b.date);
     const todayStr = getETTodayStr();
-    const activeDate = selectedItemDate || todayStr;
-
-    let html = '';
+    let chips = '';
     for (const r of sorted) {
       if (!r.date) continue;
-      const d = r.date;
-      const fmtDate = d.toISOString().slice(0, 10);
-      const dayLabel = d.toLocaleDateString('en-US', { weekday: 'short' });
-      const dateLabel = `${d.getMonth() + 1}/${d.getDate()}`;
-      const isToday = fmtDate === todayStr;
-      const isFuture = fmtDate > todayStr;
-      const isSelected = fmtDate === activeDate;
-
-      if (isFuture) {
-        html += `<button disabled class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] opacity-40 text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.12)] dark:border-op-border cursor-not-allowed">
-          <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
-        </button>`;
-      } else if (isSelected) {
-        html += `<button class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors bg-accent-green text-[#0b1220] font-semibold">
-          <span>${dayLabel}</span><span>${dateLabel}</span>${isToday ? '<span class="text-[8px] font-bold uppercase tracking-[0.1em] mt-0.5">● LIVE</span>' : ''}
-        </button>`;
-      } else {
-        html += `<button onclick="selectItemDay('${fmtDate}')" class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink">
-          <span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span>
-        </button>`;
-      }
+      const dateKey = r.date.toISOString().slice(0, 10);
+      const isFuture = dateKey > todayStr;
+      const isToday = dateKey === todayStr;
+      const isSel = dateKey === activeDate;
+      const wd = r.date.toLocaleDateString('en-US', { weekday: 'short' });
+      const dn = r.date.getDate();
+      const chipCls = isFuture
+        ? 'opacity-40 cursor-not-allowed border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)]'
+        : isSel
+          ? 'bg-accent-green border-accent-green cursor-pointer'
+          : 'border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] hover:border-accent-green/40 cursor-pointer';
+      const wdCls = isSel ? 'text-[#0b1220]/70' : 'text-opl-inkDim dark:text-op-inkDim';
+      const dnCls = isSel ? 'text-[#0b1220]' : 'text-opl-ink dark:text-op-ink';
+      const dot = isToday && !isSel ? `<span class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-accent-green"></span>` : '';
+      const onClick = isFuture ? '' : `onclick="${onClickPrefix}('${dateKey}')"`;
+      chips += `<button ${onClick} ${isFuture ? 'disabled' : ''} class="relative flex flex-col items-center justify-center py-1.5 rounded-[9px] border transition-colors ${chipCls}">${dot}<span class="text-[9.5px] font-bold uppercase tracking-[0.05em] ${wdCls}">${wd}</span><span class="text-[16px] font-extrabold leading-none tabular-nums ${dnCls} mt-0.5">${dn}</span></button>`;
     }
-
-    // Week total button — aggregates every selectable day in the current week.
-    const firstDate = sorted[0]?.date;
-    const lastDate = sorted[sorted.length - 1]?.date;
-    if (firstDate && lastDate) {
-      const rangeLabel = `${firstDate.getMonth() + 1}/${firstDate.getDate()}–${lastDate.getMonth() + 1}/${lastDate.getDate()}`;
-      const isWeekSelected = activeDate === 'WEEK';
-      if (isWeekSelected) {
-        html += `<button class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors bg-accent-green text-[#0b1220] font-semibold">
-          <span>Week</span><span>${rangeLabel}</span>
-        </button>`;
-      } else {
-        html += `<button onclick="selectItemDay('WEEK')" class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink">
-          <span class="font-semibold">Week</span><span>${rangeLabel}</span>
-        </button>`;
-      }
-    }
-
-    container.innerHTML = html;
+    const isWeek = activeDate === 'WEEK';
+    const wkCls = isWeek
+      ? 'bg-accent-green text-[#0b1220] border-accent-green'
+      : 'text-opl-inkDim dark:text-op-inkDim border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink';
+    return `
+      <div class="px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex flex-col gap-2.5">
+        <div class="grid grid-cols-7 gap-1.5">${chips}</div>
+        <button onclick="${onClickPrefix}('WEEK')" class="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[9px] border text-[12px] font-bold transition-colors ${wkCls}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          View Whole Week (combined)
+        </button>
+      </div>`;
   }
+
+  // renderItemDaySelector kept as a no-op shim: the day strip now lives inside
+  // the items-table-container render, so callers that used to update the
+  // selector separately will just trigger a full re-render of the items card.
+  function renderItemDaySelector(_storeName) { /* handled by renderItemSalesTable */ }
 
   function selectItemDay(dateStr) {
     selectedItemDate = dateStr;
-    if (currentStoreName) {
-      renderItemDaySelector(currentStoreName);
-      loadItemSales(currentStoreName, dateStr);
-    }
+    drilledCategory = null; // changing the day exits the drill view
+    if (currentStoreName) loadItemSales(currentStoreName, dateStr);
   }
   window.selectItemDay = selectItemDay;
 
+  function drillItemCategory(catName) {
+    drilledCategory = catName;
+    // Re-render from cache (no refetch needed — L3 is in the existing payload).
+    const storeKey = currentStoreName?.split('/')[0];
+    const todayStr = getETTodayStr();
+    if (selectedItemDate === 'WEEK') {
+      const prefix = `${storeKey}:WEEK:`;
+      const hit = Object.keys(itemSalesCache).find(k => k.startsWith(prefix));
+      if (hit) renderItemSalesTable(itemSalesCache[hit], true);
+      return;
+    }
+    const targetDate = selectedItemDate || todayStr;
+    const key = `${storeKey}:${targetDate}`;
+    const isToday = targetDate === todayStr;
+    if (itemSalesCache[key]) renderItemSalesTable(itemSalesCache[key], isToday);
+  }
+  window.drillItemCategory = drillItemCategory;
+
+  function backToItemCategories() {
+    drilledCategory = null;
+    drillItemCategory(null); // same re-render path
+  }
+  window.backToItemCategories = backToItemCategories;
+
+  function setItemSort(col) {
+    itemSortCol = col;
+    itemSortAsc = false; // dropdown always sorts descending
+    // Re-render from cache.
+    drillItemCategory(drilledCategory);
+  }
+  window.setItemSort = setItemSort;
+
+  // ── Render the entire Items card content into both #items-day-selector and
+  // #items-table-container. Handles category-list and drilled-into-category
+  // states. Sorting is via dropdown. Tap a category row → drill into L3.
   function renderItemSalesTable(data, isToday = true) {
+    const stripContainer = el('items-day-selector');
     const container = el('items-table-container');
+    if (!container) return;
+    const storeName = currentStoreName;
+    const activeDate = selectedItemDate || getETTodayStr();
+
+    // ── Day strip (hidden when drilled) ──
+    if (stripContainer) {
+      stripContainer.innerHTML = _buildItemsDayStripHTML(storeName, activeDate, !!drilledCategory, 'selectItemDay');
+    }
+
     const cats = [...(data.categories || [])];
     const t = data.totals || {};
+    const sourceLabel = isToday ? 'Live' : 'Stored';
 
+    // Empty state.
     if (cats.length === 0) {
-      container.innerHTML = `<div class="p-8 text-center text-gray-400 dark:text-gray-500"><div class="text-sm">${isToday ? 'No item sales data for today yet.' : 'No stored data for this date.'}</div></div>`;
+      container.innerHTML = `
+        <div class="px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+          <h3 class="text-[14px] font-extrabold tracking-[0.01em] text-opl-ink dark:text-op-ink">Item Sales · By Category</h3>
+        </div>
+        <div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim text-sm">${isToday ? 'No item sales data for today yet.' : 'No stored data for this date.'}</div>`;
       return;
     }
 
-    // Sort categories
-    cats.sort((a, b) => {
-      let va = a[itemSortCol], vb = b[itemSortCol];
-      if (typeof va === 'string') {
-        return itemSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
-      }
-      return itemSortAsc ? va - vb : vb - va;
-    });
-
-    const arrow = (col) => {
-      if (itemSortCol !== col) return ' <span class="text-gray-300 dark:text-gray-600">↕</span>';
-      return itemSortAsc ? ' ↑' : ' ↓';
+    // Sort comparator (numeric values; pctNet derived from netSales/totalNet).
+    const totalNet = t.netSales || cats.reduce((s, c) => s + (c.netSales || 0), 0);
+    const valOf = (row, col) => {
+      if (col === 'pctNet') return totalNet > 0 ? (row.netSales || 0) / totalNet : 0;
+      return row[col] || 0;
     };
-    const thCls = 'py-2 px-1.5 sm:px-3 sm:py-3 font-semibold cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 select-none';
 
-    const sourceLabel = isToday ? 'Live from Clover' : 'Historical snapshot';
-    const refreshBtn = isToday ? `<button onclick="refreshItemSales()" class="text-xs text-[#3BB54A] hover:underline font-medium">Refresh</button>` : '';
-    let html = `<div class="flex items-center justify-between mb-3"><div class="text-xs text-gray-500 dark:text-gray-400">${data.date} · ${data.orderCount} orders · ${sourceLabel}</div>${refreshBtn}</div>`;
-    html += `<div class="overflow-x-auto"><table class="w-full text-left">
-      <thead class="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
-        <tr class="text-[10px] sm:text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-          <th class="${thCls}" onclick="sortItemSales('category')">Category${arrow('category')}</th>
-          <th class="${thCls} text-right" onclick="sortItemSales('qty')">Qty${arrow('qty')}</th>
-          <th class="${thCls} text-right hidden sm:table-cell" onclick="sortItemSales('pctQty')">% Qty${arrow('pctQty')}</th>
-          <th class="${thCls} text-right hidden sm:table-cell" onclick="sortItemSales('discounts')">Discounts${arrow('discounts')}</th>
-          <th class="${thCls} text-right hidden sm:table-cell" onclick="sortItemSales('refunds')">Refunds${arrow('refunds')}</th>
-          <th class="${thCls} text-right" onclick="sortItemSales('netSales')">Net Sales${arrow('netSales')}</th>
-          <th class="${thCls} text-right" onclick="sortItemSales('asp')">ASP${arrow('asp')}</th>
-        </tr>
-      </thead>
-      <tbody class="text-xs sm:text-sm divide-y divide-gray-100 dark:divide-gray-700">`;
+    // ── DRILLED STATE: L3 rows inside the selected category ──
+    if (drilledCategory) {
+      const cat = cats.find(c => c.category === drilledCategory);
+      if (!cat) {
+        // Drilled category not in current data — fall back to list.
+        drilledCategory = null;
+        return renderItemSalesTable(data, isToday);
+      }
+      const swatch = colorForCategory(cat.category);
+      const l3s = [...(cat.l3Rows || [])];
+      const catTotalNet = cat.netSales || l3s.reduce((s, l) => s + (l.netSales || 0), 0);
+      l3s.sort((a, b) => {
+        const va = itemSortCol === 'pctNet' ? (catTotalNet > 0 ? (a.netSales || 0) / catTotalNet : 0) : (a[itemSortCol] || 0);
+        const vb = itemSortCol === 'pctNet' ? (catTotalNet > 0 ? (b.netSales || 0) / catTotalNet : 0) : (b[itemSortCol] || 0);
+        return vb - va;
+      });
 
-    for (const c of cats) {
-      const discStr = c.discounts < 0 ? `-${fmtDollar(Math.abs(c.discounts))}` : fmtDollar(c.discounts);
-      const refStr = c.refunds < 0 ? `-${fmtDollar(Math.abs(c.refunds))}` : (c.refunds === 0 ? '$0.00' : fmtDollar(c.refunds));
-      html += `<tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 font-medium text-gray-700 dark:text-gray-200">${escapeHtml(c.category)}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-600 dark:text-gray-300">${c.qty.toLocaleString()}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-500 dark:text-gray-400 hidden sm:table-cell">${c.pctQty.toFixed(1)}%</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.discounts < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'} hidden sm:table-cell">${discStr}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.refunds < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'} hidden sm:table-cell">${refStr}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right font-medium text-gray-900 dark:text-white">${fmtDollar(c.netSales)}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-600 dark:text-gray-300">${fmtDollar(c.asp)}</td>
-      </tr>`;
+      const liveTag = isToday ? `<span class="inline-flex items-center gap-1 text-[9.5px] font-bold tracking-[0.06em] uppercase text-accent-green"><span class="w-1.5 h-1.5 rounded-full bg-accent-green"></span>Live</span>` : `<span class="text-[10px] font-bold uppercase tracking-[0.06em] text-opl-inkDimmer dark:text-op-inkDimmer">Stored</span>`;
+
+      let rowsHtml = '';
+      for (const l of l3s) {
+        const pct = catTotalNet > 0 ? Math.round((l.netSales || 0) / catTotalNet * 100) : 0;
+        const discPill = (l.discounts || 0) < 0 ? `<span class="text-[10px] font-bold tabular-nums text-op-warn bg-op-warn/10 px-1.5 py-0.5 rounded">−${fmtDollar(Math.abs(l.discounts))} disc</span>` : '';
+        const refPill  = (l.refunds   || 0) < 0 ? `<span class="text-[10px] font-bold tabular-nums text-op-bad bg-op-bad/10 px-1.5 py-0.5 rounded">−${fmtDollar(Math.abs(l.refunds))} ref</span>` : '';
+        rowsHtml += `
+          <div class="grid items-start gap-3 sm:gap-4 px-4 sm:px-5 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border last:border-b-0" style="grid-template-columns:1fr auto">
+            <div class="min-w-0 flex flex-col gap-1.5">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="w-2 h-2 rounded-sm flex-shrink-0" style="background:${swatch};opacity:.55"></span>
+                <span class="text-[13.5px] font-bold text-opl-ink dark:text-op-ink truncate">${escapeHtml(l.l3 || '(uncategorized)')}</span>
+              </div>
+              <div class="flex items-center gap-2.5 flex-wrap text-[11px] text-opl-inkDim dark:text-op-inkDim">
+                <span><b class="text-opl-ink dark:text-op-ink font-semibold tabular-nums">${(l.qty || 0).toLocaleString()}</b> qty</span>
+                <span class="tabular-nums">${pct}% of cat</span>
+                ${discPill}${refPill}
+              </div>
+              <div class="h-1 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+                <div class="h-full rounded-full transition-[width] duration-500" style="width:${pct}%;background:${swatch}"></div>
+              </div>
+            </div>
+            <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
+              <span class="text-[14px] font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(l.netSales || 0)}</span>
+              <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim tabular-nums">ASP <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(l.asp || 0)}</b></span>
+            </div>
+          </div>`;
+      }
+
+      container.innerHTML = `
+        <div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex-wrap">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <button onclick="backToItemCategories()" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink text-[11px] font-bold transition-colors"><span class="text-[13px] leading-none">‹</span> Categories</button>
+            <h3 class="flex items-center gap-2 text-[14px] font-extrabold tracking-[0.01em] text-opl-ink dark:text-op-ink min-w-0"><span class="w-2.5 h-2.5 rounded-sm flex-shrink-0" style="background:${swatch}"></span><span class="truncate">${escapeHtml(cat.category)}</span></h3>
+          </div>
+          <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim tabular-nums">${(cat.qty || 0).toLocaleString()} qty · ${fmtDollar(cat.netSales || 0)} · ASP ${fmtDollar(cat.asp || 0)}</span>
+        </div>
+        <div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-[rgba(255,255,255,0.015)] border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex-wrap">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums">${escapeHtml(data.date || '')} · <b class="text-opl-ink dark:text-op-ink font-bold">${l3s.length} sub-categories</b></span>
+            ${liveTag}
+          </div>
+          ${_itemsSortDropdownHTML('setItemSort')}
+        </div>
+        ${rowsHtml}
+        <div class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 border-t border-[rgba(20,16,8,0.16)] dark:border-op-borderHi bg-[rgba(20,16,8,0.02)] dark:bg-[rgba(255,255,255,0.025)]" style="grid-template-columns:1fr auto">
+          <div class="flex flex-col gap-1">
+            <div class="text-[10px] font-bold uppercase tracking-[0.08em] text-accent-green">Category Total · ${escapeHtml(cat.category)}</div>
+            <div class="text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums"><b class="text-opl-ink dark:text-op-ink font-semibold">${(cat.qty || 0).toLocaleString()}</b> qty · ${l3s.length} sub-categories</div>
+          </div>
+          <div class="text-[18px] font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(cat.netSales || 0)}</div>
+        </div>`;
+      return;
     }
 
-    // Grand total footer
-    const totalDiscStr = t.discounts < 0 ? `-${fmtDollar(Math.abs(t.discounts))}` : fmtDollar(t.discounts);
-    const totalRefStr = t.refunds < 0 ? `-${fmtDollar(Math.abs(t.refunds))}` : '$0.00';
-    html += `</tbody><tfoot class="border-t-2 border-gray-300 dark:border-gray-600"><tr class="font-bold text-xs sm:text-sm">
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-gray-900 dark:text-white">Grand Total</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${t.qty.toLocaleString()}</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-500 dark:text-gray-400 hidden sm:table-cell">100%</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${t.discounts < 0 ? 'text-red-500' : ''} hidden sm:table-cell">${totalDiscStr}</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${t.refunds < 0 ? 'text-red-500' : ''} hidden sm:table-cell">${totalRefStr}</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${fmtDollar(t.netSales)}</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${fmtDollar(t.asp)}</td>
-    </tr></tfoot></table></div>`;
+    // ── CATEGORY LIST STATE ──
+    cats.sort((a, b) => valOf(b, itemSortCol) - valOf(a, itemSortCol));
+    const liveTag = isToday ? `<span class="inline-flex items-center gap-1 text-[9.5px] font-bold tracking-[0.06em] uppercase text-accent-green"><span class="w-1.5 h-1.5 rounded-full bg-accent-green"></span>Live</span>` : `<span class="text-[10px] font-bold uppercase tracking-[0.06em] text-opl-inkDimmer dark:text-op-inkDimmer">Stored</span>`;
+    const refreshBtn = isToday ? `<button onclick="refreshItemSales()" class="text-[11px] font-bold text-accent-green hover:underline">Refresh</button>` : '';
 
-    container.innerHTML = html;
+    let rowsHtml = '';
+    for (const c of cats) {
+      const sw = colorForCategory(c.category);
+      const pct = totalNet > 0 ? Math.round((c.netSales || 0) / totalNet * 100) : 0;
+      const discPill = (c.discounts || 0) < 0 ? `<span class="text-[10px] font-bold tabular-nums text-op-warn bg-op-warn/10 px-1.5 py-0.5 rounded">−${fmtDollar(Math.abs(c.discounts))} disc</span>` : '';
+      const refPill  = (c.refunds   || 0) < 0 ? `<span class="text-[10px] font-bold tabular-nums text-op-bad bg-op-bad/10 px-1.5 py-0.5 rounded">−${fmtDollar(Math.abs(c.refunds))} ref</span>` : '';
+      const safeName = JSON.stringify(c.category).replace(/"/g, '&quot;');
+      rowsHtml += `
+        <div onclick="drillItemCategory(${safeName})" class="grid items-start gap-3 sm:gap-4 px-4 sm:px-5 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border last:border-b-0 hover:bg-[rgba(255,255,255,0.018)] cursor-pointer transition-colors" style="grid-template-columns:1fr auto">
+          <div class="min-w-0 flex flex-col gap-1.5">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="w-2 h-2 rounded-sm flex-shrink-0" style="background:${sw}"></span>
+              <span class="text-[14px] font-bold text-opl-ink dark:text-op-ink truncate">${escapeHtml(c.category)}</span>
+              <span class="text-[12px] text-opl-inkDimmer dark:text-op-inkDimmer">›</span>
+            </div>
+            <div class="flex items-center gap-2.5 flex-wrap text-[11px] text-opl-inkDim dark:text-op-inkDim">
+              <span><b class="text-opl-ink dark:text-op-ink font-semibold tabular-nums">${(c.qty || 0).toLocaleString()}</b> qty</span>
+              <span class="tabular-nums">${pct}% of net</span>
+              ${discPill}${refPill}
+            </div>
+            <div class="h-1 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+              <div class="h-full rounded-full transition-[width] duration-500" style="width:${pct}%;background:${sw}"></div>
+            </div>
+          </div>
+          <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
+            <span class="text-[15px] font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(c.netSales || 0)}</span>
+            <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim tabular-nums">ASP <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(c.asp || 0)}</b></span>
+          </div>
+        </div>`;
+    }
+
+    container.innerHTML = `
+      <div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <h3 class="text-[14px] font-extrabold tracking-[0.01em] text-opl-ink dark:text-op-ink">Item Sales · By Category</h3>
+        <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">tap a row to see sub-categories</span>
+      </div>
+      <div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-[rgba(255,255,255,0.015)] border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex-wrap">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums">${escapeHtml(data.date || '')} · <b class="text-opl-ink dark:text-op-ink font-bold">${(data.orderCount || 0).toLocaleString()} orders</b></span>
+          ${liveTag}
+          ${refreshBtn}
+        </div>
+        ${_itemsSortDropdownHTML('setItemSort')}
+      </div>
+      ${rowsHtml}
+      <div class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 border-t border-[rgba(20,16,8,0.16)] dark:border-op-borderHi bg-[rgba(20,16,8,0.02)] dark:bg-[rgba(255,255,255,0.025)]" style="grid-template-columns:1fr auto">
+        <div class="flex flex-col gap-1">
+          <div class="text-[10px] font-bold uppercase tracking-[0.08em] text-accent-green">Grand Total · ${escapeHtml(data.date || '')}</div>
+          <div class="text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums"><b class="text-opl-ink dark:text-op-ink font-semibold">${(t.qty || 0).toLocaleString()}</b> qty · <b class="text-opl-ink dark:text-op-ink font-semibold">${(data.orderCount || 0).toLocaleString()}</b> orders · ${cats.length} categories</div>
+        </div>
+        <div class="text-[20px] font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(t.netSales || 0)}</div>
+      </div>`;
+  }
+
+  // Shared dropdown for both store-detail and All Stores items tabs.
+  function _itemsSortDropdownHTML(onChangeName) {
+    const opts = [['netSales','Net Sales'],['qty','Qty'],['asp','ASP'],['pctNet','% of Net']];
+    const sel = (v) => v === itemSortCol ? 'selected' : '';
+    return `<select onchange="${onChangeName}(this.value)" class="text-[11.5px] font-bold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-2 py-1 focus:outline-none focus:ring-1 focus:ring-accent-green cursor-pointer">
+      ${opts.map(([v, l]) => `<option value="${v}" ${sel(v)}>Sort: ${l}</option>`).join('')}
+    </select>`;
   }
 
   // ── All-Stores Detail Page ───────────────────────────────────────────────────
@@ -6682,7 +6830,7 @@
     if (tab === 'chart') renderAllStoresDailyChart();
     if (tab === 'items') {
       asSelectedItemDate = null;
-      renderAllStoresItemDaySelector();
+      asDrilledCategory = null; // reset drill on tab re-entry
       loadAllStoresItemSales(null);
     }
   }
@@ -6785,62 +6933,80 @@
     }
   }
 
-  function renderAllStoresItemDaySelector() {
-    const container = el('as-items-day-selector');
-    if (!container) return;
-    const todayStr = getETTodayStr();
+  // ── All-Stores Items tab — same card-style as store-detail ──────────
+  let asDrilledCategory = null;
 
+  // Build the Sun-first day strip using dates discovered across all stores.
+  function _buildAsItemsDayStripHTML(activeDate, isDrilled) {
+    if (isDrilled) return '';
+    const todayStr = getETTodayStr();
     const dateSet = new Map();
     for (const s of STORES) {
-      const rows = (allStoreData[s] || []).filter(r => r.week === selectedWeek && r.date);
-      for (const r of rows) {
+      for (const r of (allStoreData[s] || []).filter(r => r.week === selectedWeek && r.date)) {
         const key = r.date.toISOString().slice(0, 10);
         if (!dateSet.has(key)) dateSet.set(key, r.date);
       }
     }
     const sortedDates = [...dateSet.entries()].sort(([a], [b]) => a.localeCompare(b));
-    const activeDate = asSelectedItemDate || todayStr;
-
-    let html = '';
-    for (const [fmtDate, dateObj] of sortedDates) {
-      const dayLabel  = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
-      const dateLabel = `${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
-      const isToday   = fmtDate === todayStr;
-      const isFuture  = fmtDate > todayStr;
-      const isSelected = fmtDate === activeDate;
-      if (isFuture) {
-        html += `<button disabled class="flex flex-col items-center px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs opacity-40 text-gray-400 cursor-not-allowed"><span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span></button>`;
-      } else if (isSelected) {
-        html += `<button class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors bg-accent-green text-[#0b1220] font-semibold"><span>${dayLabel}</span><span>${dateLabel}</span>${isToday ? '<span class="text-[8px] font-bold uppercase tracking-[0.1em] mt-0.5">● LIVE</span>' : ''}</button>`;
-      } else {
-        html += `<button onclick="selectAllStoresItemDay('${fmtDate}')" class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink"><span class="font-semibold">${dayLabel}</span><span>${dateLabel}</span></button>`;
-      }
+    let chips = '';
+    for (const [dateKey, dateObj] of sortedDates) {
+      const isFuture = dateKey > todayStr;
+      const isToday = dateKey === todayStr;
+      const isSel = dateKey === activeDate;
+      const wd = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+      const dn = dateObj.getDate();
+      const chipCls = isFuture
+        ? 'opacity-40 cursor-not-allowed border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)]'
+        : isSel
+          ? 'bg-accent-green border-accent-green cursor-pointer'
+          : 'border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] hover:border-accent-green/40 cursor-pointer';
+      const wdCls = isSel ? 'text-[#0b1220]/70' : 'text-opl-inkDim dark:text-op-inkDim';
+      const dnCls = isSel ? 'text-[#0b1220]' : 'text-opl-ink dark:text-op-ink';
+      const dot = isToday && !isSel ? `<span class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-accent-green"></span>` : '';
+      const onClick = isFuture ? '' : `onclick="selectAllStoresItemDay('${dateKey}')"`;
+      chips += `<button ${onClick} ${isFuture ? 'disabled' : ''} class="relative flex flex-col items-center justify-center py-1.5 rounded-[9px] border transition-colors ${chipCls}">${dot}<span class="text-[9.5px] font-bold uppercase tracking-[0.05em] ${wdCls}">${wd}</span><span class="text-[16px] font-extrabold leading-none tabular-nums ${dnCls} mt-0.5">${dn}</span></button>`;
     }
-    if (sortedDates.length) {
-      const [fd] = sortedDates[0];
-      const [ld] = sortedDates[sortedDates.length - 1];
-      const fdObj = dateSet.get(fd), ldObj = dateSet.get(ld);
-      const rangeLabel = `${fdObj.getMonth()+1}/${fdObj.getDate()}–${ldObj.getMonth()+1}/${ldObj.getDate()}`;
-      const isWeek = activeDate === 'WEEK';
-      if (isWeek) {
-        html += `<button class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors bg-accent-green text-[#0b1220] font-semibold"><span>Week</span><span>${rangeLabel}</span></button>`;
-      } else {
-        html += `<button onclick="selectAllStoresItemDay('WEEK')" class="flex flex-col items-center px-3 py-1.5 rounded-[8px] text-[11px] transition-colors text-opl-inkDim dark:text-op-inkDim border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink"><span class="font-semibold">Week</span><span>${rangeLabel}</span></button>`;
-      }
-    }
-    container.innerHTML = html;
+    const isWeek = activeDate === 'WEEK';
+    const wkCls = isWeek
+      ? 'bg-accent-green text-[#0b1220] border-accent-green'
+      : 'text-opl-inkDim dark:text-op-inkDim border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink';
+    return `
+      <div class="px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex flex-col gap-2.5">
+        <div class="grid grid-cols-7 gap-1.5">${chips}</div>
+        <button onclick="selectAllStoresItemDay('WEEK')" class="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[9px] border text-[12px] font-bold transition-colors ${wkCls}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          View Whole Week (combined)
+        </button>
+      </div>`;
   }
 
-  async function loadAllStoresItemSales(dateStr) {
+  function _asItemsLoadingState(dateStr, message, isError) {
+    const stripContainer = el('as-items-day-selector');
     const container = el('as-items-table');
-    if (!container) return;
+    const activeDate = dateStr || getETTodayStr();
+    if (stripContainer) stripContainer.innerHTML = _buildAsItemsDayStripHTML(activeDate, /*drilled=*/false);
+    if (container) {
+      const cls = isError ? 'text-op-bad' : 'text-opl-inkDim dark:text-op-inkDim';
+      const wrap = isError ? '' : 'animate-pulse';
+      container.innerHTML = `<div class="p-8 text-center ${cls}"><div class="${wrap} text-sm">${escapeHtml(message)}</div></div>`;
+    }
+  }
+
+  // No-op shim: day strip lives inside the table render.
+  function renderAllStoresItemDaySelector() { /* handled by renderAllStoresItemTable */ }
+
+  // Cache the merged data per (date or 'WEEK') so drill / sort can re-render without refetching.
+  let _asItemsCache = {};
+
+  async function loadAllStoresItemSales(dateStr) {
     const todayStr = getETTodayStr();
     const targetDate = dateStr || todayStr;
     const isToday = targetDate === todayStr;
 
     if (targetDate === 'WEEK') {
+      if (_asItemsCache.WEEK) { renderAllStoresItemTable(_asItemsCache.WEEK, true); return; }
       let weekStart = '', weekEnd = '';
-      container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">Aggregating all stores…</div></div>`;
+      _asItemsLoadingState(dateStr, 'Aggregating all stores…', false);
       try {
         const allDayResponses = [];
         const storePromises = STORES.map(async s => {
@@ -6860,14 +7026,16 @@
         for (const storeResults of allResults) allDayResponses.push(...(storeResults || []));
         const validResponses = allDayResponses.filter(r => r && !r.error);
         const merged = mergeItemSalesData(validResponses, weekStart, weekEnd);
+        _asItemsCache.WEEK = merged;
         renderAllStoresItemTable(merged, true);
       } catch(err) {
-        container.innerHTML = `<div class="p-8 text-center text-red-400 text-sm">${escapeHtml(err.message)}</div>`;
+        _asItemsLoadingState(dateStr, `Failed to load: ${err.message}`, true);
       }
       return;
     }
 
-    container.innerHTML = `<div class="p-8 text-center text-gray-400"><div class="animate-pulse text-sm">${isToday ? 'Loading live data from all stores…' : 'Loading historical data…'}</div></div>`;
+    if (_asItemsCache[targetDate]) { renderAllStoresItemTable(_asItemsCache[targetDate], isToday); return; }
+    _asItemsLoadingState(dateStr, isToday ? 'Loading live data from all stores…' : 'Loading historical data…', false);
     try {
       const responses = await Promise.all(STORES.map(s => {
         const storeCode = s.split('/')[0];
@@ -6876,74 +7044,202 @@
       }));
       const valid = responses.filter(r => r && !r.error);
       const merged = mergeItemSalesData(valid, targetDate, targetDate);
+      _asItemsCache[targetDate] = merged;
       renderAllStoresItemTable(merged, isToday);
     } catch(err) {
-      container.innerHTML = `<div class="p-8 text-center text-red-400 text-sm">${escapeHtml(err.message)}</div>`;
+      _asItemsLoadingState(dateStr, `Failed to load: ${err.message}`, true);
     }
   }
 
+  function setAsItemSort(col) {
+    itemSortCol = col;
+    itemSortAsc = false;
+    drillAsItemCategory(asDrilledCategory); // re-render
+  }
+  window.setAsItemSort = setAsItemSort;
+
+  function drillAsItemCategory(catName) {
+    asDrilledCategory = catName;
+    const targetDate = asSelectedItemDate || getETTodayStr();
+    const todayStr = getETTodayStr();
+    const isToday = targetDate === todayStr;
+    if (asSelectedItemDate === 'WEEK' && _asItemsCache.WEEK) {
+      renderAllStoresItemTable(_asItemsCache.WEEK, true);
+    } else if (_asItemsCache[targetDate]) {
+      renderAllStoresItemTable(_asItemsCache[targetDate], isToday);
+    }
+  }
+  window.drillAsItemCategory = drillAsItemCategory;
+
+  function backToAsItemCategories() {
+    asDrilledCategory = null;
+    drillAsItemCategory(null);
+  }
+  window.backToAsItemCategories = backToAsItemCategories;
+
   function renderAllStoresItemTable(data, isToday) {
+    const stripContainer = el('as-items-day-selector');
     const container = el('as-items-table');
     if (!container) return;
+    const activeDate = asSelectedItemDate || getETTodayStr();
+
+    if (stripContainer) {
+      stripContainer.innerHTML = _buildAsItemsDayStripHTML(activeDate, !!asDrilledCategory);
+    }
+
     const cats = [...(data.categories || [])];
     const t = data.totals || {};
-    if (!cats.length) {
-      container.innerHTML = `<div class="p-8 text-center text-gray-400 text-sm">No item sales data available.</div>`;
+
+    if (cats.length === 0) {
+      container.innerHTML = `
+        <div class="px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+          <h3 class="text-[14px] font-extrabold tracking-[0.01em] text-opl-ink dark:text-op-ink">Item Sales · All Stores · By Category</h3>
+        </div>
+        <div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim text-sm">No item sales data available.</div>`;
       return;
     }
-    cats.sort((a, b) => b.netSales - a.netSales);
-    const refreshBtn = isToday ? `<button onclick="refreshAllStoresItemSales()" class="text-xs text-[#3BB54A] hover:underline font-medium">Refresh</button>` : '';
-    let html = `<div class="flex items-center justify-between mb-3"><div class="text-xs text-gray-500 dark:text-gray-400">${data.date} · ${data.orderCount} orders · ${isToday ? 'Live from Clover' : 'Historical snapshot'}</div>${refreshBtn}</div>`;
-    html += `<div class="overflow-x-auto"><table class="w-full text-left">
-      <thead class="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
-        <tr class="text-[10px] sm:text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold">Category</th>
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right">Qty</th>
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right hidden sm:table-cell">% Qty</th>
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right hidden sm:table-cell">Discounts</th>
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right hidden sm:table-cell">Refunds</th>
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right">Net Sales</th>
-          <th class="py-2 px-1.5 sm:px-3 sm:py-3 font-semibold text-right">ASP</th>
-        </tr>
-      </thead>
-      <tbody class="text-xs sm:text-sm divide-y divide-gray-100 dark:divide-gray-700">`;
-    for (const c of cats) {
-      const discStr = c.discounts < 0 ? `-${fmtDollar(Math.abs(c.discounts))}` : fmtDollar(c.discounts);
-      const refStr  = c.refunds < 0   ? `-${fmtDollar(Math.abs(c.refunds))}`  : '$0.00';
-      html += `<tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 font-medium text-gray-700 dark:text-gray-200">${escapeHtml(c.category)}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-600 dark:text-gray-300">${c.qty.toLocaleString()}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-500 dark:text-gray-400 hidden sm:table-cell">${c.pctQty.toFixed(1)}%</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.discounts < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'} hidden sm:table-cell">${discStr}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.refunds < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'} hidden sm:table-cell">${refStr}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right font-medium text-gray-900 dark:text-white">${fmtDollar(c.netSales)}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-600 dark:text-gray-300">${fmtDollar(c.asp)}</td>
-      </tr>`;
+
+    const totalNet = t.netSales || cats.reduce((s, c) => s + (c.netSales || 0), 0);
+    const valOf = (row, col) => {
+      if (col === 'pctNet') return totalNet > 0 ? (row.netSales || 0) / totalNet : 0;
+      return row[col] || 0;
+    };
+
+    if (asDrilledCategory) {
+      const cat = cats.find(c => c.category === asDrilledCategory);
+      if (!cat) { asDrilledCategory = null; return renderAllStoresItemTable(data, isToday); }
+      const swatch = colorForCategory(cat.category);
+      const l3s = [...(cat.l3Rows || [])];
+      const catTotalNet = cat.netSales || l3s.reduce((s, l) => s + (l.netSales || 0), 0);
+      l3s.sort((a, b) => {
+        const va = itemSortCol === 'pctNet' ? (catTotalNet > 0 ? (a.netSales || 0) / catTotalNet : 0) : (a[itemSortCol] || 0);
+        const vb = itemSortCol === 'pctNet' ? (catTotalNet > 0 ? (b.netSales || 0) / catTotalNet : 0) : (b[itemSortCol] || 0);
+        return vb - va;
+      });
+      const liveTag = isToday ? `<span class="inline-flex items-center gap-1 text-[9.5px] font-bold tracking-[0.06em] uppercase text-accent-green"><span class="w-1.5 h-1.5 rounded-full bg-accent-green"></span>Live</span>` : `<span class="text-[10px] font-bold uppercase tracking-[0.06em] text-opl-inkDimmer dark:text-op-inkDimmer">Stored</span>`;
+      let rowsHtml = '';
+      for (const l of l3s) {
+        const pct = catTotalNet > 0 ? Math.round((l.netSales || 0) / catTotalNet * 100) : 0;
+        const discPill = (l.discounts || 0) < 0 ? `<span class="text-[10px] font-bold tabular-nums text-op-warn bg-op-warn/10 px-1.5 py-0.5 rounded">−${fmtDollar(Math.abs(l.discounts))} disc</span>` : '';
+        const refPill  = (l.refunds   || 0) < 0 ? `<span class="text-[10px] font-bold tabular-nums text-op-bad bg-op-bad/10 px-1.5 py-0.5 rounded">−${fmtDollar(Math.abs(l.refunds))} ref</span>` : '';
+        rowsHtml += `
+          <div class="grid items-start gap-3 sm:gap-4 px-4 sm:px-5 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border last:border-b-0" style="grid-template-columns:1fr auto">
+            <div class="min-w-0 flex flex-col gap-1.5">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="w-2 h-2 rounded-sm flex-shrink-0" style="background:${swatch};opacity:.55"></span>
+                <span class="text-[13.5px] font-bold text-opl-ink dark:text-op-ink truncate">${escapeHtml(l.l3 || '(uncategorized)')}</span>
+              </div>
+              <div class="flex items-center gap-2.5 flex-wrap text-[11px] text-opl-inkDim dark:text-op-inkDim">
+                <span><b class="text-opl-ink dark:text-op-ink font-semibold tabular-nums">${(l.qty || 0).toLocaleString()}</b> qty</span>
+                <span class="tabular-nums">${pct}% of cat</span>
+                ${discPill}${refPill}
+              </div>
+              <div class="h-1 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+                <div class="h-full rounded-full transition-[width] duration-500" style="width:${pct}%;background:${swatch}"></div>
+              </div>
+            </div>
+            <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
+              <span class="text-[14px] font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(l.netSales || 0)}</span>
+              <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim tabular-nums">ASP <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(l.asp || 0)}</b></span>
+            </div>
+          </div>`;
+      }
+      container.innerHTML = `
+        <div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex-wrap">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <button onclick="backToAsItemCategories()" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink text-[11px] font-bold transition-colors"><span class="text-[13px] leading-none">‹</span> Categories</button>
+            <h3 class="flex items-center gap-2 text-[14px] font-extrabold tracking-[0.01em] text-opl-ink dark:text-op-ink min-w-0"><span class="w-2.5 h-2.5 rounded-sm flex-shrink-0" style="background:${swatch}"></span><span class="truncate">${escapeHtml(cat.category)}</span></h3>
+          </div>
+          <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim tabular-nums">${(cat.qty || 0).toLocaleString()} qty · ${fmtDollar(cat.netSales || 0)} · ASP ${fmtDollar(cat.asp || 0)}</span>
+        </div>
+        <div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-[rgba(255,255,255,0.015)] border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex-wrap">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums">${escapeHtml(data.date || '')} · <b class="text-opl-ink dark:text-op-ink font-bold">${l3s.length} sub-categories</b></span>
+            ${liveTag}
+          </div>
+          ${_itemsSortDropdownHTML('setAsItemSort')}
+        </div>
+        ${rowsHtml}
+        <div class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 border-t border-[rgba(20,16,8,0.16)] dark:border-op-borderHi bg-[rgba(20,16,8,0.02)] dark:bg-[rgba(255,255,255,0.025)]" style="grid-template-columns:1fr auto">
+          <div class="flex flex-col gap-1">
+            <div class="text-[10px] font-bold uppercase tracking-[0.08em] text-accent-green">Category Total · ${escapeHtml(cat.category)}</div>
+            <div class="text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums"><b class="text-opl-ink dark:text-op-ink font-semibold">${(cat.qty || 0).toLocaleString()}</b> qty · ${l3s.length} sub-categories · all stores</div>
+          </div>
+          <div class="text-[18px] font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(cat.netSales || 0)}</div>
+        </div>`;
+      return;
     }
-    const totDiscStr = t.discounts < 0 ? `-${fmtDollar(Math.abs(t.discounts))}` : fmtDollar(t.discounts||0);
-    const totRefStr  = t.refunds  < 0  ? `-${fmtDollar(Math.abs(t.refunds))}`  : '$0.00';
-    html += `</tbody><tfoot class="border-t-2 border-gray-300 dark:border-gray-600"><tr class="font-bold text-xs sm:text-sm">
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-gray-900 dark:text-white">Grand Total</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${(t.qty||0).toLocaleString()}</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-500 dark:text-gray-400 hidden sm:table-cell">100%</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${(t.discounts||0) < 0 ? 'text-red-500' : ''} hidden sm:table-cell">${totDiscStr}</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${(t.refunds||0) < 0 ? 'text-red-500' : ''} hidden sm:table-cell">${totRefStr}</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${fmtDollar(t.netSales||0)}</td>
-      <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${fmtDollar(t.asp||0)}</td>
-    </tr></tfoot></table></div>`;
-    container.innerHTML = html;
+
+    // CATEGORY LIST
+    cats.sort((a, b) => valOf(b, itemSortCol) - valOf(a, itemSortCol));
+    const liveTag = isToday ? `<span class="inline-flex items-center gap-1 text-[9.5px] font-bold tracking-[0.06em] uppercase text-accent-green"><span class="w-1.5 h-1.5 rounded-full bg-accent-green"></span>Live</span>` : `<span class="text-[10px] font-bold uppercase tracking-[0.06em] text-opl-inkDimmer dark:text-op-inkDimmer">Stored</span>`;
+    const refreshBtn = isToday ? `<button onclick="refreshAllStoresItemSales()" class="text-[11px] font-bold text-accent-green hover:underline">Refresh</button>` : '';
+
+    let rowsHtml = '';
+    for (const c of cats) {
+      const sw = colorForCategory(c.category);
+      const pct = totalNet > 0 ? Math.round((c.netSales || 0) / totalNet * 100) : 0;
+      const discPill = (c.discounts || 0) < 0 ? `<span class="text-[10px] font-bold tabular-nums text-op-warn bg-op-warn/10 px-1.5 py-0.5 rounded">−${fmtDollar(Math.abs(c.discounts))} disc</span>` : '';
+      const refPill  = (c.refunds   || 0) < 0 ? `<span class="text-[10px] font-bold tabular-nums text-op-bad bg-op-bad/10 px-1.5 py-0.5 rounded">−${fmtDollar(Math.abs(c.refunds))} ref</span>` : '';
+      const safeName = JSON.stringify(c.category).replace(/"/g, '&quot;');
+      rowsHtml += `
+        <div onclick="drillAsItemCategory(${safeName})" class="grid items-start gap-3 sm:gap-4 px-4 sm:px-5 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border last:border-b-0 hover:bg-[rgba(255,255,255,0.018)] cursor-pointer transition-colors" style="grid-template-columns:1fr auto">
+          <div class="min-w-0 flex flex-col gap-1.5">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="w-2 h-2 rounded-sm flex-shrink-0" style="background:${sw}"></span>
+              <span class="text-[14px] font-bold text-opl-ink dark:text-op-ink truncate">${escapeHtml(c.category)}</span>
+              <span class="text-[12px] text-opl-inkDimmer dark:text-op-inkDimmer">›</span>
+            </div>
+            <div class="flex items-center gap-2.5 flex-wrap text-[11px] text-opl-inkDim dark:text-op-inkDim">
+              <span><b class="text-opl-ink dark:text-op-ink font-semibold tabular-nums">${(c.qty || 0).toLocaleString()}</b> qty</span>
+              <span class="tabular-nums">${pct}% of net</span>
+              ${discPill}${refPill}
+            </div>
+            <div class="h-1 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+              <div class="h-full rounded-full transition-[width] duration-500" style="width:${pct}%;background:${sw}"></div>
+            </div>
+          </div>
+          <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
+            <span class="text-[15px] font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(c.netSales || 0)}</span>
+            <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim tabular-nums">ASP <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(c.asp || 0)}</b></span>
+          </div>
+        </div>`;
+    }
+
+    container.innerHTML = `
+      <div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <h3 class="text-[14px] font-extrabold tracking-[0.01em] text-opl-ink dark:text-op-ink">Item Sales · All Stores · By Category</h3>
+        <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">tap a row to see sub-categories</span>
+      </div>
+      <div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-[rgba(255,255,255,0.015)] border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex-wrap">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums">${escapeHtml(data.date || '')} · <b class="text-opl-ink dark:text-op-ink font-bold">${(data.orderCount || 0).toLocaleString()} orders</b></span>
+          ${liveTag}
+          ${refreshBtn}
+        </div>
+        ${_itemsSortDropdownHTML('setAsItemSort')}
+      </div>
+      ${rowsHtml}
+      <div class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 border-t border-[rgba(20,16,8,0.16)] dark:border-op-borderHi bg-[rgba(20,16,8,0.02)] dark:bg-[rgba(255,255,255,0.025)]" style="grid-template-columns:1fr auto">
+        <div class="flex flex-col gap-1">
+          <div class="text-[10px] font-bold uppercase tracking-[0.08em] text-accent-green">Grand Total · ${escapeHtml(data.date || '')}</div>
+          <div class="text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums"><b class="text-opl-ink dark:text-op-ink font-semibold">${(t.qty || 0).toLocaleString()}</b> qty · <b class="text-opl-ink dark:text-op-ink font-semibold">${(data.orderCount || 0).toLocaleString()}</b> orders · ${cats.length} categories · all stores</div>
+        </div>
+        <div class="text-[20px] font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(t.netSales || 0)}</div>
+      </div>`;
   }
 
   function selectAllStoresItemDay(dateStr) {
     asSelectedItemDate = dateStr;
-    renderAllStoresItemDaySelector();
+    asDrilledCategory = null;
     loadAllStoresItemSales(dateStr);
   }
   window.selectAllStoresItemDay = selectAllStoresItemDay;
 
   function refreshAllStoresItemSales() {
     asSelectedItemDate = null;
-    renderAllStoresItemDaySelector();
+    asDrilledCategory = null;
+    _asItemsCache = {}; // bust cache
     loadAllStoresItemSales(null);
   }
   window.refreshAllStoresItemSales = refreshAllStoresItemSales;
