@@ -11027,18 +11027,19 @@
       function goBack() {
         if (currentPage === 'store-detail') {
           if (storeDetailReturnTo === 'all-stores-detail') {
-            // Pass fromHistory so it doesn't pushState (we're undoing, not navigating forward).
             showAllStoresDetail(/*fromHistory=*/true);
+            // Overwrite the current history entry so the browser back button
+            // matches what the user sees. (Not pop — pop would fire popstate
+            // and our handler can mis-route if the popped state is null.)
+            try { history.replaceState({ page: 'all-stores-detail' }, ''); } catch (_) {}
           } else {
             navigateToDashboard();
+            try { history.replaceState(null, ''); } catch (_) {}
           }
         } else if (currentPage === 'all-stores-detail') {
           navigateToDashboard();
+          try { history.replaceState(null, ''); } catch (_) {}
         }
-        // Sync browser back button so iOS / system back doesn't repeat the page.
-        // popstate will fire and re-route, but since we already moved the UI it's
-        // either a no-op (same page) or a harmless re-render.
-        try { history.back(); } catch (_) {}
       }
 
       document.addEventListener('touchstart', (e) => {
