@@ -528,7 +528,51 @@
             <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Dashboard</h1>
             <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5" id="last-updated"></p>
           </div>
-          <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2.5">
+            <!-- Week/day selector — compact chip next to the title; opens a
+                 dropdown panel with week nav, Sun-first multi-select day chips,
+                 and a "View Whole Week" reset. -->
+            <div class="relative" id="day-chip-wrap">
+              <button id="day-chip-trigger" type="button" onclick="toggleDayPanel(event)"
+                aria-haspopup="true" aria-expanded="false"
+                class="inline-flex items-center gap-2 px-3 py-2 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink text-[13.5px] font-bold whitespace-nowrap transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <svg class="w-3.5 h-3.5 text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
+                <span id="day-chip-label" class="truncate max-w-[180px]">—</span>
+                <svg id="day-chip-chev" class="w-3.5 h-3.5 text-opl-inkDim dark:text-op-inkDim flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+
+              <div id="day-chip-panel" class="hidden absolute top-[calc(100%+10px)] right-0 w-[360px] max-w-[88vw] bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right">
+                <div class="flex items-center justify-between gap-2 px-3.5 py-3">
+                  <button type="button" onclick="navigateWeek(-1)" aria-label="Previous week"
+                    class="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-[9px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.03)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">‹</button>
+
+                  <div class="flex items-center gap-2 min-w-0">
+                    <label for="week-select" class="sr-only">Viewing Week</label>
+                    <select id="week-select"
+                      class="pl-3 pr-7 py-1 rounded-[8px] text-[14px] font-bold bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink border border-[rgba(20,16,8,0.08)] dark:border-op-border focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors cursor-pointer appearance-none"
+                      style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 20 20%22 fill=%22%238893a7%22%3E%3Cpath fill-rule=%22evenodd%22 d=%22M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z%22 clip-rule=%22evenodd%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 0.4rem center; background-size: 1rem;">
+                    </select>
+                    <span id="week-range" class="text-[13px] font-medium text-opl-inkDim dark:text-op-inkDim whitespace-nowrap truncate"></span>
+                  </div>
+
+                  <button type="button" onclick="navigateWeek(1)" aria-label="Next week"
+                    class="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-[9px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.03)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">›</button>
+                </div>
+
+                <div class="h-px bg-[rgba(20,16,8,0.08)] dark:bg-op-border"></div>
+
+                <div id="dash-day-selector" class="grid grid-cols-7 gap-1.5 p-3.5"></div>
+
+                <div class="flex justify-end px-3.5 pb-3.5">
+                  <button id="dash-week-btn" type="button" onclick="selectAllWeek()"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12px] font-bold transition-colors border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                    View Whole Week
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <button id="refresh-btn" aria-label="Refresh dashboard data" class="refresh-btn">
               <span class="refresh-icon">↻</span>
               <span class="refresh-label">↻ Refresh</span>
@@ -538,39 +582,6 @@
       </div>
 
       <div class="max-w-7xl mx-auto px-6 py-6 space-y-6">
-      
-      <!-- Week selector — card with ‹ › nav, week dropdown + range, Sun-first
-           multi-select day chips, and a "View Week" reset to whole-week. -->
-      <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors">
-        <div class="flex items-center justify-between gap-2 px-4 py-3">
-          <button type="button" onclick="navigateWeek(-1)" aria-label="Previous week"
-            class="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-[9px] text-lg leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.03)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">‹</button>
-
-          <div class="flex items-center gap-2 min-w-0">
-            <label for="week-select" class="sr-only">Viewing Week</label>
-            <select id="week-select"
-              class="pl-3 pr-8 py-1 rounded-[8px] text-[15px] font-bold bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink border border-[rgba(20,16,8,0.08)] dark:border-op-border focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors cursor-pointer appearance-none"
-              style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 20 20%22 fill=%22%238893a7%22%3E%3Cpath fill-rule=%22evenodd%22 d=%22M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z%22 clip-rule=%22evenodd%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 0.5rem center; background-size: 1.1rem;">
-            </select>
-            <span id="week-range" class="text-sm font-medium text-opl-inkDim dark:text-op-inkDim whitespace-nowrap truncate"></span>
-          </div>
-
-          <button type="button" onclick="navigateWeek(1)" aria-label="Next week"
-            class="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-[9px] text-lg leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.03)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">›</button>
-        </div>
-
-        <div class="h-px bg-[rgba(20,16,8,0.08)] dark:bg-op-border"></div>
-
-        <div id="dash-day-selector" class="grid grid-cols-7 gap-2 p-4"></div>
-
-        <div class="flex justify-end px-4 pb-4">
-          <button id="dash-week-btn" type="button" onclick="selectAllWeek()"
-            class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-[9px] text-[12px] font-bold transition-colors border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-            View Week
-          </button>
-        </div>
-      </section>
 
       <!-- V1 Operator hero — unified "Today's Sales · All Stores" card -->
       <section id="today-total-card" class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 lg:p-6 transition-colors">
@@ -2799,7 +2810,7 @@
 
   function renderDashDaySelector() {
     const container = el('dash-day-selector');
-    if (!container || !selectedWeek) { if (container) container.innerHTML = ''; updateWeekBtn(); return; }
+    if (!container || !selectedWeek) { if (container) container.innerHTML = ''; updateWeekBtn(); updateDayChip(); return; }
 
     // Dates in the selected week, chronological. The retail week starts
     // Sunday, so ascending sort already yields Sun-first.
@@ -2850,6 +2861,7 @@
     }
     container.innerHTML = html;
     updateWeekBtn();
+    updateDayChip();
   }
 
   // "View Week" button — solid green when the whole-week (no days) view is active.
@@ -2881,6 +2893,67 @@
     if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName);
   }
   window.selectAllWeek = selectAllWeek;
+
+  // ── Header chip + dropdown panel ─────────────────────────────────────
+  // The chip sits in the dashboard header and shows the current selection.
+  // Tapping it opens a panel containing the existing week nav + day chips.
+
+  // Update the chip label to mirror the current selection.
+  function updateDayChip() {
+    const lbl = el('day-chip-label');
+    if (!lbl) return;
+    const todayStr = etTodayStr();
+    if (selectedDashDays.size === 0) {
+      lbl.textContent = selectedWeek ? `Week ${selectedWeek}` : '—';
+    } else if (selectedDashDays.size === 1) {
+      const only = [...selectedDashDays][0];
+      if (only === todayStr) {
+        const d = new Date(only + 'T12:00:00');
+        lbl.textContent = `Today · ${d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`;
+      } else {
+        const d = new Date(only + 'T12:00:00');
+        lbl.textContent = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      }
+    } else {
+      lbl.textContent = `${selectedDashDays.size} days · combined`;
+    }
+  }
+  window.updateDayChip = updateDayChip;
+
+  function setDayPanelOpen(open) {
+    const panel = el('day-chip-panel');
+    const trig = el('day-chip-trigger');
+    const chev = el('day-chip-chev');
+    if (!panel || !trig) return;
+    if (open) {
+      panel.classList.remove('hidden');
+      trig.setAttribute('aria-expanded', 'true');
+      trig.classList.add('border-accent-green/45', 'bg-accent-green/10');
+      if (chev) chev.style.transform = 'rotate(180deg)';
+    } else {
+      panel.classList.add('hidden');
+      trig.setAttribute('aria-expanded', 'false');
+      trig.classList.remove('border-accent-green/45', 'bg-accent-green/10');
+      if (chev) chev.style.transform = '';
+    }
+  }
+  function toggleDayPanel(e) {
+    if (e) e.stopPropagation();
+    const panel = el('day-chip-panel');
+    if (!panel) return;
+    setDayPanelOpen(panel.classList.contains('hidden'));
+  }
+  window.toggleDayPanel = toggleDayPanel;
+
+  // Close on outside click / Escape. Bound once.
+  document.addEventListener('click', (e) => {
+    const wrap = el('day-chip-wrap');
+    if (!wrap) return;
+    if (!wrap.contains(e.target)) setDayPanelOpen(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') setDayPanelOpen(false);
+  });
 
   function renderDashboard() {
     if (!selectedWeek) return;
