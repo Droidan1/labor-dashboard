@@ -10991,6 +10991,53 @@
       document.addEventListener('touchend',    onTouchEnd,    { passive: true });
       document.addEventListener('touchcancel', onTouchCancel, { passive: true });
     })();
+
+    // ── Swipe-from-left-edge → back ────────────────────────────────────
+    // Minimal swipe-back gesture for the detail pages. iOS Safari disables
+    // its native edge-swipe in standalone PWA mode, so we replicate it here.
+    // Active ONLY on store-detail / all-stores-detail (where "back" is
+    // unambiguous). Triggers history.back() — which the popstate handler
+    // maps to the right previous page (dashboard or all-stores-detail).
+    (function initSwipeBack() {
+      const EDGE_ZONE = 24;     // px from left edge where the swipe must start
+      const COMMIT_DX = 80;     // px horizontal distance to commit
+      const MAX_DURATION = 800; // ms — slower than this and we treat it as a scroll/pause
+      let startX = 0, startY = 0, startT = 0;
+      let armed = false;
+
+      function activePage() {
+        return currentPage === 'store-detail' || currentPage === 'all-stores-detail';
+      }
+
+      document.addEventListener('touchstart', (e) => {
+        armed = false;
+        if (!activePage()) return;
+        if (e.touches.length !== 1) return;
+        const t = e.touches[0];
+        if (t.clientX > EDGE_ZONE) return;
+        startX = t.clientX;
+        startY = t.clientY;
+        startT = Date.now();
+        armed = true;
+      }, { passive: true });
+
+      document.addEventListener('touchend', (e) => {
+        if (!armed) return;
+        armed = false;
+        if (!activePage()) return;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        const dt = Date.now() - startT;
+        // Must be mostly horizontal, rightward, past the threshold, and not
+        // a slow drift (so a long pause-then-release doesn't navigate).
+        if (dx >= COMMIT_DX && Math.abs(dx) > Math.abs(dy) * 1.5 && dt <= MAX_DURATION) {
+          history.back();
+        }
+      }, { passive: true });
+
+      document.addEventListener('touchcancel', () => { armed = false; }, { passive: true });
+    })();
   });
   </script>
   <script>
