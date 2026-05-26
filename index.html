@@ -4310,7 +4310,15 @@
     el('items-hour-modal-body').innerHTML = '';
   }
 
+  // Where to return to when swipe-back fires from #page-store-detail.
+  // Captured on every forward navigation so we don't depend on history.state
+  // (which can be polluted by stale duplicates across sessions).
+  let storeDetailReturnTo = 'dashboard'; // 'dashboard' | 'all-stores-detail'
+
   function showStoreDetail(storeName, fromHistory) {
+    if (!fromHistory) {
+      storeDetailReturnTo = (currentPage === 'all-stores-detail') ? 'all-stores-detail' : 'dashboard';
+    }
     const isStoreSwitch = currentStoreName !== storeName;
     currentPage = 'store-detail';
     currentStoreName = storeName;
@@ -11001,8 +11009,10 @@
     // Minimal swipe-back gesture for the detail pages. iOS Safari disables
     // its native edge-swipe in standalone PWA mode, so we replicate it here.
     // Active ONLY on store-detail / all-stores-detail (where "back" is
-    // unambiguous). Triggers history.back() — which the popstate handler
-    // maps to the right previous page (dashboard or all-stores-detail).
+    // unambiguous). Uses an explicit "came from" routing — not history.back()
+    // — because the browser history can be polluted by stale duplicates from
+    // earlier sessions / pre-fix builds. history.back() is then called as a
+    // follow-up to keep the browser back button consistent.
     (function initSwipeBack() {
       const EDGE_ZONE = 24;     // px from left edge where the swipe must start
       const COMMIT_DX = 80;     // px horizontal distance to commit
@@ -11012,6 +11022,23 @@
 
       function activePage() {
         return currentPage === 'store-detail' || currentPage === 'all-stores-detail';
+      }
+
+      function goBack() {
+        if (currentPage === 'store-detail') {
+          if (storeDetailReturnTo === 'all-stores-detail') {
+            // Pass fromHistory so it doesn't pushState (we're undoing, not navigating forward).
+            showAllStoresDetail(/*fromHistory=*/true);
+          } else {
+            navigateToDashboard();
+          }
+        } else if (currentPage === 'all-stores-detail') {
+          navigateToDashboard();
+        }
+        // Sync browser back button so iOS / system back doesn't repeat the page.
+        // popstate will fire and re-route, but since we already moved the UI it's
+        // either a no-op (same page) or a harmless re-render.
+        try { history.back(); } catch (_) {}
       }
 
       document.addEventListener('touchstart', (e) => {
@@ -11034,10 +11061,8 @@
         const dx = t.clientX - startX;
         const dy = t.clientY - startY;
         const dt = Date.now() - startT;
-        // Must be mostly horizontal, rightward, past the threshold, and not
-        // a slow drift (so a long pause-then-release doesn't navigate).
         if (dx >= COMMIT_DX && Math.abs(dx) > Math.abs(dy) * 1.5 && dt <= MAX_DURATION) {
-          history.back();
+          goBack();
         }
       }, { passive: true });
 
