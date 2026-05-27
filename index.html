@@ -11974,7 +11974,9 @@
     function updateSwipeBackHint() {
       const rail = document.getElementById('swipe-rail');
       const label = document.getElementById('swipe-label');
-      const railOn = window.currentPage && window.currentPage !== 'dashboard';
+      // currentPage is a top-level `let` — accessible via closure but NOT on
+      // window. Using window.currentPage here would always be undefined.
+      const railOn = currentPage && currentPage !== 'dashboard';
       if (rail) rail.classList.toggle('hidden', !railOn);
       if (!label) return;
       if (!railOn) { label.classList.add('hidden'); label.classList.remove('show'); return; }
