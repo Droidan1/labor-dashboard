@@ -2130,10 +2130,11 @@
         <div id="hourly-modal-loading" class="text-center text-gray-500 dark:text-gray-400 py-8">Loading hourly data…</div>
         <div id="hourly-modal-error" class="hidden text-center text-red-600 dark:text-red-400 py-8"></div>
         <div id="hourly-modal-chart-wrap" class="hidden">
+          <div id="hourly-modal-stats" class="grid grid-cols-2 gap-3 mb-4"></div>
           <div class="relative h-64 sm:h-80">
             <canvas id="hourly-chart"></canvas>
           </div>
-          <div id="hourly-modal-totals" class="mt-4 grid grid-cols-2 gap-3 text-sm"></div>
+          <div id="hourly-modal-callouts" class="mt-4 grid grid-cols-2 gap-3"></div>
         </div>
       </div>
     </div>
@@ -4744,7 +4745,8 @@
     const loadingEl = el('hourly-modal-loading');
     const errorEl = el('hourly-modal-error');
     const chartWrap = el('hourly-modal-chart-wrap');
-    const totalsEl = el('hourly-modal-totals');
+    const statsEl = el('hourly-modal-stats');
+    const calloutsEl = el('hourly-modal-callouts');
 
     // Reset + show
     modal.classList.remove('hidden');
@@ -4753,8 +4755,8 @@
     chartWrap.classList.add('hidden');
 
     const storeKey = storeName.split('/')[0];
-    el('hourly-modal-title').textContent = `${shortName(storeName)} — Hourly Sales`;
-    const prettyDate = rowDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+    el('hourly-modal-title').textContent = `${shortName(storeName)} · Hourly`;
+    const prettyDate = rowDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     el('hourly-modal-subtitle').textContent = prettyDate;
 
     // Compute same-day-last-week in local terms, then format as YYYY-MM-DD
@@ -4801,22 +4803,51 @@
       const delta = curTotal - lwTotal;
       const pct = lwTotal > 0 ? (delta / lwTotal) * 100 : null;
       const fmt$ = v => '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const fmt$0 = v => '$' + Math.round(v).toLocaleString('en-US');
       const deltaColor = delta >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400';
-      const deltaSign = delta >= 0 ? '+' : '';
-      totalsEl.innerHTML = `
-        <div class="rounded-lg bg-gray-100 dark:bg-gray-700/50 p-3">
-          <div class="text-xs text-gray-500 dark:text-gray-400">This Day</div>
-          <div class="text-base font-semibold text-gray-900 dark:text-gray-100">${fmt$(curTotal)}</div>
+      const deltaSign = delta >= 0 ? '+' : '−';
+      const deltaAbs = Math.abs(delta);
+      const lwPretty = lastWeekDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      statsEl.innerHTML = `
+        <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+          <div class="flex items-center gap-2 text-[11px] uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            <span class="inline-block w-3 h-[2px] bg-green-500 rounded-sm"></span>This Day
+          </div>
+          <div class="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100 tabular-nums">${fmt$(curTotal)}</div>
+          ${lwTotal > 0 ? `<div class="mt-0.5 text-xs ${deltaColor} tabular-nums">${deltaSign}${fmt$(deltaAbs)}${pct != null ? ` · ${deltaSign}${Math.abs(pct).toFixed(1)}%` : ''} vs LW</div>` : `<div class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">—</div>`}
         </div>
-        <div class="rounded-lg bg-gray-100 dark:bg-gray-700/50 p-3">
-          <div class="text-xs text-gray-500 dark:text-gray-400">Last Week</div>
-          <div class="text-base font-semibold text-gray-900 dark:text-gray-100">${fmt$(lwTotal)}</div>
-        </div>
-        <div class="col-span-2 rounded-lg bg-gray-100 dark:bg-gray-700/50 p-3">
-          <div class="text-xs text-gray-500 dark:text-gray-400">Difference</div>
-          <div class="text-base font-semibold ${deltaColor}">${deltaSign}${fmt$(delta)}${pct != null ? ` (${deltaSign}${pct.toFixed(1)}%)` : ''}</div>
+        <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+          <div class="flex items-center gap-2 text-[11px] uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            <svg width="12" height="2" class="overflow-visible" aria-hidden="true"><line x1="0" y1="1" x2="12" y2="1" stroke="#f59e0b" stroke-width="2" stroke-dasharray="3 2"/></svg>Last Week
+          </div>
+          <div class="mt-1 text-lg font-semibold text-gray-500 dark:text-gray-400 tabular-nums">${fmt$(lwTotal)}</div>
+          <div class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">${lwPretty}</div>
         </div>
       `;
+
+      // Peak / Slow hour callouts (current day, non-zero hours only)
+      let peakIdx = -1, slowIdx = -1, peakVal = -Infinity, slowVal = Infinity;
+      for (let i = 0; i < curSeries.length; i++) {
+        const v = curSeries[i];
+        if (v > 0) {
+          if (v > peakVal) { peakVal = v; peakIdx = i; }
+          if (v < slowVal) { slowVal = v; slowIdx = i; }
+        }
+      }
+      if (peakIdx >= 0 && slowIdx >= 0 && peakIdx !== slowIdx) {
+        calloutsEl.innerHTML = `
+          <div class="rounded-lg bg-gray-50 dark:bg-gray-700/40 px-3 py-2">
+            <div class="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">Peak hour</div>
+            <div class="mt-0.5 text-sm font-semibold text-gray-900 dark:text-gray-100 tabular-nums">${labels[peakIdx]} · ${fmt$0(peakVal)}</div>
+          </div>
+          <div class="rounded-lg bg-gray-50 dark:bg-gray-700/40 px-3 py-2">
+            <div class="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">Slow hour</div>
+            <div class="mt-0.5 text-sm font-semibold text-gray-900 dark:text-gray-100 tabular-nums">${labels[slowIdx]} · ${fmt$0(slowVal)}</div>
+          </div>
+        `;
+      } else {
+        calloutsEl.innerHTML = '';
+      }
 
       const isDark = document.documentElement.classList.contains('dark');
       const textColor = isDark ? '#9ca3af' : '#6b7280';
@@ -4849,7 +4880,7 @@
             labels,
             datasets: [
               { label: 'This Day', data: curSeries, borderColor: '#3BB54A', backgroundColor: 'rgba(59,181,74,0.15)', borderWidth: 2, tension: 0.3, fill: true, pointRadius: 3 },
-              { label: 'Last Week', data: lwSeries, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', borderWidth: 2, borderDash: [5, 4], tension: 0.3, fill: false, pointRadius: 3 },
+              { label: 'Last Week', data: lwSeries, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.08)', borderWidth: 2, borderDash: [5, 4], tension: 0.3, fill: false, pointRadius: 3 },
             ],
           },
           options: {
@@ -4902,8 +4933,8 @@
     const ampm = hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`;
     const endHour = (hour + 1) % 24;
     const endAmpm = endHour === 0 ? '12 AM' : endHour < 12 ? `${endHour} AM` : endHour === 12 ? '12 PM' : `${endHour - 12} PM`;
-    el('items-hour-modal-title').textContent = `${shortName(storeName)} — Item Sales ${ampm}–${endAmpm}`;
-    const prettyDate = rowDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+    el('items-hour-modal-title').textContent = `${shortName(storeName)} · ${ampm} – ${endAmpm}`;
+    const prettyDate = rowDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     el('items-hour-modal-subtitle').textContent = prettyDate;
 
     const fmt$ = v => '$' + (v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -4923,44 +4954,65 @@
         return;
       }
 
-      const thCls = 'py-2 px-1.5 sm:px-3 sm:py-3 font-semibold';
-      let html = `<div class="mb-3 text-xs text-gray-500 dark:text-gray-400">${data.orderCount} orders · Net ${fmt$(t.netSales)}</div>`;
-      html += `<div class="overflow-x-auto"><table class="w-full text-left">
-        <thead class="bg-gray-50 dark:bg-gray-700/50 sticky top-0">
-          <tr class="text-[10px] sm:text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-            <th class="${thCls}">Category</th>
-            <th class="${thCls} text-right">Qty</th>
-            <th class="${thCls} text-right hidden sm:table-cell">Discounts</th>
-            <th class="${thCls} text-right hidden sm:table-cell">Refunds</th>
-            <th class="${thCls} text-right">Net Sales</th>
-            <th class="${thCls} text-right">ASP</th>
-          </tr>
-        </thead>
-        <tbody class="text-xs sm:text-sm divide-y divide-gray-100 dark:divide-gray-700">`;
+      const totalNet = t.netSales || cats.reduce((a, c) => a + (c.netSales || 0), 0);
+      const aspStr = t.asp ? fmt$(t.asp) : '—';
 
+      // Summary line
+      let html = `<div class="mb-4 text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+        <span class="font-semibold text-gray-700 dark:text-gray-200">${fmt$(totalNet)}</span>
+        · ${data.orderCount} orders · ${(t.qty || 0).toLocaleString()} qty · ASP ${aspStr}
+      </div>`;
+
+      // Split: main rows (≥ 2% of net) vs long tail
+      const THRESHOLD = 0.02;
+      const main = [];
+      const tail = [];
       for (const c of cats) {
-        const discStr = c.discounts < 0 ? `-${fmt$(Math.abs(c.discounts))}` : fmt$(c.discounts);
-        const refStr = c.refunds < 0 ? `-${fmt$(Math.abs(c.refunds))}` : (c.refunds === 0 ? '$0.00' : fmt$(c.refunds));
-        html += `<tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-          <td class="py-2 px-1.5 sm:py-3 sm:px-3 font-medium text-gray-700 dark:text-gray-200">${escapeHtml(c.category)}</td>
-          <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-600 dark:text-gray-300">${(c.qty || 0).toLocaleString()}</td>
-          <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.discounts < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'} hidden sm:table-cell">${discStr}</td>
-          <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${c.refunds < 0 ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'} hidden sm:table-cell">${refStr}</td>
-          <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right font-medium text-gray-900 dark:text-white">${fmt$(c.netSales)}</td>
-          <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-600 dark:text-gray-300">${fmt$(c.asp)}</td>
-        </tr>`;
+        const share = totalNet > 0 ? (c.netSales || 0) / totalNet : 0;
+        (share >= THRESHOLD ? main : tail).push(c);
       }
 
-      const totalDiscStr = t.discounts < 0 ? `-${fmt$(Math.abs(t.discounts))}` : fmt$(t.discounts);
-      const totalRefStr = t.refunds < 0 ? `-${fmt$(Math.abs(t.refunds))}` : '$0.00';
-      html += `</tbody><tfoot class="border-t-2 border-gray-300 dark:border-gray-600"><tr class="font-bold text-xs sm:text-sm">
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-gray-900 dark:text-white">Total</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${(t.qty || 0).toLocaleString()}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${t.discounts < 0 ? 'text-red-500' : 'text-gray-900 dark:text-white'} hidden sm:table-cell">${totalDiscStr}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right ${t.refunds < 0 ? 'text-red-500' : 'text-gray-900 dark:text-white'} hidden sm:table-cell">${totalRefStr}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${fmt$(t.netSales)}</td>
-        <td class="py-2 px-1.5 sm:py-3 sm:px-3 text-right text-gray-900 dark:text-white">${fmt$(t.asp)}</td>
-      </tr></tfoot></table></div>`;
+      html += `<div class="space-y-1.5">`;
+      for (const c of main) {
+        const share = totalNet > 0 ? (c.netSales / totalNet) * 100 : 0;
+        const swatch = colorForCategory(c.category);
+        const aspC = c.asp ? fmt$(c.asp) : '—';
+        html += `<div class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-gray-700/40">
+          <span class="shrink-0 inline-block w-2.5 h-2.5 rounded-sm" style="background:${swatch}"></span>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-baseline justify-between gap-2">
+              <div class="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">${escapeHtml(c.category)}</div>
+              <div class="text-sm font-semibold text-gray-900 dark:text-gray-100 tabular-nums shrink-0">${fmt$(c.netSales)}</div>
+            </div>
+            <div class="mt-1 flex items-center gap-2">
+              <div class="flex-1 h-1 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden">
+                <div class="h-full rounded-full" style="width:${share.toFixed(1)}%;background:${swatch}"></div>
+              </div>
+              <div class="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums shrink-0">${(c.qty || 0).toLocaleString()} · ${share.toFixed(0)}% · ASP ${aspC}</div>
+            </div>
+          </div>
+        </div>`;
+      }
+
+      if (tail.length > 0) {
+        const tailNet = tail.reduce((a, c) => a + (c.netSales || 0), 0);
+        const tailQty = tail.reduce((a, c) => a + (c.qty || 0), 0);
+        const tailShare = totalNet > 0 ? (tailNet / totalNet) * 100 : 0;
+        html += `<div class="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-500 dark:text-gray-400">
+          <span class="shrink-0 inline-block w-2.5 h-2.5 rounded-sm bg-gray-300 dark:bg-gray-600"></span>
+          <div class="flex-1 min-w-0 flex items-baseline justify-between gap-2">
+            <div class="text-sm italic truncate">Other (${tail.length} categor${tail.length === 1 ? 'y' : 'ies'})</div>
+            <div class="text-sm tabular-nums shrink-0">${fmt$(tailNet)} <span class="text-[11px]">· ${tailQty.toLocaleString()} · ${tailShare.toFixed(0)}%</span></div>
+          </div>
+        </div>`;
+      }
+
+      // Total row
+      html += `<div class="mt-2 flex items-baseline justify-between gap-2 px-3 py-2.5 border-t-2 border-gray-300 dark:border-gray-600">
+        <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">Total</div>
+        <div class="text-sm font-semibold text-gray-900 dark:text-gray-100 tabular-nums">${fmt$(totalNet)} <span class="text-[11px] font-normal text-gray-500 dark:text-gray-400">· ${(t.qty || 0).toLocaleString()} qty · ASP ${aspStr}</span></div>
+      </div>`;
+      html += `</div>`;
 
       bodyEl.innerHTML = html;
     } catch (err) {
