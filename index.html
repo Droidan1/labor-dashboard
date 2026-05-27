@@ -2270,16 +2270,29 @@
       const slot = document.getElementById(elId);
       if (!slot) return;
       let hrs = (d && Array.isArray(d.hours)) ? d.hours.slice() : [];
-      if (!hrs.length || hrs.every(v => !v)) { slot.innerHTML = ''; return; }
+      if (!hrs.length || hrs.every(v => !v)) {
+        slot.style.display = ''; slot.style.alignItems = ''; slot.style.justifyContent = '';
+        slot.innerHTML = ''; return;
+      }
       let s = 0, e = hrs.length - 1;
       while (s < e && !hrs[s]) s++;
       while (e > s && !hrs[e]) e--;
       const series = hrs.slice(s, e + 1);
       const labels = series.map((_, i) => fmtHour(s + i));
       const W = 104, H = 44;
+      // Reset the flex centering used by the loading skeleton — the SVG
+      // needs the slot to behave like a normal block again.
+      slot.style.display = '';
+      slot.style.alignItems = '';
+      slot.style.justifyContent = '';
       slot.innerHTML = v1Sparkline(series, color, W, H);
       attachSparkTooltip(slot, series, labels, W, H, color);
-    } catch (_) { /* keep placeholder empty */ }
+    } catch (_) {
+      // Clear the loading skeleton so a network failure doesn't leave it
+      // shimmering forever. Empty slot is the "no data" affordance.
+      const slot = document.getElementById(elId);
+      if (slot) slot.innerHTML = '';
+    }
   }
 
   function fmtHour(h) {
@@ -3985,8 +3998,12 @@
       // mounts (?action=hourly).
       const v1SparkKey = m.store.split('/')[0];
       const v1SparkId = 'v1-spark-' + v1SparkKey;
+      // Initial slot content — a centered shimmer bar so a slow fetch reads
+      // as "loading" instead of a blank gap. Replaced when the real
+      // sparkline renders (or cleared on no-data / fetch failure).
+      const v1SparkSkel = `<span class="skel" style="display:block;width:84px;height:6px;border-radius:3px"></span>`;
       const v1SparkDate = (isDayView && dayDays.size === 1) ? [...dayDays][0] : todayStr;
-      const v1Spark = '<div id="' + v1SparkId + '" style="width:104px;height:44px;flex:0 0 auto"></div>';
+      const v1Spark = '<div id="' + v1SparkId + '" style="width:104px;height:44px;flex:0 0 auto;display:flex;align-items:center;justify-content:center">' + v1SparkSkel + '</div>';
       const tile = (l, v) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
       const mtile = (l, v) => `<div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
 
