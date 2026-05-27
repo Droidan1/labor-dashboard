@@ -2114,7 +2114,7 @@
   <!-- ─────────── Hourly Sales Modal ─────────── -->
   <div id="hourly-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
     <div id="hourly-modal-backdrop" class="absolute inset-0 bg-black/60"></div>
-    <div class="relative bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+    <div class="relative bg-white dark:bg-op-panel dark:border dark:border-op-border rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
       <div class="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
         <div>
           <h3 id="hourly-modal-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Hourly Sales</h3>
@@ -2143,7 +2143,7 @@
   <!-- ─────────── Hourly Item Sales Modal (drill-down from hourly modal) ─────────── -->
   <div id="items-hour-modal" class="hidden fixed inset-0 z-[60] flex items-center justify-center p-4">
     <div id="items-hour-modal-backdrop" class="absolute inset-0 bg-black/60"></div>
-    <div class="relative bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+    <div class="relative bg-white dark:bg-op-panel dark:border dark:border-op-border rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
       <div class="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
         <div>
           <h3 id="items-hour-modal-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Item Sales</h3>
@@ -4809,19 +4809,19 @@
       const deltaAbs = Math.abs(delta);
       const lwPretty = lastWeekDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
       statsEl.innerHTML = `
-        <div class="rounded-lg border border-gray-200 dark:border-zinc-800 p-3">
-          <div class="flex items-center gap-2 text-[11px] uppercase tracking-wider text-gray-500 dark:text-zinc-400">
+        <div class="rounded-lg border border-gray-200 dark:border-op-border dark:bg-op-panelHi p-3">
+          <div class="flex items-center gap-2 text-[11px] uppercase tracking-wider text-gray-500 dark:text-op-inkDim">
             <span class="inline-block w-3 h-[2px] bg-green-500 rounded-sm"></span>This Day
           </div>
-          <div class="mt-1 text-lg font-semibold text-gray-900 dark:text-zinc-100 tabular-nums">${fmt$(curTotal)}</div>
-          ${lwTotal > 0 ? `<div class="mt-0.5 text-xs ${deltaColor} tabular-nums">${deltaSign}${fmt$(deltaAbs)}${pct != null ? ` · ${deltaSign}${Math.abs(pct).toFixed(1)}%` : ''} vs LW</div>` : `<div class="mt-0.5 text-xs text-gray-400 dark:text-zinc-500">—</div>`}
+          <div class="mt-1 text-lg font-semibold text-gray-900 dark:text-op-ink tabular-nums">${fmt$(curTotal)}</div>
+          ${lwTotal > 0 ? `<div class="mt-0.5 text-xs ${deltaColor} tabular-nums">${deltaSign}${fmt$(deltaAbs)}${pct != null ? ` · ${deltaSign}${Math.abs(pct).toFixed(1)}%` : ''} vs LW</div>` : `<div class="mt-0.5 text-xs text-gray-400 dark:text-op-inkDimmer">—</div>`}
         </div>
-        <div class="rounded-lg border border-gray-200 dark:border-zinc-800 p-3">
-          <div class="flex items-center gap-2 text-[11px] uppercase tracking-wider text-gray-500 dark:text-zinc-400">
+        <div class="rounded-lg border border-gray-200 dark:border-op-border dark:bg-op-panelHi p-3">
+          <div class="flex items-center gap-2 text-[11px] uppercase tracking-wider text-gray-500 dark:text-op-inkDim">
             <svg width="12" height="2" class="overflow-visible" aria-hidden="true"><line x1="0" y1="1" x2="12" y2="1" stroke="#f59e0b" stroke-width="2" stroke-dasharray="3 2"/></svg>Last Week
           </div>
-          <div class="mt-1 text-lg font-semibold text-gray-500 dark:text-zinc-400 tabular-nums">${fmt$(lwTotal)}</div>
-          <div class="mt-0.5 text-xs text-gray-400 dark:text-zinc-500">${lwPretty}</div>
+          <div class="mt-1 text-lg font-semibold text-gray-500 dark:text-op-inkDim tabular-nums">${fmt$(lwTotal)}</div>
+          <div class="mt-0.5 text-xs text-gray-400 dark:text-op-inkDimmer">${lwPretty}</div>
         </div>
       `;
 
@@ -4836,13 +4836,13 @@
       }
       if (peakIdx >= 0 && slowIdx >= 0 && peakIdx !== slowIdx) {
         calloutsEl.innerHTML = `
-          <div class="rounded-lg bg-gray-50 dark:bg-zinc-800/60 px-3 py-2">
-            <div class="text-[10px] uppercase tracking-wider text-gray-500 dark:text-zinc-400">Peak hour</div>
-            <div class="mt-0.5 text-sm font-semibold text-gray-900 dark:text-zinc-100 tabular-nums">${labels[peakIdx]} · ${fmt$0(peakVal)}</div>
+          <div class="rounded-lg bg-gray-50 dark:bg-op-panelHi dark:border dark:border-op-border px-3 py-2">
+            <div class="text-[10px] uppercase tracking-wider text-gray-500 dark:text-op-inkDim">Peak hour</div>
+            <div class="mt-0.5 text-sm font-semibold text-gray-900 dark:text-op-ink tabular-nums">${labels[peakIdx]} · ${fmt$0(peakVal)}</div>
           </div>
-          <div class="rounded-lg bg-gray-50 dark:bg-zinc-800/60 px-3 py-2">
-            <div class="text-[10px] uppercase tracking-wider text-gray-500 dark:text-zinc-400">Slow hour</div>
-            <div class="mt-0.5 text-sm font-semibold text-gray-900 dark:text-zinc-100 tabular-nums">${labels[slowIdx]} · ${fmt$0(slowVal)}</div>
+          <div class="rounded-lg bg-gray-50 dark:bg-op-panelHi dark:border dark:border-op-border px-3 py-2">
+            <div class="text-[10px] uppercase tracking-wider text-gray-500 dark:text-op-inkDim">Slow hour</div>
+            <div class="mt-0.5 text-sm font-semibold text-gray-900 dark:text-op-ink tabular-nums">${labels[slowIdx]} · ${fmt$0(slowVal)}</div>
           </div>
         `;
       } else {
@@ -4977,7 +4977,7 @@
         const share = totalNet > 0 ? (c.netSales / totalNet) * 100 : 0;
         const swatch = colorForCategory(c.category);
         const aspC = c.asp ? fmt$(c.asp) : '—';
-        html += `<div class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-zinc-800/60">
+        html += `<div class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-op-panelHi">
           <span class="shrink-0 inline-block w-2.5 h-2.5 rounded-sm" style="background:${swatch}"></span>
           <div class="flex-1 min-w-0">
             <div class="flex items-baseline justify-between gap-2">
