@@ -563,12 +563,18 @@
 
       <div id="page-dashboard">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="flex items-center justify-between max-w-7xl mx-auto">
-          <div>
-            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Dashboard</h1>
-            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5" id="last-updated"></p>
+        <div class="flex items-center gap-3 max-w-7xl mx-auto">
+          <h1 class="text-xl font-brand text-accent-green uppercase tracking-wide leading-none">Dashboard</h1>
+          <!-- Live freshness pill — pulsing dot + last-update time. Replaces the
+               "Updated 7:53:53 PM" stacked timestamp from the old header. -->
+          <div id="last-updated" class="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-semibold whitespace-nowrap border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.03)] text-opl-inkDim dark:text-op-inkDim">
+            <span class="relative inline-flex w-1.5 h-1.5">
+              <span class="absolute inset-0 rounded-full bg-accent-green/40 animate-ping"></span>
+              <span class="relative inline-block w-1.5 h-1.5 rounded-full bg-accent-green"></span>
+            </span>
+            <span id="last-updated-time" class="tabular-nums">—</span>
           </div>
-          <div class="flex items-center gap-2.5">
+          <div class="ml-auto flex items-center gap-2">
             <!-- Notifications bell — pace alerts, milestones, offline events.
                  Badge color reflects highest-severity unread. Pulsing halo
                  + one-shot shake on new critical. -->
@@ -602,11 +608,11 @@
                  and a "View Whole Week" reset. -->
             <div class="relative" id="day-chip-wrap">
               <button id="day-chip-trigger" type="button" onclick="toggleDayPanel(event)"
-                aria-haspopup="true" aria-expanded="false"
-                class="inline-flex items-center gap-2 px-3 py-2 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink text-[13.5px] font-bold whitespace-nowrap transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                <svg class="w-3.5 h-3.5 text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
-                <span id="day-chip-label" class="truncate max-w-[180px]">—</span>
-                <svg id="day-chip-chev" class="w-3.5 h-3.5 text-opl-inkDim dark:text-op-inkDim flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                aria-haspopup="true" aria-expanded="false" aria-label="Change date"
+                class="relative w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <svg class="w-[17px] h-[17px] text-accent-green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
+                <span id="day-chip-label" class="sr-only">—</span>
+                <svg id="day-chip-chev" class="hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
 
               <div id="day-chip-panel" class="hidden absolute top-[calc(100%+10px)] right-0 w-[360px] max-w-[88vw] bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right">
@@ -2884,7 +2890,12 @@
       banner.classList.remove("hidden");
     }
 
-    el("last-updated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    {
+      const t = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      const tEl = el("last-updated-time");
+      if (tEl) tEl.textContent = `Live · ${t}`;
+      else el("last-updated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    }
 
     renderWeekButtons();
     renderDashDaySelector();
