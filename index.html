@@ -2227,7 +2227,19 @@
   function v1Sparkline(series, color, w, h) {
     w = w || 104; h = h || 44;
     const pts = (series || []).filter(v => v != null && isFinite(v));
-    if (pts.length < 2) return `<div style="width:${w}px;height:${h}px"></div>`;
+    // 0 points: empty placeholder (still reserves card space).
+    if (pts.length === 0) return `<div style="width:${w}px;height:${h}px"></div>`;
+    // 1 point: a single labelled dot at the value's hour. Avoids blanking the
+    // slot for low-volume stores that only have sales in one hour so far.
+    if (pts.length === 1) {
+      const n = series.length || 1;
+      const idx = series.findIndex(v => v != null && isFinite(v));
+      const cx = n === 1 ? w / 2 : (idx * (w / Math.max(1, n - 1)));
+      const cy = h / 2;
+      return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;flex:0 0 auto">`
+        + `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3" fill="${color}" fill-opacity="0.25"/>`
+        + `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="2.2" fill="${color}"/></svg>`;
+    }
     const min = Math.min(...pts), max = Math.max(...pts), range = (max - min) || 1;
     const n = series.length, stepX = w / (n - 1);
     const coords = series.map((v, i) =>
