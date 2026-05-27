@@ -2416,7 +2416,13 @@
 
     const rows = [];
     const cloverHistory = {};
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // ET-aware today key — the dashboard's day filter, live data, and
+    // renderCards all key off ET dates (because the business operates in ET).
+    // Using UTC here caused today's row to NOT get its stored fields nulled
+    // out after ~8 PM ET (when UTC ticks over to the next calendar day),
+    // which let renderCards double-count today's sales: m.aTotal kept its
+    // stale stored value AND liveSales was added on top.
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
 
     for (const [dateStr, d] of Object.entries(data)) {
       const date = new Date(dateStr + "T12:00:00");
