@@ -556,7 +556,15 @@
                 <span id="notif-bell-badge" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1.5 rounded-full text-[10.5px] font-extrabold tabular-nums flex items-center justify-center text-white bg-op-bad border-2 border-opl-panel dark:border-op-panel">0</span>
               </button>
 
-              <div id="notif-bell-panel" class="hidden absolute top-[calc(100%+10px)] right-0 w-[380px] max-w-[90vw] bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right overflow-hidden">
+              <!-- Desktop: anchored under the bell (absolute, right-aligned).
+                   Mobile (<640px): switch to fixed positioning spanning the
+                   full viewport width (minus 12px each side), pinned below
+                   the sticky header — the bell sits roughly mid-header on
+                   mobile so right-anchoring overflows off the left edge. -->
+              <div id="notif-bell-panel"
+                class="hidden absolute top-[calc(100%+10px)] right-0 w-[380px] max-w-[90vw]
+                       max-sm:!fixed max-sm:!top-[calc(env(safe-area-inset-top)+72px)] max-sm:!left-3 max-sm:!right-3 max-sm:!w-auto max-sm:!max-w-none
+                       bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right overflow-hidden">
                 <div class="flex items-center justify-between gap-2 px-3.5 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
                   <h4 class="text-[14px] font-extrabold tracking-[0.01em]">Notifications <span id="notif-panel-count" class="text-[11px] text-opl-inkDim dark:text-op-inkDim font-semibold ml-1">· all clear</span></h4>
                   <button id="notif-mark-all" onclick="markAllNotifsRead()" class="text-[11px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hidden">Mark all read</button>
