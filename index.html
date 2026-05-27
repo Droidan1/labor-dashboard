@@ -766,8 +766,12 @@
 
         <!-- Tab panels -->
         <div id="sd-content-weekly" class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors"></div>
-        <div id="sd-content-chart" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
-          <div class="h-[340px]"><canvas id="daily-sales-chart"></canvas></div>
+        <div id="sd-content-chart" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors">
+          <!-- Card header + stats strip + legend pills (populated by renderDailySalesChart) -->
+          <div id="sd-chart-card"></div>
+          <div class="px-4 sm:px-5 py-4">
+            <div class="h-[280px] sm:h-[340px]"><canvas id="daily-sales-chart"></canvas></div>
+          </div>
         </div>
         <div id="sd-content-items" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors">
           <!-- Populated by renderItemSalesTable. Inner #items-day-selector and
@@ -821,8 +825,11 @@
         <!-- Tab panels -->
         <div id="as-content-stores" class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors"></div>
         <div id="as-content-weekly" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors"></div>
-        <div id="as-content-chart" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
-          <div class="h-[280px] sm:h-[340px]"><canvas id="as-daily-chart"></canvas></div>
+        <div id="as-content-chart" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors">
+          <div id="as-chart-card"></div>
+          <div class="px-4 sm:px-5 py-4">
+            <div class="h-[280px] sm:h-[340px]"><canvas id="as-daily-chart"></canvas></div>
+          </div>
         </div>
         <div id="as-content-items" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors">
           <div id="as-items-day-selector"></div>
@@ -3984,22 +3991,82 @@
     return headerHtml + rowsHtml + totalRow;
   }
 
+  // ── Shared Chart-tab palette + helpers ──────────────────────────────
+  const CHART_COLORS = {
+    tw: '#22c55e',       // This Week — green (current)
+    lw: '#f59e0b',       // Last Week — amber
+    ly: '#8b5cf6',       // Last Year — violet
+    bg: '#cbd5e1',       // Budget — neutral gray (dashed)
+  };
+
+  // Build the header + stats strip + legend pills HTML that sits above the
+  // Chart.js canvas. Stats/legend gracefully omit periods with no data.
+  function _buildChartCardHTML({ title, subtitle, twTotal, lwTotal, lyTotal, budgetTotal }) {
+    const fmt = (v) => fmtDollar(v);
+    const pctDelta = (cur, prev) => prev > 0 ? Math.round((cur - prev) / prev * 1000) / 10 : null;
+    const dollarDelta = (cur, prev) => prev > 0 ? cur - prev : null;
+    const budgetDelta = (budgetTotal > 0) ? twTotal - budgetTotal : null;
+
+    const vsLwPct = pctDelta(twTotal, lwTotal);
+    const vsLyPct = pctDelta(twTotal, lyTotal);
+    const vsLwDollar = dollarDelta(twTotal, lwTotal);
+    const vsLyDollar = dollarDelta(twTotal, lyTotal);
+
+    const statTile = (label, big, delta, deltaPos) => {
+      const deltaCls = delta == null ? 'text-opl-inkDimmer dark:text-op-inkDimmer'
+        : deltaPos ? 'text-accent-green' : 'text-op-bad';
+      return `
+        <div class="rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] px-3 py-2.5">
+          <div class="text-[10px] font-bold uppercase tracking-[0.06em] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(label)}</div>
+          <div class="mt-1 text-[15px] sm:text-[16px] font-extrabold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${big}</div>
+          <div class="mt-0.5 text-[11px] font-bold tabular-nums ${deltaCls}">${delta || '—'}</div>
+        </div>`;
+    };
+    const lwTile = (vsLwPct != null) ? statTile('vs Last Week', `${vsLwPct >= 0 ? '+' : ''}${vsLwPct}%`, `${vsLwDollar >= 0 ? '+' : '−'}${fmt(Math.abs(vsLwDollar))}`, vsLwDollar >= 0) : statTile('vs Last Week', '—', null, false);
+    const lyTile = (vsLyPct != null) ? statTile('vs Last Year', `${vsLyPct >= 0 ? '+' : ''}${vsLyPct}%`, `${vsLyDollar >= 0 ? '+' : '−'}${fmt(Math.abs(vsLyDollar))}`, vsLyDollar >= 0) : statTile('vs Last Year', '—', null, false);
+    const twTile = statTile('This Week', fmt(twTotal), budgetDelta != null ? `${budgetDelta >= 0 ? '+' : '−'}${fmt(Math.abs(budgetDelta))} vs budget` : null, (budgetDelta || 0) >= 0);
+
+    // Legend pills — each shows its swatch + label + running total.
+    const legPill = (cls, swatchHTML, lbl, val) => `<span class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-[11.5px] font-bold whitespace-nowrap">${swatchHTML}<span class="text-[10.5px] font-bold uppercase tracking-[0.04em] text-opl-inkDim dark:text-op-inkDim">${lbl}</span><span class="tabular-nums text-opl-ink dark:text-op-ink">${val}</span></span>`;
+    const solidSwatch = (color) => `<span class="inline-block w-[18px] h-[3px] rounded-sm flex-shrink-0" style="background:${color}"></span>`;
+    const dashedSwatch = (color) => `<span class="inline-block w-[18px] h-[3px] flex-shrink-0" style="background:repeating-linear-gradient(90deg,${color} 0,${color} 4px,transparent 4px,transparent 7px)"></span>`;
+    const legendHtml = [
+      legPill('tw', solidSwatch(CHART_COLORS.tw), 'TW', fmt(twTotal)),
+      lwTotal > 0 ? legPill('lw', solidSwatch(CHART_COLORS.lw), 'LW', fmt(lwTotal)) : '',
+      lyTotal > 0 ? legPill('ly', solidSwatch(CHART_COLORS.ly), 'LY', fmt(lyTotal)) : '',
+      budgetTotal > 0 ? legPill('bg', dashedSwatch(CHART_COLORS.bg), 'Budget', fmt(budgetTotal)) : '',
+    ].filter(Boolean).join('');
+
+    return `
+      <div class="flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <h3 class="text-[14px] font-extrabold tracking-[0.01em] text-opl-ink dark:text-op-ink">${escapeHtml(title)}</h3>
+        ${subtitle ? `<span class="text-[12px] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(subtitle)}</span>` : ''}
+      </div>
+      <div class="grid grid-cols-3 gap-2 px-4 sm:px-5 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        ${twTile}${lwTile}${lyTile}
+      </div>
+      <div class="flex items-center gap-2 flex-wrap px-4 sm:px-5 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        ${legendHtml}
+      </div>`;
+  }
+
   function renderDailySalesChart(storeName) {
     const data = allStoreData[storeName] || [];
     const weekRows = [...data.filter(r => r.week === selectedWeek)].sort((a, b) => a.date - b.date);
     const isDark = document.documentElement.classList.contains('dark');
     const textColor = isDark ? '#9ca3af' : '#6b7280';
-    const gridColor = isDark ? 'rgba(75,85,99,0.3)' : 'rgba(0,0,0,0.1)';
+    const gridColor = isDark ? 'rgba(75,85,99,0.18)' : 'rgba(0,0,0,0.08)';
 
     const labels = weekRows.map(r => r.date.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'}));
     const budgetData = weekRows.map(r => r.bTotal || 0);
 
-    // Actual sales – use live Clover data for today if available
-    const todayStr = new Date().toDateString();
+    // Actual sales – use live Clover data for today if available (ET-aware).
+    const todayStr = etTodayStr();
     const isCurrentWeek = selectedWeek === currentWeek;
     const liveTotal = isCurrentWeek ? (liveCloverData[storeName]?.total ?? null) : null;
     const salesData = weekRows.map(r => {
-      if (isCurrentWeek && r.date && r.date.toDateString() === todayStr && liveTotal > 0) return liveTotal;
+      const dateKey = r.date && r.date.toISOString().slice(0, 10);
+      if (isCurrentWeek && dateKey === todayStr && liveTotal > 0) return liveTotal;
       return r.aTotal || 0;
     });
 
@@ -4017,6 +4084,21 @@
       return match?.aTotal ?? null;
     });
 
+    // Build the header + stats + legend HTML.
+    const sum = (arr) => arr.reduce((s, v) => s + (v || 0), 0);
+    const twTotal = sum(salesData);
+    const lwTotal = sum(lastWeekData);
+    const lyTotal = sum(lastYearData);
+    const budgetTotal = sum(budgetData);
+    const cardEl = el('sd-chart-card');
+    if (cardEl) {
+      cardEl.innerHTML = _buildChartCardHTML({
+        title: `Sales Trend · Week ${escapeHtml(String(selectedWeek))}`,
+        subtitle: 'vs Last Week · Last Year',
+        twTotal, lwTotal, lyTotal, budgetTotal,
+      });
+    }
+
     // Shared onClick — refreshed on every update so it closes over current weekRows
     const dailyChartOnClick = (_evt, elements, chart) => {
       let idx = elements?.[0]?.index;
@@ -4033,44 +4115,43 @@
       showHourlyModal(storeName, `${y}-${m}-${d}`, row.date);
     };
 
+    const datasets = [
+      // Budget — dashed gray reference line (no fill, behind everything else).
+      { label: 'Budget', data: budgetData, borderColor: CHART_COLORS.bg, backgroundColor: 'transparent', borderWidth: 1.6, borderDash: [5, 4], pointRadius: 2.5, pointHoverRadius: 4, tension: 0.25, fill: false, order: 4 },
+      // Last Year — solid violet.
+      { label: 'Last Year', data: lastYearData, borderColor: CHART_COLORS.ly, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointHoverRadius: 5, tension: 0.3, fill: false, spanGaps: true, order: 3 },
+      // Last Week — solid amber.
+      { label: 'Last Week', data: lastWeekData, borderColor: CHART_COLORS.lw, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointHoverRadius: 5, tension: 0.3, fill: false, spanGaps: true, order: 2 },
+      // This Week — solid green with subtle area fill (on top).
+      { label: 'This Week', data: salesData, borderColor: CHART_COLORS.tw, backgroundColor: 'rgba(34,197,94,0.12)', borderWidth: 2.4, pointRadius: 3.5, pointHoverRadius: 6, tension: 0.3, fill: true, order: 1 },
+    ];
+
     if (dailySalesChart) {
       dailySalesChart.data.labels = labels;
-      dailySalesChart.data.datasets[0].data = budgetData;
-      dailySalesChart.data.datasets[0].backgroundColor = isDark ? 'rgba(107,114,128,0.5)' : 'rgba(156,163,175,0.5)';
-      dailySalesChart.data.datasets[0].borderColor = isDark ? '#6b7280' : '#9ca3af';
-      dailySalesChart.data.datasets[1].data = salesData;
-      dailySalesChart.data.datasets[2].data = lastWeekData;
-      dailySalesChart.data.datasets[3].data = lastYearData;
+      dailySalesChart.data.datasets = datasets;
       dailySalesChart.options.scales.x = { ticks: { color: textColor }, grid: { color: gridColor } };
       dailySalesChart.options.scales.y = { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } };
-      dailySalesChart.options.plugins.legend.labels.color = textColor;
       dailySalesChart.options.onClick = dailyChartOnClick;
       dailySalesChart.update();
     } else {
       dailySalesChart = new Chart(el('daily-sales-chart'), {
-        type: 'bar',
-        data: {
-          labels,
-          datasets: [
-            { label: 'Budget', data: budgetData, backgroundColor: isDark ? 'rgba(107,114,128,0.5)' : 'rgba(156,163,175,0.5)', borderColor: isDark ? '#6b7280' : '#9ca3af', borderWidth: 1 },
-            { label: 'Actual Sales', data: salesData, backgroundColor: 'rgba(59,181,74,0.7)', borderColor: '#3BB54A', borderWidth: 1 },
-            { label: 'Last Week', data: lastWeekData, backgroundColor: 'rgba(59,130,246,0.5)', borderColor: '#3b82f6', borderWidth: 1 },
-            { label: 'Last Year', data: lastYearData, backgroundColor: 'rgba(249,115,22,0.5)', borderColor: '#f97316', borderWidth: 1 }
-          ]
-        },
+        type: 'line',
+        data: { labels, datasets },
         options: {
           responsive: true, maintainAspectRatio: false,
           onClick: dailyChartOnClick,
           onHover: (evt, elements) => {
             evt.native.target.style.cursor = elements?.length ? 'pointer' : 'default';
           },
+          interaction: { mode: 'index', intersect: false },
           plugins: {
-            legend: { labels: { color: textColor } },
+            // Built-in Chart.js legend hidden — we render our own pills above.
+            legend: { display: false },
             tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? '$' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : 'N/A') } }
           },
           scales: {
             x: { ticks: { color: textColor }, grid: { color: gridColor } },
-            y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } }
+            y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor }, beginAtZero: true }
           }
         }
       });
@@ -6843,13 +6924,13 @@
   window.switchAllStoresTab = switchAllStoresTab;
 
   function renderAllStoresDailyChart() {
-    const todayStr = new Date().toDateString();
+    const todayStr = etTodayStr();
     const isCurrentWeek = selectedWeek === currentWeek;
     const isDark = document.documentElement.classList.contains('dark');
     const textColor = isDark ? '#9ca3af' : '#6b7280';
-    const gridColor = isDark ? 'rgba(75,85,99,0.3)' : 'rgba(0,0,0,0.1)';
+    const gridColor = isDark ? 'rgba(75,85,99,0.18)' : 'rgba(0,0,0,0.08)';
 
-    // ── Current week: keyed by day-of-week (0=Sun…6=Sat) ──
+    // ── Current week: per-date totals across all stores (live-boosted today) ──
     const dateMap = {};
     for (const s of STORES) {
       const rows = (allStoreData[s] || []).filter(r => r.week === selectedWeek && r.date);
@@ -6858,26 +6939,33 @@
         if (!dateMap[key]) dateMap[key] = { dateObj: r.date, dow: r.date.getDay(), budget: 0, sales: 0 };
         if (r.bTotal != null) dateMap[key].budget += r.bTotal;
         const liveTotal = isCurrentWeek ? (liveCloverData[s]?.total ?? null) : null;
-        const sales = (isCurrentWeek && r.date.toDateString() === todayStr && liveTotal > 0) ? liveTotal : (r.aTotal || 0);
+        const sales = (isCurrentWeek && key === todayStr && liveTotal > 0) ? liveTotal : (r.aTotal || 0);
         dateMap[key].sales += sales;
       }
     }
     const sorted = Object.values(dateMap).sort((a, b) => a.dateObj - b.dateObj);
     if (!sorted.length) return;
 
-    // ── Last year: 52 weeks back (364 days), aligned by day-of-week ──
-    // Using 364-day offset keeps the same day-of-week alignment exactly.
-    const DAYS_364 = 364 * 24 * 60 * 60 * 1000;
-    const lyDowMap = {}; // dow → total sales
-    // Build a set of LY date strings from the current week's dates shifted back 364 days
-    const lyDateSet = new Set(sorted.map(d => {
-      const lyDate = new Date(d.dateObj.getTime() - DAYS_364);
-      return lyDate.toISOString().slice(0, 10);
-    }));
+    // ── Last week: -7 days, aligned by day-of-week. Summed across stores. ──
+    const DAYS_7 = 7 * 24 * 60 * 60 * 1000;
+    const lwDowMap = {};
+    const lwDateSet = new Set(sorted.map(d => new Date(d.dateObj.getTime() - DAYS_7).toISOString().slice(0, 10)));
     for (const s of STORES) {
-      const lyRows = (allStoreData[s] || []).filter(r =>
-        r.date && lyDateSet.has(r.date.toISOString().slice(0, 10))
-      );
+      const lwRows = (allStoreData[s] || []).filter(r => r.date && lwDateSet.has(r.date.toISOString().slice(0, 10)));
+      for (const r of lwRows) {
+        const dow = r.date.getDay();
+        if (!lwDowMap[dow]) lwDowMap[dow] = 0;
+        lwDowMap[dow] += r.aTotal || 0;
+      }
+    }
+    const hasLWData = Object.values(lwDowMap).some(v => v > 0);
+
+    // ── Last year: 52 weeks back (364 days), day-of-week aligned ──
+    const DAYS_364 = 364 * 24 * 60 * 60 * 1000;
+    const lyDowMap = {};
+    const lyDateSet = new Set(sorted.map(d => new Date(d.dateObj.getTime() - DAYS_364).toISOString().slice(0, 10)));
+    for (const s of STORES) {
+      const lyRows = (allStoreData[s] || []).filter(r => r.date && lyDateSet.has(r.date.toISOString().slice(0, 10)));
       for (const r of lyRows) {
         const dow = r.date.getDay();
         if (!lyDowMap[dow]) lyDowMap[dow] = 0;
@@ -6885,54 +6973,55 @@
       }
     }
     const hasLYData = Object.values(lyDowMap).some(v => v > 0);
-    const lyYear = sorted[0].dateObj.getFullYear() - 1;
 
     const labels     = sorted.map(d => d.dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
     const budgetData = sorted.map(d => d.budget);
     const salesData  = sorted.map(d => d.sales);
-    const lyData     = sorted.map(d => lyDowMap[d.dow] ?? 0);
+    const lwData     = sorted.map(d => hasLWData ? (lwDowMap[d.dow] ?? null) : null);
+    const lyData     = sorted.map(d => hasLYData ? (lyDowMap[d.dow] ?? null) : null);
+
+    // Header + stats + legend HTML.
+    const sum = (arr) => arr.reduce((s, v) => s + (v || 0), 0);
+    const twTotal = sum(salesData);
+    const lwTotal = sum(lwData);
+    const lyTotal = sum(lyData);
+    const budgetTotal = sum(budgetData);
+    const cardEl = el('as-chart-card');
+    if (cardEl) {
+      cardEl.innerHTML = _buildChartCardHTML({
+        title: `Sales Trend · Week ${escapeHtml(String(selectedWeek))} · All Stores`,
+        subtitle: 'vs Last Week · Last Year',
+        twTotal, lwTotal, lyTotal, budgetTotal,
+      });
+    }
 
     const datasets = [
-      { label: 'Budget',       data: budgetData, backgroundColor: isDark ? 'rgba(107,114,128,0.5)' : 'rgba(156,163,175,0.5)', borderColor: isDark ? '#6b7280' : '#9ca3af', borderWidth: 1 },
-      { label: 'Actual Sales', data: salesData,  backgroundColor: 'rgba(59,181,74,0.7)', borderColor: '#3BB54A', borderWidth: 1 },
+      { label: 'Budget',    data: budgetData, borderColor: CHART_COLORS.bg, backgroundColor: 'transparent', borderWidth: 1.6, borderDash: [5, 4], pointRadius: 2.5, pointHoverRadius: 4, tension: 0.25, fill: false, order: 4 },
+      { label: 'Last Year', data: lyData,     borderColor: CHART_COLORS.ly, backgroundColor: 'transparent', borderWidth: 2,   pointRadius: 3,   pointHoverRadius: 5, tension: 0.3,  fill: false, spanGaps: true, order: 3 },
+      { label: 'Last Week', data: lwData,     borderColor: CHART_COLORS.lw, backgroundColor: 'transparent', borderWidth: 2,   pointRadius: 3,   pointHoverRadius: 5, tension: 0.3,  fill: false, spanGaps: true, order: 2 },
+      { label: 'This Week', data: salesData,  borderColor: CHART_COLORS.tw, backgroundColor: 'rgba(34,197,94,0.12)', borderWidth: 2.4, pointRadius: 3.5, pointHoverRadius: 6, tension: 0.3, fill: true, order: 1 },
     ];
-    if (hasLYData) {
-      datasets.push({ label: `Last Year (${lyYear})`, data: lyData, backgroundColor: 'rgba(251,146,60,0.55)', borderColor: '#f97316', borderWidth: 1 });
-    }
 
     if (asAllStoresChart) {
       asAllStoresChart.data.labels = labels;
-      asAllStoresChart.data.datasets[0].data = budgetData;
-      asAllStoresChart.data.datasets[0].backgroundColor = isDark ? 'rgba(107,114,128,0.5)' : 'rgba(156,163,175,0.5)';
-      asAllStoresChart.data.datasets[0].borderColor = isDark ? '#6b7280' : '#9ca3af';
-      asAllStoresChart.data.datasets[1].data = salesData;
-      if (hasLYData) {
-        if (asAllStoresChart.data.datasets.length < 3) {
-          asAllStoresChart.data.datasets.push({ label: `Last Year (${lyYear})`, data: lyData, backgroundColor: 'rgba(251,146,60,0.55)', borderColor: '#f97316', borderWidth: 1 });
-        } else {
-          asAllStoresChart.data.datasets[2].label = `Last Year (${lyYear})`;
-          asAllStoresChart.data.datasets[2].data = lyData;
-        }
-      } else {
-        asAllStoresChart.data.datasets.splice(2);
-      }
+      asAllStoresChart.data.datasets = datasets;
       asAllStoresChart.options.scales.x = { ticks: { color: textColor }, grid: { color: gridColor } };
       asAllStoresChart.options.scales.y = { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } };
-      asAllStoresChart.options.plugins.legend.labels.color = textColor;
       asAllStoresChart.update();
     } else {
       asAllStoresChart = new Chart(el('as-daily-chart'), {
-        type: 'bar',
+        type: 'line',
         data: { labels, datasets },
         options: {
           responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
           plugins: {
-            legend: { labels: { color: textColor } },
-            tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': $' + ctx.parsed.y.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) } }
+            legend: { display: false },
+            tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? '$' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : 'N/A') } }
           },
           scales: {
             x: { ticks: { color: textColor }, grid: { color: gridColor } },
-            y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } }
+            y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor }, beginAtZero: true }
           }
         }
       });
