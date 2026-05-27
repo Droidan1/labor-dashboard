@@ -312,6 +312,22 @@
       #budget-detail, #budget-detail > .budget-inner { display: contents; }
       #budget-summary { display: none !important; }
     }
+    /* Notifications bell — pulsing halo (only on critical) + new-alert shake */
+    @keyframes notif-pulse {
+      0%   { transform: scale(.96); opacity: .55; }
+      100% { transform: scale(1.18); opacity: 0; }
+    }
+    @keyframes notif-shake {
+      0%,100% { transform: rotate(0); }
+      20% { transform: rotate(-12deg); } 40% { transform: rotate(10deg); }
+      60% { transform: rotate(-6deg); }  80% { transform: rotate(4deg); }
+    }
+    #notif-bell-trigger.critical::before {
+      content: ""; position: absolute; inset: -3px; border-radius: 14px;
+      border: 2px solid #ef4444; opacity: .4; pointer-events: none;
+      animation: notif-pulse 2s ease-out infinite;
+    }
+    #notif-bell-trigger.shake svg { animation: notif-shake .6s ease-in-out; }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -529,6 +545,29 @@
             <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5" id="last-updated"></p>
           </div>
           <div class="flex items-center gap-2.5">
+            <!-- Notifications bell — pace alerts, milestones, offline events.
+                 Badge color reflects highest-severity unread. Pulsing halo
+                 + one-shot shake on new critical. -->
+            <div class="relative" id="notif-bell-wrap">
+              <button id="notif-bell-trigger" type="button" onclick="toggleNotifPanel(event)"
+                aria-haspopup="true" aria-expanded="false" aria-label="Notifications"
+                class="relative w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+                <span id="notif-bell-badge" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1.5 rounded-full text-[10.5px] font-extrabold tabular-nums flex items-center justify-center text-white bg-op-bad border-2 border-opl-panel dark:border-op-panel">0</span>
+              </button>
+
+              <div id="notif-bell-panel" class="hidden absolute top-[calc(100%+10px)] right-0 w-[380px] max-w-[90vw] bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right overflow-hidden">
+                <div class="flex items-center justify-between gap-2 px-3.5 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+                  <h4 class="text-[14px] font-extrabold tracking-[0.01em]">Notifications <span id="notif-panel-count" class="text-[11px] text-opl-inkDim dark:text-op-inkDim font-semibold ml-1">· all clear</span></h4>
+                  <button id="notif-mark-all" onclick="markAllNotifsRead()" class="text-[11px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hidden">Mark all read</button>
+                </div>
+                <div id="notif-bell-list" class="max-h-[60vh] overflow-y-auto"></div>
+                <div class="flex items-center justify-end px-3.5 py-2.5 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(255,255,255,0.015)]">
+                  <span class="text-[10px] text-opl-inkDimmer dark:text-op-inkDimmer uppercase tracking-[0.05em] font-bold">Quiet 11p–7a</span>
+                </div>
+              </div>
+            </div>
+
             <!-- Week/day selector — compact chip next to the title; opens a
                  dropdown panel with week nav, Sun-first multi-select day chips,
                  and a "View Whole Week" reset. -->
@@ -723,6 +762,10 @@
           </div>
         </div></div><!-- /budget-detail -->
       </section>
+
+      <!-- Inline attention strip — shown only when there's a critical alert.
+           Hidden otherwise; the bell in the header always carries the badge. -->
+      <div id="dashboard-attn-strip"></div>
 
       <div id="store-cards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
     </div>
@@ -2985,6 +3028,366 @@
     if (e.key === 'Escape') setDayPanelOpen(false);
   });
 
+  // ═══════════════════════════════════════════════════════════════
+  //  NOTIFICATIONS — pace alerts, milestones, offline events
+  // ═══════════════════════════════════════════════════════════════
+  // Computed from existing dashboard state on every renderDashboard call.
+  // Read/dismissed state persists in localStorage so dismissals survive
+  // reloads. Two surfaces share the same list:
+  //   1. Bell in the header (always visible across pages via sticky header)
+  //   2. Inline strip on the dashboard (shown only on critical alerts)
+  const NOTIF_STORAGE_KEY = 'dashNotifState_v1';
+  const NOTIF_QUIET_START = 23; // 11pm — no badge/pulse during quiet hours
+  const NOTIF_QUIET_END = 7;    // 7am
+  const NOTIF_PACE_GRACE_HOUR = 12; // no pace alerts before noon ET
+
+  function _notifState() {
+    try {
+      const raw = localStorage.getItem(NOTIF_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return {
+        dismissed: new Set(parsed.dismissed || []),
+        read: new Set(parsed.read || []),
+        // Reset both sets when the calendar day changes — yesterday's
+        // dismissals shouldn't suppress today's alerts.
+        day: parsed.day || etTodayStr(),
+        lastCriticalSeen: parsed.lastCriticalSeen || '',
+      };
+    } catch (_) {
+      return { dismissed: new Set(), read: new Set(), day: etTodayStr(), lastCriticalSeen: '' };
+    }
+  }
+  function _notifSave(s) {
+    try {
+      localStorage.setItem(NOTIF_STORAGE_KEY, JSON.stringify({
+        dismissed: [...s.dismissed],
+        read: [...s.read],
+        day: s.day,
+        lastCriticalSeen: s.lastCriticalSeen,
+      }));
+    } catch (_) { /* private mode / quota */ }
+  }
+  function _notifResetIfNewDay(s) {
+    const today = etTodayStr();
+    if (s.day !== today) {
+      s.dismissed = new Set();
+      s.read = new Set();
+      s.day = today;
+      s.lastCriticalSeen = '';
+      _notifSave(s);
+    }
+  }
+
+  // Build the list of notifications from live + stored data.
+  // Returns the list sorted: critical → warning → info → ok, then by ID.
+  function computeNotifications() {
+    const out = [];
+    const todayStr = etTodayStr();
+    const isCurrentWeek = selectedWeek === currentWeek;
+    if (!isCurrentWeek) return out; // we only alert on the live day
+
+    const etHour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(new Date()));
+    const SHORT_LABEL = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek' };
+
+    for (const s of STORES) {
+      const code = s.split('/')[0];
+      const label = SHORT_LABEL[code] || s;
+      const todayRow = getTodayRow(s);
+      const dayBudget = todayRow?.bTotal ?? null;
+      const live = liveCloverData[s];
+      const liveTotal = (live && live.total > 0) ? live.total : 0;
+      const storeAuction = todayRow?.aAuction ?? 0;
+      const sales = liveTotal + (storeAuction || 0);
+
+      // ── PACE alerts (after grace hour) ──
+      if (etHour >= NOTIF_PACE_GRACE_HOUR && dayBudget && dayBudget > 0 && sales >= 0) {
+        const pct = Math.round(sales / dayBudget * 100);
+        if (pct < 50) {
+          out.push({
+            id: `pace:${code}:${todayStr}`,
+            severity: 'critical', type: 'pace',
+            store: s,
+            title: `${label} pacing <b class="text-op-bad num">${pct}%</b> of day budget`,
+            meta: `${code} · ${fmtDollar(sales)} of ${fmtDollar(dayBudget)}`,
+          });
+        } else if (pct < 80) {
+          out.push({
+            id: `pace:${code}:${todayStr}`,
+            severity: 'warning', type: 'pace',
+            store: s,
+            title: `${label} pacing <b class="text-op-warn num">${pct}%</b> of day budget`,
+            meta: `${code} · ${fmtDollar(sales)} of ${fmtDollar(dayBudget)}`,
+          });
+        }
+      }
+
+      // ── MILESTONE: day budget reached (fires once per day per store) ──
+      if (dayBudget && dayBudget > 0 && sales >= dayBudget) {
+        out.push({
+          id: `milestone:${code}:${todayStr}`,
+          severity: 'ok', type: 'milestone',
+          store: s,
+          title: `${label} hit <b class="text-accent-green num">${fmtDollar(sales)}</b> — day budget reached`,
+          meta: `${code} · target ${fmtDollar(dayBudget)}`,
+        });
+      }
+
+      // ── OFFLINE: store has a live fetch error ──
+      if (liveCloverErrors[s]) {
+        out.push({
+          id: `offline:${code}:${todayStr}`,
+          severity: 'info', type: 'offline',
+          store: s,
+          title: `${label} is offline`,
+          meta: `${code} · live data unavailable`,
+        });
+      }
+    }
+
+    const sevOrder = { critical: 0, warning: 1, info: 2, ok: 3 };
+    out.sort((a, b) => (sevOrder[a.severity] - sevOrder[b.severity]) || a.id.localeCompare(b.id));
+    return out;
+  }
+
+  // Whether we're inside quiet hours (no badge / no pulse).
+  function _notifIsQuietHours() {
+    const etHour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(new Date()));
+    return etHour >= NOTIF_QUIET_START || etHour < NOTIF_QUIET_END;
+  }
+
+  // Smooth-scroll a store's card into view from the bell panel.
+  function scrollToStoreCard(storeName) {
+    const cards = document.querySelectorAll('#store-cards > div');
+    for (const card of cards) {
+      // Each card's first child has the store header — match on label text.
+      const titleEl = card.querySelector('.font-brand');
+      if (titleEl && titleEl.textContent === shortName(storeName)) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Brief highlight pulse for confirmation.
+        card.style.transition = 'box-shadow .3s';
+        card.style.boxShadow = '0 0 0 2px rgba(34,197,94,0.5)';
+        setTimeout(() => { card.style.boxShadow = ''; }, 900);
+        return;
+      }
+    }
+  }
+  window.scrollToStoreCard = scrollToStoreCard;
+
+  function _notifIcon(type, severity) {
+    const cls = severity === 'critical' ? 'bg-op-bad/15 text-op-bad'
+              : severity === 'warning'  ? 'bg-op-warn/15 text-op-warn'
+              : severity === 'info'     ? 'bg-accent-blue/15 text-accent-blue'
+              :                           'bg-accent-green/15 text-accent-green';
+    const svg = type === 'pace' && severity === 'critical'
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>'
+      : type === 'pace'
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+      : type === 'milestone'
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+    return `<div class="flex-shrink-0 w-8 h-8 rounded-full ${cls} flex items-center justify-center"><div class="w-[15px] h-[15px]">${svg}</div></div>`;
+  }
+
+  // Main render — call from renderDashboard. Updates badge, panel list,
+  // inline strip (if any criticals), shake/pulse classes.
+  function renderNotifications() {
+    const state = _notifState();
+    _notifResetIfNewDay(state);
+    const notifs = computeNotifications();
+    const visible = notifs.filter(n => !state.dismissed.has(n.id));
+    const unread = visible.filter(n => !state.read.has(n.id));
+    const isQuiet = _notifIsQuietHours();
+
+    // ── Bell badge ──
+    const trigger = el('notif-bell-trigger');
+    const badge = el('notif-bell-badge');
+    if (trigger && badge) {
+      const unreadCount = unread.length;
+      const highest = unread.find(n => n.severity === 'critical') ? 'critical'
+                    : unread.find(n => n.severity === 'warning')  ? 'warning'
+                    : unread.find(n => n.severity === 'info')     ? 'info' : null;
+      // Show badge unless we're in quiet hours OR there are no unread.
+      if (unreadCount > 0 && !isQuiet) {
+        badge.classList.remove('hidden');
+        badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+        badge.classList.remove('bg-op-bad','bg-op-warn','bg-accent-blue','text-white');
+        badge.classList.remove('text-[#0b1220]');
+        if (highest === 'critical') { badge.classList.add('bg-op-bad','text-white'); }
+        else if (highest === 'warning') { badge.classList.add('bg-op-warn'); badge.style.color = '#0b1220'; }
+        else { badge.classList.add('bg-accent-blue','text-white'); badge.style.color = ''; }
+      } else {
+        badge.classList.add('hidden');
+      }
+      // Pulse only on critical and not in quiet hours.
+      trigger.classList.toggle('critical', highest === 'critical' && !isQuiet);
+      // One-shot shake on a NEW critical (first time we've seen this critical id).
+      const firstCritical = unread.find(n => n.severity === 'critical');
+      if (firstCritical && firstCritical.id !== state.lastCriticalSeen && !isQuiet) {
+        trigger.classList.remove('shake');
+        // Force reflow so the animation restarts.
+        void trigger.offsetWidth;
+        trigger.classList.add('shake');
+        state.lastCriticalSeen = firstCritical.id;
+        _notifSave(state);
+      }
+    }
+
+    // ── Bell panel list ──
+    const listEl = el('notif-bell-list');
+    const countEl = el('notif-panel-count');
+    const markAllBtn = el('notif-mark-all');
+    if (listEl) {
+      if (visible.length === 0) {
+        listEl.innerHTML = `
+          <div class="py-8 px-4 text-center text-opl-inkDim dark:text-op-inkDim text-[13px]">
+            <div class="w-9 h-9 rounded-full bg-accent-green/15 text-accent-green flex items-center justify-center mx-auto mb-2.5">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div>You're caught up.</div>
+            <div class="text-[12px] text-opl-inkDimmer dark:text-op-inkDimmer">All stores on target.</div>
+          </div>`;
+        if (countEl) countEl.textContent = '· all clear';
+        if (markAllBtn) markAllBtn.classList.add('hidden');
+      } else {
+        let html = '';
+        for (const n of visible) {
+          const isUnread = !state.read.has(n.id);
+          const railCls = isUnread ? 'before:content-[""] before:absolute before:left-2 before:top-3.5 before:bottom-3.5 before:w-[3px] before:bg-accent-green before:rounded-full' : '';
+          const bgCls = isUnread ? 'bg-accent-green/[0.025]' : '';
+          const safeStore = JSON.stringify(n.store).replace(/"/g, '&quot;');
+          html += `
+            <div class="relative grid grid-cols-[32px_1fr_auto] gap-2.5 px-3.5 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border last:border-b-0 hover:bg-[rgba(255,255,255,0.02)] cursor-pointer transition-colors ${bgCls} ${railCls}"
+                 onclick="notifRowClick('${n.id}', ${safeStore})">
+              ${_notifIcon(n.type, n.severity)}
+              <div class="min-w-0 flex flex-col gap-0.5">
+                <div class="text-[13px] font-bold text-opl-ink dark:text-op-ink leading-tight">${n.title}</div>
+                <div class="text-[11px] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(n.meta)}</div>
+              </div>
+              <button onclick="event.stopPropagation();dismissNotif('${n.id}')" aria-label="Dismiss"
+                class="self-center w-[22px] h-[22px] rounded-md text-opl-inkDimmer dark:text-op-inkDimmer hover:text-opl-ink dark:hover:text-op-ink hover:bg-[rgba(255,255,255,0.04)] text-[14px] leading-none transition-colors">×</button>
+            </div>`;
+        }
+        listEl.innerHTML = html;
+        if (countEl) countEl.textContent = unread.length > 0 ? `· ${unread.length} unread` : `· ${visible.length} item${visible.length === 1 ? '' : 's'}`;
+        if (markAllBtn) markAllBtn.classList.toggle('hidden', unread.length === 0);
+      }
+    }
+
+    // ── Inline strip (only on critical alerts, not in quiet hours) ──
+    const strip = el('dashboard-attn-strip');
+    if (strip) {
+      const criticals = visible.filter(n => n.severity === 'critical');
+      if (criticals.length === 0 || isQuiet) {
+        strip.innerHTML = '';
+      } else {
+        const chips = criticals.slice(0, 4).map(n => {
+          const safeStore = JSON.stringify(n.store).replace(/"/g, '&quot;');
+          const code = n.store.split('/')[0];
+          const SHORT = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek' };
+          const label = SHORT[code] || code;
+          const pctMatch = n.title.match(/(\d+)%/);
+          const pct = pctMatch ? pctMatch[1] + '%' : '';
+          return `<button onclick="scrollToStoreCard(${safeStore})" class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11.5px] font-bold tabular-nums border border-op-bad/30 bg-op-bad/10 text-op-bad hover:bg-op-bad/15 transition-colors"><span>${escapeHtml(label)}</span><span class="opacity-80">${pct}</span><span class="opacity-60 text-[10px]">›</span></button>`;
+        }).join('');
+        const moreCount = Math.max(0, criticals.length - 4);
+        const moreChip = moreCount > 0 ? `<span class="text-[11px] text-op-bad font-bold ml-1">+${moreCount} more</span>` : '';
+        strip.innerHTML = `
+          <div class="flex items-center gap-3 px-3.5 py-3 rounded-card border border-op-bad/30" style="background:linear-gradient(180deg,rgba(239,68,68,0.08),rgba(239,68,68,0.04))">
+            <div class="flex-shrink-0 w-8 h-8 rounded-full bg-op-bad/20 text-op-bad flex items-center justify-center">
+              <svg class="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
+            </div>
+            <div class="min-w-0 flex-1 flex flex-col gap-1.5">
+              <div class="text-[13px] font-extrabold text-opl-ink dark:text-op-ink">${criticals.length} store${criticals.length === 1 ? '' : 's'} need attention</div>
+              <div class="flex flex-wrap items-center gap-1.5">${chips}${moreChip}</div>
+            </div>
+            <button onclick="dismissAllCritical()" aria-label="Dismiss for today"
+              class="flex-shrink-0 w-7 h-7 rounded-md border border-op-bad/20 text-op-bad/70 hover:text-op-bad hover:bg-op-bad/10 text-[16px] leading-none transition-colors">×</button>
+          </div>`;
+      }
+    }
+  }
+  window.renderNotifications = renderNotifications;
+
+  function toggleNotifPanel(e) {
+    if (e) e.stopPropagation();
+    const panel = el('notif-bell-panel');
+    const trig = el('notif-bell-trigger');
+    if (!panel || !trig) return;
+    const willOpen = panel.classList.contains('hidden');
+    panel.classList.toggle('hidden', !willOpen);
+    trig.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    if (willOpen) {
+      // Refresh the list when opening so it reflects latest data.
+      renderNotifications();
+    }
+  }
+  window.toggleNotifPanel = toggleNotifPanel;
+
+  function notifRowClick(id, store) {
+    const state = _notifState();
+    state.read.add(id);
+    _notifSave(state);
+    // Close the panel and scroll to the store card.
+    const panel = el('notif-bell-panel');
+    if (panel) panel.classList.add('hidden');
+    if (store) scrollToStoreCard(store);
+    renderNotifications();
+  }
+  window.notifRowClick = notifRowClick;
+
+  function dismissNotif(id) {
+    const state = _notifState();
+    state.dismissed.add(id);
+    state.read.add(id);
+    _notifSave(state);
+    renderNotifications();
+  }
+  window.dismissNotif = dismissNotif;
+
+  function markAllNotifsRead() {
+    const state = _notifState();
+    const notifs = computeNotifications();
+    for (const n of notifs) if (!state.dismissed.has(n.id)) state.read.add(n.id);
+    _notifSave(state);
+    renderNotifications();
+  }
+  window.markAllNotifsRead = markAllNotifsRead;
+
+  function dismissAllCritical() {
+    const state = _notifState();
+    const notifs = computeNotifications();
+    for (const n of notifs) if (n.severity === 'critical') {
+      state.dismissed.add(n.id);
+      state.read.add(n.id);
+    }
+    _notifSave(state);
+    renderNotifications();
+  }
+  window.dismissAllCritical = dismissAllCritical;
+
+  // Close panel on outside click / Esc — mirror the day-chip pattern.
+  document.addEventListener('click', (e) => {
+    const wrap = el('notif-bell-wrap');
+    if (!wrap) return;
+    if (!wrap.contains(e.target)) {
+      const panel = el('notif-bell-panel');
+      const trig = el('notif-bell-trigger');
+      if (panel && !panel.classList.contains('hidden')) {
+        panel.classList.add('hidden');
+        if (trig) trig.setAttribute('aria-expanded', 'false');
+      }
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const panel = el('notif-bell-panel');
+    if (panel && !panel.classList.contains('hidden')) {
+      panel.classList.add('hidden');
+      const trig = el('notif-bell-trigger');
+      if (trig) trig.setAttribute('aria-expanded', 'false');
+    }
+  });
+
   function renderDashboard() {
     if (!selectedWeek) return;
 
@@ -3354,6 +3757,7 @@
     }
 
     renderCards(metrics);
+    try { renderNotifications(); } catch (e) { /* never let notifs break dashboard */ }
   }
 
   function renderCards(metrics) {
