@@ -666,47 +666,62 @@
             </div>
           </div>
 
-          <!-- lower: channel mix + matrix (stacked on mobile, 2-col on desktop) -->
-          <div class="mt-5 pt-5 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border lg:grid lg:grid-cols-2 lg:gap-8">
-            <!-- Channel Mix -->
-            <div>
-              <div class="flex items-center justify-between">
-                <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Channel Mix</div>
-                <div id="cm-count" class="text-[11px] text-opl-inkDimmer dark:text-op-inkDimmer">3 channels</div>
-              </div>
-              <div class="mt-4 flex gap-[2px] h-2.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
-                <span id="cm-retail-seg" class="h-full bg-accent-green transition-[width] duration-500" style="width:0%"></span>
-                <span id="cm-bin-seg" class="h-full bg-accent-blue transition-[width] duration-500" style="width:0%"></span>
-                <span id="cm-auction-seg" class="h-full bg-accent-violet transition-[width] duration-500" style="width:0%"></span>
-              </div>
-              <div class="mt-4 grid grid-cols-3 gap-2 text-[13px]">
+          <!-- Collapsible "More" section — channel mix + matrix.
+               Default collapsed (grid-rows-[0fr] clips everything via the
+               inner overflow:hidden wrapper). Tap the toggle below to
+               expand; state persists in localStorage as dashHeroExpanded. -->
+          <div id="hero-extra" class="grid grid-rows-[0fr] transition-[grid-template-rows] duration-300 ease-out">
+            <div class="overflow-hidden min-h-0">
+              <!-- lower: channel mix + matrix (stacked on mobile, 2-col on desktop) -->
+              <div class="mt-5 pt-5 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border lg:grid lg:grid-cols-2 lg:gap-8">
+                <!-- Channel Mix -->
                 <div>
-                  <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-green flex-shrink-0"></span>Retail · <span id="cm-retail-pct">—</span></div>
-                  <div id="cm-retail-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
+                  <div class="flex items-center justify-between">
+                    <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Channel Mix</div>
+                    <div id="cm-count" class="text-[11px] text-opl-inkDimmer dark:text-op-inkDimmer">3 channels</div>
+                  </div>
+                  <div class="mt-4 flex gap-[2px] h-2.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
+                    <span id="cm-retail-seg" class="h-full bg-accent-green transition-[width] duration-500" style="width:0%"></span>
+                    <span id="cm-bin-seg" class="h-full bg-accent-blue transition-[width] duration-500" style="width:0%"></span>
+                    <span id="cm-auction-seg" class="h-full bg-accent-violet transition-[width] duration-500" style="width:0%"></span>
+                  </div>
+                  <div class="mt-4 grid grid-cols-3 gap-2 text-[13px]">
+                    <div>
+                      <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-green flex-shrink-0"></span>Retail · <span id="cm-retail-pct">—</span></div>
+                      <div id="cm-retail-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
+                    </div>
+                    <div class="text-center">
+                      <div class="flex items-center justify-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-blue flex-shrink-0"></span>BIN · <span id="cm-bin-pct">—</span></div>
+                      <div id="cm-bin-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
+                    </div>
+                    <div class="text-right">
+                      <div class="flex items-center justify-end gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction · <span id="cm-auction-pct">—</span></div>
+                      <div id="cm-auction-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
+                    </div>
+                  </div>
                 </div>
-                <div class="text-center">
-                  <div class="flex items-center justify-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-blue flex-shrink-0"></span>BIN · <span id="cm-bin-pct">—</span></div>
-                  <div id="cm-bin-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
+                <!-- Matrix -->
+                <div class="mt-5 pt-5 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border lg:mt-0 lg:pt-0 lg:border-t-0">
+                  <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Matrix · Today</div>
+                  <div class="mt-3.5 grid grid-cols-4 gap-2">
+                    <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Cart</div><div id="mx-cart" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
+                    <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Items</div><div id="mx-items" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
+                    <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Orders</div><div id="mx-orders" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
+                    <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">ASP</div><div id="mx-asp" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
+                  </div>
                 </div>
-                <div class="text-right">
-                  <div class="flex items-center justify-end gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction · <span id="cm-auction-pct">—</span></div>
-                  <div id="cm-auction-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
-                </div>
-              </div>
-            </div>
-            <!-- Matrix -->
-            <div class="mt-5 pt-5 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border lg:mt-0 lg:pt-0 lg:border-t-0">
-              <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Matrix · Today</div>
-              <div class="mt-3.5 grid grid-cols-4 gap-2">
-                <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Cart</div><div id="mx-cart" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
-                <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Items</div><div id="mx-items" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
-                <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Orders</div><div id="mx-orders" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
-                <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">ASP</div><div id="mx-asp" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
               </div>
             </div>
           </div>
 
-          <div class="flex justify-end mt-4">
+          <!-- Toggle for the collapsible section above + "View Details" -->
+          <div class="mt-4 flex items-center justify-between gap-3">
+            <button id="hero-more-toggle" type="button" onclick="toggleHeroExtra()"
+              aria-expanded="false" aria-controls="hero-extra"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11.5px] font-bold tracking-[0.02em] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/35 transition-colors">
+              <span id="hero-more-label">More</span>
+              <svg id="hero-more-chev" class="w-[11px] h-[11px] transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
             <button onclick="showAllStoresDetail()" class="text-xs font-semibold text-accent-green hover:underline">View Details →</button>
           </div>
         </div>
@@ -3035,6 +3050,35 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') setDayPanelOpen(false);
   });
+
+  // ─── Hero "More" collapse toggle ────────────────────────────
+  // Default collapsed; state persists in localStorage as dashHeroExpanded.
+  // Collapsed = grid-rows-[0fr] (inner overflow:hidden clips); expanded =
+  // grid-rows-[1fr]. Smooth height transition via the wrapper.
+  function _heroExtraIsExpanded() {
+    try { return localStorage.getItem('dashHeroExpanded') === '1'; } catch (_) { return false; }
+  }
+  function _applyHeroExtraState(expanded) {
+    const wrap = el('hero-extra');
+    const btn = el('hero-more-toggle');
+    const lbl = el('hero-more-label');
+    const chev = el('hero-more-chev');
+    if (wrap) {
+      wrap.classList.toggle('grid-rows-[1fr]', expanded);
+      wrap.classList.toggle('grid-rows-[0fr]', !expanded);
+    }
+    if (btn) btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    if (lbl) lbl.textContent = expanded ? 'Less' : 'More';
+    if (chev) chev.style.transform = expanded ? 'rotate(180deg)' : '';
+  }
+  function toggleHeroExtra() {
+    const next = !_heroExtraIsExpanded();
+    try { localStorage.setItem('dashHeroExpanded', next ? '1' : '0'); } catch (_) {}
+    _applyHeroExtraState(next);
+  }
+  window.toggleHeroExtra = toggleHeroExtra;
+  // Apply persisted state on load (DOM is ready by the time this script runs).
+  _applyHeroExtraState(_heroExtraIsExpanded());
 
   // ═══════════════════════════════════════════════════════════════
   //  NOTIFICATIONS — pace alerts, milestones, offline events
