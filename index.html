@@ -3999,6 +3999,53 @@
     bg: '#cbd5e1',       // Budget — neutral gray (dashed)
   };
 
+  // Chart.js plugin: paints a translucent green band + dashed vertical line +
+  // small "TODAY" label at the chart's "today" column. Driven by an option
+  // on the chart's options.plugins.todayMarker.todayIdx — set per render.
+  const todayMarkerPlugin = {
+    id: 'todayMarker',
+    afterDraw(chart, _args, _opts) {
+      const opts = chart.options.plugins.todayMarker || {};
+      const idx = opts.todayIdx;
+      if (idx == null || idx < 0) return;
+      const xScale = chart.scales.x;
+      if (!xScale) return;
+      const xPos = xScale.getPixelForValue(idx);
+      if (xPos == null || isNaN(xPos)) return;
+      // Half-width of one category band — use distance between adjacent ticks.
+      const next = chart.scales.x.getPixelForValue(idx + 1);
+      const prev = chart.scales.x.getPixelForValue(idx - 1);
+      const span = Math.max(
+        Math.abs((next || xPos) - xPos),
+        Math.abs(xPos - (prev || xPos))
+      ) || 40;
+      const half = span * 0.42;
+
+      const ctx = chart.ctx;
+      const ca = chart.chartArea;
+      ctx.save();
+      // Green band behind the day
+      ctx.fillStyle = 'rgba(34,197,94,0.07)';
+      ctx.fillRect(xPos - half, ca.top, half * 2, ca.bottom - ca.top);
+      // Dashed vertical line through today
+      ctx.strokeStyle = 'rgba(34,197,94,0.55)';
+      ctx.setLineDash([3, 3]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(xPos, ca.top);
+      ctx.lineTo(xPos, ca.bottom);
+      ctx.stroke();
+      // "TODAY" label, anchored just above the chart area
+      ctx.setLineDash([]);
+      ctx.font = '700 9px Geist, system-ui, sans-serif';
+      ctx.fillStyle = '#22c55e';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText('TODAY', xPos, Math.max(0, ca.top - 12));
+      ctx.restore();
+    },
+  };
+
   // Build the header + stats strip + legend pills HTML that sits above the
   // Chart.js canvas. Stats/legend gracefully omit periods with no data.
   function _buildChartCardHTML({ title, subtitle, twTotal, lwTotal, lyTotal, budgetTotal }) {
@@ -4069,6 +4116,10 @@
       if (isCurrentWeek && dateKey === todayStr && liveTotal > 0) return liveTotal;
       return r.aTotal || 0;
     });
+    // Position of "today" in the current labels — drives the TODAY marker.
+    const todayIdx = isCurrentWeek
+      ? weekRows.findIndex(r => r.date && r.date.toISOString().slice(0, 10) === todayStr)
+      : -1;
 
     // Last week data – match by day-of-week
     const prevWeekRows = getLastWeekRows(storeName);
@@ -4132,13 +4183,17 @@
       dailySalesChart.options.scales.x = { ticks: { color: textColor }, grid: { color: gridColor } };
       dailySalesChart.options.scales.y = { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } };
       dailySalesChart.options.onClick = dailyChartOnClick;
+      dailySalesChart.options.plugins.todayMarker = { todayIdx };
       dailySalesChart.update();
     } else {
       dailySalesChart = new Chart(el('daily-sales-chart'), {
         type: 'line',
         data: { labels, datasets },
+        plugins: [todayMarkerPlugin],
         options: {
           responsive: true, maintainAspectRatio: false,
+          // Leave headroom at the top of the chart for the TODAY label.
+          layout: { padding: { top: 14 } },
           onClick: dailyChartOnClick,
           onHover: (evt, elements) => {
             evt.native.target.style.cursor = elements?.length ? 'pointer' : 'default';
@@ -4147,7 +4202,8 @@
           plugins: {
             // Built-in Chart.js legend hidden — we render our own pills above.
             legend: { display: false },
-            tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? '$' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : 'N/A') } }
+            tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? '$' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : 'N/A') } },
+            todayMarker: { todayIdx },
           },
           scales: {
             x: { ticks: { color: textColor }, grid: { color: gridColor } },
@@ -6979,6 +7035,10 @@
     const salesData  = sorted.map(d => d.sales);
     const lwData     = sorted.map(d => hasLWData ? (lwDowMap[d.dow] ?? null) : null);
     const lyData     = sorted.map(d => hasLYData ? (lyDowMap[d.dow] ?? null) : null);
+    // Today's index — drives the TODAY marker plugin.
+    const todayIdx = isCurrentWeek
+      ? sorted.findIndex(d => d.dateObj && d.dateObj.toISOString().slice(0, 10) === todayStr)
+      : -1;
 
     // Header + stats + legend HTML.
     const sum = (arr) => arr.reduce((s, v) => s + (v || 0), 0);
@@ -7007,17 +7067,21 @@
       asAllStoresChart.data.datasets = datasets;
       asAllStoresChart.options.scales.x = { ticks: { color: textColor }, grid: { color: gridColor } };
       asAllStoresChart.options.scales.y = { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } };
+      asAllStoresChart.options.plugins.todayMarker = { todayIdx };
       asAllStoresChart.update();
     } else {
       asAllStoresChart = new Chart(el('as-daily-chart'), {
         type: 'line',
         data: { labels, datasets },
+        plugins: [todayMarkerPlugin],
         options: {
           responsive: true, maintainAspectRatio: false,
+          layout: { padding: { top: 14 } },
           interaction: { mode: 'index', intersect: false },
           plugins: {
             legend: { display: false },
-            tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? '$' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : 'N/A') } }
+            tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? '$' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : 'N/A') } },
+            todayMarker: { todayIdx },
           },
           scales: {
             x: { ticks: { color: textColor }, grid: { color: gridColor } },
