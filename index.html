@@ -328,6 +328,18 @@
       animation: notif-pulse 2s ease-out infinite;
     }
     #notif-bell-trigger.shake svg { animation: notif-shake .6s ease-in-out; }
+    /* Swipe-back hint: persistent edge rail pulse + one-shot label fade-in/out */
+    @keyframes swipe-rail-pulse {
+      0%, 100% { opacity: .12; }
+      50%      { opacity: .42; }
+    }
+    @keyframes swipe-label-show {
+      0%   { opacity: 0; transform: translateX(-6px); }
+      10%  { opacity: 1; transform: translateX(0); }
+      78%  { opacity: 1; transform: translateX(0); }
+      100% { opacity: 0; transform: translateX(-4px); }
+    }
+    #swipe-label.show { animation: swipe-label-show 3.4s ease-out forwards; }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -519,6 +531,18 @@
           <svg class="w-5 h-5 stroke-op-bad" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Sign out
         </button>
       </div>
+      <!-- Swipe-back affordance — persistent green rail on the very left edge
+           of detail pages + one-time "Swipe back" label on the first visit.
+           Both fixed-position so they survive the page-translate during the
+           gesture. Toggled by updateSwipeBackHint(). -->
+      <div id="swipe-rail" class="hidden lg:hidden fixed left-0 top-[calc(env(safe-area-inset-top)+72px)] bottom-0 w-[3px] z-30 pointer-events-none"
+        style="background:linear-gradient(180deg,transparent 0%,#22c55e 50%,transparent 100%);opacity:.16;animation:swipe-rail-pulse 2.6s ease-in-out infinite"></div>
+      <div id="swipe-label" class="hidden lg:hidden fixed left-3 top-[44%] z-30 pointer-events-none inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10.5px] font-bold uppercase tracking-[0.06em] text-accent-green"
+        style="background:rgba(16,24,38,.92);border:1px solid rgba(34,197,94,.42);backdrop-filter:blur(6px)">
+        <svg class="w-[11px] h-[11px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        Swipe back
+      </div>
+
       <nav id="bottom-nav" class="lg:hidden fixed left-0 right-0 bottom-0 z-30 flex border-t border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel transition-transform duration-300" style="padding:10px 6px calc(12px + env(safe-area-inset-bottom))">
         <button data-tab="dashboard" onclick="navigateToPage('dashboard')" class="bn-tab flex-1 flex flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
           <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Dashboard
@@ -5111,6 +5135,7 @@
     // stack — pushing here would re-stack the same page and break
     // subsequent back navigations.
     if (!fromHistory) history.pushState({ page: 'store-detail', store: storeName }, '');
+    if (typeof window.updateSwipeBackHint === 'function') window.updateSwipeBackHint();
   }
 
   function navigateToDashboard() {
@@ -5388,6 +5413,7 @@
     }
     currentPage = page;
     el('mobile-menu-btn').classList.toggle('hidden', page === 'store-detail');
+    if (typeof window.updateSwipeBackHint === 'function') window.updateSwipeBackHint();
 
     // Lazy-init Weekly Retail when first navigated to. Guarded by !wrsData
     // so subsequent visits don't refetch unnecessarily.
@@ -7228,6 +7254,7 @@
     el('page-all-stores-detail').scrollIntoView({ behavior: 'instant' });
     // Only push state on a forward navigation — see showStoreDetail.
     if (!fromHistory) history.pushState({ page: 'all-stores-detail' }, '');
+    if (typeof window.updateSwipeBackHint === 'function') window.updateSwipeBackHint();
   }
   window.showAllStoresDetail = showAllStoresDetail;
 
@@ -11938,6 +11965,31 @@
       document.addEventListener('touchend',    onTouchEnd,    { passive: true });
       document.addEventListener('touchcancel', onTouchCancel, { passive: true });
     })();
+
+    // ── Swipe-back affordance ──────────────────────────────────────────
+    // Persistent left-edge green rail on any non-dashboard page (subtle
+    // pulse, no words — teaches "this edge is interactive") + one-time
+    // "Swipe back" label on the user's first detail-page visit ever.
+    // localStorage key `swipeBackHintShown` prevents the label re-appearing.
+    function updateSwipeBackHint() {
+      const rail = document.getElementById('swipe-rail');
+      const label = document.getElementById('swipe-label');
+      const railOn = window.currentPage && window.currentPage !== 'dashboard';
+      if (rail) rail.classList.toggle('hidden', !railOn);
+      if (!label) return;
+      if (!railOn) { label.classList.add('hidden'); label.classList.remove('show'); return; }
+      let alreadyShown = false;
+      try { alreadyShown = localStorage.getItem('swipeBackHintShown') === '1'; } catch (_) {}
+      if (alreadyShown) { label.classList.add('hidden'); return; }
+      // First visit — fire the fade animation once, then mark done.
+      label.classList.remove('hidden');
+      void label.offsetWidth;          // force reflow so animation restarts
+      label.classList.add('show');
+      try { localStorage.setItem('swipeBackHintShown', '1'); } catch (_) {}
+      // Belt-and-suspenders: hide after the animation finishes.
+      setTimeout(() => { label.classList.add('hidden'); label.classList.remove('show'); }, 3600);
+    }
+    window.updateSwipeBackHint = updateSwipeBackHint;
 
     // ── Swipe-from-left-edge → back ────────────────────────────────────
     // Live page-follow swipe-back gesture. The active page translates with
