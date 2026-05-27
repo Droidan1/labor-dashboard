@@ -3388,38 +3388,10 @@
       }
     }
 
-    // ── Inline strip (only on critical alerts, not in quiet hours) ──
+    // Inline attention strip removed per user request — critical alerts
+    // are still surfaced via the bell + per-card pace coloring.
     const strip = el('dashboard-attn-strip');
-    if (strip) {
-      const criticals = visible.filter(n => n.severity === 'critical');
-      if (criticals.length === 0 || isQuiet) {
-        strip.innerHTML = '';
-      } else {
-        const chips = criticals.slice(0, 4).map(n => {
-          const safeStore = JSON.stringify(n.store).replace(/"/g, '&quot;');
-          const code = n.store.split('/')[0];
-          const SHORT = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek' };
-          const label = SHORT[code] || code;
-          const pctMatch = n.title.match(/(\d+)%/);
-          const pct = pctMatch ? pctMatch[1] + '%' : '';
-          return `<button onclick="scrollToStoreCard(${safeStore})" class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11.5px] font-bold tabular-nums border border-op-bad/30 bg-op-bad/10 text-op-bad hover:bg-op-bad/15 transition-colors"><span>${escapeHtml(label)}</span><span class="opacity-80">${pct}</span><span class="opacity-60 text-[10px]">›</span></button>`;
-        }).join('');
-        const moreCount = Math.max(0, criticals.length - 4);
-        const moreChip = moreCount > 0 ? `<span class="text-[11px] text-op-bad font-bold ml-1">+${moreCount} more</span>` : '';
-        strip.innerHTML = `
-          <div class="flex items-center gap-3 px-3.5 py-3 rounded-card border border-op-bad/30" style="background:linear-gradient(180deg,rgba(239,68,68,0.08),rgba(239,68,68,0.04))">
-            <div class="flex-shrink-0 w-8 h-8 rounded-full bg-op-bad/20 text-op-bad flex items-center justify-center">
-              <svg class="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
-            </div>
-            <div class="min-w-0 flex-1 flex flex-col gap-1.5">
-              <div class="text-[13px] font-extrabold text-opl-ink dark:text-op-ink">${criticals.length} store${criticals.length === 1 ? '' : 's'} need attention</div>
-              <div class="flex flex-wrap items-center gap-1.5">${chips}${moreChip}</div>
-            </div>
-            <button onclick="dismissAllCritical()" aria-label="Dismiss for today"
-              class="flex-shrink-0 w-7 h-7 rounded-md border border-op-bad/20 text-op-bad/70 hover:text-op-bad hover:bg-op-bad/10 text-[16px] leading-none transition-colors">×</button>
-          </div>`;
-      }
-    }
+    if (strip) strip.innerHTML = '';
   }
   window.renderNotifications = renderNotifications;
 
