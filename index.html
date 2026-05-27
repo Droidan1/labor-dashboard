@@ -728,10 +728,10 @@
                 <div class="mt-5 pt-5 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border lg:mt-0 lg:pt-0 lg:border-t-0">
                   <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Matrix · Today</div>
                   <div class="mt-3.5 grid grid-cols-4 gap-2">
-                    <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Cart</div><div id="mx-cart" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
-                    <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Items</div><div id="mx-items" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
-                    <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Orders</div><div id="mx-orders" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
-                    <div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">ASP</div><div id="mx-asp" class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div></div>
+                    <div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Cart</div><div id="mx-cart" class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div><span class="absolute -right-1 -bottom-1 text-accent-green pointer-events-none" style="opacity:.07"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-[42px] h-[42px]"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 2h3l2.7 13.5a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/></svg></span></div>
+                    <div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Items</div><div id="mx-items" class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div><span class="absolute -right-1 -bottom-1 text-accent-green pointer-events-none" style="opacity:.07"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-[42px] h-[42px]"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></span></div>
+                    <div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Orders</div><div id="mx-orders" class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div><span class="absolute -right-1 -bottom-1 text-accent-green pointer-events-none" style="opacity:.07"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-[42px] h-[42px]"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M16 8h-6"/><path d="M14 12h-4"/></svg></span></div>
+                    <div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">ASP</div><div id="mx-asp" class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div><span class="absolute -right-1 -bottom-1 text-accent-green pointer-events-none" style="opacity:.07"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-[42px] h-[42px]"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><circle cx="7" cy="7" r="1"/></svg></span></div>
                   </div>
                 </div>
               </div>
@@ -2367,6 +2367,22 @@
     return '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
   }
   function fmtPct(n, d=1) { return n != null ? `${n.toFixed(d)}%` : "—"; }
+
+  // Decorative low-opacity icon that sits in the bottom-right corner of a
+  // matrix tile (Cart / Items / Orders / ASP). Adds visual identity without
+  // competing with the value text. Tile must be `relative overflow-hidden`
+  // and the label/value need `relative` so they stack above the watermark.
+  function matrixTileWatermark(name) {
+    const paths = {
+      cart:   '<circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 2h3l2.7 13.5a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/>',
+      items:  '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+      orders: '<path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M16 8h-6"/><path d="M14 12h-4"/>',
+      asp:    '<path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z"/><circle cx="7" cy="7" r="1"/>',
+    };
+    const p = paths[name];
+    if (!p) return '';
+    return `<span class="absolute -right-1 -bottom-1 text-accent-green pointer-events-none" style="opacity:.07"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-[42px] h-[42px]">${p}</svg></span>`;
+  }
   function fmtTime(sec) { if (sec == null) return '—'; const m = Math.floor(sec / 60); const s = sec % 60; return m > 0 ? `${m}m ${s}s` : `${s}s`; }
   function normalizeLaborPct(n) {
     if (n == null) return null;
@@ -4005,7 +4021,7 @@
       const v1SparkDate = (isDayView && dayDays.size === 1) ? [...dayDays][0] : todayStr;
       const v1Spark = '<div id="' + v1SparkId + '" style="width:104px;height:44px;flex:0 0 auto;display:flex;align-items:center;justify-content:center">' + v1SparkSkel + '</div>';
       const tile = (l, v) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
-      const mtile = (l, v) => `<div class="rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
+      const mtile = (l, v, icon) => `<div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">${l}</div><div class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div>${icon ? matrixTileWatermark(icon) : ''}</div>`;
 
       const div = document.createElement("div");
       div.className = `bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors group${v1OfflineNow ? ' opacity-60' : ''}`;
@@ -4055,10 +4071,10 @@
         </div>
 
         <div class="mt-2 grid grid-cols-4 gap-2">
-          ${mtile('Cart', v1Cart != null ? '$' + Number(v1Cart).toFixed(2) : '—')}
-          ${mtile('Items', v1Items != null ? Number(v1Items).toFixed(1) : '—')}
-          ${mtile('Orders', v1Orders != null ? Number(v1Orders).toLocaleString() : '—')}
-          ${mtile('ASP', v1Asp != null ? '$' + Number(v1Asp).toFixed(2) : '—')}
+          ${mtile('Cart', v1Cart != null ? '$' + Number(v1Cart).toFixed(2) : '—', 'cart')}
+          ${mtile('Items', v1Items != null ? Number(v1Items).toFixed(1) : '—', 'items')}
+          ${mtile('Orders', v1Orders != null ? Number(v1Orders).toLocaleString() : '—', 'orders')}
+          ${mtile('ASP', v1Asp != null ? '$' + Number(v1Asp).toFixed(2) : '—', 'asp')}
         </div>
 
         <div class="mt-4 flex justify-end">
@@ -5115,25 +5131,29 @@
                 <div class="text-[11px] text-opl-inkDimmer dark:text-op-inkDimmer">vs LW · LY</div>
               </div>
               <div class="mt-3 grid grid-cols-4 lg:grid-cols-2 gap-2">
-                <div class="rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
-                  <div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Cart</div>
-                  <div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${hasMetrics ? fmtDollar(avgCart) : '—'}</div>
-                  ${hasMetrics ? `<div class="mt-1 flex justify-center gap-1">${renderComparisonBadge(avgCart, lwMetrics?.avgCart, 'LW', false)}${renderComparisonBadge(avgCart, lyMetrics?.avgCart, 'LY', false)}</div>` : ''}
+                <div class="relative overflow-hidden rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
+                  <div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Cart</div>
+                  <div class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${hasMetrics ? fmtDollar(avgCart) : '—'}</div>
+                  ${hasMetrics ? `<div class="relative mt-1 flex justify-center gap-1">${renderComparisonBadge(avgCart, lwMetrics?.avgCart, 'LW', false)}${renderComparisonBadge(avgCart, lyMetrics?.avgCart, 'LY', false)}</div>` : ''}
+                  ${matrixTileWatermark('cart')}
                 </div>
-                <div class="rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
-                  <div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Items</div>
-                  <div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${hasMetrics ? (avgItems || 0).toFixed(1) : '—'}</div>
-                  ${hasMetrics ? `<div class="mt-1 flex justify-center gap-1">${renderComparisonBadge(avgItems, lwMetrics?.avgItems, 'LW', false)}${renderComparisonBadge(avgItems, lyMetrics?.avgItems, 'LY', false)}</div>` : ''}
+                <div class="relative overflow-hidden rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
+                  <div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Items</div>
+                  <div class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${hasMetrics ? (avgItems || 0).toFixed(1) : '—'}</div>
+                  ${hasMetrics ? `<div class="relative mt-1 flex justify-center gap-1">${renderComparisonBadge(avgItems, lwMetrics?.avgItems, 'LW', false)}${renderComparisonBadge(avgItems, lyMetrics?.avgItems, 'LY', false)}</div>` : ''}
+                  ${matrixTileWatermark('items')}
                 </div>
-                <div class="rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
-                  <div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Orders</div>
-                  <div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${hasMetrics ? Number(orderCount || 0).toLocaleString() : '—'}</div>
-                  ${hasMetrics ? `<div class="mt-1 flex justify-center gap-1">${renderComparisonBadge(orderCount, lwMetrics?.orderCount, 'LW', false)}${renderComparisonBadge(orderCount, lyMetrics?.orderCount, 'LY', false)}</div>` : ''}
+                <div class="relative overflow-hidden rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
+                  <div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Orders</div>
+                  <div class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${hasMetrics ? Number(orderCount || 0).toLocaleString() : '—'}</div>
+                  ${hasMetrics ? `<div class="relative mt-1 flex justify-center gap-1">${renderComparisonBadge(orderCount, lwMetrics?.orderCount, 'LW', false)}${renderComparisonBadge(orderCount, lyMetrics?.orderCount, 'LY', false)}</div>` : ''}
+                  ${matrixTileWatermark('orders')}
                 </div>
-                <div class="rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
-                  <div class="text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">ASP</div>
-                  <div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${hasMetrics && avgASP != null ? fmtDollar(avgASP) : '—'}</div>
-                  ${hasMetrics ? `<div class="mt-1 flex justify-center gap-1">${renderComparisonBadge(avgASP, lwMetrics?.avgASP, 'LW', false)}${renderComparisonBadge(avgASP, lyMetrics?.avgASP, 'LY', false)}</div>` : ''}
+                <div class="relative overflow-hidden rounded-[9px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center">
+                  <div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">ASP</div>
+                  <div class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${hasMetrics && avgASP != null ? fmtDollar(avgASP) : '—'}</div>
+                  ${hasMetrics ? `<div class="relative mt-1 flex justify-center gap-1">${renderComparisonBadge(avgASP, lwMetrics?.avgASP, 'LW', false)}${renderComparisonBadge(avgASP, lyMetrics?.avgASP, 'LY', false)}</div>` : ''}
+                  ${matrixTileWatermark('asp')}
                 </div>
               </div>
             </div>
