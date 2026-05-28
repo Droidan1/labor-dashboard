@@ -2801,7 +2801,17 @@
 
   async function loadAll(force = false) {
     // Manual refresh: bust the cache so users get fresh data, not the 5-min cached copy
-    if (force) _apiCache.clear();
+    if (force) {
+      _apiCache.clear();
+      // Also bust the live item-sales caches (today + any week aggregates that
+      // include today) so the Item Sales view refreshes too, not just the
+      // dashboard/store totals.
+      const _t = getETTodayStr();
+      for (const k of Object.keys(itemSalesCache)) {
+        if (k.endsWith(':' + _t) || k.includes(':WEEK:')) delete itemSalesCache[k];
+      }
+      _asItemsCache = {};
+    }
     // Show app shell + skeleton cards immediately — no full-screen splash
     el("splash").classList.add("hidden");
     el("app").classList.remove("hidden");
@@ -2819,7 +2829,9 @@
         delete histErrors[s];
       } catch (e) { errors[s] = e.message; results[s] = []; histErrors[s] = e.message || "Couldn't load"; }
       loaded++;
-      el("last-updated").textContent = `Loading stores… (${loaded}/${STORES.length})`;
+      const _lu = el("last-updated-time");
+      if (_lu) _lu.textContent = `Loading ${loaded}/${STORES.length}`;
+      else el("last-updated").textContent = `Loading stores… (${loaded}/${STORES.length})`;
     }));
 
     liveDataLoading = true;
@@ -2837,7 +2849,7 @@
     })).then(() => {
       liveDataLoading = false;
       if (selectedWeek === currentWeek) renderDashboard();
-      if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName);
+      if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName, false, { rerender: true });
     }).catch(error => {
       console.error("Clover data load failed:", error);
       liveDataLoading = false;
@@ -2965,7 +2977,7 @@
     renderDashDaySelector();
     renderDashboard();
     if (selectedWeek !== currentWeek) loadHistoricalCloverForWeek(selectedWeek);
-    if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName);
+    if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName, false, { rerender: true });
   }
 
   // ‹ › step through the available weeks.
@@ -3051,7 +3063,7 @@
     else selectedDashDays.add(dateStr);
     renderDashDaySelector();
     renderDashboard();
-    if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName);
+    if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName, false, { rerender: true });
   }
   window.selectDashDay = selectDashDay;
 
@@ -3060,7 +3072,7 @@
     selectedDashDays.clear();
     renderDashDaySelector();
     renderDashboard();
-    if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName);
+    if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName, false, { rerender: true });
   }
   window.selectAllWeek = selectAllWeek;
 
@@ -5030,12 +5042,16 @@
   }
   window.__navStack = navStack; // exposed for debugging
 
-  function showStoreDetail(storeName, fromHistory) {
-    if (!fromHistory) pushNavHistory();
+  function showStoreDetail(storeName, fromHistory, opts = {}) {
+    // rerender = an in-place refresh of the page the user is already on
+    // (data reload, live update). Preserve their tab/scroll/day and don't
+    // touch navigation history.
+    const rerender = opts.rerender === true;
+    if (!fromHistory && !rerender) pushNavHistory();
     const isStoreSwitch = currentStoreName !== storeName;
     currentPage = 'store-detail';
     currentStoreName = storeName;
-    selectedItemDate = null;  // Reset to today when switching stores
+    if (!rerender) selectedItemDate = null;  // Reset to today when switching stores
     if (isStoreSwitch) {
       // Reset month/week selectors so the store detail view defaults to
       // the dashboard's current selection instead of carrying stale state.
@@ -5206,16 +5222,16 @@
     }
     document.querySelectorAll('.nav-item[data-page]').forEach(item => item.classList.remove('active'));
     if (typeof window.__syncBottomNav === 'function') try { window.__syncBottomNav('store-detail'); } catch (_) {}
-    switchStoreTab('weekly');
+    switchStoreTab(rerender ? currentStoreTab : 'weekly');
 
-    // Scroll to top
-    el('page-store-detail').scrollIntoView({ behavior: 'instant' });
+    // Scroll to top (skip on in-place re-render so the user keeps their spot)
+    if (!rerender) el('page-store-detail').scrollIntoView({ behavior: 'instant' });
 
     // Only push state on a forward navigation. When called from popstate
     // (swipe-back / browser back), the browser already moved through the
     // stack — pushing here would re-stack the same page and break
     // subsequent back navigations.
-    if (!fromHistory) history.pushState({ page: 'store-detail', store: storeName }, '');
+    if (!fromHistory && !rerender) history.pushState({ page: 'store-detail', store: storeName }, '');
     if (typeof window.updateSwipeBackHint === 'function') window.updateSwipeBackHint();
   }
 
@@ -6827,7 +6843,12 @@
   })();
   // ── End Supply Request Module ──────────────────────────────────────────────
 
+  // Remembers which store-detail tab is active so background/refresh
+  // re-renders can restore it instead of snapping back to "weekly".
+  let currentStoreTab = 'weekly';
+
   function switchStoreTab(tab) {
+    currentStoreTab = tab;
     const tabs = { weekly: el('sd-tab-weekly'), chart: el('sd-tab-chart'), items: el('sd-tab-items') };
     const panels = { weekly: el('sd-content-weekly'), chart: el('sd-content-chart'), items: el('sd-content-items') };
     const base = 'px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold transition-colors';
