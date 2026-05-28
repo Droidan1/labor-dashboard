@@ -2805,10 +2805,16 @@
       _apiCache.clear();
       // Also bust the live item-sales caches (today + any week aggregates that
       // include today) so the Item Sales view refreshes too, not just the
-      // dashboard/store totals.
+      // dashboard/store totals. Stash the old value as a fallback first: the
+      // live endpoint can briefly return zero categories, and we don't want a
+      // refresh to wipe a good view to "No item sales data" — see loadItemSales.
       const _t = getETTodayStr();
+      itemSalesFallback = {};
       for (const k of Object.keys(itemSalesCache)) {
-        if (k.endsWith(':' + _t) || k.includes(':WEEK:')) delete itemSalesCache[k];
+        if (k.endsWith(':' + _t) || k.includes(':WEEK:')) {
+          itemSalesFallback[k] = itemSalesCache[k];
+          delete itemSalesCache[k];
+        }
       }
       _asItemsCache = {};
     }
@@ -6869,6 +6875,10 @@
 
   // ─── Item Sales by L2 Category ──────────────────────────────────
   let itemSalesCache = {};  // keyed by "STORE:YYYY-MM-DD"
+  // Holds the pre-refresh value of any item-sales cache key busted by a forced
+  // refresh. If the fresh live fetch comes back empty, we restore from here so a
+  // refresh never replaces a populated view with "No item sales data".
+  let itemSalesFallback = {};
   let itemSortCol = 'netSales';
   let itemSortAsc = false;
   let selectedItemDate = null;  // YYYY-MM-DD string, null = today
@@ -6933,11 +6943,21 @@
         for (const r of responses) {
           if (r && r.error) throw new Error(r.error);
         }
-        const merged = mergeItemSalesData(responses, weekStart, weekEnd);
+        let merged = mergeItemSalesData(responses, weekStart, weekEnd);
+        if (!(merged.categories || []).length && itemSalesFallback[cacheKey]) {
+          merged = itemSalesFallback[cacheKey];
+        }
+        delete itemSalesFallback[cacheKey];
         itemSalesCache[cacheKey] = merged;
         renderItemSalesTable(merged, true);
       } catch (err) {
-        _itemsLoadingState(storeName, 'WEEK', `Failed to load week total: ${err.message}`, true);
+        if (itemSalesFallback[cacheKey]) {
+          itemSalesCache[cacheKey] = itemSalesFallback[cacheKey];
+          delete itemSalesFallback[cacheKey];
+          renderItemSalesTable(itemSalesCache[cacheKey], true);
+        } else {
+          _itemsLoadingState(storeName, 'WEEK', `Failed to load week total: ${err.message}`, true);
+        }
       }
       return;
     }
@@ -6958,12 +6978,28 @@
       if (!isToday) url += `&date=${targetDate}`;
       const resp = await fetch(url, { credentials: 'include' });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
+      let data = await resp.json();
       if (data.error) throw new Error(data.error);
+      // A forced refresh can race ahead of the live snapshot and get back an
+      // empty payload. If we stashed a populated copy before busting the cache,
+      // keep showing it rather than wiping to the empty state.
+      const fresh = (data.categories || []).length;
+      if (!fresh && itemSalesFallback[cacheKey]) {
+        data = itemSalesFallback[cacheKey];
+      }
+      delete itemSalesFallback[cacheKey];
       itemSalesCache[cacheKey] = data;
       renderItemSalesTable(data, isToday);
     } catch (err) {
-      _itemsLoadingState(storeName, dateStr, `Failed to load: ${err.message}`, true);
+      // Network/HTTP failure on a forced refresh: restore the stashed copy
+      // instead of leaving an error state where good data used to be.
+      if (itemSalesFallback[cacheKey]) {
+        itemSalesCache[cacheKey] = itemSalesFallback[cacheKey];
+        delete itemSalesFallback[cacheKey];
+        renderItemSalesTable(itemSalesCache[cacheKey], isToday);
+      } else {
+        _itemsLoadingState(storeName, dateStr, `Failed to load: ${err.message}`, true);
+      }
     }
   }
 
