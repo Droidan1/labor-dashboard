@@ -2385,7 +2385,7 @@
     };
     const p = paths[name];
     if (!p) return '';
-    return `<span class="absolute -right-1 -bottom-1 text-accent-green pointer-events-none" style="opacity:.07"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-[42px] h-[42px]">${p}</svg></span>`;
+    return `<span class="absolute -right-1 -bottom-1 text-accent-green pointer-events-none" style="opacity:.16"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-[42px] h-[42px]">${p}</svg></span>`;
   }
   function fmtTime(sec) { if (sec == null) return '—'; const m = Math.floor(sec / 60); const s = sec % 60; return m > 0 ? `${m}m ${s}s` : `${s}s`; }
   function normalizeLaborPct(n) {
@@ -2448,15 +2448,36 @@
     };
   }
 
+  // How many days of the *selected* week have elapsed (Sun → today inclusive).
+  // Returns null for any week that isn't the live in-progress week, signalling
+  // "use the whole week" to callers. Used to make LW/LY comparisons period-
+  // matched: comparing a week-to-date against the same elapsed slice of the
+  // prior week/year instead of the full 7 days (which made cumulative metrics
+  // like order count read as a huge false drop mid-week).
+  function elapsedDaysThisWeek(storeName) {
+    if (selectedWeek !== currentWeek) return null;
+    const todayStr = getETTodayStr();
+    const rows = (allStoreData[storeName] || [])
+      .filter(r => r.week === selectedWeek && r.date)
+      .sort((a, b) => a.date - b.date);
+    let n = 0;
+    for (const r of rows) { if (r.date.toISOString().slice(0, 10) <= todayStr) n++; }
+    return n > 0 ? n : null;
+  }
+
   function getLastWeekCloverMetrics(storeName) {
     const rows = getLastWeekRows(storeName);
-    const dateKeys = rows.filter(r => r.date).map(r => r.date.toISOString().slice(0, 10));
+    const elapsed = elapsedDaysThisWeek(storeName);
+    const matched = elapsed != null ? rows.slice(0, elapsed) : rows;
+    const dateKeys = matched.filter(r => r.date).map(r => r.date.toISOString().slice(0, 10));
     return aggregateCloverMetrics(storeName, dateKeys);
   }
 
   function getLastYearCloverMetrics(storeName) {
     const rows = getLastYearRows(storeName);
-    const dateKeys = rows.filter(r => r.date).map(r => r.date.toISOString().slice(0, 10));
+    const elapsed = elapsedDaysThisWeek(storeName);
+    const matched = elapsed != null ? rows.slice(0, elapsed) : rows;
+    const dateKeys = matched.filter(r => r.date).map(r => r.date.toISOString().slice(0, 10));
     return aggregateCloverMetrics(storeName, dateKeys);
   }
 
@@ -5104,9 +5125,13 @@
     const wkPct = wkBudget > 0 ? Math.round(wkSales / wkBudget * 100) : null;
     const wkAhead = wkPct != null && wkPct >= 100;
     const wkBarW = wkPct != null ? Math.min(100, Math.max(0, wkPct)) : 0;
-    // Days with stored sales + today if live.
+    // Days with sales data so far. Count completed days strictly before today
+    // (a future Fri/Sat row can carry a non-null aTotal, which previously made
+    // a Thursday read "7 of 7"), then add today only if it has live sales — so
+    // today is never double-counted.
     const weekRowsArr = (allStoreData[storeName] || []).filter(r => r.week === selectedWeek);
-    const daysReported = weekRowsArr.filter(r => r.aTotal != null).length
+    const _todayStrSD = getETTodayStr();
+    const daysReported = weekRowsArr.filter(r => r.aTotal != null && r.date && r.date.toISOString().slice(0, 10) < _todayStrSD).length
       + (sm.isCurrentWeek && sm.liveSales != null && sm.liveSales > 0 ? 1 : 0);
     const daysInWeek = weekRowsArr.length || 7;
 
