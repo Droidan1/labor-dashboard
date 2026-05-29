@@ -3043,6 +3043,59 @@ async function buildDailySummaryData(env, date) {
   return { date, priorDate, stores, totals: { sales: totalSales, budget: totalBudget, prior: totalPrior } };
 }
 
+// ─── Morning Briefing API ────────────────────────────────────────────────
+// Read-only, key-gated JSON snapshot for an external "Morning Briefing"
+// dashboard. Per store: yesterday's FINAL net sales, the budget that applied
+// to that sales day, and today's forward budget/target. All values come
+// straight from the D1 daily_sales table — no live Clover calls — so this is
+// fast and safe to poll. Same-day-last-year is intentionally deferred (v2).
+async function buildMorningBriefingData(env) {
+  const { dateStr: todayStr } = getETToday();
+  // Yesterday in ET (anchor at noon UTC to avoid DST edge slips).
+  const yd = new Date(todayStr + 'T12:00:00Z');
+  yd.setUTCDate(yd.getUTCDate() - 1);
+  const yesterdayStr = yd.toISOString().slice(0, 10);
+
+  const [{ results: yRows }, { results: tRows }] = await Promise.all([
+    env.DB.prepare('SELECT store, total, budget FROM daily_sales WHERE date = ?').bind(yesterdayStr).all(),
+    env.DB.prepare('SELECT store, budget FROM daily_sales WHERE date = ?').bind(todayStr).all(),
+  ]);
+
+  const yMap = {}, tMap = {};
+  for (const r of (yRows || [])) yMap[r.store] = r;
+  for (const r of (tRows || [])) tMap[r.store] = r;
+
+  const stores = ALL_STORES.map(store => {
+    const y = yMap[store] || {};
+    return {
+      storeId: store,
+      name: STORE_LABELS[store] || store,
+      salesDate: yesterdayStr,            // the day netSales covers (yesterday, ET)
+      netSales: y.total ?? null,          // yesterday's FINAL net sales
+      budgetForSalesDate: y.budget ?? null, // budget that applied to yesterday (compare vs netSales)
+      todayBudget: tMap[store]?.budget ?? null, // today's forward target
+    };
+  });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    salesDate: yesterdayStr,
+    todayDate: todayStr,
+    currency: 'USD',
+    stores,
+  };
+}
+
+// Constant-time string compare so the static API key can't be guessed via
+// response-timing. Length is allowed to leak (negligible for a random key).
+function timingSafeEqualStr(a, b) {
+  a = String(a || ''); b = String(b || '');
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 function _fmtDollars(v) {
   if (v == null) return '—';
   return '$' + Math.round(v).toLocaleString('en-US');
@@ -4180,6 +4233,35 @@ export default {
 
     const url = new URL(request.url);
     const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+
+    // ── Morning Briefing API (external, static-key auth) ──────────
+    // GET ?action=morning-briefing   key via X-API-Key header or ?key=
+    // Read-only per-store JSON for the boss's Morning Briefing dashboard.
+    // Gated BEFORE the session check so external callers don't need a cookie.
+    if (url.searchParams.get("action") === "morning-briefing") {
+      if (request.method !== "GET") {
+        return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
+      }
+      const expected = env.MORNING_BRIEFING_KEY;
+      const provided = request.headers.get("X-API-Key") || url.searchParams.get("key") || "";
+      if (!expected) {
+        return new Response(JSON.stringify({ error: "Endpoint not configured" }), { status: 503, headers: corsJson });
+      }
+      if (!timingSafeEqualStr(provided, expected)) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: "Database unavailable" }), { status: 503, headers: corsJson });
+      }
+      try {
+        const data = await buildMorningBriefingData(env);
+        return new Response(JSON.stringify(data), {
+          headers: { ...corsJson, "Cache-Control": "public, max-age=300" },
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
 
     // ── Auth: POST /auth/login — send magic link ──────────────────
     if (request.method === "POST" && url.searchParams.get("action") === "auth-login") {
