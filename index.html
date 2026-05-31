@@ -948,9 +948,22 @@
                 <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Week</label>
                 <select id="wrs-week-select" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors"></select>
               </div>
-              <button id="wrs-refresh" onclick="loadWeeklyRetail(true)" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Refresh</button>
-              <button id="wrs-download-pdf" onclick="downloadWrsAsPdf()" class="px-4 py-2 text-sm font-semibold bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg transition-colors">Download PDF</button>
-              <button id="wrs-download-csv" onclick="downloadWrsAsCsv()" class="px-4 py-2 text-sm font-semibold bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg transition-colors">Download CSV</button>
+              <div class="relative inline-block" id="wrs-download-wrap">
+                <button id="wrs-download-btn" type="button" onclick="toggleWrsDownload(event)" aria-haspopup="true" aria-expanded="false"
+                  class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg transition-colors">
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Download
+                  <svg id="wrs-download-chev" class="w-3.5 h-3.5 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div id="wrs-download-menu" class="hidden absolute right-0 mt-1.5 w-40 bg-white dark:bg-op-panelHi border border-gray-200 dark:border-op-border rounded-lg shadow-xl z-50 overflow-hidden">
+                  <button type="button" onclick="downloadWrsAsPdf();closeWrsDownload()" class="w-full flex items-center gap-2.5 text-left px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-op-ink hover:bg-gray-50 dark:hover:bg-[rgba(255,255,255,0.05)] transition-colors">
+                    <svg class="w-4 h-4 text-op-bad" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>PDF
+                  </button>
+                  <button type="button" onclick="downloadWrsAsCsv();closeWrsDownload()" class="w-full flex items-center gap-2.5 text-left px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-op-ink hover:bg-gray-50 dark:hover:bg-[rgba(255,255,255,0.05)] transition-colors border-t border-gray-100 dark:border-op-border">
+                    <svg class="w-4 h-4 text-accent-green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>CSV
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -8173,9 +8186,8 @@
         .find(p => p && !p.classList.contains('hidden'));
     if (!visiblePane) { alert('No active tab to export.'); return; }
 
-    const btn = el('wrs-download-pdf');
-    const origBtnText = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = 'Generating PDF…'; }
+    const btn = el('wrs-download-btn');
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
 
     const subtitle = (el('wrs-subtitle')?.textContent || '').trim();
     const generatedAt = new Date().toLocaleString('en-US', {
@@ -8330,7 +8342,7 @@
     } catch (err) {
       alert('PDF generation failed: ' + err.message);
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = origBtnText; }
+      if (btn) { btn.disabled = false; btn.style.opacity = ''; }
     }
   }
   window.downloadWrsAsPdf = downloadWrsAsPdf;
@@ -9798,6 +9810,46 @@
 
   window.switchWrsTab = switchWrsTab;
   window.loadWeeklyRetail = loadWeeklyRetail;
+
+  // Pull-to-refresh dispatcher — reloads the data for whatever page is active.
+  // On Weekly Retail this refreshes the active tab (Summary / a store / T13)
+  // by busting the fetch cache and reloading; elsewhere it reloads the
+  // dashboard. Returns a promise the PTR indicator awaits.
+  function pullRefreshAction() {
+    if (currentPage === 'weekly-summary') {
+      _apiCache.clear();
+      wrsData = null; wrsT13Data = null;
+      return Promise.resolve(loadWeeklyRetail(true));
+    }
+    return Promise.resolve(typeof loadAll === 'function' ? loadAll(true) : null);
+  }
+
+  // Download dropdown (PDF / CSV) on the Weekly Retail header.
+  function toggleWrsDownload(e) {
+    if (e) e.stopPropagation();
+    const menu = el('wrs-download-menu');
+    const chev = el('wrs-download-chev');
+    const btn = el('wrs-download-btn');
+    if (!menu) return;
+    const open = menu.classList.toggle('hidden') === false;
+    if (chev) chev.style.transform = open ? 'rotate(180deg)' : '';
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  function closeWrsDownload() {
+    const menu = el('wrs-download-menu');
+    const chev = el('wrs-download-chev');
+    const btn = el('wrs-download-btn');
+    if (menu && !menu.classList.contains('hidden')) menu.classList.add('hidden');
+    if (chev) chev.style.transform = '';
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  }
+  window.toggleWrsDownload = toggleWrsDownload;
+  window.closeWrsDownload = closeWrsDownload;
+  // Close the download menu on any outside click.
+  document.addEventListener('click', (e) => {
+    const wrap = el('wrs-download-wrap');
+    if (wrap && !wrap.contains(e.target)) closeWrsDownload();
+  });
 
   // ═══════════════════════════════════════════════════════════════
   //  WEEKLY RETAIL SUMMARY — Summary tab renderer
@@ -12281,13 +12333,13 @@
           const watchdog = setTimeout(() => {
             if (settled) return;
             settled = true;
-            console.warn('PTR: loadAll timeout — resetting indicator');
+            console.warn('PTR: refresh timeout — resetting indicator');
             reset();
             state = 'idle';
           }, 30000);
           Promise.resolve()
-            .then(() => loadAll(true))
-            .catch(err => console.warn('PTR: loadAll failed', err))
+            .then(() => pullRefreshAction())
+            .catch(err => console.warn('PTR: refresh failed', err))
             .finally(() => {
               if (settled) return;
               settled = true;
