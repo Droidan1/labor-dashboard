@@ -10140,20 +10140,90 @@
     const week = wrsData.week;
     const dates = wrsData.dates || [];
 
-    // Header card
-    const headerHtml = `<div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-5">
-      <div class="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">${escapeHtml(storeName)}</h2>
-          <p class="text-xs text-gray-400 dark:text-gray-500">Week ${escapeHtml(String(week))} · ${dates.length ? escapeHtml(dates[0] + ' – ' + dates[dates.length-1]) : ''}</p>
+    // ── Store hero (net vs budget + week stepper + channel chips) ──
+    const fmt$0s = v => (v == null ? '—' : '$' + Math.round(v).toLocaleString('en-US'));
+    const sNet = totals.netSales || 0, sBud = totals.budget || 0;
+    const sVar = totals.varianceDollar != null ? totals.varianceDollar : (sBud ? sNet - sBud : null);
+    const sPace = sBud > 0 ? (sNet / sBud) * 100 : null;
+    const sBarW = sPace != null ? Math.min(100, Math.max(0, sPace)) : 0;
+    const sBarColor = sPace == null ? '#5a6478' : (sPace >= 100 ? '#22c55e' : (sPace >= 95 ? '#f59e0b' : '#ef4444'));
+    const sVarColor = sVar == null ? 'text-opl-inkDim dark:text-op-inkDim' : (sVar >= 0 ? 'text-accent-green' : 'text-op-bad');
+    const sVarSign = sVar != null && sVar >= 0 ? '+' : '−';
+    const dateRange = dates.length ? `${dates[0]} – ${dates[dates.length - 1]}` : '';
+    const chipS = (l, v) => `<div class="rounded-[11px] bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.08)] dark:border-op-border px-2 py-2.5 text-center"><div class="text-[9px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-[14px] font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtK(v || 0)}</div></div>`;
+
+    const headerHtml = `<section class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5">
+      <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
+      <div class="relative">
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-lg font-extrabold text-opl-ink dark:text-op-ink truncate">${escapeHtml(storeName)}</h2>
+          <div class="flex-shrink-0 inline-flex items-center rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] overflow-hidden">
+            <button onclick="wrsStepWeek(1)" aria-label="Previous week" class="w-8 h-8 grid place-items-center text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">‹</button>
+            <span class="px-2 text-[12.5px] font-bold tabular-nums text-opl-ink dark:text-op-ink whitespace-nowrap">Week ${escapeHtml(String(week))}</span>
+            <button onclick="wrsStepWeek(-1)" aria-label="Next week" class="w-8 h-8 grid place-items-center text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">›</button>
+          </div>
         </div>
-        <div class="flex flex-wrap gap-4">
-          ${[['Retail', totals.retail],['Bin', totals.bin],['Auction', totals.auction],['Net Sales', totals.netSales]].map(([l,v]) =>
-            `<div class="text-center"><div class="text-[10px] text-gray-400 uppercase tracking-wider">${l}</div><div class="text-base font-bold text-gray-900 dark:text-white">${fmtK(v||0)}</div></div>`
-          ).join('')}
-        </div>
+        <div class="mt-2 font-geist font-extrabold tabular-nums tracking-tight leading-none text-4xl text-opl-ink dark:text-op-ink">${fmt$0s(sNet)}</div>
+        <div class="mt-1 text-[11.5px] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(dateRange)}</div>
+        <div class="mt-2 text-sm tabular-nums">${sVar != null ? `<span class="font-semibold ${sVarColor}">${sVarSign}${fmt$0s(Math.abs(sVar))}${sPace != null ? ` · ${Math.round(sPace)}%` : ''}</span> <span class="text-opl-inkDim dark:text-op-inkDim">of ${fmt$0s(sBud)} budget</span>` : '<span class="text-opl-inkDim dark:text-op-inkDim">No budget set</span>'}</div>
+        ${sPace != null ? `<div class="mt-3 h-2 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]"><div class="h-full rounded-full transition-[width] duration-500" style="width:${sBarW}%;background:${sBarColor}"></div></div>` : ''}
+        <div class="mt-4 grid grid-cols-4 gap-2">${chipS('Retail', totals.retail)}${chipS('Bin', totals.bin)}${chipS('Auction', totals.auction)}${chipS('Net', totals.netSales)}</div>
       </div>
+    </section>`;
+
+    // ── Profit strip ──────────────────────────────────────────────
+    const pHasCost = itemTotals.cost != null && itemTotals.cost > 0;
+    const pcell = (lab, val, cls) => `<div class="rounded-[12px] bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border px-2 py-2.5 text-center"><div class="text-[9px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim">${lab}</div><div class="mt-1 text-[15px] font-extrabold tabular-nums ${cls || 'text-opl-ink dark:text-op-ink'}">${val}</div></div>`;
+    const profitHtml = `<div class="grid grid-cols-4 gap-2 mt-2.5">
+      ${pcell('Net Sales', fmtK(itemTotals.netSales || 0))}
+      ${pcell('Ext Cost', pHasCost ? fmtK(itemTotals.cost) : '—')}
+      ${pcell('Gross Profit', pHasCost ? fmtK(itemTotals.grossProfit) : '—', pHasCost ? 'text-accent-green' : 'text-opl-inkDim dark:text-op-inkDim')}
+      ${pcell('GPM %', itemTotals.gpmPct != null ? fmtPct(itemTotals.gpmPct) : '—')}
     </div>`;
+
+    // ── Category card-rows (all L2; tap to expand L3 + cost detail) ──
+    const maxNet = Math.max(1, ...cats.map(c => c.netSales || 0));
+    const gpmBadge = (g) => {
+      if (g == null) return '';
+      const cls = g >= 45 ? 'text-accent-green bg-accent-green/15' : (g >= 30 ? 'text-op-warn bg-op-warn/15' : 'text-op-bad bg-op-bad/15');
+      return `<span class="text-[10.5px] font-extrabold px-1.5 py-0.5 rounded-full whitespace-nowrap ${cls}">GPM ${Math.round(g)}%</span>`;
+    };
+    let cardsHtml = `<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-5 mb-3 px-0.5">By category · all L2</h3><div class="space-y-1.5">`;
+    for (const c of cats) {
+      const color = colorForCategory(c.category);
+      const net = c.netSales || 0;
+      const share = maxNet > 0 ? (net / maxNet) * 100 : 0;
+      const hasL3 = Array.isArray(c.l3Rows) && c.l3Rows.length > 0;
+      const expanded = wrsExpandedL2.has(`${storeKey}:${c.category}`);
+      const meta = [c.qty ? `${fmtInt(c.qty)} qty` : null, c.asp != null ? `ASP ${fmtDollar(c.asp)}` : null].filter(Boolean).join(' · ');
+      const tapAttr = hasL3 ? `role="button" tabindex="0" onclick="toggleL2Expansion('${escapeHtml(storeKey)}','${escapeHtml(String(c.category).replace(/'/g, "\\'"))}')" class="cursor-pointer ` : `class="`;
+      cardsHtml += `<div ${tapAttr}bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-[13px] px-3.5 py-3 flex items-center gap-3">
+        <span class="flex-shrink-0 w-2.5 h-2.5 rounded-sm" style="background:${color}"></span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-baseline justify-between gap-2">
+            <span class="text-sm font-semibold text-opl-ink dark:text-op-ink truncate">${hasL3 ? `<span class="text-opl-inkDim dark:text-op-inkDim mr-0.5">${expanded ? '▾' : '▸'}</span>` : ''}${escapeHtml(String(c.category))}</span>
+            <span class="text-sm font-extrabold tabular-nums text-opl-ink dark:text-op-ink flex-shrink-0">${fmtK(net)}</span>
+          </div>
+          <div class="mt-1.5 flex items-center gap-2">
+            <div class="flex-1 h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.07)]"><div class="h-full rounded-full" style="width:${share.toFixed(1)}%;background:${color}"></div></div>
+            <span class="text-[10.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums whitespace-nowrap">${meta || '—'}</span>
+            ${gpmBadge(c.gpmPct)}
+          </div>
+        </div>
+      </div>`;
+      if (hasL3 && expanded) {
+        cardsHtml += `<div class="ml-6 mr-1 mb-1 rounded-[11px] bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.06)] dark:border-op-border divide-y divide-[rgba(255,255,255,0.04)]">` +
+          c.l3Rows.map(l => `<div class="flex items-center justify-between gap-2 px-3 py-2 text-xs">
+            <span class="text-opl-inkDim dark:text-op-inkDim truncate">${escapeHtml(String(l.l3 || ''))}</span>
+            <span class="flex items-center gap-3 flex-shrink-0 tabular-nums">
+              <span class="text-opl-inkDimmer dark:text-op-inkDimmer">${fmtInt(l.qty)} qty</span>
+              <span class="font-semibold text-opl-ink dark:text-op-ink">${fmtK(l.netSales || 0)}</span>
+              ${l.gpmPct != null ? `<span class="text-opl-inkDim dark:text-op-inkDim w-12 text-right">GPM ${Math.round(l.gpmPct)}%</span>` : '<span class="w-12"></span>'}
+            </span>
+          </div>`).join('') + `</div>`;
+      }
+    }
+    cardsHtml += `</div>`;
 
     // 13-column L2 table
     const thCls = 'px-2 py-2 text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap';
@@ -10228,8 +10298,30 @@
       </table>
     </div>`;
 
-    el('wrs-pane-store').innerHTML = headerHtml + tableHtml;
+    // Full L2/L3 detail table — collapsed; retains all cost columns + L3
+    // expansion, and keeps the CSV/PDF export (which scrapes <table>s) intact.
+    const detailsHtml = `<details class="mt-5 group bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
+      <summary class="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-opl-ink dark:text-op-ink flex items-center justify-between">
+        <span>Full L2 / L3 detail table</span><span class="text-opl-inkDim dark:text-op-inkDim text-xs group-open:rotate-180 transition-transform">▾</span></summary>
+      <div class="border-t border-gray-100 dark:border-gray-700">${tableHtml}</div>
+    </details>`;
+
+    el('wrs-pane-store').innerHTML = headerHtml + profitHtml + cardsHtml + detailsHtml;
   }
+
+  // Step the Weekly Retail week selector (±1) and reload via its change handler.
+  // delta +1 = previous (older) week, −1 = next (newer) week (options are newest-first).
+  function wrsStepWeek(delta) {
+    const sel = el('wrs-week-select');
+    if (!sel) return;
+    const opts = [...sel.options];
+    const idx = opts.findIndex(o => o.value === sel.value);
+    const ni = idx + delta;
+    if (ni < 0 || ni >= opts.length) return;
+    sel.value = opts[ni].value;
+    sel.dispatchEvent(new Event('change'));
+  }
+  window.wrsStepWeek = wrsStepWeek;
 
   function toggleL2Expansion(storeKey, l2) {
     const key = `${storeKey}:${l2}`;
