@@ -1698,6 +1698,31 @@
       </div>
       <div class="max-w-3xl mx-auto px-6 py-6 space-y-6">
 
+        <!-- What's New Announcement (superuser) -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
+          <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">What's New Announcement</h2>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Compose a popup and push it to all users. It shows once per person on next open until they dismiss it. Pushing again re-shows it for everyone.</p>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Title</label>
+              <input id="ann-title" type="text" maxlength="120" placeholder="What's New"
+                class="w-full text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Items — one per line</label>
+              <textarea id="ann-items" rows="5" placeholder="Refreshed look across the app :: New header, store cards, and charts.&#10;Pull to refresh&#10;Indy East added; Wyoming closed."
+                class="w-full text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green font-mono"></textarea>
+              <p class="text-[11px] text-gray-400 dark:text-op-inkDimmer mt-1">Optional detail after <code>::</code> — e.g. <code>Title :: short description</code></p>
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+              <button onclick="pushAnnouncement()" id="ann-push-btn" class="px-4 py-2 text-sm font-bold rounded-lg bg-accent-green hover:bg-[#1ea34e] text-[#06210f] transition-colors">Push to all users</button>
+              <button onclick="previewAnnouncement()" class="px-4 py-2 text-sm font-semibold rounded-lg border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:bg-gray-50 dark:hover:bg-[rgba(255,255,255,0.04)] transition-colors">Preview</button>
+              <button onclick="clearAnnouncement()" class="px-4 py-2 text-sm font-semibold rounded-lg border border-op-bad/30 text-op-bad hover:bg-op-bad/10 transition-colors">Clear</button>
+              <span id="ann-status" class="text-xs"></span>
+            </div>
+          </div>
+        </div>
+
         <!-- Admin Tools -->
         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
           <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Admin Tools</h2>
@@ -2193,14 +2218,8 @@
         </button>
       </div>
       <div class="px-5 pb-2 overflow-auto">
-        <h3 class="text-lg font-bold text-gray-900 dark:text-op-ink mb-3">Recent updates</h3>
-        <ul class="space-y-3">
-          <li class="flex gap-3"><span class="mt-1.5 w-1.5 h-1.5 rounded-full bg-accent-green flex-shrink-0"></span><div><div class="text-sm font-semibold text-gray-900 dark:text-op-ink">Refreshed look across the app</div><div class="text-xs text-gray-500 dark:text-op-inkDim mt-0.5">New dashboard header, store cards, and charts.</div></div></li>
-          <li class="flex gap-3"><span class="mt-1.5 w-1.5 h-1.5 rounded-full bg-accent-green flex-shrink-0"></span><div><div class="text-sm font-semibold text-gray-900 dark:text-op-ink">Redesigned Hourly &amp; Item Sales</div><div class="text-xs text-gray-500 dark:text-op-inkDim mt-0.5">Cleaner breakdowns with peak/slow hours and category shares.</div></div></li>
-          <li class="flex gap-3"><span class="mt-1.5 w-1.5 h-1.5 rounded-full bg-accent-green flex-shrink-0"></span><div><div class="text-sm font-semibold text-gray-900 dark:text-op-ink">Weekly Retail Summary &amp; Supply Budgets</div><div class="text-xs text-gray-500 dark:text-op-inkDim mt-0.5">New layouts that surface pace vs budget at a glance.</div></div></li>
-          <li class="flex gap-3"><span class="mt-1.5 w-1.5 h-1.5 rounded-full bg-accent-green flex-shrink-0"></span><div><div class="text-sm font-semibold text-gray-900 dark:text-op-ink">Pull to refresh</div><div class="text-xs text-gray-500 dark:text-op-inkDim mt-0.5">Drag down from the top of any page to reload.</div></div></li>
-          <li class="flex gap-3"><span class="mt-1.5 w-1.5 h-1.5 rounded-full bg-accent-green flex-shrink-0"></span><div><div class="text-sm font-semibold text-gray-900 dark:text-op-ink">Store updates</div><div class="text-xs text-gray-500 dark:text-op-inkDim mt-0.5">Indy East added; Wyoming closed.</div></div></li>
-        </ul>
+        <h3 id="whatsnew-title" class="text-lg font-bold text-gray-900 dark:text-op-ink mb-3">What's New</h3>
+        <ul id="whatsnew-list" class="space-y-3"></ul>
       </div>
       <div class="px-5 py-4 border-t border-gray-100 dark:border-op-border">
         <button onclick="closeWhatsNew(true)" class="w-full py-2.5 rounded-xl bg-accent-green hover:bg-[#1ea34e] text-[#06210f] font-bold text-sm transition-colors">Dismiss</button>
@@ -5584,6 +5603,7 @@
     // Guard superuser-only pages
     if (page === 'admin-settings') {
       if (!currentUser || currentUser.role !== 'superuser') return;
+      try { loadAnnouncementForm(); } catch (_) {}
     }
     // Push the outgoing page onto the back stack — but only on forward
     // navigations (taps), not on goBack() restores. Skip when staying on
@@ -9894,23 +9914,118 @@
   window.loadWeeklyRetail = loadWeeklyRetail;
 
   // ── "What's New" popup ───────────────────────────────────────────
-  // Bump this when the popup content changes — it re-shows for everyone.
-  const WHATS_NEW_VERSION = '2026-06-01';
+  // Content is authored by a superuser (Admin Tools → Announcement) and
+  // stored server-side. Each push gets a new id; the popup re-shows for
+  // everyone until they Dismiss (which persists that id locally).
   const WHATS_NEW_KEY = 'dashWhatsNewDismissed';
-  function maybeShowWhatsNew() {
-    try { if (localStorage.getItem(WHATS_NEW_KEY) === WHATS_NEW_VERSION) return; } catch (_) {}
+  let _whatsNewId = null;
+
+  async function maybeShowWhatsNew() {
+    let a = null;
+    try {
+      const data = await cachedFetch(`${WORKER_BASE}?action=announcement`, { credentials: 'include' });
+      a = data && data.announcement;
+    } catch (_) { return; }            // endpoint unavailable → no popup
+    if (!a || !a.id) return;
+    try { if (localStorage.getItem(WHATS_NEW_KEY) === a.id) return; } catch (_) {}
+    _whatsNewId = a.id;
+    const titleEl = el('whatsnew-title');
+    const listEl = el('whatsnew-list');
+    if (!titleEl || !listEl) return;
+    titleEl.textContent = a.title || "What's New";
+    listEl.innerHTML = (a.items || []).map(it => `
+      <li class="flex gap-3">
+        <span class="mt-1.5 w-1.5 h-1.5 rounded-full bg-accent-green flex-shrink-0"></span>
+        <div><div class="text-sm font-semibold text-gray-900 dark:text-op-ink">${escapeHtml(it.t || '')}</div>
+        ${it.d ? `<div class="text-xs text-gray-500 dark:text-op-inkDim mt-0.5">${escapeHtml(it.d)}</div>` : ''}</div>
+      </li>`).join('');
     const m = el('whatsnew-modal');
     if (m) m.classList.remove('hidden');
   }
-  // persist=true only on Dismiss → never show again (until version bumps).
+  // persist=true only on Dismiss → never show this announcement again.
   // Closing via X / backdrop / Esc passes false → it shows again next open.
   function closeWhatsNew(persist) {
     const m = el('whatsnew-modal');
     if (m) m.classList.add('hidden');
-    if (persist) { try { localStorage.setItem(WHATS_NEW_KEY, WHATS_NEW_VERSION); } catch (_) {} }
+    if (persist && _whatsNewId) { try { localStorage.setItem(WHATS_NEW_KEY, _whatsNewId); } catch (_) {} }
   }
   window.maybeShowWhatsNew = maybeShowWhatsNew;
   window.closeWhatsNew = closeWhatsNew;
+
+  // ── Announcement authoring (Admin Tools → superuser) ──
+  // Parse the items textarea: one bullet per line, optional "Title :: detail".
+  function _parseAnnItems() {
+    return (el('ann-items')?.value || '').split('\n').map(line => {
+      const s = line.trim();
+      if (!s) return null;
+      const idx = s.indexOf('::');
+      return idx >= 0 ? { t: s.slice(0, idx).trim(), d: s.slice(idx + 2).trim() } : { t: s, d: '' };
+    }).filter(Boolean);
+  }
+  function _annStatus(msg, type) {
+    const s = el('ann-status'); if (!s) return;
+    s.textContent = msg || '';
+    s.className = 'text-xs ' + (type === 'error' ? 'text-op-bad' : type === 'ok' ? 'text-accent-green font-semibold' : 'text-opl-inkDim dark:text-op-inkDim');
+  }
+  async function loadAnnouncementForm() {
+    try {
+      const data = await cachedFetch(`${WORKER_BASE}?action=announcement`, { credentials: 'include' });
+      const a = data && data.announcement;
+      if (a && el('ann-title')) {
+        el('ann-title').value = a.title || '';
+        el('ann-items').value = (a.items || []).map(it => it.d ? `${it.t} :: ${it.d}` : it.t).join('\n');
+        _annStatus(`Current — pushed ${a.createdAt ? new Date(a.createdAt).toLocaleString('en-US') : ''}`, '');
+      }
+    } catch (_) {}
+  }
+  window.loadAnnouncementForm = loadAnnouncementForm;
+
+  function previewAnnouncement() {
+    _whatsNewId = null; // preview never persists a dismissal
+    const titleEl = el('whatsnew-title'), listEl = el('whatsnew-list');
+    titleEl.textContent = (el('ann-title')?.value || '').trim() || "What's New";
+    listEl.innerHTML = _parseAnnItems().map(it => `
+      <li class="flex gap-3"><span class="mt-1.5 w-1.5 h-1.5 rounded-full bg-accent-green flex-shrink-0"></span>
+      <div><div class="text-sm font-semibold text-gray-900 dark:text-op-ink">${escapeHtml(it.t)}</div>
+      ${it.d ? `<div class="text-xs text-gray-500 dark:text-op-inkDim mt-0.5">${escapeHtml(it.d)}</div>` : ''}</div></li>`).join('');
+    el('whatsnew-modal').classList.remove('hidden');
+  }
+  window.previewAnnouncement = previewAnnouncement;
+
+  async function pushAnnouncement() {
+    const title = (el('ann-title')?.value || '').trim();
+    const items = _parseAnnItems();
+    if (!title && items.length === 0) { _annStatus('Add a title or at least one item.', 'error'); return; }
+    if (!confirm('Push this announcement to all users now?')) return;
+    const btn = el('ann-push-btn'); if (btn) { btn.disabled = true; btn.textContent = 'Pushing…'; }
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=announcement-set`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, items }),
+      });
+      const data = await resp.json();
+      if (!data.ok) throw new Error(data.error || 'Failed');
+      _apiCache.clear();
+      _annStatus('✓ Pushed to all users', 'ok');
+    } catch (e) { _annStatus(e.message, 'error'); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = 'Push to all users'; } }
+  }
+  window.pushAnnouncement = pushAnnouncement;
+
+  async function clearAnnouncement() {
+    if (!confirm('Remove the current announcement? No popup will show until you push a new one.')) return;
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=announcement-clear`, { method: 'POST', credentials: 'include' });
+      const data = await resp.json();
+      if (!data.ok) throw new Error(data.error || 'Failed');
+      _apiCache.clear();
+      if (el('ann-title')) el('ann-title').value = '';
+      if (el('ann-items')) el('ann-items').value = '';
+      _annStatus('Cleared.', 'ok');
+    } catch (e) { _annStatus(e.message, 'error'); }
+  }
+  window.clearAnnouncement = clearAnnouncement;
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       const m = el('whatsnew-modal');

@@ -7158,6 +7158,57 @@ export default {
       }
     }
 
+    // ── "What's New" announcement (superuser authors; all users see) ──
+    // Stored as a single KV JSON blob. Bumping it (new id) re-shows the
+    // popup for everyone, even users who dismissed the previous one.
+    // GET ?action=announcement  — any authenticated user.
+    if (request.method === "GET" && url.searchParams.get("action") === "announcement") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      try {
+        const a = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get("announcement:current", "json") : null;
+        return new Response(JSON.stringify({ ok: true, announcement: a || null }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=announcement-set  — superuser only.
+    // Body: { title, items: [{ t, d }] }  → saved as the current announcement.
+    if (request.method === "POST" && url.searchParams.get("action") === "announcement-set") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
+      }
+      if (!env.SALES_SNAPSHOTS) return new Response(JSON.stringify({ error: "Storage unavailable" }), { status: 503, headers: corsJson });
+      try {
+        const body = await request.json();
+        const title = String(body.title || "").trim().slice(0, 120);
+        const items = Array.isArray(body.items) ? body.items
+          .map(it => ({ t: String(it.t || "").trim().slice(0, 120), d: String(it.d || "").trim().slice(0, 240) }))
+          .filter(it => it.t).slice(0, 12) : [];
+        if (!title && items.length === 0) {
+          return new Response(JSON.stringify({ error: "Title or at least one item required" }), { status: 400, headers: corsJson });
+        }
+        const announcement = { id: String(Date.now()), title, items, createdAt: new Date().toISOString(), createdBy: currentUser.email || currentUser.id || "superuser" };
+        await env.SALES_SNAPSHOTS.put("announcement:current", JSON.stringify(announcement));
+        return new Response(JSON.stringify({ ok: true, announcement }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=announcement-clear  — superuser only. Removes the popup.
+    if (request.method === "POST" && url.searchParams.get("action") === "announcement-clear") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
+      }
+      try {
+        if (env.SALES_SNAPSHOTS) await env.SALES_SNAPSHOTS.delete("announcement:current");
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     // DELETE ?action=supply-request-delete
     // Body: { id }  — superuser only. Cascades to items + history via FK.
     if (request.method === "DELETE" && url.searchParams.get("action") === "supply-request-delete") {
