@@ -3258,8 +3258,15 @@
 
   // Build the list of notifications from live + stored data.
   // Returns the list sorted: critical → warning → info → ok, then by ID.
+  // Notification alerts are gated to Admins + Superusers for now.
+  function notifsEnabledForUser() {
+    const r = currentUser && currentUser.role;
+    return r === 'admin' || r === 'superuser';
+  }
+
   function computeNotifications() {
     const out = [];
+    if (!notifsEnabledForUser()) return out; // alerts: admins/superusers only
     const todayStr = etTodayStr();
     const isCurrentWeek = selectedWeek === currentWeek;
     if (!isCurrentWeek) return out; // we only alert on the live day
@@ -3369,6 +3376,12 @@
   // Main render — call from renderDashboard. Updates badge, panel list,
   // inline strip (if any criticals), shake/pulse classes.
   function renderNotifications() {
+    // Hide the bell entirely for non-privileged users — alerts are
+    // admins/superusers only for now.
+    const bellWrap = el('notif-bell-wrap');
+    if (bellWrap) bellWrap.classList.toggle('hidden', !notifsEnabledForUser());
+    if (!notifsEnabledForUser()) return;
+
     const state = _notifState();
     _notifResetIfNewDay(state);
     const notifs = computeNotifications();
