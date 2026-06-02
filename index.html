@@ -3710,6 +3710,13 @@
       }
     }
 
+    // Store managers oversee a single store, so the all-stores rollup card
+    // isn't useful to them — hide it regardless of the data-driven toggles
+    // above. (Admins, superusers, and district managers still see it.)
+    if (currentUser && currentUser.role === 'manager') {
+      el("today-total-card").classList.add("hidden");
+    }
+
     const totalAvgCart = allOrderCount > 0 ? allCartTotal / allOrderCount : 0;
     const totalAvgItems = allOrderCount > 0 ? allItemCount / allOrderCount : 0;
     const totalAvgTxnSec = allTxnTimeCount > 0 ? Math.round(allTxnTimeTotal / allTxnTimeCount) : null;
