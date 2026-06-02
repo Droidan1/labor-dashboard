@@ -2188,13 +2188,17 @@
   // ═══════════════════════════════════════════════════════════════
   const SHEET_ID     = "17byTs8k0CjH5gPOuBncq3RS3rL4PJR0PamdnbkKPss8";
   const LABOR_TARGET = 14;
+  // Dashboard store roster. Wyoming (BL12) is removed here because the store
+  // is closed — it still appears on the Weekly Retail Summary page, which uses
+  // its own WRS_STORE_KEYS list. Indy East (BL16/BL17) is added as a card;
+  // its data is wired up later.
   const STORES = [
     "BL1/BL6 Coliseum",
     "BL2/BL7 South Bend",
     "BL4/BL5 Dupont",
     "BL8/BL9 Holland",
-    "BL12/BL13 Wyoming",
     "BL14/B15 Battle Creek",
+    "BL16/BL17 Indy East",
   ];
   const COLORS = ["#3BB54A","#194975","#00B8FF","#f59e0b","#ef4444","#ec4899"];
   const MAX_TXN_DURATION_MS = 30 * 60 * 1000; // 30 min – filter out tabs/holds
@@ -3272,7 +3276,7 @@
     if (!isCurrentWeek) return out; // we only alert on the live day
 
     const etHour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(new Date()));
-    const SHORT_LABEL = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek' };
+    const SHORT_LABEL = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek', BL16:'Indy East' };
 
     for (const s of STORES) {
       const code = s.split('/')[0];
@@ -7496,7 +7500,7 @@
   function _asWeekTotals() {
     const todayStr = new Date().toDateString();
     const isCurrentWeek = selectedWeek === currentWeek;
-    const SHORT_LABEL = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek' };
+    const SHORT_LABEL = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek', BL16:'Indy East' };
     const perStore = [];
     let totalSales = 0, totalBudget = 0;
     let storesReporting = 0;
