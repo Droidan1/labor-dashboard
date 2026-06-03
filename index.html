@@ -264,6 +264,16 @@
     }
     .sidebar .nav-label { opacity: 1; transition: opacity 0.2s 0.1s; white-space: nowrap; }
     .sidebar.collapsed .nav-label { opacity: 0; transition: opacity 0.1s; pointer-events: none; width: 0; overflow: hidden; }
+    /* Hover tooltip for collapsed-sidebar icons (positioned via JS as `fixed`
+       so the sidebar's overflow:hidden doesn't clip it). */
+    .sidebar-tip {
+      position: fixed; z-index: 9999; transform: translateY(-50%);
+      background: #16203a; color: #e7ecf3; border: 1px solid rgba(255,255,255,0.1);
+      padding: 6px 11px; border-radius: 9px; font-size: 12.5px; font-weight: 600;
+      white-space: nowrap; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      opacity: 0; pointer-events: none; transition: opacity 0.12s ease;
+    }
+    .sidebar-tip.show { opacity: 1; }
     .sidebar .logo-text { opacity: 1; transition: opacity 0.2s 0.1s; white-space: nowrap; }
     .sidebar.collapsed .logo-text { opacity: 0; transition: opacity 0.1s; }
     /* V1 Operator shell */
@@ -574,7 +584,7 @@
             </span>
             <span id="last-updated-time" class="tabular-nums">—</span>
           </div>
-          <div class="ml-auto flex items-center gap-2">
+          <div class="ml-auto flex items-center gap-3">
             <!-- Manual refresh (matches Weekly Retail) — desktop affordance
                  alongside pull-to-refresh on mobile. -->
             <button id="dash-refresh-btn" type="button" onclick="dashRefresh(this)" aria-label="Refresh" title="Refresh"
@@ -12343,7 +12353,36 @@
       });
     }
     initSidebar();
+    initSidebarTips();
     initDarkMode();
+    // Desktop: when the sidebar is collapsed, hovering a nav icon shows a
+    // floating tooltip with the page name. Positioned `fixed` so it isn't
+    // clipped by the sidebar's overflow:hidden.
+    function initSidebarTips() {
+      const sidebar = el('sidebar');
+      if (!sidebar) return;
+      let tip = null;
+      const ensure = () => { if (!tip) { tip = document.createElement('div'); tip.className = 'sidebar-tip'; document.body.appendChild(tip); } return tip; };
+      const hide = () => { if (tip) tip.classList.remove('show'); };
+      sidebar.querySelectorAll('.nav-item').forEach(item => {
+        item.addEventListener('mouseenter', () => {
+          if (!sidebar.classList.contains('collapsed')) return;
+          const lbl = item.querySelector('.nav-label');
+          const text = (lbl ? lbl.textContent : '').trim();
+          if (!text) return;
+          const t = ensure();
+          t.textContent = text;
+          const r = item.getBoundingClientRect();
+          t.style.top = (r.top + r.height / 2) + 'px';
+          t.style.left = (r.right + 10) + 'px';
+          t.classList.add('show');
+        });
+        item.addEventListener('mouseleave', hide);
+      });
+      window.addEventListener('scroll', hide, true);
+      window.addEventListener('resize', hide);
+    }
+
     // Dashboard header refresh ↻ (replaces the old expanding pill).
     // Spins the icon and reloads all dashboard data.
     window.dashRefresh = async function dashRefresh(btn) {
