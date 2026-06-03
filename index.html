@@ -575,6 +575,12 @@
             <span id="last-updated-time" class="tabular-nums">—</span>
           </div>
           <div class="ml-auto flex items-center gap-2">
+            <!-- Manual refresh (matches Weekly Retail) — desktop affordance
+                 alongside pull-to-refresh on mobile. -->
+            <button id="dash-refresh-btn" type="button" onclick="dashRefresh(this)" aria-label="Refresh" title="Refresh"
+              class="w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim flex items-center justify-center transition-colors hover:border-accent-green/40 hover:text-opl-ink dark:hover:text-op-ink focus:outline-none focus:ring-1 focus:ring-accent-green">
+              <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            </button>
             <!-- Notifications bell — pace alerts, milestones, offline events.
                  Badge color reflects highest-severity unread. Pulsing halo
                  + one-shot shake on new critical. -->
@@ -647,10 +653,6 @@
               </div>
             </div>
 
-            <button id="refresh-btn" aria-label="Refresh dashboard data" class="refresh-btn">
-              <span class="refresh-icon">↻</span>
-              <span class="refresh-label">↻ Refresh</span>
-            </button>
           </div>
         </div>
       </div>
@@ -12342,7 +12344,14 @@
     }
     initSidebar();
     initDarkMode();
-    el("refresh-btn").onclick = () => loadAll(true);
+    // Dashboard header refresh ↻ (replaces the old expanding pill).
+    // Spins the icon and reloads all dashboard data.
+    window.dashRefresh = async function dashRefresh(btn) {
+      const svg = btn?.querySelector('svg');
+      if (svg) { svg.style.transition = 'transform .6s ease'; svg.style.transform = 'rotate(360deg)'; }
+      try { await Promise.resolve(loadAll(true)); }
+      finally { if (svg) setTimeout(() => { svg.style.transition = 'none'; svg.style.transform = ''; }, 650); }
+    };
 
     // Wire Weekly Retail tab clicks once
     document.querySelectorAll('#wrs-tabs .wrs-tab').forEach(btn => {
