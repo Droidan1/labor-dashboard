@@ -2189,6 +2189,11 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   // so we look refunds up by order ID and distribute them proportionally
   // across that order's line items by gross value.
   const orderLineItemMap = new Map();
+  // Per-channel (retail vs bin) per-order rollup for the dashboard channel
+  // filter. Bin = L2 "Bin Products"; everything else = retail. Positive lines
+  // only (gross of refunds) — drives the channel-filtered matrix tiles, not
+  // the books. An order is counted toward a channel if it has ≥1 of its items.
+  const _ch = { retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 } };
   function getCat(name) {
     if (!cats[name]) cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0 };
     return cats[name];
@@ -2232,6 +2237,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
 
     const lineItems = order.lineItems?.elements || [];
     let orderLineItemNetCents = 0;
+    const _ordCh = { retail: { net: 0, units: 0 }, bin: { net: 0, units: 0 } };
 
     // ── Phase 2B: pre-compute discounts (amount + percentage) ─────
     // Clover stores percentage-based discounts as `percentage` with no
@@ -2479,6 +2485,9 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         l3Cat.net += (grossCents - discCents) / 100;
         l3Cat.cost += lineCost;
         orderLineItemNetCents += (grossCents - discCents);
+        const _b = (l2 === 'Bin Products') ? _ordCh.bin : _ordCh.retail;
+        _b.net += (grossCents - discCents) / 100;
+        _b.units += qty;
       }
     }
 
@@ -2492,6 +2501,9 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     if (residualCents !== 0) {
       const cat = getCat("Other / Non-Item");
       cat.net += residualCents / 100;
+    }
+    for (const k of ['retail', 'bin']) {
+      if (_ordCh[k].units > 0) { _ch[k].orders++; _ch[k].net += _ordCh[k].net; _ch[k].units += _ordCh[k].units; }
     }
   }
 
@@ -2723,6 +2735,20 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       gpmPct: totalNet > 0 ? Math.round((totalGp / totalNet) * 1000) / 10 : 0,
     },
     orderCount: allElements.length,
+    channels: {
+      retail: {
+        net: roundCents(_ch.retail.net), units: Math.round(_ch.retail.units), orders: _ch.retail.orders,
+        avgCart: _ch.retail.orders > 0 ? roundCents(_ch.retail.net / _ch.retail.orders) : 0,
+        avgItems: _ch.retail.orders > 0 ? Math.round(_ch.retail.units / _ch.retail.orders * 10) / 10 : 0,
+        asp: _ch.retail.units > 0 ? roundCents(_ch.retail.net / _ch.retail.units) : 0,
+      },
+      bin: {
+        net: roundCents(_ch.bin.net), units: Math.round(_ch.bin.units), orders: _ch.bin.orders,
+        avgCart: _ch.bin.orders > 0 ? roundCents(_ch.bin.net / _ch.bin.orders) : 0,
+        avgItems: _ch.bin.orders > 0 ? Math.round(_ch.bin.units / _ch.bin.orders * 10) / 10 : 0,
+        asp: _ch.bin.units > 0 ? roundCents(_ch.bin.net / _ch.bin.units) : 0,
+      },
+    },
     _debug: {
       unmappedL3, noCategory,
       itemCatMapSize: Object.keys(itemCatMap).length,

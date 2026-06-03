@@ -769,11 +769,11 @@
                     <span id="cm-auction-seg" class="h-full bg-accent-violet transition-[width] duration-500" style="width:0%"></span>
                   </div>
                   <div class="mt-4 grid grid-cols-3 gap-2 text-[13px]">
-                    <div id="cm-retail-col" class="transition-opacity duration-300">
+                    <div id="cm-retail-col" role="button" tabindex="0" onclick="setDashChannel('retail')" title="Tap to filter the metrics to Retail" class="transition-opacity duration-300 cursor-pointer rounded-lg -mx-1 px-1 py-0.5 hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.05)]">
                       <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-green flex-shrink-0"></span>Retail · <span id="cm-retail-pct">—</span></div>
                       <div id="cm-retail-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
                     </div>
-                    <div id="cm-bin-col" class="text-center transition-opacity duration-300">
+                    <div id="cm-bin-col" role="button" tabindex="0" onclick="setDashChannel('bin')" title="Tap to filter the metrics to BIN" class="text-center transition-opacity duration-300 cursor-pointer rounded-lg px-1 py-0.5 hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.05)]">
                       <div class="flex items-center justify-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-blue flex-shrink-0"></span>BIN · <span id="cm-bin-pct">—</span></div>
                       <div id="cm-bin-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
                     </div>
@@ -785,7 +785,7 @@
                 </div>
                 <!-- Matrix -->
                 <div class="mt-5 pt-5 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border lg:mt-0 lg:pt-0 lg:border-t-0">
-                  <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Matrix · Today</div>
+                  <div id="dash-matrix-label" class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Matrix · Today</div>
                   <div class="mt-3.5 grid grid-cols-4 gap-2">
                     <div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Cart</div><div id="mx-cart" class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div><span class="absolute -right-1 -bottom-1 text-accent-green pointer-events-none" style="opacity:.07"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-[42px] h-[42px]"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 2h3l2.7 13.5a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/></svg></span></div>
                     <div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">Avg Items</div><div id="mx-items" class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div><span class="absolute -right-1 -bottom-1 text-accent-green pointer-events-none" style="opacity:.07"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="w-[42px] h-[42px]"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></span></div>
@@ -2358,6 +2358,12 @@
   let selectedWeek   = null;
   let currentWeek    = null;
   let selectedDashDays = new Set();  // empty = whole week; else set of 'YYYY-MM-DD' (multi-select)
+  // Dashboard Matrix channel filter: null = all stores blended; 'retail' | 'bin'
+  // shows that channel's per-order metrics (from item-level L2 data).
+  let dashChannel = null;
+  let dashChannelData = null;        // { date, retail:{net,units,orders,avgCart,avgItems,asp}, bin:{...} }
+  let dashChannelLoading = false;
+  let _dashMxBlended = null;         // saved "All" matrix tile strings, to restore
   function etTodayStr() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); }
   let allWeeks       = [];
   let liveDataLoading = false;
@@ -3955,11 +3961,15 @@
     cmDim('cm-bin-col', bPct);
     cmDim('cm-auction-col', aPct);
 
-    // Matrix · Today
+    // Matrix · Today (blended / all channels)
     el('mx-cart').textContent = hasData ? fmtDollar(totalAvgCart) : '—';
     el('mx-items').textContent = hasData ? totalAvgItems.toFixed(1) : '—';
     el('mx-orders').textContent = hasData ? allOrderCount.toLocaleString() : '—';
     el('mx-asp').textContent = (hasData && totalAvgASP != null) ? fmtDollar(totalAvgASP) : '—';
+    // Save the blended values so toggling the channel filter off can restore
+    // them, then re-apply any active channel filter.
+    _dashMxBlended = { cart: el('mx-cart').textContent, items: el('mx-items').textContent, orders: el('mx-orders').textContent, asp: el('mx-asp').textContent };
+    applyDashChannel();
 
     // Always show Weekly (week-to-date, live-boosted) — even when a
     // specific day is selected. The day selector affects per-store cards
@@ -4074,6 +4084,73 @@
 
     renderCards(metrics);
     try { renderNotifications(); } catch (e) { /* never let notifs break dashboard */ }
+  }
+
+  // ── Dashboard Matrix channel filter ─────────────────────────────
+  // Tap Retail / BIN in Channel Mix → the four Matrix tiles show that
+  // channel's per-order metrics. Per-channel data is derived from item-level
+  // L2 categories (Bin Products vs the rest), summed across all stores for
+  // today. Tap the active channel again → back to all-channels (blended).
+  function setDashChannel(ch) {
+    dashChannel = (dashChannel === ch) ? null : ch;
+    if (dashChannel && !(dashChannelData && dashChannelData.date === etTodayStr())) loadDashChannel();
+    else applyDashChannel();
+  }
+  window.setDashChannel = setDashChannel;
+
+  function applyDashChannel() {
+    // Selection ring on the chosen channel column.
+    [['retail', 'cm-retail-col'], ['bin', 'cm-bin-col']].forEach(([ch, id]) => {
+      const c = el(id); if (!c) return;
+      c.classList.toggle('ring-1', dashChannel === ch);
+      c.classList.toggle('ring-accent-green', dashChannel === ch);
+    });
+    const lbl = el('dash-matrix-label');
+    const set4 = (cart, items, orders, asp) => {
+      if (el('mx-cart')) el('mx-cart').textContent = cart;
+      if (el('mx-items')) el('mx-items').textContent = items;
+      if (el('mx-orders')) el('mx-orders').textContent = orders;
+      if (el('mx-asp')) el('mx-asp').textContent = asp;
+    };
+    if (!dashChannel) {
+      if (lbl) lbl.textContent = 'Matrix · Today';
+      if (_dashMxBlended) set4(_dashMxBlended.cart, _dashMxBlended.items, _dashMxBlended.orders, _dashMxBlended.asp);
+      return;
+    }
+    if (lbl) lbl.textContent = 'Matrix · Today · ' + (dashChannel === 'retail' ? 'Retail' : 'BIN');
+    if (dashChannelLoading) { set4('…', '…', '…', '…'); return; }
+    const d = (dashChannelData && dashChannelData.date === etTodayStr()) ? dashChannelData[dashChannel] : null;
+    if (!d) { set4('—', '—', '—', '—'); return; }
+    set4(
+      d.orders > 0 ? fmtDollar(d.avgCart) : '—',
+      d.orders > 0 ? Number(d.avgItems).toFixed(1) : '—',
+      (d.orders || 0).toLocaleString('en-US'),
+      d.units > 0 ? fmtDollar(d.asp) : '—',
+    );
+  }
+  window.applyDashChannel = applyDashChannel;
+
+  async function loadDashChannel() {
+    const date = etTodayStr();
+    if (dashChannelData && dashChannelData.date === date) { applyDashChannel(); return; }
+    dashChannelLoading = true; applyDashChannel();
+    const sum = { retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 } };
+    try {
+      await Promise.all(STORES.map(async s => {
+        const storeKey = s.split('/')[0];
+        try {
+          const data = await cachedFetch(`${WORKER_BASE}?action=items&store=${storeKey}`, { credentials: 'include' });
+          const ch = data && data.channels;
+          if (ch) for (const k of ['retail', 'bin']) {
+            sum[k].net += ch[k]?.net || 0; sum[k].units += ch[k]?.units || 0; sum[k].orders += ch[k]?.orders || 0;
+          }
+        } catch (_) {}
+      }));
+      const derive = (x) => ({ net: x.net, units: x.units, orders: x.orders,
+        avgCart: x.orders > 0 ? x.net / x.orders : 0, avgItems: x.orders > 0 ? x.units / x.orders : 0, asp: x.units > 0 ? x.net / x.units : 0 });
+      dashChannelData = { date, retail: derive(sum.retail), bin: derive(sum.bin) };
+    } catch (_) { dashChannelData = null; }
+    finally { dashChannelLoading = false; applyDashChannel(); }
   }
 
   function renderCards(metrics) {
