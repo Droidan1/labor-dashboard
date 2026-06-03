@@ -969,15 +969,15 @@
         </div>
       </div>
       <div class="max-w-7xl mx-auto px-6 py-6">
-        <nav id="wrs-tabs" class="flex flex-wrap gap-1 border-b border-gray-200 dark:border-gray-700 mb-6">
+        <nav id="wrs-tabs" class="flex flex-wrap gap-1 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border mb-6">
           <button data-wrs-tab="summary" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-[#3BB54A] text-[#3BB54A]">Summary</button>
-          <button data-wrs-tab="t13" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">T13</button>
-          <button data-wrs-tab="BL1" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Coliseum</button>
-          <button data-wrs-tab="BL2" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">South Bend</button>
-          <button data-wrs-tab="BL4" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Dupont</button>
-          <button data-wrs-tab="BL8" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Holland</button>
-          <button data-wrs-tab="BL12" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Wyoming</button>
-          <button data-wrs-tab="BL14" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Battle Creek</button>
+          <button data-wrs-tab="t13" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">T13</button>
+          <button data-wrs-tab="BL1" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Coliseum</button>
+          <button data-wrs-tab="BL2" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">South Bend</button>
+          <button data-wrs-tab="BL4" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Dupont</button>
+          <button data-wrs-tab="BL8" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Holland</button>
+          <button data-wrs-tab="BL12" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Wyoming</button>
+          <button data-wrs-tab="BL14" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Battle Creek</button>
         </nav>
 
         <div id="wrs-loading" class="hidden text-center py-12 text-sm text-gray-400 dark:text-gray-500">Loading weekly data…</div>
@@ -1316,7 +1316,7 @@
         <div id="sr-budget-section"></div>
 
         <!-- Tab bar (buttons injected by JS based on role) -->
-        <div id="sr-tab-bar" class="flex gap-1 bg-gray-100 dark:bg-gray-700/60 rounded-xl p-1 w-fit flex-wrap"></div>
+        <div id="sr-tab-bar" class="flex gap-1 bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl p-1 w-fit flex-wrap"></div>
 
         <!-- Panes (all injected by JS) -->
         <div id="sr-pane-new"         class="hidden"></div>
@@ -5881,10 +5881,10 @@
     const SR_CATS    = ['Cleaning','Office','Fixtures','Safety','Other'];
     const SR_UNITS   = ['units','boxes','packs','rolls','cases','bags','pairs','sheets'];
     const SR_STATUS  = {
-      pending:      { label:'Pending',      pill:'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300' },
-      under_review: { label:'Under Review', pill:'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400' },
-      on_hold:      { label:'On Hold',      pill:'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400' },
-      ordered:      { label:'Ordered',      pill:'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
+      pending:      { label:'Pending',      pill:'bg-op-warn/15 text-op-warn' },
+      under_review: { label:'Under Review', pill:'bg-accent-blue/15 text-accent-blue' },
+      on_hold:      { label:'On Hold',      pill:'bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.07)] text-opl-inkDim dark:text-op-inkDim' },
+      ordered:      { label:'Ordered',      pill:'bg-accent-green/15 text-accent-green' },
     };
 
     let srItemSeq     = 0;
@@ -5894,7 +5894,7 @@
 
     // ── Helpers ──
     function srInp(extra) {
-      return `block w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700/80 text-gray-900 dark:text-white text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]/50 focus:border-[#3BB54A] ${extra||''}`;
+      return `block w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green focus:border-accent-green ${extra||''}`;
     }
     function getUserStores() {
       if (!currentUser) return [];
@@ -5909,8 +5909,8 @@
     }
     function priorityBadge(p) {
       return p === 'urgent'
-        ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400">🚨 Urgent</span>`
-        : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400">Normal</span>`;
+        ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-op-bad/15 text-op-bad">Urgent</span>`
+        : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)] text-opl-inkDim dark:text-op-inkDim">Normal</span>`;
     }
     function fmtSRDate(iso) {
       if (!iso) return '—';
@@ -5943,7 +5943,7 @@
       const labels = { new:'+ New Request', history:'My Requests', all:'All Requests', budget:'Budget', reports:'Reports' };
       bar.innerHTML = tabs.map(t =>
         `<button id="sr-tab-btn-${t}" onclick="srSwitchTab('${t}')"
-           class="px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-gray-500 dark:text-gray-400">${labels[t]}</button>`
+           class="px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-opl-inkDim dark:text-op-inkDim">${labels[t]}</button>`
       ).join('');
     }
 
@@ -5953,8 +5953,8 @@
       allPanes.forEach(p => { const d = el(`sr-pane-${p}`); if(d) d.classList.add('hidden'); });
       const active = el(`sr-pane-${tab === 'budget' ? 'budget-mgmt' : tab}`);
       if (active) active.classList.remove('hidden');
-      const activeC   = 'px-4 py-2 rounded-lg text-sm font-semibold transition-colors bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm';
-      const inactiveC = 'px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200';
+      const activeC   = 'px-4 py-2 rounded-lg text-sm font-semibold transition-colors bg-white dark:bg-op-panelHi text-gray-900 dark:text-op-ink shadow-sm';
+      const inactiveC = 'px-4 py-2 rounded-lg text-sm font-semibold transition-colors text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink';
       document.querySelectorAll('[id^="sr-tab-btn-"]').forEach(b => {
         b.className = b.id === `sr-tab-btn-${tab}` ? activeC : inactiveC;
       });
@@ -5971,9 +5971,10 @@
       const stores = getUserStores();
       if (!pane) return;
       const multiStore = stores.length > 1;
+      const lblCls = 'block text-xs font-semibold text-opl-inkDim dark:text-op-inkDim uppercase tracking-wider mb-1.5';
       const storeField = multiStore
         ? `<div class="mb-5">
-            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Store</label>
+            <label class="${lblCls}">Store</label>
             <select id="sr-store" class="${srInp('max-w-xs')}">
               ${stores.map(s=>`<option value="${s}">${SR_LABELS[s]||s}</option>`).join('')}
             </select>
@@ -5981,45 +5982,39 @@
         : `<input type="hidden" id="sr-store" value="${stores[0]||''}">`;
 
       pane.innerHTML = `
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-5">
+        <div class="bg-white dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-2xl p-5">
           ${storeField}
 
           <div class="mb-5">
-            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Priority</label>
-            <div class="flex gap-4">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="sr-priority" value="normal" id="sr-pri-normal" checked class="accent-[#3BB54A]">
-                <span class="text-sm text-gray-700 dark:text-gray-300">Normal</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="sr-priority" value="urgent" id="sr-pri-urgent" class="accent-red-500">
-                <span class="text-sm font-semibold text-red-600 dark:text-red-400">🚨 Urgent</span>
-              </label>
+            <label class="${lblCls}">Priority</label>
+            <div class="inline-flex gap-1 p-1 rounded-xl bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] border border-[rgba(20,16,8,0.08)] dark:border-op-border">
+              <label><input type="radio" name="sr-priority" value="normal" id="sr-pri-normal" checked class="peer sr-only">
+                <span class="inline-block px-4 py-1.5 rounded-lg text-sm font-semibold cursor-pointer text-opl-inkDim dark:text-op-inkDim peer-checked:bg-accent-green peer-checked:text-[#06210f]">Normal</span></label>
+              <label><input type="radio" name="sr-priority" value="urgent" id="sr-pri-urgent" class="peer sr-only">
+                <span class="inline-block px-4 py-1.5 rounded-lg text-sm font-semibold cursor-pointer text-opl-inkDim dark:text-op-inkDim peer-checked:bg-op-bad peer-checked:text-white">Urgent</span></label>
             </div>
           </div>
 
           <div class="mb-5">
-            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Items</label>
+            <label class="${lblCls.replace('mb-1.5','mb-2')}">Items</label>
             <div id="sr-items-container" class="space-y-2"></div>
             <button onclick="srAddItem()" type="button"
-              class="mt-3 flex items-center gap-1.5 text-sm font-semibold text-[#3BB54A] hover:text-[#2ea042] transition-colors">
+              class="mt-3 flex items-center gap-1.5 text-sm font-semibold text-accent-green hover:underline transition-colors">
               <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
               Add item
             </button>
           </div>
 
           <div class="mb-5">
-            <label for="sr-notes" class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Notes <span class="font-normal normal-case">(optional)</span></label>
+            <label for="sr-notes" class="${lblCls}">Notes <span class="font-normal normal-case">(optional)</span></label>
             <textarea id="sr-notes" rows="2" placeholder="Any additional context for this request…" class="${srInp()}"></textarea>
           </div>
 
-          <div class="flex items-center gap-3">
-            <button onclick="srSubmit()" id="sr-submit-btn" type="button"
-              class="px-5 py-2.5 bg-[#3BB54A] hover:bg-[#2ea042] text-white text-sm font-semibold rounded-lg transition-colors shadow-sm">
-              Submit Request
-            </button>
-            <div id="sr-submit-status" class="text-sm"></div>
-          </div>
+          <button onclick="srSubmit()" id="sr-submit-btn" type="button"
+            class="w-full py-2.5 bg-accent-green hover:bg-[#1ea34e] text-[#06210f] text-sm font-bold rounded-xl transition-colors">
+            Submit request
+          </button>
+          <div id="sr-submit-status" class="text-sm mt-2"></div>
         </div>`;
 
       srItemSeq = 0;
@@ -6031,7 +6026,7 @@
       if (!container) return;
       srItemSeq++;
       const n = srItemSeq;
-      const inp = 'block w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700/80 text-gray-900 dark:text-white text-sm px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]/50 focus:border-[#3BB54A]';
+      const inp = 'block w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-sm px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green focus:border-accent-green';
       const catOpts  = SR_CATS .map(c=>`<option>${c}</option>`).join('');
       const unitOpts = SR_UNITS.map(u=>`<option>${u}</option>`).join('');
       const div = document.createElement('div');
@@ -6155,29 +6150,22 @@
       const monthName = new Date(year, month-1, 1).toLocaleString('en-US',{month:'long'});
 
       const cards = withBudget.map(b => {
-        const pct       = b.budget > 0 ? Math.min(100, Math.round((b.spent/b.budget)*100)) : 0;
-        const barColor  = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-[#3BB54A]';
-        const remColor  = b.remaining < 0 ? 'text-red-500 dark:text-red-400' : pct >= 80 ? 'text-amber-600 dark:text-amber-400' : 'text-[#3BB54A]';
-        return `<div class="flex-shrink-0 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 p-4 w-52">
-          <div class="text-xs font-bold text-gray-700 dark:text-gray-200 mb-0.5">${b.label}</div>
-          <div class="text-[11px] text-gray-400 dark:text-gray-500 mb-3">${monthName} Supply Budget</div>
-          <div class="flex justify-between text-xs mb-1">
-            <span class="text-gray-400">Spent</span>
-            <span class="font-semibold text-gray-700 dark:text-gray-200">${fmtSRMoney(b.spent)}</span>
-          </div>
-          <div class="w-full h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full mb-2">
-            <div class="h-1.5 rounded-full transition-all ${barColor}" style="width:${pct}%"></div>
-          </div>
-          <div class="flex justify-between text-xs">
-            <span class="text-gray-400">Budget: ${fmtSRMoney(b.budget)}</span>
-            <span class="font-bold ${remColor}">${b.remaining>=0?fmtSRMoney(b.remaining)+' left':fmtSRMoney(Math.abs(b.remaining))+' over'}</span>
-          </div>
+        const pct      = b.budget > 0 ? Math.min(100, Math.round((b.spent/b.budget)*100)) : 0;
+        const over     = b.remaining < 0;
+        const barColor = pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e';
+        const bigCls   = over ? 'text-op-bad' : pct >= 80 ? 'text-op-warn' : 'text-accent-green';
+        return `<div class="flex-shrink-0 bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-2xl p-4 w-56">
+          <div class="text-[13.5px] font-extrabold text-opl-ink dark:text-op-ink">${b.label}</div>
+          <div class="text-[11px] text-opl-inkDim dark:text-op-inkDim">${monthName} Supply Budget</div>
+          <div class="mt-2.5 text-xl font-extrabold tabular-nums ${bigCls}">${over ? fmtSRMoney(Math.abs(b.remaining)) : fmtSRMoney(b.remaining)} <span class="text-[12px] font-semibold text-opl-inkDim dark:text-op-inkDim">${over ? 'over' : 'left'}</span></div>
+          <div class="text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums mt-0.5">${fmtSRMoney(b.spent)} spent of ${fmtSRMoney(b.budget)}</div>
+          <div class="mt-2.5 h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.07)]"><div class="h-full rounded-full" style="width:${pct}%;background:${barColor}"></div></div>
         </div>`;
       }).join('');
 
       section.innerHTML = `
         <div>
-          <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">Supply Budget — ${monthName} ${year}</div>
+          <div class="text-xs font-semibold text-opl-inkDim dark:text-op-inkDim uppercase tracking-wider mb-2">Supply Budget — ${monthName} ${year}</div>
           <div class="flex gap-3 overflow-x-auto pb-1">${cards}</div>
         </div>`;
     }
@@ -6220,7 +6208,7 @@
         return `<button onclick="srSetFilter('${f.v}')"
           class="px-3 py-1 rounded-full text-xs font-semibold transition-colors ${active
             ? 'bg-[#3BB54A] text-white'
-            : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'}">${f.label}</button>`;
+            : 'bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim border border-[rgba(20,16,8,0.08)] dark:border-op-border hover:text-opl-ink dark:hover:text-op-ink'}">${f.label}</button>`;
       }).join('');
     }
 
@@ -6240,7 +6228,7 @@
         const nItems = r.item_count === 1 ? '1 item' : `${r.item_count} items`;
         const dated  = new Date(r.submitted_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
         return `
-          <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
+          <div class="bg-white dark:bg-op-panel rounded-2xl border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden">
             <div class="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors select-none"
                  onclick="srToggleDetail('${r.id}')">
               <div class="flex-1 min-w-0">
@@ -6438,13 +6426,13 @@
       const storeOpts = [['all','All Stores'],...SR_ALL.map(s=>[s, SR_LABELS[s]||s])];
       const statusOpts= [['all','All Statuses'],['pending','Pending'],['under_review','Under Review'],['on_hold','On Hold'],['ordered','Ordered']];
       const priOpts   = [['all','All Priorities'],['urgent','Urgent'],['normal','Normal']];
-      const sel = (id, opts, val) => `<select id="${id}" onchange="srAllFilter()" class="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]/50">${opts.map(([v,l])=>`<option value="${v}" ${val===v?'selected':''}>${l}</option>`).join('')}</select>`;
+      const sel = (id, opts, val) => `<select id="${id}" onchange="srAllFilter()" class="rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-xs font-semibold px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green">${opts.map(([v,l])=>`<option value="${v}" ${val===v?'selected':''}>${l}</option>`).join('')}</select>`;
 
       bar.innerHTML = sel('sr-f-store', storeOpts, srAllFilters.store)
         + sel('sr-f-status', statusOpts, srAllFilters.status)
         + sel('sr-f-pri', priOpts, srAllFilters.priority)
-        + `<button onclick="srLoadAllRequests()" class="px-3 py-1.5 bg-[#3BB54A] text-white text-xs font-semibold rounded-lg hover:bg-[#2ea042] transition-colors">Refresh</button>
-           <button onclick="srExportCSV()" class="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">↓ CSV</button>`;
+        + `<button onclick="srLoadAllRequests()" title="Refresh" aria-label="Refresh" class="w-[34px] h-[34px] grid place-items-center rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-500 dark:text-op-inkDim hover:border-accent-green/40 transition-colors"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
+           <button onclick="srExportCSV()" class="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-700 dark:text-op-ink text-xs font-semibold rounded-lg hover:border-accent-green/40 transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>CSV</button>`;
     }
 
     function srAllFilter() {
@@ -6467,7 +6455,7 @@
         const dated = new Date(r.submitted_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
         const nItems = r.item_count === 1 ? '1 item' : `${r.item_count} items`;
         return `
-          <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
+          <div class="bg-white dark:bg-op-panel rounded-2xl border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden">
             <div class="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors select-none"
                  onclick="srToggleSuperDetail('${r.id}')">
               <div class="flex-1 min-w-0">
@@ -6928,7 +6916,24 @@
         return;
       }
 
-      const storeHeaders = SR_ALL.map(s=>`<th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 whitespace-nowrap">${SR_LABELS[s]||s}</th>`).join('');
+      // ── KPI tiles: this calendar month ──
+      const now = new Date();
+      const curKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+      let moOrdered = 0, moCount = 0, openCount = 0;
+      for (const r of requests) {
+        const d = new Date(r.submitted_at);
+        const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        if (k === curKey) { moCount++; if (r.status === 'ordered' && r.cost != null) moOrdered += r.cost; }
+        if (r.status !== 'ordered') openCount++;
+      }
+      const kpi = (t, n, cls) => `<div class="rounded-2xl bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border p-4 text-center"><div class="text-[9.5px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim">${t}</div><div class="mt-1 text-lg font-extrabold tabular-nums ${cls||'text-opl-ink dark:text-op-ink'}">${n}</div></div>`;
+      const kpiRow = `<div class="grid grid-cols-3 gap-3">
+        ${kpi('This month · ordered', fmtSRMoney(moOrdered))}
+        ${kpi('This month · requests', moCount)}
+        ${kpi('Open (not ordered)', openCount, openCount > 0 ? 'text-op-warn' : 'text-opl-ink dark:text-op-ink')}
+      </div>`;
+
+      const storeHeaders = SR_ALL.map(s=>`<th class="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wider text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">${SR_LABELS[s]||s}</th>`).join('');
       const tableRows = sortedMonths.map(mk => {
         const [y, m] = mk.split('-').map(Number);
         const monthLabel = new Date(y,m-1,1).toLocaleString('en-US',{month:'short',year:'numeric'});
@@ -6940,38 +6945,39 @@
           const budget = budMap[`${s}-${y}-${m}`] || 0;
           rowTotal += spent;
           const pct = budget > 0 ? Math.round((spent/budget)*100) : null;
-          const color = pct == null ? '' : pct >= 100 ? 'text-red-500' : pct >= 80 ? 'text-amber-500' : '';
-          return `<td class="px-3 py-2 text-right text-sm whitespace-nowrap">
-            ${spent > 0 ? `<span class="font-semibold ${color}">${fmtSRMoney(spent)}</span>` : '<span class="text-gray-300 dark:text-gray-600">—</span>'}
-            ${count > 0 ? `<span class="text-xs text-gray-400 ml-1">(${count})</span>` : ''}
+          const color = pct == null ? '' : pct >= 100 ? 'text-op-bad' : pct >= 80 ? 'text-op-warn' : '';
+          return `<td class="px-3 py-2 text-right text-sm whitespace-nowrap tabular-nums">
+            ${spent > 0 ? `<span class="font-semibold ${color}">${fmtSRMoney(spent)}</span>` : '<span class="text-opl-inkDimmer dark:text-op-inkDimmer">—</span>'}
+            ${count > 0 ? `<span class="text-xs text-opl-inkDim dark:text-op-inkDim ml-1">(${count})</span>` : ''}
           </td>`;
         }).join('');
-        return `<tr class="border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
-          <td class="px-3 py-2 text-sm font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap">${monthLabel}</td>
+        return `<tr class="border-b border-[rgba(20,16,8,0.05)] dark:border-op-border/50">
+          <td class="px-3 py-2 text-sm font-semibold text-opl-ink dark:text-op-ink whitespace-nowrap sticky left-0 bg-white dark:bg-op-panel">${monthLabel}</td>
           ${cells}
-          <td class="px-3 py-2 text-right text-sm font-bold text-gray-900 dark:text-white whitespace-nowrap">${rowTotal > 0 ? fmtSRMoney(rowTotal) : '—'}</td>
+          <td class="px-3 py-2 text-right text-sm font-bold text-opl-ink dark:text-op-ink whitespace-nowrap tabular-nums">${rowTotal > 0 ? fmtSRMoney(rowTotal) : '—'}</td>
         </tr>`;
       }).join('');
 
       pane.innerHTML = `
         <div class="space-y-4">
+          ${kpiRow}
           <div class="flex items-center justify-between">
-            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Spending by Month &amp; Store</h3>
-            <button onclick="srExportReportsCSV()" class="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">↓ Export CSV</button>
+            <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink">Spending by month &amp; store</h3>
+            <button onclick="srExportReportsCSV()" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-700 dark:text-op-ink text-xs font-semibold rounded-lg hover:border-accent-green/40 transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV</button>
           </div>
           <div class="overflow-x-auto">
-            <table class="w-full min-w-max bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
-              <thead class="bg-gray-50 dark:bg-gray-700/50">
-                <tr>
-                  <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Month</th>
+            <table class="w-full min-w-max bg-white dark:bg-op-panel rounded-2xl border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden">
+              <thead>
+                <tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+                  <th class="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-opl-inkDim dark:text-op-inkDim sticky left-0 bg-white dark:bg-op-panel">Month</th>
                   ${storeHeaders}
-                  <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-400">Total</th>
+                  <th class="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wider text-opl-inkDim dark:text-op-inkDim">Total</th>
                 </tr>
               </thead>
               <tbody>${tableRows}</tbody>
             </table>
           </div>
-          <p class="text-xs text-gray-400 dark:text-gray-500">Dollar amounts show cost of ordered requests only. Numbers in parentheses are total request counts.</p>
+          <p class="text-xs text-opl-inkDim dark:text-op-inkDim">Dollar amounts show cost of ordered requests only. Numbers in parentheses are total request counts.</p>
         </div>`;
     }
 
@@ -9871,8 +9877,8 @@
       btn.classList.toggle('border-[#3BB54A]', active);
       btn.classList.toggle('text-[#3BB54A]', active);
       btn.classList.toggle('border-transparent', !active);
-      btn.classList.toggle('text-gray-500', !active);
-      btn.classList.toggle('dark:text-gray-400', !active);
+      btn.classList.toggle('text-opl-inkDim', !active);
+      btn.classList.toggle('dark:text-op-inkDim', !active);
     });
     ['summary','t13','store'].forEach(p => el('wrs-pane-'+p).classList.add('hidden'));
     if (tab === 'summary') {
@@ -9894,8 +9900,8 @@
       btn.classList.toggle('border-[#3BB54A]', active);
       btn.classList.toggle('text-[#3BB54A]', active);
       btn.classList.toggle('border-transparent', !active);
-      btn.classList.toggle('text-gray-500', !active);
-      btn.classList.toggle('dark:text-gray-400', !active);
+      btn.classList.toggle('text-opl-inkDim', !active);
+      btn.classList.toggle('dark:text-op-inkDim', !active);
     });
     ['summary','t13','store'].forEach(p => el('wrs-pane-'+p).classList.add('hidden'));
     if (tab === 'summary') {
@@ -10606,7 +10612,7 @@
 
     // Full L2/L3 detail table — collapsed; retains all cost columns + L3
     // expansion, and keeps the CSV/PDF export (which scrapes <table>s) intact.
-    const detailsHtml = `<details class="mt-5 group bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
+    const detailsHtml = `<details class="mt-5 group bg-white dark:bg-op-panel rounded-2xl border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden">
       <summary class="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-opl-ink dark:text-op-ink flex items-center justify-between">
         <span>Full L2 / L3 detail table</span><span class="text-opl-inkDim dark:text-op-inkDim text-xs group-open:rotate-180 transition-transform">▾</span></summary>
       <div class="border-t border-gray-100 dark:border-gray-700">${tableHtml}</div>
