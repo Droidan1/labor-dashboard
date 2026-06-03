@@ -6076,6 +6076,7 @@
       if (tab === 'all')     srLoadAllRequests();
       if (tab === 'budget')  srLoadBudgetMgmt();
       if (tab === 'reports') srLoadReports();
+      if (tab === 'new')     setTimeout(() => firstHint('sr-additem', '[onclick="srAddItem()"]', "Add as many items as you need to a single request."), 450);
     }
     window.srSwitchTab = srSwitchTab;
 
@@ -6365,6 +6366,7 @@
           </div>`;
       }).join('');
       list.innerHTML = `<div class="space-y-2">${rows}</div>`;
+      setTimeout(() => firstHint('sr-expand', '#sr-requests-list [onclick^="srToggleDetail"]', "Tap a request to see its items &amp; status timeline."), 450);
     }
 
     async function srToggleDetail(id) {
@@ -9995,6 +9997,7 @@
       btn.classList.toggle('dark:text-op-inkDim', !active);
     });
     ['summary','t13','store'].forEach(p => el('wrs-pane-'+p).classList.add('hidden'));
+    setTimeout(() => firstHint('wrs-t13', '[data-wrs-tab="t13"]', "<b>T13</b> = trailing 13-week trends, by store &amp; category."), 500);
     if (tab === 'summary') {
       el('wrs-pane-summary').classList.remove('hidden');
       if (wrsData) renderWrsSummary();
@@ -10018,6 +10021,7 @@
       btn.classList.toggle('dark:text-op-inkDim', !active);
     });
     ['summary','t13','store'].forEach(p => el('wrs-pane-'+p).classList.add('hidden'));
+    setTimeout(() => firstHint('wrs-t13', '[data-wrs-tab="t13"]', "<b>T13</b> = trailing 13-week trends, by store &amp; category."), 500);
     if (tab === 'summary') {
       el('wrs-pane-summary').classList.remove('hidden');
       if (wrsData) renderWrsSummary();
@@ -10204,11 +10208,8 @@
   }
   function _coachShow(item, target) {
     _coachActive = true;
-    const r = target.getBoundingClientRect();
     const pulse = document.createElement('div');
     pulse.className = 'coach-pulse';
-    pulse.style.left = (r.left - 4) + 'px'; pulse.style.top = (r.top - 4) + 'px';
-    pulse.style.width = (r.width + 8) + 'px'; pulse.style.height = (r.height + 8) + 'px';
     pulse.style.borderRadius = (getComputedStyle(target).borderRadius || '12px');
     document.body.appendChild(pulse);
 
@@ -10217,43 +10218,49 @@
     const stepHtml = (item.opts.step && item.opts.total) ? `<span class="coach-step">${item.opts.step} of ${item.opts.total}</span>` : '<span></span>';
     bubble.innerHTML = `<div class="coach-caret"></div><div class="coach-txt">${item.text}</div><div class="coach-row">${stepHtml}<button type="button" class="coach-got">${item.opts.cta || 'Got it'}</button></div>`;
     document.body.appendChild(bubble);
-
-    const bw = bubble.offsetWidth, bh = bubble.offsetHeight;
-    const vw = window.innerWidth, vh = window.innerHeight, gap = 10;
-    const below = (r.bottom + gap + bh) <= (vh - 8);
-    bubble.classList.add(below ? 'below' : 'above');
-    const top = below ? (r.bottom + gap) : (r.top - gap - bh);
-    const left = Math.min(Math.max(8, r.left), vw - bw - 8);
-    bubble.style.top = top + 'px'; bubble.style.left = left + 'px';
     const caret = bubble.querySelector('.coach-caret');
-    caret.style.left = Math.min(Math.max(12, (r.left + r.width / 2) - left - 6), bw - 26) + 'px';
 
+    // Position bubble + pulse relative to the (possibly moved) target.
+    // Called on scroll/resize so the hint stays anchored — only "Got it"
+    // dismisses it.
+    function place() {
+      const r = target.getBoundingClientRect();
+      pulse.style.left = (r.left - 4) + 'px'; pulse.style.top = (r.top - 4) + 'px';
+      pulse.style.width = (r.width + 8) + 'px'; pulse.style.height = (r.height + 8) + 'px';
+      const bw = bubble.offsetWidth, bh = bubble.offsetHeight;
+      const vw = window.innerWidth, vh = window.innerHeight, gap = 10;
+      const below = (r.bottom + gap + bh) <= (vh - 8);
+      bubble.classList.toggle('below', below);
+      bubble.classList.toggle('above', !below);
+      const top = below ? (r.bottom + gap) : (r.top - gap - bh);
+      const left = Math.min(Math.max(8, r.left), vw - bw - 8);
+      bubble.style.top = top + 'px'; bubble.style.left = left + 'px';
+      caret.style.left = Math.min(Math.max(12, (r.left + r.width / 2) - left - 6), bw - 26) + 'px';
+    }
+    place();
     void bubble.offsetWidth;
     bubble.classList.add('show');
 
     let done = false;
-    const cleanup = () => {
+    const cleanup = (markSeen) => {
       if (done) return; done = true;
-      document.removeEventListener('click', onDoc, true);
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
+      window.removeEventListener('scroll', onMove, true);
+      window.removeEventListener('resize', onMove);
       bubble.remove(); pulse.remove();
+      if (markSeen) _coachMark(item.key);
       _coachActive = false;
       setTimeout(_coachProcess, 400);
     };
-    const dismiss = () => { _coachMark(item.key); cleanup(); };
-    const onDoc = (e) => { dismiss(); };
-    const onScroll = () => { dismiss(); };
+    const dismiss = () => cleanup(true);   // explicit "Got it" → mark seen
+    // Reposition on scroll/resize; if the target is gone (e.g. a modal that
+    // held it closed), tear down without marking seen so it can show again.
+    const onMove = () => {
+      if (!document.body.contains(target) || target.getBoundingClientRect().width === 0) { cleanup(false); return; }
+      place();
+    };
     bubble.querySelector('.coach-got').addEventListener('click', (e) => { e.stopPropagation(); dismiss(); });
-    // Defer global listeners so the click/tap that opened this screen
-    // doesn't immediately dismiss the hint.
-    setTimeout(() => {
-      document.addEventListener('click', onDoc, true);
-      window.addEventListener('scroll', onScroll, true);
-      window.addEventListener('resize', onScroll);
-    }, 60);
-    // Safety auto-dismiss.
-    setTimeout(dismiss, 12000);
+    window.addEventListener('scroll', onMove, true);
+    window.addEventListener('resize', onMove);
   }
   window.firstHint = firstHint;
   // Re-enable all tips (used by Settings → "Show tips again").
@@ -10926,6 +10933,7 @@
     </details>`;
 
     el('wrs-pane-store').innerHTML = headerHtml + profitHtml + cardsHtml + detailsHtml;
+    setTimeout(() => firstHint('wrs-cat', '#wrs-pane-store [onclick^="toggleL2Expansion"]', "Tap a category to expand its sub-categories &amp; cost detail."), 450);
   }
 
   // Step the Weekly Retail week selector (±1) and reload via its change handler.
@@ -12723,6 +12731,7 @@
         setTimeout(() => {
           firstHint('dash-more', '#hero-more-toggle', "Tap <b>More</b> for channel mix &amp; today's metrics.", { step: 1, total: 3 });
           firstHint('dash-store', () => document.querySelector('#store-cards > div'), "Tap a store for its full daily breakdown, chart &amp; item sales.", { step: 2, total: 3 });
+          firstHint('dash-days', '#day-chip-trigger', "Pick a day, combine several, or view the whole week.");
         }, 1800);
       });
       // Cold-start deep link: SW opened a fresh window at /?view=hourly.
