@@ -36,6 +36,7 @@ module.exports = {
           panelHi: '#fafaf6',
           ink: '#14110a',
           inkDim: '#6b6453',
+          inkDimmer: '#9c9484',
           sidebar: '#ece8dc',
           bad: '#c0392b',
         },
