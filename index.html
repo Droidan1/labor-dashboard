@@ -360,6 +360,33 @@
     }
     #ptr-hint .ptr-arrow { animation: none; }
     #ptr-hint.show { animation: ptr-hint-show 4s ease-out forwards; }
+
+    /* ── Coach-marks (first-time hints) ── */
+    .coach {
+      position: fixed; z-index: 200; width: 232px;
+      background: #16203a; border: 1px solid rgba(34,197,94,.45);
+      border-radius: 14px; padding: 12px 13px; box-shadow: 0 12px 32px rgba(0,0,0,.5);
+      backdrop-filter: blur(6px); opacity: 0; transform: translateY(4px);
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .coach.show { opacity: 1; transform: translateY(0); }
+    .coach .coach-txt { font-size: 12.5px; line-height: 1.45; color: #e7ecf3; font-weight: 500; }
+    .coach .coach-txt b { color: #22c55e; font-weight: 700; }
+    .coach .coach-row { margin-top: 9px; display: flex; align-items: center; justify-content: space-between; }
+    .coach .coach-step { font-size: 10.5px; color: #5a6478; font-weight: 600; }
+    .coach .coach-got { cursor: pointer; font-size: 11.5px; font-weight: 700; color: #06210f; background: #22c55e; padding: 4px 11px; border-radius: 8px; border: 0; }
+    .coach .coach-caret { position: absolute; width: 13px; height: 13px; background: #16203a; border: 1px solid rgba(34,197,94,.45); transform: rotate(45deg); }
+    .coach.below .coach-caret { top: -7px; border-right: 0; border-bottom: 0; }
+    .coach.above .coach-caret { bottom: -7px; border-left: 0; border-top: 0; }
+    .coach-pulse {
+      position: fixed; z-index: 199; pointer-events: none;
+      box-shadow: 0 0 0 0 rgba(34,197,94,.5); animation: coach-pulse 1.8s ease-out infinite;
+    }
+    @keyframes coach-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(34,197,94,.5); }
+      70%  { box-shadow: 0 0 0 12px rgba(34,197,94,0); }
+      100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+    }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -1370,6 +1397,21 @@
         </div>
       </div>
       <div class="max-w-3xl mx-auto px-6 py-6 space-y-2">
+
+        <!-- Show tips again row -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
+          <div class="w-full flex items-center gap-4 px-5 py-4">
+            <span class="flex-shrink-0 w-8 h-8 rounded-lg bg-[#3BB54A]/10 flex items-center justify-center">
+              <svg class="w-4 h-4 text-accent-green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </span>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-semibold text-gray-900 dark:text-op-ink">App tips</div>
+              <div class="text-xs text-gray-400 dark:text-op-inkDim">Replay the first-time hints that show you around the app.</div>
+            </div>
+            <button onclick="resetCoachTips(); this.textContent='✓ Tips reset'; setTimeout(()=>{this.textContent='Show tips again'},2500)"
+              class="flex-shrink-0 px-3.5 py-2 text-xs font-semibold rounded-lg border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-accent-green/50 transition-colors">Show tips again</button>
+          </div>
+        </div>
 
         <!-- Change Log row -->
         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
@@ -5033,6 +5075,9 @@
 
       loadingEl.classList.add('hidden');
       chartWrap.classList.remove('hidden');
+
+      // First-time hint: the tap-an-hour interaction is the most hidden one.
+      setTimeout(() => firstHint('hourly-tap', '#hourly-modal-chart-wrap', "<b>Tap any hour</b> on the chart to see exactly what sold that hour.", { step: 3, total: 3 }), 400);
 
       // onClick closes over start/storeName/dateStr/rowDate — refresh on every call
       const hourlyOnClick = (evt, _elements, chart) => {
@@ -10121,6 +10166,105 @@
   }
   window.maybePtrHint = maybePtrHint;
 
+  // ── Coach-mark engine (first-time hints) ─────────────────────────
+  // firstHint(key, target, text, {step,total,cta}) shows a bubble anchored
+  // to `target` (selector | element | fn→element) the first time, gated by
+  // localStorage. One at a time; auto-flips above/below + clamps to screen.
+  const COACH_SKIP_KEY = 'coachTipsDisabled';
+  const _coachQueue = [];
+  let _coachActive = false;
+  const _coachSeen = (k) => { try { return localStorage.getItem('coach:' + k) === '1'; } catch (_) { return true; } };
+  const _coachMark = (k) => { try { localStorage.setItem('coach:' + k, '1'); } catch (_) {} };
+  const _coachDisabled = () => { try { return localStorage.getItem(COACH_SKIP_KEY) === '1'; } catch (_) { return false; } };
+  // Auto-popups that should take precedence over coach-marks.
+  function _coachBlocked() {
+    return ['whatsnew-modal', 'biometric-prompt-modal'].some(id => {
+      const m = el(id); return m && !m.classList.contains('hidden');
+    });
+  }
+  function _coachResolve(t) {
+    if (typeof t === 'function') { try { t = t(); } catch (_) { t = null; } }
+    if (typeof t === 'string') t = document.querySelector(t);
+    return (t && t.getBoundingClientRect) ? t : null;
+  }
+  function firstHint(key, target, text, opts = {}) {
+    if (_coachDisabled() || _coachSeen(key)) return;
+    _coachQueue.push({ key, target, text, opts });
+    _coachProcess();
+  }
+  function _coachProcess() {
+    if (_coachActive || !_coachQueue.length) return;
+    if (_coachBlocked()) { setTimeout(_coachProcess, 1000); return; }
+    const item = _coachQueue[0];
+    if (_coachSeen(item.key) || _coachDisabled()) { _coachQueue.shift(); return _coachProcess(); }
+    const target = _coachResolve(item.target);
+    if (!target) { _coachQueue.shift(); return _coachProcess(); } // target gone — skip (not marked seen)
+    _coachQueue.shift();
+    _coachShow(item, target);
+  }
+  function _coachShow(item, target) {
+    _coachActive = true;
+    const r = target.getBoundingClientRect();
+    const pulse = document.createElement('div');
+    pulse.className = 'coach-pulse';
+    pulse.style.left = (r.left - 4) + 'px'; pulse.style.top = (r.top - 4) + 'px';
+    pulse.style.width = (r.width + 8) + 'px'; pulse.style.height = (r.height + 8) + 'px';
+    pulse.style.borderRadius = (getComputedStyle(target).borderRadius || '12px');
+    document.body.appendChild(pulse);
+
+    const bubble = document.createElement('div');
+    bubble.className = 'coach';
+    const stepHtml = (item.opts.step && item.opts.total) ? `<span class="coach-step">${item.opts.step} of ${item.opts.total}</span>` : '<span></span>';
+    bubble.innerHTML = `<div class="coach-caret"></div><div class="coach-txt">${item.text}</div><div class="coach-row">${stepHtml}<button type="button" class="coach-got">${item.opts.cta || 'Got it'}</button></div>`;
+    document.body.appendChild(bubble);
+
+    const bw = bubble.offsetWidth, bh = bubble.offsetHeight;
+    const vw = window.innerWidth, vh = window.innerHeight, gap = 10;
+    const below = (r.bottom + gap + bh) <= (vh - 8);
+    bubble.classList.add(below ? 'below' : 'above');
+    const top = below ? (r.bottom + gap) : (r.top - gap - bh);
+    const left = Math.min(Math.max(8, r.left), vw - bw - 8);
+    bubble.style.top = top + 'px'; bubble.style.left = left + 'px';
+    const caret = bubble.querySelector('.coach-caret');
+    caret.style.left = Math.min(Math.max(12, (r.left + r.width / 2) - left - 6), bw - 26) + 'px';
+
+    void bubble.offsetWidth;
+    bubble.classList.add('show');
+
+    let done = false;
+    const cleanup = () => {
+      if (done) return; done = true;
+      document.removeEventListener('click', onDoc, true);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+      bubble.remove(); pulse.remove();
+      _coachActive = false;
+      setTimeout(_coachProcess, 400);
+    };
+    const dismiss = () => { _coachMark(item.key); cleanup(); };
+    const onDoc = (e) => { dismiss(); };
+    const onScroll = () => { dismiss(); };
+    bubble.querySelector('.coach-got').addEventListener('click', (e) => { e.stopPropagation(); dismiss(); });
+    // Defer global listeners so the click/tap that opened this screen
+    // doesn't immediately dismiss the hint.
+    setTimeout(() => {
+      document.addEventListener('click', onDoc, true);
+      window.addEventListener('scroll', onScroll, true);
+      window.addEventListener('resize', onScroll);
+    }, 60);
+    // Safety auto-dismiss.
+    setTimeout(dismiss, 12000);
+  }
+  window.firstHint = firstHint;
+  // Re-enable all tips (used by Settings → "Show tips again").
+  function resetCoachTips() {
+    try {
+      Object.keys(localStorage).filter(k => k.startsWith('coach:')).forEach(k => localStorage.removeItem(k));
+      localStorage.removeItem(COACH_SKIP_KEY);
+    } catch (_) {}
+  }
+  window.resetCoachTips = resetCoachTips;
+
   // ── Announcement authoring (Admin Tools → superuser) ──
   // Parse the items textarea: one bullet per line, optional "Title :: detail".
   function _parseAnnItems() {
@@ -12575,6 +12719,11 @@
         // Biometric enroll prompt — slightly later, and it self-skips if the
         // What's New popup is showing (so they don't stack).
         setTimeout(maybeShowBiometricPrompt, 1400);
+        // First-time dashboard coach-marks (queued; defer behind any popup).
+        setTimeout(() => {
+          firstHint('dash-more', '#hero-more-toggle', "Tap <b>More</b> for channel mix &amp; today's metrics.", { step: 1, total: 3 });
+          firstHint('dash-store', () => document.querySelector('#store-cards > div'), "Tap a store for its full daily breakdown, chart &amp; item sales.", { step: 2, total: 3 });
+        }, 1800);
       });
       // Cold-start deep link: SW opened a fresh window at /?view=hourly.
       // Route after initial data loads so Phase 3's screen has live data,
