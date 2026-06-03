@@ -350,6 +350,16 @@
       100% { opacity: 0; transform: translateX(-4px); }
     }
     #swipe-label.show { animation: swipe-label-show 3.4s ease-out forwards; }
+    @keyframes ptr-hint-show {
+      0%   { opacity: 0; transform: translate(-50%, -8px); }
+      12%  { opacity: 1; transform: translate(-50%, 0); }
+      30%  { opacity: 1; transform: translate(-50%, 4px); }
+      48%  { opacity: 1; transform: translate(-50%, 0); }
+      80%  { opacity: 1; transform: translate(-50%, 0); }
+      100% { opacity: 0; transform: translate(-50%, -6px); }
+    }
+    #ptr-hint .ptr-arrow { animation: none; }
+    #ptr-hint.show { animation: ptr-hint-show 4s ease-out forwards; }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -553,6 +563,13 @@
         Swipe back
       </div>
 
+      <!-- First-time hint for mobile pull-to-refresh (shown once). -->
+      <div id="ptr-hint" class="hidden lg:hidden fixed left-1/2 top-[calc(env(safe-area-inset-top)+62px)] z-30 pointer-events-none inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-[11px] font-bold text-accent-green"
+        style="transform:translate(-50%,-8px);background:rgba(16,24,38,.92);border:1px solid rgba(34,197,94,.42);backdrop-filter:blur(6px)">
+        <svg class="w-[12px] h-[12px] ptr-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+        Pull down to refresh
+      </div>
+
       <nav id="bottom-nav" class="lg:hidden fixed left-0 right-0 bottom-0 z-30 flex border-t border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel transition-transform duration-300" style="padding:10px 6px calc(12px + env(safe-area-inset-bottom))">
         <button data-tab="dashboard" onclick="navigateToPage('dashboard')" class="bn-tab flex-1 flex flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
           <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Dashboard
@@ -588,7 +605,7 @@
             <!-- Manual refresh (matches Weekly Retail) — desktop affordance
                  alongside pull-to-refresh on mobile. -->
             <button id="dash-refresh-btn" type="button" onclick="dashRefresh(this)" aria-label="Refresh" title="Refresh"
-              class="order-last w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim flex items-center justify-center transition-colors hover:border-accent-green/40 hover:text-opl-ink dark:hover:text-op-ink focus:outline-none focus:ring-1 focus:ring-accent-green">
+              class="order-last w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hidden lg:flex items-center justify-center transition-colors hover:border-accent-green/40 hover:text-opl-ink dark:hover:text-op-ink focus:outline-none focus:ring-1 focus:ring-accent-green">
               <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             </button>
             <!-- Notifications bell — pace alerts, milestones, offline events.
@@ -961,7 +978,7 @@
                 <select id="wrs-week-select" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors"></select>
               </div>
               <button id="wrs-refresh-btn" type="button" onclick="wrsManualRefresh(this)" title="Refresh" aria-label="Refresh"
-                class="w-[38px] h-[38px] grid place-items-center rounded-lg border border-gray-300 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-500 dark:text-op-inkDim hover:border-accent-green/50 hover:text-gray-700 dark:hover:text-op-ink transition-colors">
+                class="w-[38px] h-[38px] hidden lg:grid place-items-center rounded-lg border border-gray-300 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-500 dark:text-op-inkDim hover:border-accent-green/50 hover:text-gray-700 dark:hover:text-op-ink transition-colors">
                 <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
               </button>
               <div class="relative inline-block" id="wrs-download-wrap">
@@ -10087,6 +10104,23 @@
   window.closeBiometricPrompt = closeBiometricPrompt;
   window.bioEnroll = bioEnroll;
 
+  // First-time hint for the mobile pull-to-refresh gesture (mirrors the
+  // swipe-back hint): touch devices only, shown once, gated by localStorage.
+  function maybePtrHint() {
+    if (!('ontouchstart' in window)) return;
+    try { if (localStorage.getItem('ptrHintShown') === '1') return; } catch (_) {}
+    const h = el('ptr-hint');
+    if (!h) return;
+    const wn = el('whatsnew-modal'), bio = el('biometric-prompt-modal');
+    if ((wn && !wn.classList.contains('hidden')) || (bio && !bio.classList.contains('hidden'))) return; // try again next load
+    h.classList.remove('hidden');
+    void h.offsetWidth;             // restart animation
+    h.classList.add('show');
+    try { localStorage.setItem('ptrHintShown', '1'); } catch (_) {}
+    setTimeout(() => { h.classList.add('hidden'); h.classList.remove('show'); }, 4200);
+  }
+  window.maybePtrHint = maybePtrHint;
+
   // ── Announcement authoring (Admin Tools → superuser) ──
   // Parse the items textarea: one bullet per line, optional "Title :: detail".
   function _parseAnnItems() {
@@ -12536,6 +12570,8 @@
       // is taking over the screen. Persists only when the user hits Dismiss.
       if (!dlView) Promise.resolve(loaded).finally(() => {
         setTimeout(maybeShowWhatsNew, 700);
+        // First-time pull-to-refresh hint (mobile, unobtrusive top chip).
+        setTimeout(maybePtrHint, 1000);
         // Biometric enroll prompt — slightly later, and it self-skips if the
         // What's New popup is showing (so they don't stack).
         setTimeout(maybeShowBiometricPrompt, 1400);
