@@ -2243,6 +2243,23 @@
     </div>
   </div>
 
+  <!-- ─────────── Biometric / Face Unlock enroll prompt (post-login) ─────────── -->
+  <div id="biometric-prompt-modal" class="hidden fixed inset-0 z-[70] flex items-center justify-center p-4">
+    <div class="absolute inset-0 bg-black/60" onclick="closeBiometricPrompt(false)"></div>
+    <div class="relative bg-white dark:bg-op-panel dark:border dark:border-op-border rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center">
+      <div class="mx-auto mb-4 w-14 h-14 rounded-2xl bg-accent-green/15 text-accent-green grid place-items-center">
+        <svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 11v3"/><path d="M7 7.5a5 5 0 0 1 8.6 3.5V14"/><path d="M5.5 11a6.5 6.5 0 0 1 9-6"/><path d="M9 19a10 10 0 0 1-1-4.5"/><path d="M12 11a1 1 0 0 0-1 1v1a8 8 0 0 0 1.5 4.5"/><path d="M16 14v.5a8 8 0 0 0 .8 3.5"/></svg>
+      </div>
+      <h3 class="text-lg font-bold text-gray-900 dark:text-op-ink">Enable faster sign-in</h3>
+      <p class="mt-1.5 text-sm text-gray-500 dark:text-op-inkDim">Use Face ID, Touch ID, or your fingerprint to sign in next time — no email code needed.</p>
+      <div id="bio-prompt-error" class="hidden mt-3 text-xs text-op-bad"></div>
+      <div class="mt-5 flex flex-col gap-2">
+        <button id="bio-prompt-enable" onclick="bioEnroll(this)" class="w-full py-2.5 rounded-xl bg-accent-green hover:bg-[#1ea34e] text-[#06210f] font-bold text-sm transition-colors">Enable</button>
+        <button onclick="closeBiometricPrompt(true)" class="w-full py-2 rounded-xl text-gray-500 dark:text-op-inkDim hover:text-gray-700 dark:hover:text-op-ink text-sm font-semibold transition-colors">Not now</button>
+      </div>
+    </div>
+  </div>
+
   <script>
   // ═══════════════════════════════════════════════════════════════
   //  CONFIG
@@ -10004,6 +10021,72 @@
   window.maybeShowWhatsNew = maybeShowWhatsNew;
   window.closeWhatsNew = closeWhatsNew;
 
+  // ── Biometric / Face Unlock enroll prompt (post-login) ───────────
+  const BIO_PROMPT_KEY = 'bioPromptDismissed';
+  async function maybeShowBiometricPrompt() {
+    try { if (localStorage.getItem(BIO_PROMPT_KEY) === '1') return; } catch (_) {}
+    if (!window.PublicKeyCredential) return;            // unsupported browser
+    const wn = el('whatsnew-modal');                    // don't stack on What's New
+    if (wn && !wn.classList.contains('hidden')) return;
+    let available = false;
+    try { available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(); } catch (_) {}
+    if (!available) return;                              // no Face/Touch/fingerprint hardware
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=passkey-list`, { credentials: 'include' });
+      const data = await resp.json();
+      if (data && data.passkeys && data.passkeys.length) return; // already enrolled
+    } catch (_) { return; }
+    const m = el('biometric-prompt-modal');
+    if (m) m.classList.remove('hidden');
+  }
+  // persist=true (Not now) → don't prompt again; enrolling also persists.
+  function closeBiometricPrompt(persist) {
+    const m = el('biometric-prompt-modal');
+    if (m) m.classList.add('hidden');
+    if (persist) { try { localStorage.setItem(BIO_PROMPT_KEY, '1'); } catch (_) {} }
+  }
+  // Self-contained enrollment (doesn't depend on the Settings panel DOM).
+  async function bioEnroll(btn) {
+    const errEl = el('bio-prompt-error');
+    if (errEl) errEl.classList.add('hidden');
+    if (!window.PublicKeyCredential) { if (errEl) { errEl.textContent = 'This device does not support biometric sign-in.'; errEl.classList.remove('hidden'); } return; }
+    const ua = navigator.userAgent;
+    const deviceName = ua.includes('iPhone') ? 'iPhone' : ua.includes('iPad') ? 'iPad' : ua.includes('Android') ? 'Android device' : 'This device';
+    if (btn) { btn.disabled = true; btn.textContent = 'Waiting for biometrics…'; }
+    try {
+      const beginResp = await fetch(`${WORKER_BASE}?action=passkey-register-begin`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceName }),
+      });
+      const opts = await beginResp.json();
+      if (opts.error) throw new Error(opts.error);
+      opts.challenge = base64urlToBuffer(opts.challenge);
+      opts.user.id = base64urlToBuffer(opts.user.id);
+      if (opts.excludeCredentials) opts.excludeCredentials = opts.excludeCredentials.map(c => ({ ...c, id: base64urlToBuffer(c.id) }));
+      const credential = await navigator.credentials.create({ publicKey: opts });
+      if (!credential) throw new Error('Registration cancelled');
+      const finishResp = await fetch(`${WORKER_BASE}?action=passkey-register-finish`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: credential.id, rawId: bufToBase64url(credential.rawId), type: credential.type,
+          response: { clientDataJSON: bufToBase64url(credential.response.clientDataJSON), attestationObject: bufToBase64url(credential.response.attestationObject) },
+        }),
+      });
+      const result = await finishResp.json();
+      if (!result.ok) throw new Error(result.error || 'Registration failed');
+      try { localStorage.setItem(BIO_PROMPT_KEY, '1'); } catch (_) {}
+      closeBiometricPrompt(false);
+      if (typeof loadPasskeyList === 'function') { try { loadPasskeyList(); } catch (_) {} }
+    } catch (e) {
+      if (e.name !== 'NotAllowedError' && errEl) { errEl.textContent = e.message; errEl.classList.remove('hidden'); }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Enable'; }
+    }
+  }
+  window.maybeShowBiometricPrompt = maybeShowBiometricPrompt;
+  window.closeBiometricPrompt = closeBiometricPrompt;
+  window.bioEnroll = bioEnroll;
+
   // ── Announcement authoring (Admin Tools → superuser) ──
   // Parse the items textarea: one bullet per line, optional "Title :: detail".
   function _parseAnnItems() {
@@ -12451,7 +12534,12 @@
       const loaded = loadAll();
       // "What's New" popup — show once data has painted, unless a deep link
       // is taking over the screen. Persists only when the user hits Dismiss.
-      if (!dlView) Promise.resolve(loaded).finally(() => setTimeout(maybeShowWhatsNew, 700));
+      if (!dlView) Promise.resolve(loaded).finally(() => {
+        setTimeout(maybeShowWhatsNew, 700);
+        // Biometric enroll prompt — slightly later, and it self-skips if the
+        // What's New popup is showing (so they don't stack).
+        setTimeout(maybeShowBiometricPrompt, 1400);
+      });
       // Cold-start deep link: SW opened a fresh window at /?view=hourly.
       // Route after initial data loads so Phase 3's screen has live data,
       // then strip the param so a manual refresh doesn't re-trigger it.
