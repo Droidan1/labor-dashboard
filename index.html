@@ -948,6 +948,10 @@
                 <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Week</label>
                 <select id="wrs-week-select" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors"></select>
               </div>
+              <button id="wrs-refresh-btn" type="button" onclick="wrsManualRefresh(this)" title="Refresh" aria-label="Refresh"
+                class="w-[38px] h-[38px] grid place-items-center rounded-lg border border-gray-300 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-500 dark:text-op-inkDim hover:border-accent-green/50 hover:text-gray-700 dark:hover:text-op-ink transition-colors">
+                <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              </button>
               <div class="relative inline-block" id="wrs-download-wrap">
                 <button id="wrs-download-btn" type="button" onclick="toggleWrsDownload(event)" aria-haspopup="true" aria-expanded="false"
                   class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg transition-colors">
@@ -4003,6 +4007,25 @@
     const cardShowHist = !isCurrentWeek || !isDayView || hasPastDay;
 
     for (const m of metrics) {
+      // Brand-new store with no data yet (e.g. Indy East before it's wired up):
+      // no stored rows and no load error. Show a clean "coming soon" placeholder
+      // instead of a card full of $0 / OFFLINE noise.
+      if ((allStoreData[m.store] || []).length === 0 && !histErrors[m.store] && !liveCloverData[m.store]) {
+        const ph = document.createElement("div");
+        ph.className = "bg-opl-panel dark:bg-op-panel border border-dashed border-[rgba(20,16,8,0.14)] dark:border-op-borderHi rounded-card p-5 transition-colors";
+        ph.innerHTML = `
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-base font-extrabold text-opl-ink dark:text-op-ink">${escapeHtml(m.name)}</span>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-[0.06em] border border-[rgba(20,16,8,0.1)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim">SOON</span>
+          </div>
+          <div class="mt-6 flex flex-col items-center text-center py-4">
+            <svg class="w-7 h-7 text-opl-inkDimmer dark:text-op-inkDimmer mb-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>
+            <div class="text-sm font-semibold text-opl-ink dark:text-op-ink">No data yet</div>
+            <div class="mt-0.5 text-xs text-opl-inkDim dark:text-op-inkDim">Sales will appear here once this store is live.</div>
+          </div>`;
+        container.appendChild(ph);
+        continue;
+      }
       const liveData = cardShowLive ? liveCloverData[m.store] : null;
       const liveSales = liveData?.total ?? null;
       const liveRetail = liveData?.retail ?? null;
@@ -9918,6 +9941,17 @@
 
   window.switchWrsTab = switchWrsTab;
   window.loadWeeklyRetail = loadWeeklyRetail;
+
+  // Desktop manual refresh for Weekly Retail (pull-to-refresh is touch-only).
+  async function wrsManualRefresh(btn) {
+    const svg = btn?.querySelector('svg');
+    if (svg) { svg.style.transition = 'transform .6s ease'; svg.style.transform = 'rotate(360deg)'; }
+    _apiCache.clear();
+    wrsData = null; wrsT13Data = null;
+    try { await Promise.resolve(loadWeeklyRetail(true)); }
+    finally { if (svg) setTimeout(() => { svg.style.transition = 'none'; svg.style.transform = ''; }, 650); }
+  }
+  window.wrsManualRefresh = wrsManualRefresh;
 
   // ── "What's New" popup ───────────────────────────────────────────
   // Content is authored by a superuser (Admin Tools → Announcement) and
