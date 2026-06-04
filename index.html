@@ -5234,7 +5234,7 @@
       chartWrap.classList.remove('hidden');
 
       // First-time hint: the tap-an-hour interaction is the most hidden one.
-      setTimeout(() => firstHint('hourly-tap', '#hourly-modal-chart-wrap', "<b>Tap any hour</b> on the chart to see exactly what sold that hour.", { step: 3, total: 3 }), 400);
+      setTimeout(() => firstHint('hourly-tap', '#hourly-chart', "<b>Tap any hour</b> on the chart to see exactly what sold that hour.", { step: 3, total: 3 }), 400);
 
       // onClick closes over start/storeName/dateStr/rowDate — refresh on every call
       const hourlyOnClick = (evt, _elements, chart) => {
