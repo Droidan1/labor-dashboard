@@ -768,16 +768,16 @@
                     <span id="cm-bin-seg" class="h-full bg-accent-blue transition-[width] duration-500" style="width:0%"></span>
                     <span id="cm-auction-seg" class="h-full bg-accent-violet transition-[width] duration-500" style="width:0%"></span>
                   </div>
-                  <div class="mt-4 grid grid-cols-3 gap-2 text-[13px]">
-                    <div id="cm-retail-col" role="button" tabindex="0" onclick="setDashChannel('retail')" title="Tap to filter the metrics to Retail" class="transition-opacity duration-300 cursor-pointer rounded-lg -mx-1 px-1 py-0.5 hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.05)]">
+                  <div class="mt-4 grid grid-cols-3 gap-1.5 text-[13px]">
+                    <div id="cm-retail-col" role="button" tabindex="0" onclick="setDashChannel('retail')" title="Tap to filter the metrics to Retail" class="transition rounded-lg px-2.5 py-2 cursor-pointer hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.05)]">
                       <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-green flex-shrink-0"></span>Retail · <span id="cm-retail-pct">—</span></div>
                       <div id="cm-retail-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
                     </div>
-                    <div id="cm-bin-col" role="button" tabindex="0" onclick="setDashChannel('bin')" title="Tap to filter the metrics to BIN" class="text-center transition-opacity duration-300 cursor-pointer rounded-lg px-1 py-0.5 hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.05)]">
+                    <div id="cm-bin-col" role="button" tabindex="0" onclick="setDashChannel('bin')" title="Tap to filter the metrics to BIN" class="text-center transition rounded-lg px-2.5 py-2 cursor-pointer hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.05)]">
                       <div class="flex items-center justify-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-blue flex-shrink-0"></span>BIN · <span id="cm-bin-pct">—</span></div>
                       <div id="cm-bin-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
                     </div>
-                    <div id="cm-auction-col" class="text-right transition-opacity duration-300">
+                    <div id="cm-auction-col" class="text-right transition rounded-lg px-2.5 py-2">
                       <div class="flex items-center justify-end gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction · <span id="cm-auction-pct">—</span></div>
                       <div id="cm-auction-val" class="mt-1 font-bold tabular-nums text-opl-ink dark:text-op-ink">—</div>
                     </div>
@@ -4099,12 +4099,18 @@
   window.setDashChannel = setDashChannel;
 
   function applyDashChannel() {
-    // Selection ring on the chosen channel column.
-    [['retail', 'cm-retail-col'], ['bin', 'cm-bin-col']].forEach(([ch, id]) => {
-      const c = el(id); if (!c) return;
-      c.classList.toggle('ring-1', dashChannel === ch);
-      c.classList.toggle('ring-accent-green', dashChannel === ch);
-    });
+    // Selection highlight on the chosen channel column. ring-inset draws the
+    // ring inside the box so it can't be clipped at the card edge.
+    const retailOn = dashChannel === 'retail', binOn = dashChannel === 'bin';
+    const cr = el('cm-retail-col'), cb = el('cm-bin-col');
+    if (cr) {
+      cr.classList.toggle('ring-1', retailOn); cr.classList.toggle('ring-inset', retailOn);
+      cr.classList.toggle('ring-accent-green', retailOn); cr.classList.toggle('bg-accent-green/10', retailOn);
+    }
+    if (cb) {
+      cb.classList.toggle('ring-1', binOn); cb.classList.toggle('ring-inset', binOn);
+      cb.classList.toggle('ring-accent-blue', binOn); cb.classList.toggle('bg-accent-blue/10', binOn);
+    }
     const lbl = el('dash-matrix-label');
     const set4 = (cart, items, orders, asp) => {
       if (el('mx-cart')) el('mx-cart').textContent = cart;
