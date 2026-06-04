@@ -10359,7 +10359,10 @@
     // scrolled out of the viewport). Keep it queued and retry — otherwise the
     // bubble anchors to a 0,0 rect and pins itself to the top of the screen.
     const r = target.getBoundingClientRect();
-    const onScreen = r.width > 0 && r.height > 0 && r.bottom > 8 && r.top < (window.innerHeight - 8);
+    // Require the target to be FULLY in view (with a margin that clears the
+    // bottom nav) — a target only peeking in at the edge would push the bubble
+    // off-screen or behind the nav bar.
+    const onScreen = r.width > 0 && r.height > 0 && r.top >= 8 && r.bottom <= (window.innerHeight - 90);
     if (!onScreen) {
       item._waits = (item._waits || 0) + 1;
       if (item._waits > 40) { _coachQueue.shift(); return _coachProcess(); } // ~40s — give up (not marked seen)
@@ -12895,7 +12898,7 @@
           firstHint('dash-more', '#hero-more-toggle', "Tap <b>More</b> for channel mix &amp; today's metrics.", { step: 1, total: 3 });
           firstHint('dash-store', () => document.querySelector('#store-cards > div button[onclick^="showStoreDetail"]'), "Tap <b>View Details</b> for a store's full daily breakdown, chart &amp; item sales.", { step: 2, total: 3 });
           firstHint('dash-days', '#day-chip-trigger', "Pick a day, combine several, or view the whole week.");
-          firstHint('dash-channel', () => document.querySelector('#store-cards > div [data-ch="retail"]'), "New — tap <b>Retail</b> or <b>BIN</b> to filter the metrics below to just that channel.");
+          firstHint('dash-channel', '#cm-retail-col', "New — tap <b>Retail</b> or <b>BIN</b> to filter the metrics below to just that channel.");
         }, 1800);
       });
       // Cold-start deep link: SW opened a fresh window at /?view=hourly.
