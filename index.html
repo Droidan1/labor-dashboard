@@ -2364,6 +2364,11 @@
   let dashChannelData = null;        // { date, retail:{net,units,orders,avgCart,avgItems,asp}, bin:{...} }
   let dashChannelLoading = false;
   let _dashMxBlended = null;         // saved "All" matrix tile strings, to restore
+  // Per-store-card channel filter (same idea, keyed by store code).
+  let dashCardCh = {};               // code → 'retail' | 'bin' | null
+  let dashCardChData = {};           // code → { date, retail:{...}, bin:{...} }
+  let dashCardChLoading = {};        // code → bool
+  let dashCardBlended = {};          // code → { cart, items, orders, asp }
   function etTodayStr() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); }
   let allWeeks       = [];
   let liveDataLoading = false;
@@ -4159,6 +4164,56 @@
     finally { dashChannelLoading = false; applyDashChannel(); }
   }
 
+  // Per-store-card channel filter — same behavior as the hero, scoped to one
+  // card via [data-store-code] and that store's item channel data.
+  function setCardChannel(code, ch) {
+    dashCardCh[code] = (dashCardCh[code] === ch) ? null : ch;
+    const date = etTodayStr();
+    if (dashCardCh[code] && !(dashCardChData[code] && dashCardChData[code].date === date)) loadCardChannel(code);
+    else applyCardChannel(code);
+  }
+  window.setCardChannel = setCardChannel;
+
+  function applyCardChannel(code) {
+    const card = document.querySelector(`#store-cards [data-store-code="${code}"]`);
+    if (!card) return;
+    const ch = dashCardCh[code];
+    ['retail', 'bin'].forEach(c => {
+      const t = card.querySelector(`[data-ch="${c}"]`); if (!t) return;
+      const on = ch === c;
+      t.classList.toggle('ring-1', on); t.classList.toggle('ring-inset', on);
+      t.classList.toggle('ring-accent-green', on && c === 'retail');
+      t.classList.toggle('ring-accent-blue', on && c === 'bin');
+    });
+    const set = (k, v) => { const e = card.querySelector(`[data-mx="${k}"]`); if (e) e.textContent = v; };
+    if (!ch) {
+      const b = dashCardBlended[code];
+      if (b) { set('cart', b.cart); set('items', b.items); set('orders', b.orders); set('asp', b.asp); }
+      return;
+    }
+    if (dashCardChLoading[code]) { set('cart', '…'); set('items', '…'); set('orders', '…'); set('asp', '…'); return; }
+    const data = dashCardChData[code];
+    const d = (data && data.date === etTodayStr()) ? data[ch] : null;
+    if (!d) { set('cart', '—'); set('items', '—'); set('orders', '—'); set('asp', '—'); return; }
+    set('cart', d.orders > 0 ? '$' + Number(d.avgCart).toFixed(2) : '—');
+    set('items', d.orders > 0 ? Number(d.avgItems).toFixed(1) : '—');
+    set('orders', (d.orders || 0).toLocaleString('en-US'));
+    set('asp', d.units > 0 ? '$' + Number(d.asp).toFixed(2) : '—');
+  }
+  window.applyCardChannel = applyCardChannel;
+
+  async function loadCardChannel(code) {
+    const date = etTodayStr();
+    if (dashCardChData[code] && dashCardChData[code].date === date) { applyCardChannel(code); return; }
+    dashCardChLoading[code] = true; applyCardChannel(code);
+    try {
+      const data = await cachedFetch(`${WORKER_BASE}?action=items&store=${code}`, { credentials: 'include' });
+      const ch = data && data.channels;
+      dashCardChData[code] = ch ? { date, retail: ch.retail, bin: ch.bin } : { date };
+    } catch (_) { dashCardChData[code] = { date }; }
+    finally { dashCardChLoading[code] = false; applyCardChannel(code); }
+  }
+
   function renderCards(metrics) {
     const container = el("store-cards");
     container.innerHTML = "";
@@ -4321,10 +4376,14 @@
       const v1SparkSkel = `<span class="skel" style="display:block;width:84px;height:6px;border-radius:3px"></span>`;
       const v1SparkDate = (isDayView && dayDays.size === 1) ? [...dayDays][0] : todayStr;
       const v1Spark = '<div id="' + v1SparkId + '" style="width:104px;height:44px;flex:0 0 auto;display:flex;align-items:center;justify-content:center">' + v1SparkSkel + '</div>';
+      const cardCode = m.store.split('/')[0];
       const tile = (l, v) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
-      const mtile = (l, v, icon) => `<div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">${l}</div><div class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div>${icon ? matrixTileWatermark(icon) : ''}</div>`;
+      // Clickable channel tile (Retail / BIN) — taps filter this card's matrix.
+      const chTile = (l, v, ch) => `<div data-ch="${ch}" role="button" tabindex="0" onclick="setCardChannel('${cardCode}','${ch}')" title="Tap to filter metrics to ${l}" class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5 cursor-pointer transition hover:border-accent-green/40"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
+      const mtile = (l, v, icon) => `<div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">${l}</div><div data-mx="${icon}" class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div>${icon ? matrixTileWatermark(icon) : ''}</div>`;
 
       const div = document.createElement("div");
+      div.dataset.storeCode = cardCode;
       div.className = `bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors group${v1OfflineNow ? ' opacity-60' : ''}`;
       // Card is no longer click-through — only the "View Details →" button
       // below navigates to the store detail.
@@ -4368,7 +4427,7 @@
         </div>
 
         <div class="mt-4 grid grid-cols-3 gap-2">
-          ${tile('Retail', fmtDollar(v1Retail))}${tile('BIN', fmtDollar(v1Bin))}${tile('Auction', fmtDollar(v1Auction))}
+          ${chTile('Retail', fmtDollar(v1Retail), 'retail')}${chTile('BIN', fmtDollar(v1Bin), 'bin')}${tile('Auction', fmtDollar(v1Auction))}
         </div>
 
         <div class="mt-2 grid grid-cols-4 gap-2">
@@ -4382,6 +4441,15 @@
           <button type="button" onclick="showStoreDetail(${JSON.stringify(m.store).replace(/"/g, '&quot;')})" class="text-xs font-semibold text-accent-green hover:underline group-hover:translate-x-1 transition-transform">View Details →</button>
         </div>`;
       container.appendChild(div);
+      // Stash this card's blended matrix values + re-apply any active channel
+      // filter (the card was just rebuilt fresh in the blended state).
+      dashCardBlended[cardCode] = {
+        cart: v1Cart != null ? '$' + Number(v1Cart).toFixed(2) : '—',
+        items: v1Items != null ? Number(v1Items).toFixed(1) : '—',
+        orders: v1Orders != null ? Number(v1Orders).toLocaleString('en-US') : '—',
+        asp: v1Asp != null ? '$' + Number(v1Asp).toFixed(2) : '—',
+      };
+      if (dashCardCh[cardCode]) applyCardChannel(cardCode);
       loadStoreHourlySpark(v1SparkKey, v1SparkDate, v1SparkColor, v1SparkId);
     }
   }
