@@ -12883,6 +12883,7 @@
           firstHint('dash-more', '#hero-more-toggle', "Tap <b>More</b> for channel mix &amp; today's metrics.", { step: 1, total: 3 });
           firstHint('dash-store', () => document.querySelector('#store-cards > div'), "Tap a store for its full daily breakdown, chart &amp; item sales.", { step: 2, total: 3 });
           firstHint('dash-days', '#day-chip-trigger', "Pick a day, combine several, or view the whole week.");
+          firstHint('dash-channel', () => document.querySelector('#store-cards > div [data-ch="retail"]'), "New — tap <b>Retail</b> or <b>BIN</b> to filter the metrics below to just that channel.");
         }, 1800);
       });
       // Cold-start deep link: SW opened a fresh window at /?view=hourly.
