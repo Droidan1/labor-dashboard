@@ -10354,6 +10354,18 @@
     if (_coachSeen(item.key) || _coachDisabled()) { _coachQueue.shift(); return _coachProcess(); }
     const target = _coachResolve(item.target);
     if (!target) { _coachQueue.shift(); return _coachProcess(); } // target gone — skip (not marked seen)
+    // Don't show against a target that isn't actually on-screen (e.g. it lives
+    // on the dashboard but the user has navigated into a detail view, or it's
+    // scrolled out of the viewport). Keep it queued and retry — otherwise the
+    // bubble anchors to a 0,0 rect and pins itself to the top of the screen.
+    const r = target.getBoundingClientRect();
+    const onScreen = r.width > 0 && r.height > 0 && r.bottom > 8 && r.top < (window.innerHeight - 8);
+    if (!onScreen) {
+      item._waits = (item._waits || 0) + 1;
+      if (item._waits > 40) { _coachQueue.shift(); return _coachProcess(); } // ~40s — give up (not marked seen)
+      setTimeout(_coachProcess, 1000);
+      return;
+    }
     _coachQueue.shift();
     _coachShow(item, target);
   }
@@ -12881,7 +12893,7 @@
         // First-time dashboard coach-marks (queued; defer behind any popup).
         setTimeout(() => {
           firstHint('dash-more', '#hero-more-toggle', "Tap <b>More</b> for channel mix &amp; today's metrics.", { step: 1, total: 3 });
-          firstHint('dash-store', () => document.querySelector('#store-cards > div'), "Tap a store for its full daily breakdown, chart &amp; item sales.", { step: 2, total: 3 });
+          firstHint('dash-store', () => document.querySelector('#store-cards > div button[onclick^="showStoreDetail"]'), "Tap <b>View Details</b> for a store's full daily breakdown, chart &amp; item sales.", { step: 2, total: 3 });
           firstHint('dash-days', '#day-chip-trigger', "Pick a day, combine several, or view the whole week.");
           firstHint('dash-channel', () => document.querySelector('#store-cards > div [data-ch="retail"]'), "New — tap <b>Retail</b> or <b>BIN</b> to filter the metrics below to just that channel.");
         }, 1800);
