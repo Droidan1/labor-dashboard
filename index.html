@@ -10360,9 +10360,17 @@
     // bubble anchors to a 0,0 rect and pins itself to the top of the screen.
     const r = target.getBoundingClientRect();
     // Require the target to be FULLY in view (with a margin that clears the
-    // bottom nav) — a target only peeking in at the edge would push the bubble
-    // off-screen or behind the nav bar.
-    const onScreen = r.width > 0 && r.height > 0 && r.top >= 8 && r.bottom <= (window.innerHeight - 90);
+    // bottom nav) AND actually painted at those coordinates. The rect check
+    // alone isn't enough: an element inside a collapsed/clipped container (e.g.
+    // the hero "More" section when closed) still reports a layout rect, so we
+    // hit-test its center with elementFromPoint to confirm it's really visible.
+    const inView = r.width > 0 && r.height > 0 && r.top >= 8 && r.bottom <= (window.innerHeight - 90);
+    let painted = false;
+    if (inView) {
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      painted = !!hit && (hit === target || target.contains(hit) || hit.contains(target));
+    }
+    const onScreen = inView && painted;
     if (!onScreen) {
       item._waits = (item._waits || 0) + 1;
       if (item._waits > 40) { _coachQueue.shift(); return _coachProcess(); } // ~40s — give up (not marked seen)
