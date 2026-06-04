@@ -4362,9 +4362,14 @@
       const v1SparkColor = v1Ahead ? V1G : V1B;
       // Bar caps at 100% (target met = full). Matches the hero bar's logic.
       const v1BarW = v1Pct != null ? Math.min(100, Math.max(0, v1Pct)) : 0;
-      const v1NetLabel = (isDayView && dayDays.size === 1 && includesToday)
+      const isTodayOnly = isDayView && dayDays.size === 1 && includesToday;
+      const v1NetLabel = isTodayOnly
         ? "Today's Net"
         : `${periodLabel} Net`;
+      // The channel filter (tap Retail/BIN → per-channel matrix) only makes
+      // sense when the card is showing exactly today, because the channel data
+      // is today-live only. For any other period the tiles render plain so the
+      // numbers can't mismatch the displayed blended figures.
       // Sparkline = a single day's hourly net sales (today for whole-week/multi
       // views, otherwise the one selected day), fetched per store after the card
       // mounts (?action=hourly).
@@ -4427,7 +4432,7 @@
         </div>
 
         <div class="mt-4 grid grid-cols-3 gap-2">
-          ${chTile('Retail', fmtDollar(v1Retail), 'retail')}${chTile('BIN', fmtDollar(v1Bin), 'bin')}${tile('Auction', fmtDollar(v1Auction))}
+          ${isTodayOnly ? chTile('Retail', fmtDollar(v1Retail), 'retail') : tile('Retail', fmtDollar(v1Retail))}${isTodayOnly ? chTile('BIN', fmtDollar(v1Bin), 'bin') : tile('BIN', fmtDollar(v1Bin))}${tile('Auction', fmtDollar(v1Auction))}
         </div>
 
         <div class="mt-2 grid grid-cols-4 gap-2">
@@ -4449,7 +4454,8 @@
         orders: v1Orders != null ? Number(v1Orders).toLocaleString('en-US') : '—',
         asp: v1Asp != null ? '$' + Number(v1Asp).toFixed(2) : '—',
       };
-      if (dashCardCh[cardCode]) applyCardChannel(cardCode);
+      if (!isTodayOnly) dashCardCh[cardCode] = null;   // filter invalid off-today
+      if (isTodayOnly && dashCardCh[cardCode]) applyCardChannel(cardCode);
       loadStoreHourlySpark(v1SparkKey, v1SparkDate, v1SparkColor, v1SparkId);
     }
   }
