@@ -275,7 +275,14 @@
     }
     .sidebar-tip.show { opacity: 1; }
     .sidebar .logo-text { opacity: 1; transition: opacity 0.2s 0.1s; white-space: nowrap; }
-    .sidebar.collapsed .logo-text { opacity: 0; transition: opacity 0.1s; }
+    /* Collapsed: hide the text AND release its width so it can't squeeze the
+       logo into an oval. Center the logo in the narrow rail. */
+    .sidebar.collapsed .logo-text { opacity: 0; width: 0; overflow: hidden; transition: opacity 0.1s; }
+    .sidebar.collapsed .logo-row  { justify-content: center; }
+    /* Fixed, always-circular brand logo — defined here (not via Tailwind
+       utilities) so it can never be squished or purged. */
+    .bl-logo { flex: 0 0 40px; width: 40px; height: 40px; aspect-ratio: 1 / 1;
+      object-fit: cover; border-radius: 9999px; }
     /* V1 Operator shell */
     .sidebar .nav-item {
       display: flex; align-items: center; height: 44px; width: 100%;
@@ -473,8 +480,8 @@
     <aside id="sidebar" class="sidebar max-lg:hidden bg-opl-sidebar dark:bg-op-sidebar border-r border-[rgba(20,16,8,0.08)] dark:border-op-border flex flex-col h-screen sticky top-0 z-20 overflow-hidden transition-colors">
       <!-- Title Section -->
       <div class="px-2 pt-4 pb-4 mb-2 border-b border-gray-200 dark:border-gray-800">
-        <div class="flex items-center gap-3 p-2 rounded-lg">
-          <img src="BLlogo.svg" alt="Bargain Lane" class="w-10 h-10 shrink-0 shadow-sm object-cover rounded-full">
+        <div class="logo-row flex items-center gap-3 p-2 rounded-lg">
+          <img src="BLlogo.svg" alt="Bargain Lane" class="bl-logo shrink-0 shadow-sm">
           <div class="logo-text overflow-hidden">
             <span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">Bargain Lane</span>
             <span class="block text-xs text-gray-500 dark:text-gray-400">Dashboard</span>
