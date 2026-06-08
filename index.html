@@ -2358,6 +2358,10 @@
   let selectedWeek   = null;
   let currentWeek    = null;
   let selectedDashDays = new Set();  // empty = whole week; else set of 'YYYY-MM-DD' (multi-select)
+  // True while the selection is just the auto-added "today" soft default (the
+  // user hasn't picked a day yet). The first explicit day-tap replaces it
+  // rather than adding to it, so picking a past day shows ONLY that day.
+  let dashDaysIsDefault = false;
   // Dashboard Matrix channel filter: null = all stores blended; 'retail' | 'bin'
   // shows that channel's per-order metrics (from item-level L2 data).
   let dashChannel = null;
@@ -3084,7 +3088,8 @@
 
     selectedWeek = currentWeek ?? (allWeeks[allWeeks.length - 1] ?? null);
     selectedDashDays = new Set();
-    if (selectedWeek === currentWeek) selectedDashDays.add(etTodayStr()); // default to today
+    dashDaysIsDefault = false;
+    if (selectedWeek === currentWeek) { selectedDashDays.add(etTodayStr()); dashDaysIsDefault = true; } // soft default: today
 
     // Show error banner if any stores failed to load
     const failedStores = Object.keys(errors);
@@ -3165,7 +3170,8 @@
   function setSelectedWeek(week) {
     selectedWeek = String(week);
     selectedDashDays = new Set();
-    if (selectedWeek === currentWeek) selectedDashDays.add(etTodayStr()); // default to today on the live week
+    dashDaysIsDefault = false;
+    if (selectedWeek === currentWeek) { selectedDashDays.add(etTodayStr()); dashDaysIsDefault = true; } // soft default: today
     renderDashDaySelector();
     renderDashboard();
     if (selectedWeek !== currentWeek) loadHistoricalCloverForWeek(selectedWeek);
@@ -3249,10 +3255,18 @@
       : `${b} border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink`;
   }
 
-  // Toggle a day in/out of the multi-select set.
+  // Toggle a day in/out of the multi-select set. The first explicit tap while
+  // the selection is still the auto "today" default REPLACES it (so picking a
+  // past day shows only that day); after that it's normal multi-select.
   function selectDashDay(dateStr) {
-    if (selectedDashDays.has(dateStr)) selectedDashDays.delete(dateStr);
-    else selectedDashDays.add(dateStr);
+    if (dashDaysIsDefault) {
+      selectedDashDays = new Set([dateStr]);
+      dashDaysIsDefault = false;
+    } else if (selectedDashDays.has(dateStr)) {
+      selectedDashDays.delete(dateStr);
+    } else {
+      selectedDashDays.add(dateStr);
+    }
     renderDashDaySelector();
     renderDashboard();
     if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName, false, { rerender: true });
@@ -3262,6 +3276,7 @@
   // "View Week" — clear the day selection → whole-week combined view.
   function selectAllWeek() {
     selectedDashDays.clear();
+    dashDaysIsDefault = false;
     renderDashDaySelector();
     renderDashboard();
     if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName, false, { rerender: true });
