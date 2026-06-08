@@ -6537,6 +6537,94 @@ export default {
       }
     }
 
+    // ── Admin: client-date probe (READ-ONLY, no D1/KV writes) ─────────
+    //    GET ?action=clientdate-probe&store=BL14&start=YYYY-MM-DD&end=YYYY-MM-DD[&buffer=2]
+    // Recovers correct per-day sales after an offline / late-sync event. The
+    // normal pipeline buckets by Clover createdTime (server receipt time); when
+    // a register runs offline its orders only reach Clover on sync, so they land
+    // on the wrong day. This re-buckets by clientCreatedTime (the register's
+    // local clock = actual sale time) and reports per-day totals using the same
+    // category-based derivation the nightly snapshot uses for D1. Paste the
+    // target-range rows into the Manual Sales Override tool.
+    if (url.searchParams.get("action") === "clientdate-probe") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      const start = url.searchParams.get("start") || "";
+      const end = url.searchParams.get("end") || start;
+      const buffer = Math.max(0, Math.min(7, parseInt(url.searchParams.get("buffer") || "2", 10)));
+      if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+        return new Response(JSON.stringify({ error: "need store, start=YYYY-MM-DD, end=YYYY-MM-DD" }), { status: 400, headers: corsJson });
+      }
+
+      const etDay = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(ms));
+      const addDays = (dateStr, n) => { const d = new Date(dateStr + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+      // Wide createdTime fetch window so late-synced orders are caught:
+      // [start 00:00 ET, (end + buffer + 1) 00:00 ET).
+      const since = getStartOfDayET(start);
+      const until = getStartOfDayET(addDays(end, buffer + 1));
+
+      const [elements, itemCatMap, overrides, itemCosts] = await Promise.all([
+        fetchItemOrders(store, env, since, until),
+        fetchItemCategoryMap(store, env),
+        fetchItemOverrides(env),
+        fetchItemCosts(env),
+      ]);
+      if (!elements) {
+        return new Response(JSON.stringify({ error: `store ${store} not configured or Clover fetch failed` }), { status: 500, headers: corsJson });
+      }
+      // Refunds reported as a single window total (not per-day) so this stays a
+      // simple, double-count-free read. Per-day figures below are GROSS of refunds.
+      let windowRefunds = 0;
+      try { windowRefunds = (await fetchRefundsTotal(store, env, since, until, null)) / 100; } catch (_) {}
+
+      // Bucket each order by ET day of clientCreatedTime (fallback createdTime).
+      const buckets = {};
+      let lateSync = 0;
+      for (const o of elements) {
+        const cct = (o.clientCreatedTime != null) ? o.clientCreatedTime : o.createdTime;
+        const cDay = etDay(cct);
+        if (etDay(o.createdTime) !== cDay) lateSync++;
+        (buckets[cDay] = buckets[cDay] || []).push(o);
+      }
+
+      // Per-day category-based totals (same derivation as the nightly snapshot:
+      // total = sum of category netSales; bin = "Bin Products"; retail = rest).
+      const days = [];
+      for (let d = start; d <= addDays(end, buffer); d = addDays(d, 1)) {
+        const bucket = buckets[d] || [];
+        let total = 0, bin = 0, retail = 0;
+        if (bucket.length) {
+          const agg = aggregateItemSales(bucket, itemCatMap, store, d, overrides, itemCosts, [], [], []);
+          for (const c of (agg.categories || [])) {
+            if (c.category === "Bin Products") bin += c.netSales; else retail += c.netSales;
+          }
+          total = agg.totals?.netSales || 0;
+        }
+        days.push({
+          date: d,
+          inTargetRange: d >= start && d <= end,
+          orderCount: bucket.length,
+          total: +total.toFixed(2),
+          retail: +retail.toFixed(2),
+          bin: +bin.toFixed(2),
+        });
+      }
+
+      return new Response(JSON.stringify({
+        store, start, end, buffer,
+        bucketedBy: "clientCreatedTime (fallback createdTime)",
+        totalOrdersInWindow: elements.length,
+        lateSyncOrders: lateSync,
+        windowRefundsTotal: +windowRefunds.toFixed(2),
+        note: "Per-day totals are GROSS of refunds (windowRefundsTotal shown separately). Paste inTargetRange rows into Manual Sales Override.",
+        days,
+      }, null, 2), { headers: corsJson });
+    }
+
     // ── Admin: manual override for daily_sales rows.
     //    POST  ?action=manual-override
     //    body: { entries: [ { store, date, total?, retail?, bin?, auction?, labor_pct?, labor_hours? } ] }
