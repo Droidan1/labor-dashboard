@@ -6,6 +6,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["serve", "-l", "8080", "."],
       "port": 8080
+    },
+    {
+      "name": "Hero Mockup",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-l", "4173", "_preview"],
+      "port": 4173
     }
   ]
 }

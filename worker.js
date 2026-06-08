@@ -2189,6 +2189,11 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   // so we look refunds up by order ID and distribute them proportionally
   // across that order's line items by gross value.
   const orderLineItemMap = new Map();
+  // Per-channel (retail vs bin) per-order rollup for the dashboard channel
+  // filter. Bin = L2 "Bin Products"; everything else = retail. Positive lines
+  // only (gross of refunds) — drives the channel-filtered matrix tiles, not
+  // the books. An order is counted toward a channel if it has ≥1 of its items.
+  const _ch = { retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 } };
   function getCat(name) {
     if (!cats[name]) cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0 };
     return cats[name];
@@ -2232,6 +2237,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
 
     const lineItems = order.lineItems?.elements || [];
     let orderLineItemNetCents = 0;
+    const _ordCh = { retail: { net: 0, units: 0 }, bin: { net: 0, units: 0 } };
 
     // ── Phase 2B: pre-compute discounts (amount + percentage) ─────
     // Clover stores percentage-based discounts as `percentage` with no
@@ -2479,6 +2485,9 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         l3Cat.net += (grossCents - discCents) / 100;
         l3Cat.cost += lineCost;
         orderLineItemNetCents += (grossCents - discCents);
+        const _b = (l2 === 'Bin Products') ? _ordCh.bin : _ordCh.retail;
+        _b.net += (grossCents - discCents) / 100;
+        _b.units += qty;
       }
     }
 
@@ -2492,6 +2501,9 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     if (residualCents !== 0) {
       const cat = getCat("Other / Non-Item");
       cat.net += residualCents / 100;
+    }
+    for (const k of ['retail', 'bin']) {
+      if (_ordCh[k].units > 0) { _ch[k].orders++; _ch[k].net += _ordCh[k].net; _ch[k].units += _ordCh[k].units; }
     }
   }
 
@@ -2723,6 +2735,20 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       gpmPct: totalNet > 0 ? Math.round((totalGp / totalNet) * 1000) / 10 : 0,
     },
     orderCount: allElements.length,
+    channels: {
+      retail: {
+        net: roundCents(_ch.retail.net), units: Math.round(_ch.retail.units), orders: _ch.retail.orders,
+        avgCart: _ch.retail.orders > 0 ? roundCents(_ch.retail.net / _ch.retail.orders) : 0,
+        avgItems: _ch.retail.orders > 0 ? Math.round(_ch.retail.units / _ch.retail.orders * 10) / 10 : 0,
+        asp: _ch.retail.units > 0 ? roundCents(_ch.retail.net / _ch.retail.units) : 0,
+      },
+      bin: {
+        net: roundCents(_ch.bin.net), units: Math.round(_ch.bin.units), orders: _ch.bin.orders,
+        avgCart: _ch.bin.orders > 0 ? roundCents(_ch.bin.net / _ch.bin.orders) : 0,
+        avgItems: _ch.bin.orders > 0 ? Math.round(_ch.bin.units / _ch.bin.orders * 10) / 10 : 0,
+        asp: _ch.bin.units > 0 ? roundCents(_ch.bin.net / _ch.bin.units) : 0,
+      },
+    },
     _debug: {
       unmappedL3, noCategory,
       itemCatMapSize: Object.keys(itemCatMap).length,
@@ -2874,8 +2900,11 @@ function applyRefundsToAggregate(data, refundCents) {
 }
 
 // ─── Fetch and aggregate for a store, then snapshot ──────────────
-async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, untilTimestamp = null, binRetailOverride = null) {
-  const elements = await fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp);
+async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, untilTimestamp = null, binRetailOverride = null, preElements = null) {
+  // preElements: when provided (e.g. the clientCreatedTime sweep), skip the
+  // createdTime fetch and aggregate this exact set instead. Default (null) is
+  // byte-identical to the original behavior.
+  const elements = preElements || await fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp);
   if (!elements) return null;
 
   const data = aggregateOrders(elements, sinceTimestamp);
@@ -2965,6 +2994,61 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
   return data;
 }
 
+// ─── Re-snapshot one ET day, bucketed by clientCreatedTime ───────────
+// The normal pipeline buckets by Clover createdTime (server receipt time). When
+// a register runs offline (e.g. power outage) its orders only reach Clover on
+// sync — often the next day — so they land on the wrong day. This re-snapshots
+// `dateStr` using clientCreatedTime (the register's local clock = actual sale
+// time): it fetches a WIDE createdTime window [dateStr 00:00, dateStr+look+1)
+// so late-synced orders are captured, keeps only those whose clientCreatedTime
+// is dateStr, then runs the exact same aggregate / guard / persist path as the
+// nightly snapshot. Honors the manual-override and zero-order guards. Returns
+// the snapshot result (or null if the store has no creds / fetch failed).
+async function snapshotDayByClientTime(store, env, dateStr, lookForwardDays = 3) {
+  const etDay = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(ms));
+  const addDays = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+  const dayStart = getStartOfDayET(dateStr);
+  const dayEnd = getStartOfDayET(addDays(dateStr, 1));
+  const wideUntil = getStartOfDayET(addDays(dateStr, lookForwardDays + 1));
+
+  // Wide fetch (catch late syncs), then keep only this day's actual sales.
+  const wide = await fetchItemOrders(store, env, dayStart, wideUntil);
+  if (!wide) return null;
+  const bucket = wide.filter(o =>
+    etDay(o.clientCreatedTime != null ? o.clientCreatedTime : o.createdTime) === dateStr
+  );
+
+  // Category-based bin/retail/total (same derivation as the nightly cron), and
+  // refresh the item-sales snapshot so the Item Sales tab stays correct too.
+  let binRetailOverride = null, itemData = null;
+  try {
+    const itemCatMap = await fetchItemCategoryMap(store, env);
+    const [overrides, itemCosts] = await Promise.all([fetchItemOverrides(env), fetchItemCosts(env)]);
+    const refundElements = await fetchRefundElements(store, env, dayStart, dayEnd);
+    const manualRefundElements = await fetchManualRefunds(store, env, dayStart, dayEnd);
+    const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, bucket, refundElements);
+    itemData = aggregateItemSales(bucket, itemCatMap, store, dateStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements);
+    let binNet = 0, retailNet = 0;
+    for (const c of (itemData.categories || [])) {
+      if (c.category === "Bin Products") binNet += c.netSales; else retailNet += c.netSales;
+    }
+    binRetailOverride = { bin: binNet, retail: retailNet, total: itemData.totals?.netSales };
+  } catch (e) {
+    console.warn(`[clienttime-sweep] item prep failed ${store}/${dateStr}: ${e.message}`);
+  }
+
+  // Reuse the canonical snapshot writer with our pre-filtered bucket. Pass the
+  // day window so refunds + the aggregateOrders createdTime guard use [D, D+1).
+  const data = await fetchAggregateAndSnapshot(store, env, dayStart, dateStr, dayEnd, binRetailOverride, bucket);
+
+  if (itemData && data && !data.skippedManualOverride) {
+    try { await saveItemSalesSnapshot(env, store, dateStr, itemData); } catch (e) {
+      console.warn(`[clienttime-sweep] item snapshot save failed ${store}/${dateStr}: ${e.message}`);
+    }
+  }
+  return data ? { ...data, bucketOrders: bucket.length, wideOrders: wide.length } : null;
+}
+
 // ─── CORS headers ────────────────────────────────────────────────
 // Allowlist-based CORS. Echoes the matching Origin back so that Phase 2 can
 // enable Access-Control-Allow-Credentials for session cookies without a
@@ -2973,9 +3057,18 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
 const ALLOWED_ORIGINS = [
   "https://www.retjghub.com",
   "https://retjghub.com",
+  "https://staging.retjghub.com",
 ];
 // localhost on any port for dev (http://localhost:1234, http://127.0.0.1:5500, etc.)
 const LOCALHOST_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
+// Environment-driven hosts. Unset (prod) → prod literals, so prod behavior is
+// byte-identical. Set per-env in wrangler.toml [env.staging.vars].
+function appOrigin(env)  { return (env && env.APP_ORIGIN) || "https://www.retjghub.com"; }
+function apiOrigin(env)  { return (env && env.API_ORIGIN) || "https://api.retjghub.com"; }
+// A clientDataJSON origin is acceptable if it's an allowlisted host (covers
+// www + staging) or localhost. Replaces the old single-origin equality check.
+function isAllowedWebauthnOrigin(o) { return ALLOWED_ORIGINS.includes(o) || LOCALHOST_RE.test(o); }
 
 function resolveCors(request) {
   const origin = request.headers.get("Origin") || "";
@@ -4100,7 +4193,6 @@ async function importCOSEPublicKey(coseBuf) {
   return crypto.subtle.importKey('jwk', jwk, { name:'ECDSA', namedCurve:'P-256' }, false, ['verify']);
 }
 
-const WEBAUTHN_ORIGIN = 'https://www.retjghub.com';
 const WEBAUTHN_RP_ID  = 'retjghub.com';
 
 function getSessionCookie(request) {
@@ -4163,7 +4255,7 @@ function sessionCookie(id, maxAge) {
 }
 
 async function sendMagicLinkEmail(email, token, otpCode, env) {
-  const link = `https://api.retjghub.com/?action=auth-verify&token=${token}`;
+  const link = `${apiOrigin(env)}/?action=auth-verify&token=${token}`;
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -4195,7 +4287,7 @@ async function sendMagicLinkEmail(email, token, otpCode, env) {
 }
 
 async function sendInviteEmail(email, token, env) {
-  const link = `https://api.retjghub.com/?action=auth-verify&token=${token}`;
+  const link = `${apiOrigin(env)}/?action=auth-verify&token=${token}`;
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -4293,14 +4385,14 @@ export default {
     // ── Auth: GET /auth/verify — consume magic link, create session ──
     if (url.searchParams.get("action") === "auth-verify") {
       const token = url.searchParams.get("token");
-      if (!token) return Response.redirect("https://www.retjghub.com/?auth_error=invalid", 302);
+      if (!token) return Response.redirect(`${appOrigin(env)}/?auth_error=invalid`, 302);
       try {
         const now = new Date().toISOString();
         const { results } = await env.DB.prepare(
           "SELECT email, expires_at, used_at FROM magic_links WHERE token = ?"
         ).bind(token).all();
         if (!results || !results.length || results[0].used_at || results[0].expires_at < now) {
-          return Response.redirect("https://www.retjghub.com/?auth_error=expired", 302);
+          return Response.redirect(`${appOrigin(env)}/?auth_error=expired`, 302);
         }
         const { email } = results[0];
         // Mark token used
@@ -4311,7 +4403,7 @@ export default {
           "SELECT id FROM users WHERE email = ? AND status = 'active'"
         ).bind(email).all();
         if (!users || !users.length) {
-          return Response.redirect("https://www.retjghub.com/?auth_error=nouser", 302);
+          return Response.redirect(`${appOrigin(env)}/?auth_error=nouser`, 302);
         }
         const userId = users[0].id;
         // Create session (7 days)
@@ -4326,12 +4418,12 @@ export default {
         return new Response(null, {
           status: 302,
           headers: {
-            "Location": "https://www.retjghub.com/",
+            "Location": `${appOrigin(env)}/`,
             "Set-Cookie": sessionCookie(sessionId, 7 * 24 * 60 * 60),
           },
         });
       } catch (e) {
-        return Response.redirect("https://www.retjghub.com/?auth_error=server", 302);
+        return Response.redirect(`${appOrigin(env)}/?auth_error=server`, 302);
       }
     }
 
@@ -4429,7 +4521,7 @@ export default {
         const clientDataBytes = base64urlToBytes(credResp.clientDataJSON);
         const clientData = JSON.parse(new TextDecoder().decode(clientDataBytes));
         if (clientData.type !== 'webauthn.create') throw new Error('Wrong type');
-        if (clientData.origin !== WEBAUTHN_ORIGIN) throw new Error(`Bad origin: ${clientData.origin}`);
+        if (!isAllowedWebauthnOrigin(clientData.origin)) throw new Error(`Bad origin: ${clientData.origin}`);
         const storedChallenge = await env.SALES_SNAPSHOTS.get(`webauthn:reg:${user.id}`);
         if (!storedChallenge || storedChallenge !== clientData.challenge) throw new Error('Challenge mismatch');
         await env.SALES_SNAPSHOTS.delete(`webauthn:reg:${user.id}`);
@@ -4502,7 +4594,7 @@ export default {
         const clientDataBytes = base64urlToBytes(credResp.clientDataJSON);
         const clientData = JSON.parse(new TextDecoder().decode(clientDataBytes));
         if (clientData.type !== 'webauthn.get') throw new Error('Wrong type');
-        if (clientData.origin !== WEBAUTHN_ORIGIN) throw new Error(`Bad origin: ${clientData.origin}`);
+        if (!isAllowedWebauthnOrigin(clientData.origin)) throw new Error(`Bad origin: ${clientData.origin}`);
         const storedChallenge = await env.SALES_SNAPSHOTS.get(`webauthn:auth:${clientData.challenge}`);
         if (!storedChallenge) throw new Error('Challenge expired or not found');
         await env.SALES_SNAPSHOTS.delete(`webauthn:auth:${clientData.challenge}`);
@@ -6585,6 +6677,135 @@ export default {
       }
     }
 
+    // ── Admin: client-date probe (READ-ONLY, no D1/KV writes) ─────────
+    //    GET ?action=clientdate-probe&store=BL14&start=YYYY-MM-DD&end=YYYY-MM-DD[&buffer=2]
+    // Recovers correct per-day sales after an offline / late-sync event. The
+    // normal pipeline buckets by Clover createdTime (server receipt time); when
+    // a register runs offline its orders only reach Clover on sync, so they land
+    // on the wrong day. This re-buckets by clientCreatedTime (the register's
+    // local clock = actual sale time) and reports per-day totals using the same
+    // category-based derivation the nightly snapshot uses for D1. Paste the
+    // target-range rows into the Manual Sales Override tool.
+    if (url.searchParams.get("action") === "clientdate-probe") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      const start = url.searchParams.get("start") || "";
+      const end = url.searchParams.get("end") || start;
+      const buffer = Math.max(0, Math.min(7, parseInt(url.searchParams.get("buffer") || "2", 10)));
+      if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+        return new Response(JSON.stringify({ error: "need store, start=YYYY-MM-DD, end=YYYY-MM-DD" }), { status: 400, headers: corsJson });
+      }
+
+      const etDay = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(ms));
+      const addDays = (dateStr, n) => { const d = new Date(dateStr + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+      // Wide createdTime fetch window so late-synced orders are caught:
+      // [start 00:00 ET, (end + buffer + 1) 00:00 ET).
+      const since = getStartOfDayET(start);
+      const until = getStartOfDayET(addDays(end, buffer + 1));
+
+      const [elements, itemCatMap, overrides, itemCosts] = await Promise.all([
+        fetchItemOrders(store, env, since, until),
+        fetchItemCategoryMap(store, env),
+        fetchItemOverrides(env),
+        fetchItemCosts(env),
+      ]);
+      if (!elements) {
+        return new Response(JSON.stringify({ error: `store ${store} not configured or Clover fetch failed` }), { status: 500, headers: corsJson });
+      }
+      // Refunds reported as a single window total (not per-day) so this stays a
+      // simple, double-count-free read. Per-day figures below are GROSS of refunds.
+      let windowRefunds = 0;
+      try { windowRefunds = (await fetchRefundsTotal(store, env, since, until, null)) / 100; } catch (_) {}
+
+      // Bucket each order by ET day of clientCreatedTime (fallback createdTime).
+      const buckets = {};
+      let lateSync = 0;
+      for (const o of elements) {
+        const cct = (o.clientCreatedTime != null) ? o.clientCreatedTime : o.createdTime;
+        const cDay = etDay(cct);
+        if (etDay(o.createdTime) !== cDay) lateSync++;
+        (buckets[cDay] = buckets[cDay] || []).push(o);
+      }
+
+      // Per-day category-based totals (same derivation as the nightly snapshot:
+      // total = sum of category netSales; bin = "Bin Products"; retail = rest).
+      const days = [];
+      for (let d = start; d <= addDays(end, buffer); d = addDays(d, 1)) {
+        const bucket = buckets[d] || [];
+        let total = 0, bin = 0, retail = 0;
+        if (bucket.length) {
+          const agg = aggregateItemSales(bucket, itemCatMap, store, d, overrides, itemCosts, [], [], []);
+          for (const c of (agg.categories || [])) {
+            if (c.category === "Bin Products") bin += c.netSales; else retail += c.netSales;
+          }
+          total = agg.totals?.netSales || 0;
+        }
+        days.push({
+          date: d,
+          inTargetRange: d >= start && d <= end,
+          orderCount: bucket.length,
+          total: +total.toFixed(2),
+          retail: +retail.toFixed(2),
+          bin: +bin.toFixed(2),
+        });
+      }
+
+      return new Response(JSON.stringify({
+        store, start, end, buffer,
+        bucketedBy: "clientCreatedTime (fallback createdTime)",
+        totalOrdersInWindow: elements.length,
+        lateSyncOrders: lateSync,
+        windowRefundsTotal: +windowRefunds.toFixed(2),
+        note: "Per-day totals are GROSS of refunds (windowRefundsTotal shown separately). Paste inTargetRange rows into Manual Sales Override.",
+        days,
+      }, null, 2), { headers: corsJson });
+    }
+
+    // ── Admin: re-snapshot day(s) bucketed by clientCreatedTime ───────
+    //    POST/GET ?action=resnapshot-clienttime&store=BL14|all&start=YYYY-MM-DD&end=YYYY-MM-DD[&look=3]
+    // The durable fix for offline / late-sync days: re-writes daily_sales (and
+    // the item-sales snapshot) for each day in [start,end] using actual sale
+    // time (clientCreatedTime) instead of Clover receipt time. Manual-override
+    // rows are preserved (skipped). Admin-secret gated. WRITES to D1/KV.
+    if (url.searchParams.get("action") === "resnapshot-clienttime") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+
+      const storeParam = (url.searchParams.get("store") || "").toUpperCase();
+      const start = url.searchParams.get("start") || "";
+      const end = url.searchParams.get("end") || start;
+      const look = Math.max(0, Math.min(7, parseInt(url.searchParams.get("look") || "3", 10)));
+      if (!storeParam || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+        return new Response(JSON.stringify({ error: "need store (or 'all'), start=YYYY-MM-DD, end=YYYY-MM-DD" }), { status: 400, headers: corsJson });
+      }
+      const addDays = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+      const stores = storeParam === "ALL" ? ALL_STORES : [storeParam];
+      const results = [];
+      for (const store of stores) {
+        for (let d = start; d <= end; d = addDays(d, 1)) {
+          try {
+            const r = await snapshotDayByClientTime(store, env, d, look);
+            results.push({
+              store, date: d,
+              status: r ? (r.skippedManualOverride ? "skipped: manual override"
+                          : r.skippedZeroOverwrite ? "skipped: zero/negative guard" : "ok")
+                        : "skipped: no creds / fetch failed",
+              total: r?.total ?? null, retail: r?.retail ?? null, bin: r?.bin ?? null,
+              bucketOrders: r?.bucketOrders ?? null,
+            });
+          } catch (e) {
+            results.push({ store, date: d, status: `error: ${e.message}` });
+          }
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, look, count: results.length, results }, null, 2), { headers: corsJson });
+    }
+
     // ── Admin: manual override for daily_sales rows.
     //    POST  ?action=manual-override
     //    body: { entries: [ { store, date, total?, retail?, bin?, auction?, labor_pct?, labor_hours? } ] }
@@ -7227,6 +7448,57 @@ export default {
           `SELECT store, year, month, budget FROM supply_budgets ORDER BY year DESC, month DESC, store`
         ).all();
         return new Response(JSON.stringify({ ok: true, budgets }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── "What's New" announcement (superuser authors; all users see) ──
+    // Stored as a single KV JSON blob. Bumping it (new id) re-shows the
+    // popup for everyone, even users who dismissed the previous one.
+    // GET ?action=announcement  — any authenticated user.
+    if (request.method === "GET" && url.searchParams.get("action") === "announcement") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      try {
+        const a = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get("announcement:current", "json") : null;
+        return new Response(JSON.stringify({ ok: true, announcement: a || null }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=announcement-set  — superuser only.
+    // Body: { title, items: [{ t, d }] }  → saved as the current announcement.
+    if (request.method === "POST" && url.searchParams.get("action") === "announcement-set") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
+      }
+      if (!env.SALES_SNAPSHOTS) return new Response(JSON.stringify({ error: "Storage unavailable" }), { status: 503, headers: corsJson });
+      try {
+        const body = await request.json();
+        const title = String(body.title || "").trim().slice(0, 120);
+        const items = Array.isArray(body.items) ? body.items
+          .map(it => ({ t: String(it.t || "").trim().slice(0, 120), d: String(it.d || "").trim().slice(0, 240) }))
+          .filter(it => it.t).slice(0, 12) : [];
+        if (!title && items.length === 0) {
+          return new Response(JSON.stringify({ error: "Title or at least one item required" }), { status: 400, headers: corsJson });
+        }
+        const announcement = { id: String(Date.now()), title, items, createdAt: new Date().toISOString(), createdBy: currentUser.email || currentUser.id || "superuser" };
+        await env.SALES_SNAPSHOTS.put("announcement:current", JSON.stringify(announcement));
+        return new Response(JSON.stringify({ ok: true, announcement }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=announcement-clear  — superuser only. Removes the popup.
+    if (request.method === "POST" && url.searchParams.get("action") === "announcement-clear") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
+      }
+      try {
+        if (env.SALES_SNAPSHOTS) await env.SALES_SNAPSHOTS.delete("announcement:current");
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
@@ -7959,6 +8231,36 @@ export default {
         results[store] = `error: ${err.message}`;
       }
     }
+
+    // ── clientCreatedTime lookback sweep ──────────────────────────────
+    // Re-snapshot today + the last couple days bucketed by ACTUAL sale time
+    // (clientCreatedTime), so orders rung up offline and synced late (e.g. a
+    // power outage) land on the correct day. Re-doing today removes late syncs
+    // that belong to an earlier day; the prior-day passes add them back where
+    // they belong. Manual-override rows are preserved. Idempotent & self-
+    // correcting; see snapshotDayByClientTime().
+    const SWEEP_LOOKBACK_DAYS = 2;   // today + 2 prior = 3 days
+    const sweepAddDays = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+    const sweepWeeks = new Set();
+    for (let k = 0; k <= SWEEP_LOOKBACK_DAYS; k++) {
+      const d = sweepAddDays(todayStr, -k);
+      for (const store of ALL_STORES) {
+        try {
+          const r = await snapshotDayByClientTime(store, env, d, SWEEP_LOOKBACK_DAYS);
+          if (r && !r.skippedManualOverride && !r.skippedZeroOverwrite) sweepWeeks.add(d);
+        } catch (e) {
+          console.warn(`[clienttime-sweep] ${store}/${d} failed: ${e.message}`);
+        }
+      }
+    }
+    // Re-roll any week the sweep may have changed (a lookback day can fall in
+    // the prior week, which the todayStr rollup below wouldn't cover).
+    for (const d of sweepWeeks) {
+      try { await rollupWeekSummariesIfReady(env, d); } catch (e) {
+        console.warn(`[clienttime-sweep] rollup ${d} failed: ${e.message}`);
+      }
+    }
+    console.log(`[clienttime-sweep] done: ${SWEEP_LOOKBACK_DAYS + 1} days x ${ALL_STORES.length} stores`);
 
     // Roll up week-summary KV keys for any week whose 7 days are now in D1.
     // Lets the Weekly Retail T13 endpoint serve from pre-rolled summaries
