@@ -281,8 +281,11 @@
     .sidebar.collapsed .logo-row  { justify-content: center; }
     /* Fixed, always-circular brand logo — defined here (not via Tailwind
        utilities) so it can never be squished or purged. */
-    .bl-logo { flex: 0 0 40px; width: 40px; height: 40px; aspect-ratio: 1 / 1;
-      object-fit: cover; border-radius: 9999px; }
+    /* max-width:none defeats Tailwind Preflight's `img{max-width:100%}`, which
+       otherwise caps the logo to the narrow collapsed rail (~32px) and squishes
+       it into an oval. min-width pins the floor so flex can't shrink it either. */
+    .bl-logo { flex: 0 0 40px; width: 40px; height: 40px; min-width: 40px;
+      max-width: none; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 9999px; }
     /* V1 Operator shell */
     .sidebar .nav-item {
       display: flex; align-items: center; height: 44px; width: 100%;
