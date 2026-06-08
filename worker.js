@@ -2900,8 +2900,11 @@ function applyRefundsToAggregate(data, refundCents) {
 }
 
 // ─── Fetch and aggregate for a store, then snapshot ──────────────
-async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, untilTimestamp = null, binRetailOverride = null) {
-  const elements = await fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp);
+async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, untilTimestamp = null, binRetailOverride = null, preElements = null) {
+  // preElements: when provided (e.g. the clientCreatedTime sweep), skip the
+  // createdTime fetch and aggregate this exact set instead. Default (null) is
+  // byte-identical to the original behavior.
+  const elements = preElements || await fetchCloverOrders(store, env, sinceTimestamp, untilTimestamp);
   if (!elements) return null;
 
   const data = aggregateOrders(elements, sinceTimestamp);
@@ -2989,6 +2992,61 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
 
   await saveSnapshot(env, store, dateStr, data);
   return data;
+}
+
+// ─── Re-snapshot one ET day, bucketed by clientCreatedTime ───────────
+// The normal pipeline buckets by Clover createdTime (server receipt time). When
+// a register runs offline (e.g. power outage) its orders only reach Clover on
+// sync — often the next day — so they land on the wrong day. This re-snapshots
+// `dateStr` using clientCreatedTime (the register's local clock = actual sale
+// time): it fetches a WIDE createdTime window [dateStr 00:00, dateStr+look+1)
+// so late-synced orders are captured, keeps only those whose clientCreatedTime
+// is dateStr, then runs the exact same aggregate / guard / persist path as the
+// nightly snapshot. Honors the manual-override and zero-order guards. Returns
+// the snapshot result (or null if the store has no creds / fetch failed).
+async function snapshotDayByClientTime(store, env, dateStr, lookForwardDays = 3) {
+  const etDay = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(ms));
+  const addDays = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+  const dayStart = getStartOfDayET(dateStr);
+  const dayEnd = getStartOfDayET(addDays(dateStr, 1));
+  const wideUntil = getStartOfDayET(addDays(dateStr, lookForwardDays + 1));
+
+  // Wide fetch (catch late syncs), then keep only this day's actual sales.
+  const wide = await fetchItemOrders(store, env, dayStart, wideUntil);
+  if (!wide) return null;
+  const bucket = wide.filter(o =>
+    etDay(o.clientCreatedTime != null ? o.clientCreatedTime : o.createdTime) === dateStr
+  );
+
+  // Category-based bin/retail/total (same derivation as the nightly cron), and
+  // refresh the item-sales snapshot so the Item Sales tab stays correct too.
+  let binRetailOverride = null, itemData = null;
+  try {
+    const itemCatMap = await fetchItemCategoryMap(store, env);
+    const [overrides, itemCosts] = await Promise.all([fetchItemOverrides(env), fetchItemCosts(env)]);
+    const refundElements = await fetchRefundElements(store, env, dayStart, dayEnd);
+    const manualRefundElements = await fetchManualRefunds(store, env, dayStart, dayEnd);
+    const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, bucket, refundElements);
+    itemData = aggregateItemSales(bucket, itemCatMap, store, dateStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements);
+    let binNet = 0, retailNet = 0;
+    for (const c of (itemData.categories || [])) {
+      if (c.category === "Bin Products") binNet += c.netSales; else retailNet += c.netSales;
+    }
+    binRetailOverride = { bin: binNet, retail: retailNet, total: itemData.totals?.netSales };
+  } catch (e) {
+    console.warn(`[clienttime-sweep] item prep failed ${store}/${dateStr}: ${e.message}`);
+  }
+
+  // Reuse the canonical snapshot writer with our pre-filtered bucket. Pass the
+  // day window so refunds + the aggregateOrders createdTime guard use [D, D+1).
+  const data = await fetchAggregateAndSnapshot(store, env, dayStart, dateStr, dayEnd, binRetailOverride, bucket);
+
+  if (itemData && data && !data.skippedManualOverride) {
+    try { await saveItemSalesSnapshot(env, store, dateStr, itemData); } catch (e) {
+      console.warn(`[clienttime-sweep] item snapshot save failed ${store}/${dateStr}: ${e.message}`);
+    }
+  }
+  return data ? { ...data, bucketOrders: bucket.length, wideOrders: wide.length } : null;
 }
 
 // ─── CORS headers ────────────────────────────────────────────────
@@ -6625,6 +6683,47 @@ export default {
       }, null, 2), { headers: corsJson });
     }
 
+    // ── Admin: re-snapshot day(s) bucketed by clientCreatedTime ───────
+    //    POST/GET ?action=resnapshot-clienttime&store=BL14|all&start=YYYY-MM-DD&end=YYYY-MM-DD[&look=3]
+    // The durable fix for offline / late-sync days: re-writes daily_sales (and
+    // the item-sales snapshot) for each day in [start,end] using actual sale
+    // time (clientCreatedTime) instead of Clover receipt time. Manual-override
+    // rows are preserved (skipped). Admin-secret gated. WRITES to D1/KV.
+    if (url.searchParams.get("action") === "resnapshot-clienttime") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+
+      const storeParam = (url.searchParams.get("store") || "").toUpperCase();
+      const start = url.searchParams.get("start") || "";
+      const end = url.searchParams.get("end") || start;
+      const look = Math.max(0, Math.min(7, parseInt(url.searchParams.get("look") || "3", 10)));
+      if (!storeParam || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+        return new Response(JSON.stringify({ error: "need store (or 'all'), start=YYYY-MM-DD, end=YYYY-MM-DD" }), { status: 400, headers: corsJson });
+      }
+      const addDays = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+      const stores = storeParam === "ALL" ? ALL_STORES : [storeParam];
+      const results = [];
+      for (const store of stores) {
+        for (let d = start; d <= end; d = addDays(d, 1)) {
+          try {
+            const r = await snapshotDayByClientTime(store, env, d, look);
+            results.push({
+              store, date: d,
+              status: r ? (r.skippedManualOverride ? "skipped: manual override"
+                          : r.skippedZeroOverwrite ? "skipped: zero/negative guard" : "ok")
+                        : "skipped: no creds / fetch failed",
+              total: r?.total ?? null, retail: r?.retail ?? null, bin: r?.bin ?? null,
+              bucketOrders: r?.bucketOrders ?? null,
+            });
+          } catch (e) {
+            results.push({ store, date: d, status: `error: ${e.message}` });
+          }
+        }
+      }
+      return new Response(JSON.stringify({ ok: true, look, count: results.length, results }, null, 2), { headers: corsJson });
+    }
+
     // ── Admin: manual override for daily_sales rows.
     //    POST  ?action=manual-override
     //    body: { entries: [ { store, date, total?, retail?, bin?, auction?, labor_pct?, labor_hours? } ] }
@@ -8050,6 +8149,36 @@ export default {
         results[store] = `error: ${err.message}`;
       }
     }
+
+    // ── clientCreatedTime lookback sweep ──────────────────────────────
+    // Re-snapshot today + the last couple days bucketed by ACTUAL sale time
+    // (clientCreatedTime), so orders rung up offline and synced late (e.g. a
+    // power outage) land on the correct day. Re-doing today removes late syncs
+    // that belong to an earlier day; the prior-day passes add them back where
+    // they belong. Manual-override rows are preserved. Idempotent & self-
+    // correcting; see snapshotDayByClientTime().
+    const SWEEP_LOOKBACK_DAYS = 2;   // today + 2 prior = 3 days
+    const sweepAddDays = (d, n) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+    const sweepWeeks = new Set();
+    for (let k = 0; k <= SWEEP_LOOKBACK_DAYS; k++) {
+      const d = sweepAddDays(todayStr, -k);
+      for (const store of ALL_STORES) {
+        try {
+          const r = await snapshotDayByClientTime(store, env, d, SWEEP_LOOKBACK_DAYS);
+          if (r && !r.skippedManualOverride && !r.skippedZeroOverwrite) sweepWeeks.add(d);
+        } catch (e) {
+          console.warn(`[clienttime-sweep] ${store}/${d} failed: ${e.message}`);
+        }
+      }
+    }
+    // Re-roll any week the sweep may have changed (a lookback day can fall in
+    // the prior week, which the todayStr rollup below wouldn't cover).
+    for (const d of sweepWeeks) {
+      try { await rollupWeekSummariesIfReady(env, d); } catch (e) {
+        console.warn(`[clienttime-sweep] rollup ${d} failed: ${e.message}`);
+      }
+    }
+    console.log(`[clienttime-sweep] done: ${SWEEP_LOOKBACK_DAYS + 1} days x ${ALL_STORES.length} stores`);
 
     // Roll up week-summary KV keys for any week whose 7 days are now in D1.
     // Lets the Weekly Retail T13 endpoint serve from pre-rolled summaries
