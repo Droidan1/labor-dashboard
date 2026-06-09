@@ -12,6 +12,11 @@ cp index.html sw.js manifest.json \
    BLlogo.svg icon-192.png icon-512.png apple-touch-icon.png \
    dist/
 
+# Custom-domain marker. Harmless for Cloudflare Pages (it uses its own domain
+# config); REQUIRED for the GitHub Pages Actions deploy so www.retjghub.com
+# stays attached to the built artifact.
+[ -f CNAME ] && cp CNAME dist/ || true
+
 # Regenerate Tailwind from config so design tokens actually compile.
 # (Previously the stale committed tailwind.css was copied verbatim — any
 # new token/class added to the config never made it into the bundle.)
