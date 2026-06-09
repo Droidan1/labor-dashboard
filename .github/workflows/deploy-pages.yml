@@ -1,0 +1,53 @@
+name: Deploy production to GitHub Pages
+
+# Production (www.retjghub.com) is GitHub Pages. Instead of serving the raw
+# committed files (which let tailwind.css go stale → unstyled site), this
+# builds the frontend with scripts/build.sh and publishes the built dist/.
+# The CSS is regenerated on every deploy, so it can never drift again.
+#
+# Staging is unaffected — it stays on its own Cloudflare Pages project.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never run two Pages deploys at once; let an in-flight one finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build frontend (regenerates tailwind.css)
+        run: bash scripts/build.sh
+        env:
+          # Force the production API base (build.sh only rewrites to staging
+          # when this is set to something other than "main").
+          CF_PAGES_BRANCH: main
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
