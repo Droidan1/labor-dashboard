@@ -574,6 +574,9 @@
         <div class="flex items-center justify-between px-5 pb-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
           <div class="min-w-0"><div id="more-email" class="text-sm font-semibold text-opl-ink dark:text-op-ink truncate"></div><div id="more-role" class="text-xs text-opl-inkDim dark:text-op-inkDim capitalize"></div></div>
         </div>
+        <button id="more-marketing" onclick="navigateToPage('marketing');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
+          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>Marketing
+        </button>
         <button id="more-users" onclick="navigateToPage('users');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Users
         </button>
@@ -13690,11 +13693,12 @@
       // role-gated tabs / rows
       gate('bn-inventory', vis('nav-inventory'), 'flex');
       gate('bn-supply', vis('nav-supply-request'), 'flex');
+      gate('more-marketing', vis('nav-marketing'));
       gate('more-users', vis('nav-users'));
       gate('more-admin', vis('nav-admin-settings'));
       gate('more-settings', vis('nav-settings'));
       // active tab
-      var morePages = { 'users': 1, 'admin-settings': 1, 'settings': 1 };
+      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1 };
       // Detail pages are sub-pages of Dashboard — keep that tab highlighted.
       var detailPages = { 'store-detail': 1, 'all-stores-detail': 1 };
       var activeTab = morePages[page] ? 'more' : (detailPages[page] ? 'dashboard' : page);
