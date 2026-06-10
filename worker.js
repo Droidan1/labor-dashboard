@@ -4937,6 +4937,78 @@ export default {
       }
     }
 
+    // ── Marketing (Meta ads) insights: ?action=marketing-insights&window=mtd|last_60d
+    // Reads the meta_ad_insights table (populated via MCP backfill in Phase 1,
+    // and by the worker→Meta API cron in Phase 2). Returns a combined topline
+    // across all accounts, a per-account breakdown, and the campaign rows.
+    // Account-wide data (not store-scoped); any authenticated user may read.
+    if (url.searchParams.get("action") === "marketing-insights") {
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      }
+      const window = (url.searchParams.get("window") || "mtd").toLowerCase();
+      if (window !== "mtd" && window !== "last_60d") {
+        return new Response(JSON.stringify({ error: "window must be 'mtd' or 'last_60d'" }), { status: 400, headers: corsJson });
+      }
+
+      const { results: rows } = await env.DB.prepare(
+        "SELECT * FROM meta_ad_insights WHERE window = ? ORDER BY level, spend DESC"
+      ).bind(window).all();
+
+      const accountRows = (rows || []).filter(r => r.level === "account");
+      const campaignRows = (rows || []).filter(r => r.level === "campaign");
+
+      // Combined topline across every account. Rate metrics (cpc/cpm/ctr/
+      // frequency) are recomputed from summed base counts rather than averaged,
+      // so they stay correct across accounts.
+      const sum = (arr, k) => arr.reduce((t, r) => t + (Number(r[k]) || 0), 0);
+      const spend = sum(accountRows, "spend");
+      const impressions = sum(accountRows, "impressions");
+      const reach = sum(accountRows, "reach");
+      const clicks = sum(accountRows, "clicks");
+      const linkClicks = sum(accountRows, "link_clicks");
+      const purchases = accountRows.some(r => r.purchases != null) ? sum(accountRows, "purchases") : null;
+      const purchaseValue = accountRows.some(r => r.purchase_value != null) ? sum(accountRows, "purchase_value") : null;
+      const topline = {
+        spend,
+        impressions,
+        reach,
+        clicks,
+        linkClicks,
+        cpc: clicks ? spend / clicks : null,
+        cpm: impressions ? (spend / impressions) * 1000 : null,
+        ctr: impressions ? (clicks / impressions) * 100 : null,
+        frequency: reach ? impressions / reach : null,
+        purchases,
+        purchaseValue,
+        roas: purchaseValue != null && spend ? purchaseValue / spend : null,
+        dateStart: accountRows[0]?.date_start || null,
+        dateStop: accountRows[0]?.date_stop || null,
+      };
+
+      const byAccount = accountRows.map(r => ({
+        accountId: r.account_id,
+        accountName: r.account_name,
+        spend: r.spend, impressions: r.impressions, reach: r.reach,
+        clicks: r.clicks, linkClicks: r.link_clicks,
+        cpc: r.cpc, cpm: r.cpm, ctr: r.ctr, frequency: r.frequency,
+        purchases: r.purchases, purchaseValue: r.purchase_value, roas: r.roas,
+      }));
+
+      const campaigns = campaignRows.map(r => ({
+        accountId: r.account_id,
+        id: r.entity_id, name: r.entity_name, objective: r.objective,
+        spend: r.spend, impressions: r.impressions, reach: r.reach,
+        clicks: r.clicks, linkClicks: r.link_clicks,
+        cpc: r.cpc, cpm: r.cpm, ctr: r.ctr,
+        purchases: r.purchases, roas: r.roas,
+      }));
+
+      const fetchedAt = (rows || []).reduce((m, r) => (r.fetched_at > m ? r.fetched_at : m), "");
+
+      return new Response(JSON.stringify({ window, fetchedAt, topline, byAccount, campaigns }), { headers: corsJson });
+    }
+
     // ── User management: list-users ──────────────────────────────────
     if (url.searchParams.get("action") === "list-users") {
       if (!canAccessInventory(currentUser)) {
