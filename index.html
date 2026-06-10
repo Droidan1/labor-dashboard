@@ -116,11 +116,7 @@
        fallback for older WebViews. */
     html, body { height: 100%; overflow: hidden; }
     #app { height: 100vh; height: 100dvh; min-height: 0 !important; }
-    /* NOTE: do NOT add -webkit-overflow-scrolling:touch to #main-scroll — the
-       fixed bottom-nav / more-sheet live inside it, and on iOS that property
-       makes position:fixed descendants anchor to the scroll container instead
-       of the viewport (nav floats up off the bottom edge). Momentum scrolling
-       is the default on iOS 13+ anyway. */
+    #main-scroll { -webkit-overflow-scrolling: touch; }
     /* Fixed-overlay login can still scroll if the soft keyboard squeezes it. */
     #login-page { overflow-y: auto; }
     /* Pull-to-refresh indicator — transform is controlled inline by JS so
