@@ -1403,36 +1403,78 @@
     </div><!-- end #page-supply-request -->
 
     <div id="page-marketing" class="hidden">
-      <!-- Sticky header -->
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="max-w-7xl mx-auto flex items-end justify-between gap-4 flex-wrap">
-          <div>
-            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Marketing</h1>
-            <p id="mk-subtitle" class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Meta ad performance</p>
+      <!-- Sticky header + shared filters -->
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-7xl mx-auto">
+          <div class="flex items-end justify-between gap-4 flex-wrap mb-3">
+            <div>
+              <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Marketing</h1>
+              <p id="mk-subtitle" class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Meta ad performance</p>
+            </div>
+            <div id="mk-winseg" class="inline-flex items-center rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden text-sm font-medium"></div>
           </div>
-          <div class="inline-flex items-center rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel overflow-hidden text-sm font-medium">
-            <button id="mk-win-mtd" onclick="setMarketingWindow('mtd')" class="px-4 py-2 bg-accent-green text-white transition-colors">Month-to-date</button>
-            <button id="mk-win-last_60d" onclick="setMarketingWindow('last_60d')" class="px-4 py-2 text-opl-inkDim dark:text-op-inkDim hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)] transition-colors">Last 60 days</button>
+          <div class="flex gap-x-5 gap-y-2 flex-wrap items-center">
+            <div class="flex gap-1.5 items-center flex-wrap"><span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">Account</span><div id="mk-acct-chips" class="flex gap-1.5 flex-wrap"></div></div>
+            <div class="flex gap-1.5 items-center flex-wrap"><span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">Objective</span><div id="mk-obj-chips" class="flex gap-1.5 flex-wrap"></div></div>
           </div>
         </div>
       </div>
 
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-        <!-- Topline KPI cards -->
-        <div id="mk-kpis" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3"></div>
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 pt-4 pb-6">
+        <!-- Tab bar -->
+        <nav class="flex gap-1 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border mb-5">
+          <button data-tab="perf" onclick="mkSetTab('perf')" class="mk-tab px-4 py-2 text-sm font-semibold">Performance</button>
+          <button data-tab="charts" onclick="mkSetTab('charts')" class="mk-tab px-4 py-2 text-sm font-semibold">Charts</button>
+        </nav>
 
-        <!-- Conversions / ROAS -->
-        <div id="mk-conversions" class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5"></div>
-
-        <!-- Per-campaign table -->
-        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden">
-          <div class="px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-center justify-between">
-            <h2 class="font-semibold text-gray-700 dark:text-gray-200">Campaigns</h2>
-            <span id="mk-campaign-count" class="text-xs text-opl-inkDim dark:text-op-inkDim"></span>
+        <!-- PERFORMANCE PANEL -->
+        <div id="mk-panel-perf" class="space-y-5">
+          <div id="mk-kpis" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3"></div>
+          <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 py-3">
+            <div id="mk-acctsplit" class="flex gap-x-6 gap-y-2 flex-wrap text-sm"></div>
           </div>
-          <div id="mk-campaigns" class="overflow-x-auto"></div>
+          <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden">
+            <div class="px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-center justify-between gap-3 flex-wrap">
+              <h2 class="font-semibold text-gray-700 dark:text-gray-200">Campaigns <span id="mk-campaign-count" class="text-xs text-opl-inkDim dark:text-op-inkDim font-normal"></span></h2>
+              <input id="mk-search" placeholder="Search e.g. Fort Wayne" oninput="mkOnSearch(this.value)" class="text-sm px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-transparent w-48" />
+            </div>
+            <div id="mk-campaigns" class="overflow-x-auto"></div>
+          </div>
+          <p id="mk-fetched" class="text-xs text-opl-inkDim dark:text-op-inkDim text-center"></p>
         </div>
-        <p id="mk-fetched" class="text-xs text-opl-inkDim dark:text-op-inkDim text-center"></p>
+
+        <!-- CHARTS PANEL -->
+        <div id="mk-panel-charts" class="space-y-5 hidden">
+          <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
+            <p class="text-sm font-medium text-opl-inkDim dark:text-op-inkDim mb-3">Spend split by account</p>
+            <div class="grid sm:grid-cols-2 gap-4 items-center">
+              <div class="relative mx-auto" style="height:180px;max-width:280px;width:100%"><canvas id="mk-donut"></canvas>
+                <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">total</span>
+                  <span id="mk-donut-total" class="text-lg font-semibold text-gray-800 dark:text-gray-100"></span>
+                </div>
+              </div>
+              <div id="mk-donut-legend" class="text-sm"></div>
+            </div>
+          </div>
+          <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
+            <p class="text-sm font-medium text-opl-inkDim dark:text-op-inkDim mb-3">Spend by campaign</p>
+            <div class="relative" id="mk-spendwrap"><canvas id="mk-spend"></canvas></div>
+          </div>
+          <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
+            <p class="text-sm font-medium text-opl-inkDim dark:text-op-inkDim mb-3">CTR by campaign</p>
+            <div class="grid grid-cols-2 gap-4 mb-4 max-w-md">
+              <label class="text-xs text-opl-inkDim dark:text-op-inkDim block">Strong ≥ <b id="mk-gtval" class="text-gray-700 dark:text-gray-200">7.0</b>%<input type="range" id="mk-gslider" min="3" max="15" step="0.5" value="7" oninput="mkOnThreshold()" class="w-full mt-1"></label>
+              <label class="text-xs text-opl-inkDim dark:text-op-inkDim block">Weak &lt; <b id="mk-rtval" class="text-gray-700 dark:text-gray-200">3.0</b>%<input type="range" id="mk-rslider" min="0.5" max="9" step="0.5" value="3" oninput="mkOnThreshold()" class="w-full mt-1"></label>
+            </div>
+            <div class="flex gap-4 text-xs text-opl-inkDim dark:text-op-inkDim mb-3 flex-wrap">
+              <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm" style="background:#639922"></span>Strong</span>
+              <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm" style="background:#378ADD"></span>OK</span>
+              <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm" style="background:#E24B4A"></span>Weak</span>
+            </div>
+            <div class="relative" id="mk-ctrwrap"><canvas id="mk-ctr"></canvas></div>
+          </div>
+        </div>
       </div>
     </div><!-- end #page-marketing -->
 
@@ -10150,121 +10192,229 @@
   }
 
   // ═══════════════════════════════════════════════════════════════
-  //  MARKETING (Meta ads reporting)
+  //  MARKETING (Meta ads reporting) — two-tab interactive
+  //  Performance (data) + Charts, with shared window/account/objective
+  //  filters. Reads ?action=marketing-insights per window (cached).
   // ═══════════════════════════════════════════════════════════════
-  let mkWindow = 'mtd';
-  const mkLoaded = { mtd: false, last_60d: false };
+  const MK_WINDOWS = [['7d', '7d'], ['14d', '14d'], ['mtd', 'Month-to-date']];
+  const MK_PALETTE = ['#7F77DD', '#378ADD', '#1D9E75', '#EF9F27', '#D4537E'];
+  const MK_OBJLABEL = { E: 'Engagement', L: 'Leads', V: 'Events', T: 'Traffic', A: 'Awareness', O: 'Other' };
+  const mkCache = {};            // window -> endpoint payload
+  const mkAcctColors = {};       // accountId -> hex
+  const mkCharts = { donut: null, spend: null, ctr: null };
+  let mkCtr7 = null;             // {campaignId: ctr} from 7d, for the vs-7d column
+  let mkList = [];               // last-rendered campaign list (for drilldown stub)
+  const mkState = { window: 'mtd', acct: 'all', obj: 'all', search: '', sortKey: 'spend', sortDir: -1, gT: 7, rT: 3, tab: 'perf', booted: false };
 
-  const mkFmt = {
-    money: v => v == null ? '—' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-    int: v => v == null ? '—' : Number(v).toLocaleString('en-US'),
-    pct: v => v == null ? '—' : Number(v).toFixed(2) + '%',
-    num2: v => v == null ? '—' : Number(v).toFixed(2),
-  };
+  const mkIsDark = () => document.documentElement.classList.contains('dark');
+  const mkMoney = v => v == null ? '—' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const mkMoney0 = v => v == null ? '—' : '$' + Math.round(Number(v)).toLocaleString('en-US');
+  const mkInt = v => v == null ? '—' : Math.round(Number(v)).toLocaleString('en-US');
+  const mkPct = v => v == null ? '—' : Number(v).toFixed(2) + '%';
+  const mkEsc = s => (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const mkAcctShort = n => (n || '').replace(/^Bargain Lane - /, '');
+  function mkObjFamily(o) { o = (o || '').toUpperCase();
+    if (/LEAD/.test(o)) return 'L'; if (/EVENT/.test(o)) return 'V';
+    if (/LINK_CLICK|TRAFFIC/.test(o)) return 'T'; if (/ENGAGE/.test(o)) return 'E';
+    if (/AWARENESS/.test(o)) return 'A'; return 'O'; }
 
-  function mkKpiCard(label, value) {
-    return `<div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-4">
-      <div class="text-xs text-opl-inkDim dark:text-op-inkDim uppercase tracking-wide">${label}</div>
-      <div class="text-xl font-semibold text-gray-800 dark:text-gray-100 mt-1 tabular-nums">${value}</div>
-    </div>`;
-  }
-
-  function setMarketingWindow(win) {
-    if (win === mkWindow && mkLoaded[win]) return;
-    mkWindow = win;
-    for (const w of ['mtd', 'last_60d']) {
-      const btn = el('mk-win-' + w);
-      if (!btn) continue;
-      btn.className = w === win
-        ? 'px-4 py-2 bg-accent-green text-white transition-colors'
-        : 'px-4 py-2 text-opl-inkDim dark:text-op-inkDim hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)] transition-colors';
-    }
-    initMarketing(true);
-  }
-  window.setMarketingWindow = setMarketingWindow;
-
-  async function initMarketing(force) {
-    if (mkLoaded[mkWindow] && !force) return;
-    const kpis = el('mk-kpis');
-    kpis.innerHTML = '<div class="col-span-full text-sm text-opl-inkDim dark:text-op-inkDim py-8 text-center">Loading…</div>';
-    el('mk-conversions').innerHTML = '';
-    el('mk-campaigns').innerHTML = '';
-    try {
-      const resp = await fetch(`${WORKER_BASE}?action=marketing-insights&window=${mkWindow}`, { credentials: 'include' });
+  async function mkEnsure(win) {
+    if (!mkCache[win]) {
+      const resp = await fetch(`${WORKER_BASE}?action=marketing-insights&window=${win}`, { credentials: 'include' });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      const data = await resp.json();
-      renderMarketing(data);
-      mkLoaded[mkWindow] = true;
-    } catch (e) {
-      kpis.innerHTML = `<div class="col-span-full text-sm text-red-500 py-8 text-center">Could not load Meta data — ${e.message}</div>`;
+      mkCache[win] = await resp.json();
     }
+    (mkCache[win].byAccount || []).forEach((a, i) => { if (!mkAcctColors[a.accountId]) mkAcctColors[a.accountId] = MK_PALETTE[i % MK_PALETTE.length]; });
+    return mkCache[win];
+  }
+  function mkError(e) { el('mk-kpis').innerHTML = '<div class="col-span-full text-sm text-red-500 py-8 text-center">Could not load Meta data — ' + mkEsc(e.message) + '</div>'; }
+
+  function mkCampaigns(data) {
+    const q = mkState.search.trim().toLowerCase();
+    return (data.campaigns || [])
+      .filter(c => c.spend != null && Number(c.spend) > 0)
+      .map(c => ({ ...c, fam: mkObjFamily(c.objective) }))
+      .filter(c => (mkState.acct === 'all' || c.accountId === mkState.acct)
+        && (mkState.obj === 'all' || c.fam === mkState.obj)
+        && (!q || (c.name || '').toLowerCase().includes(q)));
+  }
+  function mkTopline(data) {
+    if (mkState.obj === 'all') {
+      if (mkState.acct === 'all') { const t = data.topline || {}; return { spend: t.spend, impr: t.impressions, clicks: t.clicks, ctr: t.ctr, cpc: t.cpc }; }
+      const a = (data.byAccount || []).find(x => x.accountId === mkState.acct) || {};
+      return { spend: a.spend, impr: a.impressions, clicks: a.clicks, ctr: a.ctr, cpc: a.cpc };
+    }
+    let sp = 0, im = 0, cl = 0; mkCampaigns(data).forEach(c => { sp += c.spend || 0; im += c.impressions || 0; cl += c.clicks || 0; });
+    return { spend: sp, impr: im, clicks: cl, ctr: im ? cl / im * 100 : null, cpc: cl ? sp / cl : null };
+  }
+  const mkBand = ct => ct >= mkState.gT ? 'green' : (ct < mkState.rT ? 'red' : 'blue');
+  function mkBadge(band) { const d = mkIsDark();
+    const txt = { green: d ? '#C0DD97' : '#3B6D11', blue: d ? '#B5D4F4' : '#185FA5', red: d ? '#F09595' : '#A32D2D' }[band];
+    const bg = { green: 'rgba(99,153,34,.16)', blue: 'rgba(55,138,221,.16)', red: 'rgba(226,75,74,.16)' }[band];
+    return `background:${bg};color:${txt}`; }
+
+  function mkRenderChips(data) {
+    el('mk-winseg').innerHTML = MK_WINDOWS.map(([w, lbl]) => {
+      const on = w === mkState.window;
+      return `<button onclick="mkSetWindow('${w}')" class="px-3 py-2 ${on ? 'bg-accent-green text-white' : 'text-opl-inkDim dark:text-op-inkDim hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)]'} transition-colors">${lbl}</button>`;
+    }).join('');
+    const achips = [['all', 'All']].concat((data.byAccount || []).map(a => [a.accountId, mkAcctShort(a.accountName)]));
+    el('mk-acct-chips').innerHTML = achips.map(([id, lbl]) => mkChip('acct', id, lbl, mkState.acct === id)).join('');
+    const ochips = [['all', 'All'], ['E', 'Engagement'], ['L', 'Leads'], ['V', 'Events'], ['T', 'Traffic']];
+    el('mk-obj-chips').innerHTML = ochips.map(([id, lbl]) => mkChip('obj', id, lbl, mkState.obj === id)).join('');
+  }
+  function mkChip(kind, id, lbl, on) {
+    const cls = on ? 'bg-[rgba(59,181,74,0.15)] text-accent-green border-transparent' : 'border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim';
+    return `<button onclick="mkSetFilter('${kind}','${id}')" class="px-3 py-1 rounded-full text-xs border ${cls} transition-colors">${mkEsc(lbl)}</button>`;
+  }
+
+  function mkRenderKPI(data) {
+    const k = mkTopline(data), d = mkIsDark();
+    const A = (bar, l, dk) => ({ bar, val: d ? dk : l });
+    const cards = [
+      [A('#7F77DD', '#534AB7', '#AFA9EC'), 'Spend', mkMoney0(k.spend), 'spend'],
+      [A('#378ADD', '#185FA5', '#85B7EB'), 'Impressions', mkInt(k.impr), 'impr'],
+      [A('#1D9E75', '#0F6E56', '#5DCAA5'), 'Clicks', mkInt(k.clicks), 'clicks'],
+      [A('#EF9F27', '#854F0B', '#FAC775'), 'CTR', mkPct(k.ctr), 'ctr'],
+      [A('#97C459', '#3B6D11', '#97C459'), 'CPC', mkMoney(k.cpc), 'cpc'],
+    ];
+    el('mk-kpis').innerHTML = cards.map(c => `<button data-jump="${c[3]}" class="text-left bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border p-3.5" style="border-left:4px solid ${c[0].bar};border-radius:0 0.5rem 0.5rem 0">
+      <div class="text-[11px] text-opl-inkDim dark:text-op-inkDim uppercase tracking-wide">${c[1]}</div>
+      <div class="text-xl font-semibold mt-1 tabular-nums" style="color:${c[0].val}">${c[2]}</div></button>`).join('');
+    const t = data.topline || {};
+    el('mk-subtitle').textContent = (t.dateStart && t.dateStop) ? `Meta ad performance · ${t.dateStart} – ${t.dateStop}` : 'Meta ad performance';
+  }
+  function mkRenderSplit(data) {
+    const accs = data.byAccount || [], tot = accs.reduce((s, a) => s + (a.spend || 0), 0);
+    el('mk-acctsplit').innerHTML = accs.map(a => {
+      const col = mkAcctColors[a.accountId] || '#888', pct = tot ? (a.spend / tot * 100).toFixed(1) : '0.0';
+      return `<span class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-sm" style="background:${col}"></span>${mkEsc(mkAcctShort(a.accountName))} <b class="font-medium">${mkMoney(a.spend)}</b> <span class="text-opl-inkDim dark:text-op-inkDim">${pct}%</span></span>`;
+    }).join('');
+  }
+  function mkTrend(c) {
+    if (!mkCtr7) return '';
+    const c7 = mkCtr7[c.id];
+    if (c7 == null) return '<span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">new</span>';
+    const d = (c.ctr || 0) - c7;
+    if (mkState.window === '7d' || Math.abs(d) < 0.06) return '<span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">– flat</span>';
+    const up = d > 0;
+    return `<span class="text-[11px]" style="color:${up ? '#3B6D11' : '#A32D2D'}">${up ? '▲' : '▼'} ${Math.abs(d).toFixed(2)}</span>`;
+  }
+  function mkRenderTable(data) {
+    if (!data) return;
+    mkList = mkCampaigns(data).slice().sort((a, b) => {
+      const k = mkState.sortKey;
+      if (k === 'name') return mkState.sortDir * String(a.name || '').localeCompare(String(b.name || ''));
+      return mkState.sortDir * ((a[k] || 0) - (b[k] || 0));
+    });
+    el('mk-campaign-count').textContent = '· ' + mkList.length + ' shown';
+    const arr = k => k === mkState.sortKey ? (mkState.sortDir < 0 ? ' ↓' : ' ↑') : '';
+    const head = `<table class="w-full text-sm"><thead><tr class="text-xs text-opl-inkDim dark:text-op-inkDim uppercase tracking-wide text-left">
+        <th class="px-4 py-2 font-medium cursor-pointer select-none" onclick="mkSort('name')">Campaign${arr('name')}</th>
+        <th class="px-4 py-2 font-medium text-right cursor-pointer select-none" onclick="mkSort('spend')">Spend${arr('spend')}</th>
+        <th class="px-4 py-2 font-medium cursor-pointer select-none" onclick="mkSort('ctr')">CTR${arr('ctr')}</th>
+        <th class="px-4 py-2 font-medium text-right">vs 7d</th></tr></thead><tbody>`;
+    const body = mkList.length ? mkList.map((c, i) => `<tr class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border hover:bg-[rgba(20,16,8,0.03)] dark:hover:bg-[rgba(255,255,255,0.03)] cursor-pointer" onclick="mkDrill(${i})">
+        <td class="px-4 py-2 text-gray-700 dark:text-gray-200 max-w-xs truncate" title="${mkEsc(c.name)}"><span class="text-opl-inkDim dark:text-op-inkDim mr-1">›</span>${mkEsc(c.name)} <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">· ${MK_OBJLABEL[c.fam]}</span></td>
+        <td class="px-4 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">${mkMoney(c.spend)}</td>
+        <td class="px-4 py-2"><span class="inline-block text-xs font-medium px-2 py-0.5 rounded-md tabular-nums" style="${mkBadge(mkBand(c.ctr || 0))}">${mkPct(c.ctr)}</span></td>
+        <td class="px-4 py-2 text-right">${mkTrend(c)}</td></tr>`).join('')
+      : '<tr><td colspan="4" class="px-4 py-4 text-opl-inkDim dark:text-op-inkDim">No campaigns match these filters.</td></tr>';
+    el('mk-campaigns').innerHTML = head + body + '</tbody></table><div id="mk-drill"></div>';
+    el('mk-fetched').textContent = data.fetchedAt ? 'Snapshot as of ' + data.fetchedAt + ' · Phase-1 data (not yet auto-refreshing)' : '';
+  }
+  function mkDrill(i) {
+    const c = mkList[i]; if (!c) return;
+    el('mk-drill').innerHTML = `<div class="px-5 py-3 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border text-sm text-opl-inkDim dark:text-op-inkDim">Ad-set breakdown for <b class="text-gray-700 dark:text-gray-200">${mkEsc(c.name)}</b> ships with the live Meta API (Phase 2).</div>`;
+  }
+  window.mkDrill = mkDrill;
+
+  const mkValueLabels = { id: 'mkvl', afterDatasetsDraw(ch, a, o) {
+    const ctx = ch.ctx, m = ch.getDatasetMeta(0); ctx.save(); ctx.font = '11px sans-serif'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = mkIsDark() ? '#cfd3da' : '#6b6a64';
+    m.data.forEach((bar, i) => { ctx.fillText(o.fmt(ch.data.datasets[0].data[i]), bar.x + 6, bar.y); }); ctx.restore();
+  } };
+  function mkBarOpts(gridc, tickc, xfmt, vfmt, tip) {
+    return { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 54 } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: tip } }, mkvl: { fmt: vfmt } },
+      scales: { x: { beginAtZero: true, grid: { color: gridc }, ticks: { color: tickc, callback: xfmt, maxTicksLimit: 5 } },
+        y: { grid: { display: false }, ticks: { color: tickc, font: { size: 11 }, crossAlign: 'far' } } } };
+  }
+  const mkShort = n => { n = (n || '').replace(/^Post:\s*/, '').replace(/^Event:\s*/, ''); return n.length > 26 ? n.slice(0, 25) + '…' : n; };
+  function mkRenderCharts(data) {
+    if (!data || typeof Chart === 'undefined') return;
+    const dark = mkIsDark(), gridc = dark ? 'rgba(255,255,255,.12)' : 'rgba(20,16,8,.10)', tickc = dark ? '#9aa3af' : '#6b6a64';
+    ['donut', 'spend', 'ctr'].forEach(k => { if (mkCharts[k]) { mkCharts[k].destroy(); mkCharts[k] = null; } });
+    const accs = data.byAccount || [], tot = accs.reduce((s, a) => s + (a.spend || 0), 0);
+    el('mk-donut-total').textContent = mkMoney0(tot);
+    el('mk-donut-legend').innerHTML = accs.map(a => {
+      const col = mkAcctColors[a.accountId] || '#888', pct = tot ? (a.spend / tot * 100).toFixed(1) : '0.0';
+      return `<div class="flex items-center gap-2 mb-1.5"><span class="w-2.5 h-2.5 rounded-sm" style="background:${col}"></span>${mkEsc(mkAcctShort(a.accountName))}<span class="ml-auto text-opl-inkDim dark:text-op-inkDim">${mkMoney(a.spend)} · ${pct}%</span></div>`;
+    }).join('');
+    mkCharts.donut = new Chart(el('mk-donut'), { type: 'doughnut', data: { labels: accs.map(a => mkAcctShort(a.accountName)), datasets: [{ data: accs.map(a => a.spend || 0), backgroundColor: accs.map(a => mkAcctColors[a.accountId] || '#888'), borderWidth: 0, hoverOffset: 4 }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '66%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.label + ': ' + mkMoney(c.parsed) } } } } });
+
+    const list = mkCampaigns(data);
+    const bySp = list.slice().sort((a, b) => (b.spend || 0) - (a.spend || 0));
+    el('mk-spendwrap').style.height = Math.max(140, bySp.length * 30 + 44) + 'px';
+    mkCharts.spend = new Chart(el('mk-spend'), { type: 'bar', data: { labels: bySp.map(c => mkShort(c.name)), datasets: [{ data: bySp.map(c => c.spend || 0), backgroundColor: '#7F77DD', borderRadius: 3, maxBarThickness: 20 }] }, options: mkBarOpts(gridc, tickc, v => '$' + v, v => '$' + Math.round(v).toLocaleString(), c => mkMoney(c.parsed.x)), plugins: [mkValueLabels] });
+
+    const HEX = { green: '#639922', blue: '#378ADD', red: '#E24B4A' };
+    const byCt = list.slice().sort((a, b) => (b.ctr || 0) - (a.ctr || 0));
+    el('mk-ctrwrap').style.height = Math.max(140, byCt.length * 30 + 44) + 'px';
+    mkCharts.ctr = new Chart(el('mk-ctr'), { type: 'bar', data: { labels: byCt.map(c => mkShort(c.name)), datasets: [{ data: byCt.map(c => c.ctr || 0), backgroundColor: byCt.map(c => HEX[mkBand(c.ctr || 0)]), borderRadius: 3, maxBarThickness: 20 }] }, options: mkBarOpts(gridc, tickc, v => v + '%', v => Number(v).toFixed(2) + '%', c => Number(c.parsed.x).toFixed(2) + '% CTR'), plugins: [mkValueLabels] });
+  }
+
+  function mkRenderAll() {
+    const data = mkCache[mkState.window]; if (!data) return;
+    mkRenderChips(data); mkRenderKPI(data); mkRenderSplit(data); mkRenderTable(data);
+    if (mkState.tab === 'charts') mkRenderCharts(data);
+  }
+
+  function mkSetTab(tab) {
+    mkState.tab = tab;
+    document.querySelectorAll('.mk-tab').forEach(b => {
+      const on = b.dataset.tab === tab;
+      b.className = 'mk-tab px-4 py-2 text-sm font-semibold ' + (on ? 'text-accent-green border-b-2 border-accent-green -mb-px' : 'text-opl-inkDim dark:text-op-inkDim');
+    });
+    el('mk-panel-perf').classList.toggle('hidden', tab !== 'perf');
+    el('mk-panel-charts').classList.toggle('hidden', tab !== 'charts');
+    if (tab === 'charts') mkRenderCharts(mkCache[mkState.window]);
+  }
+  window.mkSetTab = mkSetTab;
+  async function mkSetWindow(w) {
+    if (w === mkState.window) return;
+    mkState.window = w;
+    try { await mkEnsure(w); mkRenderAll(); } catch (e) { mkError(e); }
+  }
+  window.mkSetWindow = mkSetWindow;
+  function mkSetFilter(kind, id) { if (kind === 'acct') mkState.acct = id; else mkState.obj = id; mkRenderAll(); }
+  window.mkSetFilter = mkSetFilter;
+  function mkSort(k) { if (mkState.sortKey === k) mkState.sortDir *= -1; else { mkState.sortKey = k; mkState.sortDir = (k === 'name' ? 1 : -1); } mkRenderTable(mkCache[mkState.window]); }
+  window.mkSort = mkSort;
+  function mkOnSearch(v) { mkState.search = v; mkRenderTable(mkCache[mkState.window]); }
+  window.mkOnSearch = mkOnSearch;
+  function mkOnThreshold() {
+    mkState.gT = parseFloat(el('mk-gslider').value);
+    mkState.rT = Math.min(parseFloat(el('mk-rslider').value), mkState.gT - 0.5);
+    el('mk-gtval').textContent = mkState.gT.toFixed(1); el('mk-rtval').textContent = mkState.rT.toFixed(1);
+    mkRenderTable(mkCache[mkState.window]); if (mkState.tab === 'charts') mkRenderCharts(mkCache[mkState.window]);
+  }
+  window.mkOnThreshold = mkOnThreshold;
+
+  async function initMarketing() {
+    if (mkState.booted) return;
+    mkState.booted = true;
+    el('mk-kpis').innerHTML = '<div class="col-span-full text-sm text-opl-inkDim dark:text-op-inkDim py-8 text-center">Loading…</div>';
+    el('mk-kpis').addEventListener('click', ev => { if (ev.target.closest('[data-jump]')) mkSetTab('charts'); });
+    mkSetTab('perf');
+    try {
+      await mkEnsure(mkState.window);
+      const d7 = await mkEnsure('7d');
+      mkCtr7 = {}; (d7.campaigns || []).forEach(c => { if (c.ctr != null) mkCtr7[c.id] = c.ctr; });
+      mkRenderAll();
+    } catch (e) { mkError(e); }
   }
   window.initMarketing = initMarketing;
-
-  function renderMarketing(data) {
-    const t = data.topline || {};
-    el('mk-kpis').innerHTML = [
-      mkKpiCard('Spend', mkFmt.money(t.spend)),
-      mkKpiCard('Impressions', mkFmt.int(t.impressions)),
-      mkKpiCard('Reach', mkFmt.int(t.reach)),
-      mkKpiCard('Clicks', mkFmt.int(t.clicks)),
-      mkKpiCard('Link Clicks', mkFmt.int(t.linkClicks)),
-      mkKpiCard('CPC', mkFmt.money(t.cpc)),
-      mkKpiCard('CPM', mkFmt.money(t.cpm)),
-      mkKpiCard('CTR', mkFmt.pct(t.ctr)),
-      mkKpiCard('Frequency', mkFmt.num2(t.frequency)),
-    ].join('');
-
-    el('mk-subtitle').textContent = (t.dateStart && t.dateStop)
-      ? `Meta ad performance · ${t.dateStart} – ${t.dateStop}`
-      : 'Meta ad performance';
-
-    // Conversions / ROAS — graceful empty state when no conversion tracking.
-    const hasConv = t.purchases != null || t.roas != null;
-    if (hasConv) {
-      el('mk-conversions').innerHTML = `
-        <h2 class="font-semibold text-gray-700 dark:text-gray-200 mb-3">Conversions &amp; ROAS</h2>
-        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          ${mkKpiCard('Purchases', mkFmt.int(t.purchases))}
-          ${mkKpiCard('Conversion Value', mkFmt.money(t.purchaseValue))}
-          ${mkKpiCard('ROAS', t.roas == null ? '—' : mkFmt.num2(t.roas) + '×')}
-        </div>`;
-    } else {
-      el('mk-conversions').innerHTML = `
-        <h2 class="font-semibold text-gray-700 dark:text-gray-200 mb-1">Conversions &amp; ROAS</h2>
-        <p class="text-sm text-opl-inkDim dark:text-op-inkDim">No conversion tracking detected on these campaigns. They use engagement/traffic objectives, so purchases and ROAS aren't reported. Run conversion campaigns with a Meta pixel and this section fills in automatically.</p>`;
-    }
-
-    // Campaign table — drop rows with no spend, sort by spend desc.
-    const campaigns = (data.campaigns || [])
-      .filter(c => c.spend != null && Number(c.spend) > 0)
-      .sort((a, b) => (b.spend || 0) - (a.spend || 0));
-    el('mk-campaign-count').textContent = campaigns.length + ' with spend';
-    if (!campaigns.length) {
-      el('mk-campaigns').innerHTML = '<p class="text-sm text-opl-inkDim dark:text-op-inkDim p-5">No campaign spend in this window.</p>';
-    } else {
-      const esc = s => (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-      const rows = campaigns.map(c => `<tr class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border">
-        <td class="px-4 py-2 text-gray-700 dark:text-gray-200 max-w-md truncate" title="${esc(c.name)}">${esc(c.name) || '—'}</td>
-        <td class="px-4 py-2 text-opl-inkDim dark:text-op-inkDim text-xs whitespace-nowrap">${esc((c.objective || '').replace('OUTCOME_', ''))}</td>
-        <td class="px-4 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">${mkFmt.money(c.spend)}</td>
-        <td class="px-4 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">${mkFmt.int(c.impressions)}</td>
-        <td class="px-4 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">${mkFmt.money(c.cpm)}</td>
-        <td class="px-4 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">${mkFmt.int(c.linkClicks)}</td>
-      </tr>`).join('');
-      el('mk-campaigns').innerHTML = `<table class="w-full text-sm">
-        <thead><tr class="text-xs text-opl-inkDim dark:text-op-inkDim uppercase tracking-wide text-left">
-          <th class="px-4 py-2 font-medium">Campaign</th>
-          <th class="px-4 py-2 font-medium">Objective</th>
-          <th class="px-4 py-2 font-medium text-right">Spend</th>
-          <th class="px-4 py-2 font-medium text-right">Impressions</th>
-          <th class="px-4 py-2 font-medium text-right">CPM</th>
-          <th class="px-4 py-2 font-medium text-right">Link Clicks</th>
-        </tr></thead><tbody>${rows}</tbody></table>`;
-    }
-
-    el('mk-fetched').textContent = data.fetchedAt ? 'Data as of ' + data.fetchedAt : '';
-  }
 
   function initWeeklyRetail() {
     if (wrsData) return;
