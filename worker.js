@@ -4947,8 +4947,9 @@ export default {
         return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
       }
       const window = (url.searchParams.get("window") || "mtd").toLowerCase();
-      if (window !== "mtd" && window !== "last_60d") {
-        return new Response(JSON.stringify({ error: "window must be 'mtd' or 'last_60d'" }), { status: 400, headers: corsJson });
+      const ALLOWED_WINDOWS = ["7d", "14d", "mtd", "last_60d"];
+      if (!ALLOWED_WINDOWS.includes(window)) {
+        return new Response(JSON.stringify({ error: "window must be one of " + ALLOWED_WINDOWS.join(", ") }), { status: 400, headers: corsJson });
       }
 
       const { results: rows } = await env.DB.prepare(
