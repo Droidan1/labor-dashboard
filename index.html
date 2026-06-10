@@ -105,20 +105,6 @@
        the only feedback the user sees. Without this, Chrome's native PTR
        fights ours, and iOS Safari's rubber-band bounce overlays the indicator. */
     html, body { overscroll-behavior-y: none; }
-    /* ── Standalone-PWA-safe scrolling ──
-       Scrolling lives in #main-scroll (a fixed-height inner container), NOT
-       the document body. Body scrolling is unreliable in installed/standalone
-       PWAs (iOS home-screen apps especially; Android WebAPK too): janky,
-       sticky headers misbehave, or scrolling freezes outright. Pinning #app
-       to the visual viewport makes #main-scroll the one true scroller, which
-       behaves identically in browser tabs and installed apps.
-       100dvh tracks the dynamic viewport (URL-bar collapse); 100vh is the
-       fallback for older WebViews. */
-    html, body { height: 100%; overflow: hidden; }
-    #app { height: 100vh; height: 100dvh; min-height: 0 !important; }
-    #main-scroll { -webkit-overflow-scrolling: touch; }
-    /* Fixed-overlay login can still scroll if the soft keyboard squeezes it. */
-    #login-page { overflow-y: auto; }
     /* Pull-to-refresh indicator — transform is controlled inline by JS so
        drag follows the finger 1:1 (no CSS transition during drag), and
        transition is set inline only during snap-back / release animations. */
@@ -13041,12 +13027,9 @@
         // <= 2 instead of === 0 — mobile browsers can report tiny non-zero
         // scrollY values (subpixel offsets, momentum residual) while visually
         // at top.
-        // #main-scroll is the real scroller (standalone-PWA-safe layout);
-        // window/document reads kept as fallbacks.
-        const ms = document.getElementById('main-scroll');
-        const scrollTop = Math.max(
-          ms ? ms.scrollTop : 0,
-          window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0);
+        const scrollTop = window.scrollY ||
+                         document.documentElement.scrollTop ||
+                         document.body.scrollTop || 0;
         // Don't engage PTR while the mobile "More" sheet is open (its
         // swipe-down-to-dismiss must not trigger a page refresh).
         var moreSheet = document.getElementById('more-sheet');
@@ -13124,10 +13107,9 @@
         }
 
         // Page scrolled away from top mid-gesture — abort
-        const ms2 = document.getElementById('main-scroll');
-        const scrollTop = Math.max(
-          ms2 ? ms2.scrollTop : 0,
-          window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0);
+        const scrollTop = window.scrollY ||
+                         document.documentElement.scrollTop ||
+                         document.body.scrollTop || 0;
         if (scrollTop > 5) {
           state = 'idle';
           reset();
