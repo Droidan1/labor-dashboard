@@ -1417,9 +1417,12 @@
             </div>
             <div id="mk-winseg" class="inline-flex items-center rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden text-sm font-medium"></div>
           </div>
-          <div class="flex gap-x-5 gap-y-2 flex-wrap items-center">
-            <div class="flex gap-1.5 items-center flex-wrap"><span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">Account</span><div id="mk-acct-chips" class="flex gap-1.5 flex-wrap"></div></div>
-            <div class="flex gap-1.5 items-center flex-wrap"><span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">Objective</span><div id="mk-obj-chips" class="flex gap-1.5 flex-wrap"></div></div>
+          <div class="flex flex-col gap-y-2">
+            <div class="flex gap-1.5 items-center flex-wrap"><span class="text-[11px] text-opl-inkDim dark:text-op-inkDim w-[58px]">Store</span><div id="mk-store-chips" class="flex gap-1.5 flex-wrap"></div></div>
+            <div class="flex gap-x-5 gap-y-2 flex-wrap items-center">
+              <div class="flex gap-1.5 items-center flex-wrap"><span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">Account</span><div id="mk-acct-chips" class="flex gap-1.5 flex-wrap"></div></div>
+              <div class="flex gap-1.5 items-center flex-wrap"><span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">Objective</span><div id="mk-obj-chips" class="flex gap-1.5 flex-wrap"></div></div>
+            </div>
           </div>
         </div>
       </div>
@@ -10310,7 +10313,7 @@
   //  Performance (data) + Charts, with shared window/account/objective
   //  filters. Reads ?action=marketing-insights per window (cached).
   // ═══════════════════════════════════════════════════════════════
-  const MK_WINDOWS = [['7d', '7d'], ['14d', '14d'], ['mtd', 'Month-to-date']];
+  const MK_WINDOWS = [['7d', '7d'], ['14d', '14d'], ['30d', '30d'], ['90d', '90d']];
   const MK_PALETTE = ['#7F77DD', '#378ADD', '#1D9E75', '#EF9F27', '#D4537E'];
   const MK_OBJLABEL = { E: 'Engagement', L: 'Leads', V: 'Events', T: 'Traffic', A: 'Awareness', O: 'Other' };
   const mkCache = {};            // window -> endpoint payload
@@ -10318,7 +10321,7 @@
   const mkCharts = { donut: null, spend: null, ctr: null };
   let mkCtr7 = null;             // {campaignId: ctr} from 7d, for the vs-7d column
   let mkList = [];               // last-rendered campaign list (for drilldown stub)
-  const mkState = { window: 'mtd', acct: 'all', obj: 'all', search: '', sortKey: 'spend', sortDir: -1, gT: 7, rT: 3, tab: 'perf', booted: false };
+  const mkState = { window: '7d', acct: 'all', obj: 'all', store: 'all', search: '', sortKey: 'spend', sortDir: -1, gT: 7, rT: 3, tab: 'perf', booted: false };
 
   const mkIsDark = () => document.documentElement.classList.contains('dark');
   const mkMoney = v => v == null ? '—' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -10350,10 +10353,11 @@
       .map(c => ({ ...c, fam: mkObjFamily(c.objective) }))
       .filter(c => (mkState.acct === 'all' || c.accountId === mkState.acct)
         && (mkState.obj === 'all' || c.fam === mkState.obj)
+        && (mkState.store === 'all' || c.store === mkState.store)
         && (!q || (c.name || '').toLowerCase().includes(q)));
   }
   function mkTopline(data) {
-    if (mkState.obj === 'all') {
+    if (mkState.obj === 'all' && mkState.store === 'all') {
       if (mkState.acct === 'all') { const t = data.topline || {}; return { spend: t.spend, impr: t.impressions, clicks: t.clicks, ctr: t.ctr, cpc: t.cpc }; }
       const a = (data.byAccount || []).find(x => x.accountId === mkState.acct) || {};
       return { spend: a.spend, impr: a.impressions, clicks: a.clicks, ctr: a.ctr, cpc: a.cpc };
@@ -10372,6 +10376,11 @@
       const on = w === mkState.window;
       return `<button onclick="mkSetWindow('${w}')" class="px-3 py-2 ${on ? 'bg-accent-green text-white' : 'text-opl-inkDim dark:text-op-inkDim hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)]'} transition-colors">${lbl}</button>`;
     }).join('');
+    const storeAgg = {};
+    (data.campaigns || []).filter(c => c.spend > 0).forEach(c => { const s = c.store || 'Unattributed'; storeAgg[s] = (storeAgg[s] || 0) + (c.spend || 0); });
+    const storeList = Object.keys(storeAgg).sort((a, b) => storeAgg[b] - storeAgg[a]);
+    const schips = [['all', 'All']].concat(storeList.map(s => [s, s]));
+    el('mk-store-chips').innerHTML = schips.map(([id, lbl]) => mkChip('store', id, lbl, mkState.store === id)).join('');
     const achips = [['all', 'All']].concat((data.byAccount || []).map(a => [a.accountId, mkAcctShort(a.accountName)]));
     el('mk-acct-chips').innerHTML = achips.map(([id, lbl]) => mkChip('acct', id, lbl, mkState.acct === id)).join('');
     const ochips = [['all', 'All'], ['E', 'Engagement'], ['L', 'Leads'], ['V', 'Events'], ['T', 'Traffic']];
@@ -10389,8 +10398,8 @@
       [A('#7F77DD', '#534AB7', '#AFA9EC'), 'Spend', mkMoney0(k.spend), 'spend'],
       [A('#378ADD', '#185FA5', '#85B7EB'), 'Impressions', mkInt(k.impr), 'impr'],
       [A('#1D9E75', '#0F6E56', '#5DCAA5'), 'Clicks', mkInt(k.clicks), 'clicks'],
-      [A('#EF9F27', '#854F0B', '#FAC775'), 'CTR', mkPct(k.ctr), 'ctr'],
       [A('#97C459', '#3B6D11', '#97C459'), 'CPC', mkMoney(k.cpc), 'cpc'],
+      [A('#EF9F27', '#854F0B', '#FAC775'), 'CTR', mkPct(k.ctr), 'ctr'],
     ];
     el('mk-kpis').innerHTML = cards.map(c => `<button data-jump="${c[3]}" class="text-left bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border p-3.5" style="border-left:4px solid ${c[0].bar};border-radius:0 0.5rem 0.5rem 0">
       <div class="text-[11px] text-opl-inkDim dark:text-op-inkDim uppercase tracking-wide">${c[1]}</div>
@@ -10499,10 +10508,11 @@
   async function mkSetWindow(w) {
     if (w === mkState.window) return;
     mkState.window = w;
+    mkState.store = 'all';  // store sets differ per window; reset to avoid an empty view
     try { await mkEnsure(w); mkRenderAll(); } catch (e) { mkError(e); }
   }
   window.mkSetWindow = mkSetWindow;
-  function mkSetFilter(kind, id) { if (kind === 'acct') mkState.acct = id; else mkState.obj = id; mkRenderAll(); }
+  function mkSetFilter(kind, id) { if (kind === 'acct') mkState.acct = id; else if (kind === 'store') mkState.store = id; else mkState.obj = id; mkRenderAll(); }
   window.mkSetFilter = mkSetFilter;
   function mkSort(k) { if (mkState.sortKey === k) mkState.sortDir *= -1; else { mkState.sortKey = k; mkState.sortDir = (k === 'name' ? 1 : -1); } mkRenderTable(mkCache[mkState.window]); }
   window.mkSort = mkSort;
