@@ -3126,6 +3126,107 @@ function campaignStore(name) {
   return 'Unattributed';
 }
 
+// ─── Phase 2: live Meta Marketing API ingest ─────────────────────────────────
+// Pulls insights from graph.facebook.com directly (the worker can't use the
+// session-only Meta MCP) and upserts into meta_ad_insights, replacing the
+// Phase-1 snapshot. Configured via secrets: META_ACCESS_TOKEN (required),
+// optional META_AD_ACCOUNTS (csv) and META_API_VERSION.
+const META_API_VERSION = "v25.0";
+const META_ACCOUNT_NAMES = {
+  "273307252412674": "Brian Howard",
+  "900771016120912": "Bargain Lane - Ad Account 2",
+};
+const META_WINDOWS = { "7d": "last_7d", "14d": "last_14d", "30d": "last_30d", "90d": "last_90d" };
+const META_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+function fmtMetaDate(iso) {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return iso || null;
+  const [y, m, d] = iso.split("-");
+  return `${META_MONTHS[parseInt(m, 10) - 1]} ${parseInt(d, 10)}, ${y}`;
+}
+const metaNum = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+const metaInt = v => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : null; };
+
+// One paginated Insights call. Throws on a Graph API error (e.g. bad token).
+async function metaInsightsCall(ver, token, acct, level, preset, fields) {
+  const params = new URLSearchParams({ level, date_preset: preset, fields: fields.join(","), limit: "500", access_token: token });
+  let url = `https://graph.facebook.com/${ver}/act_${acct}/insights?${params}`;
+  const out = [];
+  for (let page = 0; page < 12 && url; page++) {
+    const resp = await fetch(url);
+    const json = await resp.json();
+    if (json.error) throw new Error(`${json.error.code || ""} ${json.error.message || JSON.stringify(json.error)}`.trim());
+    if (Array.isArray(json.data)) out.push(...json.data);
+    url = json.paging && json.paging.next ? json.paging.next : null;
+  }
+  return out;
+}
+
+function mapMetaRow(r, acct, level, win, fetchedAt) {
+  const isAcct = level === "account";
+  return {
+    account_id: acct,
+    account_name: r.account_name || META_ACCOUNT_NAMES[acct] || null,
+    level,
+    entity_id: isAcct ? acct : String(r.campaign_id),
+    entity_name: isAcct ? (r.account_name || META_ACCOUNT_NAMES[acct] || null) : (r.campaign_name || null),
+    objective: isAcct ? null : (r.objective || null),
+    window: win,
+    date_start: fmtMetaDate(r.date_start),
+    date_stop: fmtMetaDate(r.date_stop),
+    spend: metaNum(r.spend),
+    impressions: metaInt(r.impressions),
+    reach: metaInt(r.reach),
+    clicks: metaInt(r.clicks),
+    link_clicks: metaInt(r.inline_link_clicks),
+    cpc: metaNum(r.cpc),
+    cpm: metaNum(r.cpm),
+    ctr: metaNum(r.ctr),
+    frequency: metaNum(r.frequency),
+    fetched_at: fetchedAt,
+  };
+}
+
+async function fetchMetaInsights(env) {
+  if (!env.DB) return { error: "D1 not configured" };
+  const token = env.META_ACCESS_TOKEN;
+  if (!token) return { error: "META_ACCESS_TOKEN not set — generate a Meta system-user token (ads_read) and run: wrangler secret put META_ACCESS_TOKEN --env staging" };
+  const ver = env.META_API_VERSION || META_API_VERSION;
+  const accounts = (env.META_AD_ACCOUNTS || Object.keys(META_ACCOUNT_NAMES).join(","))
+    .split(",").map(s => s.trim()).filter(Boolean);
+  const acctFields = ["account_id", "account_name", "spend", "impressions", "reach", "clicks", "cpc", "cpm", "ctr", "frequency", "inline_link_clicks"];
+  const campFields = ["campaign_id", "campaign_name", "objective", "spend", "impressions", "reach", "clicks", "cpc", "cpm", "ctr", "inline_link_clicks"];
+  const fetchedAt = new Date().toISOString();
+  const errors = [];
+  let written = 0;
+
+  const stmt = env.DB.prepare(`INSERT OR REPLACE INTO meta_ad_insights
+    (account_id, account_name, level, entity_id, entity_name, objective, window, date_start, date_stop, spend, impressions, reach, clicks, link_clicks, cpc, cpm, ctr, frequency, purchases, purchase_value, roas, fetched_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,?)`);
+
+  for (const acct of accounts) {
+    for (const [win, preset] of Object.entries(META_WINDOWS)) {
+      try {
+        const [acctRows, campRows] = await Promise.all([
+          metaInsightsCall(ver, token, acct, "account", preset, acctFields),
+          metaInsightsCall(ver, token, acct, "campaign", preset, campFields),
+        ]);
+        const rows = acctRows.map(r => mapMetaRow(r, acct, "account", win, fetchedAt))
+          .concat(campRows.map(r => mapMetaRow(r, acct, "campaign", win, fetchedAt)));
+        if (rows.length) {
+          await env.DB.batch(rows.map(x => stmt.bind(
+            x.account_id, x.account_name, x.level, x.entity_id, x.entity_name, x.objective, x.window,
+            x.date_start, x.date_stop, x.spend, x.impressions, x.reach, x.clicks, x.link_clicks,
+            x.cpc, x.cpm, x.ctr, x.frequency, x.fetched_at)));
+          written += rows.length;
+        }
+      } catch (e) {
+        errors.push(`act_${acct}/${win}: ${e.message}`);
+      }
+    }
+  }
+  return { ok: errors.length === 0, written, accounts: accounts.length, windows: Object.keys(META_WINDOWS).length, errors, fetchedAt };
+}
+
 // Returns { date, priorDate, stores: [{store,label,sales,budget,prior}], totals }
 async function buildDailySummaryData(env, date) {
   const priorD = new Date(date + 'T12:00:00Z');
@@ -4709,6 +4810,16 @@ export default {
       const fetchedAt = (rows || []).reduce((m, r) => (r.fetched_at > m ? r.fetched_at : m), "");
 
       return new Response(JSON.stringify({ window, fetchedAt, topline, byAccount, campaigns }), { headers: corsJson });
+    }
+
+    // ── Marketing refresh: pull live Meta insights → D1 (Phase 2). Admin or
+    //    X-Snapshot-Secret. Also runs on the daily cron in scheduled().
+    if (url.searchParams.get("action") === "marketing-refresh") {
+      if (!isAdminSecret && !canAccessInventory(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      const result = await fetchMetaInsights(env);
+      return new Response(JSON.stringify(result), { status: result.error ? 400 : 200, headers: corsJson });
     }
 
     // ── User management: list-users ──────────────────────────────────
@@ -8253,6 +8364,14 @@ export default {
       ctx.waitUntil(
         dispatchWeeklyDigest(env, etFmt(startD), etFmt(endD))
           .then(r => console.log("Weekly digest dispatch:", JSON.stringify(r)))
+      );
+      return;
+    }
+
+    // "30 10 * * *" — daily Meta Marketing insights refresh (Phase 2)
+    if (event.cron === "30 10 * * *") {
+      ctx.waitUntil(
+        fetchMetaInsights(env).then(r => console.log("Meta insights refresh:", JSON.stringify(r)))
       );
       return;
     }
