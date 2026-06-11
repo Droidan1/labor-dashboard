@@ -10314,6 +10314,9 @@
   //  filters. Reads ?action=marketing-insights per window (cached).
   // ═══════════════════════════════════════════════════════════════
   const MK_WINDOWS = [['7d', '7d'], ['14d', '14d'], ['30d', '30d'], ['90d', '90d']];
+  // Canonical store roster — always shown as filter chips (matches STORE_LABELS
+  // in worker.js, plus Indianapolis as an active new market).
+  const MK_STORES = ['Coliseum', 'South Bend', 'Dupont', 'Holland', 'Wyoming', 'Battle Creek', 'Indianapolis'];
   const MK_PALETTE = ['#7F77DD', '#378ADD', '#1D9E75', '#EF9F27', '#D4537E'];
   const MK_OBJLABEL = { E: 'Engagement', L: 'Leads', V: 'Events', T: 'Traffic', A: 'Awareness', O: 'Other' };
   const mkCache = {};            // window -> endpoint payload
@@ -10376,19 +10379,27 @@
       const on = w === mkState.window;
       return `<button onclick="mkSetWindow('${w}')" class="px-3 py-2 ${on ? 'bg-accent-green text-white' : 'text-opl-inkDim dark:text-op-inkDim hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)]'} transition-colors">${lbl}</button>`;
     }).join('');
+    // Fixed store roster — every store is always selectable. Stores with no
+    // name-tagged campaign in this window are dimmed (not hidden). Extra
+    // location tags found in the data (e.g. Fort Wayne, Lansing) are appended,
+    // then the brand-wide "Unattributed" bucket last.
     const storeAgg = {};
     (data.campaigns || []).filter(c => c.spend > 0).forEach(c => { const s = c.store || 'Unattributed'; storeAgg[s] = (storeAgg[s] || 0) + (c.spend || 0); });
-    const storeList = Object.keys(storeAgg).sort((a, b) => storeAgg[b] - storeAgg[a]);
-    const schips = [['all', 'All']].concat(storeList.map(s => [s, s]));
-    el('mk-store-chips').innerHTML = schips.map(([id, lbl]) => mkChip('store', id, lbl, mkState.store === id)).join('');
+    const extras = Object.keys(storeAgg).filter(s => s !== 'Unattributed' && !MK_STORES.includes(s)).sort((a, b) => storeAgg[b] - storeAgg[a]);
+    const roster = MK_STORES.concat(extras);
+    if (storeAgg['Unattributed']) roster.push('Unattributed');
+    const schips = [['all', 'All', false]].concat(roster.map(s => [s, s, !storeAgg[s]]));
+    el('mk-store-chips').innerHTML = schips.map(([id, lbl, empty]) => mkChip('store', id, lbl, mkState.store === id, empty)).join('');
     const achips = [['all', 'All']].concat((data.byAccount || []).map(a => [a.accountId, mkAcctShort(a.accountName)]));
     el('mk-acct-chips').innerHTML = achips.map(([id, lbl]) => mkChip('acct', id, lbl, mkState.acct === id)).join('');
     const ochips = [['all', 'All'], ['E', 'Engagement'], ['L', 'Leads'], ['V', 'Events'], ['T', 'Traffic']];
     el('mk-obj-chips').innerHTML = ochips.map(([id, lbl]) => mkChip('obj', id, lbl, mkState.obj === id)).join('');
   }
-  function mkChip(kind, id, lbl, on) {
-    const cls = on ? 'bg-[rgba(59,181,74,0.15)] text-accent-green border-transparent' : 'border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim';
-    return `<button onclick="mkSetFilter('${kind}','${id}')" class="px-3 py-1 rounded-full text-xs border ${cls} transition-colors">${mkEsc(lbl)}</button>`;
+  function mkChip(kind, id, lbl, on, empty) {
+    const cls = on ? 'bg-[rgba(59,181,74,0.15)] text-accent-green border-transparent'
+      : 'border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim' + (empty ? ' opacity-40' : '');
+    const title = empty ? ' title="No campaigns name this store in this window"' : '';
+    return `<button onclick="mkSetFilter('${kind}','${id}')"${title} class="px-3 py-1 rounded-full text-xs border ${cls} transition-colors">${mkEsc(lbl)}</button>`;
   }
 
   function mkRenderKPI(data) {
