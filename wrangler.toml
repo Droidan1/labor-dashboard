@@ -14,7 +14,7 @@ compatibility_date = "2024-01-01"
 #                     0=Sun). "0" is rejected as invalid. Must match the handler's
 #                     exact string "0 11 * * 1".
 [triggers]
-crons = ["55 3 * * *", "* * * * *", "0 12 * * *", "0 11 * * 1", "0 * * * *"]
+crons = ["55 3 * * *", "* * * * *", "0 12 * * *", "0 11 * * 1", "0 * * * *", "30 10 * * *"]
 
 [vars]
 BL1_MERCHANT_ID = "T3M0E73JKKF11"
@@ -65,10 +65,11 @@ database_id = "3fa911d7-31d6-438c-985f-7ac08c407d2d"
 [env.staging]
 name = "clover-sales-api-staging"
 
-# Explicitly disable crons in staging (named envs otherwise INHERIT the
-# top-level [triggers], causing double notifications / snapshot writes).
+# Staging runs ONLY the Meta marketing refresh cron — NOT the snapshot /
+# notification jobs (those would double-fire against prod data). Named envs
+# otherwise inherit the top-level [triggers], so this list is explicit.
 [env.staging.triggers]
-crons = []
+crons = ["30 10 * * *"]
 
 [env.staging.vars]
 BL1_MERCHANT_ID = "T3M0E73JKKF11"
