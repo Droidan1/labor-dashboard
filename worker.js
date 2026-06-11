@@ -3106,6 +3106,26 @@ const STORE_LABELS = {
   BL8: 'Holland', BL12: 'Wyoming', BL14: 'Battle Creek',
 };
 
+// Attribute a Meta campaign to a store/location by keyword-matching its name.
+// Most specific first (Coliseum/Dupont before the generic "Fort Wayne").
+// Brand-wide campaigns with no location keyword → "Unattributed".
+const STORE_KEYWORDS = [
+  ['Coliseum', /coliseum/i],
+  ['Dupont', /dupont/i],
+  ['South Bend', /south\s*bend/i],
+  ['Holland', /holland/i],
+  ['Wyoming', /wyoming/i],
+  ['Battle Creek', /battle\s*creek/i],
+  ['Indianapolis', /indianapol|\bindy\b/i],
+  ['Lansing', /lansing/i],
+  ['Fort Wayne', /fort\s*wayne/i],
+];
+function campaignStore(name) {
+  const n = name || '';
+  for (const [label, re] of STORE_KEYWORDS) if (re.test(n)) return label;
+  return 'Unattributed';
+}
+
 // Returns { date, priorDate, stores: [{store,label,sales,budget,prior}], totals }
 async function buildDailySummaryData(env, date) {
   const priorD = new Date(date + 'T12:00:00Z');
@@ -4627,7 +4647,7 @@ export default {
         return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
       }
       const window = (url.searchParams.get("window") || "mtd").toLowerCase();
-      const ALLOWED_WINDOWS = ["7d", "14d", "mtd", "last_60d"];
+      const ALLOWED_WINDOWS = ["7d", "14d", "30d", "90d", "mtd", "last_60d"];
       if (!ALLOWED_WINDOWS.includes(window)) {
         return new Response(JSON.stringify({ error: "window must be one of " + ALLOWED_WINDOWS.join(", ") }), { status: 400, headers: corsJson });
       }
@@ -4679,6 +4699,7 @@ export default {
       const campaigns = campaignRows.map(r => ({
         accountId: r.account_id,
         id: r.entity_id, name: r.entity_name, objective: r.objective,
+        store: campaignStore(r.entity_name),
         spend: r.spend, impressions: r.impressions, reach: r.reach,
         clicks: r.clicks, linkClicks: r.link_clicks,
         cpc: r.cpc, cpm: r.cpm, ctr: r.ctr,
@@ -5502,7 +5523,9 @@ export default {
                    -- Sheet-authoritative columns: Sheet always wins (humans enter these)
                    week=CASE WHEN is_manual_override=1 THEN week ELSE excluded.week END,
                    budget=CASE WHEN is_manual_override=1 THEN budget ELSE excluded.budget END,
-                   auction=CASE WHEN is_manual_override=1 THEN auction ELSE COALESCE(excluded.auction, auction) END,
+                   -- auction is now owned by the Drive auction feed (?action=ingest):
+                   -- existing wins, so the Sheet only seeds it when the feed hasn't yet.
+                   auction=CASE WHEN is_manual_override=1 THEN auction ELSE COALESCE(auction, excluded.auction) END,
                    labor_pct=CASE WHEN is_manual_override=1 THEN labor_pct ELSE COALESCE(excluded.labor_pct, labor_pct) END,
                    -- Phase 2C: Cron-authoritative columns. Existing wins; Sheet only fills NULLs.
                    total=CASE WHEN is_manual_override=1 THEN total ELSE COALESCE(total, excluded.total) END,
@@ -5537,6 +5560,86 @@ export default {
       return new Response(JSON.stringify({ ok: true, summary }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // ── Ingest: generic channel-sales sink (auction today; eon, labor next).
+    //    POST /?action=ingest   { channel, source_file?, rows: [{store, date, total?, count?, meta?}] }
+    //    Header: X-Snapshot-Secret. Feeders (Apps Script for Drive drops, worker
+    //    crons for APIs) all normalize to this shape and POST here. Idempotent:
+    //    UNIQUE(channel, store, date) upserts, so re-sent files never double-count.
+    if (request.method === "POST" && url.searchParams.get("action") === "ingest") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+
+      let body;
+      try { body = await request.json(); }
+      catch { return new Response(JSON.stringify({ error: "Invalid JSON body" }), { status: 400, headers: corsJson }); }
+
+      const channel = (body.channel || "").toString().trim().toLowerCase();
+      const rows = Array.isArray(body.rows) ? body.rows : null;
+      const sourceFile = body.source_file ? body.source_file.toString() : null;
+      if (!channel) return new Response(JSON.stringify({ error: "Missing channel" }), { status: 400, headers: corsJson });
+      if (!rows)    return new Response(JSON.stringify({ error: "Missing rows[]" }), { status: 400, headers: corsJson });
+
+      const ingestedAt = new Date().toISOString();
+      const stmt = env.DB.prepare(
+        `INSERT INTO channel_sales (channel, store, date, total, count, meta, source_file, ingested_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(channel, store, date) DO UPDATE SET
+           total       = excluded.total,
+           count       = excluded.count,
+           meta        = excluded.meta,
+           source_file = excluded.source_file,
+           ingested_at = excluded.ingested_at`
+      );
+
+      const batch = [];
+      const errors = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i] || {};
+        const store = (r.store || "").toString().trim().toUpperCase();
+        const date = (r.date || "").toString().trim();
+        if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          errors.push({ i, store, date, reason: "missing/invalid store or date" });
+          continue;
+        }
+        const total = (r.total == null || r.total === "") ? null : roundCents(Number(r.total));
+        const count = (r.count == null || r.count === "") ? null : Math.trunc(Number(r.count));
+        const meta  = (r.meta == null) ? null : JSON.stringify(r.meta);
+        if (total != null && !Number.isFinite(total)) { errors.push({ i, store, date, reason: "non-numeric total" }); continue; }
+        batch.push(stmt.bind(channel, store, date, total, count, meta, sourceFile, ingestedAt));
+      }
+
+      if (batch.length) await env.DB.batch(batch);
+
+      // Projection: the dashboard reads daily_sales.auction (already folded into
+      // each store's total + the violet "Auction" breakdown). Project the auction
+      // channel's daily $ into that column so the UI lights up with no frontend
+      // change. Feed-authoritative (overwrites), but never touches manual-override
+      // rows. Other channels (eon/labor) get their own projection when added.
+      let projected = 0;
+      if (channel === "auction" && batch.length) {
+        const proj = env.DB.prepare(
+          `INSERT INTO daily_sales (store, date, auction) VALUES (?, ?, ?)
+           ON CONFLICT(store, date) DO UPDATE SET
+             auction = CASE WHEN is_manual_override = 1 THEN auction ELSE excluded.auction END`
+        );
+        const projBatch = [];
+        for (let i = 0; i < rows.length; i++) {
+          const r = rows[i] || {};
+          const store = (r.store || "").toString().trim().toUpperCase();
+          const date = (r.date || "").toString().trim();
+          if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+          if (r.total == null || r.total === "") continue;
+          const total = roundCents(Number(r.total));
+          if (!Number.isFinite(total)) continue;
+          projBatch.push(proj.bind(store, date, total));
+        }
+        if (projBatch.length) { await env.DB.batch(projBatch); projected = projBatch.length; }
+      }
+
+      return new Response(JSON.stringify({ ok: true, channel, written: batch.length, projected, skipped: errors.length, errors }), { headers: corsJson });
     }
 
     // ── Admin: re-snapshot item sales for a date: ?action=items-snapshot&store=BL1[&date=2026-04-08]
