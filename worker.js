@@ -4822,6 +4822,23 @@ export default {
       return new Response(JSON.stringify(result), { status: result.error ? 400 : 200, headers: corsJson });
     }
 
+    // ── Marketing Flow Calendar: ?action=flow-calendar ───────────────
+    // The promotional pipeline (source of truth). Reads marketing_flow,
+    // one row per retail week. Returns the full fiscal year (~39 small rows);
+    // the frontend computes the current week and slices to the upcoming view.
+    // Account-wide planning data (not store-scoped); any authenticated user
+    // may read. Managers consume it; admins will edit it (Phase 2).
+    if (url.searchParams.get("action") === "flow-calendar") {
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      }
+      const fy = url.searchParams.get("fy") || "F26";
+      const { results: weeks } = await env.DB.prepare(
+        "SELECT * FROM marketing_flow WHERE fiscal_year = ? ORDER BY retail_week"
+      ).bind(fy).all();
+      return new Response(JSON.stringify({ fiscalYear: fy, weeks: weeks || [] }), { headers: corsJson });
+    }
+
     // ── User management: list-users ──────────────────────────────────
     if (url.searchParams.get("action") === "list-users") {
       if (!canAccessInventory(currentUser)) {
