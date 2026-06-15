@@ -3108,32 +3108,33 @@ const STORE_LABELS = {
 
 // Returns { date, priorDate, stores: [{store,label,sales,budget,prior}], totals }
 async function buildDailySummaryData(env, date) {
-  const priorD = new Date(date + 'T12:00:00Z');
-  priorD.setUTCDate(priorD.getUTCDate() - 7);
-  const priorDate = priorD.toISOString().slice(0, 10);
+  // Per-store channel split. "sales" (Total) = POS total + auction — the same
+  // net the dashboard shows. Stores with no sales (closed / non-reporting, e.g.
+  // Wyoming) are omitted from the email entirely.
+  const { results: rows } = await env.DB.prepare(
+    'SELECT store, total, retail, bin, auction, budget FROM daily_sales WHERE date = ? AND (total IS NOT NULL OR auction IS NOT NULL)'
+  ).bind(date).all();
 
-  const [{ results: todayRows }, { results: priorRows }] = await Promise.all([
-    env.DB.prepare('SELECT store, total, budget FROM daily_sales WHERE date = ? AND total IS NOT NULL').bind(date).all(),
-    env.DB.prepare('SELECT store, total FROM daily_sales WHERE date = ? AND total IS NOT NULL').bind(priorDate).all(),
-  ]);
+  const rowMap = {};
+  for (const r of (rows || [])) rowMap[r.store] = r;
 
-  const todayMap = {}, priorMap = {};
-  for (const r of (todayRows || [])) todayMap[r.store] = r;
-  for (const r of (priorRows  || [])) priorMap[r.store] = r.total;
+  let totRetail = 0, totBin = 0, totAuction = 0, totSales = 0, totBudget = 0;
+  const stores = [];
+  for (const store of ALL_STORES) {
+    const r = rowMap[store];
+    if (!r) continue;                                       // no row → omit
+    const retail  = Number(r.retail)  || 0;
+    const bin     = Number(r.bin)     || 0;
+    const auction = Number(r.auction) || 0;
+    const sales   = (Number(r.total) || 0) + auction;       // net = POS total + auction
+    if (sales <= 0) continue;                               // closed / no sales → omit
+    const budget  = r.budget ?? null;
+    totRetail += retail; totBin += bin; totAuction += auction; totSales += sales;
+    if (budget != null) totBudget += budget;
+    stores.push({ store, label: STORE_LABELS[store] || store, retail, bin, auction, sales, budget });
+  }
 
-  let totalSales = 0, totalBudget = 0, totalPrior = 0;
-  const stores = ALL_STORES.map(store => {
-    const row    = todayMap[store] || {};
-    const sales  = row.total  ?? null;
-    const budget = row.budget ?? null;
-    const prior  = priorMap[store] ?? null;
-    if (sales  != null) totalSales  += sales;
-    if (budget != null) totalBudget += budget;
-    if (prior  != null) totalPrior  += prior;
-    return { store, label: STORE_LABELS[store] || store, sales, budget, prior };
-  });
-
-  return { date, priorDate, stores, totals: { sales: totalSales, budget: totalBudget, prior: totalPrior } };
+  return { date, stores, totals: { retail: totRetail, bin: totBin, auction: totAuction, sales: totSales, budget: totBudget } };
 }
 
 // ─── Morning Briefing API ────────────────────────────────────────────────
@@ -3213,37 +3214,45 @@ function buildSummaryEmailHtml(data) {
   const { date, stores, totals } = data;
   const displayDate = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 
-  const storeRows = stores.map(({ label, sales, budget, prior }) => `
+  const dot = c => `<span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:${c};margin-right:4px;vertical-align:middle"></span>`;
+
+  const storeRows = stores.map(({ label, retail, bin, auction, sales, budget }) => `
     <tr style="border-bottom:1px solid #eee">
-      <td style="padding:8px 14px;color:#333">${label}</td>
-      <td style="padding:8px 14px;text-align:right;font-weight:600;color:#111">${_fmtDollars(sales)}</td>
-      <td style="padding:8px 14px;text-align:right;color:${_vsColor(sales,prior)}">${_fmtVsLW(sales,prior)}</td>
-      <td style="padding:8px 14px;text-align:right;color:${_vsColor(sales,budget)}">${_fmtVsBudget(sales,budget)}</td>
+      <td style="padding:9px 8px 9px 22px;color:#333">${label}</td>
+      <td style="padding:9px 8px;text-align:right;color:#666">${_fmtDollars(retail)}</td>
+      <td style="padding:9px 8px;text-align:right;color:#666">${_fmtDollars(bin)}</td>
+      <td style="padding:9px 8px;text-align:right;color:${auction ? '#666' : '#bbb'}">${_fmtDollars(auction)}</td>
+      <td style="padding:9px 8px;text-align:right;font-weight:700;color:#111;background:#f4faf5">${_fmtDollars(sales)}</td>
+      <td style="padding:9px 14px 9px 8px;text-align:right;color:${_vsColor(sales,budget)}">${_fmtVsBudget(sales,budget)}</td>
     </tr>`).join('');
 
-  const { sales: ts, budget: tb, prior: tp } = totals;
+  const { retail: tr, bin: tbn, auction: tau, sales: ts, budget: tb } = totals;
 
   return `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:32px 24px;background:#fff">
       <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:44px;margin-bottom:20px">
       <h2 style="margin:0 0 4px;font-size:20px;color:#194975">Daily Sales Summary</h2>
       <p style="margin:0 0 24px;font-size:14px;color:#666">${displayDate}</p>
-      <table style="width:100%;border-collapse:collapse;font-size:14px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead>
           <tr style="background:#3BB54A;color:#fff">
-            <th style="padding:9px 14px;text-align:left;font-weight:600">Store</th>
-            <th style="padding:9px 14px;text-align:right;font-weight:600">Net Sales</th>
-            <th style="padding:9px 14px;text-align:right;font-weight:600">vs LW</th>
-            <th style="padding:9px 14px;text-align:right;font-weight:600">vs Budget</th>
+            <th style="padding:9px 8px 9px 22px;text-align:left;font-weight:600">Store</th>
+            <th style="padding:9px 8px;text-align:right;font-weight:600">${dot('#bff0c8')}Retail</th>
+            <th style="padding:9px 8px;text-align:right;font-weight:600">${dot('#bcd9ff')}BIN</th>
+            <th style="padding:9px 8px;text-align:right;font-weight:600">${dot('#d6caff')}Auction</th>
+            <th style="padding:9px 8px;text-align:right;font-weight:700;background:#33a544">Total</th>
+            <th style="padding:9px 14px 9px 8px;text-align:right;font-weight:600">vs Budget</th>
           </tr>
         </thead>
         <tbody>${storeRows}</tbody>
         <tfoot>
           <tr style="background:#f7f7f7;font-weight:700;border-top:2px solid #3BB54A">
-            <td style="padding:9px 14px;color:#111">All Stores</td>
-            <td style="padding:9px 14px;text-align:right;color:#111">${_fmtDollars(ts)}</td>
-            <td style="padding:9px 14px;text-align:right;color:${_vsColor(ts,tp)}">${_fmtVsLW(ts,tp)}</td>
-            <td style="padding:9px 14px;text-align:right;color:${_vsColor(ts,tb)}">${_fmtVsBudget(ts,tb)}</td>
+            <td style="padding:11px 8px 11px 22px;color:#111">All Stores</td>
+            <td style="padding:11px 8px;text-align:right;color:#333">${_fmtDollars(tr)}</td>
+            <td style="padding:11px 8px;text-align:right;color:#333">${_fmtDollars(tbn)}</td>
+            <td style="padding:11px 8px;text-align:right;color:#333">${_fmtDollars(tau)}</td>
+            <td style="padding:11px 8px;text-align:right;color:#111;background:#eef7f0">${_fmtDollars(ts)}</td>
+            <td style="padding:11px 14px 11px 8px;text-align:right;color:${_vsColor(ts,tb)}">${_fmtVsBudget(ts,tb)}</td>
           </tr>
         </tfoot>
       </table>
@@ -3260,7 +3269,7 @@ async function dispatchDailySummary(env, date) {
   if (!env.DB) return { error: 'DB not configured' };
 
   const data = await buildDailySummaryData(env, date);
-  const { sales: ts, budget: tb, prior: tp } = data.totals;
+  const { sales: ts, budget: tb } = data.totals;
 
   // Short push body
   const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
