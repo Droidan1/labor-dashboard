@@ -2538,6 +2538,39 @@
     div.appendChild(document.createTextNode(String(str)));
     return div.innerHTML;
   }
+  // ── PWA-safe dialogs ────────────────────────────────────────────────
+  // Native confirm()/alert() block the JS thread AND don't render in an
+  // installed standalone PWA (iOS) — they freeze the whole app. These
+  // Promise-based, in-app replacements never block. uiConfirm → Promise<bool>,
+  // uiAlert → Promise<void>. Text is set via textContent (no HTML injection).
+  function _uiDialog({ message, title, okText = 'OK', cancelText = null, danger = false }) {
+    return new Promise(resolve => {
+      const dark = document.documentElement.classList.contains('dark');
+      const bg = dark ? '#0f1722' : '#ffffff', fg = dark ? '#e6edf3' : '#13243a';
+      const dim = dark ? '#9fb0c0' : '#5a6b7d', border = dark ? '#1f2d3d' : '#e5e9ee';
+      const okBg = danger ? '#c0392b' : '#3BB54A', okFg = danger ? '#ffffff' : '#06210f';
+      const overlay = document.createElement('div');
+      overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true');
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,0.5);';
+      const box = document.createElement('div');
+      box.style.cssText = `max-width:380px;width:100%;background:${bg};color:${fg};border:1px solid ${border};border-radius:16px;padding:22px 22px 18px;box-shadow:0 20px 60px rgba(0,0,0,.4);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;`;
+      if (title) { const h = document.createElement('div'); h.textContent = title; h.style.cssText = `font-size:16px;font-weight:700;margin-bottom:8px;color:${fg};`; box.appendChild(h); }
+      const p = document.createElement('div'); p.textContent = message;
+      p.style.cssText = `font-size:14px;line-height:1.5;color:${dim};margin-bottom:18px;white-space:pre-wrap;`; box.appendChild(p);
+      const rowEl = document.createElement('div'); rowEl.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
+      let done = false;
+      const onKey = (e) => { if (e.key === 'Escape') finish(cancelText ? false : true); else if (e.key === 'Enter') finish(true); };
+      function finish(val) { if (done) return; done = true; document.removeEventListener('keydown', onKey); overlay.remove(); resolve(val); }
+      if (cancelText) { const c = document.createElement('button'); c.textContent = cancelText; c.style.cssText = `padding:9px 16px;font-size:14px;font-weight:600;border-radius:10px;border:1px solid ${border};background:transparent;color:${fg};cursor:pointer;`; c.onclick = () => finish(false); rowEl.appendChild(c); }
+      const okEl = document.createElement('button'); okEl.textContent = okText; okEl.style.cssText = `padding:9px 16px;font-size:14px;font-weight:700;border-radius:10px;border:none;background:${okBg};color:${okFg};cursor:pointer;`; okEl.onclick = () => finish(true); rowEl.appendChild(okEl);
+      box.appendChild(rowEl); overlay.appendChild(box);
+      overlay.addEventListener('click', e => { if (e.target === overlay) finish(cancelText ? false : true); });
+      document.addEventListener('keydown', onKey); document.body.appendChild(overlay); okEl.focus();
+    });
+  }
+  function uiConfirm(message, opts = {}) { return _uiDialog({ message, cancelText: opts.cancelText || 'Cancel', okText: opts.okText || 'OK', title: opts.title, danger: opts.danger }); }
+  function uiAlert(message, opts = {}) { return _uiDialog({ message, okText: opts.okText || 'OK', title: opts.title }); }
+  window.uiConfirm = uiConfirm; window.uiAlert = uiAlert;
   function fmtK(n) {
     if (n == null) return "—";
     const abs = Math.abs(n), sign = n < 0 ? "-" : "";
@@ -6663,7 +6696,7 @@
         if (data2.ok) { srDetailCache[reqId] = data2.request; srRenderDetail(reqId, data2.request); }
       } catch(e) {
         inp.value = note;
-        alert(`Failed: ${e.message}`);
+        uiAlert(`Failed: ${e.message}`);
       } finally { if(inp) inp.disabled = false; }
     }
     window.srAddComment = srAddComment;
@@ -6967,7 +7000,7 @@
         const resp2 = await fetch(`${WORKER_BASE}?action=supply-request&id=${reqId}`,{credentials:'include'});
         const data2 = await resp2.json();
         if (data2.ok) { srDetailCache[reqId] = data2.request; srRenderSuperDetail(reqId, data2.request); }
-      } catch(e) { inp.value = note; alert(`Failed: ${e.message}`); }
+      } catch(e) { inp.value = note; uiAlert(`Failed: ${e.message}`); }
       finally { if(inp) inp.disabled=false; }
     }
     window.srAddSuperComment = srAddSuperComment;
@@ -6975,7 +7008,7 @@
     async function srDeleteRequest(reqId) {
       const btn = el(`sr-su-del-btn-${reqId}`);
       const msg = el(`sr-su-del-msg-${reqId}`);
-      if (!confirm('Permanently delete this supply request and all its history? This cannot be undone.')) return;
+      if (!await uiConfirm('Permanently delete this supply request and all its history? This cannot be undone.')) return;
       btn.disabled = true; btn.textContent = 'Deleting…';
       try {
         const resp = await fetch(`${WORKER_BASE}?action=supply-request-delete`, {
@@ -7163,7 +7196,7 @@
         // Flash confirmation
         const btn = document.querySelector('[onclick="srCopyPrevBudgets()"]');
         if (btn) { const orig = btn.textContent; btn.textContent='✓ Filled in — click Save on each store'; setTimeout(()=>{btn.textContent=orig;},4000); }
-      } catch(e) { alert(`Failed: ${e.message}`); }
+      } catch(e) { uiAlert(`Failed: ${e.message}`); }
     }
     window.srCopyPrevBudgets = srCopyPrevBudgets;
 
@@ -8508,7 +8541,7 @@
     const days = Math.max(1, Math.min(30, parseInt(document.getElementById('resnapshot-days').value, 10) || 1));
     const statusEl = document.getElementById('resnapshot-status');
 
-    if (!endDate) { alert('Please select an end date.'); return; }
+    if (!endDate) { uiAlert('Please select an end date.'); return; }
 
     // Build descending date list ending at endDate, length = days.
     const dateList = [];
@@ -8576,11 +8609,11 @@
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js');
       } catch (e) {
-        alert('Failed to load PDF library. Check your connection and try again.'); return;
+        uiAlert('Failed to load PDF library. Check your connection and try again.'); return;
       }
     }
     const jsPDFCtor = window.jspdf?.jsPDF || window.jsPDF;
-    if (!jsPDFCtor) { alert('PDF library failed to initialize — please try again.'); return; }
+    if (!jsPDFCtor) { uiAlert('PDF library failed to initialize — please try again.'); return; }
 
     let activeLabel = 'Summary';
     const activeBtn = document.querySelector('#wrs-tabs .wrs-tab.text-\\[\\#3BB54A\\]')
@@ -8590,7 +8623,7 @@
     const visiblePane =
       [el('wrs-pane-summary'), el('wrs-pane-t13'), el('wrs-pane-store')]
         .find(p => p && !p.classList.contains('hidden'));
-    if (!visiblePane) { alert('No active tab to export.'); return; }
+    if (!visiblePane) { uiAlert('No active tab to export.'); return; }
 
     const btn = el('wrs-download-btn');
     if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
@@ -8746,7 +8779,7 @@
       const filename = `WRS-${activeLabel.replace(/\s+/g, '_')}-${new Date().toISOString().slice(0, 10)}.pdf`;
       doc.save(filename);
     } catch (err) {
-      alert('PDF generation failed: ' + err.message);
+      uiAlert('PDF generation failed: ' + err.message);
     } finally {
       if (btn) { btn.disabled = false; btn.style.opacity = ''; }
     }
@@ -8764,7 +8797,7 @@
     const visiblePane =
       [el('wrs-pane-summary'), el('wrs-pane-t13'), el('wrs-pane-store')]
         .find(p => p && !p.classList.contains('hidden'));
-    if (!visiblePane) { alert('No active tab to export.'); return; }
+    if (!visiblePane) { uiAlert('No active tab to export.'); return; }
 
     const subtitle = (el('wrs-subtitle')?.textContent || '').trim();
 
@@ -9309,7 +9342,7 @@
     const [y, m] = yearMonth.split('-').map(Number);
     const monthLabel = new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
-    const ok = window.confirm(
+    const ok = await uiConfirm(
       `Import ${daily.length} days of Clover Net Sales for ${monthLabel} (${store}) as Manual Overrides?\n\n` +
       `Days already flagged as manual overrides will be skipped.`
     );
@@ -9420,7 +9453,7 @@
     }
 
     const monthLabel = new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-    const ok = window.confirm(
+    const ok = await uiConfirm(
       `Re-snapshot all ${dates.length} days of ${monthLabel} for ${store}?\n\n` +
       `This pulls fresh data from Clover for each day. Days flagged as manual overrides will be preserved.\n\n` +
       `Existing values that match Clover will not change.`
@@ -9760,7 +9793,7 @@
     if (!_isrLastParsed) return;
     const { store, start, end } = _isrLastParsed;
 
-    const ok = window.confirm(
+    const ok = await uiConfirm(
       `Re-snapshot item sales for ${store} from ${start} to ${end}?\n\n` +
       `This re-pulls item sales from Clover for every day in the range. The comparison will refresh when done.`
     );
@@ -9867,7 +9900,7 @@
     const store = document.getElementById('overrides-store').value;
     const start = document.getElementById('overrides-start').value;
     const end = document.getElementById('overrides-end').value;
-    if (!start || !end) { alert('Please select start and end dates.'); return; }
+    if (!start || !end) { uiAlert('Please select start and end dates.'); return; }
 
     setOverridesStatus(`Loading uncategorized items for ${store} · ${start} → ${end}…`, 'info');
     document.getElementById('overrides-table-wrap').classList.add('hidden');
@@ -10040,7 +10073,7 @@
     const store = document.getElementById('overrides-store').value;
     const start = document.getElementById('overrides-start').value;
     const end = document.getElementById('overrides-end').value;
-    if (!start || !end) { alert('Please select start and end dates.'); return; }
+    if (!start || !end) { uiAlert('Please select start and end dates.'); return; }
 
     const dates = [];
     const cur = new Date(start + 'T00:00:00Z');
@@ -10521,7 +10554,7 @@
     const title = (el('ann-title')?.value || '').trim();
     const items = _parseAnnItems();
     if (!title && items.length === 0) { _annStatus('Add a title or at least one item.', 'error'); return; }
-    if (!confirm('Push this announcement to all users now?')) return;
+    if (!await uiConfirm('Push this announcement to all users now?')) return;
     const btn = el('ann-push-btn'); if (btn) { btn.disabled = true; btn.textContent = 'Pushing…'; }
     try {
       const resp = await fetch(`${WORKER_BASE}?action=announcement-set`, {
@@ -10539,7 +10572,7 @@
   window.pushAnnouncement = pushAnnouncement;
 
   async function clearAnnouncement() {
-    if (!confirm('Remove the current announcement? No popup will show until you push a new one.')) return;
+    if (!await uiConfirm('Remove the current announcement? No popup will show until you push a new one.')) return;
     try {
       const resp = await fetch(`${WORKER_BASE}?action=announcement-clear`, { method: 'POST', credentials: 'include' });
       const data = await resp.json();
@@ -12203,7 +12236,7 @@
   }
 
   async function cancelSaleSchedule(scheduleGroup) {
-    if (!confirm('Cancel this sale? Active items will have their original price restored.')) return;
+    if (!await uiConfirm('Cancel this sale? Active items will have their original price restored.')) return;
     try {
       const resp = await fetch(`${WORKER_BASE}?action=cancel-sale-schedule`, {
         method: 'POST',
@@ -12212,10 +12245,10 @@
         credentials: 'include',
       });
       const data = await resp.json();
-      if (!data.ok) { alert('Cancel failed: ' + (data.error || 'unknown')); return; }
+      if (!data.ok) { uiAlert('Cancel failed: ' + (data.error || 'unknown')); return; }
       loadSaleSchedules();
     } catch (err) {
-      alert('Error: ' + err.message);
+      uiAlert('Error: ' + err.message);
     }
   }
 
@@ -12228,10 +12261,10 @@
         credentials: 'include',
       });
       const data = await resp.json();
-      if (!data.ok) { alert('Remove failed: ' + (data.error || 'unknown')); return; }
+      if (!data.ok) { uiAlert('Remove failed: ' + (data.error || 'unknown')); return; }
       loadSaleSchedules();
     } catch (err) {
-      alert('Error: ' + err.message);
+      uiAlert('Error: ' + err.message);
     }
   }
 
@@ -12545,7 +12578,7 @@
   }
 
   async function deletePasskey(pkId) {
-    if (!confirm('Remove this passkey? You will need to use email login instead.')) return;
+    if (!await uiConfirm('Remove this passkey? You will need to use email login instead.')) return;
     try {
       const resp = await fetch(`${WORKER_BASE}?action=passkey-delete`, {
         method: 'POST', credentials: 'include',
@@ -12780,7 +12813,7 @@
   }
 
   async function deleteUser(id, email) {
-    if (!confirm(`Delete ${email}? This will remove their account and sign them out.`)) return;
+    if (!await uiConfirm(`Delete ${email}? This will remove their account and sign them out.`)) return;
     try {
       const resp = await fetch(`${WORKER_BASE}?action=delete-user`, {
         method: 'POST',
