@@ -47,14 +47,19 @@ const CONFIG = {
 
 // ─── ENTRY POINTS ────────────────────────────────────────────────────────────
 
-/** Install the daily trigger (run once, manually). */
+/** Install the daily triggers (run once, manually). */
 function installTrigger() {
   // Clear any existing triggers for runDaily to avoid duplicates.
   ScriptApp.getProjectTriggers()
     .filter(t => t.getHandlerFunction() === 'runDaily')
     .forEach(t => ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger('runDaily').timeBased().everyDays(1).atHour(6).create();
-  Logger.log('Installed daily trigger: runDaily @ ~6 AM');
+  // The auction zip is named *T0500 but doesn't land in Drive until mid-morning —
+  // a single 6 AM run misses it, so each file waited a full extra day (~2-day lag).
+  // Run several times through the day instead; the ingest endpoint is idempotent
+  // (UNIQUE channel+store+date), so repeat runs never double-count.
+  [9, 13, 17].forEach(h =>
+    ScriptApp.newTrigger('runDaily').timeBased().everyDays(1).atHour(h).create());
+  Logger.log('Installed runDaily triggers @ 9 AM, 1 PM, 5 PM');
 }
 
 /** Main job: process any not-yet-seen auction result zips. */
