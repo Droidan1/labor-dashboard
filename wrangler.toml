@@ -9,10 +9,12 @@ compatibility_date = "2024-01-01"
 #                     7 AM auction feeder so the email includes auction. In EST this
 #                     is 7 AM ET — bump to "0 13 * * *" when DST ends in November.)
 #   - "0 * * * *"   — top of every hour: interval sales summary push notifications
-#   - "0 11 * * 0"  — 7 AM ET Sunday weekly digest (11:00 UTC = EDT; Cloudflare cron
-#                     0/7=Sun, 1=Mon. Must stay in sync with the handler's "0 11 * * 0".)
+#   - "0 11 * * 1"  — 7 AM ET Sunday weekly digest (11:00 UTC = EDT). NOTE: Cloudflare
+#                     cron day-of-week is 1-7 where 1=Sunday, 7=Saturday (NOT POSIX
+#                     0=Sun). "0" is rejected as invalid. Must match the handler's
+#                     exact string "0 11 * * 1".
 [triggers]
-crons = ["55 3 * * *", "* * * * *", "0 12 * * *", "0 11 * * 0", "0 * * * *"]
+crons = ["55 3 * * *", "* * * * *", "0 12 * * *", "0 11 * * 1", "0 * * * *"]
 
 [vars]
 BL1_MERCHANT_ID = "T3M0E73JKKF11"
