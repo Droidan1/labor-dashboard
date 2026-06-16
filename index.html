@@ -1525,8 +1525,38 @@
       </div>
 
       <div class="max-w-3xl mx-auto px-4 sm:px-6 pt-4 pb-10">
-        <div id="fc-content" class="space-y-4">
-          <div class="text-sm text-opl-inkDim dark:text-op-inkDim py-10 text-center">Loading…</div>
+        <div id="fc-content">
+          <div id="fc-loading" class="text-sm text-opl-inkDim dark:text-op-inkDim py-10 text-center">Loading…</div>
+          <div id="fc-view" class="hidden">
+            <!-- Month switcher -->
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-2">
+                <button onclick="fcStepMonth(-1)" aria-label="Previous month" class="w-9 h-9 grid place-content-center rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-ink dark:text-op-ink active:scale-95 transition">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <span id="fc-month" class="text-lg font-semibold text-gray-800 dark:text-gray-100 min-w-[140px] text-center"></span>
+                <button onclick="fcStepMonth(1)" aria-label="Next month" class="w-9 h-9 grid place-content-center rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-ink dark:text-op-ink active:scale-95 transition">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+              </div>
+              <button onclick="fcGoToday()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim active:scale-95 transition">Today</button>
+            </div>
+            <!-- Week header + week stepper -->
+            <div class="flex items-stretch gap-2 mb-3">
+              <button onclick="fcStepWeek(-1)" aria-label="Previous week" class="w-9 grid place-content-center rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-ink dark:text-op-ink active:scale-95 transition flex-none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+              <div id="fc-head" class="flex-1 bg-opl-panelHi dark:bg-op-panelHi rounded-xl px-4 py-2.5"></div>
+              <button onclick="fcStepWeek(1)" aria-label="Next week" class="w-9 grid place-content-center rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-ink dark:text-op-ink active:scale-95 transition flex-none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+            </div>
+            <!-- 7-day strip -->
+            <div id="fc-days" class="grid grid-cols-7 gap-1 sm:gap-1.5"></div>
+            <!-- Selected-day detail -->
+            <div id="fc-detail" class="mt-4"></div>
+          </div>
+          <div id="fc-error" class="hidden text-sm text-red-500 py-10 text-center"></div>
         </div>
       </div>
     </div><!-- end #page-flow-calendar -->
@@ -10616,33 +10646,40 @@
   }
   window.initMarketing = initMarketing;
 
-  // ─── Marketing Flow Calendar (upcoming view) ───────────────────────
+  // ─── Marketing Flow Calendar (week view, default) ──────────────────
   let fcBooted = false;
-  const FC_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  // Detail rows shown under each week's theme, each with its own accent —
-  // echoing the calendar's category key. Order = display order.
+  let fcWeeks = [];   // sorted week rows from the API
+  let fcIdx = 0;      // index of the focused week in fcWeeks
+  let fcFocus = '';   // ISO of the selected day within the focused week
+  const FC_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const FC_DOWS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const FC_DOWL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  // Detail rows under the week header — each accent echoes the calendar key.
   const FC_FIELDS = [
-    { key: 'special_event', label: 'Event',           color: '#EF9F27' },
-    { key: 'flash_sale',    label: 'Flash (Wed–Thu)', color: '#1D9E75' },
-    { key: 'weekend_event', label: 'Weekend',         color: '#7F77DD' },
-    { key: 'product_focus', label: 'Product focus',   color: '#378ADD' },
+    { key: 'special_event', label: 'Event',         sub: '',          color: '#EF9F27' },
+    { key: 'flash_sale',    label: 'Flash',         sub: '(Wed–Thu)', color: '#1D9E75' },
+    { key: 'weekend_event', label: 'Weekend',       sub: '(Fri–Sun)', color: '#7F77DD' },
+    { key: 'dd_loyalty',    label: 'Loyalty',       sub: '',          color: '#D4537E' },
+    { key: 'product_focus', label: 'Product focus', sub: '',          color: '#378ADD' },
   ];
 
   function fcEsc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
-  function fcDay(iso) { return Number(iso.split('-')[2]); }
-  function fcMon(iso) { return FC_MONTHS[Number(iso.split('-')[1]) - 1]; }
+  function fcZ(n) { return String(n).padStart(2, '0'); }
+  function fcISO(d) { return `${d.getFullYear()}-${fcZ(d.getMonth() + 1)}-${fcZ(d.getDate())}`; }
+  function fcParse(iso) { const p = iso.split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
+  function fcTodayISO() { return fcISO(new Date()); }
   function fcRange(s, e) {
-    return s.split('-')[1] === e.split('-')[1]
-      ? `${fcMon(s)} ${fcDay(s)}–${fcDay(e)}`
-      : `${fcMon(s)} ${fcDay(s)}–${fcMon(e)} ${fcDay(e)}`;
+    const sm = FC_MONTHS[Number(s.split('-')[1]) - 1].slice(0, 3);
+    const em = FC_MONTHS[Number(e.split('-')[1]) - 1].slice(0, 3);
+    const sd = Number(s.split('-')[2]), ed = Number(e.split('-')[2]);
+    return s.split('-')[1] === e.split('-')[1] ? `${sm} ${sd}–${ed}` : `${sm} ${sd}–${em} ${ed}`;
   }
-  function fcTodayISO() {
-    const t = new Date(), z = n => String(n).padStart(2, '0');
-    return `${t.getFullYear()}-${z(t.getMonth() + 1)}-${z(t.getDate())}`;
-  }
+  // A week "belongs to" the month of its Wednesday, so the switcher label
+  // tracks the bulk of a cross-month week. Returns year*12 + monthIndex.
+  function fcWeekMonth(w) { const d = fcParse(w.week_start); d.setDate(d.getDate() + 3); return d.getFullYear() * 12 + d.getMonth(); }
 
   async function initFlowCalendar() {
     if (fcBooted) return;
@@ -10650,63 +10687,110 @@
     try {
       const resp = await fetch(`${WORKER_BASE}?action=flow-calendar`, { credentials: 'include' });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      fcRender(await resp.json());
+      const data = await resp.json();
+      el('fc-fy').textContent = data.fiscalYear || 'F26';
+      fcWeeks = (data.weeks || []).slice().sort((a, b) => a.retail_week - b.retail_week);
+      if (!fcWeeks.length) { fcShowError('No calendar weeks found.'); return; }
+      fcGoToday();
+      el('fc-loading').classList.add('hidden');
+      el('fc-view').classList.remove('hidden');
     } catch (e) {
       fcBooted = false; // allow a retry on next visit
-      el('fc-content').innerHTML =
-        `<div class="text-sm text-red-500 py-10 text-center">Couldn't load the flow calendar (${fcEsc((e && e.message) || e)}).</div>`;
+      fcShowError(`Couldn't load the flow calendar (${fcEsc((e && e.message) || e)}).`);
     }
   }
   window.initFlowCalendar = initFlowCalendar;
 
-  function fcRender(data) {
-    el('fc-fy').textContent = data.fiscalYear || 'F26';
-    const weeks = (data.weeks || []).slice().sort((a, b) => a.retail_week - b.retail_week);
-    if (!weeks.length) {
-      el('fc-content').innerHTML = '<div class="text-sm text-opl-inkDim dark:text-op-inkDim py-10 text-center">No calendar weeks found.</div>';
-      return;
-    }
-    const today = fcTodayISO();
-    let idx = weeks.findIndex(w => w.week_start <= today && today <= w.week_end);
-    if (idx === -1) idx = today < weeks[0].week_start ? 0 : weeks.length - 1;
-    const upcoming = weeks.slice(idx, idx + 4); // this week + next 3
-
-    el('fc-content').innerHTML = upcoming.map((w, i) => fcCard(w, i === 0)).join('')
-      + '<p class="text-xs text-opl-inkDim dark:text-op-inkDim text-center pt-2">Showing this week and the next few. Full calendar &amp; editing coming soon.</p>';
+  function fcShowError(msg) {
+    el('fc-loading').classList.add('hidden');
+    el('fc-view').classList.add('hidden');
+    const ee = el('fc-error'); ee.textContent = msg; ee.classList.remove('hidden');
   }
 
-  function fcCard(w, isCurrent) {
-    const dd = w.dd_loyalty
-      ? `<span class="text-[11px] font-semibold px-2 py-1 rounded-md whitespace-nowrap"
-            style="background:${/x2/i.test(w.dd_loyalty) ? 'rgba(55,138,221,0.14);color:#2f6fb0' : 'rgba(212,83,126,0.14);color:#c0426b'}">${fcEsc(w.dd_loyalty)}</span>`
-      : '';
-    const rows = FC_FIELDS.filter(f => w[f.key]).map(f => `
-      <div class="flex items-start gap-2.5">
-        <span class="mt-1 w-2 h-2 rounded-full flex-shrink-0" style="background:${f.color}"></span>
-        <div class="min-w-0">
-          <span class="text-[11px] uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">${f.label}</span>
-          <div class="text-sm text-gray-700 dark:text-gray-200 leading-snug">${fcEsc(w[f.key])}</div>
-        </div>
-      </div>`).join('');
+  // Focus the current day if it's in the focused week, else that week's start.
+  function fcSyncFocus() {
+    const w = fcWeeks[fcIdx], today = fcTodayISO();
+    fcFocus = (w.week_start <= today && today <= w.week_end) ? today : w.week_start;
+  }
+  function fcGoToday() {
+    const today = fcTodayISO();
+    let idx = fcWeeks.findIndex(w => w.week_start <= today && today <= w.week_end);
+    if (idx === -1) idx = today < fcWeeks[0].week_start ? 0 : fcWeeks.length - 1;
+    fcIdx = idx; fcSyncFocus(); fcRenderWeek();
+  }
+  window.fcGoToday = fcGoToday;
+  function fcStepWeek(n) {
+    const t = fcIdx + n; if (t < 0 || t >= fcWeeks.length) return;
+    fcIdx = t; fcSyncFocus(); fcRenderWeek();
+  }
+  window.fcStepWeek = fcStepWeek;
+  function fcStepMonth(n) {
+    const target = fcWeekMonth(fcWeeks[fcIdx]) + n;
+    const idx = fcWeeks.findIndex(w => fcWeekMonth(w) === target);
+    if (idx === -1) return;
+    fcIdx = idx; fcSyncFocus(); fcRenderWeek();
+  }
+  window.fcStepMonth = fcStepMonth;
+  function fcSelectDay(iso) { fcFocus = iso; fcRenderWeek(); }
+  window.fcSelectDay = fcSelectDay;
+
+  function fcRenderWeek() {
+    const w = fcWeeks[fcIdx], today = fcTodayISO(), wm = fcWeekMonth(w);
+    el('fc-month').textContent = `${FC_MONTHS[wm % 12]} ${Math.floor(wm / 12)}`;
+
+    const isNow = w.week_start <= today && today <= w.week_end;
+    let tags = '';
+    if (isNow) tags += '<span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-accent-green/15 text-accent-green whitespace-nowrap">This week</span>';
+    if (w.special_event) tags += `<span class="text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap" style="background:rgba(239,159,39,0.16);color:#b06d12">${fcEsc(w.special_event)}</span>`;
+    if (w.dd_loyalty) tags += `<span class="text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap" style="background:rgba(212,83,126,0.16);color:#c0426b">${fcEsc(w.dd_loyalty)}</span>`;
     const theme = w.weekly_theme ? fcEsc(w.weekly_theme) : '<span class="text-opl-inkDim dark:text-op-inkDim font-normal">No theme set</span>';
-    const badge = isCurrent
-      ? '<span class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-accent-green/15 text-accent-green">This week</span>'
-      : '';
-    return `
-      <div class="rounded-xl border bg-opl-panel dark:bg-op-panel px-4 py-3.5 transition-colors ${isCurrent ? 'border-accent-green' : 'border-[rgba(20,16,8,0.08)] dark:border-op-border'}"
-           style="${isCurrent ? 'box-shadow:0 0 0 1px #22c55e inset' : ''}">
-        <div class="flex items-start justify-between gap-3 mb-2">
+    el('fc-head').innerHTML =
+      `<div class="flex items-start justify-between gap-2 mb-0.5">
+         <span class="text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">Week ${w.retail_week} · ${fcRange(w.week_start, w.week_end)}</span>
+         <span class="flex gap-1.5 flex-wrap justify-end">${tags}</span>
+       </div>
+       <div class="text-lg font-semibold text-gray-800 dark:text-gray-100 leading-tight">${theme}</div>`;
+
+    const d = fcParse(w.week_start);
+    let cells = '';
+    for (let k = 0; k < 7; k++) {
+      const di = fcISO(d), dow = d.getDay();
+      let dots = '';
+      if (w.flash_sale && (dow === 3 || dow === 4)) dots += '<span class="w-1.5 h-1.5 rounded-full" style="background:#1D9E75"></span>';
+      if (w.weekend_event && (dow === 5 || dow === 6 || dow === 0)) dots += '<span class="w-1.5 h-1.5 rounded-full" style="background:#7F77DD"></span>';
+      const isT = di === today, isSel = di === fcFocus;
+      const num = isT
+        ? `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-accent-green text-white text-[13px] font-semibold">${d.getDate()}</span>`
+        : `<span class="text-[14px] text-gray-700 dark:text-gray-200">${d.getDate()}</span>`;
+      cells += `<button onclick="fcSelectDay('${di}')" class="min-h-[74px] flex flex-col items-center gap-1 rounded-lg border px-0.5 py-1.5 transition ${isSel ? 'border-accent-green' : 'border-[rgba(20,16,8,0.08)] dark:border-op-border'}" style="${isSel ? 'box-shadow:0 0 0 1px #22c55e inset' : ''}">
+          <span class="text-[10px] uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">${FC_DOWS[dow]}</span>
+          ${num}
+          <span class="flex gap-1 mt-auto h-1.5">${dots}</span>
+        </button>`;
+      d.setDate(d.getDate() + 1);
+    }
+    el('fc-days').innerHTML = cells;
+    fcRenderDetail();
+  }
+
+  function fcRenderDetail() {
+    const w = fcWeeks[fcIdx], d = fcParse(fcFocus), dow = d.getDay();
+    const rows = FC_FIELDS.filter(f => w[f.key]).map(f => {
+      const hot = (f.key === 'flash_sale' && (dow === 3 || dow === 4)) ||
+                  (f.key === 'weekend_event' && (dow === 5 || dow === 6 || dow === 0));
+      return `<div class="flex items-start gap-2.5 px-2.5 py-1.5 rounded-lg ${hot ? 'bg-opl-panelHi dark:bg-op-panelHi' : ''}">
+          <span class="mt-1.5 w-2 h-2 rounded-full flex-shrink-0" style="background:${f.color}"></span>
           <div class="min-w-0">
-            <div class="flex items-center gap-2 mb-0.5">
-              <span class="text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">W${w.retail_week} · ${fcRange(w.week_start, w.week_end)}</span>
-              ${badge}
-            </div>
-            <div class="text-lg font-semibold text-gray-800 dark:text-gray-100 leading-tight">${theme}</div>
+            <span class="text-[11px] uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">${f.label}${f.sub ? ` <span class="normal-case tracking-normal">${f.sub}</span>` : ''}</span>
+            <div class="text-sm text-gray-700 dark:text-gray-200 leading-snug">${fcEsc(w[f.key])}</div>
           </div>
-          ${dd}
-        </div>
-        ${rows ? `<div class="space-y-2 mt-2.5 pt-2.5 border-t border-[rgba(20,16,8,0.06)] dark:border-op-border">${rows}</div>` : ''}
-      </div>`;
+        </div>`;
+    }).join('');
+    el('fc-detail').innerHTML =
+      `<div class="text-[11px] uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5 ml-1">${FC_DOWL[dow]} · ${FC_MONTHS[d.getMonth()]} ${d.getDate()}</div>
+       <div class="rounded-xl border bg-opl-panel dark:bg-op-panel border-[rgba(20,16,8,0.08)] dark:border-op-border px-2 py-2 space-y-0.5">
+         ${rows || '<div class="text-sm text-opl-inkDim dark:text-op-inkDim px-2 py-3 text-center">Nothing scheduled this week.</div>'}
+       </div>`;
   }
 
   function initWeeklyRetail() {
