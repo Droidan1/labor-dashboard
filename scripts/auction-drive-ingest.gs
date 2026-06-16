@@ -13,7 +13,7 @@
  *   1. script.google.com → New project → paste this file.
  *   2. Fill in the CONFIG block below (FOLDER_ID + SNAPSHOT_SECRET).
  *   3. Run `installTrigger` once and authorize when prompted.
- *      (That schedules runDaily every morning ~6 AM.)
+ *      (That schedules runDaily at 7 AM, 1 PM, and 5 PM.)
  *   4. Optional: run `runDaily` manually to backfill what's in the folder now.
  *
  * The endpoint is idempotent (UNIQUE channel+store+date), so re-running or
@@ -53,13 +53,13 @@ function installTrigger() {
   ScriptApp.getProjectTriggers()
     .filter(t => t.getHandlerFunction() === 'runDaily')
     .forEach(t => ScriptApp.deleteTrigger(t));
-  // The auction zip is named *T0500 but doesn't land in Drive until mid-morning —
-  // a single 6 AM run misses it, so each file waited a full extra day (~2-day lag).
-  // Run several times through the day instead; the ingest endpoint is idempotent
-  // (UNIQUE channel+store+date), so repeat runs never double-count.
-  [9, 13, 17].forEach(h =>
+  // The auction zip lands in Drive between 6–7 AM. 7 AM is the primary run (it
+  // feeds the ~8 AM summary email); 1 PM & 5 PM are safety nets that still pull
+  // the file into the dashboard if it ever lands late. The ingest endpoint is
+  // idempotent (UNIQUE channel+store+date), so repeat runs never double-count.
+  [7, 13, 17].forEach(h =>
     ScriptApp.newTrigger('runDaily').timeBased().everyDays(1).atHour(h).create());
-  Logger.log('Installed runDaily triggers @ 9 AM, 1 PM, 5 PM');
+  Logger.log('Installed runDaily triggers @ 7 AM, 1 PM, 5 PM');
 }
 
 /** Main job: process any not-yet-seen auction result zips. */

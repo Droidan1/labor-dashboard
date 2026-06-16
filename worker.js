@@ -8229,8 +8229,9 @@ export default {
       return;
     }
 
-    // "0 10 * * *" — 5 AM ET daily summary (10:00 UTC = EST; shifts to 6 AM during EDT)
-    if (event.cron === "0 10 * * *") {
+    // "0 12 * * *" — 8 AM ET daily summary (12:00 UTC = EDT; 7 AM during EST).
+    // Runs after the 7 AM auction feeder so the email includes yesterday's auction.
+    if (event.cron === "0 12 * * *") {
       const yesterday = new Date(Date.now() - 24 * 3600 * 1000);
       const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(yesterday);
       ctx.waitUntil(
