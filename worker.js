@@ -3192,7 +3192,7 @@ function timingSafeEqualStr(a, b) {
 
 function _fmtDollars(v) {
   if (v == null) return '—';
-  return '$' + Math.round(v).toLocaleString('en-US');
+  return '$' + v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 }
 function _fmtVsLW(sales, prior) {
   if (sales == null || prior == null || prior === 0) return '—';
@@ -3615,12 +3615,9 @@ async function dispatchIntervalSummary(env) {
     //   All Stores $26.0K / $37.6K  -31%      ← compact $K headline
     //   Coliseum $10,214 / $11,899  -14%      ← full dollars per store
     //   ...
-    const fmtMoney = v => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0);
-    // Compact $K form for the headline (matches the reviewed preview).
-    const fmtK = v => {
-      const n = Number(v) || 0;
-      return Math.abs(n) >= 1000 ? `$${(n / 1000).toFixed(1)}K` : fmtMoney(n);
-    };
+    const fmtMoney = v => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v || 0);
+    // Headline uses the same full-dollar (with cents) format as the store lines.
+    const fmtK = v => fmtMoney(Number(v) || 0);
 
     let chainSales = 0, chainBudget = 0;
     const storeLines = userStores.map(s => {

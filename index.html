@@ -2521,7 +2521,7 @@
       ind.style.left = x + 'px'; ind.style.opacity = '0.45';
       dot.style.left = x + 'px'; dot.style.top = y + 'px'; dot.style.opacity = '1';
       tip.style.left = x + 'px'; tip.style.opacity = '1';
-      tip.textContent = labels[idx] + ' · $' + Math.round(v).toLocaleString('en-US');
+      tip.textContent = labels[idx] + ' · $' + v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
     }
     function onLeave() {
       ind.style.opacity = '0'; dot.style.opacity = '0'; tip.style.opacity = '0';
@@ -2575,9 +2575,7 @@
   function fmtK(n) {
     if (n == null) return "—";
     const abs = Math.abs(n), sign = n < 0 ? "-" : "";
-    if (abs >= 1e6) return `${sign}$${(abs/1e6).toFixed(2)}M`;
-    if (abs >= 1e3) return `${sign}$${(abs/1e3).toFixed(1)}K`;
-    return `${sign}$${abs.toFixed(0)}`;
+    return `${sign}$${abs.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
   }
   function fmtDollar(n) {
     if (n == null) return "—";
@@ -5140,7 +5138,7 @@
       dailySalesChart.data.labels = labels;
       dailySalesChart.data.datasets = datasets;
       dailySalesChart.options.scales.x = { ticks: { color: textColor }, grid: { color: gridColor } };
-      dailySalesChart.options.scales.y = { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } };
+      dailySalesChart.options.scales.y = { ticks: { color: textColor, callback: v => '$' + Math.round(v).toLocaleString('en-US') }, grid: { color: gridColor } };
       dailySalesChart.options.onClick = dailyChartOnClick;
       dailySalesChart.options.plugins.todayMarker = { todayIdx };
       dailySalesChart.update();
@@ -5166,7 +5164,7 @@
           },
           scales: {
             x: { ticks: { color: textColor }, grid: { color: gridColor } },
-            y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor }, beginAtZero: true }
+            y: { ticks: { color: textColor, callback: v => '$' + Math.round(v).toLocaleString('en-US') }, grid: { color: gridColor }, beginAtZero: true }
           }
         }
       });
@@ -5239,7 +5237,7 @@
       const delta = curTotal - lwTotal;
       const pct = lwTotal > 0 ? (delta / lwTotal) * 100 : null;
       const fmt$ = v => '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      const fmt$0 = v => '$' + Math.round(v).toLocaleString('en-US');
+      const fmt$0 = v => '$' + (v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
       const deltaColor = delta >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400';
       const deltaSign = delta >= 0 ? '+' : '−';
       const deltaAbs = Math.abs(delta);
@@ -5308,7 +5306,7 @@
         hourlyChart.data.datasets[0].data = curSeries;
         hourlyChart.data.datasets[1].data = lwSeries;
         hourlyChart.options.scales.x = { ticks: { color: textColor }, grid: { color: gridColor } };
-        hourlyChart.options.scales.y = { beginAtZero: true, ticks: { color: textColor, callback: v => '$' + (v >= 1000 ? (v / 1000).toFixed(1) + 'K' : v) }, grid: { color: gridColor } };
+        hourlyChart.options.scales.y = { beginAtZero: true, ticks: { color: textColor, callback: v => '$' + Math.round(v).toLocaleString('en-US') }, grid: { color: gridColor } };
         hourlyChart.options.plugins.legend.labels.color = textColor;
         hourlyChart.options.onClick = hourlyOnClick;
         hourlyChart.update();
@@ -5337,7 +5335,7 @@
             },
             scales: {
               x: { ticks: { color: textColor }, grid: { color: gridColor } },
-              y: { beginAtZero: true, ticks: { color: textColor, callback: v => '$' + (v >= 1000 ? (v / 1000).toFixed(1) + 'K' : v) }, grid: { color: gridColor } },
+              y: { beginAtZero: true, ticks: { color: textColor, callback: v => '$' + Math.round(v).toLocaleString('en-US') }, grid: { color: gridColor } },
             },
           },
         });
@@ -5745,7 +5743,7 @@
     return 'red';
   }
   function hsMoney(v) {
-    return '$' + Math.round(v || 0).toLocaleString('en-US');
+    return '$' + (v || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
   }
 
   function buildHourlyCard() {
@@ -8170,7 +8168,7 @@
       asAllStoresChart.data.labels = labels;
       asAllStoresChart.data.datasets = datasets;
       asAllStoresChart.options.scales.x = { ticks: { color: textColor }, grid: { color: gridColor } };
-      asAllStoresChart.options.scales.y = { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor } };
+      asAllStoresChart.options.scales.y = { ticks: { color: textColor, callback: v => '$' + Math.round(v).toLocaleString('en-US') }, grid: { color: gridColor } };
       asAllStoresChart.options.plugins.todayMarker = { todayIdx };
       asAllStoresChart.update();
     } else {
@@ -8189,7 +8187,7 @@
           },
           scales: {
             x: { ticks: { color: textColor }, grid: { color: gridColor } },
-            y: { ticks: { color: textColor, callback: v => '$' + (v/1000).toFixed(0) + 'K' }, grid: { color: gridColor }, beginAtZero: true }
+            y: { ticks: { color: textColor, callback: v => '$' + Math.round(v).toLocaleString('en-US') }, grid: { color: gridColor }, beginAtZero: true }
           }
         }
       });
@@ -10640,7 +10638,7 @@
     const d = wrsData;
     const co = d.company || {};
     const coT = co.totals || {};
-    const fmt$0 = v => (v == null ? '—' : '$' + Math.round(v).toLocaleString('en-US'));
+    const fmt$0 = v => (v == null ? '—' : '$' + (v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
 
     // ── Company hero: week total vs budget + pace bar + stat tiles ──
     const cNet = coT.netSales || 0;
@@ -11006,7 +11004,7 @@
     const dates = wrsData.dates || [];
 
     // ── Store hero (net vs budget + week stepper + channel chips) ──
-    const fmt$0s = v => (v == null ? '—' : '$' + Math.round(v).toLocaleString('en-US'));
+    const fmt$0s = v => (v == null ? '—' : '$' + (v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
     const sNet = totals.netSales || 0, sBud = totals.budget || 0;
     const sVar = totals.varianceDollar != null ? totals.varianceDollar : (sBud ? sNet - sBud : null);
     const sPace = sBud > 0 ? (sNet / sBud) * 100 : null;
