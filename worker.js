@@ -1,7 +1,7 @@
 // ─── Constants ───────────────────────────────────────────────────
 const BIN_PATTERNS = [/\bbin\b/i, /\bfill a bag\b/i, /\bglass case\b/i];
 const MAX_TXN_DURATION_MS = 30 * 60 * 1000;
-const ALL_STORES = ["BL1", "BL2", "BL4", "BL8", "BL12", "BL14"];
+const ALL_STORES = ["BL1", "BL2", "BL4", "BL8", "BL14", "BL16"];
 
 // Get today's date and start-of-day timestamp in Eastern Time (all stores are ET)
 function getETToday() {
@@ -3103,7 +3103,7 @@ const roundCents = n => Math.round(n * 100) / 100;
 
 const STORE_LABELS = {
   BL1: 'Coliseum', BL2: 'South Bend', BL4: 'Dupont',
-  BL8: 'Holland', BL12: 'Wyoming', BL14: 'Battle Creek',
+  BL8: 'Holland', BL14: 'Battle Creek', BL16: 'Indy East',
 };
 
 // Returns { date, priorDate, stores: [{store,label,sales,budget,prior}], totals }
@@ -5518,7 +5518,7 @@ export default {
       const STORE_TABS = {
         "BL1/BL6 Coliseum": "BL1", "BL2/BL7 South Bend": "BL2",
         "BL4/BL5 Dupont": "BL4", "BL8/BL9 Holland": "BL8",
-        "BL12/BL13 Wyoming": "BL12", "BL14/B15 Battle Creek": "BL14"
+        "BL14/B15 Battle Creek": "BL14", "BL16/BL17 Indy East": "BL16"
       };
       const COL = { WEEK:2, DATE:3, B_TOTAL:8, A_RETAIL:17, A_BINS:18, A_AUCTION:19, A_TOTAL:20, A_LABOR:22 };
 
