@@ -5143,9 +5143,10 @@ export default {
     }
 
     // ── Marketing Flow Calendar: ?action=flow-calendar ───────────────
-    // The promotional pipeline (source of truth). Reads marketing_flow,
-    // one row per retail week. Returns the full fiscal year (~39 small rows);
-    // the frontend computes the current week and slices to the upcoming view.
+    // The promotional pipeline (source of truth). Returns the full fiscal year:
+    // `weeks` (marketing_flow, one row per retail week) plus `segments`
+    // (flow_segments — the seasonal lifecycle / leadership / beyond-bargains
+    // bands that span multiple weeks). The frontend renders both as a matrix.
     // Account-wide planning data (not store-scoped); any authenticated user
     // may read. Managers consume it; admins will edit it (Phase 2).
     if (url.searchParams.get("action") === "flow-calendar") {
@@ -5156,7 +5157,14 @@ export default {
       const { results: weeks } = await env.DB.prepare(
         "SELECT * FROM marketing_flow WHERE fiscal_year = ? ORDER BY retail_week"
       ).bind(fy).all();
-      return new Response(JSON.stringify({ fiscalYear: fy, weeks: weeks || [] }), { headers: corsJson });
+      let segments = [];
+      try {
+        const seg = await env.DB.prepare(
+          "SELECT * FROM flow_segments WHERE fiscal_year = ? ORDER BY sort_order, start_week"
+        ).bind(fy).all();
+        segments = seg.results || [];
+      } catch (e) { /* table may not exist yet on prod — degrade gracefully */ }
+      return new Response(JSON.stringify({ fiscalYear: fy, weeks: weeks || [], segments }), { headers: corsJson });
     }
 
     // ── User management: list-users ──────────────────────────────────
