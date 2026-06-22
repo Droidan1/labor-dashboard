@@ -4201,16 +4201,22 @@ async function importCOSEPublicKey(coseBuf) {
 
 const WEBAUTHN_RP_ID  = 'retjghub.com';
 
-function getSessionCookie(request) {
+// Per-environment cookie name so prod ("session") and staging
+// ("session_staging") don't clobber each other on the shared retjghub.com
+// domain (a single shared cookie meant you could only be logged into one).
+function sessionCookieName(env) {
+  return (env && env.API_ORIGIN && env.API_ORIGIN.includes('staging')) ? 'session_staging' : 'session';
+}
+function getSessionCookie(request, env) {
   const cookie = request.headers.get('Cookie') || '';
-  const match = cookie.match(/(?:^|;\s*)session=([^;]+)/);
+  const match = cookie.match(new RegExp('(?:^|;\\s*)' + sessionCookieName(env) + '=([^;]+)'));
   return match ? match[1] : null;
 }
 
 // Returns user row or null.
 async function getAuthUser(request, env) {
   if (!env.DB) return null;
-  const sessionId = getSessionCookie(request);
+  const sessionId = getSessionCookie(request, env);
   if (!sessionId) return null;
   const now = new Date().toISOString();
   const { results } = await env.DB.prepare(
@@ -4256,8 +4262,8 @@ function requireInventoryAccess(currentUser, isAdminSecret, corsJson) {
   return null;
 }
 
-function sessionCookie(id, maxAge) {
-  return `session=${id}; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=retjghub.com; Max-Age=${maxAge}`;
+function sessionCookie(id, maxAge, env) {
+  return `${sessionCookieName(env)}=${id}; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=retjghub.com; Max-Age=${maxAge}`;
 }
 
 async function sendMagicLinkEmail(email, token, otpCode, env) {
@@ -4425,7 +4431,7 @@ export default {
           status: 302,
           headers: {
             "Location": `${appOrigin(env)}/`,
-            "Set-Cookie": sessionCookie(sessionId, 7 * 24 * 60 * 60),
+            "Set-Cookie": sessionCookie(sessionId, 7 * 24 * 60 * 60, env),
           },
         });
       } catch (e) {
@@ -4465,7 +4471,7 @@ export default {
         ).bind(sessionId, users[0].id, expiry, now).run();
         await env.DB.prepare("UPDATE users SET last_login = ? WHERE id = ?").bind(now, users[0].id).run();
         return new Response(JSON.stringify({ ok: true }), {
-          headers: { ...corsJson, "Set-Cookie": sessionCookie(sessionId, 7 * 24 * 60 * 60) },
+          headers: { ...corsJson, "Set-Cookie": sessionCookie(sessionId, 7 * 24 * 60 * 60, env) },
         });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
@@ -4644,7 +4650,7 @@ export default {
         await env.DB.prepare("INSERT INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)")
           .bind(sessionId, cred.user_id, expiry, now2).run();
         return new Response(JSON.stringify({ ok: true }), {
-          headers: { ...corsJson, 'Set-Cookie': sessionCookie(sessionId, 7*24*60*60) },
+          headers: { ...corsJson, 'Set-Cookie': sessionCookie(sessionId, 7*24*60*60, env) },
         });
       } catch(e) {
         return new Response(JSON.stringify({error: e.message}), {status:400, headers:corsJson});
@@ -4681,12 +4687,12 @@ export default {
 
     // ── Auth: POST /auth/logout ───────────────────────────────────
     if (request.method === "POST" && url.searchParams.get("action") === "auth-logout") {
-      const sessionId = getSessionCookie(request);
+      const sessionId = getSessionCookie(request, env);
       if (sessionId && env.DB) {
         await env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind(sessionId).run().catch(() => {});
       }
       return new Response(JSON.stringify({ ok: true }), {
-        headers: { ...corsJson, "Set-Cookie": sessionCookie("", 0) },
+        headers: { ...corsJson, "Set-Cookie": sessionCookie("", 0, env) },
       });
     }
 
