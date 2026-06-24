@@ -3137,6 +3137,225 @@ async function buildDailySummaryData(env, date) {
   return { date, stores, totals: { retail: totRetail, bin: totBin, auction: totAuction, sales: totSales, budget: totBudget } };
 }
 
+// ─── AI Morning Brief ──────────────────────────────────────────────────────
+// A 2–4 sentence narrative summary of yesterday's cross-store performance,
+// written by Claude (Sonnet 4.6). One non-streaming Messages API call per
+// morning; the result is cached in KV (daily-brief:<date>) so the email and
+// the dashboard read the same text. The brief is always OPTIONAL — on a missing
+// key, API error, or refusal we return null and callers render nothing, never
+// blocking the summary email or the dashboard.
+
+function briefKey(date) { return `daily-brief:${date}`; }
+
+async function getStoredBrief(env, date) {
+  if (!env.SALES_SNAPSHOTS) return null;
+  return await env.SALES_SNAPSHOTS.get(briefKey(date), "json");
+}
+
+async function generateMorningBrief(env, data, scores) {
+  if (!env.ANTHROPIC_API_KEY) return null;
+  const { date, stores, totals } = data;
+  if (!stores || !stores.length) return null;
+
+  // Compact, factual number block. Only data we actually have goes in, so the
+  // model has nothing to hallucinate from.
+  const lines = stores.map(s => {
+    const vb = (s.budget && s.budget > 0)
+      ? `${Math.round((s.sales / s.budget) * 100)}% of budget`
+      : 'no budget set';
+    return `- ${s.label}: ${_fmtDollars(s.sales)} total (${vb}); retail ${_fmtDollars(s.retail)}, BIN ${_fmtDollars(s.bin)}, auction ${_fmtDollars(s.auction)}`;
+  }).join('\n');
+  const chainVb = (totals.budget > 0)
+    ? `${Math.round((totals.sales / totals.budget) * 100)}% of budget`
+    : 'no budget set';
+  const scoreLines = (scores && scores.stores ? scores.stores : [])
+    .filter(s => s.score != null)
+    .map(s => `- ${s.label}: ${s.score}% (${s.band === 'at_risk' ? 'at risk' : s.band})`)
+    .join('\n');
+  const scoreBlock = scoreLines
+    ? `\n\nWeekly budget outlook — each store's statistically-computed chance of hitting THIS week's Sun–Sat budget, as of this morning:\n${scoreLines}`
+    : '';
+  const userContent =
+    `Date: ${date}\n` +
+    `Chain total: ${_fmtDollars(totals.sales)} (${chainVb}) — retail ${_fmtDollars(totals.retail)}, BIN ${_fmtDollars(totals.bin)}, auction ${_fmtDollars(totals.auction)}\n\n` +
+    `Per store:\n${lines}` + scoreBlock;
+
+  const system =
+    "You are a retail operations analyst writing a brief morning summary for the owner and store managers of a thrift/resale chain. " +
+    "Given yesterday's per-store numbers, write 2 to 4 sentences highlighting what matters most: the biggest mover, any store notably over or under its budget, and notable channel-mix trends (retail vs BIN vs auction). " +
+    "Lead with the chain-wide result, then the standouts. Be specific with real figures from the data. " +
+    "You are also given each store's statistically-computed probability of hitting its weekly budget; call out any store clearly at risk (low %) or comfortably on track, using the percentages exactly as given — never recompute or invent them. " +
+    "Plain prose only — no preamble, no bullet points, no headings, no markdown. Never invent numbers, trends, streaks, or comparisons that are not present in the data.";
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 400,
+        thinking: { type: "disabled" },
+        output_config: { effort: "low" },
+        system,
+        messages: [{ role: "user", content: userContent }],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      console.error(`Morning brief API ${res.status}: ${err.slice(0, 200)}`);
+      return null;
+    }
+    const json = await res.json();
+    if (json.stop_reason === 'refusal') { console.error('Morning brief refused by safety classifier'); return null; }
+    const text = (json.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+    return text || null;
+  } catch (e) {
+    console.error('Morning brief exception:', e.message);
+    return null;
+  }
+}
+
+// Build yesterday's summary data, generate the brief, and cache it in KV.
+// Returns { data, brief } — brief may be null. Shared by the daily-summary
+// dispatch and the manual generate-brief endpoint.
+async function buildAndStoreBrief(env, date) {
+  // Scores are "as of the morning after `date`": they bank through `date` and
+  // forecast today→Saturday of the current week.
+  const asOf = new Date(new Date(date + 'T12:00:00Z').getTime() + 86400000).toISOString().slice(0, 10);
+  const [data, scores] = await Promise.all([
+    buildDailySummaryData(env, date),
+    computeStoreScores(env, asOf),
+  ]);
+  const brief = await generateMorningBrief(env, data, scores);
+  if (brief && env.SALES_SNAPSHOTS) {
+    await env.SALES_SNAPSHOTS.put(
+      briefKey(date),
+      JSON.stringify({ date, brief, generatedAt: new Date().toISOString() }),
+      { expirationTtl: 35 * 86400 }
+    );
+  }
+  return { data, brief };
+}
+
+// ─── Weekly budget probability (per-store score) ─────────────────────────────
+// Deterministic Monte-Carlo forecast of each store's chance of hitting its
+// weekly (Sun–Sat) budget. Banks completed days this week, then resamples each
+// remaining weekday from the last 13 weeks of that store's net sales. Seeded
+// per (store, week, asOf) so the % is stable across reloads within a day. No
+// LLM — fast, calibrated, free; safe to run live on every dashboard load.
+const SCORE_SIMS = 4000;
+
+function _hash32(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+function _mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function _dateStr(d) { return d.toISOString().slice(0, 10); }
+function _weekStartOf(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+  return _dateStr(d);
+}
+
+async function computeStoreScores(env, asOfStr) {
+  if (!env.DB) return { asOf: asOfStr, stores: [] };
+
+  // Current Sun–Sat week containing asOf.
+  const asOf = new Date(asOfStr + 'T12:00:00Z');
+  const weekStart = new Date(asOf.getTime()); weekStart.setUTCDate(weekStart.getUTCDate() - asOf.getUTCDay());
+  const weekEnd = new Date(weekStart.getTime()); weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+  const weekStartStr = _dateStr(weekStart), weekEndStr = _dateStr(weekEnd);
+
+  // The 13 weeks (91 days) before this week.
+  const histStart = new Date(weekStart.getTime()); histStart.setUTCDate(histStart.getUTCDate() - 7 * 13);
+  const histStartStr = _dateStr(histStart);
+  const histEndStr = _dateStr(new Date(weekStart.getTime() - 86400000));
+
+  const [weekRes, histRes] = await Promise.all([
+    env.DB.prepare('SELECT store, date, total, auction, budget FROM daily_sales WHERE date BETWEEN ? AND ?').bind(weekStartStr, weekEndStr).all(),
+    env.DB.prepare('SELECT store, date, total, auction FROM daily_sales WHERE date BETWEEN ? AND ?').bind(histStartStr, histEndStr).all(),
+  ]);
+
+  // Per-store week cells: store → date → { net, budget }.
+  const weekByStore = {};
+  for (const r of (weekRes.results || [])) {
+    const m = weekByStore[r.store] || (weekByStore[r.store] = {});
+    m[r.date] = { net: (Number(r.total) || 0) + (Number(r.auction) || 0), budget: r.budget };
+  }
+  const weekDates = [];
+  for (let t = weekStart.getTime(); t <= weekEnd.getTime(); t += 86400000) weekDates.push(_dateStr(new Date(t)));
+
+  // Historical net sales: store → weekday → samples, plus an all-days pool.
+  const hist = {};
+  for (const r of (histRes.results || [])) {
+    const h = hist[r.store] || (hist[r.store] = { byDow: {}, all: [], weeks: new Set() });
+    const net = (Number(r.total) || 0) + (Number(r.auction) || 0);
+    const dow = new Date(r.date + 'T12:00:00Z').getUTCDay();
+    (h.byDow[dow] || (h.byDow[dow] = [])).push(net);
+    h.all.push(net);
+    h.weeks.add(_weekStartOf(r.date));
+  }
+
+  const stores = [];
+  for (const store of ALL_STORES) {
+    const label = STORE_LABELS[store] || store;
+    const cells = weekByStore[store] || {};
+
+    // Weekly budget = sum of the 7 daily budgets. Bank a completed day only if
+    // it has positive sales; days that are missing/zero-but-past, today, or
+    // future are forecast from history (a not-yet-synced 0 shouldn't doom it).
+    let budget = 0, banked = 0, hasBudget = false, daysLeft = 0;
+    const forecastDows = [];
+    for (const ds of weekDates) {
+      const cell = cells[ds];
+      if (cell && cell.budget != null) { budget += Number(cell.budget); hasBudget = true; }
+      const net = cell ? cell.net : 0;
+      if (ds < asOfStr && net > 0) banked += net;
+      else forecastDows.push(new Date(ds + 'T12:00:00Z').getUTCDay());
+      if (ds >= asOfStr) daysLeft++; // today through Saturday — the sell days left
+    }
+
+    const gap = Math.max(0, budget - banked);
+    const perDayNeeded = daysLeft > 0 ? Math.round(gap / daysLeft) : 0;
+    const base = { store, label, weeklyBudget: Math.round(budget), banked: Math.round(banked), daysLeft, gap: Math.round(gap), perDayNeeded };
+    if (!hasBudget || budget <= 0) { stores.push({ ...base, score: null, band: null, confidence: 'no_budget' }); continue; }
+    const h = hist[store];
+    if (!h || h.all.length === 0) { stores.push({ ...base, score: null, band: null, confidence: 'no_history' }); continue; }
+
+    const rng = _mulberry32(_hash32(store + '|' + weekStartStr + '|' + asOfStr));
+    const sampleFor = (dow) => {
+      const arr = h.byDow[dow];
+      if (arr && arr.length) return arr[(rng() * arr.length) | 0];
+      return h.all[(rng() * h.all.length) | 0]; // weekday unseen → fall back to any day
+    };
+    let hits = 0;
+    for (let i = 0; i < SCORE_SIMS; i++) {
+      let tot = banked;
+      for (const dow of forecastDows) tot += sampleFor(dow);
+      if (tot >= budget) hits++;
+    }
+    const score = Math.round((hits / SCORE_SIMS) * 100);
+    const band = score >= 70 ? 'likely' : score >= 30 ? 'at_risk' : 'unlikely';
+    const weeks = h.weeks.size;
+    const confidence = weeks >= 8 ? 'high' : weeks >= 4 ? 'medium' : 'low';
+    stores.push({ ...base, score, band, confidence });
+  }
+
+  return { asOf: asOfStr, weekStart: weekStartStr, weekEnd: weekEndStr, stores };
+}
+
 // ─── Morning Briefing API ────────────────────────────────────────────────
 // Read-only, key-gated JSON snapshot for an external "Morning Briefing"
 // dashboard. Per store: yesterday's FINAL net sales, the budget that applied
@@ -3210,9 +3429,15 @@ function _vsColor(sales, ref) {
   return sales >= ref ? '#2d8a2d' : '#c0392b';
 }
 
-function buildSummaryEmailHtml(data) {
+function buildSummaryEmailHtml(data, brief) {
   const { date, stores, totals } = data;
   const displayDate = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+  const briefBox = brief ? `
+      <div style="background:#f1f9f3;border:1px solid #cfe9d6;border-radius:8px;padding:14px 16px;margin:0 0 22px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#1f6e33;margin-bottom:7px">Morning Brief</div>
+        <div style="font-size:14px;line-height:1.6;color:#23332a">${brief.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+      </div>` : '';
 
   const dot = c => `<span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:${c};margin-right:4px;vertical-align:middle"></span>`;
 
@@ -3233,6 +3458,7 @@ function buildSummaryEmailHtml(data) {
       <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:44px;margin-bottom:20px">
       <h2 style="margin:0 0 4px;font-size:20px;color:#194975">Daily Sales Summary</h2>
       <p style="margin:0 0 24px;font-size:14px;color:#666">${displayDate}</p>
+      ${briefBox}
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead>
           <tr style="background:#3BB54A;color:#fff">
@@ -3268,7 +3494,7 @@ function buildSummaryEmailHtml(data) {
 async function dispatchDailySummary(env, date) {
   if (!env.DB) return { error: 'DB not configured' };
 
-  const data = await buildDailySummaryData(env, date);
+  const { data, brief } = await buildAndStoreBrief(env, date);
   const { sales: ts, budget: tb } = data.totals;
 
   // Short push body
@@ -3335,7 +3561,7 @@ async function dispatchDailySummary(env, date) {
             from: 'noreply@retjghub.com',
             to: user.email,
             subject: `Sales Summary — ${displayDate}`,
-            html: buildSummaryEmailHtml(data),
+            html: buildSummaryEmailHtml(data, brief),
           }),
         });
         if (res.ok) {
@@ -7183,6 +7409,52 @@ export default {
 
     // POST ?action=send-daily-summary[&date=YYYY-MM-DD]
     // Manually trigger the daily summary dispatch (superuser or admin-secret).
+    // GET ?action=store-scores[&asOf=YYYY-MM-DD]
+    // Per-store chance of hitting this week's budget. Computed live (pure math,
+    // no LLM) so it's safe to call on every dashboard load. Defaults to today (ET).
+    if (request.method === "GET" && url.searchParams.get("action") === "store-scores") {
+      const asOf = url.searchParams.get("asOf") ||
+        new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+      try {
+        const result = await computeStoreScores(env, asOf);
+        return new Response(JSON.stringify(result), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=daily-brief[&date=YYYY-MM-DD]
+    // Returns the cached AI morning brief for the dashboard. Defaults to
+    // yesterday (ET). Any logged-in user; brief is chain-wide.
+    if (request.method === "GET" && url.searchParams.get("action") === "daily-brief") {
+      const date = url.searchParams.get("date") || (() => {
+        const y = new Date(); y.setUTCDate(y.getUTCDate() - 1);
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(y);
+      })();
+      const stored = await getStoredBrief(env, date);
+      return new Response(JSON.stringify(stored || { date, brief: null }), { headers: corsJson });
+    }
+
+    // POST ?action=generate-brief[&date=YYYY-MM-DD]
+    // Build + cache the brief for a date WITHOUT sending any email/push.
+    // Superuser or admin-secret. Used to preview/regenerate the brief.
+    if (request.method === "POST" && url.searchParams.get("action") === "generate-brief") {
+      const isAdminReq = request.headers.get('X-Snapshot-Secret') === env.SNAPSHOT_SECRET;
+      if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      const date = url.searchParams.get("date") || (() => {
+        const y = new Date(); y.setUTCDate(y.getUTCDate() - 1);
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(y);
+      })();
+      try {
+        const { brief } = await buildAndStoreBrief(env, date);
+        return new Response(JSON.stringify({ date, brief, generated: brief != null }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     if (request.method === "POST" && url.searchParams.get("action") === "send-daily-summary") {
       const isAdminReq = request.headers.get('X-Snapshot-Secret') === env.SNAPSHOT_SECRET;
       if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
