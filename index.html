@@ -12987,7 +12987,7 @@
     const isSuperuser = user.role === 'superuser';
     // Marketing dropdown: the group is visible to every authenticated user
     // (Flow Calendar is for everyone); Ad Reporting stays admin/superuser-only.
-    el('nav-marketing-group').classList.remove('hidden');
+    el('nav-marketing-group').classList.toggle('hidden', !isAdmin);   // Marketing dropdown (Ad Reporting + Flow Calendar): admin/superuser only
     el('nav-marketing-ads').classList.toggle('hidden', !isAdmin);
     el('nav-inventory').classList.toggle('hidden', !isAdmin);
     el('nav-supply-request').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');

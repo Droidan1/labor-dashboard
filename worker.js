@@ -5062,8 +5062,11 @@ export default {
     // Reads the meta_ad_insights table (populated via MCP backfill in Phase 1,
     // and by the worker→Meta API cron in Phase 2). Returns a combined topline
     // across all accounts, a per-account breakdown, and the campaign rows.
-    // Account-wide data (not store-scoped); any authenticated user may read.
+    // Account-wide data (not store-scoped); admin/superuser only.
     if (url.searchParams.get("action") === "marketing-insights") {
+      if (!isAdminSecret && !canAccessInventory(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
       if (!env.DB) {
         return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
       }
@@ -5147,9 +5150,11 @@ export default {
     // `weeks` (marketing_flow, one row per retail week) plus `segments`
     // (flow_segments — the seasonal lifecycle / leadership / beyond-bargains
     // bands that span multiple weeks). The frontend renders both as a matrix.
-    // Account-wide planning data (not store-scoped); any authenticated user
-    // may read. Managers consume it; admins will edit it (Phase 2).
+    // Account-wide planning data (not store-scoped); admin/superuser only.
     if (url.searchParams.get("action") === "flow-calendar") {
+      if (!isAdminSecret && !canAccessInventory(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
       if (!env.DB) {
         return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
       }
