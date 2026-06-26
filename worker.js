@@ -3161,7 +3161,23 @@ async function metaInsightsCall(ver, token, acct, level, preset, fields) {
   return out;
 }
 
-function mapMetaRow(r, acct, level, win, fetchedAt) {
+// One paginated Campaigns call -> { campaignId: created_time(ISO) }. The insights
+// edge doesn't return created_time, so fetch it separately (once per account).
+async function metaCampaignsCall(ver, token, acct) {
+  const params = new URLSearchParams({ fields: "id,created_time", limit: "500", access_token: token });
+  let url = `https://graph.facebook.com/${ver}/act_${acct}/campaigns?${params}`;
+  const map = {};
+  for (let page = 0; page < 20 && url; page++) {
+    const resp = await fetch(url);
+    const json = await resp.json();
+    if (json.error) throw new Error(`${json.error.code || ""} ${json.error.message || JSON.stringify(json.error)}`.trim());
+    for (const c of (json.data || [])) if (c && c.id) map[String(c.id)] = c.created_time || null;
+    url = json.paging && json.paging.next ? json.paging.next : null;
+  }
+  return map;
+}
+
+function mapMetaRow(r, acct, level, win, fetchedAt, createdMap) {
   const isAcct = level === "account";
   return {
     account_id: acct,
@@ -3182,6 +3198,7 @@ function mapMetaRow(r, acct, level, win, fetchedAt) {
     cpm: metaNum(r.cpm),
     ctr: metaNum(r.ctr),
     frequency: metaNum(r.frequency),
+    created_time: isAcct ? null : ((createdMap && createdMap[String(r.campaign_id)]) || null),
     fetched_at: fetchedAt,
   };
 }
@@ -3200,23 +3217,28 @@ async function fetchMetaInsights(env) {
   let written = 0;
 
   const stmt = env.DB.prepare(`INSERT OR REPLACE INTO meta_ad_insights
-    (account_id, account_name, level, entity_id, entity_name, objective, window, date_start, date_stop, spend, impressions, reach, clicks, link_clicks, cpc, cpm, ctr, frequency, purchases, purchase_value, roas, fetched_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,?)`);
+    (account_id, account_name, level, entity_id, entity_name, objective, window, date_start, date_stop, spend, impressions, reach, clicks, link_clicks, cpc, cpm, ctr, frequency, purchases, purchase_value, roas, created_time, fetched_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?)`);
 
   for (const acct of accounts) {
+    // created_time isn't on the insights edge — fetch once per account, reuse
+    // across windows. Non-fatal if it fails (sort just shows no date).
+    let createdMap = {};
+    try { createdMap = await metaCampaignsCall(ver, token, acct); }
+    catch (e) { errors.push(`act_${acct}/campaigns: ${e.message}`); }
     for (const [win, preset] of Object.entries(META_WINDOWS)) {
       try {
         const [acctRows, campRows] = await Promise.all([
           metaInsightsCall(ver, token, acct, "account", preset, acctFields),
           metaInsightsCall(ver, token, acct, "campaign", preset, campFields),
         ]);
-        const rows = acctRows.map(r => mapMetaRow(r, acct, "account", win, fetchedAt))
-          .concat(campRows.map(r => mapMetaRow(r, acct, "campaign", win, fetchedAt)));
+        const rows = acctRows.map(r => mapMetaRow(r, acct, "account", win, fetchedAt, createdMap))
+          .concat(campRows.map(r => mapMetaRow(r, acct, "campaign", win, fetchedAt, createdMap)));
         if (rows.length) {
           await env.DB.batch(rows.map(x => stmt.bind(
             x.account_id, x.account_name, x.level, x.entity_id, x.entity_name, x.objective, x.window,
             x.date_start, x.date_stop, x.spend, x.impressions, x.reach, x.clicks, x.link_clicks,
-            x.cpc, x.cpm, x.ctr, x.frequency, x.fetched_at)));
+            x.cpc, x.cpm, x.ctr, x.frequency, x.created_time, x.fetched_at)));
           written += rows.length;
         }
       } catch (e) {
@@ -5124,6 +5146,7 @@ export default {
         accountId: r.account_id,
         id: r.entity_id, name: r.entity_name, objective: r.objective,
         store: campaignStore(r.entity_name),
+        createdTime: r.created_time,
         spend: r.spend, impressions: r.impressions, reach: r.reach,
         clicks: r.clicks, linkClicks: r.link_clicks,
         cpc: r.cpc, cpm: r.cpm, ctr: r.ctr,

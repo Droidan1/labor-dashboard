@@ -10415,6 +10415,7 @@
   const mkPct = v => v == null ? '—' : Number(v).toFixed(2) + '%';
   const mkEsc = s => (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const mkAcctShort = n => (n || '').replace(/^Bargain Lane - /, '');
+  const mkDate = iso => { if (!iso) return '—'; const d = new Date(iso); return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }); };
   function mkObjFamily(o) { o = (o || '').toUpperCase();
     if (/LEAD/.test(o)) return 'L'; if (/EVENT/.test(o)) return 'V';
     if (/LINK_CLICK|TRAFFIC/.test(o)) return 'T'; if (/ENGAGE/.test(o)) return 'E';
@@ -10522,6 +10523,11 @@
     mkList = mkCampaigns(data).slice().sort((a, b) => {
       const k = mkState.sortKey;
       if (k === 'name') return mkState.sortDir * String(a.name || '').localeCompare(String(b.name || ''));
+      if (k === 'created') {
+        const ta = a.createdTime ? new Date(a.createdTime).getTime() : 0;
+        const tb = b.createdTime ? new Date(b.createdTime).getTime() : 0;
+        return mkState.sortDir * (ta - tb);
+      }
       return mkState.sortDir * ((a[k] || 0) - (b[k] || 0));
     });
     el('mk-campaign-count').textContent = '· ' + mkList.length + ' shown';
@@ -10530,13 +10536,15 @@
         <th class="px-4 py-2 font-medium cursor-pointer select-none" onclick="mkSort('name')">Campaign${arr('name')}</th>
         <th class="px-4 py-2 font-medium text-right cursor-pointer select-none" onclick="mkSort('spend')">Spend${arr('spend')}</th>
         <th class="px-4 py-2 font-medium cursor-pointer select-none" onclick="mkSort('ctr')">CTR${arr('ctr')}</th>
+        <th class="px-4 py-2 font-medium cursor-pointer select-none whitespace-nowrap" onclick="mkSort('created')">Created${arr('created')}</th>
         <th class="px-4 py-2 font-medium text-right">vs 7d</th></tr></thead><tbody>`;
     const body = mkList.length ? mkList.map((c, i) => `<tr id="mk-row-${i}" class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border hover:bg-[rgba(20,16,8,0.03)] dark:hover:bg-[rgba(255,255,255,0.03)] cursor-pointer" onclick="mkDrill(${i})">
         <td class="px-4 py-2 text-gray-700 dark:text-gray-200 max-w-xs truncate" title="${mkEsc(c.name)}"><span class="text-opl-inkDim dark:text-op-inkDim mr-1">›</span>${mkEsc(c.name)} <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">· ${MK_OBJLABEL[c.fam]}</span></td>
         <td class="px-4 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">${mkMoney(c.spend)}</td>
         <td class="px-4 py-2"><span class="inline-block text-xs font-medium px-2 py-0.5 rounded-md tabular-nums" style="${mkBadge(mkBand(c.ctr || 0))}">${mkPct(c.ctr)}</span></td>
+        <td class="px-4 py-2 text-[12px] text-opl-inkDim dark:text-op-inkDim whitespace-nowrap tabular-nums">${mkDate(c.createdTime)}</td>
         <td class="px-4 py-2 text-right">${mkTrend(c)}</td></tr>`).join('')
-      : '<tr><td colspan="4" class="px-4 py-4 text-opl-inkDim dark:text-op-inkDim">No campaigns match these filters.</td></tr>';
+      : '<tr><td colspan="5" class="px-4 py-4 text-opl-inkDim dark:text-op-inkDim">No campaigns match these filters.</td></tr>';
     el('mk-campaigns').innerHTML = head + body + '</tbody></table>';
     mkDrillOpen = null;
     const _through = data.topline && data.topline.dateStop ? data.topline.dateStop : null;
@@ -10553,7 +10561,7 @@
     if (!row) return;
     const tr = document.createElement('tr');
     tr.className = 'mk-drill-row bg-[rgba(20,16,8,0.02)] dark:bg-[rgba(255,255,255,0.02)]';
-    tr.innerHTML = `<td colspan="4" class="px-5 py-3 text-sm text-opl-inkDim dark:text-op-inkDim">Ad-set breakdown for <b class="text-gray-700 dark:text-gray-200">${mkEsc(c.name)}</b> ships with the live Meta API (Phase 2).</td>`;
+    tr.innerHTML = `<td colspan="5" class="px-5 py-3 text-sm text-opl-inkDim dark:text-op-inkDim">Ad-set breakdown for <b class="text-gray-700 dark:text-gray-200">${mkEsc(c.name)}</b> ships with the live Meta API (Phase 2).</td>`;
     row.after(tr);
     mkDrillOpen = i;
   }
