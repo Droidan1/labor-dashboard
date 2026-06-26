@@ -1440,7 +1440,14 @@
               <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Marketing</h1>
               <p id="mk-subtitle" class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Meta ad performance</p>
             </div>
-            <div id="mk-winseg" class="inline-flex items-center rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden text-sm font-medium"></div>
+            <div class="flex items-center gap-3 flex-wrap">
+              <span id="mk-updated" class="text-[11px] text-opl-inkDim dark:text-op-inkDim"></span>
+              <button id="mk-refresh" onclick="mkRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition disabled:opacity-50">
+                <svg id="mk-refresh-icon" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+                Refresh
+              </button>
+              <div id="mk-winseg" class="inline-flex items-center rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden text-sm font-medium"></div>
+            </div>
           </div>
           <div class="flex flex-col gap-y-2">
             <div class="flex gap-1.5 items-center flex-wrap"><span class="text-[11px] text-opl-inkDim dark:text-op-inkDim w-[58px]">Store</span><div id="mk-store-chips" class="flex gap-1.5 flex-wrap"></div></div>
@@ -10390,7 +10397,7 @@
   const MK_WINDOWS = [['7d', '7d'], ['14d', '14d'], ['30d', '30d'], ['90d', '90d']];
   // Canonical store roster — always shown as filter chips (matches STORE_LABELS
   // in worker.js, plus Indianapolis as an active new market).
-  const MK_STORES = ['Coliseum', 'South Bend', 'Dupont', 'Holland', 'Wyoming', 'Battle Creek', 'Indianapolis'];
+  const MK_STORES = ['Coliseum', 'South Bend', 'Dupont', 'Holland', 'Battle Creek', 'Indianapolis'];
   const MK_PALETTE = ['#7F77DD', '#378ADD', '#1D9E75', '#EF9F27', '#D4537E'];
   const MK_OBJLABEL = { E: 'Engagement', L: 'Leads', V: 'Events', T: 'Traffic', A: 'Awareness', O: 'Other' };
   const mkCache = {};            // window -> endpoint payload
@@ -10532,7 +10539,10 @@
       : '<tr><td colspan="4" class="px-4 py-4 text-opl-inkDim dark:text-op-inkDim">No campaigns match these filters.</td></tr>';
     el('mk-campaigns').innerHTML = head + body + '</tbody></table>';
     mkDrillOpen = null;
-    el('mk-fetched').textContent = data.fetchedAt ? 'Snapshot as of ' + data.fetchedAt + ' · Phase-1 data (not yet auto-refreshing)' : '';
+    const _through = data.topline && data.topline.dateStop ? data.topline.dateStop : null;
+    el('mk-fetched').textContent = data.fetchedAt
+      ? 'Updated ' + mkTimeAgo(data.fetchedAt) + (_through ? ' · figures run through ' + _through : '') + ' · Meta finalizes the current day overnight, so today appears tomorrow'
+      : '';
   }
   function mkDrill(i) {
     const c = mkList[i]; if (!c) return;
@@ -10588,6 +10598,7 @@
     const data = mkCache[mkState.window]; if (!data) return;
     mkRenderChips(data); mkRenderKPI(data); mkRenderSplit(data); mkRenderTable(data);
     if (mkState.tab === 'charts') mkRenderCharts(data);
+    const u = el('mk-updated'); if (u) u.textContent = data.fetchedAt ? 'Updated ' + mkTimeAgo(data.fetchedAt) : '';
   }
 
   function mkSetTab(tab) {
@@ -10621,6 +10632,38 @@
     mkRenderTable(mkCache[mkState.window]); if (mkState.tab === 'charts') mkRenderCharts(mkCache[mkState.window]);
   }
   window.mkOnThreshold = mkOnThreshold;
+
+  function mkTimeAgo(iso) {
+    if (!iso) return '';
+    const t = new Date(iso).getTime(); if (isNaN(t)) return '';
+    const mins = Math.round((Date.now() - t) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + (mins === 1 ? ' min ago' : ' mins ago');
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return hrs + (hrs === 1 ? ' hour ago' : ' hours ago');
+    const days = Math.round(hrs / 24);
+    return days + (days === 1 ? ' day ago' : ' days ago');
+  }
+  // On-demand pull: hit marketing-refresh (admin-gated), drop the cached windows,
+  // re-fetch the current window + 7d baseline, re-render.
+  async function mkRefresh() {
+    const btn = el('mk-refresh'), icon = el('mk-refresh-icon');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true; if (icon) icon.classList.add('animate-spin');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=marketing-refresh`, { method: 'POST', credentials: 'include' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const res = await r.json();
+      if (res && res.error) throw new Error(res.error);
+      for (const k in mkCache) delete mkCache[k];   // force a fresh pull on next read
+      await mkEnsure(mkState.window);
+      const d7 = await mkEnsure('7d');
+      mkCtr7 = {}; (d7.campaigns || []).forEach(c => { if (c.ctr != null) mkCtr7[c.id] = c.ctr; });
+      mkRenderAll();
+    } catch (e) { mkError(e); }
+    finally { btn.disabled = false; if (icon) icon.classList.remove('animate-spin'); }
+  }
+  window.mkRefresh = mkRefresh;
 
   async function initMarketing() {
     if (mkState.booted) return;
