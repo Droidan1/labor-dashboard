@@ -2338,6 +2338,10 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
 
       // Determine L3 category from item reference → category map
       let l3 = null;
+      // L3 string usable for category-cost lookup even when the item has no
+      // Clover catalog category — e.g. name-matched items whose name IS an L3
+      // category string. Lets category costs reach those rows too.
+      let l3CostKey = null;
       if (!l2 && itemId && itemCatMap[itemId]) {
         l3 = itemCatMap[itemId];
       }
@@ -2374,6 +2378,8 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         if (nameMatch) {
           l2 = nameMatch;
           l2Source = "name";
+          // The matched key IS a real L3 category string → use it for cost lookup.
+          l3CostKey = L3_TO_L2[normalized] ? normalized : li.name;
         } else {
           if (imNum && IM_TO_L2[imNum]) {
             l2 = IM_TO_L2[imNum];
@@ -2501,11 +2507,12 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       //   3. 0 — renders `—` in the CPU/Ext Cost columns.
       const costRecord = imNum ? icItems[imNum] : null;
       let unitCost = 0, costSource = "none";
+      const costL3 = l3 || l3CostKey;   // real Clover L3, or name-matched L3 string
       if (costRecord && Number.isFinite(Number(costRecord.cost))) {
         unitCost = Number(costRecord.cost);
         costSource = "item";
-      } else if (l3) {
-        const catCost = Number(icCats[l3]);
+      } else if (costL3) {
+        const catCost = Number(icCats[costL3]);
         if (Number.isFinite(catCost) && catCost > 0) { unitCost = catCost; costSource = "category"; }
       }
 
