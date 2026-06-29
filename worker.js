@@ -1839,7 +1839,7 @@ function mergeItemSnapshots(snapshots) {
     for (const c of snap.categories) {
       const name = c.category || "Uncategorized";
       if (!cats[name]) {
-        cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0, l3: {} };
+        cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0, covItem: 0, covCat: 0, covNone: 0, l3: {} };
       }
       const bucket = cats[name];
       bucket.qty += Number(c.qty) || 0;
@@ -1848,11 +1848,17 @@ function mergeItemSnapshots(snapshots) {
       bucket.refunds += Number(c.refunds) || 0;
       bucket.net += Number(c.netSales) || 0;
       bucket.cost += Number(c.cost) || 0;
+      // Coverage is optional on legacy snapshots; missing → contributes 0 (shows
+      // as "unknown" in the report rather than falsely counting as uncovered).
+      const cov = c.coverage || {};
+      bucket.covItem += Number(cov.item) || 0;
+      bucket.covCat += Number(cov.category) || 0;
+      bucket.covNone += Number(cov.none) || 0;
       if (Array.isArray(c.l3Rows)) {
         for (const l of c.l3Rows) {
           const lName = l.l3 || "(uncategorized)";
           if (!bucket.l3[lName]) {
-            bucket.l3[lName] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0 };
+            bucket.l3[lName] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0, covItem: 0, covCat: 0, covNone: 0 };
           }
           const lb = bucket.l3[lName];
           lb.qty += Number(l.qty) || 0;
@@ -1861,15 +1867,21 @@ function mergeItemSnapshots(snapshots) {
           lb.refunds += Number(l.refunds) || 0;
           lb.net += Number(l.netSales) || 0;
           lb.cost += Number(l.cost) || 0;
+          const lcov = l.coverage || {};
+          lb.covItem += Number(lcov.item) || 0;
+          lb.covCat += Number(lcov.category) || 0;
+          lb.covNone += Number(lcov.none) || 0;
         }
       }
     }
   }
   let totalQty = 0, totalGross = 0, totalDisc = 0, totalRef = 0, totalNet = 0, totalCost = 0;
+  let totCovItem = 0, totCovCat = 0, totCovNone = 0;
   const categories = [];
   for (const [name, c] of Object.entries(cats)) {
     totalQty += c.qty; totalGross += c.gross; totalDisc += c.discounts;
     totalRef += c.refunds; totalNet += c.net; totalCost += c.cost;
+    totCovItem += c.covItem; totCovCat += c.covCat; totCovNone += c.covNone;
     const gp = c.net - c.cost;
     const l3Rows = Object.entries(c.l3).map(([l3Name, lc]) => {
       const lgp = lc.net - lc.cost;
@@ -1885,6 +1897,7 @@ function mergeItemSnapshots(snapshots) {
         extCost: roundCents(lc.cost),
         grossProfit: roundCents(lgp),
         gpmPct: lc.net > 0 ? Math.round((lgp / lc.net) * 1000) / 10 : 0,
+        coverage: { item: roundCents(lc.covItem), category: roundCents(lc.covCat), none: roundCents(lc.covNone) },
       };
     }).sort((a, b) => b.netSales - a.netSales);
     categories.push({
@@ -1899,6 +1912,7 @@ function mergeItemSnapshots(snapshots) {
       extCost: roundCents(c.cost),
       grossProfit: roundCents(gp),
       gpmPct: c.net > 0 ? Math.round((gp / c.net) * 1000) / 10 : 0,
+      coverage: { item: roundCents(c.covItem), category: roundCents(c.covCat), none: roundCents(c.covNone) },
       l3Rows,
     });
   }
@@ -1922,6 +1936,7 @@ function mergeItemSnapshots(snapshots) {
       cost: roundCents(totalCost),
       grossProfit: roundCents(totalGp),
       gpmPct: totalNet > 0 ? Math.round((totalGp / totalNet) * 1000) / 10 : 0,
+      coverage: { item: roundCents(totCovItem), category: roundCents(totCovCat), none: roundCents(totCovNone) },
     },
     orderCount: totalOrders,
   };
@@ -2211,13 +2226,16 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   // only (gross of refunds) — drives the channel-filtered matrix tiles, not
   // the books. An order is counted toward a channel if it has ≥1 of its items.
   const _ch = { retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 } };
+  // covItem/covCat/covNone = net $ whose cost came from an IM# item-master cost
+  // (known), an L3 category flat cost (estimate), or no cost source (uncovered).
+  // Feeds the Cost Coverage report so admins can see what's known vs. estimated.
   function getCat(name) {
-    if (!cats[name]) cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0 };
+    if (!cats[name]) cats[name] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0, covItem: 0, covCat: 0, covNone: 0 };
     return cats[name];
   }
   function getL3(l2, l3) {
     if (!l3Cats[l2]) l3Cats[l2] = {};
-    if (!l3Cats[l2][l3]) l3Cats[l2][l3] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0 };
+    if (!l3Cats[l2][l3]) l3Cats[l2][l3] = { qty: 0, gross: 0, discounts: 0, refunds: 0, net: 0, cost: 0, covItem: 0, covCat: 0, covNone: 0 };
     return l3Cats[l2][l3];
   }
 
@@ -2482,12 +2500,13 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       //      string `l3` (NOT l3Key, which may be a bracketed synthetic label).
       //   3. 0 — renders `—` in the CPU/Ext Cost columns.
       const costRecord = imNum ? icItems[imNum] : null;
-      let unitCost = 0;
+      let unitCost = 0, costSource = "none";
       if (costRecord && Number.isFinite(Number(costRecord.cost))) {
         unitCost = Number(costRecord.cost);
+        costSource = "item";
       } else if (l3) {
         const catCost = Number(icCats[l3]);
-        if (Number.isFinite(catCost) && catCost > 0) unitCost = catCost;
+        if (Number.isFinite(catCost) && catCost > 0) { unitCost = catCost; costSource = "category"; }
       }
 
       if (priceCents < 0) {
@@ -2508,6 +2527,10 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         l3Cat.discounts -= discCents / 100;
         l3Cat.net += (grossCents - discCents) / 100;
         l3Cat.cost += lineCost;
+        const lineNet = (grossCents - discCents) / 100;
+        const covKey = costSource === "item" ? "covItem" : costSource === "category" ? "covCat" : "covNone";
+        cat[covKey] += lineNet;
+        l3Cat[covKey] += lineNet;
         orderLineItemNetCents += (grossCents - discCents);
         const _b = (l2 === 'Bin Products') ? _ordCh.bin : _ordCh.retail;
         _b.net += (grossCents - discCents) / 100;
@@ -2688,6 +2711,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
 
   // Calculate totals and format response
   let totalQty = 0, totalGross = 0, totalDisc = 0, totalRef = 0, totalNet = 0, totalCost = 0;
+  let totCovItem = 0, totCovCat = 0, totCovNone = 0;
   const categories = [];
   for (const [name, c] of Object.entries(cats)) {
     totalQty += c.qty;
@@ -2696,6 +2720,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     totalRef += c.refunds;
     totalNet += c.net;
     totalCost += c.cost;
+    totCovItem += c.covItem; totCovCat += c.covCat; totCovNone += c.covNone;
     const grossProfit = c.net - c.cost;
     const l3Map = l3Cats[name] || {};
     const l3Rows = [];
@@ -2713,6 +2738,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         extCost: roundCents(lc.cost),
         grossProfit: roundCents(l3Gp),
         gpmPct: lc.net > 0 ? Math.round((l3Gp / lc.net) * 1000) / 10 : 0,
+        coverage: { item: roundCents(lc.covItem), category: roundCents(lc.covCat), none: roundCents(lc.covNone) },
       });
     }
     l3Rows.sort((a, b) => b.netSales - a.netSales);
@@ -2728,6 +2754,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       extCost: roundCents(c.cost),
       grossProfit: roundCents(grossProfit),
       gpmPct: c.net > 0 ? Math.round((grossProfit / c.net) * 1000) / 10 : 0,
+      coverage: { item: roundCents(c.covItem), category: roundCents(c.covCat), none: roundCents(c.covNone) },
       l3Rows,
     });
   }
@@ -2757,6 +2784,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       cost: roundCents(totalCost),
       grossProfit: roundCents(totalGp),
       gpmPct: totalNet > 0 ? Math.round((totalGp / totalNet) * 1000) / 10 : 0,
+      coverage: { item: roundCents(totCovItem), category: roundCents(totCovCat), none: roundCents(totCovNone) },
     },
     orderCount: allElements.length,
     channels: {
@@ -6383,14 +6411,19 @@ export default {
         try { body = await request.json(); }
         catch { return new Response(JSON.stringify({ error: "Invalid JSON body" }), { status: 400, headers: corsJson }); }
 
+        // merge:true → patch the existing map (add/update `items`, remove `delete`d
+        // IM#s) instead of replacing it. Default (no flag) stays authoritative-
+        // replace, so the full-file uploader keeps wiping-and-rewriting as before.
+        const merge = body?.merge === true;
         const rawItems = body?.items;
-        if (!rawItems || typeof rawItems !== "object") {
+        const delList = Array.isArray(body?.delete) ? body.delete : [];
+        if ((!rawItems || typeof rawItems !== "object") && !(merge && delList.length)) {
           return new Response(JSON.stringify({ error: "Body must include items: { itemNo: { cost, desc } }" }), { status: 400, headers: corsJson });
         }
 
         const cleaned = {};
         let rejected = 0;
-        for (const [k, v] of Object.entries(rawItems)) {
+        for (const [k, v] of Object.entries(rawItems || {})) {
           if (!/^\d{4,5}$/.test(String(k))) { rejected++; continue; }
           const cost = Number(v?.cost);
           if (!Number.isFinite(cost) || cost < 0) { rejected++; continue; }
@@ -6399,13 +6432,28 @@ export default {
             desc: typeof v?.desc === "string" ? v.desc : "",
           };
         }
+
+        let finalItems;
+        let deleted = 0;
+        if (merge) {
+          const existing = await env.SALES_SNAPSHOTS.get(ITEM_COSTS_KEY, "json");
+          const base = (existing && typeof existing === "object" && existing.items && typeof existing.items === "object") ? existing.items : {};
+          finalItems = { ...base, ...cleaned };
+          for (const d of delList) {
+            const key = String(d);
+            if (/^\d{4,5}$/.test(key) && key in finalItems) { delete finalItems[key]; deleted++; }
+          }
+        } else {
+          finalItems = cleaned;
+        }
+
         const payload = {
-          items: cleaned,
+          items: finalItems,
           importedAt: new Date().toISOString(),
-          count: Object.keys(cleaned).length,
+          count: Object.keys(finalItems).length,
         };
         await env.SALES_SNAPSHOTS.put(ITEM_COSTS_KEY, JSON.stringify(payload));
-        return new Response(JSON.stringify({ ok: true, count: payload.count, rejected, importedAt: payload.importedAt }), { headers: corsJson });
+        return new Response(JSON.stringify({ ok: true, count: payload.count, rejected, deleted, merged: merge, importedAt: payload.importedAt }), { headers: corsJson });
       }
 
       return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
