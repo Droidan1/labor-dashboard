@@ -311,7 +311,10 @@
     .sidebar .nav-chev { margin-left: auto; margin-right: 12px; display: grid; place-content: center; transition: transform 0.2s; opacity: 0.55; }
     .sidebar .nav-chev svg { width: 14px; height: 14px; }
     .sidebar.collapsed .nav-chev { display: none; }
-    .sidebar .nav-sub { margin-top: 2px; display: flex; flex-direction: column; gap: 1px; }
+    .sidebar .nav-sub { margin-top: 2px; }
+    /* Only lay out as a flex column when open — keep specificity below Tailwind
+       .hidden so the collapsed (hidden) state actually hides the sub-items. */
+    .sidebar .nav-sub:not(.hidden) { display: flex; flex-direction: column; gap: 1px; }
     .sidebar .nav-subitem { height: 38px; font-size: 0.825rem; }
     .sidebar .nav-subitem .nav-icon { width: 48px; }
     .sidebar .nav-subitem .nav-icon svg { width: 15px; height: 15px; }
