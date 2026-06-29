@@ -3513,7 +3513,7 @@ async function buildMorningBriefingData(env) {
   const yesterdayStr = yd.toISOString().slice(0, 10);
 
   const [{ results: yRows }, { results: tRows }] = await Promise.all([
-    env.DB.prepare('SELECT store, total, budget FROM daily_sales WHERE date = ?').bind(yesterdayStr).all(),
+    env.DB.prepare('SELECT store, total, budget, labor_pct, order_count FROM daily_sales WHERE date = ?').bind(yesterdayStr).all(),
     env.DB.prepare('SELECT store, budget FROM daily_sales WHERE date = ?').bind(todayStr).all(),
   ]);
 
@@ -3521,15 +3521,45 @@ async function buildMorningBriefingData(env) {
   for (const r of (yRows || [])) yMap[r.store] = r;
   for (const r of (tRows || [])) tMap[r.store] = r;
 
-  const stores = ALL_STORES.map(store => {
+  // Per-store item snapshots (KV) for yesterday → Tier-1 gross margin + category
+  // breakdown. Degrades gracefully: when a snapshot is missing, grossMargin is
+  // null and categories is [] so the consumer simply drops those lines.
+  const snaps = await Promise.all(ALL_STORES.map(store =>
+    env.SALES_SNAPSHOTS
+      ? env.SALES_SNAPSHOTS.get(`items:${store.toLowerCase()}:${yesterdayStr}`, "json")
+      : Promise.resolve(null)
+  ));
+
+  const stores = ALL_STORES.map((store, i) => {
     const y = yMap[store] || {};
+    const merged = snaps[i] ? mergeItemSnapshots([snaps[i]]) : null;
+    // gpmPct is stored 0–100 (e.g. 43.0); the spec wants a decimal fraction, so /100.
+    const t = merged && merged.totals;
     return {
       storeId: store,
       name: STORE_LABELS[store] || store,
       salesDate: yesterdayStr,            // the day netSales covers (yesterday, ET)
-      netSales: y.total ?? null,          // yesterday's FINAL net sales
+      netSales: y.total ?? null,          // yesterday's FINAL net sales (POS; excludes auction)
       budgetForSalesDate: y.budget ?? null, // budget that applied to yesterday (compare vs netSales)
       todayBudget: tMap[store]?.budget ?? null, // today's forward target
+      // Tier 2/3 — from the same daily_sales row. labor_pct is stored in percent
+      // units (e.g. 11.5); spec wants a fraction, so /100. The <5 guard mirrors
+      // the dashboard's normalizeLaborPct in case a row was stored as a fraction.
+      // A stored 0 means "not entered" (no store runs 0% labor), so report it as
+      // null rather than a real 0% per the spec's "don't send 0 for unknown".
+      laborActualPct: !y.labor_pct ? null
+        : (Number(y.labor_pct) < 5 ? Number(y.labor_pct) : Number(y.labor_pct) / 100),
+      transactions: y.order_count ?? null,
+      // Tier 1 — from the item snapshot (KV). gross margin as a fraction; no
+      // planned margin or per-category budget exists in our system, so those
+      // spec fields are intentionally absent.
+      grossMargin: t && t.netSales > 0 ? t.gpmPct / 100 : null,
+      categories: merged ? merged.categories.map(c => ({
+        name: c.category,
+        netSales: c.netSales,
+        grossMargin: c.netSales > 0 ? c.gpmPct / 100 : null,
+        units: c.qty,
+      })) : [],
     };
   });
 
