@@ -2215,6 +2215,7 @@
           <div class="space-y-3">
             <div class="flex flex-wrap gap-3 items-center">
               <input id="cc-search" type="text" placeholder="Filter categories…" class="flex-1 min-w-[200px] text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+              <label class="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap cursor-pointer select-none"><input id="cc-sales-only" type="checkbox" onchange="renderCategoryCosts()" class="rounded"> With sales only</label>
               <button onclick="saveCategoryCosts()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Save costs</button>
               <button onclick="loadCategoryCosts()" class="px-4 py-2 text-sm font-semibold border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors">Reload</button>
             </div>
@@ -12278,6 +12279,7 @@
   // ── L3 Category Costs ──────────────────────────────────────────────
   let ccCatalog = [];   // [{ l3, l2 }] from worker, grouped/sorted by L2
   let ccCosts = {};     // { "<l3>": number } — current edits
+  let ccSales = {};     // { "<l3>": { qty, net } } — recent sales (last 7d, all stores)
 
   function ccSetStatus(msg, type) {
     const s = el('cc-status');
@@ -12292,32 +12294,52 @@
     s.textContent = msg;
   }
 
+  function ccFmt$(n) { return '$' + Math.round(n).toLocaleString(); }
+
   function renderCategoryCosts() {
     const wrap = el('cc-list');
     if (!wrap) return;
     const q = (el('cc-search')?.value || '').trim().toLowerCase();
-    const rows = ccCatalog.filter(c =>
-      !q || c.l3.toLowerCase().includes(q) || c.l2.toLowerCase().includes(q));
+    const salesOnly = !!el('cc-sales-only')?.checked;
+    const sal = l3 => ccSales[l3] || { qty: 0, net: 0 };
+
+    let rows = ccCatalog.filter(c =>
+      (!q || c.l3.toLowerCase().includes(q) || c.l2.toLowerCase().includes(q)) &&
+      (!salesOnly || sal(c.l3).net > 0));
     if (!rows.length) { wrap.innerHTML = '<div class="px-4 py-6 text-sm text-gray-400">No categories match.</div>'; return; }
+
+    // Group by L2; sort L3s within a group by recent net desc (sales first);
+    // sort the L2 groups by their total recent net desc.
+    const groups = {};
+    for (const c of rows) (groups[c.l2] = groups[c.l2] || []).push(c);
+    const groupTotal = l2 => groups[l2].reduce((s, c) => s + sal(c.l3).net, 0);
+    const orderedL2 = Object.keys(groups).sort((a, b) => groupTotal(b) - groupTotal(a) || a.localeCompare(b));
+
     let html = '';
-    let curL2 = null;
-    for (const c of rows) {
-      if (c.l2 !== curL2) {
-        curL2 = c.l2;
-        html += `<div class="px-4 py-2 bg-gray-50 dark:bg-gray-900/40 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">${curL2}</div>`;
+    for (const l2 of orderedL2) {
+      const gNet = groupTotal(l2);
+      html += `<div class="flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-900/40 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+        <span>${l2}</span>${gNet > 0 ? `<span class="tabular-nums normal-case font-medium">${ccFmt$(gNet)} · 7d</span>` : ''}</div>`;
+      const sorted = groups[l2].sort((a, b) => sal(b.l3).net - sal(a.l3).net || a.l3.localeCompare(b.l3));
+      for (const c of sorted) {
+        const v = ccCosts[c.l3];
+        const val = (v != null && Number.isFinite(Number(v))) ? Number(v) : '';
+        const s = sal(c.l3);
+        const salesTag = s.net > 0
+          ? `<span class="text-[11px] tabular-nums text-accent-green whitespace-nowrap">${s.qty.toLocaleString()} u · ${ccFmt$(s.net)}</span>`
+          : `<span class="text-[11px] text-gray-300 dark:text-gray-600 whitespace-nowrap">no sales</span>`;
+        html += `<div class="flex items-center gap-3 px-4 py-2 ${s.net > 0 ? '' : 'opacity-60'}">
+          <span class="flex-1 min-w-0 text-sm text-gray-700 dark:text-gray-200 font-mono truncate" title="${c.l3.replace(/"/g,'&quot;')}">${c.l3}</span>
+          <span class="w-28 text-right">${salesTag}</span>
+          <div class="flex items-center gap-1">
+            <span class="text-xs text-gray-400">$</span>
+            <input type="number" step="0.01" min="0" data-l3="${c.l3.replace(/"/g,'&quot;')}" value="${val}"
+              oninput="ccOnInput(this)"
+              class="cc-input w-24 text-sm text-right rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1">
+            <span class="text-xs text-gray-400">/unit</span>
+          </div>
+        </div>`;
       }
-      const v = ccCosts[c.l3];
-      const val = (v != null && Number.isFinite(Number(v))) ? Number(v) : '';
-      html += `<div class="flex items-center gap-3 px-4 py-2">
-        <span class="flex-1 text-sm text-gray-700 dark:text-gray-200 font-mono truncate" title="${c.l3.replace(/"/g,'&quot;')}">${c.l3}</span>
-        <div class="flex items-center gap-1">
-          <span class="text-xs text-gray-400">$</span>
-          <input type="number" step="0.01" min="0" data-l3="${c.l3.replace(/"/g,'&quot;')}" value="${val}"
-            oninput="ccOnInput(this)"
-            class="cc-input w-24 text-sm text-right rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1">
-          <span class="text-xs text-gray-400">/unit</span>
-        </div>
-      </div>`;
     }
     wrap.innerHTML = html;
   }
@@ -12341,6 +12363,7 @@
       if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
       ccCatalog = Array.isArray(data.categories) ? data.categories : [];
       ccCosts = (data.costs && typeof data.costs === 'object') ? { ...data.costs } : {};
+      ccSales = (data.sales && typeof data.sales === 'object') ? data.sales : {};
       renderCategoryCosts();
       el('cc-status').classList.add('hidden');
       refreshCategoryCostsStatus(data);
@@ -12377,6 +12400,7 @@
   }
 
   window.loadCategoryCosts = loadCategoryCosts;
+  window.renderCategoryCosts = renderCategoryCosts;
   window.saveCategoryCosts = saveCategoryCosts;
   window.ccOnInput = ccOnInput;
   (function(){ const s = el('cc-search'); if (s) s.addEventListener('input', renderCategoryCosts); })();

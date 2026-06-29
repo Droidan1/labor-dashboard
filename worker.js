@@ -6945,9 +6945,46 @@ export default {
       if (request.method === "GET") {
         const stored = await env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json");
         const s = (stored && typeof stored === "object") ? stored : {};
+
+        // Recent sales per L3 (last 7 days, all stores) so the editor can show
+        // which categories actually have sales and sort them to the top. Name-
+        // matched rows ("[Name match] X") are attributed back to their L3 key X.
+        // Best-effort: a snapshot miss just contributes nothing.
+        const salesByL3 = {};
+        try {
+          const { dateStr: today } = getETToday();
+          const cur = new Date(today + "T00:00:00Z");
+          const keys = [];
+          for (let i = 0; i < 7; i++) {
+            const dt = cur.toISOString().slice(0, 10);
+            for (const st of ALL_STORES) keys.push(`items:${st.toLowerCase()}:${dt}`);
+            cur.setUTCDate(cur.getUTCDate() - 1);
+          }
+          const snaps = await Promise.all(keys.map(k => env.SALES_SNAPSHOTS.get(k, "json").catch(() => null)));
+          for (const snap of snaps) {
+            if (!snap || !Array.isArray(snap.categories)) continue;
+            for (const c of snap.categories) {
+              for (const l of (c.l3Rows || [])) {
+                let key = l.l3 || "";
+                if (key.startsWith("[Name match] ")) key = key.slice(13);
+                if (!Object.prototype.hasOwnProperty.call(L3_TO_L2, key)) continue;
+                const b = salesByL3[key] || { qty: 0, net: 0 };
+                b.qty += Number(l.qty) || 0;
+                b.net += Number(l.netSales) || 0;
+                salesByL3[key] = b;
+              }
+            }
+          }
+          for (const k of Object.keys(salesByL3)) {
+            salesByL3[k].qty = Math.round(salesByL3[k].qty);
+            salesByL3[k].net = roundCents(salesByL3[k].net);
+          }
+        } catch (e) { /* sales is best-effort */ }
+
         return new Response(JSON.stringify({
           costs: s.costs && typeof s.costs === "object" ? s.costs : {},
           categories: catalog,
+          sales: salesByL3,
           importedAt: s.importedAt || null,
           count: Number(s.count) || 0,
         }), { headers: corsJson });
