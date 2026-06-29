@@ -2186,6 +2186,23 @@
           </div>
         </div>
 
+        <!-- L3 Category Costs -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
+          <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">L3 Category Costs</h2>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Set a flat cost per unit for each L3 category (e.g. <code>FG BL SEASONAL - CHRISTMAS - GM</code>). Used by the Weekly Retail Summary as the cost fallback when an item has no Item Master cost. A specific item (IM#) cost always wins over its category cost. Re-snapshot historical days to backfill.</p>
+
+          <div class="space-y-3">
+            <div class="flex flex-wrap gap-3 items-center">
+              <input id="cc-search" type="text" placeholder="Filter categories…" class="flex-1 min-w-[200px] text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+              <button onclick="saveCategoryCosts()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Save costs</button>
+              <button onclick="loadCategoryCosts()" class="px-4 py-2 text-sm font-semibold border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors">Reload</button>
+            </div>
+            <div id="cc-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
+            <div id="cc-summary" class="text-xs text-gray-500 dark:text-gray-400">Status: not loaded yet.</div>
+            <div id="cc-list" class="max-h-[460px] overflow-y-auto border border-gray-100 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700"></div>
+          </div>
+        </div>
+
         <!-- Custom Sales Categorization -->
         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
           <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Custom Sales Categorization</h2>
@@ -12065,12 +12082,118 @@
   window.importItemCosts = importItemCosts;
   window.refreshItemCostsStatus = refreshItemCostsStatus;
 
+  // ── L3 Category Costs ──────────────────────────────────────────────
+  let ccCatalog = [];   // [{ l3, l2 }] from worker, grouped/sorted by L2
+  let ccCosts = {};     // { "<l3>": number } — current edits
+
+  function ccSetStatus(msg, type) {
+    const s = el('cc-status');
+    if (!s) return;
+    s.classList.remove('hidden');
+    const cls = {
+      ok:    'border-green-200 dark:border-green-700 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400',
+      error: 'border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400',
+      info:  'border-yellow-200 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400',
+    };
+    s.className = 'text-sm rounded-lg px-4 py-3 border ' + (cls[type] || cls.info);
+    s.textContent = msg;
+  }
+
+  function renderCategoryCosts() {
+    const wrap = el('cc-list');
+    if (!wrap) return;
+    const q = (el('cc-search')?.value || '').trim().toLowerCase();
+    const rows = ccCatalog.filter(c =>
+      !q || c.l3.toLowerCase().includes(q) || c.l2.toLowerCase().includes(q));
+    if (!rows.length) { wrap.innerHTML = '<div class="px-4 py-6 text-sm text-gray-400">No categories match.</div>'; return; }
+    let html = '';
+    let curL2 = null;
+    for (const c of rows) {
+      if (c.l2 !== curL2) {
+        curL2 = c.l2;
+        html += `<div class="px-4 py-2 bg-gray-50 dark:bg-gray-900/40 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">${curL2}</div>`;
+      }
+      const v = ccCosts[c.l3];
+      const val = (v != null && Number.isFinite(Number(v))) ? Number(v) : '';
+      html += `<div class="flex items-center gap-3 px-4 py-2">
+        <span class="flex-1 text-sm text-gray-700 dark:text-gray-200 font-mono truncate" title="${c.l3.replace(/"/g,'&quot;')}">${c.l3}</span>
+        <div class="flex items-center gap-1">
+          <span class="text-xs text-gray-400">$</span>
+          <input type="number" step="0.01" min="0" data-l3="${c.l3.replace(/"/g,'&quot;')}" value="${val}"
+            oninput="ccOnInput(this)"
+            class="cc-input w-24 text-sm text-right rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1">
+          <span class="text-xs text-gray-400">/unit</span>
+        </div>
+      </div>`;
+    }
+    wrap.innerHTML = html;
+  }
+
+  function ccOnInput(input) {
+    const l3 = input.getAttribute('data-l3');
+    const raw = input.value.trim();
+    if (raw === '') { delete ccCosts[l3]; return; }
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) ccCosts[l3] = n;
+  }
+
+  async function loadCategoryCosts() {
+    ccSetStatus('Loading…', 'info');
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=category-costs`, {
+        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        credentials: 'include',
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      ccCatalog = Array.isArray(data.categories) ? data.categories : [];
+      ccCosts = (data.costs && typeof data.costs === 'object') ? { ...data.costs } : {};
+      renderCategoryCosts();
+      el('cc-status').classList.add('hidden');
+      refreshCategoryCostsStatus(data);
+    } catch (e) {
+      ccSetStatus('Load failed: ' + e.message, 'error');
+    }
+  }
+
+  function refreshCategoryCostsStatus(data) {
+    const summEl = el('cc-summary');
+    if (!summEl) return;
+    const setCount = Object.keys(ccCosts).length;
+    const imported = data && data.importedAt ? ` · last saved ${new Date(data.importedAt).toLocaleString()}` : '';
+    summEl.textContent = `${ccCatalog.length} categories · ${setCount} with a cost set${imported}`;
+  }
+
+  async function saveCategoryCosts() {
+    const count = Object.keys(ccCosts).length;
+    ccSetStatus(`Saving ${count} category cost${count===1?'':'s'}…`, 'info');
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=category-costs`, {
+        method: 'POST',
+        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ costs: ccCosts }),
+        credentials: 'include',
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      ccSetStatus(`Saved ${data.count} category cost${data.count===1?'':'s'}${data.rejected?` (${data.rejected} rejected)`:''}. Re-snapshot history to apply.`, 'ok');
+      refreshCategoryCostsStatus(data);
+    } catch (e) {
+      ccSetStatus('Save failed: ' + e.message, 'error');
+    }
+  }
+
+  window.loadCategoryCosts = loadCategoryCosts;
+  window.saveCategoryCosts = saveCategoryCosts;
+  window.ccOnInput = ccOnInput;
+  (function(){ const s = el('cc-search'); if (s) s.addEventListener('input', renderCategoryCosts); })();
+
   // Auto-load item costs status on Settings page visit
   (function() {
     const orig = window.navigateToPage;
     window.navigateToPage = function(page) {
       orig(page);
-      if (page === 'settings') refreshItemCostsStatus();
+      if (page === 'settings') { refreshItemCostsStatus(); loadCategoryCosts(); }
     };
   })();
 
