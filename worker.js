@@ -3545,7 +3545,9 @@ async function buildMorningBriefingData(env) {
       // Tier 2/3 — from the same daily_sales row. labor_pct is stored in percent
       // units (e.g. 11.5); spec wants a fraction, so /100. The <5 guard mirrors
       // the dashboard's normalizeLaborPct in case a row was stored as a fraction.
-      laborActualPct: y.labor_pct == null ? null
+      // A stored 0 means "not entered" (no store runs 0% labor), so report it as
+      // null rather than a real 0% per the spec's "don't send 0 for unknown".
+      laborActualPct: !y.labor_pct ? null
         : (Number(y.labor_pct) < 5 ? Number(y.labor_pct) : Number(y.labor_pct) / 100),
       transactions: y.order_count ?? null,
       // Tier 1 — from the item snapshot (KV). gross margin as a fraction; no
