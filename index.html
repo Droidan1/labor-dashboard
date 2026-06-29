@@ -2183,6 +2183,27 @@
             </div>
             <div id="im-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
             <div id="im-summary" class="text-xs text-gray-500 dark:text-gray-400">Status: not loaded yet.</div>
+
+            <!-- Per-item editor (edit/add single costs without re-uploading) -->
+            <details id="im-editor" class="border-t border-gray-100 dark:border-gray-700 pt-4">
+              <summary onclick="ensureItemCostsLoaded()" class="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-200 select-none">Edit individual items</summary>
+              <div class="mt-3 space-y-3">
+                <p class="text-xs text-gray-400 dark:text-gray-500">Fix or add a single item's cost without re-uploading the whole file. Changes merge into the existing master.</p>
+                <input id="ie-search" type="text" placeholder="Search by item # or description…" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                <div id="ie-list" class="max-h-[360px] overflow-y-auto border border-gray-100 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700"></div>
+                <div class="flex flex-wrap gap-2 items-end pt-1">
+                  <div><label class="block text-[11px] font-medium text-gray-500 mb-1">New item #</label><input id="ie-new-no" type="text" inputmode="numeric" placeholder="1234" class="w-24 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1"></div>
+                  <div><label class="block text-[11px] font-medium text-gray-500 mb-1">Cost $</label><input id="ie-new-cost" type="number" step="0.01" min="0" placeholder="0.89" class="w-24 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1"></div>
+                  <div class="flex-1 min-w-[140px]"><label class="block text-[11px] font-medium text-gray-500 mb-1">Description (optional)</label><input id="ie-new-desc" type="text" placeholder="" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1"></div>
+                  <button onclick="ieAddItem()" class="px-3 py-1.5 text-sm font-semibold border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg">Add</button>
+                </div>
+                <div id="ie-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
+                <div class="flex items-center gap-3">
+                  <button onclick="saveItemCostEdits()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Save changes</button>
+                  <span id="ie-dirty" class="text-xs text-gray-400">No pending changes.</span>
+                </div>
+              </div>
+            </details>
           </div>
         </div>
 
@@ -11759,6 +11780,31 @@
       ${pcell('GPM %', itemTotals.gpmPct != null ? fmtPct(itemTotals.gpmPct) : '—')}
     </div>`;
 
+    // ── Cost coverage strip (known IM# vs category estimate vs uncovered) ──
+    const cov = itemTotals.coverage || {};
+    const cKnown = Math.max(0, cov.item || 0), cEst = Math.max(0, cov.category || 0), cUnc = Math.max(0, cov.none || 0);
+    const cTot = cKnown + cEst + cUnc;
+    let coverageHtml = '';
+    if (cTot > 0) {
+      const pk = cKnown / cTot * 100, pe = cEst / cTot * 100, pu = cUnc / cTot * 100;
+      const seg = (w, color) => w > 0 ? `<div style="width:${w}%;background:${color}" class="h-full"></div>` : '';
+      const topUnc = cats.map(c => ({ name: c.category, none: (c.coverage && c.coverage.none) || 0 }))
+        .filter(x => x.none > 0).sort((a, b) => b.none - a.none).slice(0, 3);
+      const topUncHtml = topUnc.length
+        ? `<div class="mt-2 text-[11px] text-opl-inkDim dark:text-op-inkDim">Largest uncovered: ${topUnc.map(x => `${escapeHtml(String(x.name))} <span class="tabular-nums font-semibold">${fmtK(x.none)}</span>`).join(' · ')}</div>`
+        : '';
+      const lg = (color, lab, amt, pct) => `<span class="text-opl-inkDim dark:text-op-inkDim whitespace-nowrap"><span class="inline-block w-2 h-2 rounded-sm align-middle" style="background:${color}"></span> ${lab} <span class="tabular-nums">${fmtK(amt)}</span> (${Math.round(pct)}%)</span>`;
+      coverageHtml = `<div class="mt-2.5 rounded-[13px] bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border px-3.5 py-3">
+        <div class="flex items-center justify-between">
+          <span class="text-[9px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim">Cost coverage</span>
+          <span class="text-[11px] font-extrabold tabular-nums text-opl-ink dark:text-op-ink">${Math.round(pk + pe)}% of net costed</span>
+        </div>
+        <div class="mt-2 flex h-2 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">${seg(pk, '#3BB54A')}${seg(pe, '#E0A500')}${seg(pu, 'rgba(120,120,120,0.45)')}</div>
+        <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">${lg('#3BB54A', 'Known', cKnown, pk)}${lg('#E0A500', 'Est.', cEst, pe)}${lg('rgba(120,120,120,0.6)', 'Uncovered', cUnc, pu)}</div>
+        ${topUncHtml}
+      </div>`;
+    }
+
     // ── Category card-rows (all L2; tap to expand L3 + cost detail) ──
     const maxNet = Math.max(1, ...cats.map(c => c.netSales || 0));
     const gpmBadge = (g) => {
@@ -11884,7 +11930,7 @@
       <div class="border-t border-gray-100 dark:border-gray-700">${tableHtml}</div>
     </details>`;
 
-    el('wrs-pane-store').innerHTML = headerHtml + profitHtml + cardsHtml + detailsHtml;
+    el('wrs-pane-store').innerHTML = headerHtml + profitHtml + coverageHtml + cardsHtml + detailsHtml;
     setTimeout(() => firstHint('wrs-cat', '#wrs-pane-store [onclick^="toggleL2Expansion"]', "Tap a category to expand its sub-categories &amp; cost detail."), 450);
   }
 
@@ -12081,6 +12127,153 @@
 
   window.importItemCosts = importItemCosts;
   window.refreshItemCostsStatus = refreshItemCostsStatus;
+
+  // ── Per-item cost editor (merge-based; no full re-upload) ──────────
+  let ieItems = null;            // full { imNo: { cost, desc } } map (loaded once)
+  let ieEdits = {};              // imNo → { cost, desc } pending add/update
+  let ieDeletes = new Set();     // imNos pending deletion
+  let ieLoaded = false;
+
+  function ieSetStatus(msg, type) {
+    const s = el('ie-status'); if (!s) return;
+    s.classList.remove('hidden');
+    const cls = {
+      ok:    'border-green-200 dark:border-green-700 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400',
+      error: 'border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400',
+      info:  'border-yellow-200 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400',
+    };
+    s.className = 'text-sm rounded-lg px-4 py-3 border ' + (cls[type] || cls.info);
+    s.textContent = msg;
+  }
+
+  function ieDirtyCount() { return Object.keys(ieEdits).length + ieDeletes.size; }
+  function ieUpdateDirty() {
+    const n = ieDirtyCount();
+    const d = el('ie-dirty'); if (d) d.textContent = n ? `${n} pending change${n===1?'':'s'}.` : 'No pending changes.';
+  }
+
+  async function ensureItemCostsLoaded() {
+    if (ieLoaded) return;
+    ieSetStatus('Loading items…', 'info');
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=item-costs`, {
+        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }, credentials: 'include',
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      ieItems = (data.items && typeof data.items === 'object') ? data.items : {};
+      ieLoaded = true;
+      el('ie-status').classList.add('hidden');
+      ieRender();
+    } catch (e) { ieSetStatus('Load failed: ' + e.message, 'error'); }
+  }
+
+  // Effective cost/desc for a row, honoring pending edits/deletes.
+  function ieEffective(imNo) {
+    if (ieDeletes.has(imNo)) return null;
+    if (ieEdits[imNo]) return ieEdits[imNo];
+    return ieItems[imNo] || null;
+  }
+
+  function ieRender() {
+    const wrap = el('ie-list'); if (!wrap || !ieItems) return;
+    const q = (el('ie-search')?.value || '').trim().toLowerCase();
+    // Union of stored keys + newly added (edits not yet in ieItems).
+    const keys = new Set(Object.keys(ieItems));
+    for (const k of Object.keys(ieEdits)) keys.add(k);
+    let rows = [...keys].filter(k => {
+      if (!q) return true;
+      const eff = ieEdits[k] || ieItems[k] || {};
+      return k.includes(q) || String(eff.desc || '').toLowerCase().includes(q);
+    });
+    rows.sort((a, b) => Number(a) - Number(b));
+    const CAP = 200;
+    const shown = rows.slice(0, CAP);
+    if (!shown.length) { wrap.innerHTML = '<div class="px-4 py-6 text-sm text-gray-400">No items match.</div>'; return; }
+    let html = '';
+    for (const k of shown) {
+      const eff = ieEffective(k);
+      const deleted = ieDeletes.has(k);
+      const edited = !!ieEdits[k];
+      const cost = eff ? eff.cost : '';
+      const desc = (ieEdits[k]?.desc ?? ieItems[k]?.desc) || '';
+      html += `<div class="flex items-center gap-2 px-3 py-2 ${deleted?'opacity-40 line-through':''}">
+        <span class="w-14 text-sm font-mono text-gray-500">${k}</span>
+        <span class="flex-1 text-sm text-gray-700 dark:text-gray-200 truncate" title="${String(desc).replace(/"/g,'&quot;')}">${desc || '<span class=\"text-gray-400\">—</span>'}</span>
+        ${edited?'<span class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-400">edited</span>':''}
+        <span class="text-xs text-gray-400">$</span>
+        <input type="number" step="0.01" min="0" data-im="${k}" value="${cost===''?'':Number(cost)}" ${deleted?'disabled':''}
+          oninput="ieEditCost(this)" class="w-20 text-sm text-right rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1">
+        <button onclick="ieToggleDelete('${k}')" title="${deleted?'Undo delete':'Delete'}" class="text-gray-400 hover:text-red-500 px-1">${deleted?'↺':'×'}</button>
+      </div>`;
+    }
+    if (rows.length > CAP) html += `<div class="px-4 py-2 text-xs text-gray-400">Showing first ${CAP} of ${rows.length}. Refine your search.</div>`;
+    wrap.innerHTML = html;
+  }
+
+  function ieEditCost(input) {
+    const k = input.getAttribute('data-im');
+    const raw = input.value.trim();
+    const desc = (ieEdits[k]?.desc ?? ieItems[k]?.desc) || '';
+    if (raw === '') { return; } // empty = no change; use × to delete
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) return;
+    const orig = ieItems[k];
+    if (orig && Number(orig.cost) === n && !ieDeletes.has(k)) { delete ieEdits[k]; }
+    else { ieEdits[k] = { cost: n, desc }; ieDeletes.delete(k); }
+    ieUpdateDirty();
+  }
+
+  function ieToggleDelete(k) {
+    if (ieDeletes.has(k)) ieDeletes.delete(k);
+    else { ieDeletes.add(k); delete ieEdits[k]; }
+    ieRender(); ieUpdateDirty();
+  }
+
+  function ieAddItem() {
+    const no = (el('ie-new-no').value || '').trim();
+    const costRaw = (el('ie-new-cost').value || '').trim();
+    const desc = (el('ie-new-desc').value || '').trim();
+    if (!/^\d{4,5}$/.test(no)) { ieSetStatus('Item # must be 4–5 digits.', 'error'); return; }
+    const cost = Number(costRaw);
+    if (!Number.isFinite(cost) || cost < 0) { ieSetStatus('Enter a valid cost ≥ 0.', 'error'); return; }
+    ieEdits[no] = { cost, desc };
+    ieDeletes.delete(no);
+    el('ie-new-no').value = ''; el('ie-new-cost').value = ''; el('ie-new-desc').value = '';
+    el('ie-status').classList.add('hidden');
+    if (el('ie-search')) el('ie-search').value = no;
+    ieRender(); ieUpdateDirty();
+  }
+
+  async function saveItemCostEdits() {
+    const items = { ...ieEdits };
+    const del = [...ieDeletes];
+    if (!Object.keys(items).length && !del.length) { ieSetStatus('No pending changes to save.', 'info'); return; }
+    ieSetStatus('Saving…', 'info');
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=item-costs`, {
+        method: 'POST',
+        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ merge: true, items, delete: del }),
+        credentials: 'include',
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      // Apply locally so the list reflects saved state without a full reload.
+      for (const [k, v] of Object.entries(items)) ieItems[k] = v;
+      for (const k of del) delete ieItems[k];
+      ieEdits = {}; ieDeletes = new Set();
+      ieSetStatus(`Saved. ${data.count.toLocaleString()} items total${data.deleted?`, ${data.deleted} deleted`:''}${data.rejected?`, ${data.rejected} rejected`:''}. Re-snapshot history to apply.`, 'ok');
+      ieRender(); ieUpdateDirty(); refreshItemCostsStatus();
+    } catch (e) { ieSetStatus('Save failed: ' + e.message, 'error'); }
+  }
+
+  window.ensureItemCostsLoaded = ensureItemCostsLoaded;
+  window.ieEditCost = ieEditCost;
+  window.ieToggleDelete = ieToggleDelete;
+  window.ieAddItem = ieAddItem;
+  window.saveItemCostEdits = saveItemCostEdits;
+  (function(){ const s = el('ie-search'); if (s) s.addEventListener('input', ieRender); })();
 
   // ── L3 Category Costs ──────────────────────────────────────────────
   let ccCatalog = [];   // [{ l3, l2 }] from worker, grouped/sorted by L2
