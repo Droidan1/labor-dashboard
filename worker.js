@@ -2129,16 +2129,32 @@ async function fetchItemOverrides(env) {
 // to enrich line-items with cost so the Weekly Retail Summary page can show CPU,
 // Ext Cost, Gross Profit, GPM%.
 const ITEM_COSTS_KEY = "item-costs:global";
-const EMPTY_ITEM_COSTS = { items: {}, importedAt: null, count: 0 };
+// Admin-managed flat $/unit cost per L3 Clover category, stored globally in KV
+// key `category-costs:global` as { costs: { "<l3 category>": number }, importedAt, count }.
+// Populated via ?action=category-costs. Used by aggregateItemSales as the cost
+// fallback when a line item has no item-master (IM#) cost — keyed on the full
+// Clover L3 category string (e.g. "FG BL SEASONAL - CHRISTMAS - GM").
+const CATEGORY_COSTS_KEY = "category-costs:global";
+const EMPTY_ITEM_COSTS = { items: {}, categories: {}, importedAt: null, count: 0, categoriesImportedAt: null, categoriesCount: 0 };
 
+// Loads BOTH cost maps in one shot: per-item (IM#) costs and per-L3-category
+// flat costs. They ride on the same object so aggregateItemSales — which already
+// receives this — gets category costs for free, with no new function parameter.
 async function fetchItemCosts(env) {
   if (!env.SALES_SNAPSHOTS) return EMPTY_ITEM_COSTS;
-  const val = await env.SALES_SNAPSHOTS.get(ITEM_COSTS_KEY, "json");
-  if (!val || typeof val !== "object") return EMPTY_ITEM_COSTS;
+  const [val, catVal] = await Promise.all([
+    env.SALES_SNAPSHOTS.get(ITEM_COSTS_KEY, "json"),
+    env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json"),
+  ]);
+  const safe = (val && typeof val === "object") ? val : {};
+  const safeCat = (catVal && typeof catVal === "object") ? catVal : {};
   return {
-    items: val.items && typeof val.items === "object" ? val.items : {},
-    importedAt: val.importedAt || null,
-    count: Number(val.count) || 0,
+    items: safe.items && typeof safe.items === "object" ? safe.items : {},
+    importedAt: safe.importedAt || null,
+    count: Number(safe.count) || 0,
+    categories: safeCat.costs && typeof safeCat.costs === "object" ? safeCat.costs : {},
+    categoriesImportedAt: safeCat.importedAt || null,
+    categoriesCount: Number(safeCat.count) || 0,
   };
 }
 
@@ -2176,6 +2192,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   const ovPatterns = ov.patterns || [];
   const ic = itemCosts || EMPTY_ITEM_COSTS;
   const icItems = ic.items || {};
+  const icCats = ic.categories || {};   // L3 Clover category → flat $/unit cost (fallback)
   const cats = {};        // L2 → { qty, gross, discounts, refunds, net, cost }
   const l3Cats = {};      // L2 → L3 → { qty, gross, discounts, refunds, net, cost }
   const unmappedL3 = {};
@@ -2459,12 +2476,19 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         }
       }
 
-      // Cost lookup: join on the IM number we extracted at the top of the loop.
-      // Misses (no imNum, or imNum not in master) silently contribute 0 — those
-      // rows will render with `—` in the CPU/Ext Cost columns.
+      // Cost lookup, in precedence order:
+      //   1. IM# item-master cost (join on the number extracted above) — wins.
+      //   2. L3 category flat cost — fallback keyed on the real Clover category
+      //      string `l3` (NOT l3Key, which may be a bracketed synthetic label).
+      //   3. 0 — renders `—` in the CPU/Ext Cost columns.
       const costRecord = imNum ? icItems[imNum] : null;
-      const unitCost = (costRecord && Number.isFinite(Number(costRecord.cost)))
-        ? Number(costRecord.cost) : 0;
+      let unitCost = 0;
+      if (costRecord && Number.isFinite(Number(costRecord.cost))) {
+        unitCost = Number(costRecord.cost);
+      } else if (l3) {
+        const catCost = Number(icCats[l3]);
+        if (Number.isFinite(catCost) && catCost > 0) unitCost = catCost;
+      }
 
       if (priceCents < 0) {
         cat.refunds -= grossCents / 100;
@@ -6381,6 +6405,62 @@ export default {
           count: Object.keys(cleaned).length,
         };
         await env.SALES_SNAPSHOTS.put(ITEM_COSTS_KEY, JSON.stringify(payload));
+        return new Response(JSON.stringify({ ok: true, count: payload.count, rejected, importedAt: payload.importedAt }), { headers: corsJson });
+      }
+
+      return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
+    }
+
+    // ── Admin: Per-L3-category flat $/unit costs ───────────────────────────
+    //    GET  ?action=category-costs → { costs, categories:[{l3,l2}], importedAt, count }
+    //    POST ?action=category-costs  body { costs: { "<l3 category>": number } }
+    //       Authoritative replace. Validates each L3 against the curated
+    //       L3_TO_L2 map and each cost as a finite, non-negative number.
+    if (url.searchParams.get("action") === "category-costs") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+
+      // The set of L3 categories the dashboard knows how to bucket, grouped by L2.
+      const catalog = Object.entries(L3_TO_L2)
+        .map(([l3, l2]) => ({ l3, l2 }))
+        .sort((a, b) => (a.l2 === b.l2 ? a.l3.localeCompare(b.l3) : a.l2.localeCompare(b.l2)));
+
+      if (request.method === "GET") {
+        const stored = await env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json");
+        const s = (stored && typeof stored === "object") ? stored : {};
+        return new Response(JSON.stringify({
+          costs: s.costs && typeof s.costs === "object" ? s.costs : {},
+          categories: catalog,
+          importedAt: s.importedAt || null,
+          count: Number(s.count) || 0,
+        }), { headers: corsJson });
+      }
+
+      if (request.method === "POST") {
+        let body;
+        try { body = await request.json(); }
+        catch { return new Response(JSON.stringify({ error: "Invalid JSON body" }), { status: 400, headers: corsJson }); }
+
+        const rawCosts = body?.costs;
+        if (!rawCosts || typeof rawCosts !== "object") {
+          return new Response(JSON.stringify({ error: "Body must include costs: { \"<l3 category>\": number }" }), { status: 400, headers: corsJson });
+        }
+
+        const cleaned = {};
+        let rejected = 0;
+        for (const [l3, v] of Object.entries(rawCosts)) {
+          if (!Object.prototype.hasOwnProperty.call(L3_TO_L2, l3)) { rejected++; continue; }
+          const cost = Number(v);
+          if (!Number.isFinite(cost) || cost < 0) { rejected++; continue; }
+          if (cost === 0) continue; // omit zeros — absence means "no cost set"
+          cleaned[l3] = Math.round(cost * 10000) / 10000;
+        }
+        const payload = { costs: cleaned, importedAt: new Date().toISOString(), count: Object.keys(cleaned).length };
+        await env.SALES_SNAPSHOTS.put(CATEGORY_COSTS_KEY, JSON.stringify(payload));
         return new Response(JSON.stringify({ ok: true, count: payload.count, rejected, importedAt: payload.importedAt }), { headers: corsJson });
       }
 
