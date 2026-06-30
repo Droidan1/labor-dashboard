@@ -4008,6 +4008,9 @@
     for (const s of STORES) {
       const wk = sumRows((allStoreData[s] || []).filter(r => r.week === selectedWeek));
       if (wk.aTotal != null) tA += wk.aTotal;
+      // Fold auction into the weekly actual so this card matches the All Stores
+      // headline (grandTotal = total + auction). daily_sales.total excludes auction.
+      if (wk.aAuction != null) tA += wk.aAuction;
       if (wk.bTotal != null) tB += wk.bTotal;
     }
     if (selectedWeek === currentWeek) {
@@ -4287,6 +4290,8 @@
           for (const r of (allStoreData[s] || [])) {
             if (r.date && r.date.getMonth() === refMonth && r.date.getFullYear() === refYear) {
               if (r.aTotal != null) mA += r.aTotal;
+              // Fold auction into the monthly actual (same reason as weekly above).
+              if (r.aAuction != null) mA += r.aAuction;
               if (r.bTotal != null) mB += r.bTotal;
             }
           }
