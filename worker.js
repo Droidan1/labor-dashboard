@@ -3185,6 +3185,24 @@ function campaignStore(name) {
   return 'Unattributed';
 }
 
+// Reliable store attribution: each store has its own Facebook Page, so the
+// page a boosted post came from maps cleanly to a store — unlike the truncated
+// post text in the campaign name. Populated after discovery (page_id → store).
+// Takes precedence over campaignStore(name) in marketing-insights.
+// Discovered 2026-06-30 by correlating page_id with keyword-attributable
+// campaigns (+ user confirmation for Holland, whose posts never name it).
+// Page 113655020488471 is a SHARED page (Coliseum/Dupont/Fort Wayne) so it is
+// deliberately NOT mapped — those fall back to campaignStore(name).
+const STORE_BY_PAGE = {
+  "264627006733058": "South Bend",
+  "104574708111472": "Battle Creek",
+  "1000209416518542": "Indianapolis",
+  "222962777911366": "Holland",
+};
+function storeByPage(pageId) {
+  return pageId ? (STORE_BY_PAGE[String(pageId)] || null) : null;
+}
+
 // ─── Phase 2: live Meta Marketing API ingest ─────────────────────────────────
 // Pulls insights from graph.facebook.com directly (the worker can't use the
 // session-only Meta MCP) and upserts into meta_ad_insights, replacing the
@@ -3262,6 +3280,43 @@ function mapMetaRow(r, acct, level, win, fetchedAt, createdMap) {
   };
 }
 
+// Map campaign_id → Facebook page_id for an account, via each campaign's ad
+// creative. effective_object_story_id is "{page_id}_{post_id}" for boosted
+// posts. Used to attribute campaigns to stores by page (the page reliably maps
+// to one store) rather than by parsing truncated post text in the campaign name.
+// Defensive: any failure returns {} so the insights ingest proceeds unchanged.
+async function fetchCampaignPages(ver, token, acct, diag) {
+  const map = {};
+  let ads = 0, withStory = 0;
+  try {
+    const params = new URLSearchParams({
+      fields: "campaign_id,creative{effective_object_story_id}",
+      limit: "500", access_token: token,
+    });
+    let url = `https://graph.facebook.com/${ver}/act_${acct}/ads?${params}`;
+    for (let page = 0; page < 12 && url; page++) {
+      const resp = await fetch(url);
+      const json = await resp.json();
+      if (json.error) throw new Error(json.error.message || JSON.stringify(json.error));
+      for (const ad of (json.data || [])) {
+        ads++;
+        const cid = ad.campaign_id;
+        const story = ad.creative && ad.creative.effective_object_story_id;
+        if (!cid || !story) continue;
+        withStory++;
+        const pageId = String(story).split("_")[0];
+        if (pageId && !map[cid]) map[cid] = pageId;   // first ad's page wins
+      }
+      url = json.paging && json.paging.next ? json.paging.next : null;
+    }
+  } catch (e) {
+    if (diag) diag.push(`act_${acct} pages: ${e.message}`);
+    console.warn(`fetchCampaignPages(act_${acct}):`, e.message);
+  }
+  if (diag) diag.push(`act_${acct}: ads=${ads} withStory=${withStory} mapped=${Object.keys(map).length}`);
+  return map;
+}
+
 async function fetchMetaInsights(env) {
   if (!env.DB) return { error: "D1 not configured" };
   const token = env.META_ACCESS_TOKEN;
@@ -3273,11 +3328,12 @@ async function fetchMetaInsights(env) {
   const campFields = ["campaign_id", "campaign_name", "objective", "spend", "impressions", "reach", "clicks", "cpc", "cpm", "ctr", "inline_link_clicks"];
   const fetchedAt = new Date().toISOString();
   const errors = [];
+  const pageDiag = [];
   let written = 0;
 
   const stmt = env.DB.prepare(`INSERT OR REPLACE INTO meta_ad_insights
-    (account_id, account_name, level, entity_id, entity_name, objective, window, date_start, date_stop, spend, impressions, reach, clicks, link_clicks, cpc, cpm, ctr, frequency, purchases, purchase_value, roas, created_time, fetched_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?)`);
+    (account_id, account_name, level, entity_id, entity_name, objective, window, date_start, date_stop, spend, impressions, reach, clicks, link_clicks, cpc, cpm, ctr, frequency, purchases, purchase_value, roas, created_time, page_id, fetched_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?,?)`);
 
   for (const acct of accounts) {
     // created_time isn't on the insights edge — fetch once per account, reuse
@@ -3285,19 +3341,21 @@ async function fetchMetaInsights(env) {
     let createdMap = {};
     try { createdMap = await metaCampaignsCall(ver, token, acct); }
     catch (e) { errors.push(`act_${acct}/campaigns: ${e.message}`); }
+    // One campaign→page map per account, reused across all windows.
+    const pageMap = await fetchCampaignPages(ver, token, acct, pageDiag);
     for (const [win, preset] of Object.entries(META_WINDOWS)) {
       try {
         const [acctRows, campRows] = await Promise.all([
           metaInsightsCall(ver, token, acct, "account", preset, acctFields),
           metaInsightsCall(ver, token, acct, "campaign", preset, campFields),
         ]);
-        const rows = acctRows.map(r => mapMetaRow(r, acct, "account", win, fetchedAt, createdMap))
-          .concat(campRows.map(r => mapMetaRow(r, acct, "campaign", win, fetchedAt, createdMap)));
+        const rows = acctRows.map(r => ({ ...mapMetaRow(r, acct, "account", win, fetchedAt, createdMap), page_id: null }))
+          .concat(campRows.map(r => ({ ...mapMetaRow(r, acct, "campaign", win, fetchedAt, createdMap), page_id: pageMap[String(r.campaign_id)] || null })));
         if (rows.length) {
           await env.DB.batch(rows.map(x => stmt.bind(
             x.account_id, x.account_name, x.level, x.entity_id, x.entity_name, x.objective, x.window,
             x.date_start, x.date_stop, x.spend, x.impressions, x.reach, x.clicks, x.link_clicks,
-            x.cpc, x.cpm, x.ctr, x.frequency, x.created_time, x.fetched_at)));
+            x.cpc, x.cpm, x.ctr, x.frequency, x.created_time, x.page_id, x.fetched_at)));
           written += rows.length;
         }
       } catch (e) {
@@ -3305,7 +3363,7 @@ async function fetchMetaInsights(env) {
       }
     }
   }
-  return { ok: errors.length === 0, written, accounts: accounts.length, windows: Object.keys(META_WINDOWS).length, errors, fetchedAt };
+  return { ok: errors.length === 0, written, accounts: accounts.length, windows: Object.keys(META_WINDOWS).length, errors, pageDiag, fetchedAt };
 }
 
 // Returns { date, priorDate, stores: [{store,label,sales,budget,prior}], totals }
@@ -5234,7 +5292,8 @@ export default {
       const campaigns = campaignRows.map(r => ({
         accountId: r.account_id,
         id: r.entity_id, name: r.entity_name, objective: r.objective,
-        store: campaignStore(r.entity_name),
+        pageId: r.page_id || null,
+        store: storeByPage(r.page_id) || campaignStore(r.entity_name),
         createdTime: r.created_time,
         spend: r.spend, impressions: r.impressions, reach: r.reach,
         clicks: r.clicks, linkClicks: r.link_clicks,
