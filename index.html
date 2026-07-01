@@ -709,46 +709,43 @@
               </div>
             </div>
 
-            <!-- Week/day selector — compact chip next to the title; opens a
-                 dropdown panel with week nav, Sun-first multi-select day chips,
-                 and a "View Whole Week" reset. -->
+            <!-- Date-range selector — Clover-style. Compact chip opens a panel
+                 with a preset list (Today … Last 12 Months) and a Custom Date
+                 Range dual-calendar. Drives the main dashboard range. -->
             <div class="relative" id="day-chip-wrap">
               <button id="day-chip-trigger" type="button" onclick="toggleDayPanel(event)"
-                aria-haspopup="true" aria-expanded="false" aria-label="Change date"
-                class="relative w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
-                <svg class="w-[17px] h-[17px] text-accent-green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
-                <span id="day-chip-label" class="sr-only">—</span>
-                <svg id="day-chip-chev" class="hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg>
+                aria-haspopup="true" aria-expanded="false" aria-label="Change date range"
+                class="relative h-[38px] px-3 gap-2 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <svg class="w-[17px] h-[17px] text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
+                <span id="day-chip-label" class="hidden sm:inline text-[13px] font-bold whitespace-nowrap max-w-[180px] truncate">—</span>
+                <svg id="day-chip-chev" class="w-3.5 h-3.5 text-opl-inkDim dark:text-op-inkDim flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
 
-              <div id="day-chip-panel" class="hidden absolute top-[calc(100%+10px)] right-0 w-[360px] max-w-[88vw] bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right">
-                <div class="flex items-center justify-between gap-2 px-3.5 py-3">
-                  <button type="button" onclick="navigateWeek(-1)" aria-label="Previous week"
-                    class="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-[9px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.03)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">‹</button>
+              <div id="day-chip-panel"
+                class="hidden absolute top-[calc(100%+10px)] right-0 w-[300px] max-w-[92vw]
+                       max-sm:!fixed max-sm:!top-[calc(env(safe-area-inset-top)+64px)] max-sm:!left-3 max-sm:!right-3 max-sm:!w-auto max-sm:!max-w-none
+                       bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right overflow-hidden">
+                <!-- Preset list -->
+                <div id="range-preset-list" class="max-h-[70vh] overflow-y-auto py-1"></div>
 
-                  <div class="flex items-center gap-2 min-w-0">
-                    <label for="week-select" class="sr-only">Viewing Week</label>
-                    <select id="week-select"
-                      class="pl-3 pr-7 py-1 rounded-[8px] text-[14px] font-bold bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink border border-[rgba(20,16,8,0.08)] dark:border-op-border focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors cursor-pointer appearance-none"
-                      style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 20 20%22 fill=%22%238893a7%22%3E%3Cpath fill-rule=%22evenodd%22 d=%22M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z%22 clip-rule=%22evenodd%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 0.4rem center; background-size: 1rem;">
-                    </select>
-                    <span id="week-range" class="text-[13px] font-medium text-opl-inkDim dark:text-op-inkDim whitespace-nowrap truncate"></span>
+                <!-- Custom dual-calendar (hidden until "Custom Date Range" chosen) -->
+                <div id="range-custom" class="hidden border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                  <div class="flex items-center justify-between gap-2 px-3.5 py-2.5">
+                    <button type="button" onclick="rangeCalNav(-1)" aria-label="Previous month"
+                      class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">‹</button>
+                    <span id="range-cal-title" class="text-[12px] font-bold text-opl-ink dark:text-op-ink text-center flex-1"></span>
+                    <button type="button" onclick="rangeCalNav(1)" aria-label="Next month"
+                      class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">›</button>
                   </div>
-
-                  <button type="button" onclick="navigateWeek(1)" aria-label="Next week"
-                    class="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-[9px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.03)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">›</button>
-                </div>
-
-                <div class="h-px bg-[rgba(20,16,8,0.08)] dark:bg-op-border"></div>
-
-                <div id="dash-day-selector" class="grid grid-cols-7 gap-1.5 p-3.5"></div>
-
-                <div class="flex justify-end px-3.5 pb-3.5">
-                  <button id="dash-week-btn" type="button" onclick="selectAllWeek()"
-                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12px] font-bold transition-colors border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                    View Whole Week
-                  </button>
+                  <div id="range-cal-grids" class="px-3 pb-2 grid grid-cols-1 gap-3"></div>
+                  <div class="flex items-center justify-between gap-2 px-3.5 py-3 border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                    <span id="range-custom-summary" class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim truncate">Pick a start date</span>
+                    <div class="flex items-center gap-1.5 flex-shrink-0">
+                      <button type="button" onclick="rangeCustomCancel()" class="px-2.5 py-1.5 rounded-[8px] text-[12px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+                      <button id="range-custom-apply" type="button" onclick="rangeCustomApply()" disabled
+                        class="px-3 py-1.5 rounded-[8px] text-[12px] font-bold bg-accent-green text-[#0b1220] disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">Apply</button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -862,7 +859,7 @@
         <!-- Collapsed summary (mobile only; hidden when expanded / on desktop) -->
         <div id="budget-summary" class="lg:hidden p-5 flex items-start gap-3 cursor-pointer" onclick="toggleBudget()">
           <div class="flex-1 min-w-0">
-            <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Weekly · <span id="bgt-sum-wk">Wk —</span></div>
+            <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim"><span id="bgt-sum-wk">—</span></div>
             <div class="mt-1"><div id="bgt-sum-wt" class="text-lg font-bold tabular-nums tracking-tight text-opl-ink dark:text-op-ink leading-tight">—</div><div class="text-[12px] font-semibold tabular-nums text-opl-inkDim dark:text-op-inkDim leading-tight">/ <span id="bgt-sum-wb">—</span></div></div>
           </div>
           <div class="flex-1 min-w-0 pl-3 border-l border-[rgba(20,16,8,0.08)] dark:border-op-border text-right">
@@ -2569,12 +2566,18 @@
   let historicalCloverData = {}; // { storeName: { "YYYY-MM-DD": { total, retail, bin, avgCart, ... } } }
   let liveCloverErrors = {}; // { storeName: message } — set on fetch failure, cleared on success
   let histErrors = {};       // { storeName: message } — same, for D1/historical fetch
+  // selectedWeek is now DERIVED from the selected date range (the retail week
+  // containing the range's end). It seeds the week-based drill-downs (Store
+  // Detail, All-Stores Detail, Weekly Report Sheet) which keep their own week
+  // browsers. currentWeek/allWeeks/per-row .week remain the source data.
   let selectedWeek   = null;
   let currentWeek    = null;
-  let selectedDashDays = new Set();  // empty = whole week; else set of 'YYYY-MM-DD' (multi-select)
-  // True while the selection is just the auto-added "today" soft default (the
-  // user hasn't picked a day yet). The first explicit day-tap replaces it
-  // rather than adding to it, so picking a past day shows ONLY that day.
+  // Canonical dashboard selection: an inclusive ET date range {from,to} plus
+  // the preset id/label it came from. Drives the main dashboard.
+  let dateRange = { from: null, to: null, presetId: 'today', label: 'Today' };
+  // Kept as a permanently-empty shim: the old within-week day-multiselect is
+  // gone (the range IS the filter), so every `isDayView` branch stays dormant.
+  let selectedDashDays = new Set();
   let dashDaysIsDefault = false;
   // Dashboard Matrix channel filter: null = all stores blended; 'retail' | 'bin'
   // shows that channel's per-order metrics (from item-level L2 data).
@@ -3289,12 +3292,12 @@
       }
     })).then(() => {
       liveDataLoading = false;
-      if (selectedWeek === currentWeek) renderDashboard();
+      if (selIncludesToday()) renderDashboard();
       if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName, false, { rerender: true });
     }).catch(error => {
       console.error("Clover data load failed:", error);
       liveDataLoading = false;
-      if (selectedWeek === currentWeek) renderDashboard();
+      if (selIncludesToday()) renderDashboard();
     });
 
     // Wait FOR SHEETS ONLY to complete to render instantly
@@ -3331,10 +3334,12 @@
       }
     }
 
-    selectedWeek = currentWeek ?? (allWeeks[allWeeks.length - 1] ?? null);
-    selectedDashDays = new Set();
-    dashDaysIsDefault = false;
-    if (selectedWeek === currentWeek) { selectedDashDays.add(etTodayStr()); dashDaysIsDefault = true; } // soft default: today
+    // Default selection: Today (re-resolve on refresh so relative presets like
+    // "This Week" advance with the calendar; a custom range is preserved).
+    dateRange = dateRange.from
+      ? resolvePreset(dateRange.presetId, dateRange.from, dateRange.to)
+      : resolvePreset('today');
+    selectedWeek = weekForRangeEnd();
 
     // Show error banner if any stores failed to load
     const failedStores = Object.keys(errors);
@@ -3351,9 +3356,8 @@
       else el("last-updated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
     }
 
-    renderWeekButtons();
-    renderDashDaySelector();
-    if (selectedWeek) renderDashboard();
+    updateDayChip();
+    renderDashboard();
 
   }
 
@@ -3398,159 +3402,228 @@
   // ═══════════════════════════════════════════════════════════════
   //  RENDER UI
   // ═══════════════════════════════════════════════════════════════
-  function renderWeekButtons() {
-    const select = el("week-select");
-    select.innerHTML = "";
-    for (const w of allWeeks) {
-      const opt = document.createElement("option");
-      opt.value = w;
-      opt.textContent = `Week ${w}`;
-      if (w === selectedWeek) opt.selected = true;
-      select.appendChild(opt);
+  // ══ Date-range engine ════════════════════════════════════════════════
+  // The dashboard selection is an inclusive ET date range (dateRange). Presets
+  // resolve against ET "today"; retail weeks run Sun–Sat. selectedWeek is
+  // derived (week of the range end) purely to seed the week-based drill-downs.
+
+  const RANGE_PRESETS = [
+    { id: 'today',     label: 'Today' },
+    { id: 'yesterday', label: 'Yesterday', groupEnd: true },
+    { id: 'thisWeek',  label: 'This Week' },
+    { id: 'lastWeek',  label: 'Last Week' },
+    { id: 'last7',     label: 'Last 7 Days', groupEnd: true },
+    { id: 'thisMonth', label: 'This Month' },
+    { id: 'lastMonth', label: 'Last Month' },
+    { id: 'last30',    label: 'Last 30 Days', groupEnd: true },
+    { id: 'last3mo',   label: 'Last 3 Months' },
+    { id: 'last6mo',   label: 'Last 6 Months', groupEnd: true },
+    { id: 'thisYear',  label: 'This Year' },
+    { id: 'lastYear',  label: 'Last Year' },
+    { id: 'last12mo',  label: 'Last 12 Months', groupEnd: true },
+    { id: 'custom',    label: 'Custom Date Range' },
+  ];
+
+  // ── 'YYYY-MM-DD' date math, TZ-safe via a UTC anchor ──
+  function ymdToUTC(ymd)          { return new Date(ymd + 'T00:00:00Z'); }
+  function ymdShift(ymd, days)    { const d = ymdToUTC(ymd); d.setUTCDate(d.getUTCDate() + days);     return d.toISOString().slice(0, 10); }
+  function ymdMonthShift(ymd, m)  { const d = ymdToUTC(ymd); d.setUTCMonth(d.getUTCMonth() + m);      return d.toISOString().slice(0, 10); }
+  function ymdSundayOf(ymd)       { return ymdShift(ymd, -ymdToUTC(ymd).getUTCDay()); } // Sunday = 0
+  function ymdFirstOfMonth(ymd)   { return ymd.slice(0, 7) + '-01'; }
+  function ymdLastOfMonth(ymd)    { const d = ymdToUTC(ymdFirstOfMonth(ymd)); d.setUTCMonth(d.getUTCMonth() + 1); d.setUTCDate(0); return d.toISOString().slice(0, 10); }
+
+  // Row day key — matches the app's existing convention (UTC slice compared
+  // against ET "today" strings). rowInSel = the row falls inside dateRange.
+  function rowDayKey(r)     { return r.date ? r.date.toISOString().slice(0, 10) : null; }
+  function rowInSel(r)      { const k = rowDayKey(r); return k != null && k >= dateRange.from && k <= dateRange.to; }
+  function selIncludesToday() { const t = etTodayStr(); return dateRange.from <= t && t <= dateRange.to; }
+  function selDayCount()    { return Math.round((ymdToUTC(dateRange.to) - ymdToUTC(dateRange.from)) / 86400000) + 1; }
+
+  // Resolve a preset id → {from,to,presetId,label}. 'custom' takes explicit dates.
+  function resolvePreset(id, cFrom, cTo) {
+    const today = etTodayStr();
+    let from = today, to = today, label = 'Today';
+    switch (id) {
+      case 'today':     from = today; to = today; label = 'Today'; break;
+      case 'yesterday': from = to = ymdShift(today, -1); label = 'Yesterday'; break;
+      case 'thisWeek':  from = ymdSundayOf(today); to = today; label = 'This Week'; break;
+      case 'lastWeek':  to = ymdShift(ymdSundayOf(today), -1); from = ymdShift(to, -6); label = 'Last Week'; break;
+      case 'last7':     from = ymdShift(today, -6); to = today; label = 'Last 7 Days'; break;
+      case 'thisMonth': from = ymdFirstOfMonth(today); to = today; label = 'This Month'; break;
+      case 'lastMonth': { const lm = ymdMonthShift(today, -1); from = ymdFirstOfMonth(lm); to = ymdLastOfMonth(lm); label = 'Last Month'; break; }
+      case 'last30':    from = ymdShift(today, -29); to = today; label = 'Last 30 Days'; break;
+      case 'last3mo':   from = ymdShift(ymdMonthShift(today, -3), 1); to = today; label = 'Last 3 Months'; break;
+      case 'last6mo':   from = ymdShift(ymdMonthShift(today, -6), 1); to = today; label = 'Last 6 Months'; break;
+      case 'thisYear':  from = today.slice(0, 4) + '-01-01'; to = today; label = 'This Year'; break;
+      case 'lastYear':  { const ly = String(Number(today.slice(0, 4)) - 1); from = ly + '-01-01'; to = ly + '-12-31'; label = 'Last Year'; break; }
+      case 'last12mo':  from = ymdShift(ymdMonthShift(today, -12), 1); to = today; label = 'Last 12 Months'; break;
+      case 'custom':    from = cFrom; to = cTo; if (from && to) { if (from > to) { const t = from; from = to; to = t; } label = fmtRangeShort(from, to); } break;
     }
-    select.onchange = () => { setSelectedWeek(select.value); };
+    return { from, to, presetId: id, label };
   }
 
-  // Central week switch — used by the dropdown and the ‹ › nav arrows.
-  function setSelectedWeek(week) {
-    selectedWeek = String(week);
-    selectedDashDays = new Set();
-    dashDaysIsDefault = false;
-    if (selectedWeek === currentWeek) { selectedDashDays.add(etTodayStr()); dashDaysIsDefault = true; } // soft default: today
-    renderDashDaySelector();
-    renderDashboard();
-    if (selectedWeek !== currentWeek) loadHistoricalCloverForWeek(selectedWeek);
-    if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName, false, { rerender: true });
+  // Short human range, e.g. "Jun 28 – Jul 4" or single "Jul 1, 2026".
+  function fmtRangeShort(from, to) {
+    const a = new Date(from + 'T12:00:00'), b = new Date(to + 'T12:00:00');
+    const mo = d => d.toLocaleDateString('en-US', { month: 'short' });
+    if (from === to) return a.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const sameYear = a.getFullYear() === b.getFullYear();
+    if (!sameYear) return `${mo(a)} ${a.getDate()}, ${a.getFullYear()} – ${mo(b)} ${b.getDate()}, ${b.getFullYear()}`;
+    const right = (mo(a) === mo(b)) ? `${b.getDate()}` : `${mo(b)} ${b.getDate()}`;
+    return `${mo(a)} ${a.getDate()} – ${right}`;
   }
 
-  // ‹ › step through the available weeks.
-  function navigateWeek(dir) {
-    const idx = allWeeks.indexOf(selectedWeek);
-    if (idx === -1) return;
-    const next = idx + dir;
-    if (next < 0 || next >= allWeeks.length) return;
-    setSelectedWeek(allWeeks[next]);
-  }
-  window.navigateWeek = navigateWeek;
-
-  function renderDashDaySelector() {
-    const container = el('dash-day-selector');
-    if (!container || !selectedWeek) { if (container) container.innerHTML = ''; updateWeekBtn(); updateDayChip(); return; }
-
-    // Dates in the selected week, chronological. The retail week starts
-    // Sunday, so ascending sort already yields Sun-first.
-    const dateSet = new Set();
+  // Derive the retail week that seeds week-based drill-downs: the week of the
+  // latest data row on or before the range end (fallback currentWeek).
+  function weekForRangeEnd() {
+    const to = dateRange.to;
+    let best = null, bestT = -1;
     for (const s of STORES) for (const r of (allStoreData[s] || [])) {
-      if (r.week === selectedWeek && r.date) dateSet.add(r.date.toISOString().slice(0, 10));
+      if (r.week == null || !r.date) continue;
+      const k = rowDayKey(r);
+      if (k <= to && r.date.getTime() > bestT) { bestT = r.date.getTime(); best = r.week; }
     }
-    const dates = [...dateSet].sort();
+    return best != null ? best : currentWeek;
+  }
 
-    // Week range label, e.g. "May 17 – 23"
-    const rangeEl = el('week-range');
-    if (rangeEl) {
-      if (dates.length) {
-        const a = new Date(dates[0] + 'T12:00:00'), b = new Date(dates[dates.length - 1] + 'T12:00:00');
-        const mo = (d) => d.toLocaleDateString('en-US', { month: 'short' });
-        rangeEl.textContent = (mo(a) === mo(b))
-          ? `${mo(a)} ${a.getDate()} – ${b.getDate()}`
-          : `${mo(a)} ${a.getDate()} – ${mo(b)} ${b.getDate()}`;
-      } else rangeEl.textContent = '';
-    }
-
-    if (dates.length === 0) { container.innerHTML = ''; updateWeekBtn(); return; }
-
-    const todayStr = etTodayStr();
-    const base = 'relative flex flex-col items-center justify-center gap-0.5 py-2.5 px-1 rounded-[10px] border transition-colors select-none';
-    let html = '';
-    for (const dateStr of dates) {
-      const d = new Date(dateStr + 'T12:00:00');
-      const wd = d.toLocaleDateString('en-US', { weekday: 'short' });
-      const dn = d.getDate();
-      const isFuture = dateStr > todayStr;
-      const isSel = selectedDashDays.has(dateStr);
-      const isToday = dateStr === todayStr;
-      let cls, onclick = '';
-      if (isFuture) {
-        cls = `${base} opacity-40 cursor-not-allowed border-[rgba(20,16,8,0.08)] dark:border-op-border`;
-      } else if (isSel) {
-        cls = `${base} bg-accent-green border-accent-green cursor-pointer`;
-        onclick = `onclick="selectDashDay('${dateStr}')"`;
-      } else {
-        cls = `${base} cursor-pointer border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.03)] hover:border-accent-green/40`;
-        onclick = `onclick="selectDashDay('${dateStr}')"`;
-      }
-      const wdCls = `text-[10px] font-bold uppercase tracking-[0.04em] ${isSel ? 'text-[#0b1220]/70' : 'text-opl-inkDim dark:text-op-inkDim'}`;
-      const dnCls = `text-xl font-extrabold tabular-nums leading-none ${isSel ? 'text-[#0b1220]' : 'text-opl-ink dark:text-op-ink'}`;
-      const dot = isToday ? `<span class="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full ${isSel ? 'bg-[#0b1220]' : 'bg-accent-green'}"></span>` : '';
-      html += `<button ${onclick} ${isFuture ? 'disabled' : ''} class="${cls}">${dot}<span class="${wdCls}">${wd}</span><span class="${dnCls}">${dn}</span></button>`;
-    }
-    container.innerHTML = html;
-    updateWeekBtn();
+  // Central range switch — replaces setSelectedWeek/navigateWeek/selectDashDay.
+  function setDateRange(presetId, cFrom, cTo) {
+    const r = resolvePreset(presetId, cFrom, cTo);
+    if (!r.from || !r.to) return;
+    dateRange = r;
+    selectedWeek = weekForRangeEnd();
     updateDayChip();
+    renderRangePanel();
+    renderDashboard();
+    if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName, false, { rerender: true });
   }
+  window.setDateRange = setDateRange;
 
-  // "View Week" button — solid green when the whole-week (no days) view is active.
-  function updateWeekBtn() {
-    const wkBtn = el('dash-week-btn');
-    if (!wkBtn) return;
-    const whole = selectedDashDays.size === 0;
-    const b = 'inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-[9px] text-[12px] font-bold transition-colors';
-    wkBtn.className = whole
-      ? `${b} bg-accent-green text-[#0b1220]`
-      : `${b} border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink`;
-  }
-
-  // Toggle a day in/out of the multi-select set. The first explicit tap while
-  // the selection is still the auto "today" default REPLACES it (so picking a
-  // past day shows only that day); after that it's normal multi-select.
-  function selectDashDay(dateStr) {
-    if (dashDaysIsDefault) {
-      selectedDashDays = new Set([dateStr]);
-      dashDaysIsDefault = false;
-    } else if (selectedDashDays.has(dateStr)) {
-      selectedDashDays.delete(dateStr);
-    } else {
-      selectedDashDays.add(dateStr);
+  // Preset list rendering + selection.
+  function renderRangePanel() {
+    const list = el('range-preset-list');
+    if (!list) return;
+    let html = '';
+    for (const p of RANGE_PRESETS) {
+      const active = p.id === dateRange.presetId;
+      const border = p.groupEnd ? 'border-b border-[rgba(20,16,8,0.08)] dark:border-op-border' : '';
+      const activeCls = active
+        ? 'bg-accent-green/12 font-bold'
+        : 'hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)] font-medium';
+      html += `<button type="button" onclick="pickRangePreset('${p.id}')" class="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-left text-[14px] text-opl-ink dark:text-op-ink transition-colors ${activeCls} ${border}">`
+            + `<span>${p.label}</span>`
+            + (active ? '<svg class="w-4 h-4 text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '')
+            + `</button>`;
     }
-    renderDashDaySelector();
-    renderDashboard();
-    if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName, false, { rerender: true });
+    list.innerHTML = html;
   }
-  window.selectDashDay = selectDashDay;
-
-  // "View Week" — clear the day selection → whole-week combined view.
-  function selectAllWeek() {
-    selectedDashDays.clear();
-    dashDaysIsDefault = false;
-    renderDashDaySelector();
-    renderDashboard();
-    if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName, false, { rerender: true });
+  function pickRangePreset(id) {
+    if (id === 'custom') { openCustomRange(); return; }
+    setDateRange(id);
+    setDayPanelOpen(false);
   }
-  window.selectAllWeek = selectAllWeek;
+  window.pickRangePreset = pickRangePreset;
 
-  // ── Header chip + dropdown panel ─────────────────────────────────────
-  // The chip sits in the dashboard header and shows the current selection.
-  // Tapping it opens a panel containing the existing week nav + day chips.
+  // ── Custom dual-calendar ─────────────────────────────────────────────
+  let _rcMonth = null;             // 'YYYY-MM' of the newer (lower) calendar
+  let _rcStart = null, _rcEnd = null;  // in-progress selection (YMD)
 
-  // Update the chip label to mirror the current selection.
+  function openCustomRange() {
+    const list = el('range-preset-list'), cust = el('range-custom');
+    if (list) list.classList.add('hidden');
+    if (cust) cust.classList.remove('hidden');
+    const isCustom = dateRange.presetId === 'custom';
+    _rcStart = isCustom ? dateRange.from : null;
+    _rcEnd   = isCustom ? dateRange.to   : null;
+    _rcMonth = (_rcEnd || etTodayStr()).slice(0, 7);
+    renderRangeCal();
+  }
+  function rangeCustomCancel() {
+    const list = el('range-preset-list'), cust = el('range-custom');
+    if (cust) cust.classList.add('hidden');
+    if (list) list.classList.remove('hidden');
+  }
+  window.rangeCustomCancel = rangeCustomCancel;
+
+  function rangeCalNav(dir) {
+    const d = ymdToUTC(_rcMonth + '-01'); d.setUTCMonth(d.getUTCMonth() + dir);
+    _rcMonth = d.toISOString().slice(0, 7);
+    renderRangeCal();
+  }
+  window.rangeCalNav = rangeCalNav;
+
+  function rangeCalPick(ymd) {
+    if (ymd > etTodayStr()) return;                 // no future days
+    if (!_rcStart || (_rcStart && _rcEnd)) { _rcStart = ymd; _rcEnd = null; }
+    else if (ymd < _rcStart) { _rcEnd = _rcStart; _rcStart = ymd; }
+    else { _rcEnd = ymd; }
+    renderRangeCal();
+  }
+  window.rangeCalPick = rangeCalPick;
+
+  function rangeCustomApply() {
+    if (!_rcStart) return;
+    setDateRange('custom', _rcStart, _rcEnd || _rcStart);
+    rangeCustomCancel();
+    setDayPanelOpen(false);
+  }
+  window.rangeCustomApply = rangeCustomApply;
+
+  // One month grid (Sun-first). Highlights the in-progress selection.
+  function _monthGridHTML(ym) {
+    const first = ym + '-01';
+    const firstDow = ymdToUTC(first).getUTCDay();
+    const days = Number(ymdLastOfMonth(first).slice(8));
+    const today = etTodayStr();
+    const lo = _rcStart, hi = _rcEnd || _rcStart;
+    const monthName = new Date(first + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    let cells = '';
+    for (let i = 0; i < firstDow; i++) cells += '<div></div>';
+    for (let dn = 1; dn <= days; dn++) {
+      const ymd = `${ym}-${String(dn).padStart(2, '0')}`;
+      const future = ymd > today;
+      const isEnd = lo && (ymd === lo || ymd === hi);
+      const inRange = lo && hi && ymd >= lo && ymd <= hi && !isEnd;
+      let cls = 'h-8 flex items-center justify-center text-[12px] rounded-[7px] tabular-nums transition-colors ';
+      if (future) cls += 'opacity-30 cursor-not-allowed text-opl-inkDim dark:text-op-inkDim';
+      else if (isEnd) cls += 'bg-accent-green text-[#0b1220] font-bold cursor-pointer';
+      else if (inRange) cls += 'bg-accent-green/20 text-opl-ink dark:text-op-ink cursor-pointer';
+      else cls += 'text-opl-ink dark:text-op-ink hover:bg-[rgba(20,16,8,0.06)] dark:hover:bg-[rgba(255,255,255,0.06)] cursor-pointer';
+      cells += `<div ${future ? '' : `onclick="rangeCalPick('${ymd}')"`} class="${cls}">${dn}</div>`;
+    }
+    const dow = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+      .map(d => `<div class="h-5 flex items-center justify-center text-[9px] font-bold uppercase text-opl-inkDim dark:text-op-inkDim">${d}</div>`).join('');
+    return `<div><div class="text-[11px] font-bold text-opl-ink dark:text-op-ink mb-1.5 text-center">${monthName}</div>`
+         + `<div class="grid grid-cols-7 gap-0.5 mb-1">${dow}</div>`
+         + `<div class="grid grid-cols-7 gap-0.5">${cells}</div></div>`;
+  }
+
+  // Render two stacked months (the month before _rcMonth, then _rcMonth).
+  function renderRangeCal() {
+    const grids = el('range-cal-grids'), title = el('range-cal-title'),
+          apply = el('range-custom-apply'), summ = el('range-custom-summary');
+    if (!grids) return;
+    const prevD = ymdToUTC(_rcMonth + '-01'); prevD.setUTCMonth(prevD.getUTCMonth() - 1);
+    const prev = prevD.toISOString().slice(0, 7);
+    grids.innerHTML = _monthGridHTML(prev) + _monthGridHTML(_rcMonth);
+    if (title) {
+      const a = new Date(prev + '-01T12:00:00'), b = new Date(_rcMonth + '-01T12:00:00');
+      title.textContent = `${a.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })} – ${b.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+    }
+    if (summ) summ.textContent = _rcStart
+      ? (_rcEnd && _rcEnd !== _rcStart ? fmtRangeShort(_rcStart, _rcEnd) : fmtRangeShort(_rcStart, _rcStart) + ' — now pick end')
+      : 'Pick a start date';
+    if (apply) apply.disabled = !_rcStart;
+  }
+
+  // ── Header chip + panel open/close ───────────────────────────────────
+  // Update the chip label to mirror the current range.
   function updateDayChip() {
     const lbl = el('day-chip-label');
     if (!lbl) return;
-    const todayStr = etTodayStr();
-    if (selectedDashDays.size === 0) {
-      lbl.textContent = selectedWeek ? `Week ${selectedWeek}` : '—';
-    } else if (selectedDashDays.size === 1) {
-      const only = [...selectedDashDays][0];
-      if (only === todayStr) {
-        const d = new Date(only + 'T12:00:00');
-        lbl.textContent = `Today · ${d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`;
-      } else {
-        const d = new Date(only + 'T12:00:00');
-        lbl.textContent = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-      }
-    } else {
-      lbl.textContent = `${selectedDashDays.size} days · combined`;
-    }
+    lbl.textContent = dateRange.label || '—';
+    const trig = el('day-chip-trigger');
+    if (trig && dateRange.from) trig.title = fmtRangeShort(dateRange.from, dateRange.to);
   }
   window.updateDayChip = updateDayChip;
 
@@ -3560,6 +3633,9 @@
     const chev = el('day-chip-chev');
     if (!panel || !trig) return;
     if (open) {
+      // Always (re)open on the preset list, active state fresh.
+      rangeCustomCancel();
+      renderRangePanel();
       panel.classList.remove('hidden');
       trig.setAttribute('aria-expanded', 'true');
       trig.classList.add('border-accent-green/45', 'bg-accent-green/10');
@@ -3680,8 +3756,8 @@
     const out = [];
     if (!notifsEnabledForUser()) return out; // alerts: admins/superusers only
     const todayStr = etTodayStr();
-    const isCurrentWeek = selectedWeek === currentWeek;
-    if (!isCurrentWeek) return out; // we only alert on the live day
+    const isCurrentWeek = selIncludesToday();
+    if (!isCurrentWeek) return out; // we only alert when the range includes the live day
 
     const etHour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(new Date()));
     const SHORT_LABEL = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek', BL16:'Indy East' };
@@ -3964,28 +4040,24 @@
   });
 
   function renderDashboard() {
-    if (!selectedWeek) return;
+    if (!dateRange.from) return;
 
-    // Row filter: whole week (empty set) or the selected set of days.
-    const dayDays = selectedDashDays;            // Set of 'YYYY-MM-DD'
-    const isDayView = dayDays.size > 0;
-    const filterRows = (rows) => {
-      const weekRows = rows.filter(r => r.week === selectedWeek);
-      if (!isDayView) return weekRows;
-      return weekRows.filter(r => r.date && dayDays.has(r.date.toISOString().slice(0, 10)));
-    };
+    // Row filter: every row inside the selected date range. (The old within-week
+    // day-multiselect is gone; the range IS the filter, so isDayView is always
+    // false and the legacy day-view branches below stay dormant.)
+    const dayDays = selectedDashDays;            // permanently empty shim
+    const isDayView = false;
+    const filterRows = (rows) => rows.filter(rowInSel);
     const todayStr = etTodayStr();
-    const includesToday = dayDays.has(todayStr);
+    const includesToday = selIncludesToday();
     // When live is shown, historical accumulation must skip today to avoid
     // double-counting (live already contributes today's numbers).
-    const histSkipToday = isCurrentWeekTop();
-    // Clover snapshot match: respect the selected set; skip today when live wins.
+    const histSkipToday = includesToday;
+    // Clover snapshot match: the row is in range and (skip today when live wins).
     const matchesCloverDate = (dateKey, weekRows) => {
       if (histSkipToday && dateKey === todayStr) return false;
-      if (isDayView) return dayDays.has(dateKey);
-      return weekRows.some(r => r.date && r.date.toISOString().slice(0, 10) === dateKey);
+      return dateKey >= dateRange.from && dateKey <= dateRange.to;
     };
-    function isCurrentWeekTop() { return selectedWeek === currentWeek && (dayDays.size === 0 || includesToday); }
 
     const metrics = STORES.map((s, i) => ({
       store: s, name: shortName(s), color: COLORS[i],
@@ -4002,19 +4074,19 @@
     }
     const laborTot = lDen > 0 ? (lNum / lDen) * 100 : null;
 
-    // All Stores Budget — Weekly (always full week, never day-filtered).
-    // Sum the entire selected week from D1, then live-boost today's
-    // contribution when viewing the current week.
+    // All Stores Budget — sums actual + budget across the whole selected range
+    // (budgets are per-day rows, so summing yields the range's total budget),
+    // then live-boosts today's contribution when the range includes today.
     let tA=0, tB=0;
     for (const s of STORES) {
-      const wk = sumRows((allStoreData[s] || []).filter(r => r.week === selectedWeek));
+      const wk = sumRows((allStoreData[s] || []).filter(rowInSel));
       if (wk.aTotal != null) tA += wk.aTotal;
-      // Fold auction into the weekly actual so this card matches the All Stores
+      // Fold auction into the actual so this card matches the All Stores
       // headline (grandTotal = total + auction). daily_sales.total excludes auction.
       if (wk.aAuction != null) tA += wk.aAuction;
       if (wk.bTotal != null) tB += wk.bTotal;
     }
-    if (selectedWeek === currentWeek) {
+    if (selIncludesToday()) {
       for (const s of STORES) {
         const live = liveCloverData[s];
         if (!live || live.total == null) continue;
@@ -4024,8 +4096,8 @@
       }
     }
 
-    // Today's total live sales across all stores
-    const isCurrentWeek = selectedWeek === currentWeek;
+    // Live "today" sales roll into the range total when the range includes today.
+    const isCurrentWeek = selIncludesToday();
     let todayTotal = 0, todayRetail = 0, todayBin = 0, todayAuction = 0;
     let todayTotalBudget = 0;
     let storesWithData = 0;
@@ -4093,7 +4165,7 @@
         }
 
         const storeHist = historicalCloverData[s] || {};
-        const weekRows = (allStoreData[s] || []).filter(r => r.week === selectedWeek);
+        const weekRows = (allStoreData[s] || []).filter(rowInSel);
         for (const [dateKey, snap] of Object.entries(storeHist)) {
           if (!matchesCloverDate(dateKey, weekRows)) continue;
           hasAnyHistData = true;
@@ -4138,17 +4210,7 @@
     const totalAvgASP = allASPCount > 0 ? allASPTotal / allASPCount : null;
 
     const isLoading = (showLive && liveDataLoading) || (showHist && historicalDataLoading && !showLive);
-    let cardLabel;
-    if (!isDayView) {
-      cardLabel = isCurrentWeek ? "This Week" : `Week ${selectedWeek}`;
-    } else if (dayDays.size === 1) {
-      const only = [...dayDays][0];
-      cardLabel = only === todayStr
-        ? "Today's Sales"
-        : new Date(only + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    } else {
-      cardLabel = `${dayDays.size} Days`;
-    }
+    const cardLabel = dateRange.label;
 
     el("c-today-card-label").textContent = `${cardLabel} · All Stores`;
 
@@ -4261,28 +4323,8 @@
     let monthLabel = '';
     let mA = 0, mB = 0;
     {
-      let refDate = null;
-      // For the monthly card, a selected day picks the month (multi-day → the
-      // latest selected day wins, so a selection spanning a month boundary
-      // resolves to the most recent month).
-      const dayFilter = isDayView ? [...dayDays].sort().slice(-1)[0] : null;
-      if (dayFilter) {
-        refDate = new Date(dayFilter + 'T12:00:00');
-      } else {
-        // Is today in the selected week?
-        for (const s of STORES) {
-          const todayInWeek = (allStoreData[s] || []).find(r =>
-            r.week === selectedWeek && r.date && r.date.toISOString().slice(0, 10) === todayStr
-          );
-          if (todayInWeek) { refDate = todayInWeek.date; break; }
-        }
-        if (!refDate) {
-          for (const s of STORES) {
-            const row = (allStoreData[s] || []).find(r => r.week === selectedWeek && r.date);
-            if (row) { refDate = row.date; break; }
-          }
-        }
-      }
+      // Monthly card follows the calendar month of the selected range's end.
+      const refDate = new Date(dateRange.to + 'T12:00:00');
       if (refDate) {
         const refMonth = refDate.getMonth();
         const refYear = refDate.getFullYear();
@@ -4328,7 +4370,7 @@
       const moPct = mB > 0 ? Math.round(mA / mB * 100) : 0;
       const wkAhead = tB > 0 && tA >= tB;
       const moAhead = mB > 0 && mA >= mB;
-      el("bgt-sum-wk").textContent = selectedWeek ? `Wk ${selectedWeek}` : 'Wk —';
+      el("bgt-sum-wk").textContent = dateRange.label || '—';
       el("bgt-sum-wt").textContent = fmtK(tA);
       el("bgt-sum-wb").textContent = fmtK(tB);
       el("bgt-sum-mo").textContent = monthLabel ? `Monthly · ${monthLabel}` : 'Monthly';
@@ -4483,19 +4525,14 @@
     const container = el("store-cards");
     container.innerHTML = "";
 
-    const isCurrentWeek = selectedWeek === currentWeek;
+    const isCurrentWeek = selIncludesToday();
     const todayStr = etTodayStr();
-    const dayDays = selectedDashDays;            // Set of 'YYYY-MM-DD'
-    const isDayView = dayDays.size > 0;
-    const includesToday = dayDays.has(todayStr);
-    // Live shows when the current week is viewed whole, or the selection
-    // includes today. Historical shows for past weeks, the whole-week view, or
-    // selections that include past days. Today's stored row is nulled out in
-    // loadStoreFromD1 (and absent from historicalCloverData), so live and
-    // stored data never double-count today.
-    const cardShowLive = isCurrentWeek && (!isDayView || includesToday);
-    const hasPastDay = isDayView && [...dayDays].some(d => d !== todayStr);
-    const cardShowHist = !isCurrentWeek || !isDayView || hasPastDay;
+    const isDayView = false;                      // day-multiselect removed; range is the filter
+    // Live shows when the range includes today; historical always accumulates
+    // the in-range days. Today's stored row is nulled in loadStoreFromD1 and
+    // skipped below, so live and stored data never double-count today.
+    const cardShowLive = isCurrentWeek;
+    const cardShowHist = true;
 
     for (const m of metrics) {
       // Brand-new store with no data yet (e.g. Indy East before it's wired up):
@@ -4533,9 +4570,8 @@
       let histTxnTimeTotal = 0, histTxnTimeCount = 0, histItemCount = 0, histCartTotal = 0, histASPTotal = 0, histASPCount = 0;
       let histDayCount = 0;
       for (const [dateKey, snap] of Object.entries(storeHistory)) {
-        const weekRows = (allStoreData[m.store] || []).filter(r => r.week === selectedWeek);
-        if (isDayView) { if (!dayDays.has(dateKey)) continue; }
-        else { if (!weekRows.some(r => r.date && r.date.toISOString().slice(0, 10) === dateKey)) continue; }
+        if (dateKey < dateRange.from || dateKey > dateRange.to) continue;   // outside the range
+        if (cardShowLive && dateKey === todayStr) continue;                 // live already covers today
         histDayCount++;
         histTotal += snap.total || 0;
         histRetail += snap.retail || 0;
@@ -4575,14 +4611,9 @@
         + (liveSales != null && liveSales > 0 ? liveSales : 0)
         + (cardShowLive && storeAuction != null ? storeAuction : 0);
 
-      // Label for the "total" section when not showing live: single day → date,
-      // multi-day → "N Days", whole week → "Week N".
-      const periodLabel = !isDayView
-        ? `Week ${selectedWeek}`
-        : (dayDays.size === 1
-            ? new Date([...dayDays][0] + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-            : `${dayDays.size} Days`);
-      const budgetLabel = isDayView ? 'Day Budget' : 'Week Budget';
+      // Label for the "total" section reflects the selected range.
+      const periodLabel = dateRange.label;
+      const budgetLabel = 'Budget';
 
       // ── Unified V1 store card values (works across live / historical / day) ──
       const v1Loading = (cardShowLive && liveDataLoading) || (cardShowHist && historicalDataLoading);
@@ -4627,7 +4658,7 @@
       const v1SparkColor = v1Ahead ? V1G : V1B;
       // Bar caps at 100% (target met = full). Matches the hero bar's logic.
       const v1BarW = v1Pct != null ? Math.min(100, Math.max(0, v1Pct)) : 0;
-      const isTodayOnly = isDayView && dayDays.size === 1 && includesToday;
+      const isTodayOnly = dateRange.presetId === 'today';
       const v1NetLabel = isTodayOnly
         ? "Today's Net"
         : `${periodLabel} Net`;
@@ -4644,7 +4675,7 @@
       // as "loading" instead of a blank gap. Replaced when the real
       // sparkline renders (or cleared on no-data / fetch failure).
       const v1SparkSkel = `<span class="skel" style="display:block;width:84px;height:6px;border-radius:3px"></span>`;
-      const v1SparkDate = (isDayView && dayDays.size === 1) ? [...dayDays][0] : todayStr;
+      const v1SparkDate = dateRange.to;   // hourly spark = last day of the range
       const v1Spark = '<div id="' + v1SparkId + '" style="width:104px;height:44px;flex:0 0 auto;display:flex;align-items:center;justify-content:center">' + v1SparkSkel + '</div>';
       const cardCode = m.store.split('/')[0];
       const tile = (l, v) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
@@ -14077,7 +14108,7 @@
         setTimeout(() => {
           firstHint('dash-more', '#hero-more-toggle', "Tap <b>More</b> for channel mix &amp; today's metrics.", { step: 1, total: 3 });
           firstHint('dash-store', () => document.querySelector('#store-cards > div button[onclick^="showStoreDetail"]'), "Tap <b>View Details</b> for a store's full daily breakdown, chart &amp; item sales.", { step: 2, total: 3 });
-          firstHint('dash-days', '#day-chip-trigger', "Pick a day, combine several, or view the whole week.");
+          firstHint('dash-days', '#day-chip-trigger', "Pick a date range — Today, This Week, Last 30 Days, or a custom range.");
           firstHint('dash-channel', '#cm-retail-col', "New — tap <b>Retail</b> or <b>BIN</b> to filter the metrics below to just that channel.");
         }, 1800);
       });
