@@ -10452,7 +10452,6 @@
   const mkCharts = { donut: null, spend: null, ctr: null };
   let mkCtr7 = null;             // {campaignId: ctr} from 7d, for the vs-7d column
   let mkList = [];               // last-rendered campaign list (for drilldown stub)
-  let mkDrillOpen = null;        // index of the row whose ad-set drilldown is expanded
   const mkState = { window: '7d', acct: 'all', obj: 'all', store: 'all', search: '', sortKey: 'spend', sortDir: -1, gT: 7, rT: 3, tab: 'perf', booted: false };
 
   const mkIsDark = () => document.documentElement.classList.contains('dark');
@@ -10587,8 +10586,8 @@
         ${th('impressions', 'Impr', 'text-right')}
         ${th('clicks', 'Clicks', 'text-right')}
         ${th('ctr', 'CTR')}</tr></thead><tbody>`;
-    const body = mkList.length ? mkList.map((c, i) => `<tr id="mk-row-${i}" class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border hover:bg-[rgba(20,16,8,0.03)] dark:hover:bg-[rgba(255,255,255,0.03)] cursor-pointer" onclick="mkDrill(${i})">
-        <td class="px-4 py-2 text-gray-700 dark:text-gray-200 max-w-xs truncate" title="${mkEsc(c.name)}"><span class="text-opl-inkDim dark:text-op-inkDim mr-1">›</span>${mkEsc(c.name)} <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">· ${MK_OBJLABEL[c.fam]}</span></td>
+    const body = mkList.length ? mkList.map((c, i) => `<tr id="mk-row-${i}" class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border hover:bg-[rgba(20,16,8,0.03)] dark:hover:bg-[rgba(255,255,255,0.03)]">
+        <td class="px-4 py-2 text-gray-700 dark:text-gray-200 max-w-xs truncate" title="${mkEsc(c.name)}">${mkEsc(c.name)} <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">· ${MK_OBJLABEL[c.fam]}</span></td>
         <td class="px-4 py-2 text-right text-[12px] text-opl-inkDim dark:text-op-inkDim whitespace-nowrap tabular-nums">${mkDate(c.createdTime)}</td>
         <td class="px-4 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">${mkMoney(c.spend)}</td>
         <td class="px-4 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">${mkInt(c.impressions)}</td>
@@ -10596,27 +10595,11 @@
         <td class="px-4 py-2"><span class="inline-block text-xs font-medium px-2 py-0.5 rounded-md tabular-nums" style="${mkBadge(mkBand(c.ctr || 0))}">${mkPct(c.ctr)}</span></td></tr>`).join('')
       : '<tr><td colspan="6" class="px-4 py-4 text-opl-inkDim dark:text-op-inkDim">No campaigns match these filters.</td></tr>';
     el('mk-campaigns').innerHTML = head + body + '</tbody></table>';
-    mkDrillOpen = null;
     const _through = data.topline && data.topline.dateStop ? data.topline.dateStop : null;
     el('mk-fetched').textContent = data.fetchedAt
       ? 'Updated ' + mkTimeAgo(data.fetchedAt) + (_through ? ' · figures run through ' + _through : '') + ' · Meta finalizes the current day overnight, so today appears tomorrow'
       : '';
   }
-  function mkDrill(i) {
-    const c = mkList[i]; if (!c) return;
-    const existing = document.querySelector('.mk-drill-row');
-    if (existing) existing.remove();
-    if (mkDrillOpen === i) { mkDrillOpen = null; return; }  // tap again to close
-    const row = document.getElementById('mk-row-' + i);
-    if (!row) return;
-    const tr = document.createElement('tr');
-    tr.className = 'mk-drill-row bg-[rgba(20,16,8,0.02)] dark:bg-[rgba(255,255,255,0.02)]';
-    tr.innerHTML = `<td colspan="6" class="px-5 py-3 text-sm text-opl-inkDim dark:text-op-inkDim">Ad-set breakdown for <b class="text-gray-700 dark:text-gray-200">${mkEsc(c.name)}</b> ships with the live Meta API (Phase 2).</td>`;
-    row.after(tr);
-    mkDrillOpen = i;
-  }
-  window.mkDrill = mkDrill;
-
   const mkValueLabels = { id: 'mkvl', afterDatasetsDraw(ch, a, o) {
     const ctx = ch.ctx, m = ch.getDatasetMeta(0); ctx.save(); ctx.font = '11px sans-serif'; ctx.textBaseline = 'middle';
     ctx.fillStyle = mkIsDark() ? '#cfd3da' : '#6b6a64';
