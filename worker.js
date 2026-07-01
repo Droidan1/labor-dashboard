@@ -3169,8 +3169,8 @@ const STORE_LABELS = {
 // Most specific first (Coliseum/Dupont before the generic "Fort Wayne").
 // Brand-wide campaigns with no location keyword → "Unattributed".
 const STORE_KEYWORDS = [
-  ['Coliseum', /coliseum/i],
-  ['Dupont', /dupont/i],
+  ['Coliseum/Dupont', /coliseum/i],
+  ['Coliseum/Dupont', /dupont/i],
   ['South Bend', /south\s*bend/i],
   ['Holland', /holland/i],
   ['Wyoming', /wyoming/i],
@@ -3191,13 +3191,17 @@ function campaignStore(name) {
 // Takes precedence over campaignStore(name) in marketing-insights.
 // Discovered 2026-06-30 by correlating page_id with keyword-attributable
 // campaigns (+ user confirmation for Holland, whose posts never name it).
-// Page 113655020488471 is a SHARED page (Coliseum/Dupont/Fort Wayne) so it is
-// deliberately NOT mapped — those fall back to campaignStore(name).
+// Page 113655020488471 is the SHARED Coliseum/Dupont main brand page (used by
+// both ad accounts); the two can't be split by page, so they're merged into one
+// "Coliseum/Dupont" bucket (2026-07-01, per owner) — this also pulls the page's
+// brand-wide Awareness/Lead-Gen campaigns out of Unattributed.
 const STORE_BY_PAGE = {
   "264627006733058": "South Bend",
   "104574708111472": "Battle Creek",
   "1000209416518542": "Indianapolis",
   "222962777911366": "Holland",
+  "527530810750043": "Holland",          // "Holland Bins" — Holland's second page (owner-confirmed)
+  "113655020488471": "Coliseum/Dupont",
 };
 function storeByPage(pageId) {
   return pageId ? (STORE_BY_PAGE[String(pageId)] || null) : null;
