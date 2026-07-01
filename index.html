@@ -1471,21 +1471,7 @@
 
         <!-- PERFORMANCE PANEL -->
         <div id="mk-panel-perf" class="space-y-5">
-          <div class="flex items-center justify-between gap-2">
-            <div id="mk-sel-note" class="text-xs text-opl-inkDim dark:text-op-inkDim"></div>
-            <div class="relative shrink-0">
-              <button type="button" onclick="mkToggleInfo(event)" aria-label="What do these metrics mean?" title="What do these metrics mean?"
-                class="w-6 h-6 rounded-full border border-[rgba(20,16,8,0.15)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim text-xs font-semibold italic leading-none flex items-center justify-center hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.06)] transition-colors">i</button>
-              <div id="mk-info-pop" class="hidden absolute right-0 mt-2 w-72 z-30 bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-xl shadow-lg p-4 text-xs text-gray-600 dark:text-gray-300 space-y-2 text-left">
-                <div class="font-semibold text-gray-700 dark:text-gray-200 mb-1">What these metrics mean</div>
-                <div><b class="text-gray-700 dark:text-gray-200">Spend</b> — Total amount spent on these ads.</div>
-                <div><b class="text-gray-700 dark:text-gray-200">Impressions</b> — How many times the ads were shown.</div>
-                <div><b class="text-gray-700 dark:text-gray-200">Clicks</b> — Total clicks on the ads.</div>
-                <div><b class="text-gray-700 dark:text-gray-200">CPC</b> — Cost per click (Spend ÷ Clicks).</div>
-                <div><b class="text-gray-700 dark:text-gray-200">CTR</b> — Click-through rate (Clicks ÷ Impressions), i.e. the % of people shown the ad who clicked.</div>
-              </div>
-            </div>
-          </div>
+          <div id="mk-sel-note" class="text-xs text-opl-inkDim dark:text-op-inkDim"></div>
           <div id="mk-kpis" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3"></div>
           <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 py-3">
             <div id="mk-acctsplit" class="flex gap-x-6 gap-y-2 flex-wrap text-sm"></div>
@@ -10577,9 +10563,14 @@
       [A('#97C459', '#3B6D11', '#97C459'), 'CPC', mkMoney(k.cpc), 'cpc'],
       [A('#EF9F27', '#854F0B', '#FAC775'), 'CTR', mkPct(k.ctr), 'ctr'],
     ];
-    el('mk-kpis').innerHTML = cards.map(c => `<button data-jump="${c[3]}" class="text-left bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border p-3.5" style="border-left:4px solid ${c[0].bar};border-radius:0 0.5rem 0.5rem 0">
-      <div class="text-[11px] text-opl-inkDim dark:text-op-inkDim uppercase tracking-wide">${c[1]}</div>
-      <div class="text-xl font-semibold mt-1 tabular-nums" style="color:${c[0].val}">${c[2]}</div></button>`).join('');
+    el('mk-kpis').innerHTML = cards.map(c => { const key = c[3]; return `<div class="relative">
+      <button data-jump="${key}" class="w-full text-left bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border p-3.5 pr-8" style="border-left:4px solid ${c[0].bar};border-radius:0 0.5rem 0.5rem 0">
+        <div class="text-[11px] text-opl-inkDim dark:text-op-inkDim uppercase tracking-wide">${c[1]}</div>
+        <div class="text-xl font-semibold mt-1 tabular-nums" style="color:${c[0].val}">${c[2]}</div></button>
+      <span data-mpop="${key}" onclick="mkMetricInfo('${key}', event)" title="What is ${c[1]}?" aria-label="What is ${c[1]}?"
+        class="absolute top-2 right-2 w-4 h-4 rounded-full border border-[rgba(20,16,8,0.2)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim text-[10px] font-semibold italic leading-none flex items-center justify-center cursor-pointer hover:bg-[rgba(20,16,8,0.06)] dark:hover:bg-[rgba(255,255,255,0.08)]">i</span>
+      <div id="mk-mpop-${key}" class="mk-mpop hidden absolute top-9 right-1 z-30 w-56 bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-lg shadow-lg p-3 text-[11px] normal-case tracking-normal font-normal text-gray-600 dark:text-gray-300 text-left"><b class="text-gray-700 dark:text-gray-200">${c[1]}</b> — ${MK_METRIC_DEFS[key]}</div>
+    </div>`; }).join('');
     const t = data.topline || {};
     el('mk-subtitle').textContent = (t.dateStart && t.dateStop) ? `Meta ad performance · ${t.dateStart} – ${t.dateStop}` : 'Meta ad performance';
   }
@@ -10713,16 +10704,26 @@
     mkRenderKPI(data); mkUpdateSelNote(data); mkRenderTable(data);
   }
   window.mkClearSel = mkClearSel;
-  function mkToggleInfo(ev) {
+  const MK_METRIC_DEFS = {
+    spend:  'Total amount spent on these ads.',
+    impr:   'How many times the ads were shown (impressions).',
+    clicks: 'Total clicks on the ads.',
+    cpc:    'Cost per click — Spend ÷ Clicks.',
+    ctr:    'Click-through rate — Clicks ÷ Impressions. The % of people shown the ad who clicked.',
+  };
+  // Per-card metric explainer: tap the ⓘ on a KPI card to see what it means.
+  function mkMetricInfo(key, ev) {
     if (ev) ev.stopPropagation();
-    const p = el('mk-info-pop'); if (!p) return;
-    p.classList.toggle('hidden');
-    if (!p.classList.contains('hidden')) {
-      const close = e => { if (!p.contains(e.target) && !e.target.closest('[onclick*="mkToggleInfo"]')) { p.classList.add('hidden'); document.removeEventListener('click', close); } };
+    const pop = el('mk-mpop-' + key); if (!pop) return;
+    const show = pop.classList.contains('hidden');
+    document.querySelectorAll('.mk-mpop').forEach(p => p.classList.add('hidden'));  // one at a time
+    if (show) {
+      pop.classList.remove('hidden');
+      const close = e => { if (!pop.contains(e.target) && !e.target.closest('[data-mpop="' + key + '"]')) { pop.classList.add('hidden'); document.removeEventListener('click', close); } };
       setTimeout(() => document.addEventListener('click', close), 0);
     }
   }
-  window.mkToggleInfo = mkToggleInfo;
+  window.mkMetricInfo = mkMetricInfo;
   function mkSort(k) { if (mkState.sortKey === k) mkState.sortDir *= -1; else { mkState.sortKey = k; mkState.sortDir = (k === 'name' ? 1 : -1); } mkRenderTable(mkCache[mkState.window]); }
   window.mkSort = mkSort;
   function mkOnSearch(v) { mkState.search = v; mkRenderTable(mkCache[mkState.window]); }
