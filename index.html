@@ -1471,6 +1471,21 @@
 
         <!-- PERFORMANCE PANEL -->
         <div id="mk-panel-perf" class="space-y-5">
+          <div class="flex items-center justify-between gap-2">
+            <div id="mk-sel-note" class="text-xs text-opl-inkDim dark:text-op-inkDim"></div>
+            <div class="relative shrink-0">
+              <button type="button" onclick="mkToggleInfo(event)" aria-label="What do these metrics mean?" title="What do these metrics mean?"
+                class="w-6 h-6 rounded-full border border-[rgba(20,16,8,0.15)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim text-xs font-semibold italic leading-none flex items-center justify-center hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.06)] transition-colors">i</button>
+              <div id="mk-info-pop" class="hidden absolute right-0 mt-2 w-72 z-30 bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-xl shadow-lg p-4 text-xs text-gray-600 dark:text-gray-300 space-y-2 text-left">
+                <div class="font-semibold text-gray-700 dark:text-gray-200 mb-1">What these metrics mean</div>
+                <div><b class="text-gray-700 dark:text-gray-200">Spend</b> — Total amount spent on these ads.</div>
+                <div><b class="text-gray-700 dark:text-gray-200">Impressions</b> — How many times the ads were shown.</div>
+                <div><b class="text-gray-700 dark:text-gray-200">Clicks</b> — Total clicks on the ads.</div>
+                <div><b class="text-gray-700 dark:text-gray-200">CPC</b> — Cost per click (Spend ÷ Clicks).</div>
+                <div><b class="text-gray-700 dark:text-gray-200">CTR</b> — Click-through rate (Clicks ÷ Impressions), i.e. the % of people shown the ad who clicked.</div>
+              </div>
+            </div>
+          </div>
           <div id="mk-kpis" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3"></div>
           <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 py-3">
             <div id="mk-acctsplit" class="flex gap-x-6 gap-y-2 flex-wrap text-sm"></div>
@@ -10452,7 +10467,7 @@
   const mkCharts = { donut: null, spend: null, ctr: null };
   let mkCtr7 = null;             // {campaignId: ctr} from 7d, for the vs-7d column
   let mkList = [];               // last-rendered campaign list (for drilldown stub)
-  const mkState = { window: '7d', acct: 'all', obj: 'all', store: 'all', search: '', sortKey: 'spend', sortDir: -1, gT: 7, rT: 3, tab: 'perf', booted: false };
+  const mkState = { window: '7d', acct: 'all', obj: 'all', store: 'all', search: '', sortKey: 'spend', sortDir: -1, gT: 7, rT: 3, tab: 'perf', booted: false, sel: new Set() };
 
   const mkIsDark = () => document.documentElement.classList.contains('dark');
   const mkMoney = v => v == null ? '—' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -10531,8 +10546,29 @@
     return `<button onclick="mkSetFilter('${kind}','${id}')"${title} class="px-3 py-1 rounded-full text-xs border ${cls} transition-colors">${mkEsc(lbl)}</button>`;
   }
 
+  // KPI values: when campaigns are selected, aggregate across just those
+  // (from the full window set, so the basket is stable regardless of search/
+  // sort); otherwise use the filter-aware topline.
+  function mkMetrics(data) {
+    const sel = mkState.sel;
+    if (sel && sel.size) {
+      let sp = 0, im = 0, cl = 0, n = 0;
+      (data.campaigns || []).forEach(c => {
+        if (sel.has(String(c.id))) { sp += c.spend || 0; im += c.impressions || 0; cl += c.clicks || 0; n++; }
+      });
+      return { spend: sp, impr: im, clicks: cl, ctr: im ? cl / im * 100 : null, cpc: cl ? sp / cl : null, n };
+    }
+    return { ...mkTopline(data), n: 0 };
+  }
+  function mkUpdateSelNote(data) {
+    const node = el('mk-sel-note'); if (!node) return;
+    const n = mkState.sel ? mkState.sel.size : 0;
+    node.innerHTML = n
+      ? `Metrics reflect <b class="text-gray-700 dark:text-gray-200">${n} selected campaign${n > 1 ? 's' : ''}</b> · <button type="button" onclick="mkClearSel()" class="text-accent-green hover:underline font-medium">Clear</button>`
+      : 'Tap campaigns below to see their combined metrics above.';
+  }
   function mkRenderKPI(data) {
-    const k = mkTopline(data), d = mkIsDark();
+    const k = mkMetrics(data), d = mkIsDark();
     const A = (bar, l, dk) => ({ bar, val: d ? dk : l });
     const cards = [
       [A('#7F77DD', '#534AB7', '#AFA9EC'), 'Spend', mkMoney0(k.spend), 'spend'],
@@ -10586,13 +10622,13 @@
         ${th('impressions', 'Impr', 'text-right')}
         ${th('clicks', 'Clicks', 'text-right')}
         ${th('ctr', 'CTR')}</tr></thead><tbody>`;
-    const body = mkList.length ? mkList.map((c, i) => `<tr id="mk-row-${i}" class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border hover:bg-[rgba(20,16,8,0.03)] dark:hover:bg-[rgba(255,255,255,0.03)]">
-        <td class="px-4 py-2 text-gray-700 dark:text-gray-200 max-w-xs truncate" title="${mkEsc(c.name)}">${mkEsc(c.name)} <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">· ${MK_OBJLABEL[c.fam]}</span></td>
+    const body = mkList.length ? mkList.map((c, i) => { const sel = mkState.sel.has(String(c.id)); return `<tr id="mk-row-${i}" onclick="mkToggleSel('${c.id}')" class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border cursor-pointer ${sel ? 'bg-[rgba(59,181,74,0.10)] dark:bg-[rgba(59,181,74,0.14)]' : 'hover:bg-[rgba(20,16,8,0.03)] dark:hover:bg-[rgba(255,255,255,0.03)]'}" style="${sel ? 'box-shadow: inset 3px 0 0 #3BB54A;' : ''}">
+        <td class="px-4 py-2 text-gray-700 dark:text-gray-200 max-w-xs truncate" title="${mkEsc(c.name)}"><span class="text-opl-inkDim dark:text-op-inkDim mr-1">${sel ? '✓' : '›'}</span>${mkEsc(c.name)} <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">· ${MK_OBJLABEL[c.fam]}</span></td>
         <td class="px-4 py-2 text-right text-[12px] text-opl-inkDim dark:text-op-inkDim whitespace-nowrap tabular-nums">${mkDate(c.createdTime)}</td>
         <td class="px-4 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">${mkMoney(c.spend)}</td>
         <td class="px-4 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">${mkInt(c.impressions)}</td>
         <td class="px-4 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">${mkInt(c.clicks)}</td>
-        <td class="px-4 py-2"><span class="inline-block text-xs font-medium px-2 py-0.5 rounded-md tabular-nums" style="${mkBadge(mkBand(c.ctr || 0))}">${mkPct(c.ctr)}</span></td></tr>`).join('')
+        <td class="px-4 py-2"><span class="inline-block text-xs font-medium px-2 py-0.5 rounded-md tabular-nums" style="${mkBadge(mkBand(c.ctr || 0))}">${mkPct(c.ctr)}</span></td></tr>`; }).join('')
       : '<tr><td colspan="6" class="px-4 py-4 text-opl-inkDim dark:text-op-inkDim">No campaigns match these filters.</td></tr>';
     el('mk-campaigns').innerHTML = head + body + '</tbody></table>';
     const _through = data.topline && data.topline.dateStop ? data.topline.dateStop : null;
@@ -10637,7 +10673,7 @@
 
   function mkRenderAll() {
     const data = mkCache[mkState.window]; if (!data) return;
-    mkRenderChips(data); mkRenderKPI(data); mkRenderSplit(data); mkRenderTable(data);
+    mkRenderChips(data); mkRenderKPI(data); mkUpdateSelNote(data); mkRenderSplit(data); mkRenderTable(data);
     if (mkState.tab === 'charts') mkRenderCharts(data);
     const u = el('mk-updated'); if (u) u.textContent = data.fetchedAt ? 'Updated ' + mkTimeAgo(data.fetchedAt) : '';
   }
@@ -10657,11 +10693,36 @@
     if (w === mkState.window) return;
     mkState.window = w;
     mkState.store = 'all';  // store sets differ per window; reset to avoid an empty view
+    mkState.sel.clear();    // campaign ids differ per window
     try { await mkEnsure(w); mkRenderAll(); } catch (e) { mkError(e); }
   }
   window.mkSetWindow = mkSetWindow;
-  function mkSetFilter(kind, id) { if (kind === 'acct') mkState.acct = id; else if (kind === 'store') mkState.store = id; else mkState.obj = id; mkRenderAll(); }
+  function mkSetFilter(kind, id) { if (kind === 'acct') mkState.acct = id; else if (kind === 'store') mkState.store = id; else mkState.obj = id; mkState.sel.clear(); mkRenderAll(); }
   window.mkSetFilter = mkSetFilter;
+  // Campaign selection: tap rows to combine their metrics in the KPI cards.
+  function mkToggleSel(id) {
+    id = String(id);
+    if (mkState.sel.has(id)) mkState.sel.delete(id); else mkState.sel.add(id);
+    const data = mkCache[mkState.window]; if (!data) return;
+    mkRenderKPI(data); mkUpdateSelNote(data); mkRenderTable(data);
+  }
+  window.mkToggleSel = mkToggleSel;
+  function mkClearSel() {
+    mkState.sel.clear();
+    const data = mkCache[mkState.window]; if (!data) return;
+    mkRenderKPI(data); mkUpdateSelNote(data); mkRenderTable(data);
+  }
+  window.mkClearSel = mkClearSel;
+  function mkToggleInfo(ev) {
+    if (ev) ev.stopPropagation();
+    const p = el('mk-info-pop'); if (!p) return;
+    p.classList.toggle('hidden');
+    if (!p.classList.contains('hidden')) {
+      const close = e => { if (!p.contains(e.target) && !e.target.closest('[onclick*="mkToggleInfo"]')) { p.classList.add('hidden'); document.removeEventListener('click', close); } };
+      setTimeout(() => document.addEventListener('click', close), 0);
+    }
+  }
+  window.mkToggleInfo = mkToggleInfo;
   function mkSort(k) { if (mkState.sortKey === k) mkState.sortDir *= -1; else { mkState.sortKey = k; mkState.sortDir = (k === 'name' ? 1 : -1); } mkRenderTable(mkCache[mkState.window]); }
   window.mkSort = mkSort;
   function mkOnSearch(v) { mkState.search = v; mkRenderTable(mkCache[mkState.window]); }
