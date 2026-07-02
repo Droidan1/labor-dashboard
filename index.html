@@ -1534,7 +1534,6 @@
               <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">The promotional pipeline — the F26 source of truth.</p>
             </div>
             <div class="flex items-center gap-2">
-              <button id="fc-add-seg" onclick="fcAddSegment()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg border border-accent-green/50 text-accent-green active:scale-95 transition">+ Band</button>
               <button id="fc-edit-toggle" onclick="fcToggleEdit()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim active:scale-95 transition">Edit</button>
               <button onclick="fcScrollNow()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim active:scale-95 transition">This week</button>
               <span id="fc-fy" class="text-[11px] font-semibold px-2 py-1 rounded-md bg-opl-panelHi dark:bg-op-panelHi text-opl-inkDim dark:text-op-inkDim"></span>
@@ -10878,7 +10877,6 @@
     btn.textContent = fcEditMode ? 'Done' : 'Edit';
     btn.classList.toggle('border-accent-green', fcEditMode);
     btn.classList.toggle('text-accent-green', fcEditMode);
-    el('fc-add-seg').classList.toggle('hidden', !fcEditMode);
     el('fc-wrap').classList.toggle('fc-editing', fcEditMode);
     fcRenderMatrix();
   }
