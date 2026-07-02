@@ -5336,9 +5336,20 @@ export default {
       const ver = env.META_API_VERSION || META_API_VERSION;
       let b;
       try { b = await request.json(); } catch (e) { b = {}; }
-      const token = String(b.token || env.META_PAGE_TOKEN || "").trim();
+      // Token resolution: explicit body token → per-page stored token
+      // (META_PAGE_TOKENS is a JSON map of page_id → {name, token} or → token)
+      // → single META_PAGE_TOKEN fallback.
+      let token = String(b.token || "").trim();
+      if (!token && env.META_PAGE_TOKENS && b.page_id) {
+        try {
+          const m = JSON.parse(env.META_PAGE_TOKENS);
+          const e = m[String(b.page_id)];
+          token = String((e && (e.token || e)) || "").trim();
+        } catch (_) { /* bad JSON — fall through */ }
+      }
+      if (!token) token = String(env.META_PAGE_TOKEN || "").trim();
       if (!token) {
-        return new Response(JSON.stringify({ error: 'No token — pass "token" in the body or set the META_PAGE_TOKEN secret (wrangler secret put META_PAGE_TOKEN)' }), { status: 400, headers: corsJson });
+        return new Response(JSON.stringify({ error: 'No token — pass "token" in the body, or set META_PAGE_TOKENS / META_PAGE_TOKEN as a secret' }), { status: 400, headers: corsJson });
       }
       const gGet = async (path, params) => {
         const qs = new URLSearchParams({ ...params, access_token: token }).toString();
