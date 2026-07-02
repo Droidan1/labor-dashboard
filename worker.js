@@ -4965,6 +4965,107 @@ export default {
       return new Response(JSON.stringify({ fiscalYear: fy, weeks: weeks || [], segments }), { headers: corsJson });
     }
 
+    // ── Flow Calendar admin editor (Phase 2): write endpoints ────────
+    // The read endpoint above is open to all authenticated users. These mutate
+    // the source of truth, so admin/superuser (or X-Snapshot-Secret) only.
+    // Weekly rows live in marketing_flow; multi-week bands in flow_segments.
+    // No schema change — both tables were created in migration-016 / -017.
+    if (request.method === "POST" &&
+        (url.searchParams.get("action") === "flow-week-upsert" ||
+         url.searchParams.get("action") === "flow-segment-upsert" ||
+         url.searchParams.get("action") === "flow-segment-delete")) {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      }
+      // '' -> null so cleared fields blank out instead of storing empty strings.
+      const clean = (v) => { const s = (v == null ? "" : String(v)).trim(); return s === "" ? null : s; };
+      const FLOW_COLORS = new Set(["sl","ots","prod","set","clr","otb","focus","endcap","lead","beyondB","beyondO"]);
+      const action = url.searchParams.get("action");
+      try {
+        const b = await request.json();
+        const fy = clean(b.fiscal_year) || "F26";
+
+        // Update one week's manager-facing fields (week dates are fixed).
+        if (action === "flow-week-upsert") {
+          const wk = parseInt(b.retail_week, 10);
+          if (!Number.isInteger(wk) || wk < 1 || wk > 53) {
+            return new Response(JSON.stringify({ error: "Invalid retail_week" }), { status: 400, headers: corsJson });
+          }
+          const dd = clean(b.dd_loyalty);
+          if (dd && dd !== "Double Dip" && dd !== "X2 Points") {
+            return new Response(JSON.stringify({ error: "Invalid dd_loyalty" }), { status: 400, headers: corsJson });
+          }
+          const now = new Date().toISOString().slice(0, 10);
+          const res = await env.DB.prepare(
+            `UPDATE marketing_flow SET special_event=?, weekly_theme=?, product_focus=?,
+               dd_loyalty=?, flash_sale=?, weekend_event=?, notes=?, updated_at=?
+             WHERE fiscal_year=? AND retail_week=?`
+          ).bind(
+            clean(b.special_event), clean(b.weekly_theme), clean(b.product_focus),
+            dd, clean(b.flash_sale), clean(b.weekend_event), clean(b.notes),
+            now, fy, wk
+          ).run();
+          if (!res.meta || res.meta.changes === 0) {
+            return new Response(JSON.stringify({ error: "Week not found" }), { status: 404, headers: corsJson });
+          }
+          const week = await env.DB.prepare(
+            "SELECT * FROM marketing_flow WHERE fiscal_year=? AND retail_week=?"
+          ).bind(fy, wk).first();
+          return new Response(JSON.stringify({ ok: true, week }), { headers: corsJson });
+        }
+
+        // Create or update a single band segment.
+        if (action === "flow-segment-upsert") {
+          const sw = parseInt(b.start_week, 10), ew = parseInt(b.end_week, 10);
+          const so = parseInt(b.sort_order, 10);
+          const rowLabel = clean(b.row_label);
+          const color = clean(b.color);
+          const section = clean(b.section);
+          const label = clean(b.label);
+          const detail = clean(b.detail);
+          if (!rowLabel) return new Response(JSON.stringify({ error: "row_label required" }), { status: 400, headers: corsJson });
+          if (!color || !FLOW_COLORS.has(color)) return new Response(JSON.stringify({ error: "Invalid color" }), { status: 400, headers: corsJson });
+          if (!Number.isInteger(sw) || !Number.isInteger(ew) || sw < 1 || ew > 53 || sw > ew) {
+            return new Response(JSON.stringify({ error: "Invalid week range" }), { status: 400, headers: corsJson });
+          }
+          if (!Number.isInteger(so)) return new Response(JSON.stringify({ error: "Invalid sort_order" }), { status: 400, headers: corsJson });
+          if (section && section !== "seasonal" && section !== "program") {
+            return new Response(JSON.stringify({ error: "Invalid section" }), { status: 400, headers: corsJson });
+          }
+          if (b.id != null && b.id !== "") {
+            const id = parseInt(b.id, 10);
+            const res = await env.DB.prepare(
+              `UPDATE flow_segments SET sort_order=?, row_label=?, section=?, start_week=?,
+                 end_week=?, label=?, color=?, detail=? WHERE id=? AND fiscal_year=?`
+            ).bind(so, rowLabel, section, sw, ew, label, color, detail, id, fy).run();
+            if (!res.meta || res.meta.changes === 0) {
+              return new Response(JSON.stringify({ error: "Segment not found" }), { status: 404, headers: corsJson });
+            }
+            return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
+          }
+          const res = await env.DB.prepare(
+            `INSERT INTO flow_segments (fiscal_year, sort_order, row_label, section, start_week, end_week, label, color, detail)
+             VALUES (?,?,?,?,?,?,?,?,?)`
+          ).bind(fy, so, rowLabel, section, sw, ew, label, color, detail).run();
+          return new Response(JSON.stringify({ ok: true, id: res.meta && res.meta.last_row_id }), { headers: corsJson });
+        }
+
+        // Delete a band segment by id.
+        if (action === "flow-segment-delete") {
+          const id = parseInt(b.id, 10);
+          if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+          const res = await env.DB.prepare(
+            "DELETE FROM flow_segments WHERE id=? AND fiscal_year=?"
+          ).bind(id, fy).run();
+          return new Response(JSON.stringify({ ok: true, deleted: (res.meta && res.meta.changes) || 0 }), { headers: corsJson });
+        }
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
     // ── User management: list-users ──────────────────────────────────
     if (url.searchParams.get("action") === "list-users") {
       if (!canAccessInventory(currentUser)) {

@@ -1516,11 +1516,14 @@
         .dark #fc-tbl td,.dark #fc-tbl th{border-right-color:rgba(255,255,255,.09);border-bottom-color:rgba(255,255,255,.09)}
         #fc-tbl td{width:88px;min-width:88px;max-width:88px;overflow:hidden}
         #fc-tbl .fc-lbl{position:sticky;left:0;z-index:2;width:112px;min-width:112px;max-width:112px;white-space:normal;font-weight:500}
-        #fc-tbl .fc-band{text-align:center;white-space:nowrap;overflow:hidden;font-weight:500}
+        #fc-tbl .fc-band{text-align:center;white-space:nowrap;overflow:hidden;font-weight:600}
         #fc-tbl .fc-ctr{text-align:center}
         #fc-tbl .fc-sec td,#fc-tbl .fc-sec th{border-top:2px solid rgba(20,16,8,.18)}
         .dark #fc-tbl .fc-sec td,.dark #fc-tbl .fc-sec th{border-top-color:rgba(255,255,255,.16)}
         #fc-tbl .fc-now{box-shadow:inset 2px 0 0 #639922,inset -2px 0 0 #639922}
+        .fc-editing #fc-tbl td[data-fcwk],.fc-editing #fc-tbl td[data-fcseg],.fc-editing #fc-tbl td[data-fcaddrow]{cursor:pointer}
+        .fc-editing #fc-tbl td[data-fcwk]:hover,.fc-editing #fc-tbl td[data-fcseg]:hover{box-shadow:inset 0 0 0 2px #639922}
+        .fc-editing #fc-tbl td[data-fcaddrow]:hover{box-shadow:inset 0 0 0 1px #639922;background:rgba(99,153,34,.12)!important}
       </style>
       <!-- Sticky header -->
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
@@ -1531,6 +1534,8 @@
               <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">The promotional pipeline — the F26 source of truth.</p>
             </div>
             <div class="flex items-center gap-2">
+              <button id="fc-add-seg" onclick="fcAddSegment()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg border border-accent-green/50 text-accent-green active:scale-95 transition">+ Band</button>
+              <button id="fc-edit-toggle" onclick="fcToggleEdit()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim active:scale-95 transition">Edit</button>
               <button onclick="fcScrollNow()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim active:scale-95 transition">This week</button>
               <span id="fc-fy" class="text-[11px] font-semibold px-2 py-1 rounded-md bg-opl-panelHi dark:bg-op-panelHi text-opl-inkDim dark:text-op-inkDim"></span>
             </div>
@@ -1548,6 +1553,81 @@
           <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-2 px-1">Scroll sideways to move across the year. Seasonal &amp; program spans are best-estimate from the sheet.</p>
         </div>
         <div id="fc-error" class="hidden text-sm text-red-500 py-10 text-center"></div>
+      </div>
+
+      <!-- Week editor modal (admin) -->
+      <div id="fc-week-modal" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black/50" onclick="fcCloseWeek()"></div>
+        <div class="relative bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+          <div class="flex items-center justify-between px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+            <h3 id="fc-week-title" class="text-base font-bold text-opl-ink dark:text-op-ink">Edit week</h3>
+            <button onclick="fcCloseWeek()" class="text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink text-xl leading-none">×</button>
+          </div>
+          <div class="px-5 py-4 space-y-3.5">
+            <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Special event</label>
+              <input id="fw-special_event" type="text" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
+            <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Weekly theme</label>
+              <input id="fw-weekly_theme" type="text" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
+            <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Product focus</label>
+              <input id="fw-product_focus" type="text" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
+            <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">DD / loyalty</label>
+              <select id="fw-dd_loyalty" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <option value="">—</option><option value="Double Dip">Double Dip</option><option value="X2 Points">X2 Points</option></select></div>
+            <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Flash · Wed–Thu</label>
+              <input id="fw-flash_sale" type="text" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
+            <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Weekend · Fri–Sun</label>
+              <input id="fw-weekend_event" type="text" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
+            <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Notes</label>
+              <textarea id="fw-notes" rows="2" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></textarea></div>
+            <p id="fc-week-err" class="hidden text-xs text-red-500"></p>
+          </div>
+          <div class="flex items-center justify-end gap-2 px-5 py-4 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border">
+            <button onclick="fcCloseWeek()" class="px-4 py-2 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+            <button id="fc-week-save" onclick="fcSaveWeek()" class="px-5 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Segment editor modal (admin) -->
+      <div id="fc-seg-modal" class="hidden fixed inset-0 z-[80] flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black/50" onclick="fcCloseSeg()"></div>
+        <div class="relative bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+          <div class="flex items-center justify-between px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+            <h3 id="fc-seg-title" class="text-base font-bold text-opl-ink dark:text-op-ink">Band segment</h3>
+            <button onclick="fcCloseSeg()" class="text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink text-xl leading-none">×</button>
+          </div>
+          <div class="px-5 py-4 space-y-3.5">
+            <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Row label</label>
+              <input id="fs-row_label" type="text" list="fc-row-labels" placeholder="e.g. Leadership Training" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+              <datalist id="fc-row-labels"></datalist>
+              <p class="text-[10.5px] text-opl-inkDim dark:text-op-inkDim mt-1">Matching an existing row adds to it; a new label starts a new row.</p></div>
+            <div class="grid grid-cols-2 gap-3">
+              <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Section</label>
+                <select id="fs-section" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                  <option value="seasonal">Seasonal</option><option value="program">Program</option></select></div>
+              <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Color</label>
+                <select id="fs-color" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></select></div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Start week</label>
+                <input id="fs-start_week" type="number" min="14" max="52" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
+              <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">End week</label>
+                <input id="fs-end_week" type="number" min="14" max="52" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
+            </div>
+            <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Band label</label>
+              <input id="fs-label" type="text" placeholder="Text shown inside the band" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
+            <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Detail (optional)</label>
+              <input id="fs-detail" type="text" class="w-full rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
+            <p id="fc-seg-err" class="hidden text-xs text-red-500"></p>
+          </div>
+          <div class="flex items-center justify-between gap-2 px-5 py-4 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border">
+            <button id="fc-seg-del" onclick="fcDeleteSeg()" class="hidden px-3 py-2 text-sm font-semibold text-red-500 hover:text-red-600 transition-colors">Delete</button>
+            <div class="flex items-center gap-2 ml-auto">
+              <button onclick="fcCloseSeg()" class="px-4 py-2 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+              <button id="fc-seg-save" onclick="fcSaveSeg()" class="px-5 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Save</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div><!-- end #page-flow-calendar -->
 
@@ -10609,20 +10689,32 @@
   let fcWeeks = [];      // weekly rows (marketing_flow)
   let fcSegments = [];   // band segments (flow_segments)
   let fcNowIdx = -1;     // column index of the current week
+  let fcFY = 'F26';      // current fiscal year (for admin writes)
+  let fcCanEdit = false; // admin/superuser — set by applyRoleUI
+  let fcEditMode = false;// edit toggle state
+  let fcEditWk = null;   // retail_week being edited in the week modal
+  let fcEditSeg = null;  // segment object being edited (null = adding)
+  let fcTblWired = false;// delegation listener attached once
 
   // Band colors by key — fixed hex (a light fill + dark text reads in both modes).
   const FC_CMAP = {
-    sl:     ['#C7E8A0', '#3B5A14'], ots:    ['#35D335', '#0D4D0D'],
-    prod:   ['#C9B8E8', '#43356B'], set:    ['#AFC6EC', '#244A7A'],
-    clr:    ['#FBEF5A', '#6B6410'], otb:    ['#FF7BDD', '#7A1A5E'],
-    focus:  ['#F0A23A', '#5A3206'], endcap: ['#BFBFBA', '#3A3A38'],
-    lead:   ['#A06C82', '#FFFFFF'], beyondB:['#5E7BC4', '#FFFFFF'], beyondO:['#F0A23A', '#5A3206'],
+    sl:     ['#C7E8A0', '#2E4A0E'], ots:    ['#35D335', '#0D4D0D'],
+    prod:   ['#C9B8E8', '#3A2C60'], set:    ['#AFC6EC', '#1E4270'],
+    clr:    ['#FBEF5A', '#5E580C'], otb:    ['#FF7BDD', '#6E1553'],
+    focus:  ['#F0A23A', '#4E2B04'], endcap: ['#BFBFBA', '#33332F'],
+    lead:   ['#7A4A61', '#FFFFFF'], beyondB:['#4E6AB0', '#FFFFFF'], beyondO:['#F0A23A', '#4E2B04'],
   };
+  // Human names for the band color keys (used by the segment editor select).
+  const FC_COLOR_NAMES = [
+    ['sl','Seasonal launch'], ['ots','OTS'], ['prod','Production'], ['set','Set / ship'],
+    ['clr','Clearance'], ['otb','OTB'], ['focus','Focus / feature'], ['endcap','End cap'],
+    ['lead','Leadership'], ['beyondB','Beyond Bargains (blue)'], ['beyondO','Beyond Bargains (orange)'],
+  ];
   const FC_MONS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const FC_LEGEND = [
     ['Cust. appreciation', '#E9D6AE'], ['Loyalty', '#5FDCE6'], ['Flash / weekend', '#F4EEDA'],
     ['Seasonal launch', '#C7E8A0'], ['OTS', '#35D335'], ['Production', '#C9B8E8'],
-    ['Set / ship', '#AFC6EC'], ['Clearance', '#FBEF5A'], ['Leadership', '#A06C82'], ['Beyond Bargains', '#5E7BC4'],
+    ['Set / ship', '#AFC6EC'], ['Clearance', '#FBEF5A'], ['Leadership', '#7A4A61'], ['Beyond Bargains', '#4E6AB0'],
   ];
 
   function fcEsc(s) {
@@ -10640,10 +10732,12 @@
       const resp = await fetch(`${WORKER_BASE}?action=flow-calendar`, { credentials: 'include' });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
-      el('fc-fy').textContent = data.fiscalYear || 'F26';
+      fcFY = data.fiscalYear || 'F26';
+      el('fc-fy').textContent = fcFY;
       fcWeeks = (data.weeks || []).slice().sort((a, b) => a.retail_week - b.retail_week);
       fcSegments = data.segments || [];
       if (!fcWeeks.length) { fcShowError('No calendar weeks found.'); return; }
+      fcEditSetup();
       fcRenderMatrix();
       el('fc-loading').classList.add('hidden');
       el('fc-view').classList.remove('hidden');
@@ -10669,7 +10763,7 @@
     if (kind === 'fl')  return { cls: '', style: 'background:#F4EEDA;color:#6B5E36' };
     if (/customer appreciation|15% off/i.test(val)) return { cls: '', style: 'background:#E9D6AE;color:#6B5526' };
     if (/clearance/i.test(val)) return { cls: '', style: 'background:#FBEF5A;color:#6B6410' };
-    return { cls: 'bg-opl-panel dark:bg-op-panel text-gray-700 dark:text-gray-200', style: '' };
+    return { cls: 'bg-opl-panel dark:bg-op-panel text-gray-800 dark:text-gray-100', style: '' };
   }
 
   function fcRenderMatrix() {
@@ -10681,18 +10775,19 @@
     ).join('') + '<span class="inline-flex items-center gap-1.5"><span class="inline-block w-3 h-3 rounded-[3px]" style="background:#639922"></span>This week</span>';
 
     const nowCls = i => (i === fcNowIdx ? ' fc-now' : '');
-    const hdrLbl = 'fc-lbl bg-opl-panelHi dark:bg-op-panelHi text-opl-inkDim dark:text-op-inkDim';
+    const hdrLbl = 'fc-lbl bg-opl-panelHi dark:bg-op-panelHi text-opl-ink dark:text-op-ink';
     const hdrCell = 'fc-ctr bg-opl-panelHi dark:bg-op-panelHi';
 
     let h = '';
+    const qtrCell = `${hdrCell} text-gray-600 dark:text-gray-300 font-semibold`;
     h += `<tr><th class="${hdrLbl}"></th>`
-       + `<td class="${hdrCell} text-opl-inkDim dark:text-op-inkDim" colspan="13">Quarter Two</td>`
-       + `<td class="${hdrCell} text-opl-inkDim dark:text-op-inkDim" colspan="13">Quarter Three</td>`
-       + `<td class="${hdrCell} text-opl-inkDim dark:text-op-inkDim" colspan="13">Quarter Four</td></tr>`;
+       + `<td class="${qtrCell}" colspan="13">Quarter Two</td>`
+       + `<td class="${qtrCell}" colspan="13">Quarter Three</td>`
+       + `<td class="${qtrCell}" colspan="13">Quarter Four</td></tr>`;
     h += `<tr><th class="${hdrLbl}">Retail week</th>`;
     fcWeeks.forEach((w, i) => { h += `<td class="${hdrCell} text-gray-700 dark:text-gray-200 font-medium${nowCls(i)}">W${w.retail_week}</td>`; });
     h += `</tr><tr><th class="${hdrLbl}">Dates</th>`;
-    fcWeeks.forEach((w, i) => { h += `<td class="${hdrCell} text-opl-inkDim dark:text-op-inkDim${nowCls(i)}" style="font-size:10px">${fcShortDate(w.week_start)}–${(+w.week_end.split('-')[2])}</td>`; });
+    fcWeeks.forEach((w, i) => { h += `<td class="${hdrCell} text-gray-600 dark:text-gray-300${nowCls(i)}" style="font-size:10px">${fcShortDate(w.week_start)}–${(+w.week_end.split('-')[2])}</td>`; });
     h += '</tr>';
 
     const wkRows = [
@@ -10708,7 +10803,8 @@
       fcWeeks.forEach((w, i) => {
         const v = w[key];
         const c = fcWeekCell(kind, v);
-        h += `<td class="${c.cls}${nowCls(i)}" style="${c.style}" title="${fcEsc(v)}">${fcEsc(v || '')}</td>`;
+        const edit = fcEditMode ? ` data-fcwk="${w.retail_week}"` : '';
+        h += `<td class="${c.cls}${nowCls(i)}"${edit} style="${c.style}" title="${fcEsc(v)}">${fcEsc(v || '')}</td>`;
       });
       h += '</tr>';
     });
@@ -10726,16 +10822,18 @@
       const sec = (g.section !== prevSection); prevSection = g.section;
       h += `<tr class="${sec ? 'fc-sec' : ''}"><th class="${hdrLbl}">${fcEsc(g.label)}</th>`;
       const segs = g.segs.slice().sort((a, b) => a.start_week - b.start_week);
+      const addAttr = fcEditMode ? ` data-fcaddrow="${fcEsc(g.label)}"` : '';
       let wk = firstWeek;
       while (wk <= lastWeek) {
         const seg = segs.find(s => wk >= s.start_week && wk <= s.end_week);
         if (seg) {
           const col = FC_CMAP[seg.color] || ['#dddddd', '#333333'];
           const span = Math.min(seg.end_week, lastWeek) - wk + 1;
-          h += `<td class="fc-band" colspan="${span}" style="background:${col[0]};color:${col[1]}" title="${fcEsc(seg.label)}">${fcEsc(seg.label || '')}</td>`;
+          const edit = fcEditMode ? ` data-fcseg="${seg.id}"` : '';
+          h += `<td class="fc-band" colspan="${span}"${edit} style="background:${col[0]};color:${col[1]}" title="${fcEsc(seg.label)}">${fcEsc(seg.label || '')}</td>`;
           wk = seg.end_week + 1;
         } else {
-          h += `<td class="bg-opl-panel dark:bg-op-panel"></td>`; wk++;
+          h += `<td class="bg-opl-panel dark:bg-op-panel"${addAttr}${addAttr ? ` data-fcaddwk="${wk}"` : ''}></td>`; wk++;
         }
       }
       h += '</tr>';
@@ -10750,6 +10848,190 @@
     wrap.scrollLeft = Math.max(0, (fcNowIdx - 1) * 88 - 20);
   }
   window.fcScrollNow = fcScrollNow;
+
+  // ── Flow Calendar admin editor (Phase 2) ────────────────────────────
+  // Admins get an Edit toggle. In edit mode, clicking a week opens the week
+  // modal; clicking a band opens the segment modal; clicking an empty gap in a
+  // band row opens the segment modal prefilled to add into that row.
+  let fcDelArm = false;
+
+  function fcEditSetup() {
+    el('fc-edit-toggle').classList.toggle('hidden', !fcCanEdit);
+    if (!fcCanEdit) fcEditMode = false;
+    const cs = el('fs-color');
+    if (cs && !cs.options.length) cs.innerHTML = FC_COLOR_NAMES.map(([k, n]) => `<option value="${k}">${fcEsc(n)}</option>`).join('');
+    fcRefreshRowLabels();
+    if (!fcTblWired) { el('fc-tbl').addEventListener('click', fcTblClick); fcTblWired = true; }
+  }
+
+  function fcRefreshRowLabels() {
+    const seen = [];
+    fcSegments.forEach(s => { if (!seen.includes(s.row_label)) seen.push(s.row_label); });
+    const dl = el('fc-row-labels');
+    if (dl) dl.innerHTML = seen.map(l => `<option value="${fcEsc(l)}"></option>`).join('');
+  }
+
+  function fcToggleEdit() {
+    if (!fcCanEdit) return;
+    fcEditMode = !fcEditMode;
+    const btn = el('fc-edit-toggle');
+    btn.textContent = fcEditMode ? 'Done' : 'Edit';
+    btn.classList.toggle('border-accent-green', fcEditMode);
+    btn.classList.toggle('text-accent-green', fcEditMode);
+    el('fc-add-seg').classList.toggle('hidden', !fcEditMode);
+    el('fc-wrap').classList.toggle('fc-editing', fcEditMode);
+    fcRenderMatrix();
+  }
+  window.fcToggleEdit = fcToggleEdit;
+
+  function fcTblClick(e) {
+    if (!fcEditMode) return;
+    const td = e.target.closest('td'); if (!td) return;
+    if (td.dataset.fcwk) return fcEditWeek(+td.dataset.fcwk);
+    if (td.dataset.fcseg) return fcEditSegment(+td.dataset.fcseg);
+    if (td.dataset.fcaddrow) return fcAddSegment(td.dataset.fcaddrow, td.dataset.fcaddwk ? +td.dataset.fcaddwk : null);
+  }
+
+  async function fcPost(action, body) {
+    const resp = await fetch(`${WORKER_BASE}?action=${action}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    let data = {};
+    try { data = await resp.json(); } catch (e) {}
+    if (!resp.ok || (data && data.error)) throw new Error((data && data.error) || ('HTTP ' + resp.status));
+    return data;
+  }
+
+  // Week editor ---------------------------------------------------------
+  function fcEditWeek(wk) {
+    const w = fcWeeks.find(x => x.retail_week === wk); if (!w) return;
+    fcEditWk = wk;
+    el('fc-week-title').textContent = `Edit W${wk} · ${fcShortDate(w.week_start)}–${(+w.week_end.split('-')[2])}`;
+    el('fw-special_event').value = w.special_event || '';
+    el('fw-weekly_theme').value = w.weekly_theme || '';
+    el('fw-product_focus').value = w.product_focus || '';
+    el('fw-dd_loyalty').value = w.dd_loyalty || '';
+    el('fw-flash_sale').value = w.flash_sale || '';
+    el('fw-weekend_event').value = w.weekend_event || '';
+    el('fw-notes').value = w.notes || '';
+    el('fc-week-err').classList.add('hidden');
+    el('fc-week-modal').classList.remove('hidden');
+  }
+  window.fcEditWeek = fcEditWeek;
+  function fcCloseWeek() { el('fc-week-modal').classList.add('hidden'); fcEditWk = null; }
+  window.fcCloseWeek = fcCloseWeek;
+
+  async function fcSaveWeek() {
+    if (fcEditWk == null) return;
+    const btn = el('fc-week-save'); btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const body = {
+        fiscal_year: fcFY, retail_week: fcEditWk,
+        special_event: el('fw-special_event').value,
+        weekly_theme: el('fw-weekly_theme').value,
+        product_focus: el('fw-product_focus').value,
+        dd_loyalty: el('fw-dd_loyalty').value,
+        flash_sale: el('fw-flash_sale').value,
+        weekend_event: el('fw-weekend_event').value,
+        notes: el('fw-notes').value,
+      };
+      const data = await fcPost('flow-week-upsert', body);
+      const idx = fcWeeks.findIndex(x => x.retail_week === fcEditWk);
+      if (idx >= 0) fcWeeks[idx] = data.week || Object.assign({}, fcWeeks[idx], body);
+      fcCloseWeek();
+      fcRenderMatrix();
+    } catch (e) {
+      const err = el('fc-week-err'); err.textContent = (e && e.message) || 'Save failed'; err.classList.remove('hidden');
+    } finally { btn.disabled = false; btn.textContent = 'Save'; }
+  }
+  window.fcSaveWeek = fcSaveWeek;
+
+  // Segment editor ------------------------------------------------------
+  function fcSegGroupOrder(rowLabel) {
+    const g = fcSegments.find(s => s.row_label === rowLabel);
+    return g ? g.sort_order : (fcSegments.reduce((m, s) => Math.max(m, s.sort_order || 0), 0) + 10);
+  }
+  function fcOpenSeg(seg, prefill) {
+    fcEditSeg = seg; fcDelArm = false;
+    prefill = prefill || {};
+    el('fc-seg-title').textContent = seg ? 'Edit band segment' : 'Add band segment';
+    el('fs-row_label').value = seg ? (seg.row_label || '') : (prefill.row_label || '');
+    el('fs-section').value = seg ? (seg.section || 'seasonal') : (prefill.section || 'seasonal');
+    el('fs-color').value = seg ? (seg.color || 'sl') : (prefill.color || 'sl');
+    el('fs-start_week').value = seg ? seg.start_week : (prefill.start_week || '');
+    el('fs-end_week').value = seg ? seg.end_week : (prefill.start_week || '');
+    el('fs-label').value = seg ? (seg.label || '') : '';
+    el('fs-detail').value = seg ? (seg.detail || '') : '';
+    const del = el('fc-seg-del'); del.classList.toggle('hidden', !seg); del.textContent = 'Delete';
+    el('fc-seg-err').classList.add('hidden');
+    fcRefreshRowLabels();
+    el('fc-seg-modal').classList.remove('hidden');
+  }
+  function fcEditSegment(id) {
+    const seg = fcSegments.find(s => +s.id === +id); if (seg) fcOpenSeg(seg, null);
+  }
+  window.fcEditSegment = fcEditSegment;
+  function fcAddSegment(rowLabel, startWk) {
+    const prefill = { row_label: rowLabel || '', start_week: startWk || '' };
+    if (rowLabel) { const ex = fcSegments.find(s => s.row_label === rowLabel); if (ex) { prefill.section = ex.section; prefill.color = ex.color; } }
+    fcOpenSeg(null, prefill);
+  }
+  window.fcAddSegment = fcAddSegment;
+  function fcCloseSeg() { el('fc-seg-modal').classList.add('hidden'); fcEditSeg = null; fcDelArm = false; }
+  window.fcCloseSeg = fcCloseSeg;
+
+  async function fcSaveSeg() {
+    const err = el('fc-seg-err');
+    const fail = (m) => { err.textContent = m; err.classList.remove('hidden'); };
+    err.classList.add('hidden');
+    const rowLabel = el('fs-row_label').value.trim();
+    const sw = parseInt(el('fs-start_week').value, 10), ew = parseInt(el('fs-end_week').value, 10);
+    if (!rowLabel) return fail('Row label is required.');
+    if (!Number.isInteger(sw) || !Number.isInteger(ew) || sw > ew) return fail('Enter a valid start/end week (start ≤ end).');
+    const btn = el('fc-seg-save'); btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const body = {
+        id: fcEditSeg ? fcEditSeg.id : undefined,
+        fiscal_year: fcFY,
+        sort_order: fcSegGroupOrder(rowLabel),
+        row_label: rowLabel,
+        section: el('fs-section').value,
+        start_week: sw, end_week: ew,
+        label: el('fs-label').value.trim(),
+        color: el('fs-color').value,
+        detail: el('fs-detail').value.trim(),
+      };
+      const data = await fcPost('flow-segment-upsert', body);
+      if (fcEditSeg) Object.assign(fcEditSeg, body);
+      else fcSegments.push(Object.assign({ id: data.id }, body));
+      fcCloseSeg();
+      fcRefreshRowLabels();
+      fcRenderMatrix();
+    } catch (e) {
+      fail((e && e.message) || 'Save failed');
+    } finally { btn.disabled = false; btn.textContent = 'Save'; }
+  }
+  window.fcSaveSeg = fcSaveSeg;
+
+  async function fcDeleteSeg() {
+    if (!fcEditSeg) return;
+    const del = el('fc-seg-del');
+    if (!fcDelArm) { fcDelArm = true; del.textContent = 'Confirm delete?'; setTimeout(() => { fcDelArm = false; if (del) del.textContent = 'Delete'; }, 3000); return; }
+    fcDelArm = false; del.disabled = true;
+    try {
+      await fcPost('flow-segment-delete', { id: fcEditSeg.id, fiscal_year: fcFY });
+      const gone = fcEditSeg.id;
+      fcSegments = fcSegments.filter(s => +s.id !== +gone);
+      fcCloseSeg();
+      fcRefreshRowLabels();
+      fcRenderMatrix();
+    } catch (e) {
+      const err = el('fc-seg-err'); err.textContent = (e && e.message) || 'Delete failed'; err.classList.remove('hidden');
+    } finally { del.disabled = false; del.textContent = 'Delete'; }
+  }
+  window.fcDeleteSeg = fcDeleteSeg;
 
   function initWeeklyRetail() {
     if (wrsData) return;
@@ -13257,6 +13539,9 @@
     // (Flow Calendar is for everyone); Ad Reporting stays admin/superuser-only.
     el('nav-marketing-group').classList.remove('hidden');
     el('nav-marketing-ads').classList.toggle('hidden', !isAdmin);
+    // Flow Calendar admin editor: only admins/superusers see the Edit toggle.
+    fcCanEdit = isAdmin;
+    const fcEd = el('fc-edit-toggle'); if (fcEd) fcEd.classList.toggle('hidden', !isAdmin);
     el('nav-inventory').classList.toggle('hidden', !isAdmin);
     el('nav-supply-request').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');
     el('nav-users').classList.toggle('hidden', !isAdmin);
