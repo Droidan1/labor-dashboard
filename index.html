@@ -4354,21 +4354,24 @@
     const cmTotal = grandTotal > 0 ? grandTotal : 0;
     const cmPct = (v) => cmTotal > 0 ? (v / cmTotal * 100) : 0;
     const rPct = cmPct(todayRetail), bPct = cmPct(todayBin), aPct = cmPct(todayAuction);
+    // Whole % normally, but "<1%" for a channel with real sales that would
+    // otherwise round to a misleading 0% (e.g. a small auction day).
+    const cmFmtPct = (pct, val) => !hasData ? '—' : (val > 0 && Math.round(pct) === 0 ? '<1%' : Math.round(pct) + '%');
     el('cm-retail-seg').style.width = (hasData ? rPct : 0) + '%';
     el('cm-bin-seg').style.width = (hasData ? bPct : 0) + '%';
     el('cm-auction-seg').style.width = (hasData ? aPct : 0) + '%';
-    el('cm-retail-pct').textContent = hasData ? Math.round(rPct) + '%' : '—';
-    el('cm-bin-pct').textContent = hasData ? Math.round(bPct) + '%' : '—';
-    el('cm-auction-pct').textContent = hasData ? Math.round(aPct) + '%' : '—';
+    el('cm-retail-pct').textContent = cmFmtPct(rPct, todayRetail);
+    el('cm-bin-pct').textContent = cmFmtPct(bPct, todayBin);
+    el('cm-auction-pct').textContent = cmFmtPct(aPct, todayAuction);
     el('cm-retail-val').textContent = hasData ? fmtDollar(todayRetail) : '—';
     el('cm-bin-val').textContent = hasData ? fmtDollar(todayBin) : '—';
     el('cm-auction-val').textContent = hasData ? fmtDollar(todayAuction) : '—';
-    // Dim channels contributing nothing (rounded 0%) so the eye skips the
-    // $0 noise on single-channel days, without shifting the layout.
-    const cmDim = (id, pct) => { const c = el(id); if (c) c.style.opacity = (hasData && Math.round(pct) > 0) ? '1' : '0.32'; };
-    cmDim('cm-retail-col', rPct);
-    cmDim('cm-bin-col', bPct);
-    cmDim('cm-auction-col', aPct);
+    // Dim only channels with no actual sales (true $0) so a small-but-real
+    // channel keeps full opacity instead of reading as $0 noise.
+    const cmDim = (id, val) => { const c = el(id); if (c) c.style.opacity = (hasData && val > 0) ? '1' : '0.32'; };
+    cmDim('cm-retail-col', todayRetail);
+    cmDim('cm-bin-col', todayBin);
+    cmDim('cm-auction-col', todayAuction);
 
     // Matrix · Today (blended / all channels)
     el('mx-cart').textContent = hasData ? fmtDollar(totalAvgCart) : '—';
@@ -5944,8 +5947,11 @@
 
     // Channel mix (Retail / BIN / Auction)
     const cmTotal = retail + bin + auction;
-    const cmPct = (v) => cmTotal > 0 ? Math.round(v / cmTotal * 100) : 0;
+    const cmPct = (v) => cmTotal > 0 ? (v / cmTotal * 100) : 0;
     const rPct = cmPct(retail), bPct = cmPct(bin), aPct = cmPct(auction);
+    // Whole % normally, but "<1%" for a channel with real sales that would
+    // otherwise round to a misleading 0% (e.g. a small auction day).
+    const cmFmtPct = (pct, val) => (val > 0 && Math.round(pct) === 0) ? '<1%' : Math.round(pct) + '%';
 
     // LIVE pill — green when current week + live sales present.
     const showLive = sm.isCurrentWeek && sm.liveSales != null && sm.liveSales > 0;
@@ -6000,16 +6006,16 @@
                 <span class="h-full bg-accent-violet transition-[width] duration-500" style="width:${aPct}%"></span>
               </div>
               <div class="mt-3 grid grid-cols-3 gap-3 text-[11px]">
-                <div class="transition-opacity duration-300" style="opacity:${rPct > 0 ? 1 : 0.32}">
-                  <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-green flex-shrink-0"></span>Retail · ${rPct}%</div>
+                <div class="transition-opacity duration-300" style="opacity:${retail > 0 ? 1 : 0.32}">
+                  <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-green flex-shrink-0"></span>Retail · ${cmFmtPct(rPct, retail)}</div>
                   <div class="mt-0.5 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(retail)}</div>
                 </div>
-                <div class="transition-opacity duration-300" style="opacity:${bPct > 0 ? 1 : 0.32}">
-                  <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-blue flex-shrink-0"></span>BIN · ${bPct}%</div>
+                <div class="transition-opacity duration-300" style="opacity:${bin > 0 ? 1 : 0.32}">
+                  <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-blue flex-shrink-0"></span>BIN · ${cmFmtPct(bPct, bin)}</div>
                   <div class="mt-0.5 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(bin)}</div>
                 </div>
-                <div class="transition-opacity duration-300" style="opacity:${aPct > 0 ? 1 : 0.32}">
-                  <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction · ${aPct}%</div>
+                <div class="transition-opacity duration-300" style="opacity:${auction > 0 ? 1 : 0.32}">
+                  <div class="flex items-center gap-1.5 font-medium text-opl-inkDim dark:text-op-inkDim"><span class="w-2 h-2 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction · ${cmFmtPct(aPct, auction)}</div>
                   <div class="mt-0.5 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(auction)}</div>
                 </div>
               </div>
