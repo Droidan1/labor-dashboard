@@ -5320,6 +5320,92 @@ export default {
       return new Response(JSON.stringify(result), { status: result.error ? 400 : 200, headers: corsJson });
     }
 
+    // ── Meta Page publish test (Slice-0 spike) ───────────────────────
+    // Admin-only. Proves we can publish to a Facebook Page via the Graph API
+    // before building the full pipeline. Defaults to published:false (staged /
+    // unpublished) so NOTHING goes public during testing — the post is only
+    // visible in the Page's Publishing Tools until you explicitly pass
+    // published:true. Token comes from the request body ("token") or the
+    // META_PAGE_TOKEN secret. Works whether the token is a system-user, user,
+    // or page token (it derives the Page token). This endpoint is a temporary
+    // spike and can be removed once the real pipeline lands.
+    // Body: { page_id, message?, image_url?, published?, token?, delete_id? }
+    if (request.method === "POST" && url.searchParams.get("action") === "fb-publish-test") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      const ver = env.META_API_VERSION || META_API_VERSION;
+      let b;
+      try { b = await request.json(); } catch (e) { b = {}; }
+      const token = String(b.token || env.META_PAGE_TOKEN || "").trim();
+      if (!token) {
+        return new Response(JSON.stringify({ error: 'No token — pass "token" in the body or set the META_PAGE_TOKEN secret (wrangler secret put META_PAGE_TOKEN)' }), { status: 400, headers: corsJson });
+      }
+      const gGet = async (path, params) => {
+        const qs = new URLSearchParams({ ...params, access_token: token }).toString();
+        const r = await fetch(`https://graph.facebook.com/${ver}/${path}?${qs}`);
+        return { ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) };
+      };
+      const gPost = async (path, form) => {
+        const body = new URLSearchParams(form);
+        if (!body.has("access_token")) body.set("access_token", token);
+        const r = await fetch(`https://graph.facebook.com/${ver}/${path}`, { method: "POST", body });
+        return { ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) };
+      };
+
+      try {
+        // Cleanup a prior test post/photo. Needs the Page token when deleting a
+        // Page-owned object, so derive it from page_id when provided.
+        if (b.delete_id) {
+          let delTok = token;
+          if (b.page_id) {
+            const pg = await gGet(String(b.page_id), { fields: "access_token" });
+            if (pg.body && pg.body.access_token) delTok = pg.body.access_token;
+          }
+          const qs = new URLSearchParams({ access_token: delTok }).toString();
+          const r = await fetch(`https://graph.facebook.com/${ver}/${encodeURIComponent(String(b.delete_id))}?${qs}`, { method: "DELETE" });
+          const body = await r.json().catch(() => ({}));
+          return new Response(JSON.stringify({ ok: r.ok, action: "delete", id: b.delete_id, response: body }), { status: r.ok ? 200 : 400, headers: corsJson });
+        }
+
+        const pageId = String(b.page_id || "").trim();
+        if (!pageId) {
+          return new Response(JSON.stringify({ error: "page_id is required" }), { status: 400, headers: corsJson });
+        }
+
+        // Derive the Page access token + confirm which Page we're posting to.
+        const pageInfo = await gGet(pageId, { fields: "name,access_token" });
+        if (!pageInfo.body || pageInfo.body.error) {
+          return new Response(JSON.stringify({ error: "Couldn't read the Page — check page_id and that the token has pages_show_list / pages_read_engagement", detail: pageInfo.body && pageInfo.body.error }), { status: 400, headers: corsJson });
+        }
+        const pageToken = pageInfo.body.access_token || token;
+        const pageName = pageInfo.body.name || null;
+        if (!pageInfo.body.access_token) {
+          // No Page token means the token isn't tied to this Page as a manager.
+          return new Response(JSON.stringify({ error: "Token has no access_token for this Page — assign the system user to the Page with content permission (pages_manage_posts)", page: { id: pageId, name: pageName } }), { status: 400, headers: corsJson });
+        }
+
+        const message = b.message == null ? "" : String(b.message);
+        const published = b.published === true; // default false = staged/unpublished
+        const imageUrl = String(b.image_url || "").trim();
+
+        const result = imageUrl
+          ? await gPost(`${pageId}/photos`, { url: imageUrl, caption: message, published: String(published), access_token: pageToken })
+          : await gPost(`${pageId}/feed`, { message: message || "Bargain Lane publish test", published: String(published), access_token: pageToken });
+
+        const ok = result.ok && !(result.body && result.body.error);
+        return new Response(JSON.stringify({
+          ok,
+          page: { id: pageId, name: pageName },
+          endpoint: imageUrl ? "photos" : "feed",
+          published,
+          note: published ? "PUBLISHED LIVE on the Page" : "staged as unpublished (published=false) — visible in the Page's Publishing Tools, not public",
+          response: result.body,
+        }), { status: ok ? 200 : 400, headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
     // ── Marketing Flow Calendar: ?action=flow-calendar ───────────────
     // The promotional pipeline (source of truth). Returns the full fiscal year:
     // `weeks` (marketing_flow, one row per retail week) plus `segments`
