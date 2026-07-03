@@ -530,6 +530,10 @@
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
               <span class="nav-label">Flow Calendar</span>
             </div>
+            <div id="nav-content" class="nav-item nav-subitem" data-page="content" onclick="navigateToPage('content')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></span>
+              <span class="nav-label">Content</span>
+            </div>
             <div id="nav-submit-photos" class="nav-item nav-subitem" data-page="submit-photos" onclick="navigateToPage('submit-photos')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>
               <span class="nav-label">Submit Photos</span>
@@ -609,6 +613,9 @@
         </button>
         <button id="more-flow-calendar" onclick="navigateToPage('flow-calendar');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Flow Calendar
+        </button>
+        <button id="more-content" onclick="navigateToPage('content');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
+          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>Content
         </button>
         <button id="more-marketing" onclick="navigateToPage('marketing');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Ad Reporting
@@ -1476,6 +1483,30 @@
         <p id="sp-status" class="hidden text-sm text-center"></p>
       </div>
     </div><!-- end #page-submit-photos -->
+
+    <div id="page-content" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-3xl mx-auto">
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Content</h1>
+          <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Premade thumbnails &amp; bin-post drafts.</p>
+        </div>
+      </div>
+
+      <div class="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-8">
+        <section>
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <h2 class="text-sm font-bold text-opl-ink dark:text-op-ink">Premade thumbnails</h2>
+              <p class="text-[12px] text-opl-inkDim dark:text-op-inkDim">Branded cover images used as the first image of a bin post.</p>
+            </div>
+            <label for="ct-thumb-file" class="shrink-0 cursor-pointer px-3.5 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-xl transition-colors">+ Add</label>
+            <input id="ct-thumb-file" type="file" accept="image/*" multiple class="hidden" onchange="ctUploadThumb()">
+          </div>
+          <p id="ct-thumb-status" class="hidden text-sm mb-2"></p>
+          <div id="ct-thumb-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
+        </section>
+      </div>
+    </div><!-- end #page-content -->
 
     <div id="page-marketing" class="hidden">
       <!-- Sticky header + shared filters -->
@@ -6110,7 +6141,7 @@
     // Show page — hide every other top-level page (previously only some were
     // listed, so drilling into a store from All Stores left both pages
     // visible stacked in the DOM).
-    const _pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','marketing','flow-calendar','inventory','supply-request','submit-photos','settings','users','admin-settings'];
+    const _pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','marketing','flow-calendar','inventory','supply-request','submit-photos','content','settings','users','admin-settings'];
     for (const _p of _pages) {
       const _pe = el('page-' + _p);
       if (_pe) _pe.classList.toggle('hidden', _p !== 'store-detail');
@@ -6367,7 +6398,7 @@
 
   function navigateToPage(page, pushHistory = true) {
     // Guard admin-only pages
-    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar'];
+    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content'];
     if (adminOnly.includes(page)) {
       const role = currentUser && currentUser.role;
       if (role !== 'superuser' && role !== 'admin') return;
@@ -6388,7 +6419,7 @@
     if (pushHistory && currentPage && currentPage !== page) {
       pushNavHistory();
     }
-    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'settings', 'users', 'admin-settings'];
+    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
       if (pageEl) pageEl.classList.toggle('hidden', p !== page);
@@ -6420,7 +6451,7 @@
       if (typeof initFlowCalendar === 'function') initFlowCalendar();
     }
     // Keep the Marketing dropdown expanded while on either of its pages.
-    if ((page === 'marketing' || page === 'flow-calendar' || page === 'submit-photos') && typeof toggleMarketingMenu === 'function') {
+    if ((page === 'marketing' || page === 'flow-calendar' || page === 'submit-photos' || page === 'content') && typeof toggleMarketingMenu === 'function') {
       toggleMarketingMenu(true);
     }
     if (page === 'users') {
@@ -6431,6 +6462,9 @@
     }
     if (page === 'submit-photos') {
       if (typeof initSubmitPhotos === 'function') initSubmitPhotos();
+    }
+    if (page === 'content') {
+      if (typeof initContent === 'function') initContent();
     }
 
     // Close mobile sidebar
@@ -8320,7 +8354,7 @@
     if (chip) chip.textContent = `Week ${selectedWeek}`;
     el('as-metrics').innerHTML = buildAllStoresHero();
 
-    const pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','marketing','flow-calendar','inventory','supply-request','submit-photos','settings','users','admin-settings'];
+    const pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','marketing','flow-calendar','inventory','supply-request','submit-photos','content','settings','users','admin-settings'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
       if (pageEl) pageEl.classList.toggle('hidden', p !== 'all-stores-detail');
@@ -11198,6 +11232,63 @@
   }
   window.spSubmit = spSubmit;
 
+  // ── Content (Slice 1b): premade thumbnail library (admin) ───────────
+  function initContent() { ctLoadThumbs(); }
+  window.initContent = initContent;
+
+  async function ctLoadThumbs() {
+    const grid = el('ct-thumb-grid');
+    grid.innerHTML = '<div class="col-span-full text-sm text-opl-inkDim dark:text-op-inkDim py-6 text-center">Loading…</div>';
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=thumbnails`, { credentials: 'include' });
+      const d = await r.json();
+      const list = (d && d.thumbnails) || [];
+      if (!list.length) { grid.innerHTML = '<div class="col-span-full text-sm text-opl-inkDim dark:text-op-inkDim py-6 text-center">No thumbnails yet — tap <b>+ Add</b> to upload one.</div>'; return; }
+      grid.innerHTML = list.map(t => `
+        <div class="relative rounded-xl overflow-hidden border border-[rgba(20,16,8,0.1)] dark:border-op-border bg-opl-panelHi dark:bg-op-panelHi">
+          <img src="${WORKER_BASE}?action=thumbnail&id=${t.id}" class="w-full aspect-square object-cover" alt="${escapeHtml(t.name || '')}">
+          <button type="button" onclick="ctDeleteThumb(${t.id})" aria-label="Remove thumbnail" class="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 text-white text-lg leading-none flex items-center justify-center active:scale-90 transition">&times;</button>
+          ${t.name ? `<div class="px-2 py-1 text-[11px] font-medium text-opl-ink dark:text-op-ink truncate">${escapeHtml(t.name)}</div>` : ''}
+        </div>`).join('');
+    } catch (e) {
+      grid.innerHTML = '<div class="col-span-full text-sm text-red-500 py-6 text-center">Couldn’t load thumbnails.</div>';
+    }
+  }
+
+  async function ctUploadThumb() {
+    const inp = el('ct-thumb-file');
+    const files = Array.from(inp.files || []);
+    inp.value = '';
+    if (!files.length) return;
+    const st = el('ct-thumb-status');
+    const show = (m, c) => { st.textContent = m; st.className = 'text-sm mb-2 ' + c; st.classList.remove('hidden'); };
+    let ok = 0, fail = 0;
+    show(`Uploading ${files.length}…`, 'text-opl-inkDim dark:text-op-inkDim');
+    for (const f of files) {
+      try {
+        const fd = new FormData();
+        fd.append('thumbnail', f);
+        fd.append('name', f.name.replace(/\.[^.]+$/, ''));
+        const r = await fetch(`${WORKER_BASE}?action=thumbnail-upload`, { method: 'POST', credentials: 'include', body: fd });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.ok) ok++; else fail++;
+      } catch (_) { fail++; }
+    }
+    if (fail) show(`Added ${ok}, ${fail} failed.`, 'text-op-bad'); else st.classList.add('hidden');
+    ctLoadThumbs();
+  }
+  window.ctUploadThumb = ctUploadThumb;
+
+  async function ctDeleteThumb(id) {
+    const ok = await uiConfirm('Remove this thumbnail?', { danger: true, okText: 'Remove' });
+    if (!ok) return;
+    try {
+      await fetch(`${WORKER_BASE}?action=thumbnail-delete`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+    } catch (_) {}
+    ctLoadThumbs();
+  }
+  window.ctDeleteThumb = ctDeleteThumb;
+
   // ── Flow Calendar admin editor (Phase 2) ────────────────────────────
   // Admins get an Edit toggle. In edit mode, clicking a week opens the week
   // modal; clicking a band opens the segment modal; clicking an empty gap in a
@@ -13889,6 +13980,7 @@
     el('nav-marketing-group').classList.remove('hidden');
     el('nav-marketing-ads').classList.toggle('hidden', !isAdmin);     // Ad Reporting: admin/superuser
     el('nav-flow-calendar').classList.toggle('hidden', !isAdmin);     // Flow Calendar: admin/superuser
+    el('nav-content').classList.toggle('hidden', !isAdmin);          // Content (composer): admin/superuser
     el('nav-submit-photos').classList.remove('hidden');              // Submit Photos: all users
     // Flow Calendar admin editor: only admins/superusers see the Edit toggle.
     fcCanEdit = isAdmin;
@@ -14980,12 +15072,13 @@
       gate('bn-supply', vis('nav-supply-request'), 'flex');
       gate('more-submit-photos', vis('nav-submit-photos'));
       gate('more-flow-calendar', vis('nav-flow-calendar'));
+      gate('more-content', vis('nav-content'));
       gate('more-marketing', vis('nav-marketing-ads'));
       gate('more-users', vis('nav-users'));
       gate('more-admin', vis('nav-admin-settings'));
       gate('more-settings', vis('nav-settings'));
       // active tab
-      var morePages = { 'marketing': 1, 'flow-calendar': 1, 'submit-photos': 1, 'users': 1, 'admin-settings': 1, 'settings': 1 };
+      var morePages = { 'marketing': 1, 'flow-calendar': 1, 'submit-photos': 1, 'content': 1, 'users': 1, 'admin-settings': 1, 'settings': 1 };
       // Detail pages are sub-pages of Dashboard — keep that tab highlighted.
       var detailPages = { 'store-detail': 1, 'all-stores-detail': 1 };
       var activeTab = morePages[page] ? 'more' : (detailPages[page] ? 'dashboard' : page);

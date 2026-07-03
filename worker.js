@@ -5476,6 +5476,80 @@ export default {
       return new Response(obj.body, { headers: h });
     }
 
+    // ── Marketing thumbnails (Slice 1b): admin premade cover images ──
+    // Admin/superuser only. Upload/list/serve/soft-delete premade thumbnails
+    // (branded cover images) used as the first image of a bin post.
+    if (request.method === "POST" && url.searchParams.get("action") === "thumbnail-upload") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const form = await request.formData();
+        const name = String(form.get("name") || "").trim() || null;
+        const file = form.get("thumbnail") || form.get("photo");
+        if (!file || typeof file.arrayBuffer !== "function") return new Response(JSON.stringify({ error: "No image file" }), { status: 400, headers: corsJson });
+        const ct = file.type || "application/octet-stream";
+        if (!ct.startsWith("image/")) return new Response(JSON.stringify({ error: "File must be an image" }), { status: 400, headers: corsJson });
+        const buf = await file.arrayBuffer();
+        const bytes = buf.byteLength;
+        if (bytes > 15 * 1024 * 1024) return new Response(JSON.stringify({ error: "Image too large (max 15MB)" }), { status: 400, headers: corsJson });
+        const ext = (ct.split("/")[1] || "png").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "png";
+        const key = `marketing/_thumbnails/${crypto.randomUUID()}.${ext}`;
+        await env.MEDIA.put(key, buf, { httpMetadata: { contentType: ct } });
+        const res = await env.DB.prepare(
+          `INSERT INTO marketing_thumbnails (name, r2_key, content_type, bytes, uploaded_by, active, created_at)
+           VALUES (?,?,?,?,?, 1, ?)`
+        ).bind(name, key, ct, bytes, (currentUser && currentUser.email) || null, new Date().toISOString()).run();
+        const id = res.meta && res.meta.last_row_id;
+        return new Response(JSON.stringify({ ok: true, id, name, url: `?action=thumbnail&id=${id}` }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // List active thumbnails (admin). GET ?action=thumbnails
+    if (request.method === "GET" && url.searchParams.get("action") === "thumbnails") {
+      if (!isAdminSecret && !canAccessInventory(currentUser)) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      const { results } = await env.DB.prepare(
+        "SELECT id, name, content_type, bytes, uploaded_by, created_at FROM marketing_thumbnails WHERE active = 1 ORDER BY created_at DESC"
+      ).all();
+      const thumbnails = (results || []).map(t => ({ ...t, url: `?action=thumbnail&id=${t.id}` }));
+      return new Response(JSON.stringify({ ok: true, thumbnails }), { headers: corsJson });
+    }
+
+    // Serve a thumbnail from R2 (admin). GET ?action=thumbnail&id=123
+    if (request.method === "GET" && url.searchParams.get("action") === "thumbnail") {
+      if (!isAdminSecret && !canAccessInventory(currentUser)) return new Response("Forbidden", { status: 403, headers: corsHeaders });
+      if (!env.DB || !env.MEDIA) return new Response("Storage not configured", { status: 500, headers: corsHeaders });
+      const id = parseInt(url.searchParams.get("id") || "", 10);
+      if (!Number.isInteger(id)) return new Response("Invalid id", { status: 400, headers: corsHeaders });
+      const row = await env.DB.prepare("SELECT r2_key, content_type FROM marketing_thumbnails WHERE id = ?").bind(id).first();
+      if (!row) return new Response("Not found", { status: 404, headers: corsHeaders });
+      const obj = await env.MEDIA.get(row.r2_key);
+      if (!obj) return new Response("Gone", { status: 404, headers: corsHeaders });
+      const h = new Headers(corsHeaders);
+      h.set("Content-Type", row.content_type || "image/png");
+      h.set("Cache-Control", "private, max-age=3600");
+      return new Response(obj.body, { headers: h });
+    }
+
+    // Soft-delete a thumbnail (admin). POST ?action=thumbnail-delete { id }
+    if (request.method === "POST" && url.searchParams.get("action") === "thumbnail-delete") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const id = parseInt(b.id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        const res = await env.DB.prepare("UPDATE marketing_thumbnails SET active = 0 WHERE id = ?").bind(id).run();
+        return new Response(JSON.stringify({ ok: true, updated: (res.meta && res.meta.changes) || 0 }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
     // ── Marketing Flow Calendar: ?action=flow-calendar ───────────────
     // The promotional pipeline (source of truth). Returns the full fiscal year:
     // `weeks` (marketing_flow, one row per retail week) plus `segments`
