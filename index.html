@@ -530,6 +530,10 @@
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
               <span class="nav-label">Flow Calendar</span>
             </div>
+            <div id="nav-submit-photos" class="nav-item nav-subitem" data-page="submit-photos" onclick="navigateToPage('submit-photos')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>
+              <span class="nav-label">Submit Photos</span>
+            </div>
           </div>
         </div>
         <div id="nav-inventory" class="hidden nav-item" data-page="inventory" onclick="navigateToPage('inventory')">
@@ -539,10 +543,6 @@
         <div id="nav-supply-request" class="hidden nav-item" data-page="supply-request" onclick="navigateToPage('supply-request')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/><line x1="9" y1="9" x2="10" y2="9"/></svg></span>
           <span class="nav-label">Supply Request</span>
-        </div>
-        <div id="nav-submit-photos" class="hidden nav-item" data-page="submit-photos" onclick="navigateToPage('submit-photos')">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>
-          <span class="nav-label">Submit Photos</span>
         </div>
         <div id="nav-users" class="hidden nav-item" data-page="users" onclick="navigateToPage('users')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
@@ -6367,12 +6367,12 @@
 
   function navigateToPage(page, pushHistory = true) {
     // Guard admin-only pages
-    const adminOnly = ['inventory', 'users'];
+    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar'];
     if (adminOnly.includes(page)) {
       const role = currentUser && currentUser.role;
       if (role !== 'superuser' && role !== 'admin') return;
     }
-    if (page === 'supply-request' || page === 'submit-photos') {
+    if (page === 'supply-request') {
       const role = currentUser && currentUser.role;
       const allowed = ['superuser','admin','district_manager','manager'];
       if (!allowed.includes(role)) return;
@@ -6420,7 +6420,7 @@
       if (typeof initFlowCalendar === 'function') initFlowCalendar();
     }
     // Keep the Marketing dropdown expanded while on either of its pages.
-    if ((page === 'marketing' || page === 'flow-calendar') && typeof toggleMarketingMenu === 'function') {
+    if ((page === 'marketing' || page === 'flow-calendar' || page === 'submit-photos') && typeof toggleMarketingMenu === 'function') {
       toggleMarketingMenu(true);
     }
     if (page === 'users') {
@@ -13883,16 +13883,18 @@
     // Show/hide nav items based on role
     const isAdmin = user.role === 'superuser' || user.role === 'admin';
     const isSuperuser = user.role === 'superuser';
-    // Marketing dropdown: the group is visible to every authenticated user
-    // (Flow Calendar is for everyone); Ad Reporting stays admin/superuser-only.
-    el('nav-marketing-group').classList.toggle('hidden', !isAdmin);   // Marketing dropdown (Ad Reporting + Flow Calendar): admin/superuser only
-    el('nav-marketing-ads').classList.toggle('hidden', !isAdmin);
+    // Marketing dropdown: the GROUP is visible to every authenticated user so
+    // all users can reach Submit Photos. Ad Reporting + Flow Calendar stay
+    // admin/superuser-only (gated individually below).
+    el('nav-marketing-group').classList.remove('hidden');
+    el('nav-marketing-ads').classList.toggle('hidden', !isAdmin);     // Ad Reporting: admin/superuser
+    el('nav-flow-calendar').classList.toggle('hidden', !isAdmin);     // Flow Calendar: admin/superuser
+    el('nav-submit-photos').classList.remove('hidden');              // Submit Photos: all users
     // Flow Calendar admin editor: only admins/superusers see the Edit toggle.
     fcCanEdit = isAdmin;
     const fcEd = el('fc-edit-toggle'); if (fcEd) fcEd.classList.toggle('hidden', !isAdmin);
     el('nav-inventory').classList.toggle('hidden', !isAdmin);
     el('nav-supply-request').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');
-    el('nav-submit-photos').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');
     el('nav-users').classList.toggle('hidden', !isAdmin);
     el('nav-admin-settings').classList.toggle('hidden', !isSuperuser);
     el('nav-settings').classList.remove('hidden');
@@ -14977,7 +14979,7 @@
       gate('bn-inventory', vis('nav-inventory'), 'flex');
       gate('bn-supply', vis('nav-supply-request'), 'flex');
       gate('more-submit-photos', vis('nav-submit-photos'));
-      gate('more-flow-calendar', vis('nav-marketing-group'));
+      gate('more-flow-calendar', vis('nav-flow-calendar'));
       gate('more-marketing', vis('nav-marketing-ads'));
       gate('more-users', vis('nav-users'));
       gate('more-admin', vis('nav-admin-settings'));
