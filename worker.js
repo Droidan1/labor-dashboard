@@ -5550,6 +5550,90 @@ export default {
       }
     }
 
+    // ── Bin-post composer (Slice 1b-2): drafts (admin) ───────────────
+    // List submitted photos to pick from. GET ?action=marketing-photos&store=&type=&status=
+    if (request.method === "GET" && url.searchParams.get("action") === "marketing-photos") {
+      if (!isAdminSecret && !canAccessInventory(currentUser)) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      const store = String(url.searchParams.get("store") || "").trim().toUpperCase();
+      const type = String(url.searchParams.get("type") || "").trim().toLowerCase();
+      const status = String(url.searchParams.get("status") || "new").trim().toLowerCase();
+      let q = "SELECT id, store, photo_type, note, uploader, status, created_at FROM marketing_photos WHERE 1=1";
+      const binds = [];
+      if (store) { q += " AND store = ?"; binds.push(store); }
+      if (type) { q += " AND photo_type = ?"; binds.push(type); }
+      if (status && status !== "all") { q += " AND status = ?"; binds.push(status); }
+      q += " ORDER BY created_at DESC LIMIT 200";
+      const { results } = await env.DB.prepare(q).bind(...binds).all();
+      const photos = (results || []).map(p => ({ ...p, url: `?action=photo&id=${p.id}` }));
+      return new Response(JSON.stringify({ ok: true, photos }), { headers: corsJson });
+    }
+
+    // Save (create/update) a draft. POST ?action=draft-save
+    if (request.method === "POST" && url.searchParams.get("action") === "draft-save") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const store = String(b.store || "").trim().toUpperCase();
+        if (!ALL_STORES.includes(store)) return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+        const thumbnailId = (b.thumbnail_id != null && b.thumbnail_id !== "") ? parseInt(b.thumbnail_id, 10) : null;
+        const photoIds = Array.isArray(b.photo_ids) ? b.photo_ids.map(x => parseInt(x, 10)).filter(Number.isInteger) : [];
+        const caption = (b.caption == null ? "" : String(b.caption)).trim() || null;
+        const captionSource = (b.caption_source === "ai") ? "ai" : "manual";
+        const now = new Date().toISOString();
+        if (b.id != null && b.id !== "") {
+          const id = parseInt(b.id, 10);
+          const res = await env.DB.prepare(
+            `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, updated_at=? WHERE id=?`
+          ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, now, id).run();
+          if (!res.meta || res.meta.changes === 0) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
+          return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
+        }
+        const res = await env.DB.prepare(
+          `INSERT INTO marketing_drafts (store, thumbnail_id, photo_ids, caption, caption_source, status, created_by, created_at, updated_at)
+           VALUES (?,?,?,?,?, 'draft', ?, ?, ?)`
+        ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, (currentUser && currentUser.email) || null, now, now).run();
+        return new Response(JSON.stringify({ ok: true, id: res.meta && res.meta.last_row_id }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // List drafts. GET ?action=drafts&status=
+    if (request.method === "GET" && url.searchParams.get("action") === "drafts") {
+      if (!isAdminSecret && !canAccessInventory(currentUser)) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      const status = String(url.searchParams.get("status") || "").trim().toLowerCase();
+      let q = "SELECT * FROM marketing_drafts WHERE 1=1";
+      const binds = [];
+      if (status && status !== "all") { q += " AND status = ?"; binds.push(status); }
+      q += " ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 100";
+      const { results } = await env.DB.prepare(q).bind(...binds).all();
+      const drafts = (results || []).map(d => {
+        let pids = []; try { pids = JSON.parse(d.photo_ids || "[]"); } catch (_) {}
+        return { ...d, photo_ids: pids };
+      });
+      return new Response(JSON.stringify({ ok: true, drafts }), { headers: corsJson });
+    }
+
+    // Delete a draft. POST ?action=draft-delete { id }
+    if (request.method === "POST" && url.searchParams.get("action") === "draft-delete") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const id = parseInt(b.id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        const res = await env.DB.prepare("DELETE FROM marketing_drafts WHERE id = ?").bind(id).run();
+        return new Response(JSON.stringify({ ok: true, deleted: (res.meta && res.meta.changes) || 0 }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
     // ── Marketing Flow Calendar: ?action=flow-calendar ───────────────
     // The promotional pipeline (source of truth). Returns the full fiscal year:
     // `weeks` (marketing_flow, one row per retail week) plus `segments`
