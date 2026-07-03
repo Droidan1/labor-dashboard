@@ -5417,6 +5417,65 @@ export default {
       }
     }
 
+    // ── Marketing intake (Slice 1a): manager photo submission ────────
+    // POST multipart/form-data (photo, store, photo_type, note). Any signed-in
+    // user may submit for a store they're allowed to (admins: any). The original
+    // goes to R2 (MEDIA); metadata to marketing_photos. X-Snapshot-Secret allowed
+    // for tooling/verification.
+    if (request.method === "POST" && url.searchParams.get("action") === "photo-upload") {
+      if (!currentUser && !isAdminSecret) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const form = await request.formData();
+        const store = String(form.get("store") || "").trim().toUpperCase();
+        const ptypeRaw = String(form.get("photo_type") || "other").trim().toLowerCase();
+        const note = String(form.get("note") || "").trim() || null;
+        const file = form.get("photo");
+        if (!ALL_STORES.includes(store)) return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+        const allow = currentUser ? allowedStores(currentUser) : null;
+        if (allow && !allow.includes(store)) return new Response(JSON.stringify({ error: "Forbidden for this store" }), { status: 403, headers: corsJson });
+        const TYPES = ["retail", "bins", "event", "team", "other"];
+        const ptype = TYPES.includes(ptypeRaw) ? ptypeRaw : "other";
+        if (!file || typeof file.arrayBuffer !== "function") return new Response(JSON.stringify({ error: "No photo file" }), { status: 400, headers: corsJson });
+        const ct = file.type || "application/octet-stream";
+        if (!ct.startsWith("image/")) return new Response(JSON.stringify({ error: "File must be an image" }), { status: 400, headers: corsJson });
+        const buf = await file.arrayBuffer();
+        const bytes = buf.byteLength;
+        if (bytes > 15 * 1024 * 1024) return new Response(JSON.stringify({ error: "Image too large (max 15MB)" }), { status: 400, headers: corsJson });
+        const now = new Date();
+        const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+        const ext = (ct.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "jpg";
+        const key = `marketing/${store}/${ptype}/${ym}/${crypto.randomUUID()}.${ext}`;
+        await env.MEDIA.put(key, buf, { httpMetadata: { contentType: ct } });
+        const res = await env.DB.prepare(
+          `INSERT INTO marketing_photos (store, photo_type, r2_key, content_type, bytes, uploader, note, status, created_at)
+           VALUES (?,?,?,?,?,?,?, 'new', ?)`
+        ).bind(store, ptype, key, ct, bytes, (currentUser && currentUser.email) || null, note, now.toISOString()).run();
+        const id = res.meta && res.meta.last_row_id;
+        return new Response(JSON.stringify({ ok: true, id, store, photo_type: ptype, r2_key: key, bytes, url: `?action=photo&id=${id}` }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // Serve a submitted photo from R2 (auth-gated). GET ?action=photo&id=123
+    if (request.method === "GET" && url.searchParams.get("action") === "photo") {
+      if (!currentUser && !isAdminSecret) return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+      if (!env.DB || !env.MEDIA) return new Response("Storage not configured", { status: 500, headers: corsHeaders });
+      const id = parseInt(url.searchParams.get("id") || "", 10);
+      if (!Number.isInteger(id)) return new Response("Invalid id", { status: 400, headers: corsHeaders });
+      const row = await env.DB.prepare("SELECT r2_key, content_type, store FROM marketing_photos WHERE id = ?").bind(id).first();
+      if (!row) return new Response("Not found", { status: 404, headers: corsHeaders });
+      const allow = currentUser ? allowedStores(currentUser) : null;
+      if (allow && !allow.includes(row.store)) return new Response("Forbidden", { status: 403, headers: corsHeaders });
+      const obj = await env.MEDIA.get(row.r2_key);
+      if (!obj) return new Response("Gone", { status: 404, headers: corsHeaders });
+      const h = new Headers(corsHeaders);
+      h.set("Content-Type", row.content_type || "image/jpeg");
+      h.set("Cache-Control", "private, max-age=3600");
+      return new Response(obj.body, { headers: h });
+    }
+
     // ── Marketing Flow Calendar: ?action=flow-calendar ───────────────
     // The promotional pipeline (source of truth). Returns the full fiscal year:
     // `weeks` (marketing_flow, one row per retail week) plus `segments`

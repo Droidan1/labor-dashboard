@@ -55,6 +55,12 @@ binding = "DB"
 database_name = "labor-dashboard-db"
 database_id = "3fa911d7-31d6-438c-985f-7ac08c407d2d"
 
+# R2 bucket for marketing media (manager photo submissions, generated assets).
+# Create with: npx wrangler r2 bucket create bl-marketing-media
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "bl-marketing-media"
+
 # ── Staging environment ───────────────────────────────────────────────
 # Deploy:  npx wrangler deploy --env staging
 # Isolated D1 + KV; NO crons (avoids double notifications / snapshot writes).
@@ -102,3 +108,7 @@ id = "f90d56417cf448aa979ad83988daa8b1"
 binding = "DB"
 database_name = "labor-dashboard-db-staging"
 database_id = "b40982c2-4009-4842-bc17-fa0977468b07"
+
+[[env.staging.r2_buckets]]
+binding = "MEDIA"
+bucket_name = "bl-marketing-media-staging"
