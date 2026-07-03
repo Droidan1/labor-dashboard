@@ -1461,9 +1461,9 @@
           <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Photos</label>
           <label for="sp-files" class="flex flex-col items-center justify-center gap-2 w-full py-8 rounded-2xl border-2 border-dashed border-[rgba(20,16,8,0.15)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim cursor-pointer hover:border-accent-green/50 transition-colors">
             <svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            <span class="text-sm font-medium">Tap to take or choose photos</span>
+            <span class="text-sm font-medium">Tap to upload photos</span>
           </label>
-          <input id="sp-files" type="file" accept="image/*" capture="environment" multiple class="hidden" onchange="spFilesChange()">
+          <input id="sp-files" type="file" accept="image/*" multiple class="hidden" onchange="spFilesChange()">
           <div id="sp-thumbs" class="grid grid-cols-3 gap-2 mt-3"></div>
         </div>
 
@@ -11136,7 +11136,7 @@
   window.initSubmitPhotos = initSubmitPhotos;
 
   function renderSpTypes() {
-    const types = [['retail', 'Retail floor'], ['bins', 'Bins'], ['event', 'Event'], ['team', 'Team'], ['other', 'Other']];
+    const types = [['retail', 'Retail floor'], ['bins', 'Bins'], ['event', 'Event'], ['other', 'Other']];
     el('sp-type-chips').innerHTML = types.map(([v, l]) => {
       const on = v === spType;
       return `<button type="button" onclick="spSetType('${v}')" class="px-3 py-1.5 rounded-full text-xs font-semibold border transition ${on ? 'bg-accent-green text-[#06210f] border-accent-green' : 'border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim'}">${l}</button>`;
@@ -11145,18 +11145,26 @@
   function spSetType(v) { spType = v; renderSpTypes(); }
   window.spSetType = spSetType;
 
-  function spFilesChange() {
-    spFiles = Array.from((el('sp-files').files) || []);
+  function spRenderThumbs() {
     const wrap = el('sp-thumbs');
     wrap.innerHTML = '';
-    spFiles.forEach(f => {
+    spFiles.forEach((f, i) => {
       const d = document.createElement('div');
-      d.className = 'aspect-square rounded-lg overflow-hidden border border-[rgba(20,16,8,0.1)] dark:border-op-border';
-      d.innerHTML = `<img src="${URL.createObjectURL(f)}" class="w-full h-full object-cover">`;
+      d.className = 'relative aspect-square rounded-lg overflow-hidden border border-[rgba(20,16,8,0.1)] dark:border-op-border';
+      d.innerHTML = `<img src="${URL.createObjectURL(f)}" class="w-full h-full object-cover">` +
+        `<button type="button" onclick="spRemoveFile(${i})" aria-label="Remove photo" class="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white text-base leading-none flex items-center justify-center active:scale-90 transition">&times;</button>`;
       wrap.appendChild(d);
     });
   }
+  function spFilesChange() {
+    // Append (so multiple picks accumulate); reset input so the same file can be re-added.
+    spFiles = spFiles.concat(Array.from(el('sp-files').files || []));
+    el('sp-files').value = '';
+    spRenderThumbs();
+  }
   window.spFilesChange = spFilesChange;
+  function spRemoveFile(i) { spFiles.splice(i, 1); spRenderThumbs(); }
+  window.spRemoveFile = spRemoveFile;
 
   async function spSubmit() {
     const store = el('sp-store').value;
