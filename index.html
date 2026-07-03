@@ -540,6 +540,10 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/><line x1="9" y1="9" x2="10" y2="9"/></svg></span>
           <span class="nav-label">Supply Request</span>
         </div>
+        <div id="nav-submit-photos" class="hidden nav-item" data-page="submit-photos" onclick="navigateToPage('submit-photos')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>
+          <span class="nav-label">Submit Photos</span>
+        </div>
         <div id="nav-users" class="hidden nav-item" data-page="users" onclick="navigateToPage('users')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
           <span class="nav-label">Users</span>
@@ -1430,6 +1434,45 @@
 
       </div>
     </div><!-- end #page-supply-request -->
+
+    <div id="page-submit-photos" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-xl mx-auto">
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Submit Photos</h1>
+          <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Send store photos to the marketing team for upcoming posts.</p>
+        </div>
+      </div>
+
+      <div class="max-w-xl mx-auto px-4 sm:px-6 py-6 space-y-5">
+        <div>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Store</label>
+          <select id="sp-store" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+        </div>
+
+        <div>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Photo type</label>
+          <div id="sp-type-chips" class="flex flex-wrap gap-2"></div>
+        </div>
+
+        <div>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Photos</label>
+          <label for="sp-files" class="flex flex-col items-center justify-center gap-2 w-full py-8 rounded-2xl border-2 border-dashed border-[rgba(20,16,8,0.15)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim cursor-pointer hover:border-accent-green/50 transition-colors">
+            <svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span class="text-sm font-medium">Tap to take or choose photos</span>
+          </label>
+          <input id="sp-files" type="file" accept="image/*" capture="environment" multiple class="hidden" onchange="spFilesChange()">
+          <div id="sp-thumbs" class="grid grid-cols-3 gap-2 mt-3"></div>
+        </div>
+
+        <div>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Note (optional)</label>
+          <textarea id="sp-note" rows="2" placeholder="Anything the marketing team should know?" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></textarea>
+        </div>
+
+        <button id="sp-submit" onclick="spSubmit()" class="w-full bg-[#3BB54A] hover:bg-[#32a040] text-white font-semibold text-sm py-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Submit photos</button>
+        <p id="sp-status" class="hidden text-sm text-center"></p>
+      </div>
+    </div><!-- end #page-submit-photos -->
 
     <div id="page-marketing" class="hidden">
       <!-- Sticky header + shared filters -->
@@ -6064,7 +6107,7 @@
     // Show page — hide every other top-level page (previously only some were
     // listed, so drilling into a store from All Stores left both pages
     // visible stacked in the DOM).
-    const _pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','marketing','flow-calendar','inventory','supply-request','settings','users','admin-settings'];
+    const _pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','marketing','flow-calendar','inventory','supply-request','submit-photos','settings','users','admin-settings'];
     for (const _p of _pages) {
       const _pe = el('page-' + _p);
       if (_pe) _pe.classList.toggle('hidden', _p !== 'store-detail');
@@ -6326,7 +6369,7 @@
       const role = currentUser && currentUser.role;
       if (role !== 'superuser' && role !== 'admin') return;
     }
-    if (page === 'supply-request') {
+    if (page === 'supply-request' || page === 'submit-photos') {
       const role = currentUser && currentUser.role;
       const allowed = ['superuser','admin','district_manager','manager'];
       if (!allowed.includes(role)) return;
@@ -6342,7 +6385,7 @@
     if (pushHistory && currentPage && currentPage !== page) {
       pushNavHistory();
     }
-    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'settings', 'users', 'admin-settings'];
+    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'settings', 'users', 'admin-settings'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
       if (pageEl) pageEl.classList.toggle('hidden', p !== page);
@@ -6382,6 +6425,9 @@
     }
     if (page === 'supply-request') {
       if (typeof initSRPage === 'function') initSRPage();
+    }
+    if (page === 'submit-photos') {
+      if (typeof initSubmitPhotos === 'function') initSubmitPhotos();
     }
 
     // Close mobile sidebar
@@ -8271,7 +8317,7 @@
     if (chip) chip.textContent = `Week ${selectedWeek}`;
     el('as-metrics').innerHTML = buildAllStoresHero();
 
-    const pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','marketing','flow-calendar','inventory','supply-request','settings','users','admin-settings'];
+    const pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','marketing','flow-calendar','inventory','supply-request','submit-photos','settings','users','admin-settings'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
       if (pageEl) pageEl.classList.toggle('hidden', p !== 'all-stores-detail');
@@ -11064,6 +11110,83 @@
   }
   window.fcScrollNow = fcScrollNow;
 
+  // ── Submit Photos (Slice 1a) — manager photo intake ─────────────────
+  let spType = 'retail';
+  let spFiles = [];
+  function initSubmitPhotos() {
+    const sel = el('sp-store');
+    if (sel) {
+      sel.innerHTML = STORES.map(s => {
+        const code = s.split('/')[0];
+        const name = s.slice(s.indexOf(' ') + 1);
+        return `<option value="${code}">${escapeHtml(name)} (${code})</option>`;
+      }).join('');
+    }
+    spType = 'retail';
+    spFiles = [];
+    renderSpTypes();
+    if (el('sp-files')) el('sp-files').value = '';
+    if (el('sp-thumbs')) el('sp-thumbs').innerHTML = '';
+    if (el('sp-note')) el('sp-note').value = '';
+    if (el('sp-status')) el('sp-status').classList.add('hidden');
+  }
+  window.initSubmitPhotos = initSubmitPhotos;
+
+  function renderSpTypes() {
+    const types = [['retail', 'Retail floor'], ['bins', 'Bins'], ['event', 'Event'], ['team', 'Team'], ['other', 'Other']];
+    el('sp-type-chips').innerHTML = types.map(([v, l]) => {
+      const on = v === spType;
+      return `<button type="button" onclick="spSetType('${v}')" class="px-3 py-1.5 rounded-full text-xs font-semibold border transition ${on ? 'bg-accent-green text-[#06210f] border-accent-green' : 'border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim'}">${l}</button>`;
+    }).join('');
+  }
+  function spSetType(v) { spType = v; renderSpTypes(); }
+  window.spSetType = spSetType;
+
+  function spFilesChange() {
+    spFiles = Array.from((el('sp-files').files) || []);
+    const wrap = el('sp-thumbs');
+    wrap.innerHTML = '';
+    spFiles.forEach(f => {
+      const d = document.createElement('div');
+      d.className = 'aspect-square rounded-lg overflow-hidden border border-[rgba(20,16,8,0.1)] dark:border-op-border';
+      d.innerHTML = `<img src="${URL.createObjectURL(f)}" class="w-full h-full object-cover">`;
+      wrap.appendChild(d);
+    });
+  }
+  window.spFilesChange = spFilesChange;
+
+  async function spSubmit() {
+    const store = el('sp-store').value;
+    const note = el('sp-note').value.trim();
+    const status = el('sp-status');
+    const show = (msg, cls) => { status.textContent = msg; status.className = 'text-sm text-center ' + cls; status.classList.remove('hidden'); };
+    if (!store) return show('Pick a store.', 'text-op-bad');
+    if (!spFiles.length) return show('Add at least one photo.', 'text-op-bad');
+    const btn = el('sp-submit'); btn.disabled = true;
+    let ok = 0, fail = 0;
+    for (const f of spFiles) {
+      btn.textContent = `Uploading… ${ok + fail + 1}/${spFiles.length}`;
+      try {
+        const fd = new FormData();
+        fd.append('photo', f);
+        fd.append('store', store);
+        fd.append('photo_type', spType);
+        if (note) fd.append('note', note);
+        const r = await fetch(`${WORKER_BASE}?action=photo-upload`, { method: 'POST', credentials: 'include', body: fd });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.ok) ok++; else fail++;
+      } catch (_) { fail++; }
+    }
+    btn.disabled = false; btn.textContent = 'Submit photos';
+    if (fail === 0) {
+      show(`✓ Sent ${ok} photo${ok === 1 ? '' : 's'} to marketing. Thank you!`, 'text-accent-green');
+      spFiles = []; el('sp-files').value = ''; el('sp-thumbs').innerHTML = ''; el('sp-note').value = '';
+    } else {
+      show(`Sent ${ok}, but ${fail} failed. Please try again.`, 'text-op-bad');
+    }
+  }
+  window.spSubmit = spSubmit;
+
   // ── Flow Calendar admin editor (Phase 2) ────────────────────────────
   // Admins get an Edit toggle. In edit mode, clicking a week opens the week
   // modal; clicking a band opens the segment modal; clicking an empty gap in a
@@ -13758,6 +13881,7 @@
     const fcEd = el('fc-edit-toggle'); if (fcEd) fcEd.classList.toggle('hidden', !isAdmin);
     el('nav-inventory').classList.toggle('hidden', !isAdmin);
     el('nav-supply-request').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');
+    el('nav-submit-photos').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');
     el('nav-users').classList.toggle('hidden', !isAdmin);
     el('nav-admin-settings').classList.toggle('hidden', !isSuperuser);
     el('nav-settings').classList.remove('hidden');
