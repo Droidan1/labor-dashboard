@@ -3213,6 +3213,8 @@ function storeByPage(pageId) {
 // Phase-1 snapshot. Configured via secrets: META_ACCESS_TOKEN (required),
 // optional META_AD_ACCOUNTS (csv) and META_API_VERSION.
 const META_API_VERSION = "v25.0";
+// Post-type categories for Content-page folder organization (drafts + covers).
+const MARKETING_POST_TYPES = ["bin_preview", "weekly_promo", "new_arrivals", "event", "other"];
 const META_ACCOUNT_NAMES = {
   "273307252412674": "Brian Howard",
   "900771016120912": "Bargain Lane - Ad Account 2",
@@ -5486,6 +5488,7 @@ export default {
       try {
         const form = await request.formData();
         const name = String(form.get("name") || "").trim() || null;
+        const postType = MARKETING_POST_TYPES.includes(String(form.get("post_type"))) ? String(form.get("post_type")) : null;
         const file = form.get("thumbnail") || form.get("photo");
         if (!file || typeof file.arrayBuffer !== "function") return new Response(JSON.stringify({ error: "No image file" }), { status: 400, headers: corsJson });
         const ct = file.type || "application/octet-stream";
@@ -5497,9 +5500,9 @@ export default {
         const key = `marketing/_thumbnails/${crypto.randomUUID()}.${ext}`;
         await env.MEDIA.put(key, buf, { httpMetadata: { contentType: ct } });
         const res = await env.DB.prepare(
-          `INSERT INTO marketing_thumbnails (name, r2_key, content_type, bytes, uploaded_by, active, created_at)
-           VALUES (?,?,?,?,?, 1, ?)`
-        ).bind(name, key, ct, bytes, (currentUser && currentUser.email) || null, new Date().toISOString()).run();
+          `INSERT INTO marketing_thumbnails (name, r2_key, content_type, bytes, uploaded_by, post_type, active, created_at)
+           VALUES (?,?,?,?,?,?, 1, ?)`
+        ).bind(name, key, ct, bytes, (currentUser && currentUser.email) || null, postType, new Date().toISOString()).run();
         const id = res.meta && res.meta.last_row_id;
         return new Response(JSON.stringify({ ok: true, id, name, url: `?action=thumbnail&id=${id}` }), { headers: corsJson });
       } catch (e) {
@@ -5512,7 +5515,7 @@ export default {
       if (!isAdminSecret && !canAccessInventory(currentUser)) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
       const { results } = await env.DB.prepare(
-        "SELECT id, name, content_type, bytes, uploaded_by, created_at FROM marketing_thumbnails WHERE active = 1 ORDER BY created_at DESC"
+        "SELECT id, name, content_type, bytes, uploaded_by, post_type, created_at FROM marketing_thumbnails WHERE active = 1 ORDER BY created_at DESC"
       ).all();
       const thumbnails = (results || []).map(t => ({ ...t, url: `?action=thumbnail&id=${t.id}` }));
       return new Response(JSON.stringify({ ok: true, thumbnails }), { headers: corsJson });
@@ -5583,19 +5586,20 @@ export default {
         const caption = (b.caption == null ? "" : String(b.caption)).trim() || null;
         const captionSource = (b.caption_source === "ai") ? "ai" : "manual";
         const topic = (b.topic == null ? "" : String(b.topic)).trim() || null;
+        const postType = MARKETING_POST_TYPES.includes(String(b.post_type)) ? String(b.post_type) : null;
         const now = new Date().toISOString();
         if (b.id != null && b.id !== "") {
           const id = parseInt(b.id, 10);
           const res = await env.DB.prepare(
-            `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, topic=?, updated_at=? WHERE id=?`
-          ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, now, id).run();
+            `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, topic=?, post_type=?, updated_at=? WHERE id=?`
+          ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, postType, now, id).run();
           if (!res.meta || res.meta.changes === 0) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
           return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
         }
         const res = await env.DB.prepare(
-          `INSERT INTO marketing_drafts (store, thumbnail_id, photo_ids, caption, caption_source, topic, status, created_by, created_at, updated_at)
-           VALUES (?,?,?,?,?,?, 'draft', ?, ?, ?)`
-        ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, (currentUser && currentUser.email) || null, now, now).run();
+          `INSERT INTO marketing_drafts (store, thumbnail_id, photo_ids, caption, caption_source, topic, post_type, status, created_by, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?, 'draft', ?, ?, ?)`
+        ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, postType, (currentUser && currentUser.email) || null, now, now).run();
         return new Response(JSON.stringify({ ok: true, id: res.meta && res.meta.last_row_id }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
@@ -5607,10 +5611,10 @@ export default {
       if (!isAdminSecret && !canAccessInventory(currentUser)) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
       const status = String(url.searchParams.get("status") || "").trim().toLowerCase();
-      let q = "SELECT * FROM marketing_drafts WHERE 1=1";
+      let q = "SELECT d.*, (SELECT pl.post_url FROM marketing_publish_log pl WHERE pl.draft_id = d.id AND pl.post_url IS NOT NULL ORDER BY pl.id DESC LIMIT 1) AS post_url FROM marketing_drafts d WHERE 1=1";
       const binds = [];
-      if (status && status !== "all") { q += " AND status = ?"; binds.push(status); }
-      q += " ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 100";
+      if (status && status !== "all") { q += " AND d.status = ?"; binds.push(status); }
+      q += " ORDER BY COALESCE(d.updated_at, d.created_at) DESC LIMIT 300";
       const { results } = await env.DB.prepare(q).bind(...binds).all();
       const drafts = (results || []).map(d => {
         let pids = []; try { pids = JSON.parse(d.photo_ids || "[]"); } catch (_) {}

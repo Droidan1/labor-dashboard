@@ -1494,16 +1494,19 @@
 
       <div class="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-8">
         <section>
-          <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center justify-between gap-2 mb-3">
             <div>
               <h2 class="text-sm font-bold text-opl-ink dark:text-op-ink">Premade thumbnails</h2>
               <p class="text-[12px] text-opl-inkDim dark:text-op-inkDim">Branded cover images used as the first image of a bin post.</p>
             </div>
-            <label for="ct-thumb-file" class="shrink-0 cursor-pointer px-3.5 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-xl transition-colors">+ Add</label>
-            <input id="ct-thumb-file" type="file" accept="image/*" multiple class="hidden" onchange="ctUploadThumb()">
+            <div class="flex items-center gap-2 shrink-0">
+              <select id="ct-thumb-type" aria-label="Cover post type" class="rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-xs px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+              <label for="ct-thumb-file" class="cursor-pointer px-3.5 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-xl transition-colors">+ Add</label>
+              <input id="ct-thumb-file" type="file" accept="image/*" multiple class="hidden" onchange="ctUploadThumb()">
+            </div>
           </div>
           <p id="ct-thumb-status" class="hidden text-sm mb-2"></p>
-          <div id="ct-thumb-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
+          <div id="ct-thumb-grid" class="space-y-3"></div>
         </section>
 
         <section class="pt-2 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border">
@@ -1522,15 +1525,11 @@
               <div id="ct-photo-pick" class="grid grid-cols-3 sm:grid-cols-4 gap-2"></div>
             </div>
             <div>
-              <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">What's this post about?</label>
-              <div class="flex flex-wrap gap-2 mb-2">
-                <button type="button" onclick="ctSetTopic('Weekly bin preview — new finds just out')" class="px-3 py-1.5 rounded-full text-xs font-semibold border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:border-accent-green/50 transition">Bin preview</button>
-                <button type="button" onclick="ctSetTopic(&quot;This week's promotion&quot;)" class="px-3 py-1.5 rounded-full text-xs font-semibold border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:border-accent-green/50 transition">This week's promo</button>
-                <button type="button" onclick="ctSetTopic('New arrivals just hit the floor')" class="px-3 py-1.5 rounded-full text-xs font-semibold border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:border-accent-green/50 transition">New arrivals</button>
-                <button type="button" onclick="ctSetTopic('Store event')" class="px-3 py-1.5 rounded-full text-xs font-semibold border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:border-accent-green/50 transition">Event</button>
-              </div>
+              <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Post type</label>
+              <select id="ct-posttype" onchange="ctOnTypeChange()" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 mb-3 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+              <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">What's this post about? <span class="text-opl-inkDim dark:text-op-inkDim normal-case font-normal">(optional — guides the AI)</span></label>
               <input id="ct-topic" type="text" placeholder="e.g. Weekly bin preview, holiday sale, new furniture…" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green">
-              <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">Tells the AI what to write. Leave blank for a weekly bin preview.</p>
+              <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">Picking a post type files the draft into that folder and pre-fills this line.</p>
             </div>
             <div>
               <div class="flex items-center justify-between mb-1.5">
@@ -1549,8 +1548,14 @@
         </section>
 
         <section class="pt-2 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border">
-          <h2 class="text-sm font-bold text-opl-ink dark:text-op-ink mb-3">Drafts</h2>
-          <div id="ct-drafts" class="space-y-2.5"></div>
+          <div class="flex items-center justify-between gap-2 mb-3">
+            <h2 class="text-sm font-bold text-opl-ink dark:text-op-ink">Posts</h2>
+            <select id="ct-store-filter" onchange="ctRenderPosts()" aria-label="Filter by store" class="rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-xs px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+          </div>
+          <h3 class="text-[11px] font-bold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-2">Drafts</h3>
+          <div id="ct-drafts" class="space-y-2.5 mb-6"></div>
+          <h3 class="text-[11px] font-bold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-2">Published</h3>
+          <div id="ct-published" class="space-y-2.5"></div>
         </section>
       </div>
     </div><!-- end #page-content -->
@@ -11286,10 +11291,69 @@
   let ctSelPhotos = new Set();
   let ctEditingId = null;
   let ctCaptionSource = 'manual';
+  let ctAllDrafts = [];
+
+  // Post-type taxonomy (mirrors MARKETING_POST_TYPES in worker.js). `topic` is the
+  // default AI prompt phrase pre-filled when a type is chosen.
+  const CT_POST_TYPES = [
+    { key: 'bin_preview',  label: 'Bin Preview',  topic: 'Weekly bin preview — new finds just out' },
+    { key: 'weekly_promo', label: 'Weekly Promo', topic: "This week's promotion" },
+    { key: 'new_arrivals', label: 'New Arrivals', topic: 'New arrivals just hit the floor' },
+    { key: 'event',        label: 'Event',        topic: 'Store event' },
+    { key: 'other',        label: 'Other',        topic: '' },
+  ];
+  const ctTypeLabel = k => { const t = CT_POST_TYPES.find(x => x.key === k); return t ? t.label : 'Uncategorized'; };
+  function ctMonthLabel(iso) { const d = new Date(iso); return isNaN(d.getTime()) ? 'Undated' : d.toLocaleString('en-US', { month: 'short', year: 'numeric' }); }
+  function ctFillTypeSelect(id, def) { const s = el(id); if (!s) return; s.innerHTML = CT_POST_TYPES.map(t => `<option value="${t.key}">${t.label}</option>`).join(''); if (def) s.value = def; }
+
+  // Group items into Post Type → Month folders (type order fixed, months newest first).
+  function ctGroupByTypeMonth(items) {
+    const order = CT_POST_TYPES.map(t => t.key).concat('__none__');
+    const byType = {};
+    for (const it of items) {
+      const k = CT_POST_TYPES.some(t => t.key === it.post_type) ? it.post_type : '__none__';
+      (byType[k] = byType[k] || []).push(it);
+    }
+    const out = [];
+    for (const k of order) {
+      const arr = byType[k]; if (!arr || !arr.length) continue;
+      const byMonth = {}, mOrder = [];
+      for (const it of arr) { const mk = (it.created_at || '').slice(0, 7) || '0000-00'; if (!byMonth[mk]) { byMonth[mk] = []; mOrder.push(mk); } byMonth[mk].push(it); }
+      mOrder.sort((a, b) => b.localeCompare(a));
+      out.push({ typeLabel: k === '__none__' ? 'Uncategorized' : ctTypeLabel(k), count: arr.length,
+        months: mOrder.map(mk => ({ monthLabel: ctMonthLabel(byMonth[mk][0].created_at), items: byMonth[mk] })) });
+    }
+    return out;
+  }
+
+  // Render grouped folders into a container. `renderItem` returns each item's HTML.
+  function ctRenderFolders(containerId, items, renderItem, opts) {
+    opts = opts || {};
+    const wrap = el(containerId); if (!wrap) return;
+    if (!items.length) { wrap.innerHTML = `<div class="text-sm text-opl-inkDim dark:text-op-inkDim py-2">${escapeHtml(opts.empty || 'Nothing here yet.')}</div>`; return; }
+    const itemsClass = opts.itemsClass || 'space-y-2.5';
+    wrap.innerHTML = ctGroupByTypeMonth(items).map(g => `
+      <details ${opts.open ? 'open' : ''} class="rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border overflow-hidden">
+        <summary class="flex items-center gap-2 px-3 py-2.5 cursor-pointer select-none bg-opl-panelHi dark:bg-op-panelHi text-sm font-semibold text-opl-ink dark:text-op-ink">
+          ${escapeHtml(g.typeLabel)}
+          <span class="ml-auto text-[11px] font-normal text-opl-inkDim dark:text-op-inkDim">${g.count}</span>
+        </summary>
+        <div class="px-3 py-2.5 space-y-3">
+          ${g.months.map(m => `
+            <div>
+              <div class="text-[11px] font-bold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">${escapeHtml(m.monthLabel)} · ${m.items.length}</div>
+              <div class="${itemsClass}">${m.items.map(renderItem).join('')}</div>
+            </div>`).join('')}
+        </div>
+      </details>`).join('');
+  }
 
   function initContent() {
-    ctResetComposer();
+    ctFillTypeSelect('ct-posttype', 'bin_preview');
+    ctFillTypeSelect('ct-thumb-type', 'bin_preview');
     ctPopulateStores();
+    ctPopulateStoreFilter();
+    ctResetComposer();
     ctLoadThumbs();
     ctLoadPhotos();
     ctLoadDrafts();
@@ -11306,6 +11370,16 @@
     }
   }
 
+  function ctPopulateStoreFilter() {
+    const sel = el('ct-store-filter');
+    if (sel && !sel.options.length) {
+      sel.innerHTML = '<option value="">All stores</option>' + STORES.map(s => {
+        const code = s.split('/')[0], name = s.slice(s.indexOf(' ') + 1);
+        return `<option value="${code}">${escapeHtml(name)}</option>`;
+      }).join('');
+    }
+  }
+
   async function ctLoadThumbs() {
     el('ct-thumb-grid').innerHTML = '<div class="col-span-full text-sm text-opl-inkDim dark:text-op-inkDim py-6 text-center">Loading…</div>';
     try {
@@ -11318,14 +11392,12 @@
   }
 
   function ctRenderThumbGrid() {
-    const grid = el('ct-thumb-grid');
-    if (!ctThumbs.length) { grid.innerHTML = '<div class="col-span-full text-sm text-opl-inkDim dark:text-op-inkDim py-6 text-center">No thumbnails yet — tap <b>+ Add</b> to upload one.</div>'; return; }
-    grid.innerHTML = ctThumbs.map(t => `
+    ctRenderFolders('ct-thumb-grid', ctThumbs, t => `
       <div class="relative rounded-xl overflow-hidden border border-[rgba(20,16,8,0.1)] dark:border-op-border bg-opl-panelHi dark:bg-op-panelHi">
         <img src="${WORKER_BASE}?action=thumbnail&id=${t.id}" class="w-full aspect-square object-cover" alt="${escapeHtml(t.name || '')}">
         <button type="button" onclick="ctDeleteThumb(${t.id})" aria-label="Remove thumbnail" class="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 text-white text-lg leading-none flex items-center justify-center active:scale-90 transition">&times;</button>
         ${t.name ? `<div class="px-2 py-1 text-[11px] font-medium text-opl-ink dark:text-op-ink truncate">${escapeHtml(t.name)}</div>` : ''}
-      </div>`).join('');
+      </div>`, { open: true, itemsClass: 'grid grid-cols-2 sm:grid-cols-3 gap-3', empty: 'No thumbnails yet — tap + Add to upload one.' });
   }
 
   function ctRenderThumbPicker() {
@@ -11356,6 +11428,7 @@
         const fd = new FormData();
         fd.append('thumbnail', f);
         fd.append('name', f.name.replace(/\.[^.]+$/, ''));
+        fd.append('post_type', el('ct-thumb-type') ? el('ct-thumb-type').value : '');
         const r = await fetch(`${WORKER_BASE}?action=thumbnail-upload`, { method: 'POST', credentials: 'include', body: fd });
         const d = await r.json().catch(() => ({}));
         if (r.ok && d.ok) ok++; else fail++;
@@ -11415,6 +11488,7 @@
     ctEditingId = null; ctSelThumb = null; ctSelPhotos = new Set(); ctCaptionSource = 'manual';
     if (el('ct-caption')) el('ct-caption').value = '';
     if (el('ct-topic')) el('ct-topic').value = '';
+    if (el('ct-posttype')) el('ct-posttype').value = 'bin_preview';
     if (el('ct-ai-note')) el('ct-ai-note').classList.add('hidden');
     if (el('ct-compose-status')) el('ct-compose-status').classList.add('hidden');
     if (el('ct-clear')) el('ct-clear').classList.add('hidden');
@@ -11433,7 +11507,7 @@
     if (!ctSelPhotos.size) return show('Select at least one photo.', 'text-op-bad');
     const btn = el('ct-save-draft'); btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      const body = { store, thumbnail_id: ctSelThumb, photo_ids: [...ctSelPhotos], caption, caption_source: ctCaptionSource, topic: (el('ct-topic') ? el('ct-topic').value.trim() : '') };
+      const body = { store, thumbnail_id: ctSelThumb, photo_ids: [...ctSelPhotos], caption, caption_source: ctCaptionSource, topic: (el('ct-topic') ? el('ct-topic').value.trim() : ''), post_type: (el('ct-posttype') ? el('ct-posttype').value : '') };
       if (ctEditingId) body.id = ctEditingId;
       const r = await fetch(`${WORKER_BASE}?action=draft-save`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json().catch(() => ({}));
@@ -11450,6 +11524,14 @@
 
   function ctSetTopic(t) { if (el('ct-topic')) el('ct-topic').value = t; }
   window.ctSetTopic = ctSetTopic;
+
+  // When a post type is chosen, pre-fill the "about" line if the user hasn't typed one.
+  function ctOnTypeChange() {
+    const t = CT_POST_TYPES.find(x => x.key === (el('ct-posttype') ? el('ct-posttype').value : ''));
+    const topic = el('ct-topic');
+    if (t && topic && !topic.value.trim()) topic.value = t.topic;
+  }
+  window.ctOnTypeChange = ctOnTypeChange;
 
   async function ctAiCaption() {
     const store = el('ct-store').value;
@@ -11472,33 +11554,52 @@
   window.ctAiCaption = ctAiCaption;
 
   async function ctLoadDrafts() {
-    const wrap = el('ct-drafts');
-    wrap.innerHTML = '<div class="text-sm text-opl-inkDim dark:text-op-inkDim py-2">Loading…</div>';
+    el('ct-drafts').innerHTML = '<div class="text-sm text-opl-inkDim dark:text-op-inkDim py-2">Loading…</div>';
     try {
-      const r = await fetch(`${WORKER_BASE}?action=drafts&status=draft`, { credentials: 'include' });
+      const r = await fetch(`${WORKER_BASE}?action=drafts&status=all`, { credentials: 'include' });
       const d = await r.json();
-      const list = (d && d.drafts) || [];
-      if (!list.length) { wrap.innerHTML = '<div class="text-sm text-opl-inkDim dark:text-op-inkDim py-2">No drafts yet.</div>'; return; }
-      wrap.innerHTML = list.map(dr => {
-        const match = STORES.find(s => s.split('/')[0] === dr.store);
-        const label = match ? match.slice(match.indexOf(' ') + 1) : dr.store;
-        const nPhotos = (dr.photo_ids || []).length;
-        return `<div class="flex items-center gap-3 p-2.5 rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border bg-opl-panelHi dark:bg-op-panelHi">
-          ${dr.thumbnail_id ? `<img src="${WORKER_BASE}?action=thumbnail&id=${dr.thumbnail_id}" class="w-12 h-12 rounded-lg object-cover shrink-0" alt="">` : '<div class="w-12 h-12 rounded-lg bg-black/20 shrink-0"></div>'}
-          <div class="min-w-0 flex-1">
-            <div class="text-sm font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(label)} · ${nPhotos} photo${nPhotos === 1 ? '' : 's'}</div>
-            <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim truncate">${escapeHtml(dr.caption || 'No caption')}</div>
-          </div>
-          <button onclick="ctPublishDraft(${dr.id})" class="shrink-0 text-xs font-semibold text-white bg-accent-blue rounded-lg px-2.5 py-1">Publish</button>
-          <button onclick="ctEditDraft(${dr.id})" class="shrink-0 text-xs font-semibold text-accent-green px-2 py-1">Edit</button>
-          <button onclick="ctDeleteDraft(${dr.id})" aria-label="Delete draft" class="shrink-0 text-xs font-semibold text-op-bad px-2 py-1">Delete</button>
-        </div>`;
-      }).join('');
-    } catch (e) {
-      wrap.innerHTML = '<div class="text-sm text-red-500 py-2">Couldn’t load drafts.</div>';
-    }
+      ctAllDrafts = (d && d.drafts) || [];
+    } catch (_) { ctAllDrafts = []; }
+    ctRenderPosts();
   }
   window.ctLoadDrafts = ctLoadDrafts;
+
+  function ctStoreLabel(code) { const m = STORES.find(s => s.split('/')[0] === code); return m ? m.slice(m.indexOf(' ') + 1) : code; }
+
+  function ctDraftItem(dr) {
+    const nPhotos = (dr.photo_ids || []).length;
+    return `<div class="flex items-center gap-3 p-2.5 rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border bg-opl-panel dark:bg-op-panel">
+      ${dr.thumbnail_id ? `<img src="${WORKER_BASE}?action=thumbnail&id=${dr.thumbnail_id}" class="w-12 h-12 rounded-lg object-cover shrink-0" alt="">` : '<div class="w-12 h-12 rounded-lg bg-black/20 shrink-0"></div>'}
+      <div class="min-w-0 flex-1">
+        <div class="text-sm font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(ctStoreLabel(dr.store))} · ${nPhotos} photo${nPhotos === 1 ? '' : 's'}</div>
+        <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim truncate">${escapeHtml(dr.caption || 'No caption')}</div>
+      </div>
+      <button onclick="ctPublishDraft(${dr.id})" class="shrink-0 text-xs font-semibold text-white bg-accent-blue rounded-lg px-2.5 py-1">Publish</button>
+      <button onclick="ctEditDraft(${dr.id})" class="shrink-0 text-xs font-semibold text-accent-green px-2 py-1">Edit</button>
+      <button onclick="ctDeleteDraft(${dr.id})" aria-label="Delete draft" class="shrink-0 text-xs font-semibold text-op-bad px-2 py-1">Delete</button>
+    </div>`;
+  }
+
+  function ctPublishedItem(dr) {
+    return `<div class="flex items-center gap-3 p-2.5 rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border bg-opl-panel dark:bg-op-panel">
+      ${dr.thumbnail_id ? `<img src="${WORKER_BASE}?action=thumbnail&id=${dr.thumbnail_id}" class="w-12 h-12 rounded-lg object-cover shrink-0" alt="">` : '<div class="w-12 h-12 rounded-lg bg-black/20 shrink-0"></div>'}
+      <div class="min-w-0 flex-1">
+        <div class="text-sm font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(ctStoreLabel(dr.store))}</div>
+        <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim truncate">${escapeHtml(dr.caption || 'No caption')}</div>
+      </div>
+      ${dr.post_url ? `<a href="${escapeHtml(dr.post_url)}" target="_blank" rel="noopener" class="shrink-0 text-xs font-semibold text-accent-blue px-2 py-1">View post ↗</a>` : '<span class="shrink-0 text-[11px] text-opl-inkDim dark:text-op-inkDim px-2">posted</span>'}
+      <button onclick="ctDeleteDraft(${dr.id})" aria-label="Delete record" class="shrink-0 text-xs font-semibold text-op-bad px-2 py-1">Delete</button>
+    </div>`;
+  }
+
+  // Filter by store + split into Drafts (unpublished) and Published, each foldered by type → month.
+  function ctRenderPosts() {
+    const store = el('ct-store-filter') ? el('ct-store-filter').value : '';
+    const rows = store ? ctAllDrafts.filter(d => d.store === store) : ctAllDrafts;
+    ctRenderFolders('ct-drafts', rows.filter(d => d.status !== 'published'), ctDraftItem, { open: true, empty: 'No drafts yet.' });
+    ctRenderFolders('ct-published', rows.filter(d => d.status === 'published'), ctPublishedItem, { open: false, empty: 'Nothing published yet.' });
+  }
+  window.ctRenderPosts = ctRenderPosts;
 
   async function ctEditDraft(id) {
     let d = null;
@@ -11515,6 +11616,7 @@
     ctSelPhotos = new Set((d.photo_ids || []).map(Number));
     el('ct-caption').value = d.caption || '';
     if (el('ct-topic')) el('ct-topic').value = d.topic || '';
+    if (el('ct-posttype')) el('ct-posttype').value = (CT_POST_TYPES.some(t => t.key === d.post_type) ? d.post_type : 'other');
     ctCaptionSource = d.caption_source || 'manual';
     el('ct-ai-note').classList.toggle('hidden', ctCaptionSource !== 'ai');
     ctRenderThumbPicker(); ctRenderPhotoPicker();
