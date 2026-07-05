@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dashboard-cache-v10';
+const CACHE_NAME = 'dashboard-cache-v11';
 
 // Pre-fetched and cached on install
 const PRECACHE_ASSETS = [
@@ -32,7 +32,9 @@ function isApiRequest(hostname) {
 self.addEventListener('install', event => {
   self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(PRECACHE_ASSETS))
+    // Bypass the HTTP cache when precaching so a fresh deploy's index.html /
+    // tailwind.css are actually re-fetched (not served stale from the browser cache).
+    caches.open(CACHE_NAME).then(cache => cache.addAll(PRECACHE_ASSETS.map(u => new Request(u, { cache: 'reload' }))))
   );
 });
 

@@ -14883,6 +14883,18 @@
       navigator.serviceWorker.register('/sw.js').catch(err => {
         console.warn('SW registration failed:', err);
       });
+      // Auto-reload once when a newly-deployed service worker takes control, so an
+      // installed PWA picks up frontend updates without a manual refresh. Only wired
+      // when the page loaded already controlled (a returning visit) — this avoids a
+      // spurious reload on the very first install.
+      if (navigator.serviceWorker.controller) {
+        let swRefreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (swRefreshing) return;
+          swRefreshing = true;
+          window.location.reload();
+        });
+      }
       // Deep-link: notification tap focuses the window then SW posts a navigate message
       navigator.serviceWorker.addEventListener('message', e => {
         if (e.data?.type === 'sw-navigate' && e.data.url) {
