@@ -4282,19 +4282,26 @@
     }
     const laborTot = lDen > 0 ? (lNum / lDen) * 100 : null;
 
-    // All Stores Budget — sums actual + budget across the whole selected range
-    // (budgets are per-day rows, so summing yields the range's total budget),
-    // then live-boosts today's contribution when the range includes today.
+    // All Stores Budget — Weekly: always the full retail WEEK of the range end
+    // (selectedWeek = weekForRangeEnd()), so the label "Weekly" is honest and
+    // this card mirrors the sibling Monthly block, which anchors to the calendar
+    // month of the range end. The day/range selection intentionally does NOT
+    // narrow this card — the user can always see week-level pacing even when a
+    // single day is selected. Budgets are per-day rows, so summing the week
+    // yields the week's total budget.
     let tA=0, tB=0;
     for (const s of STORES) {
-      const wk = sumRows((allStoreData[s] || []).filter(rowInSel));
+      const wk = sumRows((allStoreData[s] || []).filter(r => r.week === selectedWeek));
       if (wk.aTotal != null) tA += wk.aTotal;
       // Fold auction into the actual so this card matches the All Stores
       // headline (grandTotal = total + auction). daily_sales.total excludes auction.
       if (wk.aAuction != null) tA += wk.aAuction;
       if (wk.bTotal != null) tB += wk.bTotal;
     }
-    if (selIncludesToday()) {
+    // Live-boost today only when the shown week IS the current week (mirrors the
+    // Monthly block's "today is in the shown month" guard). Subtract the stale
+    // stored aTotal so today counts once (D1 today-rows null aTotal → stale 0).
+    if (selectedWeek === currentWeek) {
       for (const s of STORES) {
         const live = liveCloverData[s];
         if (!live || live.total == null) continue;
@@ -4581,7 +4588,7 @@
       const moPct = mB > 0 ? Math.round(mA / mB * 100) : 0;
       const wkAhead = tB > 0 && tA >= tB;
       const moAhead = mB > 0 && mA >= mB;
-      el("bgt-sum-wk").textContent = dateRange.label || '—';
+      el("bgt-sum-wk").textContent = "Weekly";
       el("bgt-sum-wt").textContent = fmtK(tA);
       el("bgt-sum-wb").textContent = fmtK(tB);
       el("bgt-sum-mo").textContent = monthLabel ? `Monthly · ${monthLabel}` : 'Monthly';
@@ -5534,7 +5541,7 @@
 
   // Build the header + stats strip + legend pills HTML that sits above the
   // Chart.js canvas. Stats/legend gracefully omit periods with no data.
-  function _buildChartCardHTML({ title, subtitle, twTotal, lwTotal, lyTotal, budgetTotal }) {
+  function _buildChartCardHTML({ title, subtitle, twTotal, lwTotal, lyTotal, budgetTotal, twLabel = 'This Week' }) {
     const fmt = (v) => fmtDollar(v);
     const pctDelta = (cur, prev) => prev > 0 ? Math.round((cur - prev) / prev * 1000) / 10 : null;
     const dollarDelta = (cur, prev) => prev > 0 ? cur - prev : null;
@@ -5557,7 +5564,7 @@
     };
     const lwTile = (vsLwPct != null) ? statTile('vs Last Week', `${vsLwPct >= 0 ? '+' : ''}${vsLwPct}%`, `${vsLwDollar >= 0 ? '+' : '−'}${fmt(Math.abs(vsLwDollar))}`, vsLwDollar >= 0) : statTile('vs Last Week', '—', null, false);
     const lyTile = (vsLyPct != null) ? statTile('vs Last Year', `${vsLyPct >= 0 ? '+' : ''}${vsLyPct}%`, `${vsLyDollar >= 0 ? '+' : '−'}${fmt(Math.abs(vsLyDollar))}`, vsLyDollar >= 0) : statTile('vs Last Year', '—', null, false);
-    const twTile = statTile('This Week', fmt(twTotal), budgetDelta != null ? `${budgetDelta >= 0 ? '+' : '−'}${fmt(Math.abs(budgetDelta))} vs budget` : null, (budgetDelta || 0) >= 0);
+    const twTile = statTile(twLabel, fmt(twTotal), budgetDelta != null ? `${budgetDelta >= 0 ? '+' : '−'}${fmt(Math.abs(budgetDelta))} vs budget` : null, (budgetDelta || 0) >= 0);
 
     // Legend pills — each shows its swatch + label + running total.
     const legPill = (cls, swatchHTML, lbl, val) => `<span class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-[11.5px] font-bold whitespace-nowrap">${swatchHTML}<span class="text-[10.5px] font-bold uppercase tracking-[0.04em] text-opl-inkDim dark:text-op-inkDim">${lbl}</span><span class="tabular-nums text-opl-ink dark:text-op-ink">${val}</span></span>`;
@@ -5633,6 +5640,7 @@
         title: `Sales Trend · Week ${escapeHtml(String(selectedWeek))}`,
         subtitle: 'vs Last Week · Last Year',
         twTotal, lwTotal, lyTotal, budgetTotal,
+        twLabel: isCurrentWeek ? 'This Week' : `Week ${selectedWeek}`,
       });
     }
 
@@ -8702,6 +8710,7 @@
         title: `Sales Trend · Week ${escapeHtml(String(selectedWeek))} · All Stores`,
         subtitle: 'vs Last Week · Last Year',
         twTotal, lwTotal, lyTotal, budgetTotal,
+        twLabel: isCurrentWeek ? 'This Week' : `Week ${selectedWeek}`,
       });
     }
 
