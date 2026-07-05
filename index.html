@@ -1522,6 +1522,17 @@
               <div id="ct-photo-pick" class="grid grid-cols-3 sm:grid-cols-4 gap-2"></div>
             </div>
             <div>
+              <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">What's this post about?</label>
+              <div class="flex flex-wrap gap-2 mb-2">
+                <button type="button" onclick="ctSetTopic('Weekly bin preview — new finds just out')" class="px-3 py-1.5 rounded-full text-xs font-semibold border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:border-accent-green/50 transition">Bin preview</button>
+                <button type="button" onclick="ctSetTopic(&quot;This week's promotion&quot;)" class="px-3 py-1.5 rounded-full text-xs font-semibold border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:border-accent-green/50 transition">This week's promo</button>
+                <button type="button" onclick="ctSetTopic('New arrivals just hit the floor')" class="px-3 py-1.5 rounded-full text-xs font-semibold border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:border-accent-green/50 transition">New arrivals</button>
+                <button type="button" onclick="ctSetTopic('Store event')" class="px-3 py-1.5 rounded-full text-xs font-semibold border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:border-accent-green/50 transition">Event</button>
+              </div>
+              <input id="ct-topic" type="text" placeholder="e.g. Weekly bin preview, holiday sale, new furniture…" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green">
+              <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">Tells the AI what to write. Leave blank for a weekly bin preview.</p>
+            </div>
+            <div>
               <div class="flex items-center justify-between mb-1.5">
                 <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">Caption</label>
                 <button type="button" id="ct-ai-btn" onclick="ctAiCaption()" class="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-accent-green/50 text-accent-green hover:bg-accent-green/10 transition">✨ AI generate</button>
@@ -11403,6 +11414,7 @@
   function ctResetComposer() {
     ctEditingId = null; ctSelThumb = null; ctSelPhotos = new Set(); ctCaptionSource = 'manual';
     if (el('ct-caption')) el('ct-caption').value = '';
+    if (el('ct-topic')) el('ct-topic').value = '';
     if (el('ct-ai-note')) el('ct-ai-note').classList.add('hidden');
     if (el('ct-compose-status')) el('ct-compose-status').classList.add('hidden');
     if (el('ct-clear')) el('ct-clear').classList.add('hidden');
@@ -11421,7 +11433,7 @@
     if (!ctSelPhotos.size) return show('Select at least one photo.', 'text-op-bad');
     const btn = el('ct-save-draft'); btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      const body = { store, thumbnail_id: ctSelThumb, photo_ids: [...ctSelPhotos], caption, caption_source: ctCaptionSource };
+      const body = { store, thumbnail_id: ctSelThumb, photo_ids: [...ctSelPhotos], caption, caption_source: ctCaptionSource, topic: (el('ct-topic') ? el('ct-topic').value.trim() : '') };
       if (ctEditingId) body.id = ctEditingId;
       const r = await fetch(`${WORKER_BASE}?action=draft-save`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json().catch(() => ({}));
@@ -11436,13 +11448,17 @@
   }
   window.ctSaveDraft = ctSaveDraft;
 
+  function ctSetTopic(t) { if (el('ct-topic')) el('ct-topic').value = t; }
+  window.ctSetTopic = ctSetTopic;
+
   async function ctAiCaption() {
     const store = el('ct-store').value;
     const st = el('ct-compose-status');
     if (!store) { st.textContent = 'Pick a store first.'; st.className = 'text-sm text-op-bad'; st.classList.remove('hidden'); return; }
+    const topic = el('ct-topic') ? el('ct-topic').value.trim() : '';
     const btn = el('ct-ai-btn'); const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Writing…';
     try {
-      const r = await fetch(`${WORKER_BASE}?action=draft-generate-caption`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ store }) });
+      const r = await fetch(`${WORKER_BASE}?action=draft-generate-caption`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ store, topic }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) throw new Error(d.error || 'AI failed');
       el('ct-caption').value = d.caption || '';
@@ -11497,6 +11513,7 @@
     ctSelThumb = d.thumbnail_id || null;
     ctSelPhotos = new Set((d.photo_ids || []).map(Number));
     el('ct-caption').value = d.caption || '';
+    if (el('ct-topic')) el('ct-topic').value = d.topic || '';
     ctCaptionSource = d.caption_source || 'manual';
     el('ct-ai-note').classList.toggle('hidden', ctCaptionSource !== 'ai');
     ctRenderThumbPicker(); ctRenderPhotoPicker();

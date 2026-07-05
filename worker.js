@@ -5582,19 +5582,20 @@ export default {
         const photoIds = Array.isArray(b.photo_ids) ? b.photo_ids.map(x => parseInt(x, 10)).filter(Number.isInteger) : [];
         const caption = (b.caption == null ? "" : String(b.caption)).trim() || null;
         const captionSource = (b.caption_source === "ai") ? "ai" : "manual";
+        const topic = (b.topic == null ? "" : String(b.topic)).trim() || null;
         const now = new Date().toISOString();
         if (b.id != null && b.id !== "") {
           const id = parseInt(b.id, 10);
           const res = await env.DB.prepare(
-            `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, updated_at=? WHERE id=?`
-          ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, now, id).run();
+            `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, topic=?, updated_at=? WHERE id=?`
+          ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, now, id).run();
           if (!res.meta || res.meta.changes === 0) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
           return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
         }
         const res = await env.DB.prepare(
-          `INSERT INTO marketing_drafts (store, thumbnail_id, photo_ids, caption, caption_source, status, created_by, created_at, updated_at)
-           VALUES (?,?,?,?,?, 'draft', ?, ?, ?)`
-        ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, (currentUser && currentUser.email) || null, now, now).run();
+          `INSERT INTO marketing_drafts (store, thumbnail_id, photo_ids, caption, caption_source, topic, status, created_by, created_at, updated_at)
+           VALUES (?,?,?,?,?,?, 'draft', ?, ?, ?)`
+        ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, (currentUser && currentUser.email) || null, now, now).run();
         return new Response(JSON.stringify({ ok: true, id: res.meta && res.meta.last_row_id }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
@@ -5647,7 +5648,8 @@ export default {
         const b = await request.json();
         const store = String(b.store || "").trim().toUpperCase();
         const fy = String(b.fiscal_year || "F26").trim();
-        // Pull the current retail week's context from the Flow Calendar.
+        const topic = String(b.topic || "").trim() || "our weekly bin preview — fresh bargain finds just put out in the bins";
+        // Pull the current retail week from the Flow Calendar as OPTIONAL background.
         let wk = null;
         if (env.DB) {
           const today = new Date().toISOString().slice(0, 10);
@@ -5656,16 +5658,19 @@ export default {
           ).bind(fy, today, today).first().catch(() => null);
         }
         const label = (typeof STORE_LABELS !== "undefined" && STORE_LABELS[store]) ? STORE_LABELS[store] : (store || "the store");
-        const ctx = [
+        const bg = [
+          wk && wk.weekly_theme ? `weekly theme "${wk.weekly_theme}"` : "",
+          wk && wk.product_focus ? `product focus "${wk.product_focus}"` : "",
+          wk && wk.special_event ? `special event "${wk.special_event}"` : "",
+          wk && wk.dd_loyalty ? `loyalty promo "${wk.dd_loyalty}"` : "",
+        ].filter(Boolean).join(", ");
+        const userMsg = [
           `Store: Bargain Lane ${label}.`,
-          wk && wk.weekly_theme ? `This week's theme: ${wk.weekly_theme}.` : "",
-          wk && wk.product_focus ? `Product focus: ${wk.product_focus}.` : "",
-          wk && wk.special_event ? `Special event: ${wk.special_event}.` : "",
-          wk && wk.dd_loyalty ? `Loyalty promo: ${wk.dd_loyalty}.` : "",
-          wk && wk.weekend_event ? `Weekend event: ${wk.weekend_event}.` : "",
-          "This is a BINS post — new bargain finds just put out in the bins.",
-        ].filter(Boolean).join(" ");
-        const system = "You write short, upbeat Facebook post captions for Bargain Lane, a chain of discount bin stores. Voice: friendly, exciting, community-minded, a little playful. Rules: 1-2 short sentences plus a light call to action, then 2-4 relevant hashtags. NEVER invent or imply specific prices, dollar amounts, discounts, percentages, dates, or product claims — use ONLY the details given. Do not use the store's internal code. Return ONLY the caption text — no preamble, no quotation marks, no explanation.";
+          `This post is about: ${topic}.`,
+          bg ? `Optional background — this week at the store: ${bg}. Use it ONLY if it naturally fits this post; do not force it in.` : "",
+          "Write the caption.",
+        ].filter(Boolean).join("\n");
+        const system = "You write short, upbeat Facebook post captions for Bargain Lane, a chain of discount bin stores. Voice: friendly, exciting, community-minded, a little playful. The user tells you what THIS specific post is about — write for that, not a generic promo. Rules: 1-2 short sentences plus a light call to action, then 2-4 relevant hashtags. NEVER invent or imply specific prices, dollar amounts, discounts, percentages, dates, or product claims — use ONLY the details given. Do not use the store's internal code. Return ONLY the caption text — no preamble, no quotation marks, no explanation.";
         const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
@@ -5675,7 +5680,7 @@ export default {
             thinking: { type: "disabled" },
             output_config: { effort: "low" },
             system,
-            messages: [{ role: "user", content: `${ctx}\n\nWrite the caption.` }],
+            messages: [{ role: "user", content: userMsg }],
           }),
         });
         if (!aiRes.ok) {
