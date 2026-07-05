@@ -1522,8 +1522,12 @@
               <div id="ct-photo-pick" class="grid grid-cols-3 sm:grid-cols-4 gap-2"></div>
             </div>
             <div>
-              <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Caption</label>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">Caption</label>
+                <button type="button" id="ct-ai-btn" onclick="ctAiCaption()" class="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-accent-green/50 text-accent-green hover:bg-accent-green/10 transition">✨ AI generate</button>
+              </div>
               <textarea id="ct-caption" rows="3" placeholder="Write the post caption…" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></textarea>
+              <p id="ct-ai-note" class="hidden text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">✨ AI-drafted from this week's Flow Calendar — edit as needed.</p>
             </div>
             <div class="flex items-center gap-3">
               <button id="ct-save-draft" onclick="ctSaveDraft()" class="px-5 py-2.5 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-xl transition-colors">Save draft</button>
@@ -11270,6 +11274,7 @@
   let ctSelThumb = null;
   let ctSelPhotos = new Set();
   let ctEditingId = null;
+  let ctCaptionSource = 'manual';
 
   function initContent() {
     ctResetComposer();
@@ -11396,8 +11401,9 @@
   window.ctTogglePhoto = ctTogglePhoto;
 
   function ctResetComposer() {
-    ctEditingId = null; ctSelThumb = null; ctSelPhotos = new Set();
+    ctEditingId = null; ctSelThumb = null; ctSelPhotos = new Set(); ctCaptionSource = 'manual';
     if (el('ct-caption')) el('ct-caption').value = '';
+    if (el('ct-ai-note')) el('ct-ai-note').classList.add('hidden');
     if (el('ct-compose-status')) el('ct-compose-status').classList.add('hidden');
     if (el('ct-clear')) el('ct-clear').classList.add('hidden');
     if (el('ct-save-draft')) el('ct-save-draft').textContent = 'Save draft';
@@ -11415,7 +11421,7 @@
     if (!ctSelPhotos.size) return show('Select at least one photo.', 'text-op-bad');
     const btn = el('ct-save-draft'); btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      const body = { store, thumbnail_id: ctSelThumb, photo_ids: [...ctSelPhotos], caption, caption_source: 'manual' };
+      const body = { store, thumbnail_id: ctSelThumb, photo_ids: [...ctSelPhotos], caption, caption_source: ctCaptionSource };
       if (ctEditingId) body.id = ctEditingId;
       const r = await fetch(`${WORKER_BASE}?action=draft-save`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json().catch(() => ({}));
@@ -11429,6 +11435,25 @@
     } finally { btn.disabled = false; }
   }
   window.ctSaveDraft = ctSaveDraft;
+
+  async function ctAiCaption() {
+    const store = el('ct-store').value;
+    const st = el('ct-compose-status');
+    if (!store) { st.textContent = 'Pick a store first.'; st.className = 'text-sm text-op-bad'; st.classList.remove('hidden'); return; }
+    const btn = el('ct-ai-btn'); const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Writing…';
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=draft-generate-caption`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ store }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || 'AI failed');
+      el('ct-caption').value = d.caption || '';
+      ctCaptionSource = 'ai';
+      el('ct-ai-note').classList.remove('hidden');
+      st.classList.add('hidden');
+    } catch (e) {
+      st.textContent = (e && e.message) || 'AI failed'; st.className = 'text-sm text-op-bad'; st.classList.remove('hidden');
+    } finally { btn.disabled = false; btn.textContent = orig; }
+  }
+  window.ctAiCaption = ctAiCaption;
 
   async function ctLoadDrafts() {
     const wrap = el('ct-drafts');
@@ -11472,6 +11497,8 @@
     ctSelThumb = d.thumbnail_id || null;
     ctSelPhotos = new Set((d.photo_ids || []).map(Number));
     el('ct-caption').value = d.caption || '';
+    ctCaptionSource = d.caption_source || 'manual';
+    el('ct-ai-note').classList.toggle('hidden', ctCaptionSource !== 'ai');
     ctRenderThumbPicker(); ctRenderPhotoPicker();
     el('ct-save-draft').textContent = 'Update draft';
     el('ct-clear').classList.remove('hidden');

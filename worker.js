@@ -5634,6 +5634,66 @@ export default {
       }
     }
 
+    // ── AI caption (Slice 1b-3): draft a bin-post caption from the Flow ──
+    // Calendar week via Claude. Admin only. Text-only (no image generation).
+    // POST ?action=draft-generate-caption { store, fiscal_year? }
+    if (request.method === "POST" && url.searchParams.get("action") === "draft-generate-caption") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.ANTHROPIC_API_KEY) {
+        return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY not set — run: wrangler secret put ANTHROPIC_API_KEY --env staging" }), { status: 400, headers: corsJson });
+      }
+      try {
+        const b = await request.json();
+        const store = String(b.store || "").trim().toUpperCase();
+        const fy = String(b.fiscal_year || "F26").trim();
+        // Pull the current retail week's context from the Flow Calendar.
+        let wk = null;
+        if (env.DB) {
+          const today = new Date().toISOString().slice(0, 10);
+          wk = await env.DB.prepare(
+            "SELECT * FROM marketing_flow WHERE fiscal_year = ? AND week_start <= ? AND week_end >= ? LIMIT 1"
+          ).bind(fy, today, today).first().catch(() => null);
+        }
+        const label = (typeof STORE_LABELS !== "undefined" && STORE_LABELS[store]) ? STORE_LABELS[store] : (store || "the store");
+        const ctx = [
+          `Store: Bargain Lane ${label}.`,
+          wk && wk.weekly_theme ? `This week's theme: ${wk.weekly_theme}.` : "",
+          wk && wk.product_focus ? `Product focus: ${wk.product_focus}.` : "",
+          wk && wk.special_event ? `Special event: ${wk.special_event}.` : "",
+          wk && wk.dd_loyalty ? `Loyalty promo: ${wk.dd_loyalty}.` : "",
+          wk && wk.weekend_event ? `Weekend event: ${wk.weekend_event}.` : "",
+          "This is a BINS post — new bargain finds just put out in the bins.",
+        ].filter(Boolean).join(" ");
+        const system = "You write short, upbeat Facebook post captions for Bargain Lane, a chain of discount bin stores. Voice: friendly, exciting, community-minded, a little playful. Rules: 1-2 short sentences plus a light call to action, then 2-4 relevant hashtags. NEVER invent or imply specific prices, dollar amounts, discounts, percentages, dates, or product claims — use ONLY the details given. Do not use the store's internal code. Return ONLY the caption text — no preamble, no quotation marks, no explanation.";
+        const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-opus-4-8",
+            max_tokens: 400,
+            thinking: { type: "disabled" },
+            output_config: { effort: "low" },
+            system,
+            messages: [{ role: "user", content: `${ctx}\n\nWrite the caption.` }],
+          }),
+        });
+        if (!aiRes.ok) {
+          const errTxt = await aiRes.text().catch(() => "");
+          return new Response(JSON.stringify({ error: `Claude API ${aiRes.status}`, detail: errTxt.slice(0, 200) }), { status: 502, headers: corsJson });
+        }
+        const aiJson = await aiRes.json();
+        if (aiJson.stop_reason === "refusal") {
+          return new Response(JSON.stringify({ error: "The caption request was declined by the safety system. Edit the details and try again." }), { status: 400, headers: corsJson });
+        }
+        const caption = (aiJson.content || []).filter(x => x.type === "text").map(x => x.text).join("").trim();
+        if (!caption) return new Response(JSON.stringify({ error: "No caption produced" }), { status: 502, headers: corsJson });
+        return new Response(JSON.stringify({ ok: true, caption, week: wk ? wk.retail_week : null }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
     // ── Marketing Flow Calendar: ?action=flow-calendar ───────────────
     // The promotional pipeline (source of truth). Returns the full fiscal year:
     // `weeks` (marketing_flow, one row per retail week) plus `segments`
