@@ -11458,7 +11458,7 @@
     const topic = el('ct-topic') ? el('ct-topic').value.trim() : '';
     const btn = el('ct-ai-btn'); const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Writing…';
     try {
-      const r = await fetch(`${WORKER_BASE}?action=draft-generate-caption`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ store, topic }) });
+      const r = await fetch(`${WORKER_BASE}?action=draft-generate-caption`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ store, topic, thumbnail_id: ctSelThumb }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) throw new Error(d.error || 'AI failed');
       el('ct-caption').value = d.caption || '';

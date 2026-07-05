@@ -5649,6 +5649,24 @@ export default {
         const store = String(b.store || "").trim().toUpperCase();
         const fy = String(b.fiscal_year || "F26").trim();
         const topic = String(b.topic || "").trim() || "our weekly bin preview — fresh bargain finds just put out in the bins";
+        // Load the selected cover thumbnail so the model can SEE what the post
+        // promotes (theme, day-by-day pricing, "new inventory Friday", etc.).
+        let coverImg = null;
+        const thumbId = (b.thumbnail_id != null && b.thumbnail_id !== "") ? parseInt(b.thumbnail_id, 10) : null;
+        if (env.DB && env.MEDIA && Number.isInteger(thumbId)) {
+          const th = await env.DB.prepare("SELECT r2_key, content_type FROM marketing_thumbnails WHERE id = ?").bind(thumbId).first().catch(() => null);
+          const obj = th && th.r2_key ? await env.MEDIA.get(th.r2_key) : null;
+          if (obj) {
+            const bytes = new Uint8Array(await obj.arrayBuffer());
+            let mt = (th.content_type || "image/png").toLowerCase();
+            if (mt === "image/jpg") mt = "image/jpeg";
+            if (/^image\/(png|jpeg|gif|webp)$/.test(mt) && bytes.length <= 5 * 1024 * 1024) {
+              let bin = ""; const chunk = 0x8000;
+              for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+              coverImg = { type: "image", source: { type: "base64", media_type: mt, data: btoa(bin) } };
+            }
+          }
+        }
         // Pull the current retail week from the Flow Calendar as OPTIONAL background.
         let wk = null;
         if (env.DB) {
@@ -5664,13 +5682,15 @@ export default {
           wk && wk.special_event ? `special event "${wk.special_event}"` : "",
           wk && wk.dd_loyalty ? `loyalty promo "${wk.dd_loyalty}"` : "",
         ].filter(Boolean).join(", ");
-        const userMsg = [
+        const userText = [
           `Store: Bargain Lane ${label}.`,
           `This post is about: ${topic}.`,
-          bg ? `Optional background — this week at the store: ${bg}. Use it ONLY if it naturally fits this post; do not force it in.` : "",
+          coverImg ? "The attached image is THIS post's branded cover graphic. Match the caption to what it actually promotes — its theme, headline, and any recurring schedule, day-by-day pricing, or offer printed on it. You MAY reference prices, days, or offers that are clearly printed on the cover; do NOT invent any that are not shown." : "",
+          bg ? `Extra background — this week's store plan: ${bg}. Use it ONLY if it fits this specific post; do not force it in.` : "",
           "Write the caption.",
         ].filter(Boolean).join("\n");
-        const system = "You write short, upbeat Facebook post captions for Bargain Lane, a chain of discount bin stores. Voice: friendly, exciting, community-minded, a little playful. The user tells you what THIS specific post is about — write for that, not a generic promo. Rules: 1-2 short sentences plus a light call to action, then 2-4 relevant hashtags. NEVER invent or imply specific prices, dollar amounts, discounts, percentages, dates, or product claims — use ONLY the details given. Do not use the store's internal code. Return ONLY the caption text — no preamble, no quotation marks, no explanation.";
+        const content = coverImg ? [coverImg, { type: "text", text: userText }] : userText;
+        const system = "You write short, upbeat Facebook post captions for Bargain Lane, a chain of discount bin stores. Voice: friendly, exciting, community-minded, a little playful. The user tells you what THIS post is about and may attach the post's cover graphic — write for that specific post, not a generic promo. Rules: 1-2 short sentences plus a light call to action, then 2-4 relevant hashtags. Only reference prices, discounts, dates, schedules, offers, or claims that are printed on the attached cover image or given in the text — NEVER invent, guess, or embellish beyond what's provided. Do not use the store's internal code. Return ONLY the caption text — no preamble, no quotation marks, no explanation.";
         const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
@@ -5680,7 +5700,7 @@ export default {
             thinking: { type: "disabled" },
             output_config: { effort: "low" },
             system,
-            messages: [{ role: "user", content: userMsg }],
+            messages: [{ role: "user", content }],
           }),
         });
         if (!aiRes.ok) {
