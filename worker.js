@@ -5719,6 +5719,107 @@ export default {
       }
     }
 
+    // ── Publish a draft to Facebook (Slice 1c) — multi-photo post ─────
+    // Admin only. Builds ONE multi-photo Page post: the branded cover thumbnail
+    // FIRST, then the selected bin photos, with the caption. SAFE BY DEFAULT —
+    // stages the post UNPUBLISHED unless the caller passes { published: true },
+    // so a human can review it in the Page's Publishing Tools before it goes live.
+    // POST ?action=publish-draft { draft_id, published?, token? }
+    if (request.method === "POST" && url.searchParams.get("action") === "publish-draft") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured (DB/MEDIA)" }), { status: 500, headers: corsJson });
+      const ver = env.META_API_VERSION || META_API_VERSION;
+      try {
+        const b = await request.json();
+        const draftId = parseInt(b.draft_id, 10);
+        if (!Number.isInteger(draftId)) return new Response(JSON.stringify({ error: "Invalid draft_id" }), { status: 400, headers: corsJson });
+        const published = b.published === true;
+        const draft = await env.DB.prepare("SELECT * FROM marketing_drafts WHERE id = ?").bind(draftId).first();
+        if (!draft) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
+        const store = String(draft.store || "").toUpperCase();
+
+        // Resolve the Facebook Page for this store.
+        const target = await env.DB.prepare("SELECT page_id, page_name FROM facebook_page_targets WHERE store = ?").bind(store).first().catch(() => null);
+        if (!target || !target.page_id) return new Response(JSON.stringify({ error: `No Facebook Page mapped for store ${store}` }), { status: 400, headers: corsJson });
+        const pageId = String(target.page_id);
+
+        // Token: explicit body → META_PAGE_TOKENS[page_id] → META_PAGE_TOKEN.
+        let token = String(b.token || "").trim();
+        if (!token && env.META_PAGE_TOKENS) {
+          try { const m = JSON.parse(env.META_PAGE_TOKENS); const e = m[pageId]; token = String((e && (e.token || e)) || "").trim(); } catch (_) {}
+        }
+        if (!token) token = String(env.META_PAGE_TOKEN || "").trim();
+        if (!token) return new Response(JSON.stringify({ error: "No Page token — set META_PAGE_TOKENS/META_PAGE_TOKEN or pass token" }), { status: 400, headers: corsJson });
+        // Derive the Page access token (works whether token is user/system/page).
+        const pgInfo = await fetch(`https://graph.facebook.com/${ver}/${pageId}?${new URLSearchParams({ fields: "name,access_token", access_token: token })}`).then(r => r.json()).catch(() => ({}));
+        if (!pgInfo || pgInfo.error || !pgInfo.access_token) {
+          return new Response(JSON.stringify({ error: "Couldn't get a Page token — check the token/permissions", detail: pgInfo && pgInfo.error }), { status: 400, headers: corsJson });
+        }
+        const pageToken = pgInfo.access_token;
+
+        // Ordered image list: cover thumbnail first, then the bin photos.
+        const images = [];
+        if (draft.thumbnail_id) {
+          const th = await env.DB.prepare("SELECT r2_key, content_type FROM marketing_thumbnails WHERE id = ?").bind(draft.thumbnail_id).first().catch(() => null);
+          if (th && th.r2_key) images.push({ key: th.r2_key, ct: th.content_type || "image/png" });
+        }
+        let photoIds = []; try { photoIds = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
+        for (const pid of photoIds) {
+          const ph = await env.DB.prepare("SELECT r2_key, content_type FROM marketing_photos WHERE id = ?").bind(pid).first().catch(() => null);
+          if (ph && ph.r2_key) images.push({ key: ph.r2_key, ct: ph.content_type || "image/jpeg" });
+        }
+        if (!images.length) return new Response(JSON.stringify({ error: "Draft has no cover or photos to post" }), { status: 400, headers: corsJson });
+
+        // Upload each image to the Page as an UNPUBLISHED photo → collect fbids.
+        const fbids = [];
+        for (const img of images) {
+          const obj = await env.MEDIA.get(img.key);
+          if (!obj) return new Response(JSON.stringify({ error: `Image missing from storage: ${img.key}` }), { status: 500, headers: corsJson });
+          const bytes = new Uint8Array(await obj.arrayBuffer());
+          const fd = new FormData();
+          fd.append("access_token", pageToken);
+          fd.append("published", "false");
+          fd.append("source", new Blob([bytes], { type: img.ct }), "photo");
+          const upr = await fetch(`https://graph.facebook.com/${ver}/${pageId}/photos`, { method: "POST", body: fd });
+          const upj = await upr.json().catch(() => ({}));
+          if (!upr.ok || !upj.id) {
+            return new Response(JSON.stringify({ error: "Facebook photo upload failed", detail: upj && upj.error }), { status: 502, headers: corsJson });
+          }
+          fbids.push(upj.id);
+        }
+
+        // Create the multi-photo feed post referencing the uploaded photos.
+        const feed = new URLSearchParams();
+        feed.set("access_token", pageToken);
+        if (draft.caption) feed.set("message", String(draft.caption));
+        feed.set("published", published ? "true" : "false");
+        fbids.forEach((id, i) => feed.append(`attached_media[${i}]`, JSON.stringify({ media_fbid: id })));
+        const fr = await fetch(`https://graph.facebook.com/${ver}/${pageId}/feed`, { method: "POST", body: feed });
+        const fj = await fr.json().catch(() => ({}));
+        const postId = fj.id || fj.post_id || null;
+        const ok = fr.ok && postId && !(fj && fj.error);
+        const postUrl = postId ? `https://www.facebook.com/${postId}` : null;
+
+        // Log the attempt + advance the draft status on success.
+        const now = new Date().toISOString();
+        await env.DB.prepare(
+          "INSERT INTO marketing_publish_log (draft_id, store, page_id, post_id, post_url, response, status, created_at) VALUES (?,?,?,?,?,?,?,?)"
+        ).bind(draftId, store, pageId, postId, postUrl, JSON.stringify(fj).slice(0, 2000), ok ? (published ? "published" : "staged") : "error", now).run().catch(() => {});
+        if (ok) {
+          await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=? WHERE id=?").bind(published ? "published" : "approved", now, draftId).run().catch(() => {});
+        }
+        if (!ok) return new Response(JSON.stringify({ error: "Facebook post failed", detail: fj && fj.error }), { status: 502, headers: corsJson });
+        return new Response(JSON.stringify({
+          ok: true, published, page: { id: pageId, name: target.page_name },
+          post_id: postId, post_url: postUrl, photos: fbids.length,
+          note: published ? "Published LIVE to the Page." : "Staged as UNPUBLISHED — review it in the Page's Publishing Tools, then publish live.",
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
     // ── Marketing Flow Calendar: ?action=flow-calendar ───────────────
     // The promotional pipeline (source of truth). Returns the full fiscal year:
     // `weeks` (marketing_flow, one row per retail week) plus `segments`

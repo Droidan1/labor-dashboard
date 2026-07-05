@@ -11489,6 +11489,7 @@
             <div class="text-sm font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(label)} · ${nPhotos} photo${nPhotos === 1 ? '' : 's'}</div>
             <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim truncate">${escapeHtml(dr.caption || 'No caption')}</div>
           </div>
+          <button onclick="ctPublishDraft(${dr.id})" class="shrink-0 text-xs font-semibold text-white bg-accent-blue rounded-lg px-2.5 py-1">Publish</button>
           <button onclick="ctEditDraft(${dr.id})" class="shrink-0 text-xs font-semibold text-accent-green px-2 py-1">Edit</button>
           <button onclick="ctDeleteDraft(${dr.id})" aria-label="Delete draft" class="shrink-0 text-xs font-semibold text-op-bad px-2 py-1">Delete</button>
         </div>`;
@@ -11531,6 +11532,25 @@
     ctLoadDrafts();
   }
   window.ctDeleteDraft = ctDeleteDraft;
+
+  async function ctPublishDraft(id) {
+    const ok = await uiConfirm('Post this to Facebook? The cover and photos will be published LIVE to the store’s Page with your caption.', { okText: 'Publish live', title: 'Publish to Facebook' });
+    if (!ok) return;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=publish-draft`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ draft_id: id, published: true }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.error) {
+        const extra = j.detail && j.detail.message ? ` — ${j.detail.message}` : '';
+        await uiAlert(`Couldn’t publish: ${j.error || ('HTTP ' + r.status)}${extra}`, { title: 'Publish failed' });
+        return;
+      }
+      await uiAlert(`Posted to ${(j.page && j.page.name) || 'Facebook'} ✓${j.post_url ? '\n\n' + j.post_url : ''}`, { title: 'Published' });
+      ctLoadDrafts();
+    } catch (e) {
+      await uiAlert('Publish failed — network error.', { title: 'Publish failed' });
+    }
+  }
+  window.ctPublishDraft = ctPublishDraft;
 
   // ── Flow Calendar admin editor (Phase 2) ────────────────────────────
   // Admins get an Edit toggle. In edit mode, clicking a week opens the week
