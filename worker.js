@@ -2,6 +2,28 @@
 const BIN_PATTERNS = [/\bbin\b/i, /\bfill a bag\b/i, /\bglass case\b/i];
 const MAX_TXN_DURATION_MS = 30 * 60 * 1000;
 const ALL_STORES = ["BL1", "BL2", "BL4", "BL8", "BL14", "BL16"];
+// The Weekly Retail Summary re-admits the closed Wyoming (BL12) as frozen
+// history alongside Indy East (BL16), which took over BL12's physical Clover
+// account when Wyoming closed. Because they are ONE merchant, the WRS splits by
+// date: BL12 owns dates BEFORE the cutover, BL16 owns dates ON/AFTER it — so no
+// week is double-counted. WRS_STORES is consumed ONLY by the two WRS endpoints;
+// ALL_STORES stays the 6-store live roster for the dashboard, cron, snapshots,
+// email, inventory, budgets, etc.
+//
+// INVARIANT: WRS_CUTOVER must land on a WEEK START. weekly-summary gates
+// per-date, but weekly-t13 attributes each whole week by its start date, so a
+// mid-week cutover would let the two endpoints disagree. 2026-06-14 is exactly
+// the week-24/25 boundary, so no retail week straddles it.
+const WRS_CUTOVER = "2026-06-14";            // week-25 start; Wyoming -> Indy handoff
+const WRS_STORES  = [...ALL_STORES, "BL12"]; // + Wyoming (frozen history)
+// Per-store WRS date gate: BL12 keeps only pre-cutover dates, BL16 only
+// post-cutover dates; every other store passes through unchanged. Dates are
+// YYYY-MM-DD, so a lexicographic compare is equivalent to a chronological one.
+function wrsGateDates(store, dates) {
+  if (store === "BL12") return dates.filter(d => d < WRS_CUTOVER);
+  if (store === "BL16") return dates.filter(d => d >= WRS_CUTOVER);
+  return dates;
+}
 
 // Get today's date and start-of-day timestamp in Eastern Time (all stores are ET)
 function getETToday() {
@@ -7954,13 +7976,20 @@ export default {
           }), { headers: corsJson });
         }
 
-        // Scope stores to what the current user is allowed to see
-        const scopedStores = allowedStores(currentUser)
-          ? ALL_STORES.filter(s => allowedStores(currentUser).includes(s))
-          : ALL_STORES;
+        // Scope stores to what the current user is allowed to see. WRS_STORES
+        // adds BL12 (Wyoming, frozen history); a user who can see BL16 (Indy)
+        // also sees BL12 since it's the same physical store.
+        const _wrsAllow = allowedStores(currentUser);
+        const scopedStores = _wrsAllow
+          ? WRS_STORES.filter(s => _wrsAllow.includes(s) || (s === "BL12" && _wrsAllow.includes("BL16")))
+          : WRS_STORES;
 
+        // Per-store date gate splits the shared BL12/BL16 Clover account so the
+        // selected week is attributed to exactly one of them (no double-count).
+        // For a week wholly on the other side of the cutover, the gated store
+        // gets an empty date list -> buildStoreWeekly returns a zeroed bundle.
         const bundles = await Promise.all(
-          scopedStores.map(s => buildStoreWeekly(env, s, dates))
+          scopedStores.map(s => buildStoreWeekly(env, s, wrsGateDates(s, dates)))
         );
         const stores = {};
         scopedStores.forEach((s, i) => { stores[s] = bundles[i]; });
@@ -8083,9 +8112,10 @@ export default {
 
         // Build per-store time series. Read pre-rolled summaries first; on
         // miss, build live for that one (store, week).
-        const scopedStoresT13 = allowedStores(currentUser)
-          ? ALL_STORES.filter(s => allowedStores(currentUser).includes(s))
-          : ALL_STORES;
+        const _wrsAllowT13 = allowedStores(currentUser);
+        const scopedStoresT13 = _wrsAllowT13
+          ? WRS_STORES.filter(s => _wrsAllowT13.includes(s) || (s === "BL12" && _wrsAllowT13.includes("BL16")))
+          : WRS_STORES;
         const stores = {};
         for (const s of scopedStoresT13) {
           stores[s] = {
@@ -8109,7 +8139,21 @@ export default {
           const perStore = {};
           const perStoreL2 = {};
           const perStoreL2Net = {};
+          // Shared BL12/BL16 account: attribute this whole week to one store.
+          // wkObj.start is the week's MIN(date); the cutover is a week boundary.
+          const isPostCutover = (wkObj.start || "") >= WRS_CUTOVER;
           await Promise.all(scopedStoresT13.map(async (s) => {
+            // Zero the gated store for this week (BL12 after the cutover, BL16
+            // before it). Zeroing every surface here — totals, L2 maps, and the
+            // raw per-store maps shipped for client-side recompute — keeps the
+            // 'total' line and combined L2 cards from double-counting, and shows
+            // the store's true non-operating weeks as 0.
+            if ((s === "BL12" && isPostCutover) || (s === "BL16" && !isPostCutover)) {
+              perStore[s] = { netSales: 0, qty: 0, transactions: 0, asp: 0, laborPct: 0, budget: 0, auction: 0 };
+              perStoreL2[s] = {};
+              perStoreL2Net[s] = {};
+              return;
+            }
             let summary = null;
             if (env.SALES_SNAPSHOTS) {
               summary = await env.SALES_SNAPSHOTS.get(

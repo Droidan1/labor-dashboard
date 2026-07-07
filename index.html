@@ -1095,6 +1095,7 @@
           <button data-wrs-tab="BL8" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Holland</button>
           <button data-wrs-tab="BL12" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Wyoming</button>
           <button data-wrs-tab="BL14" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Battle Creek</button>
+          <button data-wrs-tab="BL16" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Indy East</button>
         </nav>
 
         <div id="wrs-loading" class="hidden text-center py-12 text-sm text-gray-400 dark:text-gray-500">Loading weekly data…</div>
@@ -10666,8 +10667,8 @@
   // ═══════════════════════════════════════════════════════════════
   //  WEEKLY RETAIL SUMMARY — helpers + init + loaders
   // ═══════════════════════════════════════════════════════════════
-  const WRS_STORE_KEYS  = ['BL1','BL2','BL4','BL8','BL12','BL14'];
-  const WRS_STORE_NAMES = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek' };
+  const WRS_STORE_KEYS  = ['BL1','BL2','BL4','BL8','BL12','BL14','BL16'];
+  const WRS_STORE_NAMES = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont', BL8:'Holland', BL12:'Wyoming', BL14:'Battle Creek', BL16:'Indy East' };
 
   function fmtInt(n) { return (n == null || n === 0) ? '0' : Number(n).toLocaleString('en-US'); }
   function fmtDash(n) { return (n == null || n === 0) ? '—' : fmtDollar(n); }
@@ -12725,7 +12726,10 @@
       <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
       <div class="relative">
         <div class="flex items-center justify-between gap-2">
-          <h2 class="text-lg font-extrabold text-opl-ink dark:text-op-ink truncate">${escapeHtml(storeName)}</h2>
+          <div class="flex items-center gap-2 min-w-0">
+            <h2 class="text-lg font-extrabold text-opl-ink dark:text-op-ink truncate">${escapeHtml(storeName)}</h2>
+            ${storeKey === 'BL12' ? `<span class="flex-shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-[0.05em] border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">Closed · historical</span>` : ''}
+          </div>
           <div class="flex-shrink-0 inline-flex items-center rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] overflow-hidden">
             <button onclick="wrsStepWeek(1)" aria-label="Previous week" class="w-8 h-8 grid place-items-center text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">‹</button>
             <span class="px-2 text-[12.5px] font-bold tabular-nums text-opl-ink dark:text-op-ink whitespace-nowrap">Week ${escapeHtml(String(week))}</span>
@@ -14374,7 +14378,9 @@
         ...STORES.filter(s => allowed.includes(s.split('/')[0]))
       );
       WRS_STORE_KEYS.splice(0, WRS_STORE_KEYS.length,
-        ...WRS_STORE_KEYS.filter(s => allowed.includes(s))
+        // BL12 (Wyoming, frozen history) rides along with BL16 (Indy) — same
+        // physical store — so an Indy-scoped manager still sees the history tab.
+        ...WRS_STORE_KEYS.filter(s => allowed.includes(s) || (s === 'BL12' && allowed.includes('BL16')))
       );
     }
   }
