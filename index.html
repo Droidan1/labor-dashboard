@@ -1054,12 +1054,34 @@
             </div>
             <div class="flex gap-3 items-end">
               <div>
-                <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Year</label>
-                <select id="wrs-year-select" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors"></select>
-              </div>
-              <div>
-                <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Week</label>
-                <select id="wrs-week-select" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors"></select>
+                <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Date Range</label>
+                <div class="relative" id="wrs-chip-wrap">
+                  <button id="wrs-chip-trigger" type="button" onclick="toggleWrsPanel(event)" aria-haspopup="true" aria-expanded="false" aria-label="Change date range"
+                    class="relative h-[38px] px-3 gap-2 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink flex items-center justify-center transition-colors hover:border-accent-green/40 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                    <svg class="w-[17px] h-[17px] text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
+                    <span id="wrs-chip-label" class="text-[13px] font-bold whitespace-nowrap max-w-[180px] truncate">—</span>
+                    <svg id="wrs-chip-chev" class="w-3.5 h-3.5 text-opl-inkDim dark:text-op-inkDim flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                  </button>
+                  <div id="wrs-chip-panel" onclick="event.stopPropagation()"
+                    class="hidden absolute top-[calc(100%+10px)] right-0 w-[300px] max-w-[92vw] max-sm:!fixed max-sm:!top-[calc(env(safe-area-inset-top)+64px)] max-sm:!left-3 max-sm:!right-3 max-sm:!w-auto max-sm:!max-w-none bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi rounded-[15px] shadow-2xl z-50 origin-top-right overflow-hidden">
+                    <div id="wrs-range-preset-list" class="max-h-[70vh] overflow-y-auto py-1"></div>
+                    <div id="wrs-range-custom" class="hidden border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                      <div class="flex items-center justify-between gap-2 px-3.5 py-2.5">
+                        <button type="button" onclick="wrsRangeCalNav(-1)" aria-label="Previous month" class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">‹</button>
+                        <span id="wrs-range-cal-title" class="text-[12px] font-bold text-opl-ink dark:text-op-ink text-center flex-1"></span>
+                        <button type="button" onclick="wrsRangeCalNav(1)" aria-label="Next month" class="w-7 h-7 flex items-center justify-center rounded-[8px] text-base leading-none border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors">›</button>
+                      </div>
+                      <div id="wrs-range-cal-grids" class="px-3 pb-2 grid grid-cols-1 gap-3"></div>
+                      <div class="flex items-center justify-between gap-2 px-3.5 py-3 border-t border-[rgba(20,16,8,0.1)] dark:border-op-border">
+                        <span id="wrs-range-custom-summary" class="text-[12px] font-medium text-opl-inkDim dark:text-op-inkDim truncate">Pick a start date</span>
+                        <div class="flex items-center gap-1.5 flex-shrink-0">
+                          <button type="button" onclick="wrsRangeCustomCancel()" class="px-2.5 py-1.5 rounded-[8px] text-[12px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+                          <button id="wrs-range-custom-apply" type="button" onclick="wrsRangeCustomApply()" disabled class="px-3 py-1.5 rounded-[8px] text-[12px] font-bold bg-accent-green text-[#0b1220] disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">Apply</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
               <button id="wrs-refresh-btn" type="button" onclick="wrsManualRefresh(this)" title="Refresh" aria-label="Refresh"
                 class="w-[38px] h-[38px] hidden lg:grid place-items-center rounded-lg border border-gray-300 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-500 dark:text-op-inkDim hover:border-accent-green/50 hover:text-gray-700 dark:hover:text-op-ink transition-colors">
@@ -11847,42 +11869,194 @@
   }
   window.fcDeleteSeg = fcDeleteSeg;
 
+  // ── WRS date-range picker ─────────────────────────────────────────
+  // Independent picker instance for the Weekly Retail Summary. Reuses the pure
+  // dashboard helpers (RANGE_PRESETS, resolvePreset, ymd*, fmtRangeShort) but
+  // keeps its OWN state + DOM (wrs- prefixed) so it never touches the dashboard
+  // range. Selecting a range reloads the Summary/T13/store panes over [from,to].
+  let wrsRange = { from: null, to: null, presetId: 'thisWeek', label: 'This Week' };
+  let _wrsRcMonth = null, _wrsRcStart = null, _wrsRcEnd = null;
+
+  function updateWrsChip() {
+    const lbl = el('wrs-chip-label');
+    if (!lbl) return;
+    lbl.textContent = wrsRange.label || '—';
+    const trig = el('wrs-chip-trigger');
+    if (trig && wrsRange.from) trig.title = fmtRangeShort(wrsRange.from, wrsRange.to);
+  }
+  function renderWrsPanel() {
+    const list = el('wrs-range-preset-list');
+    if (!list) return;
+    let html = '';
+    for (const p of RANGE_PRESETS) {
+      const active = p.id === wrsRange.presetId;
+      const border = p.groupEnd ? 'border-b border-[rgba(20,16,8,0.08)] dark:border-op-border' : '';
+      const activeCls = active
+        ? 'bg-accent-green/12 font-bold'
+        : 'hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)] font-medium';
+      html += `<button type="button" onclick="wrsPickRangePreset('${p.id}')" class="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-left text-[14px] text-opl-ink dark:text-op-ink transition-colors ${activeCls} ${border}">`
+            + `<span>${p.label}</span>`
+            + (active ? '<svg class="w-4 h-4 text-accent-green flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '')
+            + `</button>`;
+    }
+    list.innerHTML = html;
+  }
+  function setWrsRange(presetId, cFrom, cTo) {
+    const r = resolvePreset(presetId, cFrom, cTo);
+    if (!r.from || !r.to) return;
+    wrsRange = r;
+    updateWrsChip();
+    renderWrsPanel();
+    wrsData = null; wrsT13Data = null;
+    loadWeeklyRetail(true);
+  }
+  function wrsPickRangePreset(id) {
+    if (id === 'custom') { openWrsCustomRange(); return; }
+    setWrsRange(id);
+    setWrsPanelOpen(false);
+  }
+  window.wrsPickRangePreset = wrsPickRangePreset;
+
+  function openWrsCustomRange() {
+    const list = el('wrs-range-preset-list'), cust = el('wrs-range-custom');
+    if (list) list.classList.add('hidden');
+    if (cust) cust.classList.remove('hidden');
+    const isCustom = wrsRange.presetId === 'custom';
+    _wrsRcStart = isCustom ? wrsRange.from : null;
+    _wrsRcEnd   = isCustom ? wrsRange.to   : null;
+    _wrsRcMonth = (_wrsRcEnd || etTodayStr()).slice(0, 7);
+    renderWrsCal();
+  }
+  function wrsRangeCustomCancel() {
+    const list = el('wrs-range-preset-list'), cust = el('wrs-range-custom');
+    if (cust) cust.classList.add('hidden');
+    if (list) list.classList.remove('hidden');
+  }
+  window.wrsRangeCustomCancel = wrsRangeCustomCancel;
+  function wrsRangeCalNav(dir) {
+    const d = ymdToUTC(_wrsRcMonth + '-01'); d.setUTCMonth(d.getUTCMonth() + dir);
+    _wrsRcMonth = d.toISOString().slice(0, 7);
+    renderWrsCal();
+  }
+  window.wrsRangeCalNav = wrsRangeCalNav;
+  function wrsRangeCalPick(ymd) {
+    if (ymd > etTodayStr()) return;
+    if (!_wrsRcStart || (_wrsRcStart && _wrsRcEnd)) { _wrsRcStart = ymd; _wrsRcEnd = null; }
+    else if (ymd < _wrsRcStart) { _wrsRcEnd = _wrsRcStart; _wrsRcStart = ymd; }
+    else { _wrsRcEnd = ymd; }
+    renderWrsCal();
+  }
+  window.wrsRangeCalPick = wrsRangeCalPick;
+  function wrsRangeCustomApply() {
+    if (!_wrsRcStart) return;
+    setWrsRange('custom', _wrsRcStart, _wrsRcEnd || _wrsRcStart);
+    wrsRangeCustomCancel();
+    setWrsPanelOpen(false);
+  }
+  window.wrsRangeCustomApply = wrsRangeCustomApply;
+  function _wrsMonthGridHTML(ym) {
+    const first = ym + '-01';
+    const firstDow = ymdToUTC(first).getUTCDay();
+    const days = Number(ymdLastOfMonth(first).slice(8));
+    const today = etTodayStr();
+    const lo = _wrsRcStart, hi = _wrsRcEnd || _wrsRcStart;
+    const monthName = new Date(first + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    let cells = '';
+    for (let i = 0; i < firstDow; i++) cells += '<div></div>';
+    for (let dn = 1; dn <= days; dn++) {
+      const ymd = `${ym}-${String(dn).padStart(2, '0')}`;
+      const future = ymd > today;
+      const isEnd = lo && (ymd === lo || ymd === hi);
+      const inRange = lo && hi && ymd >= lo && ymd <= hi && !isEnd;
+      let cls = 'h-8 flex items-center justify-center text-[12px] rounded-[7px] tabular-nums transition-colors ';
+      if (future) cls += 'opacity-30 cursor-not-allowed text-opl-inkDim dark:text-op-inkDim';
+      else if (isEnd) cls += 'bg-accent-green text-[#0b1220] font-bold cursor-pointer';
+      else if (inRange) cls += 'bg-accent-green/20 text-opl-ink dark:text-op-ink cursor-pointer';
+      else cls += 'text-opl-ink dark:text-op-ink hover:bg-[rgba(20,16,8,0.06)] dark:hover:bg-[rgba(255,255,255,0.06)] cursor-pointer';
+      cells += `<div ${future ? '' : `onclick="wrsRangeCalPick('${ymd}')"`} class="${cls}">${dn}</div>`;
+    }
+    const dow = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+      .map(d => `<div class="h-5 flex items-center justify-center text-[9px] font-bold uppercase text-opl-inkDim dark:text-op-inkDim">${d}</div>`).join('');
+    return `<div><div class="text-[11px] font-bold text-opl-ink dark:text-op-ink mb-1.5 text-center">${monthName}</div>`
+         + `<div class="grid grid-cols-7 gap-0.5 mb-1">${dow}</div>`
+         + `<div class="grid grid-cols-7 gap-0.5">${cells}</div></div>`;
+  }
+  function renderWrsCal() {
+    const grids = el('wrs-range-cal-grids'), title = el('wrs-range-cal-title'),
+          apply = el('wrs-range-custom-apply'), summ = el('wrs-range-custom-summary');
+    if (!grids) return;
+    const prevD = ymdToUTC(_wrsRcMonth + '-01'); prevD.setUTCMonth(prevD.getUTCMonth() - 1);
+    const prev = prevD.toISOString().slice(0, 7);
+    grids.innerHTML = _wrsMonthGridHTML(prev) + _wrsMonthGridHTML(_wrsRcMonth);
+    if (title) {
+      const a = new Date(prev + '-01T12:00:00'), b = new Date(_wrsRcMonth + '-01T12:00:00');
+      title.textContent = `${a.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })} – ${b.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+    }
+    if (summ) summ.textContent = _wrsRcStart
+      ? (_wrsRcEnd && _wrsRcEnd !== _wrsRcStart ? fmtRangeShort(_wrsRcStart, _wrsRcEnd) : fmtRangeShort(_wrsRcStart, _wrsRcStart) + ' — now pick end')
+      : 'Pick a start date';
+    if (apply) apply.disabled = !_wrsRcStart;
+  }
+  function setWrsPanelOpen(open) {
+    const panel = el('wrs-chip-panel');
+    const trig = el('wrs-chip-trigger');
+    const chev = el('wrs-chip-chev');
+    if (!panel || !trig) return;
+    if (open) {
+      wrsRangeCustomCancel();
+      renderWrsPanel();
+      panel.classList.remove('hidden');
+      trig.setAttribute('aria-expanded', 'true');
+      trig.classList.add('border-accent-green/45', 'bg-accent-green/10');
+      if (chev) chev.style.transform = 'rotate(180deg)';
+    } else {
+      panel.classList.add('hidden');
+      trig.setAttribute('aria-expanded', 'false');
+      trig.classList.remove('border-accent-green/45', 'bg-accent-green/10');
+      if (chev) chev.style.transform = '';
+    }
+  }
+  function toggleWrsPanel(e) {
+    if (e) e.stopPropagation();
+    const panel = el('wrs-chip-panel');
+    if (!panel) return;
+    setWrsPanelOpen(panel.classList.contains('hidden'));
+  }
+  window.toggleWrsPanel = toggleWrsPanel;
+  // Close the WRS panel on outside-click / Escape (separate from the dashboard's).
+  document.addEventListener('click', (e) => {
+    const wrap = el('wrs-chip-wrap');
+    if (!wrap) return;
+    if (!wrap.contains(e.target)) setWrsPanelOpen(false);
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setWrsPanelOpen(false); });
+
+  // Short label for the current WRS range (used by the Summary hero + subtitle).
+  function wrsRangeLabel() {
+    if (wrsData && wrsData.week != null) return 'Week ' + wrsData.week;
+    if (wrsRange.from) return wrsRange.label || fmtRangeShort(wrsRange.from, wrsRange.to);
+    return '';
+  }
+
   function initWeeklyRetail() {
     if (wrsData) return;
-
-    // Populate year select from allStoreData dates
-    const yearSel = el('wrs-year-select');
-    const weekSel = el('wrs-week-select');
-    const years = new Set();
-    for (const rows of Object.values(allStoreData)) {
-      for (const r of (rows || [])) {
-        if (r.date) years.add(String(r.date.getFullYear ? r.date.getFullYear() : r.date).slice(0,4));
-      }
-    }
-    const curYear = String(new Date().getFullYear());
-    years.add(curYear);
-    yearSel.innerHTML = [...years].sort((a,b)=>b-a)
-      .map(y => `<option value="${y}"${y===curYear?' selected':''}>${y}</option>`).join('');
-
-    // Populate week select from allWeeks
-    weekSel.innerHTML = (allWeeks || []).slice().reverse()
-      .map(w => `<option value="${w}"${w===selectedWeek?' selected':''}>${'Week ' + w}</option>`).join('');
-
+    // Seed/advance the range (default This Week; relative presets re-resolve).
+    wrsRange = resolvePreset(wrsRange.presetId || 'thisWeek', wrsRange.from, wrsRange.to);
+    updateWrsChip();
+    renderWrsPanel();
     loadWeeklyRetail(false);
   }
 
   async function loadWeeklyRetail(force) {
     if (wrsData && !force) { renderWrsActiveTab(); return; }
-    const week = el('wrs-week-select').value;
-    const year = el('wrs-year-select').value;
-    if (!week || !year) return;
+    if (!wrsRange.from || !wrsRange.to) return;
     wrsShowLoading(true);
     try {
-      const data = await cachedFetch(`${WORKER_BASE}?action=weekly-summary&week=${encodeURIComponent(week)}&year=${encodeURIComponent(year)}`, { credentials: 'include' });
+      const data = await cachedFetch(`${WORKER_BASE}?action=weekly-summary&from=${encodeURIComponent(wrsRange.from)}&to=${encodeURIComponent(wrsRange.to)}`, { credentials: 'include' });
       if (data.error) throw new Error(data.error);
       wrsData = data;
       wrsExpandedL2.clear();
-      el('wrs-subtitle').textContent = `Week ${week} · ${year}`;
+      el('wrs-subtitle').textContent = wrsRange.label + ' · ' + fmtRangeShort(wrsRange.from, wrsRange.to);
     } catch(e) {
       wrsShowError('Failed to load weekly data: ' + e.message);
       return;
@@ -11891,12 +12065,11 @@
   }
 
   async function loadT13() {
-    const week = el('wrs-week-select').value;
-    const year = el('wrs-year-select').value;
-    if (!week || !year) return;
+    if (!wrsRange.to) return;
     el('wrs-pane-t13').innerHTML = '<p class="text-sm text-gray-400 py-8 text-center">Loading T13…</p>';
     try {
-      const data = await cachedFetch(`${WORKER_BASE}?action=weekly-t13&endWeek=${encodeURIComponent(week)}&year=${encodeURIComponent(year)}`, { credentials: 'include' });
+      // T13 stays a trailing-13-weeks trend anchored at the range's END date.
+      const data = await cachedFetch(`${WORKER_BASE}?action=weekly-t13&end=${encodeURIComponent(wrsRange.to)}`, { credentials: 'include' });
       if (data.error) throw new Error(data.error);
       wrsT13Data = data;
     } catch(e) {
@@ -11904,6 +12077,32 @@
       return;
     }
     renderT13();
+  }
+
+  // Per-store detail is embedded eagerly for short ranges; for long ranges the
+  // Summary payload is `lazy` and each store's category detail loads on demand.
+  async function showWrsStorePane(storeKey) {
+    const needLazy = wrsData && wrsData.lazy &&
+      !(wrsData.stores && wrsData.stores[storeKey] && wrsData.stores[storeKey].itemSales);
+    if (needLazy) {
+      const reqRange = wrsData.from + '|' + wrsData.to;   // the range this fetch is for
+      el('wrs-pane-store').innerHTML = `<p class="text-sm text-gray-400 py-8 text-center">Loading ${escapeHtml(WRS_STORE_NAMES[storeKey] || storeKey)}…</p>`;
+      try {
+        const d = await cachedFetch(`${WORKER_BASE}?action=weekly-store-detail&store=${encodeURIComponent(storeKey)}&from=${encodeURIComponent(wrsData.from)}&to=${encodeURIComponent(wrsData.to)}`, { credentials: 'include' });
+        if (d.error) throw new Error(d.error);
+        // Range changed mid-fetch (wrsData replaced/nulled): drop this result so
+        // we never merge stale detail into a different range's payload.
+        if (!wrsData || (wrsData.from + '|' + wrsData.to) !== reqRange) return;
+        wrsData.stores[storeKey] = { ...(wrsData.stores[storeKey] || {}), totals: d.totals, itemSales: d.itemSales };
+      } catch (e) {
+        if (wrsCurrentTab === storeKey) el('wrs-pane-store').innerHTML = `<p class="text-sm text-red-500 py-8 text-center">Failed to load ${escapeHtml(WRS_STORE_NAMES[storeKey] || storeKey)}: ${escapeHtml(e.message)}</p>`;
+        return;
+      }
+    }
+    // The user may have switched tabs while we awaited — don't paint a store
+    // pane that is no longer the active tab.
+    if (wrsCurrentTab !== storeKey) return;
+    renderWrsStore(storeKey);
   }
 
   function switchWrsTab(tab) {
@@ -11927,7 +12126,7 @@
       if (!wrsT13Data) loadT13(); else renderT13();
     } else {
       el('wrs-pane-store').classList.remove('hidden');
-      if (wrsData) renderWrsStore(tab);
+      if (wrsData) showWrsStorePane(tab);
     }
   }
 
@@ -11951,7 +12150,7 @@
       if (!wrsT13Data) loadT13(); else renderT13();
     } else {
       el('wrs-pane-store').classList.remove('hidden');
-      if (wrsData) renderWrsStore(tab);
+      if (wrsData) showWrsStorePane(tab);
     }
   }
 
@@ -12364,15 +12563,15 @@
     let html = `<section class="relative overflow-hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5">
       <div class="pointer-events-none absolute inset-0" style="background:radial-gradient(120% 80% at 100% 0%, rgba(34,197,94,0.12), transparent 60%)"></div>
       <div class="relative">
-        <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">All Stores · Week ${escapeHtml(String(wrsData.week ?? ''))}</div>
+        <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">All Stores · ${escapeHtml(wrsRangeLabel())}</div>
         <div class="mt-2 font-geist font-extrabold tabular-nums tracking-tight leading-none text-4xl text-opl-ink dark:text-op-ink">${fmt$0(cNet)}</div>
         <div class="mt-2 text-sm tabular-nums">${cVar != null ? `<span class="font-semibold ${cVarColor}">${cVarSign}${fmt$0(Math.abs(cVar))}${cPace != null ? ` · ${Math.round(cPace)}%` : ''}</span> <span class="text-opl-inkDim dark:text-op-inkDim">of ${fmt$0(cBud)} budget</span>` : '<span class="text-opl-inkDim dark:text-op-inkDim">No budget set</span>'}</div>
         <div class="mt-3 h-2.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]"><div class="h-full rounded-full transition-[width] duration-500" style="width:${cBarW}%;background:${cBarColor}"></div></div>
         <div class="mt-1.5 flex justify-between text-[11px] text-opl-inkDim dark:text-op-inkDim tabular-nums"><span>$0</span><span>${fmt$0(cBud)}</span></div>
         <div class="mt-4 grid grid-cols-4 gap-2">
           ${tile('Transactions', fmtInt(coT.transactions))}
-          ${tile('Qty', fmtInt(coT.qty))}
-          ${tile('ASP', fmtDollar(coT.asp))}
+          ${tile('Qty', coT.qty == null ? '—' : fmtInt(coT.qty))}
+          ${tile('ASP', coT.asp == null ? '—' : fmtDollar(coT.asp))}
           ${tile('Labor %', fmtPct(coT.laborPct))}
         </div>
       </div>
@@ -12416,9 +12615,9 @@
     const kpiCell = (t, col) => {
       switch (col) {
         case 'Net Sales':    return fmtDollar(t.netSales);
-        case 'Qty':          return fmtInt(t.qty);
+        case 'Qty':          return t.qty == null ? '—' : fmtInt(t.qty);
         case 'Transactions': return fmtInt(t.transactions);
-        case 'ASP':          return fmtDollar(t.asp);
+        case 'ASP':          return t.asp == null ? '—' : fmtDollar(t.asp);
         case 'Budget':       return fmtDollar(t.budget);
         case 'Variance $':   return `<span class="${wrsVarianceClass(t.varianceDollar)}">${t.varianceDollar != null ? fmtDollar(t.varianceDollar) : '—'}</span>`;
         case 'Variance %':   return `<span class="${wrsVarianceClass(t.variancePct)}">${t.variancePct != null ? fmtPct(t.variancePct) : '—'}</span>`;
@@ -12450,7 +12649,12 @@
     </details>`;
 
     // ── L2 category × store matrix (heat-shaded) ───────────────────
+    // Long-range (lazy) payloads omit the matrix — it would need per-date item
+    // KV over the whole range x all stores. Show a pointer to the per-store tabs.
     const matrix = co.l2Matrix || [];
+    if (!matrix.length && wrsData && wrsData.lazy) {
+      html += `<div class="mt-6 bg-opl-panel dark:bg-op-panel border border-dashed border-[rgba(20,16,8,0.14)] dark:border-op-borderHi rounded-xl px-4 py-5 text-center text-[13px] text-opl-inkDim dark:text-op-inkDim">The <b>Net Sales by L2 Category × Store</b> matrix isn't computed for long ranges — open a store tab for its full category &amp; GPM breakdown over this period, or choose a range up to ~4 months to see the matrix.</div>`;
+    } else {
     let grandTotal = 0;
     const storeTotals = Object.fromEntries(WRS_STORE_KEYS.map(s => [s, 0]));
     let maxCell = 0;
@@ -12481,6 +12685,7 @@
           <td class="${tdTotCls} text-right tabular-nums">${fmtK(grandTotal)}</td>
         </tr></tbody></table></div>
     </div>`;
+    }
 
     el('wrs-pane-summary').innerHTML = html;
   }
@@ -12730,11 +12935,7 @@
             <h2 class="text-lg font-extrabold text-opl-ink dark:text-op-ink truncate">${escapeHtml(storeName)}</h2>
             ${storeKey === 'BL12' ? `<span class="flex-shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-[0.05em] border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">Closed · historical</span>` : ''}
           </div>
-          <div class="flex-shrink-0 inline-flex items-center rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] overflow-hidden">
-            <button onclick="wrsStepWeek(1)" aria-label="Previous week" class="w-8 h-8 grid place-items-center text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">‹</button>
-            <span class="px-2 text-[12.5px] font-bold tabular-nums text-opl-ink dark:text-op-ink whitespace-nowrap">Week ${escapeHtml(String(week))}</span>
-            <button onclick="wrsStepWeek(-1)" aria-label="Next week" class="w-8 h-8 grid place-items-center text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">›</button>
-          </div>
+          <div class="flex-shrink-0 px-2.5 py-1 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-[12px] font-bold tabular-nums text-opl-ink dark:text-op-ink whitespace-nowrap">${escapeHtml(wrsRangeLabel())}</div>
         </div>
         <div class="mt-2 font-geist font-extrabold tabular-nums tracking-tight leading-none text-4xl text-opl-ink dark:text-op-ink">${fmt$0s(sNet)}</div>
         <div class="mt-1 text-[11.5px] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(dateRange)}</div>
@@ -12907,20 +13108,6 @@
     el('wrs-pane-store').innerHTML = headerHtml + profitHtml + coverageHtml + cardsHtml + detailsHtml;
     setTimeout(() => firstHint('wrs-cat', '#wrs-pane-store [onclick^="toggleL2Expansion"]', "Tap a category to expand its sub-categories &amp; cost detail."), 450);
   }
-
-  // Step the Weekly Retail week selector (±1) and reload via its change handler.
-  // delta +1 = previous (older) week, −1 = next (newer) week (options are newest-first).
-  function wrsStepWeek(delta) {
-    const sel = el('wrs-week-select');
-    if (!sel) return;
-    const opts = [...sel.options];
-    const idx = opts.findIndex(o => o.value === sel.value);
-    const ni = idx + delta;
-    if (ni < 0 || ni >= opts.length) return;
-    sel.value = opts[ni].value;
-    sel.dispatchEvent(new Event('change'));
-  }
-  window.wrsStepWeek = wrsStepWeek;
 
   function toggleL2Expansion(storeKey, l2) {
     const key = `${storeKey}:${l2}`;
@@ -14952,14 +15139,8 @@
     document.querySelectorAll('#wrs-tabs .wrs-tab').forEach(btn => {
       btn.addEventListener('click', () => switchWrsTab(btn.dataset.wrsTab));
     });
-    document.getElementById('wrs-week-select').addEventListener('change', () => {
-      wrsData = null; wrsT13Data = null;
-      loadWeeklyRetail(true);
-    });
-    document.getElementById('wrs-year-select').addEventListener('change', () => {
-      wrsData = null; wrsT13Data = null;
-      loadWeeklyRetail(true);
-    });
+    // The WRS date-range picker wires its own inline handlers; range changes
+    // reload via setWrsRange → loadWeeklyRetail (no select-change wiring needed).
 
     // Hourly modal: close on button click, backdrop click, or Escape key.
     // The item-sales drill-down sits on top; Escape closes the topmost modal first.

@@ -25,6 +25,102 @@ function wrsGateDates(store, dates) {
   return dates;
 }
 
+// ── WRS date-range support ────────────────────────────────────────
+// Above this many days, weekly-summary switches from the full per-store
+// buildStoreWeekly path (1 KV/date/store — would blow the ~1000-subrequest cap
+// over a long range x 7 stores) to a cheap KPI-only path (grouped daily_sales
+// SUM, 0 KV) with per-store category detail loaded lazily. 120 days x 7 stores
+// ~= 840 KV, a safe margin under 1000.
+const WRS_RANGE_FULL_MAX_DAYS = 120;
+
+// Inclusive list of 'YYYY-MM-DD' dates from `from` to `to`.
+function enumDatesInclusive(from, to) {
+  const out = [];
+  const cur = new Date(from + "T00:00:00Z");
+  const end = new Date(to + "T00:00:00Z");
+  while (cur <= end) { out.push(cur.toISOString().slice(0, 10)); cur.setUTCDate(cur.getUTCDate() + 1); }
+  return out;
+}
+
+// Cheap per-store KPI totals over an arbitrary [from,to] from daily_sales only
+// (no item KV). Applies the BL12/BL16 cutover as SQL date predicates (mirrors
+// wrsGateDates). qty/asp come from item snapshots, so they are null here (the
+// long-range Summary shows "—" for them); everything else is exact.
+async function wrsRangeKPIs(env, store, from, to) {
+  const zero = { netSales: 0, retail: 0, bin: 0, auction: 0, budget: 0, qty: null,
+    transactions: 0, asp: null, varianceDollar: 0, variancePct: 0, laborPct: 0 };
+  if (!env.DB) return zero;
+  let cond = "store = ? AND date >= ? AND date <= ?";
+  const binds = [store, from, to];
+  if (store === "BL12") { cond += " AND date < ?"; binds.push(WRS_CUTOVER); }
+  if (store === "BL16") { cond += " AND date >= ?"; binds.push(WRS_CUTOVER); }
+  const r = await env.DB.prepare(
+    `SELECT ROUND(SUM(total),2) t, ROUND(SUM(retail),2) rt, ROUND(SUM(bin),2) bn,
+            ROUND(SUM(auction),2) au, ROUND(SUM(budget),2) bu, SUM(order_count) oc,
+            SUM(CASE WHEN total IS NOT NULL THEN labor_pct*(total+COALESCE(auction,0)) ELSE 0 END) lnum,
+            SUM(CASE WHEN total IS NOT NULL THEN (total+COALESCE(auction,0)) ELSE 0 END) lden
+     FROM daily_sales WHERE ${cond}`
+  ).bind(...binds).first();
+  const total = Number(r?.t) || 0, retail = Number(r?.rt) || 0, bin = Number(r?.bn) || 0,
+        auction = Number(r?.au) || 0, budget = Number(r?.bu) || 0, txn = Number(r?.oc) || 0;
+  const netSales = total + auction;
+  const variance = netSales - budget;
+  const lden = Number(r?.lden) || 0;
+  return {
+    netSales: roundCents(netSales), retail: roundCents(retail), bin: roundCents(bin),
+    auction: roundCents(auction), budget: roundCents(budget), qty: null, transactions: txn,
+    asp: null, varianceDollar: roundCents(variance),
+    variancePct: budget > 0 ? Math.round((variance / budget) * 1000) / 10 : 0,
+    laborPct: lden > 0 ? Math.round((Number(r?.lnum) / lden) * 10) / 10 : 0,
+  };
+}
+
+// Assemble the weekly-summary response body (stores map + company totals + L2
+// matrix) from per-store buildStoreWeekly bundles. Shared by the single-week
+// and small-range (<= WRS_RANGE_FULL_MAX_DAYS) paths so both stay identical.
+function wrsAssembleFromBundles(scopedStores, bundles) {
+  const stores = {};
+  scopedStores.forEach((s, i) => { stores[s] = bundles[i]; });
+  let cNet = 0, cRetail = 0, cBin = 0, cAuction = 0, cBudget = 0,
+      cQty = 0, cTxn = 0, cLaborNum = 0, cLaborDen = 0;
+  for (const b of bundles) {
+    cNet += b.totals.netSales; cRetail += b.totals.retail; cBin += b.totals.bin;
+    cAuction += b.totals.auction; cBudget += b.totals.budget; cQty += b.totals.qty;
+    cTxn += b.totals.transactions;
+    if (b.totals.netSales > 0) { cLaborNum += b.totals.laborPct * b.totals.netSales; cLaborDen += b.totals.netSales; }
+  }
+  const cAsp = cQty > 0 ? (cNet - cAuction) / cQty : 0;
+  const cVar = cNet - cBudget;
+  const cVarPct = cBudget > 0 ? (cVar / cBudget) * 100 : 0;
+  const cLabor = cLaborDen > 0 ? cLaborNum / cLaborDen : 0;
+  const l2Set = new Set();
+  for (const b of bundles) for (const c of b.itemSales.categories) l2Set.add(c.category);
+  const l2Matrix = [];
+  for (const l2 of l2Set) {
+    const row = { l2, byStore: {}, total: 0 };
+    scopedStores.forEach((s, i) => {
+      const found = bundles[i].itemSales.categories.find(c => c.category === l2);
+      const v = found ? found.netSales : 0;
+      row.byStore[s] = v; row.total += v;
+    });
+    row.total = roundCents(row.total);
+    l2Matrix.push(row);
+  }
+  l2Matrix.sort((a, b) => b.total - a.total);
+  return {
+    stores,
+    company: {
+      totals: {
+        netSales: roundCents(cNet), retail: roundCents(cRetail), bin: roundCents(cBin),
+        auction: roundCents(cAuction), budget: roundCents(cBudget), qty: cQty, transactions: cTxn,
+        asp: roundCents(cAsp), varianceDollar: roundCents(cVar),
+        variancePct: Math.round(cVarPct * 10) / 10, laborPct: Math.round(cLabor * 10) / 10,
+      },
+      l2Matrix,
+    },
+  };
+}
+
 // Get today's date and start-of-day timestamp in Eastern Time (all stores are ET)
 function getETToday() {
   const now = new Date();
@@ -1971,11 +2067,17 @@ async function buildStoreWeekly(env, store, dates) {
   // Daily sales rows from D1 (one row per date)
   let dailyRows = [];
   if (env.DB && dates.length) {
-    const placeholders = dates.map(() => "?").join(",");
+    // Query by contiguous [min,max] bounds (3 bound params) rather than a
+    // `date IN (...)` list: D1 caps bound parameters at 100/query, and range
+    // mode can pass up to ~365 dates. Output-identical because daily_sales has
+    // one row per date and every caller passes a contiguous (gated-contiguous)
+    // list; the explicit `dates` array is still used for the per-date KV loop.
+    const lo = dates.reduce((a, d) => (d < a ? d : a), dates[0]);
+    const hi = dates.reduce((a, d) => (d > a ? d : a), dates[0]);
     const { results } = await env.DB.prepare(
       `SELECT date, total, retail, bin, auction, budget, labor_pct, order_count, avg_cart
-       FROM daily_sales WHERE store = ? AND date IN (${placeholders}) ORDER BY date`
-    ).bind(store, ...dates).all();
+       FROM daily_sales WHERE store = ? AND date >= ? AND date <= ? ORDER BY date`
+    ).bind(store, lo, hi).all();
     dailyRows = results || [];
   }
   // Item sales snapshots from KV (one per date)
@@ -7963,19 +8065,14 @@ export default {
     if (url.searchParams.get("action") === "weekly-summary") {
       const week = url.searchParams.get("week");
       const year = url.searchParams.get("year") || String(new Date().getUTCFullYear());
-      if (!week) {
-        return new Response(JSON.stringify({ error: "Missing week param" }), { status: 400, headers: corsJson });
+      const qFrom = url.searchParams.get("from");
+      const qTo   = url.searchParams.get("to");
+      const isRange = !!(qFrom && qTo);
+      if (!week && !isRange) {
+        return new Response(JSON.stringify({ error: "Missing week or from/to param" }), { status: 400, headers: corsJson });
       }
 
       try {
-        const dates = await resolveWeekDates(env, week, year);
-        if (!dates.length) {
-          return new Response(JSON.stringify({
-            week, year: Number(year), dates: [], stores: {}, company: { totals: {}, l2Matrix: [] },
-            note: "No daily_sales rows found for this week.",
-          }), { headers: corsJson });
-        }
-
         // Scope stores to what the current user is allowed to see. WRS_STORES
         // adds BL12 (Wyoming, frozen history); a user who can see BL16 (Indy)
         // also sees BL12 since it's the same physical store.
@@ -7984,94 +8081,123 @@ export default {
           ? WRS_STORES.filter(s => _wrsAllow.includes(s) || (s === "BL12" && _wrsAllow.includes("BL16")))
           : WRS_STORES;
 
+        // ── Range mode: ?from=YYYY-MM-DD&to=YYYY-MM-DD ─────────────────
+        if (isRange) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(qFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(qTo)) {
+            return new Response(JSON.stringify({ error: "Invalid from/to (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+          }
+          let rFrom = qFrom, rTo = qTo;
+          if (rFrom > rTo) { const t = rFrom; rFrom = rTo; rTo = t; }
+          const rangeDates = enumDatesInclusive(rFrom, rTo);
+
+          // Short range: full per-store build (exact KPIs + L2 matrix + eager
+          // per-store detail), gated per store. Cheap enough under the cap.
+          if (rangeDates.length <= WRS_RANGE_FULL_MAX_DAYS) {
+            const bundles = await Promise.all(
+              scopedStores.map(s => buildStoreWeekly(env, s, wrsGateDates(s, rangeDates)))
+            );
+            const asm = wrsAssembleFromBundles(scopedStores, bundles);
+            return new Response(JSON.stringify({
+              from: rFrom, to: rTo, dates: rangeDates, lazy: false, ...asm,
+            }), { headers: corsJson });
+          }
+
+          // Long range: KPIs from a grouped daily_sales SUM (0 KV). Per-store
+          // category detail loads lazily via ?action=weekly-store-detail, and
+          // the company L2 matrix is omitted (would need per-date item KV over
+          // the whole range x all stores → exceeds the subrequest cap).
+          const kpis = await Promise.all(scopedStores.map(s => wrsRangeKPIs(env, s, rFrom, rTo)));
+          const stores = {};
+          scopedStores.forEach((s, i) => { stores[s] = { totals: kpis[i] }; });
+          let cNet = 0, cRetail = 0, cBin = 0, cAuction = 0, cBudget = 0, cTxn = 0, cLaborNum = 0, cLaborDen = 0;
+          for (const k of kpis) {
+            cNet += k.netSales; cRetail += k.retail; cBin += k.bin; cAuction += k.auction;
+            cBudget += k.budget; cTxn += k.transactions;
+            if (k.netSales > 0) { cLaborNum += k.laborPct * k.netSales; cLaborDen += k.netSales; }
+          }
+          const cVar = cNet - cBudget;
+          return new Response(JSON.stringify({
+            from: rFrom, to: rTo, dates: rangeDates, lazy: true,
+            note: "Long range: per-store category detail loads on demand; company L2 matrix omitted.",
+            stores,
+            company: { totals: {
+              netSales: roundCents(cNet), retail: roundCents(cRetail), bin: roundCents(cBin),
+              auction: roundCents(cAuction), budget: roundCents(cBudget), qty: null, transactions: cTxn,
+              asp: null, varianceDollar: roundCents(cVar),
+              variancePct: cBudget > 0 ? Math.round((cVar / cBudget) * 1000) / 10 : 0,
+              laborPct: cLaborDen > 0 ? Math.round((cLaborNum / cLaborDen) * 10) / 10 : 0,
+            }, l2Matrix: [] },
+          }), { headers: corsJson });
+        }
+
+        // ── Single-week mode (unchanged) ───────────────────────────────
+        const dates = await resolveWeekDates(env, week, year);
+        if (!dates.length) {
+          return new Response(JSON.stringify({
+            week, year: Number(year), dates: [], stores: {}, company: { totals: {}, l2Matrix: [] },
+            note: "No daily_sales rows found for this week.",
+          }), { headers: corsJson });
+        }
         // Per-store date gate splits the shared BL12/BL16 Clover account so the
         // selected week is attributed to exactly one of them (no double-count).
-        // For a week wholly on the other side of the cutover, the gated store
-        // gets an empty date list -> buildStoreWeekly returns a zeroed bundle.
         const bundles = await Promise.all(
           scopedStores.map(s => buildStoreWeekly(env, s, wrsGateDates(s, dates)))
         );
-        const stores = {};
-        scopedStores.forEach((s, i) => { stores[s] = bundles[i]; });
-
-        // Company totals (sum of scoped stores)
-        let cNet = 0, cRetail = 0, cBin = 0, cAuction = 0, cBudget = 0,
-            cQty = 0, cTxn = 0, cLaborNum = 0, cLaborDen = 0;
-        for (const b of bundles) {
-          cNet += b.totals.netSales;
-          cRetail += b.totals.retail;
-          cBin += b.totals.bin;
-          cAuction += b.totals.auction;
-          cBudget += b.totals.budget;
-          cQty += b.totals.qty;
-          cTxn += b.totals.transactions;
-          if (b.totals.netSales > 0) {
-            cLaborNum += b.totals.laborPct * b.totals.netSales;
-            cLaborDen += b.totals.netSales;
-          }
-        }
-        // ASP excludes auction (auction has no qty — would inflate per-item avg)
-        const cAsp = cQty > 0 ? (cNet - cAuction) / cQty : 0;
-        const cVar = cNet - cBudget;
-        const cVarPct = cBudget > 0 ? (cVar / cBudget) * 100 : 0;
-        const cLabor = cLaborDen > 0 ? cLaborNum / cLaborDen : 0;
-
-        // L2 × store matrix (scoped stores only). Since buildStoreWeekly now
-        // injects an "Auction" row into each bundle's itemSales.categories,
-        // the matrix automatically includes it — no special-case needed here.
-        // The matrix grand total now equals the KPI table Net Sales.
-        const l2Set = new Set();
-        for (const b of bundles) {
-          for (const c of b.itemSales.categories) l2Set.add(c.category);
-        }
-        const l2Matrix = [];
-        for (const l2 of l2Set) {
-          const row = { l2, byStore: {}, total: 0 };
-          scopedStores.forEach((s, i) => {
-            const found = bundles[i].itemSales.categories.find(c => c.category === l2);
-            const v = found ? found.netSales : 0;
-            row.byStore[s] = v;
-            row.total += v;
-          });
-          row.total = roundCents(row.total);
-          l2Matrix.push(row);
-        }
-        l2Matrix.sort((a, b) => b.total - a.total);
-
+        const asm = wrsAssembleFromBundles(scopedStores, bundles);
         return new Response(JSON.stringify({
-          week, year: Number(year), dates,
-          stores,
-          company: {
-            totals: {
-              netSales: roundCents(cNet),
-              retail: roundCents(cRetail),
-              bin: roundCents(cBin),
-              auction: roundCents(cAuction),
-              budget: roundCents(cBudget),
-              qty: cQty,
-              transactions: cTxn,
-              asp: roundCents(cAsp),
-              varianceDollar: roundCents(cVar),
-              variancePct: Math.round(cVarPct * 10) / 10,
-              laborPct: Math.round(cLabor * 10) / 10,
-            },
-            l2Matrix,
-          },
+          week, year: Number(year), dates, ...asm,
         }), { headers: corsJson });
       } catch (err) {
         return new Response(JSON.stringify({ error: "weekly-summary failed", detail: err.message }), { status: 500, headers: corsJson });
       }
     }
 
+    // ── Public: one store's full category/GPM detail over a date range.
+    //    ?action=weekly-store-detail&store=BL1&from=YYYY-MM-DD&to=YYYY-MM-DD
+    // Lazy companion to weekly-summary's long-range mode: that payload omits the
+    // heavy per-store item detail, and the WRS per-store tab fetches it here on
+    // demand. One store at a time keeps the KV read count under the cap.
+    if (url.searchParams.get("action") === "weekly-store-detail") {
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      const qFrom = url.searchParams.get("from");
+      const qTo   = url.searchParams.get("to");
+      if (!WRS_STORES.includes(store)) {
+        return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+      }
+      // Same visibility rule as weekly-summary (BL12 Wyoming rides with BL16 Indy).
+      const _allow = allowedStores(currentUser);
+      if (_allow && !(_allow.includes(store) || (store === "BL12" && _allow.includes("BL16")))) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      if (!qFrom || !qTo || !/^\d{4}-\d{2}-\d{2}$/.test(qFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(qTo)) {
+        return new Response(JSON.stringify({ error: "Missing or invalid from/to (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+      }
+      try {
+        let rFrom = qFrom, rTo = qTo;
+        if (rFrom > rTo) { const t = rFrom; rFrom = rTo; rTo = t; }
+        // Gate the shared BL12/BL16 account to this store's side of the cutover.
+        const dates = wrsGateDates(store, enumDatesInclusive(rFrom, rTo));
+        const bundle = await buildStoreWeekly(env, store, dates);
+        return new Response(JSON.stringify({
+          store, from: rFrom, to: rTo,
+          totals: bundle.totals,
+          itemSales: bundle.itemSales,
+        }), { headers: corsJson });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "weekly-store-detail failed", detail: err.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     // ── Public: trailing 13-week summary feed
-    //    ?action=weekly-t13&endWeek=15&year=2026
+    //    ?action=weekly-t13&endWeek=15&year=2026   (or &end=YYYY-MM-DD)
     // Reads from pre-rolled `week-summary:` KV keys; falls back to live aggregation
     // for any missing key (and logs a warning).
     if (url.searchParams.get("action") === "weekly-t13") {
       const endWeek = url.searchParams.get("endWeek");
+      const endDate = url.searchParams.get("end");   // anchor at a date (range picker)
       const year = url.searchParams.get("year") || String(new Date().getUTCFullYear());
-      if (!endWeek) {
-        return new Response(JSON.stringify({ error: "Missing endWeek param" }), { status: 400, headers: corsJson });
+      if (!endWeek && !endDate) {
+        return new Response(JSON.stringify({ error: "Missing endWeek or end param" }), { status: 400, headers: corsJson });
       }
 
       try {
@@ -8080,11 +8206,18 @@ export default {
         // back to numeric range.
         let weeks = [];
         if (env.DB) {
-          // Find the latest date for endWeek to anchor the trailing window
-          const anchor = await env.DB.prepare(
-            "SELECT MAX(date) as d FROM daily_sales WHERE week = ? AND date LIKE ?"
-          ).bind(String(endWeek), `${year}-%`).first();
-          const anchorDate = anchor?.d;
+          // Anchor the trailing window on a date: an explicit end=YYYY-MM-DD
+          // (from the range picker's end) takes precedence; otherwise use the
+          // latest date of the endWeek label.
+          let anchorDate = null;
+          if (endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+            anchorDate = endDate;
+          } else if (endWeek) {
+            const anchor = await env.DB.prepare(
+              "SELECT MAX(date) as d FROM daily_sales WHERE week = ? AND date LIKE ?"
+            ).bind(String(endWeek), `${year}-%`).first();
+            anchorDate = anchor?.d;
+          }
           if (anchorDate) {
             const { results } = await env.DB.prepare(
               `SELECT week, MIN(date) as start_date, MAX(date) as end_date
@@ -8098,8 +8231,9 @@ export default {
             }));
           }
         }
-        if (!weeks.length) {
-          // Fallback: numeric range ending at endWeek
+        if (!weeks.length && endWeek) {
+          // Fallback: numeric range ending at endWeek (endWeek path only; the
+          // end=date path relies on the D1 anchor above and is a recent date).
           const ew = parseInt(endWeek, 10);
           const yr = parseInt(year, 10);
           for (let i = 12; i >= 0; i--) {
@@ -8157,12 +8291,14 @@ export default {
             let summary = null;
             if (env.SALES_SNAPSHOTS) {
               summary = await env.SALES_SNAPSHOTS.get(
-                `week-summary:${s.toLowerCase()}:${wk}-${year}`, "json"
+                `week-summary:${s.toLowerCase()}:${wk}-${(wkObj.start || "").slice(0, 4) || year}`, "json"
               );
             }
             if (!summary) {
               liveBuilds++;
-              const dates = await resolveWeekDates(env, wk, year);
+              // Use the week's OWN year (from its start date), not the request
+              // year — the end=DATE anchor can trail across a year boundary.
+              const dates = await resolveWeekDates(env, wk, (wkObj.start || "").slice(0, 4) || year);
               if (dates.length) {
                 const bundle = await buildStoreWeekly(env, s, dates);
                 summary = { totals: bundle.totals, l2Qty: bundle.l2Qty, l2Net: bundle.l2Net };
