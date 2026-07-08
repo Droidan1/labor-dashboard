@@ -101,9 +101,9 @@ VAPID_SUBJECT = "mailto:noreply@retjghub.com"
 # Env-aware hosts (worker.js falls back to prod literals when unset).
 APP_ORIGIN = "https://staging.retjghub.com"
 API_ORIGIN = "https://api-staging.retjghub.com"
-# OpenAI calls route through Cloudflare AI Gateway (Worker->api.openai.com direct hits
-# edge rate-limit err 1015). Create an AI Gateway named "bargain-lane" in the dashboard.
-OPENAI_BASE = "https://gateway.ai.cloudflare.com/v1/9a0cbd2e181e46f35f173cfd2ea2037b/bargain-lane/openai"
+# OPENAI_BASE unset = call api.openai.com directly (the worker retries across
+# Cloudflare's egress-IP pool to dodge OpenAI's edge rate-limit / err 1015).
+# To route via AI Gateway instead, set it to the gateway .../openai URL.
 
 [[env.staging.kv_namespaces]]
 binding = "SALES_SNAPSHOTS"

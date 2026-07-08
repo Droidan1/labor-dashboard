@@ -5941,8 +5941,8 @@ export default {
       const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (denied) return denied;
       if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
-      if (!env.OPENAI_API_KEY) {
-        return new Response(JSON.stringify({ error: "OPENAI_API_KEY not set — run: wrangler secret put OPENAI_API_KEY --env staging" }), { status: 400, headers: corsJson });
+      if (!env.GEMINI_API_KEY) {
+        return new Response(JSON.stringify({ error: "GEMINI_API_KEY not set — run: wrangler secret put GEMINI_API_KEY --env staging" }), { status: 400, headers: corsJson });
       }
       try {
         const b = await request.json();
@@ -5959,37 +5959,37 @@ export default {
           `This cover is for: ${userPrompt}`,
           "Bold, high-contrast, eye-catching, on-brand. Leave clean negative space where a logo and a short headline could sit.",
         ].filter(Boolean).join("\n\n");
-        // Worker→api.openai.com (both on Cloudflare) gets edge-rate-limited (err 1015).
-        // Route through Cloudflare AI Gateway instead: set OPENAI_BASE to
-        // https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/openai  (falls back to direct).
-        const OPENAI_BASE = (env.OPENAI_BASE || "https://api.openai.com/v1").replace(/\/+$/, "");
-        const oaRes = await fetch(`${OPENAI_BASE}/images/generations`, {
+        // Google "Nano Banana" (Gemini 2.5 Flash Image). generativelanguage.googleapis.com is
+        // Google-hosted (not Cloudflare), so a Worker reaches it without OpenAI's 1015 edge block.
+        const gModel = env.GEMINI_MODEL || "gemini-2.5-flash-image";
+        const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent`, {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": "BargainLane-ContentStudio/1.0",
-            ...(env.OPENAI_ORG ? { "OpenAI-Organization": env.OPENAI_ORG } : {}),
-          },
-          body: JSON.stringify({ model: "gpt-image-1", prompt, size: "1024x1024", quality, n: 1 }),
+          headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: { responseModalities: ["IMAGE"] },
+          }),
         });
-        const oaText = await oaRes.text();
-        let oa = {}; try { oa = JSON.parse(oaText); } catch (_) {}
-        if (!oaRes.ok || !(oa.data && oa.data[0] && oa.data[0].b64_json)) {
-          const e = oa && oa.error;
-          const detail = (e && (e.message || e.code || e.type)) || (oaText || "").slice(0, 400) || `HTTP ${oaRes.status}`;
-          return new Response(JSON.stringify({ error: "Image generation failed", openai_status: oaRes.status, code: (e && (e.code || e.type)) || null, detail }), { status: 502, headers: corsJson });
+        const gText = await gRes.text();
+        let g = {}; try { g = JSON.parse(gText); } catch (_) {}
+        const parts = (((g.candidates || [])[0] || {}).content || {}).parts || [];
+        const inline = (parts.find(p => p.inlineData || p.inline_data) || {});
+        const img = inline.inlineData || inline.inline_data;
+        if (!gRes.ok || !img || !img.data) {
+          const detail = (g && g.error && g.error.message) || (gText || "").slice(0, 400) || `HTTP ${gRes.status}`;
+          return new Response(JSON.stringify({ error: "Image generation failed", provider: "gemini", status: gRes.status, detail }), { status: 502, headers: corsJson });
         }
         // Decode base64 → bytes, store in R2, register in marketing_thumbnails.
-        const bytes = Uint8Array.from(atob(oa.data[0].b64_json), c => c.charCodeAt(0));
-        const key = `marketing/_thumbnails/${crypto.randomUUID()}.png`;
-        await env.MEDIA.put(key, bytes, { httpMetadata: { contentType: "image/png" } });
+        const contentType = img.mimeType || img.mime_type || "image/png";
+        const bytes = Uint8Array.from(atob(img.data), c => c.charCodeAt(0));
+        const ext = contentType.includes("jpeg") ? "jpg" : (contentType.includes("webp") ? "webp" : "png");
+        const key = `marketing/_thumbnails/${crypto.randomUUID()}.${ext}`;
+        await env.MEDIA.put(key, bytes, { httpMetadata: { contentType } });
         const name = (String(b.name || userPrompt).trim().slice(0, 60)) || "AI cover";
         const res = await env.DB.prepare(
           `INSERT INTO marketing_thumbnails (name, r2_key, content_type, bytes, uploaded_by, post_type, active, created_at)
            VALUES (?,?,?,?,?,?, 1, ?)`
-        ).bind(name, key, "image/png", bytes.length, (currentUser && currentUser.email) || null, postType, new Date().toISOString()).run();
+        ).bind(name, key, contentType, bytes.length, (currentUser && currentUser.email) || null, postType, new Date().toISOString()).run();
         const id = res.meta && res.meta.last_row_id;
         return new Response(JSON.stringify({ ok: true, id, name, url: `?action=thumbnail&id=${id}` }), { headers: corsJson });
       } catch (e) {
