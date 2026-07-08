@@ -29,11 +29,11 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -45,6 +45,9 @@ jobs:
           # when this is set to something other than "main").
           CF_PAGES_BRANCH: main
 
+      # upload-pages-artifact / deploy-pages have no Node 24 major yet; the
+      # runner force-runs them on Node 24 and GitHub will bump these tags before
+      # Node 20 is removed (Sep 2026). Leave pinned until a Node 24 release ships.
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
