@@ -513,7 +513,7 @@
         </div>
         <div class="nav-item" data-page="weekly-summary" onclick="navigateToPage('weekly-summary')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
-          <span class="nav-label">Weekly Retail Summary</span>
+          <span class="nav-label">Retail Summary</span>
         </div>
         <div id="nav-marketing-group" class="hidden">
           <div id="nav-marketing" class="nav-item" onclick="toggleMarketingMenu()">
@@ -662,7 +662,7 @@
           <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Dashboard
         </button>
         <button data-tab="weekly-summary" onclick="navigateToPage('weekly-summary')" class="bn-tab flex-1 flex flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
-          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Weekly
+          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Retail
         </button>
         <button id="bn-inventory" data-tab="inventory" onclick="navigateToPage('inventory')" class="bn-tab hidden flex-1 flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
           <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>Inventory
@@ -1049,7 +1049,7 @@
         <div class="max-w-7xl mx-auto">
           <div class="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Weekly Retail Summary</h1>
+              <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Retail Summary</h1>
               <p id="wrs-subtitle" class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Loading…</p>
             </div>
             <div class="flex gap-3 items-end">
@@ -2399,7 +2399,7 @@
         <!-- Item Master Costs -->
         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
           <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Item Master Costs</h2>
-          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Upload an Item Master export so the Weekly Retail Summary can render CPU, Ext Cost, Gross Profit, and GPM% per L2/L3 category. Accepts <code>.html</code> (Item Master export), <code>.csv</code>, or <code>.json</code>. Re-snapshot historical days after uploading to backfill cost into existing data.</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Upload an Item Master export so the Retail Summary can render CPU, Ext Cost, Gross Profit, and GPM% per L2/L3 category. Accepts <code>.html</code> (Item Master export), <code>.csv</code>, or <code>.json</code>. Re-snapshot historical days after uploading to backfill cost into existing data.</p>
 
           <div class="space-y-4">
             <div class="flex flex-wrap gap-4 items-end">
@@ -2439,7 +2439,7 @@
         <!-- L3 Category Costs -->
         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
           <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">L3 Category Costs</h2>
-          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Set a flat cost per unit for each L3 category (e.g. <code>FG BL SEASONAL - CHRISTMAS - GM</code>). Used by the Weekly Retail Summary as the cost fallback when an item has no Item Master cost. A specific item (IM#) cost always wins over its category cost. Re-snapshot historical days to backfill.</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Set a flat cost per unit for each L3 category (e.g. <code>FG BL SEASONAL - CHRISTMAS - GM</code>). Used by the Retail Summary as the cost fallback when an item has no Item Master cost. A specific item (IM#) cost always wins over its category cost. Re-snapshot historical days to backfill.</p>
 
           <div class="space-y-3">
             <div class="flex flex-wrap gap-3 items-center">
@@ -9389,7 +9389,7 @@
     const csvRow = arr => arr.map(csvCell).join(',');
 
     const lines = [];
-    lines.push(csvRow([`Weekly Retail Summary — ${activeLabel}`]));
+    lines.push(csvRow([`Retail Summary — ${activeLabel}`]));
     if (subtitle) lines.push(csvRow([subtitle]));
     lines.push(csvRow([`Exported ${new Date().toLocaleString('en-US')}`]));
     lines.push('');
