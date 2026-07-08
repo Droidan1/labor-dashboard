@@ -6146,6 +6146,46 @@ export default {
       return new Response(JSON.stringify({ ok: true, ...result }), { headers: corsJson });
     }
 
+    // Seed per-store DRAFTS from a Flow Calendar week (Phase 7). Point-in-time snapshot —
+    // does NOT hook flow-week-upsert; editing the calendar later won't mutate seeded drafts.
+    // Lands in Drafts (a Flow week has no image); operator adds a cover/photos then schedules.
+    // POST ?action=flow-schedule-week { fiscal_year?, retail_week, stores[] }
+    if (request.method === "POST" && url.searchParams.get("action") === "flow-schedule-week") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const fy = String(b.fiscal_year || "F26").trim();
+        const wk = parseInt(b.retail_week, 10);
+        if (!Number.isInteger(wk)) return new Response(JSON.stringify({ error: "Invalid retail_week" }), { status: 400, headers: corsJson });
+        const stores = Array.isArray(b.stores) ? [...new Set(b.stores.map(s => String(s).trim().toUpperCase()).filter(s => ALL_STORES.includes(s)))] : [];
+        if (!stores.length) return new Response(JSON.stringify({ error: "Pick at least one store" }), { status: 400, headers: corsJson });
+        const week = await env.DB.prepare("SELECT * FROM marketing_flow WHERE fiscal_year=? AND retail_week=?").bind(fy, wk).first();
+        if (!week) return new Response(JSON.stringify({ error: `No Flow week ${wk} for ${fy}` }), { status: 404, headers: corsJson });
+        const topic = [week.special_event, week.weekly_theme, week.product_focus].filter(Boolean).join(" — ") || `Retail week ${wk}`;
+        const postType = week.special_event ? "event" : (week.weekend_event ? "weekly_promo" : "bin_preview");
+        const now = new Date().toISOString();
+        let created = 0, already = 0;
+        // One INSERT per store (D1 caps bound params at 100/query); uq_drafts_flow_week dedupes re-seeds.
+        for (const store of stores) {
+          try {
+            const res = await env.DB.prepare(
+              `INSERT INTO marketing_drafts (store, photo_ids, caption, caption_source, topic, post_type, status, origin, flow_fiscal_year, flow_retail_week, created_by, created_at, updated_at)
+               VALUES (?, '[]', NULL, 'manual', ?, ?, 'draft', 'flow', ?, ?, ?, ?, ?)`
+            ).bind(store, topic, postType, fy, wk, (currentUser && currentUser.email) || null, now, now).run();
+            if (res.meta && res.meta.changes) created++;
+          } catch (e) {
+            if (/UNIQUE|constraint/i.test(String((e && e.message) || e))) already++;  // already seeded this store/week
+            else throw e;
+          }
+        }
+        return new Response(JSON.stringify({ ok: true, created, already, topic, post_type: postType, week: wk }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
     if (request.method === "POST" && url.searchParams.get("action") === "publish-draft") {
       const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (denied) return denied;

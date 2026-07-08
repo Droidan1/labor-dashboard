@@ -1631,7 +1631,10 @@
         <div id="ct-pipeline" class="mt-10 pt-8 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border">
           <div class="flex items-center justify-between gap-2 mb-4">
             <h2 class="text-base font-bold text-opl-ink dark:text-op-ink">Post pipeline</h2>
-            <select id="ct-store-filter" onchange="ctRenderPipeline()" aria-label="Filter by store" class="rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-xs px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+            <div class="flex items-center gap-2">
+              <button onclick="ctFlowSeed()" class="text-[12px] font-semibold px-2.5 py-2 rounded-xl border border-accent-green/50 text-accent-green hover:bg-accent-green/10 transition">＋ From Flow</button>
+              <select id="ct-store-filter" onchange="ctRenderPipeline()" aria-label="Filter by store" class="rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-xs px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+            </div>
           </div>
           <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
             <div>
@@ -11540,6 +11543,69 @@
     });
   }
 
+  // ── Seed drafts from a Flow Calendar week (Phase 7) ───────────────────
+  async function ctFlowSeed() {
+    let weeks = [];
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=flow-calendar&fy=F26`, { credentials: 'include' });
+      const d = await r.json();
+      weeks = (d && d.weeks) || [];
+    } catch (_) {}
+    if (!weeks.length) { await uiAlert('No Flow Calendar weeks found for F26.', { title: 'From Flow' }); return; }
+    const picked = await ctFlowSeedModal(weeks);
+    if (!picked) return;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=flow-schedule-week`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fiscal_year: 'F26', retail_week: picked.week, stores: picked.stores }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Seed failed');
+      await uiAlert(`Created ${d.created} draft${d.created === 1 ? '' : 's'}${d.already ? `, ${d.already} already existed` : ''}. Add a cover + photos, then Schedule.`, { title: 'Seeded from Flow' });
+      ctSetTab('posts');
+      ctLoadDrafts();
+    } catch (e) { await uiAlert((e && e.message) || 'Seed failed', { title: 'From Flow' }); }
+  }
+  window.ctFlowSeed = ctFlowSeed;
+
+  // Modal: pick a Flow week + stores. Resolves { week, stores[] } or null.
+  function ctFlowSeedModal(weeks) {
+    return new Promise(resolve => {
+      const wkOpts = weeks.map(w => {
+        const label = [w.special_event, w.weekly_theme].filter(Boolean).join(' · ') || 'no theme';
+        return `<option value="${w.retail_week}">Week ${w.retail_week} — ${escapeHtml(label)}</option>`;
+      }).join('');
+      const storeBoxes = STORES.map(s => {
+        const code = s.split('/')[0], name = s.slice(s.indexOf(' ') + 1);
+        return `<label class="flex items-center gap-2 text-[13px] text-opl-ink dark:text-op-ink cursor-pointer"><input type="checkbox" class="cts-flow-store" value="${code}" checked style="accent-color:#22c55e;width:15px;height:15px"> ${escapeHtml(name)}</label>`;
+      }).join('');
+      const ov = document.createElement('div');
+      ov.className = 'fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/50';
+      ov.innerHTML = `
+        <div class="w-full max-w-sm bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.1)] dark:border-op-border rounded-2xl p-5">
+          <h3 class="text-base font-bold text-opl-ink dark:text-op-ink mb-1">Seed drafts from Flow</h3>
+          <p class="text-[12px] text-opl-inkDim dark:text-op-inkDim mb-4">One draft per store, pre-filled with the week's theme. Add a cover + photos, then Schedule.</p>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Flow week</label>
+          <select id="cts-flow-week" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 mb-4 focus:outline-none focus:ring-1 focus:ring-accent-green">${wkOpts}</select>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Stores</label>
+          <div class="grid grid-cols-2 gap-x-3 gap-y-2 mb-4">${storeBoxes}</div>
+          <div class="flex items-center gap-2 justify-end">
+            <button id="cts-flow-cancel" class="px-3 py-2 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Cancel</button>
+            <button id="cts-flow-ok" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-xl">Create drafts</button>
+          </div>
+        </div>`;
+      document.body.appendChild(ov);
+      const q = s => ov.querySelector(s);
+      const onKey = e => { if (e.key === 'Escape') close(null); };
+      const close = v => { document.removeEventListener('keydown', onKey); ov.remove(); resolve(v); };
+      document.addEventListener('keydown', onKey);
+      q('#cts-flow-cancel').addEventListener('click', () => close(null));
+      ov.addEventListener('click', e => { if (e.target === ov) close(null); });
+      q('#cts-flow-ok').addEventListener('click', () => {
+        const week = parseInt(q('#cts-flow-week').value, 10);
+        const stores = [].map.call(ov.querySelectorAll('.cts-flow-store:checked'), c => c.value);
+        if (week && stores.length) close({ week, stores });
+      });
+    });
+  }
+
   function ctOnStoreChange() { ctMarkDirty(); ctRenderPreview(); ctLoadPhotos().then(() => ctRenderPreview()); }
   window.ctOnStoreChange = ctOnStoreChange;
 
@@ -11854,7 +11920,7 @@
       }
     } else {
       const nPhotos = (dr.photo_ids || []).length;
-      meta = escapeHtml(ctStoreLabel(dr.store)) + ' · ' + nPhotos + ' photo' + (nPhotos === 1 ? '' : 's');
+      meta = escapeHtml(ctStoreLabel(dr.store)) + ' · ' + nPhotos + ' photo' + (nPhotos === 1 ? '' : 's') + (dr.origin === 'flow' ? ' · from Flow' : '');
       metaClass = 'text-opl-inkDim dark:text-op-inkDim';
       actions = `<button onclick="ctPublishDraft(${dr.id})" class="shrink-0 text-[11px] font-semibold text-white bg-accent-blue rounded-md px-2 py-0.5">Publish</button>`
         + `<button onclick="ctEditDraft(${dr.id})" class="shrink-0 text-[11px] font-semibold text-accent-green px-1">Edit</button>`
