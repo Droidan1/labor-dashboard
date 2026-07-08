@@ -1525,8 +1525,94 @@
           <button data-cttab="posts" onclick="ctSetTab('posts')" class="ct-tab px-4 py-2 text-sm font-semibold">Posts <span id="ct-tab-posts-n" class="font-normal text-opl-inkDim dark:text-op-inkDim"></span></button>
         </nav>
 
+        <!-- Shared hidden file input for cover uploads (both the compose "Upload new" and Thumbnails "+ Add" labels point here) -->
+        <input id="ct-thumb-file" type="file" accept="image/*" multiple class="hidden" onchange="ctUploadThumb()">
+
+        <!-- ── COMPOSE: form (left) + live preview (right) ── -->
+        <div id="ct-pane-compose" class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px] gap-6 lg:gap-8 items-start">
+          <!-- form column -->
+          <div class="min-w-0 space-y-5">
+            <div class="grid grid-cols-1 sm:grid-cols-[1fr_1.3fr] gap-4">
+              <div>
+                <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Store</label>
+                <select id="ct-store" onchange="ctOnStoreChange()" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Post type</label>
+                <div id="ct-type-chips" class="flex flex-wrap gap-2"></div>
+              </div>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">Cover thumbnail</label>
+                <label for="ct-thumb-file" class="cursor-pointer text-[12px] font-semibold text-accent-green hover:opacity-80">＋ Upload new</label>
+              </div>
+              <div id="ct-thumb-pick" class="flex flex-wrap gap-2.5"></div>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">Bin photos <span class="text-opl-inkDimmer dark:text-op-inkDimmer normal-case font-normal tracking-normal">· from today's floor walk</span></label>
+                <span id="ct-photo-count" class="text-[12px] text-opl-inkDim dark:text-op-inkDim"></span>
+              </div>
+              <div id="ct-photo-pick" class="flex flex-wrap gap-2.5"></div>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">What's this post about? <span class="text-opl-inkDim dark:text-op-inkDim normal-case font-normal tracking-normal">(guides the AI)</span></label>
+              <input id="ct-topic" type="text" oninput="ctMarkDirty()" placeholder="e.g. Weekly bin preview, holiday sale, new furniture…" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green">
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">Caption</label>
+                <button type="button" id="ct-ai-btn" onclick="ctAiCaption()" class="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-accent-green/50 text-accent-green hover:bg-accent-green/10 transition">✨ AI generate</button>
+              </div>
+              <textarea id="ct-caption" rows="4" oninput="ctUpdateCaptionUI();ctMarkDirty()" placeholder="Write the post caption…" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></textarea>
+              <p id="ct-ai-note" class="hidden text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">✨ AI-drafted from this week's Flow Calendar — edit as needed.</p>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <button id="ct-save-draft" onclick="ctSaveDraft()" class="px-5 py-2.5 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-xl transition-colors">Save draft</button>
+              <button id="ct-schedule-btn" onclick="ctScheduleStub()" class="px-4 py-2.5 text-sm font-semibold rounded-xl border border-[rgba(20,16,8,0.14)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition-colors">Schedule…</button>
+              <button id="ct-clear" onclick="ctResetComposer()" class="px-3 py-2.5 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors hidden">Cancel edit</button>
+              <span id="ct-charcount" class="ml-auto text-[12px] text-opl-inkDimmer dark:text-op-inkDimmer tabular-nums">0 / 2,200</span>
+            </div>
+            <p id="ct-compose-status" class="hidden text-sm"></p>
+          </div>
+
+          <!-- live preview column -->
+          <div class="lg:sticky lg:top-24 self-start lg:max-h-[calc(100vh-7rem)] overflow-y-auto">
+            <div class="flex items-center gap-2 mb-2.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-accent-green"></span>
+              <span class="text-[10.5px] font-bold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim">Live preview — posts to Facebook</span>
+            </div>
+            <div id="ct-preview-card" class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-2xl overflow-hidden">
+              <div class="flex items-center gap-2.5 px-3.5 py-3">
+                <div id="ct-pv-avatar" class="w-8 h-8 rounded-full bg-accent-green grid place-items-center text-[13px] font-black text-[#06210f]">B</div>
+                <div class="min-w-0">
+                  <div id="ct-pv-handle" class="text-[13px] font-bold text-opl-ink dark:text-op-ink truncate">binstore.store</div>
+                  <div id="ct-pv-sub" class="text-[11px] text-opl-inkDim dark:text-op-inkDim truncate"></div>
+                </div>
+                <div class="ml-auto text-opl-inkDim dark:text-op-inkDim tracking-widest text-sm">···</div>
+              </div>
+              <div class="relative aspect-square bg-opl-panelHi dark:bg-op-panelHi overflow-hidden">
+                <img id="ct-pv-cover" alt="" class="absolute inset-0 w-full h-full object-cover hidden">
+                <div id="ct-pv-cover-empty" class="absolute inset-0 grid place-items-center text-[12px] text-opl-inkDim dark:text-op-inkDim">Pick a cover thumbnail</div>
+                <div id="ct-pv-dots" class="absolute bottom-3 right-3 flex gap-1"></div>
+              </div>
+              <div class="px-3.5 py-3">
+                <div class="flex items-center gap-3.5 text-opl-inkDim dark:text-op-inkDim text-[15px] mb-2"><span>♡</span><span>✉</span><span>↗</span><span class="ml-auto">⌗</span></div>
+                <div class="text-[12.5px] leading-relaxed"><span id="ct-pv-handle2" class="font-bold text-opl-ink dark:text-op-ink"></span> <span id="ct-pv-caption" class="text-opl-inkDim dark:text-op-inkDim">Your caption will appear here…</span></div>
+              </div>
+            </div>
+            <div id="ct-preview-foot" class="text-center mt-3 text-[12px] text-opl-inkDim dark:text-op-inkDim">Add a cover to preview</div>
+          </div>
+        </div>
+
+        <!-- ── THUMBNAILS gallery ── -->
         <div id="ct-pane-thumbs" class="hidden">
-        <section>
           <div class="flex items-center justify-between gap-2 mb-3">
             <div>
               <h2 class="text-sm font-bold text-opl-ink dark:text-op-ink">Premade thumbnails</h2>
@@ -1535,66 +1621,33 @@
             <div class="flex items-center gap-2 shrink-0">
               <select id="ct-thumb-type" aria-label="Cover post type" class="rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-xs px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
               <label for="ct-thumb-file" class="cursor-pointer px-3.5 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-xl transition-colors">+ Add</label>
-              <input id="ct-thumb-file" type="file" accept="image/*" multiple class="hidden" onchange="ctUploadThumb()">
             </div>
           </div>
           <p id="ct-thumb-status" class="hidden text-sm mb-2"></p>
           <div id="ct-thumb-grid" class="space-y-3"></div>
-        </section>
-        </div><!-- /thumbs pane -->
+        </div>
 
-        <div id="ct-pane-compose">
-        <section class="max-w-2xl">
-          <h2 class="text-sm font-bold text-opl-ink dark:text-op-ink mb-3">Compose a bin post</h2>
-          <div class="space-y-4">
+        <!-- ── POST PIPELINE (visible on Compose + Posts tabs) ── -->
+        <div id="ct-pipeline" class="mt-10 pt-8 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border">
+          <div class="flex items-center justify-between gap-2 mb-4">
+            <h2 class="text-base font-bold text-opl-ink dark:text-op-ink">Post pipeline</h2>
+            <select id="ct-store-filter" onchange="ctRenderPipeline()" aria-label="Filter by store" class="rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-xs px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+          </div>
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
             <div>
-              <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Store</label>
-              <select id="ct-store" onchange="ctLoadPhotos()" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+              <div class="flex items-center gap-2 mb-3"><span class="w-2 h-2 rounded-sm bg-opl-inkDim dark:bg-op-inkDim"></span><span id="ct-drafts-label" class="text-[11px] font-extrabold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Drafts</span></div>
+              <div id="ct-drafts" class="space-y-2.5"></div>
             </div>
             <div>
-              <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Cover thumbnail</label>
-              <div id="ct-thumb-pick" class="grid grid-cols-3 sm:grid-cols-4 gap-2"></div>
+              <div class="flex items-center gap-2 mb-3"><span class="w-2 h-2 rounded-sm bg-accent-amber"></span><span id="ct-scheduled-label" class="text-[11px] font-extrabold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Scheduled</span></div>
+              <div id="ct-scheduled" class="space-y-2.5"></div>
             </div>
             <div>
-              <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Bin photos <span id="ct-photo-count" class="text-opl-inkDim dark:text-op-inkDim normal-case font-normal"></span></label>
-              <div id="ct-photo-pick" class="grid grid-cols-3 sm:grid-cols-4 gap-2"></div>
-            </div>
-            <div>
-              <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Post type</label>
-              <select id="ct-posttype" onchange="ctOnTypeChange()" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 mb-3 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
-              <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">What's this post about? <span class="text-opl-inkDim dark:text-op-inkDim normal-case font-normal">(optional — guides the AI)</span></label>
-              <input id="ct-topic" type="text" placeholder="e.g. Weekly bin preview, holiday sale, new furniture…" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green">
-              <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">Picking a post type files the draft into that folder and pre-fills this line.</p>
-            </div>
-            <div>
-              <div class="flex items-center justify-between mb-1.5">
-                <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">Caption</label>
-                <button type="button" id="ct-ai-btn" onclick="ctAiCaption()" class="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-accent-green/50 text-accent-green hover:bg-accent-green/10 transition">✨ AI generate</button>
-              </div>
-              <textarea id="ct-caption" rows="3" placeholder="Write the post caption…" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></textarea>
-              <p id="ct-ai-note" class="hidden text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">✨ AI-drafted from this week's Flow Calendar — edit as needed.</p>
-            </div>
-            <div class="flex items-center gap-3">
-              <button id="ct-save-draft" onclick="ctSaveDraft()" class="px-5 py-2.5 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-xl transition-colors">Save draft</button>
-              <button id="ct-clear" onclick="ctResetComposer()" class="px-4 py-2.5 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors hidden">Cancel edit</button>
-              <p id="ct-compose-status" class="hidden text-sm"></p>
+              <div class="flex items-center gap-2 mb-3"><span class="w-2 h-2 rounded-sm bg-accent-green"></span><span id="ct-published-label" class="text-[11px] font-extrabold uppercase tracking-[0.1em] text-opl-inkDim dark:text-op-inkDim">Published</span></div>
+              <div id="ct-published" class="space-y-2.5"></div>
             </div>
           </div>
-        </section>
-        </div><!-- /compose pane -->
-
-        <div id="ct-pane-posts" class="hidden">
-        <section>
-          <div class="flex items-center justify-between gap-2 mb-3">
-            <h2 class="text-sm font-bold text-opl-ink dark:text-op-ink">Posts</h2>
-            <select id="ct-store-filter" onchange="ctRenderPosts()" aria-label="Filter by store" class="rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-xs px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
-          </div>
-          <h3 class="text-[11px] font-bold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-2">Drafts</h3>
-          <div id="ct-drafts" class="space-y-2.5 mb-6"></div>
-          <h3 class="text-[11px] font-bold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-2">Published</h3>
-          <div id="ct-published" class="space-y-2.5"></div>
-        </section>
-        </div><!-- /posts pane -->
+        </div>
       </div>
     </div><!-- end #page-content -->
 
@@ -11340,6 +11393,9 @@
   let ctCaptionSource = 'manual';
   let ctAllDrafts = [];
   let ctTab = 'compose';
+  let ctPostType = 'bin_preview';
+  let ctInited = false;
+  let ctDirty = false;
 
   // Post-type taxonomy (mirrors MARKETING_POST_TYPES in worker.js). `topic` is the
   // default AI prompt phrase pre-filled when a type is chosen.
@@ -11350,61 +11406,25 @@
     { key: 'event',        label: 'Event',        topic: 'Store event' },
     { key: 'other',        label: 'Other',        topic: '' },
   ];
-  const ctTypeLabel = k => { const t = CT_POST_TYPES.find(x => x.key === k); return t ? t.label : 'Uncategorized'; };
-  function ctMonthLabel(iso) { const d = new Date(iso); return isNaN(d.getTime()) ? 'Undated' : d.toLocaleString('en-US', { month: 'short', year: 'numeric' }); }
   function ctFillTypeSelect(id, def) { const s = el(id); if (!s) return; s.innerHTML = CT_POST_TYPES.map(t => `<option value="${t.key}">${t.label}</option>`).join(''); if (def) s.value = def; }
 
-  // Group items into Post Type → Month folders (type order fixed, months newest first).
-  function ctGroupByTypeMonth(items) {
-    const order = CT_POST_TYPES.map(t => t.key).concat('__none__');
-    const byType = {};
-    for (const it of items) {
-      const k = CT_POST_TYPES.some(t => t.key === it.post_type) ? it.post_type : '__none__';
-      (byType[k] = byType[k] || []).push(it);
-    }
-    const out = [];
-    for (const k of order) {
-      const arr = byType[k]; if (!arr || !arr.length) continue;
-      const byMonth = {}, mOrder = [];
-      for (const it of arr) { const mk = (it.created_at || '').slice(0, 7) || '0000-00'; if (!byMonth[mk]) { byMonth[mk] = []; mOrder.push(mk); } byMonth[mk].push(it); }
-      mOrder.sort((a, b) => b.localeCompare(a));
-      out.push({ typeLabel: k === '__none__' ? 'Uncategorized' : ctTypeLabel(k), count: arr.length,
-        months: mOrder.map(mk => ({ monthLabel: ctMonthLabel(byMonth[mk][0].created_at), items: byMonth[mk] })) });
-    }
-    return out;
-  }
-
-  // Render grouped folders into a container. `renderItem` returns each item's HTML.
-  function ctRenderFolders(containerId, items, renderItem, opts) {
-    opts = opts || {};
-    const wrap = el(containerId); if (!wrap) return;
-    if (!items.length) { wrap.innerHTML = `<div class="text-sm text-opl-inkDim dark:text-op-inkDim py-2">${escapeHtml(opts.empty || 'Nothing here yet.')}</div>`; return; }
-    const itemsClass = opts.itemsClass || 'space-y-2.5';
-    wrap.innerHTML = ctGroupByTypeMonth(items).map(g => `
-      <details ${opts.open ? 'open' : ''} class="rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border overflow-hidden">
-        <summary class="flex items-center gap-2 px-3 py-2.5 cursor-pointer select-none bg-opl-panelHi dark:bg-op-panelHi text-sm font-semibold text-opl-ink dark:text-op-ink">
-          ${escapeHtml(g.typeLabel)}
-          <span class="ml-auto text-[11px] font-normal text-opl-inkDim dark:text-op-inkDim">${g.count}</span>
-        </summary>
-        <div class="px-3 py-2.5 space-y-3">
-          ${g.months.map(m => `
-            <div>
-              <div class="text-[11px] font-bold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">${escapeHtml(m.monthLabel)} · ${m.items.length}</div>
-              <div class="${itemsClass}">${m.items.map(renderItem).join('')}</div>
-            </div>`).join('')}
-        </div>
-      </details>`).join('');
-  }
-
-  // Tab switching (Compose / Thumbnails / Posts) — mirrors mkSetTab.
+  // Tab switching. Compose = composer + pipeline; Posts = pipeline only; Thumbnails = gallery.
   function ctSetTab(tab) {
     ctTab = tab;
     document.querySelectorAll('.ct-tab').forEach(b => {
       const on = b.dataset.cttab === tab;
       b.className = 'ct-tab px-4 py-2 text-sm font-semibold ' + (on ? 'text-accent-green border-b-2 border-accent-green -mb-px' : 'text-opl-inkDim dark:text-op-inkDim');
     });
-    const map = { compose: 'ct-pane-compose', thumbs: 'ct-pane-thumbs', posts: 'ct-pane-posts' };
-    for (const t in map) { const p = el(map[t]); if (p) p.classList.toggle('hidden', t !== tab); }
+    const compose = el('ct-pane-compose'), thumbs = el('ct-pane-thumbs'), pipeline = el('ct-pipeline');
+    if (compose) compose.classList.toggle('hidden', tab !== 'compose');
+    if (thumbs)  thumbs.classList.toggle('hidden', tab !== 'thumbs');
+    if (pipeline) {
+      pipeline.classList.toggle('hidden', tab === 'thumbs');  // shown on compose + posts
+      const below = (tab === 'compose');                       // sits under the composer only on Compose
+      pipeline.classList.toggle('mt-10', below);
+      pipeline.classList.toggle('pt-8', below);
+      pipeline.classList.toggle('border-t', below);
+    }
   }
   window.ctSetTab = ctSetTab;
 
@@ -11414,16 +11434,84 @@
     const p = el('ct-tab-posts-n'); if (p) p.textContent = ctAllDrafts.length ? '· ' + ctAllDrafts.length : '';
   }
 
+  function ctMarkDirty() { ctDirty = true; }
+  window.ctMarkDirty = ctMarkDirty;
+
+  function ctScheduleStub() { uiAlert('Scheduling arrives in the next update — for now use Save draft, then Publish when ready.', { title: 'Scheduling — coming soon' }); }
+  window.ctScheduleStub = ctScheduleStub;
+
+  function ctOnStoreChange() { ctMarkDirty(); ctRenderPreview(); ctLoadPhotos().then(() => ctRenderPreview()); }
+  window.ctOnStoreChange = ctOnStoreChange;
+
+  // Post-type toggle chips (replaces the old <select>). All reads/writes go through ctPostType.
+  function ctRenderTypeChips() {
+    const wrap = el('ct-type-chips'); if (!wrap) return;
+    wrap.innerHTML = CT_POST_TYPES.map(t => {
+      const on = ctPostType === t.key;
+      return `<button type="button" onclick="ctPickType('${t.key}')" class="px-3 py-2 rounded-xl text-[13px] border transition-colors ${on ? 'bg-accent-green/15 border-accent-green/50 text-accent-green font-bold' : 'border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim font-semibold hover:text-opl-ink dark:hover:text-op-ink'}">${escapeHtml(t.label)}</button>`;
+    }).join('');
+  }
+  function ctPickType(key) { ctPostType = key; ctRenderTypeChips(); ctOnTypeChange(); ctMarkDirty(); }
+  window.ctPickType = ctPickType;
+
+  // Live Instagram-style preview, painted from composer state. The cover <img> is
+  // persistent — its src only changes when the selected thumbnail changes, so typing
+  // a caption never reloads/re-decodes the image (no flicker on mobile Safari).
+  function ctRenderPreview() {
+    if (!el('ct-preview-card')) return;
+    const code = el('ct-store') ? el('ct-store').value : '';
+    const name = code ? ctStoreLabel(code) : 'Store';
+    const handle = 'binstore.' + (name || 'store').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (el('ct-pv-avatar'))  el('ct-pv-avatar').textContent = (name || 'B').charAt(0).toUpperCase();
+    if (el('ct-pv-handle'))  el('ct-pv-handle').textContent = handle;
+    if (el('ct-pv-handle2')) el('ct-pv-handle2').textContent = handle;
+    if (el('ct-pv-sub'))     el('ct-pv-sub').textContent = name + (code ? ' · ' + code : '');
+    const img = el('ct-pv-cover'), empty = el('ct-pv-cover-empty');
+    if (img) {
+      if (ctSelThumb) {
+        if (img.dataset.thumb !== String(ctSelThumb)) { img.src = `${WORKER_BASE}?action=thumbnail&id=${ctSelThumb}`; img.dataset.thumb = String(ctSelThumb); }
+        img.classList.remove('hidden'); if (empty) empty.classList.add('hidden');
+      } else {
+        img.classList.add('hidden'); img.removeAttribute('src'); img.dataset.thumb = ''; if (empty) empty.classList.remove('hidden');
+      }
+    }
+    const nPhotos = ctSelPhotos.size, total = (ctSelThumb ? 1 : 0) + nPhotos;
+    const dots = el('ct-pv-dots');
+    if (dots) dots.innerHTML = total > 1 ? Array.from({ length: Math.min(total, 5) }, (_, i) => `<span class="w-1.5 h-1.5 rounded-full ${i === 0 ? 'bg-white' : 'bg-white/40'}"></span>`).join('') : '';
+    const foot = el('ct-preview-foot');
+    if (foot) {
+      const bits = [];
+      if (ctSelThumb) bits.push('Cover');
+      if (nPhotos) bits.push(nPhotos + ' bin photo' + (nPhotos === 1 ? '' : 's'));
+      foot.textContent = bits.length ? bits.join(' + ') + ' · carousel post' : 'Add a cover to preview';
+    }
+    ctUpdateCaptionUI();
+  }
+  window.ctRenderPreview = ctRenderPreview;
+
+  // Caption text + char counter only — never touches the cover image (safe per keystroke).
+  function ctUpdateCaptionUI() {
+    const cap = el('ct-caption') ? el('ct-caption').value : '';
+    const pv = el('ct-pv-caption');
+    if (pv) pv.textContent = cap ? (cap.length > 150 ? cap.slice(0, 150) + '…' : cap) : 'Your caption will appear here…';
+    const cc = el('ct-charcount');
+    if (cc) { cc.textContent = cap.length.toLocaleString() + ' / 2,200'; cc.classList.toggle('text-op-warn', cap.length > 2200); }
+  }
+  window.ctUpdateCaptionUI = ctUpdateCaptionUI;
+
   function initContent() {
-    ctFillTypeSelect('ct-posttype', 'bin_preview');
     ctFillTypeSelect('ct-thumb-type', 'bin_preview');
     ctPopulateStores();
     ctPopulateStoreFilter();
-    ctResetComposer();
-    ctSetTab('compose');
     ctLoadThumbs();
-    ctLoadPhotos();
     ctLoadDrafts();
+    if (!ctInited) {
+      ctInited = true;
+      ctResetComposer();   // renders type chips + pickers + live preview
+      ctLoadPhotos();
+      ctSetTab('compose');
+    }
+    // Re-entry: preserve the in-progress composer (thumb / photos / caption); lists refreshed above.
   }
   window.initContent = initContent;
 
@@ -11460,26 +11548,31 @@
   }
 
   function ctRenderThumbGrid() {
-    ctRenderFolders('ct-thumb-grid', ctThumbs, t => `
+    const wrap = el('ct-thumb-grid'); if (!wrap) return;
+    if (!ctThumbs.length) { wrap.className = ''; wrap.innerHTML = '<div class="text-sm text-opl-inkDim dark:text-op-inkDim py-6 text-center">No thumbnails yet — tap + Add to upload one.</div>'; return; }
+    wrap.className = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3';
+    wrap.innerHTML = ctThumbs.map(t => `
       <div class="relative rounded-xl overflow-hidden border border-[rgba(20,16,8,0.1)] dark:border-op-border bg-opl-panelHi dark:bg-op-panelHi">
-        <img src="${WORKER_BASE}?action=thumbnail&id=${t.id}" class="w-full aspect-square object-cover" alt="${escapeHtml(t.name || '')}">
+        <img src="${WORKER_BASE}?action=thumbnail&id=${t.id}" class="w-full aspect-square object-cover" alt="${escapeHtml(t.name || '')}" loading="lazy">
         <button type="button" onclick="ctDeleteThumb(${t.id})" aria-label="Remove thumbnail" class="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 text-white text-lg leading-none flex items-center justify-center active:scale-90 transition">&times;</button>
         ${t.name ? `<div class="px-2 py-1 text-[11px] font-medium text-opl-ink dark:text-op-ink truncate">${escapeHtml(t.name)}</div>` : ''}
-      </div>`, { open: true, itemsClass: 'grid grid-cols-2 sm:grid-cols-3 gap-3', empty: 'No thumbnails yet — tap + Add to upload one.' });
+      </div>`).join('');
   }
 
+  // 78px horizontal cover picker (Compose). Selected = accent-green border; others dimmed.
   function ctRenderThumbPicker() {
     const pick = el('ct-thumb-pick');
     if (!pick) return;
-    if (!ctThumbs.length) { pick.innerHTML = '<div class="col-span-full text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">Add a thumbnail above first.</div>'; return; }
+    if (!ctThumbs.length) { pick.innerHTML = '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">No thumbnails yet — add one from the Thumbnails tab.</div>'; return; }
     pick.innerHTML = ctThumbs.map(t => {
       const on = ctSelThumb === t.id;
-      return `<button type="button" onclick="ctPickThumb(${t.id})" class="relative rounded-lg overflow-hidden border-2 ${on ? 'border-accent-green' : 'border-[rgba(20,16,8,0.1)] dark:border-op-border'} focus:outline-none">
-        <img src="${WORKER_BASE}?action=thumbnail&id=${t.id}" class="w-full aspect-square object-cover" alt="">
+      return `<button type="button" onclick="ctPickThumb(${t.id})" class="relative w-[78px] h-[78px] rounded-xl overflow-hidden shrink-0 border-2 ${on ? 'border-accent-green' : 'border-transparent opacity-70 hover:opacity-100'} focus:outline-none transition">
+        <img src="${WORKER_BASE}?action=thumbnail&id=${t.id}" class="w-full h-full object-cover" alt="" loading="lazy">
+        ${on ? '<span class="absolute top-1 right-1 w-5 h-5 rounded-full bg-accent-green text-[#06210f] text-[11px] font-black grid place-items-center">✓</span>' : ''}
       </button>`;
     }).join('');
   }
-  function ctPickThumb(id) { ctSelThumb = (ctSelThumb === id ? null : id); ctRenderThumbPicker(); }
+  function ctPickThumb(id) { ctSelThumb = (ctSelThumb === id ? null : id); ctRenderThumbPicker(); ctRenderPreview(); ctMarkDirty(); }
   window.ctPickThumb = ctPickThumb;
 
   async function ctUploadThumb() {
@@ -11535,33 +11628,34 @@
   }
   window.ctLoadPhotos = ctLoadPhotos;
 
+  // 78px photo picker. Numbered badge = carousel order (insertion order in ctSelPhotos).
   function ctRenderPhotoPicker() {
     const pick = el('ct-photo-pick');
     if (!pick) return;
-    const cnt = el('ct-photo-count'); if (cnt) cnt.textContent = ctSelPhotos.size ? `· ${ctSelPhotos.size} selected` : '';
-    if (!ctPhotos.length) { pick.innerHTML = '<div class="col-span-full text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">No submitted photos for this store yet.</div>'; return; }
+    const cnt = el('ct-photo-count'); if (cnt) cnt.textContent = ctPhotos.length ? `${ctSelPhotos.size} of ${ctPhotos.length} selected` : '';
+    if (!ctPhotos.length) { pick.innerHTML = '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">No submitted photos for this store yet.</div>'; return; }
+    const order = [...ctSelPhotos];
     pick.innerHTML = ctPhotos.map(p => {
-      const on = ctSelPhotos.has(p.id);
-      return `<button type="button" onclick="ctTogglePhoto(${p.id})" class="relative rounded-lg overflow-hidden border-2 ${on ? 'border-accent-green' : 'border-[rgba(20,16,8,0.1)] dark:border-op-border'} focus:outline-none">
-        <img src="${WORKER_BASE}?action=photo&id=${p.id}" class="w-full aspect-square object-cover" alt="">
+      const idx = order.indexOf(p.id), on = idx > -1;
+      return `<button type="button" onclick="ctTogglePhoto(${p.id})" class="relative w-[78px] h-[78px] rounded-xl overflow-hidden shrink-0 border-2 ${on ? 'border-accent-green' : 'border-transparent opacity-70 hover:opacity-100'} focus:outline-none transition">
+        <img src="${WORKER_BASE}?action=photo&id=${p.id}" class="w-full h-full object-cover" alt="" loading="lazy">
         <span class="absolute bottom-1 left-1 text-[9px] font-bold uppercase px-1 py-0.5 rounded bg-black/55 text-white">${escapeHtml(p.photo_type || '')}</span>
-        ${on ? '<span class="absolute top-1 right-1 w-5 h-5 rounded-full bg-accent-green text-[#06210f] text-xs font-bold flex items-center justify-center">✓</span>' : ''}
+        ${on ? `<span class="absolute top-1 right-1 w-5 h-5 rounded-full bg-accent-green text-[#06210f] text-[11px] font-black grid place-items-center">${idx + 1}</span>` : ''}
       </button>`;
     }).join('');
   }
-  function ctTogglePhoto(id) { if (ctSelPhotos.has(id)) ctSelPhotos.delete(id); else ctSelPhotos.add(id); ctRenderPhotoPicker(); }
+  function ctTogglePhoto(id) { if (ctSelPhotos.has(id)) ctSelPhotos.delete(id); else ctSelPhotos.add(id); ctRenderPhotoPicker(); ctRenderPreview(); ctMarkDirty(); }
   window.ctTogglePhoto = ctTogglePhoto;
 
   function ctResetComposer() {
-    ctEditingId = null; ctSelThumb = null; ctSelPhotos = new Set(); ctCaptionSource = 'manual';
+    ctEditingId = null; ctSelThumb = null; ctSelPhotos = new Set(); ctCaptionSource = 'manual'; ctPostType = 'bin_preview'; ctDirty = false;
     if (el('ct-caption')) el('ct-caption').value = '';
     if (el('ct-topic')) el('ct-topic').value = '';
-    if (el('ct-posttype')) el('ct-posttype').value = 'bin_preview';
     if (el('ct-ai-note')) el('ct-ai-note').classList.add('hidden');
     if (el('ct-compose-status')) el('ct-compose-status').classList.add('hidden');
     if (el('ct-clear')) el('ct-clear').classList.add('hidden');
     if (el('ct-save-draft')) el('ct-save-draft').textContent = 'Save draft';
-    ctRenderThumbPicker(); ctRenderPhotoPicker();
+    ctRenderTypeChips(); ctRenderThumbPicker(); ctRenderPhotoPicker(); ctRenderPreview();
   }
   window.ctResetComposer = ctResetComposer;
 
@@ -11575,7 +11669,7 @@
     if (!ctSelPhotos.size) return show('Select at least one photo.', 'text-op-bad');
     const btn = el('ct-save-draft'); btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      const body = { store, thumbnail_id: ctSelThumb, photo_ids: [...ctSelPhotos], caption, caption_source: ctCaptionSource, topic: (el('ct-topic') ? el('ct-topic').value.trim() : ''), post_type: (el('ct-posttype') ? el('ct-posttype').value : '') };
+      const body = { store, thumbnail_id: ctSelThumb, photo_ids: [...ctSelPhotos], caption, caption_source: ctCaptionSource, topic: (el('ct-topic') ? el('ct-topic').value.trim() : ''), post_type: ctPostType };
       if (ctEditingId) body.id = ctEditingId;
       const r = await fetch(`${WORKER_BASE}?action=draft-save`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json().catch(() => ({}));
@@ -11595,7 +11689,7 @@
 
   // When a post type is chosen, pre-fill the "about" line if the user hasn't typed one.
   function ctOnTypeChange() {
-    const t = CT_POST_TYPES.find(x => x.key === (el('ct-posttype') ? el('ct-posttype').value : ''));
+    const t = CT_POST_TYPES.find(x => x.key === ctPostType);
     const topic = el('ct-topic');
     if (t && topic && !topic.value.trim()) topic.value = t.topic;
   }
@@ -11612,6 +11706,7 @@
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) throw new Error(d.error || 'AI failed');
       el('ct-caption').value = d.caption || '';
+      ctUpdateCaptionUI();
       ctCaptionSource = 'ai';
       el('ct-ai-note').classList.remove('hidden');
       st.classList.add('hidden');
@@ -11628,47 +11723,69 @@
       const d = await r.json();
       ctAllDrafts = (d && d.drafts) || [];
     } catch (_) { ctAllDrafts = []; }
-    ctRenderPosts();
+    ctRenderPipeline();
     ctUpdateCounts();
   }
   window.ctLoadDrafts = ctLoadDrafts;
 
   function ctStoreLabel(code) { const m = STORES.find(s => s.split('/')[0] === code); return m ? m.slice(m.indexOf(' ') + 1) : code; }
 
-  function ctDraftItem(dr) {
-    const nPhotos = (dr.photo_ids || []).length;
-    return `<div class="flex items-center gap-3 p-2.5 rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border bg-opl-panel dark:bg-op-panel">
-      ${dr.thumbnail_id ? `<img src="${WORKER_BASE}?action=thumbnail&id=${dr.thumbnail_id}" class="w-12 h-12 rounded-lg object-cover shrink-0" alt="">` : '<div class="w-12 h-12 rounded-lg bg-black/20 shrink-0"></div>'}
+  // Compact pipeline card. Actions vary by lane; every existing action is preserved.
+  function ctPipelineCard(dr, kind) {
+    const cover = dr.thumbnail_id
+      ? `<img src="${WORKER_BASE}?action=thumbnail&id=${dr.thumbnail_id}" class="w-10 h-10 rounded-lg object-cover shrink-0" alt="" loading="lazy">`
+      : '<div class="w-10 h-10 rounded-lg bg-black/20 dark:bg-white/5 shrink-0"></div>';
+    const title = escapeHtml(dr.caption || dr.topic || (ctStoreLabel(dr.store) + ' post'));
+    let meta, metaClass, actions;
+    if (kind === 'published') {
+      meta = (dr.post_url ? 'Live' : 'Posted') + ' · ' + escapeHtml(ctStoreLabel(dr.store));
+      metaClass = 'text-accent-green';
+      actions = (dr.post_url ? `<a href="${escapeHtml(dr.post_url)}" target="_blank" rel="noopener" class="shrink-0 text-[11px] font-semibold text-accent-blue px-1">View ↗</a>` : '')
+        + `<button onclick="ctDeleteDraft(${dr.id})" aria-label="Delete record" class="shrink-0 text-[11px] font-semibold text-op-bad px-1">Delete</button>`;
+    } else if (kind === 'scheduled') {
+      meta = 'Scheduled · ' + escapeHtml(ctStoreLabel(dr.store));
+      metaClass = 'text-accent-amber';
+      actions = `<button onclick="ctEditDraft(${dr.id})" class="shrink-0 text-[11px] font-semibold text-accent-green px-1">Edit</button>`;
+    } else {
+      const nPhotos = (dr.photo_ids || []).length;
+      meta = escapeHtml(ctStoreLabel(dr.store)) + ' · ' + nPhotos + ' photo' + (nPhotos === 1 ? '' : 's');
+      metaClass = 'text-opl-inkDim dark:text-op-inkDim';
+      actions = `<button onclick="ctPublishDraft(${dr.id})" class="shrink-0 text-[11px] font-semibold text-white bg-accent-blue rounded-md px-2 py-0.5">Publish</button>`
+        + `<button onclick="ctEditDraft(${dr.id})" class="shrink-0 text-[11px] font-semibold text-accent-green px-1">Edit</button>`
+        + `<button onclick="ctDeleteDraft(${dr.id})" aria-label="Delete draft" class="shrink-0 text-[11px] font-semibold text-op-bad px-1">Delete</button>`;
+    }
+    return `<div class="flex items-center gap-2.5 p-2.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel">
+      ${cover}
       <div class="min-w-0 flex-1">
-        <div class="text-sm font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(ctStoreLabel(dr.store))} · ${nPhotos} photo${nPhotos === 1 ? '' : 's'}</div>
-        <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim truncate">${escapeHtml(dr.caption || 'No caption')}</div>
+        <div class="text-[13px] font-semibold text-opl-ink dark:text-op-ink truncate">${title}</div>
+        <div class="text-[11px] ${metaClass} truncate mt-0.5">${meta}</div>
       </div>
-      <button onclick="ctPublishDraft(${dr.id})" class="shrink-0 text-xs font-semibold text-white bg-accent-blue rounded-lg px-2.5 py-1">Publish</button>
-      <button onclick="ctEditDraft(${dr.id})" class="shrink-0 text-xs font-semibold text-accent-green px-2 py-1">Edit</button>
-      <button onclick="ctDeleteDraft(${dr.id})" aria-label="Delete draft" class="shrink-0 text-xs font-semibold text-op-bad px-2 py-1">Delete</button>
+      ${actions}
     </div>`;
   }
 
-  function ctPublishedItem(dr) {
-    return `<div class="flex items-center gap-3 p-2.5 rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border bg-opl-panel dark:bg-op-panel">
-      ${dr.thumbnail_id ? `<img src="${WORKER_BASE}?action=thumbnail&id=${dr.thumbnail_id}" class="w-12 h-12 rounded-lg object-cover shrink-0" alt="">` : '<div class="w-12 h-12 rounded-lg bg-black/20 shrink-0"></div>'}
-      <div class="min-w-0 flex-1">
-        <div class="text-sm font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(ctStoreLabel(dr.store))}</div>
-        <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim truncate">${escapeHtml(dr.caption || 'No caption')}</div>
-      </div>
-      ${dr.post_url ? `<a href="${escapeHtml(dr.post_url)}" target="_blank" rel="noopener" class="shrink-0 text-xs font-semibold text-accent-blue px-2 py-1">View post ↗</a>` : '<span class="shrink-0 text-[11px] text-opl-inkDim dark:text-op-inkDim px-2">posted</span>'}
-      <button onclick="ctDeleteDraft(${dr.id})" aria-label="Delete record" class="shrink-0 text-xs font-semibold text-op-bad px-2 py-1">Delete</button>
-    </div>`;
+  function ctFillLane(id, rows, kind, empty) {
+    const wrap = el(id); if (!wrap) return;
+    wrap.innerHTML = rows.length ? rows.map(dr => ctPipelineCard(dr, kind)).join('')
+      : `<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">${escapeHtml(empty)}</div>`;
   }
+  function ctSetLaneCount(id, label, n) { const e = el(id); if (e) e.textContent = label + ' · ' + n; }
 
-  // Filter by store + split into Drafts (unpublished) and Published, each foldered by type → month.
-  function ctRenderPosts() {
+  // Filter by store, split into Drafts / Scheduled / Published lanes.
+  function ctRenderPipeline() {
     const store = el('ct-store-filter') ? el('ct-store-filter').value : '';
     const rows = store ? ctAllDrafts.filter(d => d.store === store) : ctAllDrafts;
-    ctRenderFolders('ct-drafts', rows.filter(d => d.status !== 'published'), ctDraftItem, { open: true, empty: 'No drafts yet.' });
-    ctRenderFolders('ct-published', rows.filter(d => d.status === 'published'), ctPublishedItem, { open: false, empty: 'Nothing published yet.' });
+    const drafts = rows.filter(d => d.status !== 'published' && d.status !== 'scheduled');
+    const scheduled = rows.filter(d => d.status === 'scheduled');
+    const published = rows.filter(d => d.status === 'published');
+    ctFillLane('ct-drafts', drafts, 'draft', 'No drafts yet.');
+    ctFillLane('ct-scheduled', scheduled, 'scheduled', 'Nothing scheduled yet.');
+    ctFillLane('ct-published', published, 'published', 'Nothing published yet.');
+    ctSetLaneCount('ct-drafts-label', 'Drafts', drafts.length);
+    ctSetLaneCount('ct-scheduled-label', 'Scheduled', scheduled.length);
+    ctSetLaneCount('ct-published-label', 'Published', published.length);
   }
-  window.ctRenderPosts = ctRenderPosts;
+  window.ctRenderPipeline = ctRenderPipeline;
 
   async function ctEditDraft(id) {
     let d = null;
@@ -11678,6 +11795,7 @@
       d = (j.drafts || []).find(x => x.id === id);
     } catch (_) {}
     if (!d) return;
+    ctSetTab('compose');
     ctEditingId = d.id;
     el('ct-store').value = d.store;
     await ctLoadPhotos();
@@ -11685,13 +11803,14 @@
     ctSelPhotos = new Set((d.photo_ids || []).map(Number));
     el('ct-caption').value = d.caption || '';
     if (el('ct-topic')) el('ct-topic').value = d.topic || '';
-    if (el('ct-posttype')) el('ct-posttype').value = (CT_POST_TYPES.some(t => t.key === d.post_type) ? d.post_type : 'other');
+    ctPostType = (CT_POST_TYPES.some(t => t.key === d.post_type) ? d.post_type : 'other');
     ctCaptionSource = d.caption_source || 'manual';
     el('ct-ai-note').classList.toggle('hidden', ctCaptionSource !== 'ai');
-    ctRenderThumbPicker(); ctRenderPhotoPicker();
+    ctDirty = false;
+    ctRenderTypeChips(); ctRenderThumbPicker(); ctRenderPhotoPicker(); ctRenderPreview();
     el('ct-save-draft').textContent = 'Update draft';
     el('ct-clear').classList.remove('hidden');
-    el('ct-store').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
   window.ctEditDraft = ctEditDraft;
 
