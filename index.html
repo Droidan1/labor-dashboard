@@ -13594,7 +13594,10 @@
   function initSidebar() {
     const sidebar = el("sidebar");
     const btn = el("sidebar-toggle");
-    sidebar.classList.add('collapsed');
+    // Open EXPANDED on desktop/PWA so the full nav is visible on launch and
+    // navigation. On mobile (<768) the sidebar is a hidden overlay, so start it
+    // collapsed there. (The user can still collapse it via the toggle mid-session.)
+    sidebar.classList.toggle('collapsed', window.innerWidth < 768);
     btn.onclick = () => {
       sidebar.classList.toggle('collapsed');
       localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
