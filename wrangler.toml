@@ -75,7 +75,9 @@ name = "clover-sales-api-staging"
 # notification jobs (those would double-fire against prod data). Named envs
 # otherwise inherit the top-level [triggers], so this list is explicit.
 [env.staging.triggers]
-crons = ["30 10 * * *"]
+# Meta refresh + the every-minute tick (sale scheduler is prod-gated to skip on
+# staging, so only the scheduled bin-post publisher actually runs here).
+crons = ["30 10 * * *", "* * * * *"]
 
 [env.staging.vars]
 BL1_MERCHANT_ID = "T3M0E73JKKF11"

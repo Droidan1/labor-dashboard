@@ -5072,6 +5072,133 @@ async function publishDraft(env, { draftId, published, token }) {
   };
 }
 
+// Interpret an ET wall-clock string ("YYYY-MM-DDTHH:MM", from <input type=datetime-local>)
+// as a UTC instant. DST-safe: the tz offset is computed at that actual date.
+function etWallClockToUtc(wall, tz) {
+  tz = tz || 'America/New_York';
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(String(wall || ''));
+  if (!m) return null;
+  const [, Y, Mo, D, H, Mi] = m.map(Number);
+  const asUtc = Date.UTC(Y, Mo - 1, D, H, Mi);              // pretend the wall time is UTC
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(asUtc)).map(p => [p.type, p.value]));
+  const shownMs = Date.UTC(+parts.year, +parts.month - 1, +parts.day, (+parts.hour) % 24, +parts.minute);
+  const offset = shownMs - asUtc;                            // how far tz leads UTC at this instant
+  const utc = new Date(asUtc - offset);
+  return isNaN(utc.getTime()) ? null : utc;
+}
+
+// Push-only alert to superusers when a scheduled post fails terminally (no human is
+// watching at fire time). Mirrors dispatchCronFailureAlert.
+async function dispatchScheduleFailureAlert(env, draftId, reason) {
+  if (!env.DB || !env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return;
+  const payload = JSON.stringify({
+    title: '⚠️ Scheduled post failed',
+    body: `Post #${draftId}: ${reason}`.slice(0, 180),
+    tag: 'schedule-error', url: '/',
+  });
+  const { results: superusers } = await env.DB.prepare(
+    "SELECT id FROM users WHERE role = 'superuser' AND status = 'active'"
+  ).all();
+  for (const user of (superusers || [])) {
+    const { results: subs } = await env.DB.prepare(
+      'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?'
+    ).bind(user.id).all();
+    for (const sub of (subs || [])) {
+      try {
+        const res = await sendWebPush(env, sub, payload);
+        if (res.expired) await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+      } catch (e) { console.error('Schedule failure push error:', e.message); }
+    }
+  }
+}
+
+// Mark a scheduled post terminally failed (shown on its card) + optionally notify.
+async function failSchedule(env, id, reason, nowIso, notify) {
+  await env.DB.prepare(
+    "UPDATE marketing_drafts SET status='schedule_error', claimed_at=NULL, schedule_error=?, updated_at=? WHERE id=?"
+  ).bind(String(reason || 'failed').slice(0, 300), nowIso, id).run().catch(() => {});
+  if (notify) { try { await dispatchScheduleFailureAlert(env, id, reason); } catch (_) {} }
+}
+
+// Every-minute scheduler: auto-publish due scheduled bin posts, EXACTLY ONCE.
+// Runs off the "* * * * *" cron (alongside processSaleSchedules). Idempotency rests on
+// three guards: atomic claim, reconcile-before-publish (against marketing_publish_log),
+// and a stale-'publishing' reaper for rows a crashed prior tick left mid-flight.
+async function processScheduledPosts(env, now) {
+  if (!env.DB) return { skipped: 'no-db' };
+  const PER_TICK = 5, MAX_ATTEMPTS = 3, CLAIM_STALE_MS = 5 * 60 * 1000, MAX_LATE_MS = 6 * 3600 * 1000;
+  const nowMs = now.getTime(), nowIso = now.toISOString();
+  const out = { published: 0, failed: 0, reaped: 0, skipped: 0 };
+
+  // Has this draft already been posted? (successful log row with a post_id.)
+  const alreadyPosted = async (draftId) =>
+    env.DB.prepare("SELECT post_id FROM marketing_publish_log WHERE draft_id=? AND post_id IS NOT NULL AND status IN ('published','staged') ORDER BY id DESC LIMIT 1")
+      .bind(draftId).first().catch(() => null);
+
+  // 1. Reaper: rescue rows a prior tick left stuck in 'publishing'.
+  const staleIso = new Date(nowMs - CLAIM_STALE_MS).toISOString();
+  const stale = await env.DB.prepare(
+    "SELECT id, publish_attempts FROM marketing_drafts WHERE status='publishing' AND (claimed_at IS NULL OR claimed_at < ?) LIMIT 10"
+  ).bind(staleIso).all().catch(() => ({ results: [] }));
+  for (const row of (stale.results || [])) {
+    const done = await alreadyPosted(row.id);
+    if (done && done.post_id) {
+      await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=? WHERE id=? AND status='publishing'").bind(nowIso, row.id).run().catch(() => {});
+    } else if ((row.publish_attempts || 0) >= MAX_ATTEMPTS) {
+      await failSchedule(env, row.id, 'Gave up after repeated interruptions', nowIso, true);
+    } else {
+      await env.DB.prepare("UPDATE marketing_drafts SET status='scheduled', claimed_at=NULL, next_attempt_at=? WHERE id=? AND status='publishing'").bind(new Date(nowMs + 2 * 60 * 1000).toISOString(), row.id).run().catch(() => {});
+    }
+    out.reaped++;
+  }
+
+  // 2. Due query.
+  const due = await env.DB.prepare(
+    "SELECT id, scheduled_at, publish_live, publish_attempts FROM marketing_drafts WHERE status='scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= ? AND publish_attempts < ? AND (next_attempt_at IS NULL OR next_attempt_at <= ?) ORDER BY scheduled_at ASC LIMIT ?"
+  ).bind(nowIso, MAX_ATTEMPTS, nowIso, PER_TICK).all().catch(() => ({ results: [] }));
+
+  for (const row of (due.results || [])) {
+    // 3. Max-lateness guard — don't publish stale content.
+    if (row.scheduled_at && (nowMs - new Date(row.scheduled_at).getTime()) > MAX_LATE_MS) {
+      await failSchedule(env, row.id, 'Expired — scheduled time passed too long ago', nowIso, true);
+      out.failed++; continue;
+    }
+    // 4. Atomic claim (sole concurrent-tick guard): only one worker wins scheduled->publishing.
+    const claim = await env.DB.prepare(
+      "UPDATE marketing_drafts SET status='publishing', claimed_at=?, publish_attempts=publish_attempts+1 WHERE id=? AND status='scheduled'"
+    ).bind(nowIso, row.id).run();
+    if (!claim.meta || claim.meta.changes !== 1) { out.skipped++; continue; }
+    // 5. Reconcile-before-publish — the only guard against an ambiguous-outcome duplicate.
+    const prior = await alreadyPosted(row.id);
+    if (prior && prior.post_id) {
+      await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=? WHERE id=?").bind(nowIso, row.id).run().catch(() => {});
+      out.published++; continue;
+    }
+    // 6. Publish via the shared publisher, honoring publish_live (default 1 = LIVE).
+    let r;
+    try { r = await publishDraft(env, { draftId: row.id, published: row.publish_live !== 0 }); }
+    catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+    if (r.ok) { out.published++; continue; }  // publishDraft advanced status to published/approved
+    // 7. Failure: transient -> backoff & requeue; terminal / attempts exhausted -> schedule_error + notify.
+    const attempts = (row.publish_attempts || 0) + 1;
+    const errText = String(r.error || "") + " " + JSON.stringify(r.detail || "");
+    const terminalHint = /no cover|no Page token|no Facebook Page|Image missing|Invalid|not found|Storage not configured|has no cover/i.test(errText);
+    const transient = !terminalHint && ((r.status >= 500 || r.status === 429) || /\b(network|timeout|fetch|temporarily|rate limit|try again)\b/i.test(errText));
+    if (transient && attempts < MAX_ATTEMPTS) {
+      const backoffMs = [2, 10, 30][Math.min(attempts - 1, 2)] * 60 * 1000;
+      await env.DB.prepare("UPDATE marketing_drafts SET status='scheduled', claimed_at=NULL, next_attempt_at=?, schedule_error=? WHERE id=?")
+        .bind(new Date(nowMs + backoffMs).toISOString(), String(r.error || 'temporary error').slice(0, 300), row.id).run().catch(() => {});
+    } else {
+      await failSchedule(env, row.id, r.error || 'publish failed', nowIso, true);
+    }
+    out.failed++;
+  }
+  return out;
+}
+
 export default {
   // ── HTTP request handler ──────────────────────────────────────
   async fetch(request, env, ctx) {
@@ -5813,10 +5940,16 @@ export default {
         const now = new Date().toISOString();
         if (b.id != null && b.id !== "") {
           const id = parseInt(b.id, 10);
+          const cur = await env.DB.prepare("SELECT status FROM marketing_drafts WHERE id=?").bind(id).first().catch(() => null);
+          if (cur && cur.status === "publishing") return new Response(JSON.stringify({ error: "Post is publishing — can't edit right now" }), { status: 409, headers: corsJson });
           const res = await env.DB.prepare(
             `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, topic=?, post_type=?, updated_at=? WHERE id=?`
           ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, postType, now, id).run();
           if (!res.meta || res.meta.changes === 0) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
+          // A scheduled post must always have an image; an edit that removes them auto-unschedules it.
+          if (cur && cur.status === "scheduled" && !thumbnailId && !photoIds.length) {
+            await env.DB.prepare("UPDATE marketing_drafts SET status='draft', scheduled_at=NULL, schedule_error=? WHERE id=?").bind("Unscheduled — needs a cover or photo", id).run().catch(() => {});
+          }
           return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
         }
         const res = await env.DB.prepare(
@@ -5855,7 +5988,11 @@ export default {
         const b = await request.json();
         const id = parseInt(b.id, 10);
         if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
-        const res = await env.DB.prepare("DELETE FROM marketing_drafts WHERE id = ?").bind(id).run();
+        const res = await env.DB.prepare("DELETE FROM marketing_drafts WHERE id = ? AND status != 'publishing'").bind(id).run();
+        if (!res.meta || res.meta.changes === 0) {
+          const cur = await env.DB.prepare("SELECT status FROM marketing_drafts WHERE id=?").bind(id).first().catch(() => null);
+          if (cur && cur.status === "publishing") return new Response(JSON.stringify({ error: "Post is publishing — try again in a moment" }), { status: 409, headers: corsJson });
+        }
         return new Response(JSON.stringify({ ok: true, deleted: (res.meta && res.meta.changes) || 0 }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
@@ -5952,15 +6089,86 @@ export default {
     // stages the post UNPUBLISHED unless the caller passes { published: true },
     // so a human can review it in the Page's Publishing Tools before it goes live.
     // POST ?action=publish-draft { draft_id, published?, token? }
+    // Schedule a draft to auto-publish at an ET wall-clock time.
+    // POST ?action=draft-schedule { id, et_wall_clock:"YYYY-MM-DDThh:mm", tz?, publish_live? }
+    if (request.method === "POST" && url.searchParams.get("action") === "draft-schedule") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const id = parseInt(b.id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        const draft = await env.DB.prepare("SELECT status, thumbnail_id, photo_ids FROM marketing_drafts WHERE id=?").bind(id).first();
+        if (!draft) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
+        if (draft.status === "published" || draft.status === "publishing") return new Response(JSON.stringify({ error: "That post is already publishing or published" }), { status: 409, headers: corsJson });
+        let pids = []; try { pids = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
+        if (!draft.thumbnail_id && !pids.length) return new Response(JSON.stringify({ error: "Add a cover or a photo before scheduling" }), { status: 400, headers: corsJson });
+        const when = etWallClockToUtc(b.et_wall_clock, b.tz);
+        if (!when) return new Response(JSON.stringify({ error: "Invalid date/time" }), { status: 400, headers: corsJson });
+        if (when.getTime() <= Date.now()) return new Response(JSON.stringify({ error: "Pick a time in the future" }), { status: 400, headers: corsJson });
+        const publishLive = b.publish_live === false ? 0 : 1;
+        const res = await env.DB.prepare(
+          "UPDATE marketing_drafts SET status='scheduled', scheduled_at=?, publish_live=?, schedule_error=NULL, next_attempt_at=NULL, publish_attempts=0, claimed_at=NULL, updated_at=? WHERE id=? AND status NOT IN ('publishing','published')"
+        ).bind(when.toISOString(), publishLive, new Date().toISOString(), id).run();
+        if (!res.meta || res.meta.changes !== 1) return new Response(JSON.stringify({ error: "Couldn't schedule — try again" }), { status: 409, headers: corsJson });
+        return new Response(JSON.stringify({ ok: true, scheduled_at: when.toISOString(), publish_live: publishLive }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // Unschedule (back to Drafts). POST ?action=draft-unschedule { id }
+    if (request.method === "POST" && url.searchParams.get("action") === "draft-unschedule") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const id = parseInt(b.id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        // Conditional claim — refuse if it's mid-publish or already published; keep origin/flow_* provenance.
+        const res = await env.DB.prepare(
+          "UPDATE marketing_drafts SET status='draft', scheduled_at=NULL, schedule_error=NULL, next_attempt_at=NULL, claimed_at=NULL, updated_at=? WHERE id=? AND status IN ('scheduled','schedule_error')"
+        ).bind(new Date().toISOString(), id).run();
+        if (!res.meta || res.meta.changes !== 1) return new Response(JSON.stringify({ error: "Can't unschedule (already publishing, or not scheduled)" }), { status: 409, headers: corsJson });
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // TEMPORARY (staging verification): fire the scheduled-post tick on demand. Remove before prod GA.
+    if (request.method === "POST" && url.searchParams.get("action") === "run-scheduled-tick") {
+      const unauth = requireAdminSecret(request, env, corsJson);
+      if (unauth) return unauth;
+      const result = await processScheduledPosts(env, new Date());
+      return new Response(JSON.stringify({ ok: true, ...result }), { headers: corsJson });
+    }
+
     if (request.method === "POST" && url.searchParams.get("action") === "publish-draft") {
       const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
       try {
         const b = await request.json();
         const draftId = parseInt(b.draft_id, 10);
         if (!Number.isInteger(draftId)) return new Response(JSON.stringify({ error: "Invalid draft_id" }), { status: 400, headers: corsJson });
+        // Atomic claim so a manual publish and the cron can never both publish the same draft.
+        const claim = await env.DB.prepare(
+          "UPDATE marketing_drafts SET status='publishing', claimed_at=?, publish_attempts=publish_attempts+1 WHERE id=? AND status IN ('draft','approved','scheduled','schedule_error','rejected')"
+        ).bind(new Date().toISOString(), draftId).run();
+        if (!claim.meta || claim.meta.changes !== 1) {
+          const cur = await env.DB.prepare("SELECT status FROM marketing_drafts WHERE id=?").bind(draftId).first().catch(() => null);
+          if (!cur) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
+          return new Response(JSON.stringify({ error: cur.status === "published" ? "Already published" : "Post is publishing — try again in a moment" }), { status: 409, headers: corsJson });
+        }
         const r = await publishDraft(env, { draftId, published: b.published === true, token: b.token });
-        if (!r.ok) return new Response(JSON.stringify({ error: r.error, detail: r.detail }), { status: r.status || 400, headers: corsJson });
+        if (!r.ok) {
+          // Release the claim (publishDraft leaves status='publishing' on failure) so it returns to Drafts.
+          await env.DB.prepare("UPDATE marketing_drafts SET status='draft', claimed_at=NULL WHERE id=? AND status='publishing'").bind(draftId).run().catch(() => {});
+          return new Response(JSON.stringify({ error: r.error, detail: r.detail }), { status: r.status || 400, headers: corsJson });
+        }
         return new Response(JSON.stringify({
           ok: true, published: r.published, page: r.page,
           post_id: r.postId, post_url: r.postUrl, photos: r.photos, note: r.note,
@@ -9908,9 +10116,11 @@ export default {
       return;
     }
 
-    // "* * * * *" — every-minute sale scheduler
+    // "* * * * *" — every-minute sale scheduler + scheduled bin-post publisher.
+    // Two independent waitUntils so a failure in one can't abort the other.
     if (event.cron === "* * * * *") {
       ctx.waitUntil(processSaleSchedules(env, new Date()));
+      ctx.waitUntil(processScheduledPosts(env, new Date()).then(r => console.log("Scheduled posts:", JSON.stringify(r))));
       return;
     }
 
