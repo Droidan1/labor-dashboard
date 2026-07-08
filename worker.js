@@ -5903,6 +5903,87 @@ export default {
       }
     }
 
+    // ── Content settings (key/value) — e.g. the AI brand guide. Admin only. ──
+    // GET  ?action=content-setting&key=brand_guide  → { value }
+    // POST ?action=content-setting { key, value }
+    if (url.searchParams.get("action") === "content-setting") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      const ALLOWED = ["brand_guide"];
+      try {
+        if (request.method === "GET") {
+          const key = String(url.searchParams.get("key") || "");
+          if (!ALLOWED.includes(key)) return new Response(JSON.stringify({ error: "Unknown setting" }), { status: 400, headers: corsJson });
+          const row = await env.DB.prepare("SELECT value FROM content_settings WHERE key = ?").bind(key).first().catch(() => null);
+          return new Response(JSON.stringify({ ok: true, key, value: (row && row.value) || "" }), { headers: corsJson });
+        }
+        if (request.method === "POST") {
+          const b = await request.json();
+          const key = String(b.key || "");
+          if (!ALLOWED.includes(key)) return new Response(JSON.stringify({ error: "Unknown setting" }), { status: 400, headers: corsJson });
+          const value = b.value == null ? "" : String(b.value);
+          await env.DB.prepare("INSERT INTO content_settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at")
+            .bind(key, value, new Date().toISOString()).run();
+          return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+        }
+        return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // ── AI-generate a branded cover thumbnail via OpenAI gpt-image-1 (admin). ──
+    // POST ?action=thumbnail-generate { prompt, post_type?, quality?, name? }
+    // Uses the saved brand_guide as style context; saves the result to R2 +
+    // marketing_thumbnails so it drops straight into the composer's cover picker.
+    if (request.method === "POST" && url.searchParams.get("action") === "thumbnail-generate") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      if (!env.OPENAI_API_KEY) {
+        return new Response(JSON.stringify({ error: "OPENAI_API_KEY not set — run: wrangler secret put OPENAI_API_KEY --env staging" }), { status: 400, headers: corsJson });
+      }
+      try {
+        const b = await request.json();
+        const userPrompt = String(b.prompt || "").trim();
+        if (!userPrompt) return new Response(JSON.stringify({ error: "Describe the cover you want" }), { status: 400, headers: corsJson });
+        const postType = MARKETING_POST_TYPES.includes(String(b.post_type)) ? String(b.post_type) : null;
+        const quality = ["low", "medium", "high"].includes(String(b.quality)) ? String(b.quality) : "medium";
+        // Brand guide (style context) — capped so a huge paste can't blow the prompt.
+        const bg = await env.DB.prepare("SELECT value FROM content_settings WHERE key = 'brand_guide'").first().catch(() => null);
+        const brandGuide = (bg && bg.value) ? String(bg.value).slice(0, 4000) : "";
+        const prompt = [
+          "Design a square social-media COVER GRAPHIC for a Bargain Lane bin store post.",
+          brandGuide ? `Brand guidelines to follow:\n${brandGuide}` : "",
+          `This cover is for: ${userPrompt}`,
+          "Bold, high-contrast, eye-catching, on-brand. Leave clean negative space where a logo and a short headline could sit.",
+        ].filter(Boolean).join("\n\n");
+        const oaRes = await fetch("https://api.openai.com/v1/images/generations", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-image-1", prompt, size: "1024x1024", quality, n: 1 }),
+        });
+        const oa = await oaRes.json().catch(() => ({}));
+        if (!oaRes.ok || !(oa.data && oa.data[0] && oa.data[0].b64_json)) {
+          return new Response(JSON.stringify({ error: "Image generation failed", detail: (oa && oa.error && oa.error.message) || `HTTP ${oaRes.status}` }), { status: 502, headers: corsJson });
+        }
+        // Decode base64 → bytes, store in R2, register in marketing_thumbnails.
+        const bytes = Uint8Array.from(atob(oa.data[0].b64_json), c => c.charCodeAt(0));
+        const key = `marketing/_thumbnails/${crypto.randomUUID()}.png`;
+        await env.MEDIA.put(key, bytes, { httpMetadata: { contentType: "image/png" } });
+        const name = (String(b.name || userPrompt).trim().slice(0, 60)) || "AI cover";
+        const res = await env.DB.prepare(
+          `INSERT INTO marketing_thumbnails (name, r2_key, content_type, bytes, uploaded_by, post_type, active, created_at)
+           VALUES (?,?,?,?,?,?, 1, ?)`
+        ).bind(name, key, "image/png", bytes.length, (currentUser && currentUser.email) || null, postType, new Date().toISOString()).run();
+        const id = res.meta && res.meta.last_row_id;
+        return new Response(JSON.stringify({ ok: true, id, name, url: `?action=thumbnail&id=${id}` }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
     // ── Bin-post composer (Slice 1b-2): drafts (admin) ───────────────
     // List submitted photos to pick from. GET ?action=marketing-photos&store=&type=&status=
     if (request.method === "GET" && url.searchParams.get("action") === "marketing-photos") {

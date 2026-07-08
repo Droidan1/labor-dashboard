@@ -1620,6 +1620,7 @@
             </div>
             <div class="flex items-center gap-2 shrink-0">
               <select id="ct-thumb-type" aria-label="Cover post type" class="rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-xs px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+              <button onclick="ctGenerateThumb()" class="px-3 py-2 text-sm font-semibold rounded-xl border border-accent-green/50 text-accent-green hover:bg-accent-green/10 transition">✨ Generate</button>
               <label for="ct-thumb-file" class="cursor-pointer px-3.5 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-xl transition-colors">+ Add</label>
             </div>
           </div>
@@ -11617,6 +11618,75 @@
         const week = parseInt(q('#cts-flow-week').value, 10);
         const stores = [].map.call(ov.querySelectorAll('.cts-flow-store:checked'), c => c.value);
         if (week && stores.length) close({ week, stores });
+      });
+    });
+  }
+
+  // ── AI-generate a branded cover thumbnail (Slice 1: Full AI, gpt-image-1) ─────
+  async function ctGenerateThumb() {
+    let brand = '';
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=content-setting&key=brand_guide`, { credentials: 'include' });
+      const d = await r.json(); brand = (d && d.value) || '';
+    } catch (_) {}
+    const picked = await ctGenerateModal(brand);
+    if (!picked) return;
+    // Persist the (possibly edited) brand guide for next time.
+    try {
+      await fetch(`${WORKER_BASE}?action=content-setting`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'brand_guide', value: picked.brand }) });
+    } catch (_) {}
+    const st = el('ct-thumb-status');
+    const show = (m, c) => { if (!st) return; st.textContent = m; st.className = 'text-sm mb-2 ' + c; st.classList.remove('hidden'); };
+    show('✨ Generating… this can take 20–40s.', 'text-opl-inkDim dark:text-op-inkDim');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=thumbnail-generate`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: picked.prompt, quality: picked.quality, post_type: el('ct-thumb-type') ? el('ct-thumb-type').value : '' }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error((d.detail && d.detail.message) || d.detail || d.error || 'Generation failed');
+      show('✓ Cover generated.', 'text-accent-green');
+      setTimeout(() => st && st.classList.add('hidden'), 3000);
+      ctLoadThumbs();
+    } catch (e) {
+      show((e && e.message) || 'Generation failed', 'text-op-bad');
+    }
+  }
+  window.ctGenerateThumb = ctGenerateThumb;
+
+  // Modal: brand guide + prompt + quality. Resolves { brand, prompt, quality } or null.
+  function ctGenerateModal(brand) {
+    return new Promise(resolve => {
+      const ov = document.createElement('div');
+      ov.className = 'fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/50';
+      ov.innerHTML = `
+        <div class="w-full max-w-md bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.1)] dark:border-op-border rounded-2xl p-5">
+          <h3 class="text-base font-bold text-opl-ink dark:text-op-ink mb-1">✨ Generate a cover</h3>
+          <p class="text-[12px] text-opl-inkDim dark:text-op-inkDim mb-4">AI draws a branded cover from your brand guide + description. It lands in your thumbnails to pick.</p>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Brand guide <span class="normal-case font-normal tracking-normal">(saved for next time)</span></label>
+          <textarea id="ctg-brand" rows="4" placeholder="Colors, fonts, logo usage, tone… e.g. 'Bright green (#22c55e) + navy, bold condensed headlines, playful discount-store energy.'" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 mb-4 focus:outline-none focus:ring-1 focus:ring-accent-green"></textarea>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">This cover is for…</label>
+          <textarea id="ctg-prompt" rows="2" placeholder="e.g. Friday bin preview — electronics heavy, bold '$10 FRIDAY' energy" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 mb-4 focus:outline-none focus:ring-1 focus:ring-accent-green"></textarea>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Quality</label>
+          <select id="ctg-quality" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 mb-4 focus:outline-none focus:ring-1 focus:ring-accent-green">
+            <option value="low">Low — fastest, cheapest</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High — slowest, priciest</option>
+          </select>
+          <div class="flex items-center gap-2 justify-end">
+            <button id="ctg-cancel" class="px-3 py-2 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Cancel</button>
+            <button id="ctg-ok" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-xl">Generate</button>
+          </div>
+        </div>`;
+      document.body.appendChild(ov);
+      const q = s => ov.querySelector(s);
+      q('#ctg-brand').value = brand || '';
+      const onKey = e => { if (e.key === 'Escape') close(null); };
+      const close = v => { document.removeEventListener('keydown', onKey); ov.remove(); resolve(v); };
+      document.addEventListener('keydown', onKey);
+      q('#ctg-cancel').addEventListener('click', () => close(null));
+      ov.addEventListener('click', e => { if (e.target === ov) close(null); });
+      q('#ctg-ok').addEventListener('click', () => {
+        const prompt = q('#ctg-prompt').value.trim();
+        if (!prompt) { q('#ctg-prompt').focus(); return; }
+        close({ brand: q('#ctg-brand').value, prompt, quality: q('#ctg-quality').value });
       });
     });
   }
