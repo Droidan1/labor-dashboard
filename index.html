@@ -1508,14 +1508,24 @@
     </div><!-- end #page-submit-photos -->
 
     <div id="page-content" class="hidden">
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="max-w-3xl mx-auto">
-          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Content</h1>
-          <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Premade thumbnails &amp; bin-post drafts.</p>
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-7xl mx-auto">
+          <div class="flex items-center gap-2.5">
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Content</h1>
+            <span class="text-[11px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded-md px-2 py-0.5">Studio</span>
+          </div>
+          <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Draft the post here, watch it take shape on the right.</p>
         </div>
       </div>
 
-      <div class="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-8">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 pt-4 pb-6">
+        <nav class="flex gap-1 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border mb-5">
+          <button data-cttab="compose" onclick="ctSetTab('compose')" class="ct-tab px-4 py-2 text-sm font-semibold">Compose</button>
+          <button data-cttab="thumbs" onclick="ctSetTab('thumbs')" class="ct-tab px-4 py-2 text-sm font-semibold">Thumbnails <span id="ct-tab-thumbs-n" class="font-normal text-opl-inkDim dark:text-op-inkDim"></span></button>
+          <button data-cttab="posts" onclick="ctSetTab('posts')" class="ct-tab px-4 py-2 text-sm font-semibold">Posts <span id="ct-tab-posts-n" class="font-normal text-opl-inkDim dark:text-op-inkDim"></span></button>
+        </nav>
+
+        <div id="ct-pane-thumbs" class="hidden">
         <section>
           <div class="flex items-center justify-between gap-2 mb-3">
             <div>
@@ -1531,8 +1541,10 @@
           <p id="ct-thumb-status" class="hidden text-sm mb-2"></p>
           <div id="ct-thumb-grid" class="space-y-3"></div>
         </section>
+        </div><!-- /thumbs pane -->
 
-        <section class="pt-2 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <div id="ct-pane-compose">
+        <section class="max-w-2xl">
           <h2 class="text-sm font-bold text-opl-ink dark:text-op-ink mb-3">Compose a bin post</h2>
           <div class="space-y-4">
             <div>
@@ -1569,8 +1581,10 @@
             </div>
           </div>
         </section>
+        </div><!-- /compose pane -->
 
-        <section class="pt-2 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <div id="ct-pane-posts" class="hidden">
+        <section>
           <div class="flex items-center justify-between gap-2 mb-3">
             <h2 class="text-sm font-bold text-opl-ink dark:text-op-ink">Posts</h2>
             <select id="ct-store-filter" onchange="ctRenderPosts()" aria-label="Filter by store" class="rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-xs px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
@@ -1580,6 +1594,7 @@
           <h3 class="text-[11px] font-bold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-2">Published</h3>
           <div id="ct-published" class="space-y-2.5"></div>
         </section>
+        </div><!-- /posts pane -->
       </div>
     </div><!-- end #page-content -->
 
@@ -11324,6 +11339,7 @@
   let ctEditingId = null;
   let ctCaptionSource = 'manual';
   let ctAllDrafts = [];
+  let ctTab = 'compose';
 
   // Post-type taxonomy (mirrors MARKETING_POST_TYPES in worker.js). `topic` is the
   // default AI prompt phrase pre-filled when a type is chosen.
@@ -11380,12 +11396,31 @@
       </details>`).join('');
   }
 
+  // Tab switching (Compose / Thumbnails / Posts) — mirrors mkSetTab.
+  function ctSetTab(tab) {
+    ctTab = tab;
+    document.querySelectorAll('.ct-tab').forEach(b => {
+      const on = b.dataset.cttab === tab;
+      b.className = 'ct-tab px-4 py-2 text-sm font-semibold ' + (on ? 'text-accent-green border-b-2 border-accent-green -mb-px' : 'text-opl-inkDim dark:text-op-inkDim');
+    });
+    const map = { compose: 'ct-pane-compose', thumbs: 'ct-pane-thumbs', posts: 'ct-pane-posts' };
+    for (const t in map) { const p = el(map[t]); if (p) p.classList.toggle('hidden', t !== tab); }
+  }
+  window.ctSetTab = ctSetTab;
+
+  // Live tab counts (Thumbnails · N, Posts · N).
+  function ctUpdateCounts() {
+    const t = el('ct-tab-thumbs-n'); if (t) t.textContent = ctThumbs.length ? '· ' + ctThumbs.length : '';
+    const p = el('ct-tab-posts-n'); if (p) p.textContent = ctAllDrafts.length ? '· ' + ctAllDrafts.length : '';
+  }
+
   function initContent() {
     ctFillTypeSelect('ct-posttype', 'bin_preview');
     ctFillTypeSelect('ct-thumb-type', 'bin_preview');
     ctPopulateStores();
     ctPopulateStoreFilter();
     ctResetComposer();
+    ctSetTab('compose');
     ctLoadThumbs();
     ctLoadPhotos();
     ctLoadDrafts();
@@ -11421,6 +11456,7 @@
     } catch (_) { ctThumbs = []; }
     ctRenderThumbGrid();
     ctRenderThumbPicker();
+    ctUpdateCounts();
   }
 
   function ctRenderThumbGrid() {
@@ -11593,6 +11629,7 @@
       ctAllDrafts = (d && d.drafts) || [];
     } catch (_) { ctAllDrafts = []; }
     ctRenderPosts();
+    ctUpdateCounts();
   }
   window.ctLoadDrafts = ctLoadDrafts;
 
