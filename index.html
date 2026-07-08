@@ -11399,6 +11399,7 @@
   let ctPostType = 'bin_preview';
   let ctInited = false;
   let ctDirty = false;
+  const CT_LS = 'ct-composer-draft';   // localStorage key for the in-progress composer
 
   // Post-type taxonomy (mirrors MARKETING_POST_TYPES in worker.js). `topic` is the
   // default AI prompt phrase pre-filled when a type is chosen.
@@ -11437,8 +11438,22 @@
     const p = el('ct-tab-posts-n'); if (p) p.textContent = ctAllDrafts.length ? '· ' + ctAllDrafts.length : '';
   }
 
-  function ctMarkDirty() { ctDirty = true; }
+  function ctMarkDirty() { ctDirty = true; ctSaveLocal(); }
   window.ctMarkDirty = ctMarkDirty;
+  // True when there's unsaved composer work on-screen (used by the PWA reload guard).
+  window.ctIsDirty = () => ctDirty;
+  // Autosave the in-progress composer so a reload / PWA update never loses work.
+  function ctSaveLocal() {
+    try {
+      localStorage.setItem(CT_LS, JSON.stringify({
+        store: el('ct-store') ? el('ct-store').value : '', thumb: ctSelThumb, photos: [...ctSelPhotos],
+        topic: el('ct-topic') ? el('ct-topic').value : '', caption: el('ct-caption') ? el('ct-caption').value : '',
+        type: ctPostType, captionSource: ctCaptionSource, editing: ctEditingId,
+      }));
+    } catch (_) {}
+  }
+  function ctReadLocal() { try { return JSON.parse(localStorage.getItem(CT_LS) || 'null'); } catch (_) { return null; } }
+  function ctClearLocal() { try { localStorage.removeItem(CT_LS); } catch (_) {} }
 
   // ── Scheduling (Phase 6) ──────────────────────────────────────────────
   // Persist the composer to a draft and return its id (shared by Save + Schedule).
@@ -11665,7 +11680,7 @@
   }
   window.ctUpdateCaptionUI = ctUpdateCaptionUI;
 
-  function initContent() {
+  async function initContent() {
     ctFillTypeSelect('ct-thumb-type', 'bin_preview');
     ctPopulateStores();
     ctPopulateStoreFilter();
@@ -11673,13 +11688,37 @@
     ctLoadDrafts();
     if (!ctInited) {
       ctInited = true;
-      ctResetComposer();   // renders type chips + pickers + live preview
-      ctLoadPhotos();
       ctSetTab('compose');
+      const saved = ctReadLocal();
+      ctResetComposer();   // baseline (also clears storage) — then overlay any autosaved draft
+      if (saved && (saved.caption || saved.topic || saved.thumb || (saved.photos && saved.photos.length))) {
+        await ctRehydrateFrom(saved);
+      } else {
+        ctLoadPhotos();
+      }
     }
     // Re-entry: preserve the in-progress composer (thumb / photos / caption); lists refreshed above.
   }
   window.initContent = initContent;
+
+  // Restore a composer draft autosaved to localStorage (survives reload / PWA update).
+  async function ctRehydrateFrom(s) {
+    ctEditingId = s.editing || null;
+    if (s.store && el('ct-store')) el('ct-store').value = s.store;
+    await ctLoadPhotos();                         // loads this store's photos (clears selection)
+    ctSelThumb = s.thumb || null;
+    ctSelPhotos = new Set((s.photos || []).map(Number));
+    ctPostType = s.type || 'bin_preview';
+    ctCaptionSource = s.captionSource || 'manual';
+    if (el('ct-topic')) el('ct-topic').value = s.topic || '';
+    if (el('ct-caption')) el('ct-caption').value = s.caption || '';
+    if (ctEditingId) {
+      if (el('ct-clear')) el('ct-clear').classList.remove('hidden');
+      if (el('ct-save-draft')) el('ct-save-draft').textContent = 'Update draft';
+    }
+    ctRenderTypeChips(); ctRenderThumbPicker(); ctRenderPhotoPicker(); ctRenderPreview();
+    ctSaveLocal();                                // persist the restored state (reset cleared it)
+  }
 
   function ctPopulateStores() {
     const sel = el('ct-store');
@@ -11815,6 +11854,7 @@
 
   function ctResetComposer() {
     ctEditingId = null; ctSelThumb = null; ctSelPhotos = new Set(); ctCaptionSource = 'manual'; ctPostType = 'bin_preview'; ctDirty = false;
+    ctClearLocal();
     if (el('ct-caption')) el('ct-caption').value = '';
     if (el('ct-topic')) el('ct-topic').value = '';
     if (el('ct-ai-note')) el('ct-ai-note').classList.add('hidden');
@@ -15416,6 +15456,13 @@
         let swRefreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', () => {
           if (swRefreshing) return;
+          // Don't hard-reload out from under an in-progress compose. The draft is
+          // autosaved to localStorage, but a mid-typing reload is jarring — defer it;
+          // the update lands on their next navigation/reload.
+          if (typeof window.ctIsDirty === 'function' && window.ctIsDirty()) {
+            const pc = document.getElementById('page-content');
+            if (pc && !pc.classList.contains('hidden')) return;
+          }
           swRefreshing = true;
           window.location.reload();
         });

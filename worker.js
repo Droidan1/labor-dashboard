@@ -6138,14 +6138,6 @@ export default {
       }
     }
 
-    // TEMPORARY (staging verification): fire the scheduled-post tick on demand. Remove before prod GA.
-    if (request.method === "POST" && url.searchParams.get("action") === "run-scheduled-tick") {
-      const unauth = requireAdminSecret(request, env, corsJson);
-      if (unauth) return unauth;
-      const result = await processScheduledPosts(env, new Date());
-      return new Response(JSON.stringify({ ok: true, ...result }), { headers: corsJson });
-    }
-
     // Seed per-store DRAFTS from a Flow Calendar week (Phase 7). Point-in-time snapshot —
     // does NOT hook flow-week-upsert; editing the calendar later won't mutate seeded drafts.
     // Lands in Drafts (a Flow week has no image); operator adds a cover/photos then schedules.
