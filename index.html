@@ -11495,7 +11495,7 @@
     const pv = el('ct-pv-caption');
     if (pv) pv.textContent = cap ? (cap.length > 150 ? cap.slice(0, 150) + '…' : cap) : 'Your caption will appear here…';
     const cc = el('ct-charcount');
-    if (cc) { cc.textContent = cap.length.toLocaleString() + ' / 2,200'; cc.classList.toggle('text-op-warn', cap.length > 2200); }
+    if (cc) { cc.textContent = cap.length.toLocaleString() + ' / 2,200'; cc.className = 'ml-auto text-[12px] tabular-nums ' + (cap.length > 2200 ? 'text-op-warn font-semibold' : 'text-opl-inkDimmer dark:text-op-inkDimmer'); }
   }
   window.ctUpdateCaptionUI = ctUpdateCaptionUI;
 
@@ -11580,8 +11580,8 @@
     const files = Array.from(inp.files || []);
     inp.value = '';
     if (!files.length) return;
-    const st = el('ct-thumb-status');
-    const show = (m, c) => { st.textContent = m; st.className = 'text-sm mb-2 ' + c; st.classList.remove('hidden'); };
+    const st = (ctTab === 'compose') ? el('ct-compose-status') : el('ct-thumb-status');
+    const show = (m, c) => { if (!st) return; st.textContent = m; st.className = 'text-sm mb-2 ' + c; st.classList.remove('hidden'); };
     let ok = 0, fail = 0;
     show(`Uploading ${files.length}…`, 'text-opl-inkDim dark:text-op-inkDim');
     for (const f of files) {
@@ -11595,7 +11595,7 @@
         if (r.ok && d.ok) ok++; else fail++;
       } catch (_) { fail++; }
     }
-    if (fail) show(`Added ${ok}, ${fail} failed.`, 'text-op-bad'); else st.classList.add('hidden');
+    if (fail) show(`Added ${ok}, ${fail} failed.`, 'text-op-bad'); else if (st) st.classList.add('hidden');
     ctLoadThumbs();
   }
   window.ctUploadThumb = ctUploadThumb;
@@ -11606,7 +11606,7 @@
     try {
       await fetch(`${WORKER_BASE}?action=thumbnail-delete`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
     } catch (_) {}
-    if (ctSelThumb === id) ctSelThumb = null;
+    if (ctSelThumb === id) { ctSelThumb = null; ctRenderPreview(); }
     ctLoadThumbs();
   }
   window.ctDeleteThumb = ctDeleteThumb;
