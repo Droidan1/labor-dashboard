@@ -1575,7 +1575,7 @@
 
             <div class="flex items-center gap-3">
               <button id="ct-save-draft" onclick="ctSaveDraft()" class="px-5 py-2.5 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-xl transition-colors">Save draft</button>
-              <button id="ct-schedule-btn" onclick="ctScheduleStub()" class="px-4 py-2.5 text-sm font-semibold rounded-xl border border-[rgba(20,16,8,0.14)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition-colors">Schedule…</button>
+              <button id="ct-schedule-btn" onclick="ctScheduleFromComposer()" class="px-4 py-2.5 text-sm font-semibold rounded-xl border border-[rgba(20,16,8,0.14)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition-colors">Schedule…</button>
               <button id="ct-clear" onclick="ctResetComposer()" class="px-3 py-2.5 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors hidden">Cancel edit</button>
               <span id="ct-charcount" class="ml-auto text-[12px] text-opl-inkDimmer dark:text-op-inkDimmer tabular-nums">0 / 2,200</span>
             </div>
@@ -11437,8 +11437,108 @@
   function ctMarkDirty() { ctDirty = true; }
   window.ctMarkDirty = ctMarkDirty;
 
-  function ctScheduleStub() { uiAlert('Scheduling arrives in the next update — for now use Save draft, then Publish when ready.', { title: 'Scheduling — coming soon' }); }
-  window.ctScheduleStub = ctScheduleStub;
+  // ── Scheduling (Phase 6) ──────────────────────────────────────────────
+  // Persist the composer to a draft and return its id (shared by Save + Schedule).
+  async function ctPersistDraft() {
+    const store = el('ct-store').value;
+    if (!store) throw new Error('Pick a store.');
+    if (!ctSelThumb) throw new Error('Pick a cover thumbnail.');
+    if (!ctSelPhotos.size) throw new Error('Select at least one photo.');
+    const body = { store, thumbnail_id: ctSelThumb, photo_ids: [...ctSelPhotos], caption: el('ct-caption').value.trim(), caption_source: ctCaptionSource, topic: (el('ct-topic') ? el('ct-topic').value.trim() : ''), post_type: ctPostType };
+    if (ctEditingId) body.id = ctEditingId;
+    const r = await fetch(`${WORKER_BASE}?action=draft-save`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) throw new Error(d.error || 'Save failed');
+    return d.id != null ? d.id : ctEditingId;
+  }
+
+  // Composer "Schedule…" → save the draft, then open the popover for it.
+  async function ctScheduleFromComposer() {
+    const st = el('ct-compose-status');
+    const show = (m, c) => { st.textContent = m; st.className = 'text-sm ' + c; st.classList.remove('hidden'); };
+    let id;
+    try { id = await ctPersistDraft(); } catch (e) { return show((e && e.message) || 'Save failed', 'text-op-bad'); }
+    if (id == null) return show('Save the draft first.', 'text-op-bad');
+    const ok = await ctSchedule(id);
+    if (ok) { ctResetComposer(); show('✓ Scheduled.', 'text-accent-green'); setTimeout(() => st.classList.add('hidden'), 2500); ctLoadDrafts(); }
+  }
+  window.ctScheduleFromComposer = ctScheduleFromComposer;
+
+  // Open the popover and, if confirmed, POST draft-schedule. Returns true on success.
+  async function ctSchedule(id) {
+    const picked = await ctSchedulePopover();
+    if (!picked) return false;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=draft-schedule`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, et_wall_clock: picked.when, tz: 'America/New_York', publish_live: picked.live }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Schedule failed');
+      ctLoadDrafts();
+      return true;
+    } catch (e) { await uiAlert((e && e.message) || 'Schedule failed', { title: 'Couldn’t schedule' }); return false; }
+  }
+  window.ctSchedule = ctSchedule;
+
+  async function ctUnschedule(id) {
+    const ok = await uiConfirm('Move this back to Drafts?', { okText: 'Unschedule' });
+    if (!ok) return;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=draft-unschedule`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Failed');
+      ctLoadDrafts();
+    } catch (e) { await uiAlert((e && e.message) || 'Couldn’t unschedule', { title: 'Error' }); }
+  }
+  window.ctUnschedule = ctUnschedule;
+
+  // Format a UTC scheduled_at as an ET wall-clock label for the card.
+  function ctFmtSchedTime(iso) {
+    if (!iso) return 'Scheduled';
+    try { return new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+    catch (_) { return 'Scheduled'; }
+  }
+
+  // PWA-safe schedule modal (built + appended to <body>; no native dialogs).
+  // Resolves { when:"YYYY-MM-DDThh:mm", live:boolean } or null if cancelled.
+  function ctSchedulePopover() {
+    return new Promise(resolve => {
+      const soon = new Date(Date.now() + 60 * 60 * 1000);
+      const pad = n => String(n).padStart(2, '0');
+      const localNow = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const def = `${soon.getFullYear()}-${pad(soon.getMonth() + 1)}-${pad(soon.getDate())}T${pad(soon.getHours())}:00`;
+      const ov = document.createElement('div');
+      ov.className = 'fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/50';
+      ov.innerHTML = `
+        <div class="w-full max-w-sm bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.1)] dark:border-op-border rounded-2xl p-5">
+          <h3 class="text-base font-bold text-opl-ink dark:text-op-ink mb-1">Schedule post</h3>
+          <p class="text-[12px] text-opl-inkDim dark:text-op-inkDim mb-4">Auto-posts at this Eastern Time.</p>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Date &amp; time (ET)</label>
+          <input id="cts-when" type="datetime-local" value="${def}" min="${localNow(new Date())}" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 mb-4 focus:outline-none focus:ring-1 focus:ring-accent-green">
+          <label class="flex items-center gap-2.5 mb-2 cursor-pointer">
+            <input id="cts-live" type="checkbox" checked style="accent-color:#22c55e;width:16px;height:16px">
+            <span class="text-[13px] text-opl-ink dark:text-op-ink">Publish <strong>LIVE</strong> to the Facebook Page</span>
+          </label>
+          <p id="cts-note" class="text-[11px] text-op-warn mb-4">⚠ Goes public automatically at the scheduled time.</p>
+          <div class="flex items-center gap-2 justify-end">
+            <button id="cts-cancel" class="px-3 py-2 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Cancel</button>
+            <button id="cts-ok" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-xl">Schedule</button>
+          </div>
+        </div>`;
+      document.body.appendChild(ov);
+      const q = s => ov.querySelector(s);
+      const onKey = e => { if (e.key === 'Escape') close(null); };
+      const close = val => { document.removeEventListener('keydown', onKey); ov.remove(); resolve(val); };
+      document.addEventListener('keydown', onKey);
+      const live = q('#cts-live'), note = q('#cts-note');
+      live.addEventListener('change', () => {
+        note.textContent = live.checked ? '⚠ Goes public automatically at the scheduled time.' : 'Staged as unpublished — you publish it manually in Facebook.';
+        note.className = 'text-[11px] mb-4 ' + (live.checked ? 'text-op-warn' : 'text-opl-inkDim dark:text-op-inkDim');
+      });
+      q('#cts-cancel').addEventListener('click', () => close(null));
+      ov.addEventListener('click', e => { if (e.target === ov) close(null); });
+      q('#cts-ok').addEventListener('click', () => { const when = q('#cts-when').value; if (when) close({ when, live: live.checked }); });
+      q('#cts-when').focus();
+    });
+  }
 
   function ctOnStoreChange() { ctMarkDirty(); ctRenderPreview(); ctLoadPhotos().then(() => ctRenderPreview()); }
   window.ctOnStoreChange = ctOnStoreChange;
@@ -11660,27 +11760,19 @@
   window.ctResetComposer = ctResetComposer;
 
   async function ctSaveDraft() {
-    const store = el('ct-store').value;
-    const caption = el('ct-caption').value.trim();
     const st = el('ct-compose-status');
     const show = (m, c) => { st.textContent = m; st.className = 'text-sm ' + c; st.classList.remove('hidden'); };
-    if (!store) return show('Pick a store.', 'text-op-bad');
-    if (!ctSelThumb) return show('Pick a cover thumbnail.', 'text-op-bad');
-    if (!ctSelPhotos.size) return show('Select at least one photo.', 'text-op-bad');
-    const btn = el('ct-save-draft'); btn.disabled = true; btn.textContent = 'Saving…';
+    const btn = el('ct-save-draft'); const label = ctEditingId ? 'Update draft' : 'Save draft';
+    btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      const body = { store, thumbnail_id: ctSelThumb, photo_ids: [...ctSelPhotos], caption, caption_source: ctCaptionSource, topic: (el('ct-topic') ? el('ct-topic').value.trim() : ''), post_type: ctPostType };
-      if (ctEditingId) body.id = ctEditingId;
-      const r = await fetch(`${WORKER_BASE}?action=draft-save`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok || !d.ok) throw new Error(d.error || 'Save failed');
+      await ctPersistDraft();
       ctResetComposer();
       show('✓ Draft saved.', 'text-accent-green');
       setTimeout(() => st.classList.add('hidden'), 2500);
       ctLoadDrafts();
     } catch (e) {
       show((e && e.message) || 'Save failed', 'text-op-bad');
-    } finally { btn.disabled = false; }
+    } finally { btn.disabled = false; if (btn.textContent === 'Saving…') btn.textContent = label; }
   }
   window.ctSaveDraft = ctSaveDraft;
 
@@ -11743,9 +11835,23 @@
       actions = (dr.post_url ? `<a href="${escapeHtml(dr.post_url)}" target="_blank" rel="noopener" class="shrink-0 text-[11px] font-semibold text-accent-blue px-1">View ↗</a>` : '')
         + `<button onclick="ctDeleteDraft(${dr.id})" aria-label="Delete record" class="shrink-0 text-[11px] font-semibold text-op-bad px-1">Delete</button>`;
     } else if (kind === 'scheduled') {
-      meta = 'Scheduled · ' + escapeHtml(ctStoreLabel(dr.store));
-      metaClass = 'text-accent-amber';
-      actions = `<button onclick="ctEditDraft(${dr.id})" class="shrink-0 text-[11px] font-semibold text-accent-green px-1">Edit</button>`;
+      if (dr.status === 'schedule_error') {
+        meta = 'Failed: ' + escapeHtml(dr.schedule_error || 'publish error');
+        metaClass = 'text-op-bad';
+        actions = `<button onclick="ctSchedule(${dr.id})" class="shrink-0 text-[11px] font-semibold text-accent-green px-1">Retry</button>`
+          + `<button onclick="ctUnschedule(${dr.id})" class="shrink-0 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim px-1">To drafts</button>`;
+      } else if (dr.status === 'publishing') {
+        meta = 'Publishing…';
+        metaClass = 'text-accent-blue';
+        actions = '';
+      } else {
+        const flow = dr.origin === 'flow' ? ' · from Flow' : '';
+        const staged = dr.publish_live === 0 ? ' · staged' : '';
+        meta = ctFmtSchedTime(dr.scheduled_at) + staged + flow;
+        metaClass = 'text-accent-amber';
+        actions = `<button onclick="ctEditDraft(${dr.id})" class="shrink-0 text-[11px] font-semibold text-accent-green px-1">Edit</button>`
+          + `<button onclick="ctUnschedule(${dr.id})" class="shrink-0 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim px-1">Unschedule</button>`;
+      }
     } else {
       const nPhotos = (dr.photo_ids || []).length;
       meta = escapeHtml(ctStoreLabel(dr.store)) + ' · ' + nPhotos + ' photo' + (nPhotos === 1 ? '' : 's');
@@ -11775,8 +11881,9 @@
   function ctRenderPipeline() {
     const store = el('ct-store-filter') ? el('ct-store-filter').value : '';
     const rows = store ? ctAllDrafts.filter(d => d.store === store) : ctAllDrafts;
-    const drafts = rows.filter(d => d.status !== 'published' && d.status !== 'scheduled');
-    const scheduled = rows.filter(d => d.status === 'scheduled');
+    const SCHED = { scheduled: 1, publishing: 1, schedule_error: 1 };
+    const drafts = rows.filter(d => d.status !== 'published' && !SCHED[d.status]);
+    const scheduled = rows.filter(d => SCHED[d.status]).sort((a, b) => String(a.scheduled_at || '').localeCompare(String(b.scheduled_at || '')));
     const published = rows.filter(d => d.status === 'published');
     ctFillLane('ct-drafts', drafts, 'draft', 'No drafts yet.');
     ctFillLane('ct-scheduled', scheduled, 'scheduled', 'Nothing scheduled yet.');
