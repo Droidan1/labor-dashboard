@@ -12272,21 +12272,51 @@
   async function ctPublishDraft(id) {
     const ok = await uiConfirm('Post this to Facebook? The cover and photos will be published LIVE to the store’s Page with your caption.', { okText: 'Publish live', title: 'Publish to Facebook' });
     if (!ok) return;
+    let resp = null, netError = false;
     try {
       const r = await fetch(`${WORKER_BASE}?action=publish-draft`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ draft_id: id, published: true }) });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || j.error) {
-        const extra = j.detail && j.detail.message ? ` — ${j.detail.message}` : '';
-        await uiAlert(`Couldn’t publish: ${j.error || ('HTTP ' + r.status)}${extra}`, { title: 'Publish failed' });
-        return;
-      }
-      await uiAlert(`Posted to ${(j.page && j.page.name) || 'Facebook'} ✓${j.post_url ? '\n\n' + j.post_url : ''}`, { title: 'Published' });
-      ctLoadDrafts();
-    } catch (e) {
-      await uiAlert('Publish failed — network error.', { title: 'Publish failed' });
+      resp = { httpOk: r.ok, status: r.status, j: await r.json().catch(() => ({})) };
+    } catch (_) { netError = true; }
+
+    // A multi-photo Facebook post can take longer than the browser (or an
+    // intermediary) will wait, so a network error here does NOT mean it failed.
+    // Reconcile against the server before reporting, and always refresh the board
+    // so a succeeded-but-timed-out publish never strands the card in Drafts.
+    await ctLoadDrafts();
+    const cur = (ctAllDrafts || []).find(d => d.id === id) || {};
+
+    if (cur.status === 'published') {
+      await uiAlert(`Posted to ${ctStoreLabel(cur.store)} ✓${cur.post_url ? '\n\n' + cur.post_url : ''}`, { title: 'Published' });
+      return;
     }
+    if (cur.status === 'publishing') {
+      // Still uploading to Facebook — auto-refresh the board a few times so the
+      // card moves itself to Published without the user re-clicking (which is
+      // blocked mid-flight anyway).
+      ctPollPublishing(id, 5);
+      await uiAlert('Still posting — a post with several photos can take a minute or two. It’ll move to Published on its own; no need to click Publish again (a duplicate is blocked while it finishes).', { title: 'Posting to Facebook…' });
+      return;
+    }
+    if (netError) {
+      await uiAlert('Couldn’t reach the server and the post hasn’t gone live. Check your connection and try again — it’s safe to retry.', { title: 'Publish failed' });
+      return;
+    }
+    const j = (resp && resp.j) || {};
+    const extra = j.detail && j.detail.message ? ` — ${j.detail.message}` : '';
+    await uiAlert(`Couldn’t publish: ${j.error || ('HTTP ' + (resp ? resp.status : '?'))}${extra}`, { title: 'Publish failed' });
   }
   window.ctPublishDraft = ctPublishDraft;
+
+  // Poll the board while a draft is finishing its post, so the card advances from
+  // "Publishing…" to Published on its own. Bounded; stops once it leaves 'publishing'.
+  function ctPollPublishing(id, tries) {
+    if (tries <= 0) return;
+    setTimeout(async () => {
+      await ctLoadDrafts();
+      const cur = (ctAllDrafts || []).find(d => d.id === id);
+      if (cur && cur.status === 'publishing') ctPollPublishing(id, tries - 1);
+    }, 15000);
+  }
 
   // ── Flow Calendar admin editor (Phase 2) ────────────────────────────
   // Admins get an Edit toggle. In edit mode, clicking a week opens the week
