@@ -3338,6 +3338,16 @@ function storeByPage(pageId) {
   return pageId ? (STORE_BY_PAGE[String(pageId)] || null) : null;
 }
 
+// Store-center coordinates for local "Boost" ad targeting (radius around the
+// store). Keyed by store code. Add a store here to enable boosting its posts;
+// a missing store returns a clear "no location configured" error rather than
+// silently targeting the wrong place.
+const STORE_GEO = {
+  BL8:  { lat: 42.7875, lng: -86.1089 },  // Holland, MI
+  BL14: { lat: 42.3211, lng: -85.1797 },  // Battle Creek, MI
+  BL16: { lat: 39.7684, lng: -86.1581 },  // Indy East (Indianapolis, IN)
+};
+
 // ─── Phase 2: live Meta Marketing API ingest ─────────────────────────────────
 // Pulls insights from graph.facebook.com directly (the worker can't use the
 // session-only Meta MCP) and upserts into meta_ad_insights, replacing the
@@ -6330,6 +6340,136 @@ export default {
         return new Response(JSON.stringify({
           ok: true, published: r.published, page: r.page,
           post_id: r.postId, post_url: r.postUrl, photos: r.photos, note: r.note,
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // ── Boost a published bin post as a Meta ad ──────────────────────
+    // POST ?action=boost-post { draft_id, daily_budget_cents?, radius_mi?, preview? }
+    //   preview (default true): read the post's promotable_id + eligibility via the
+    //     Page token and return the plan — creates NOTHING.
+    //   preview=false: create campaign→adset→ad on the ad account, ALL PAUSED, and
+    //     record the boost. Uses META_ADS_TOKEN (needs ads_management) for the ad
+    //     objects and META_PAGE_TOKENS to read the post. One boost per draft.
+    if (request.method === "POST" && url.searchParams.get("action") === "boost-post") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      const ver = env.META_API_VERSION || META_API_VERSION;
+      try {
+        const b = await request.json();
+        const draftId = parseInt(b.draft_id, 10);
+        if (!Number.isInteger(draftId)) return new Response(JSON.stringify({ error: "Invalid draft_id" }), { status: 400, headers: corsJson });
+        const preview = b.preview !== false;                                   // default: safe preview
+        const dailyBudget = Math.min(50000, Math.max(100, parseInt(b.daily_budget_cents, 10) || 500));  // cents, $1–$500/day
+        const radiusMi = Math.min(50, Math.max(1, parseInt(b.radius_mi, 10) || 25));    // Meta caps custom-location radius at 50mi
+
+        // 1. The published FB post for this draft (page_id + post id).
+        const draft = await env.DB.prepare("SELECT id, store FROM marketing_drafts WHERE id = ?").bind(draftId).first().catch(() => null);
+        if (!draft) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
+        const store = String(draft.store || "").toUpperCase();
+        const logRow = await env.DB.prepare(
+          "SELECT page_id, post_id FROM marketing_publish_log WHERE draft_id = ? AND post_id IS NOT NULL AND status IN ('published','staged') ORDER BY id DESC LIMIT 1"
+        ).bind(draftId).first().catch(() => null);
+        if (!logRow || !logRow.post_id) return new Response(JSON.stringify({ error: "This post isn't published to Facebook yet — publish it first, then boost." }), { status: 400, headers: corsJson });
+        const pageId = String(logRow.page_id);
+        const postId = String(logRow.post_id);
+
+        // Already boosted? (surface it in both preview and create.)
+        const existing = await env.DB.prepare("SELECT campaign_id, ad_id, ad_account_id FROM marketing_boosts WHERE draft_id = ? ORDER BY id DESC LIMIT 1").bind(draftId).first().catch(() => null);
+        const alreadyBoosted = existing && existing.campaign_id
+          ? { campaign_id: existing.campaign_id, ad_id: existing.ad_id, ads_manager_url: `https://www.facebook.com/adsmanager/manage/campaigns?act=${existing.ad_account_id}&selected_campaign_ids=${existing.campaign_id}` }
+          : null;
+        if (alreadyBoosted && !preview) {
+          return new Response(JSON.stringify({ error: "Already boosted", already_boosted: alreadyBoosted }), { status: 409, headers: corsJson });
+        }
+
+        // 2. Page token → the post's promotability.
+        let pageTok = "";
+        if (env.META_PAGE_TOKENS) { try { const m = JSON.parse(env.META_PAGE_TOKENS); const e = m[pageId]; pageTok = String((e && (e.token || e)) || "").trim(); } catch (_) {} }
+        if (!pageTok) pageTok = String(env.META_PAGE_TOKEN || "").trim();
+        if (!pageTok) return new Response(JSON.stringify({ error: `No Page token for ${pageId} — set META_PAGE_TOKENS.` }), { status: 400, headers: corsJson });
+        const pgInfo = await fetch(`https://graph.facebook.com/${ver}/${pageId}?${new URLSearchParams({ fields: "name,access_token", access_token: pageTok })}`).then(r => r.json()).catch(() => ({}));
+        const pageToken = (pgInfo && pgInfo.access_token) || pageTok;
+        const pageName = (pgInfo && pgInfo.name) || null;
+        const postInfo = await fetch(`https://graph.facebook.com/${ver}/${postId}?${new URLSearchParams({ fields: "is_eligible_for_promotion,promotable_id", access_token: pageToken })}`).then(r => r.json()).catch(() => ({ __fetchFailed: true }));
+        if (postInfo && postInfo.__fetchFailed) return new Response(JSON.stringify({ error: "Couldn't reach Facebook to check the post — try again in a moment." }), { status: 502, headers: corsJson });
+        if (postInfo && postInfo.error) return new Response(JSON.stringify({ error: "Couldn't read the post from Facebook — check the Page token's permissions.", detail: postInfo.error }), { status: 400, headers: corsJson });
+        // Only promote via the resolved promotable_id — the raw /feed post id is the
+        // exact value Meta rejects with "Promoted post is unavailable". No promotable
+        // id → treat as not eligible rather than sending a known-bad id.
+        const promotableId = postInfo.promotable_id ? String(postInfo.promotable_id) : null;
+        const eligible = postInfo.is_eligible_for_promotion !== false && !!promotableId;
+        const geo = STORE_GEO[store] || null;
+
+        const plan = {
+          store, page: { id: pageId, name: pageName }, post_id: postId, promotable_id: promotableId,
+          eligible, daily_budget_cents: dailyBudget, radius_mi: radiusMi, geo,
+          objective: "OUTCOME_ENGAGEMENT", optimization_goal: "POST_ENGAGEMENT",
+        };
+        if (!eligible) return new Response(JSON.stringify({ ok: false, eligible: false, already_boosted: alreadyBoosted, plan, error: "Facebook says this post isn't eligible to promote." }), { headers: corsJson });
+        if (!geo) return new Response(JSON.stringify({ ok: false, already_boosted: alreadyBoosted, plan, error: `No store location configured for ${store} — it can't be geo-targeted yet.` }), { status: 400, headers: corsJson });
+
+        if (preview) return new Response(JSON.stringify({ ok: true, preview: true, already_boosted: alreadyBoosted, plan }), { headers: corsJson });
+
+        // 3. Create the ad objects (needs an ads_management token).
+        const adsTok = String(env.META_ADS_TOKEN || env.META_ACCESS_TOKEN || "").trim();
+        if (!adsTok) return new Response(JSON.stringify({ error: "No ads token — set META_ADS_TOKEN (needs ads_management)." }), { status: 400, headers: corsJson });
+        const acct = String(env.META_BOOST_AD_ACCOUNT || "273307252412674").trim();
+        const adsPost = async (path, form) => {
+          const body = new URLSearchParams({ ...form, access_token: adsTok });
+          const r = await fetch(`https://graph.facebook.com/${ver}/${path}`, { method: "POST", body });
+          return { ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) };
+        };
+        // Best-effort teardown so a half-built boost never leaves orphan paused
+        // objects cluttering Ads Manager (we hit exactly this in testing).
+        const adsDelete = async (id) => { try { await fetch(`https://graph.facebook.com/${ver}/${id}?access_token=${encodeURIComponent(adsTok)}`, { method: "DELETE" }); } catch (_) {} };
+        const label = `BL Boost · ${store} · draft ${draftId}`;
+        const camp = await adsPost(`act_${acct}/campaigns`, {
+          name: label, objective: "OUTCOME_ENGAGEMENT", status: "PAUSED", buying_type: "AUCTION",
+          special_ad_categories: "[]", daily_budget: String(dailyBudget), bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+        });
+        if (!camp.ok || !camp.body.id) return new Response(JSON.stringify({ error: "Couldn't create the campaign.", detail: camp.body.error }), { status: 502, headers: corsJson });
+        const campaignId = String(camp.body.id);
+        const targeting = JSON.stringify({ geo_locations: { custom_locations: [{ latitude: geo.lat, longitude: geo.lng, radius: radiusMi, distance_unit: "mile" }] }, age_min: 18 });
+        const adset = await adsPost(`act_${acct}/adsets`, {
+          name: `${store} · ${radiusMi}mi`, campaign_id: campaignId, optimization_goal: "POST_ENGAGEMENT",
+          billing_event: "IMPRESSIONS", targeting, status: "PAUSED",
+        });
+        if (!adset.ok || !adset.body.id) {
+          await adsDelete(campaignId);
+          return new Response(JSON.stringify({ error: "Couldn't create the ad set — nothing was left behind.", detail: adset.body.error }), { status: 502, headers: corsJson });
+        }
+        const adsetId = String(adset.body.id);
+        const ad = await adsPost(`act_${acct}/ads`, {
+          name: `${store} boosted post`, adset_id: adsetId, status: "PAUSED",
+          creative: JSON.stringify({ object_story_id: promotableId }),
+        });
+        if (!ad.ok || !ad.body.id) {
+          await adsDelete(adsetId); await adsDelete(campaignId);
+          return new Response(JSON.stringify({ error: "Couldn't create the ad — nothing was left behind.", detail: ad.body.error }), { status: 502, headers: corsJson });
+        }
+        const adId = String(ad.body.id);
+
+        // Record the boost. This is the one-boost-per-draft guard (uq_boosts_draft
+        // is UNIQUE on draft_id), so a failed write means either a race lost or the
+        // table is missing — in EITHER case the objects we just made are untracked,
+        // so tear them back down and report failure. Never return ok:true for a
+        // boost that wasn't recorded (that's how duplicates + double-spend sneak in).
+        const rec = await env.DB.prepare(
+          "INSERT INTO marketing_boosts (draft_id, store, ad_account_id, campaign_id, adset_id, ad_id, object_story_id, daily_budget_cents, status, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+        ).bind(draftId, store, acct, campaignId, adsetId, adId, promotableId, dailyBudget, "paused", (currentUser && currentUser.email) || null, new Date().toISOString()).run().catch(() => null);
+        if (!rec || !rec.meta || rec.meta.changes !== 1) {
+          await adsDelete(adId); await adsDelete(adsetId); await adsDelete(campaignId);
+          return new Response(JSON.stringify({ error: "Boost couldn't be recorded — the ad was rolled back, nothing was left behind. Try again." }), { status: 500, headers: corsJson });
+        }
+        return new Response(JSON.stringify({
+          ok: true, created: true, campaign_id: campaignId, adset_id: adsetId, ad_id: adId,
+          daily_budget_cents: dailyBudget, radius_mi: radiusMi,
+          ads_manager_url: `https://www.facebook.com/adsmanager/manage/campaigns?act=${acct}&selected_campaign_ids=${campaignId}`,
+          note: "Created PAUSED — review in Ads Manager and set it live when you're ready. Nothing has spent.",
         }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });

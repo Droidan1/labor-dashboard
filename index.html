@@ -12172,6 +12172,7 @@
       meta = (dr.post_url ? 'Live' : 'Posted') + ' · ' + escapeHtml(ctStoreLabel(dr.store));
       metaClass = 'text-accent-green';
       actions = (dr.post_url ? `<a href="${escapeHtml(dr.post_url)}" target="_blank" rel="noopener" class="shrink-0 text-[11px] font-semibold text-accent-blue px-1">View ↗</a>` : '')
+        + `<button onclick="ctBoostDraft(${dr.id})" class="shrink-0 text-[11px] font-semibold text-[#06210f] bg-accent-green hover:opacity-90 rounded-md px-2 py-0.5 transition">Boost</button>`
         + `<button onclick="ctDeleteDraft(${dr.id})" aria-label="Delete record" class="shrink-0 text-[11px] font-semibold text-op-bad px-1">Delete</button>`;
     } else if (kind === 'scheduled') {
       if (dr.status === 'schedule_error') {
@@ -12268,6 +12269,76 @@
     ctLoadDrafts();
   }
   window.ctDeleteDraft = ctDeleteDraft;
+
+  // ── Boost a published post as a Meta ad (created paused) ──────────
+  function ctBoostSheet() {
+    return new Promise(resolve => {
+      const ov = document.createElement('div');
+      ov.className = 'fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/50';
+      ov.innerHTML = `
+        <div class="w-full max-w-sm bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.1)] dark:border-op-border rounded-2xl p-5">
+          <h3 class="text-base font-bold text-opl-ink dark:text-op-ink mb-1">Boost on Facebook</h3>
+          <p class="text-[12px] text-opl-inkDim dark:text-op-inkDim mb-4">Promotes this exact post to people near the store. Created <strong>paused</strong> — nothing spends until you set it live in Ads Manager.</p>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Daily budget</label>
+          <select id="ctb-budget" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 mb-4 focus:outline-none focus:ring-1 focus:ring-accent-green">
+            <option value="500">$5 / day</option>
+            <option value="1000">$10 / day</option>
+            <option value="2000">$20 / day</option>
+          </select>
+          <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1.5">Radius around the store</label>
+          <div class="flex items-center gap-2 mb-4">
+            <input id="ctb-radius" type="number" min="1" max="50" value="25" class="w-24 rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green">
+            <span class="text-[13px] text-opl-inkDim dark:text-op-inkDim">miles</span>
+          </div>
+          <div class="flex items-center gap-2 justify-end">
+            <button id="ctb-cancel" class="px-3 py-2 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Cancel</button>
+            <button id="ctb-ok" class="px-4 py-2 text-sm font-semibold bg-accent-green hover:opacity-90 text-[#06210f] rounded-xl">Preview boost</button>
+          </div>
+        </div>`;
+      document.body.appendChild(ov);
+      const q = s => ov.querySelector(s);
+      const onKey = e => { if (e.key === 'Escape') close(null); };
+      const close = val => { document.removeEventListener('keydown', onKey); ov.remove(); resolve(val); };
+      document.addEventListener('keydown', onKey);
+      q('#ctb-cancel').addEventListener('click', () => close(null));
+      ov.addEventListener('click', e => { if (e.target === ov) close(null); });
+      q('#ctb-ok').addEventListener('click', () => {
+        const budget_cents = parseInt(q('#ctb-budget').value, 10) || 500;
+        const radius_mi = Math.min(50, Math.max(1, parseInt(q('#ctb-radius').value, 10) || 25));
+        close({ budget_cents, radius_mi });
+      });
+    });
+  }
+
+  async function ctBoostDraft(id) {
+    const opts = await ctBoostSheet();
+    if (!opts) return;
+    const call = (preview) => fetch(`${WORKER_BASE}?action=boost-post`, {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ draft_id: id, preview, daily_budget_cents: opts.budget_cents, radius_mi: opts.radius_mi })
+    });
+    // 1. Preview — resolve eligibility + the promotable post id; creates nothing.
+    let r, pv;
+    try { r = await call(true); pv = await r.json().catch(() => ({})); }
+    catch (_) { await uiAlert('Couldn’t reach the server. Check your connection and try again.', { title: 'Boost' }); return; }
+    if (pv.already_boosted) { await uiAlert(`This post is already boosted.\n\nReview it in Ads Manager:\n${pv.already_boosted.ads_manager_url}`, { title: 'Already boosted' }); return; }
+    if (pv.eligible === false) { await uiAlert('Facebook says this post isn’t eligible to promote — it may be too old or a post type that can’t be boosted.', { title: 'Can’t boost' }); return; }
+    if (!r.ok || !pv.ok || !pv.plan || !pv.plan.geo) { await uiAlert(pv.error || 'This post can’t be boosted yet.', { title: 'Can’t boost' }); return; }
+
+    // 2. Confirm, then create (paused).
+    const store = ctStoreLabel(pv.plan.store);
+    const dollars = (opts.budget_cents / 100).toFixed(opts.budget_cents % 100 ? 2 : 0);
+    const ok = await uiConfirm(`Create a PAUSED boost of this post?\n\n$${dollars}/day · ${opts.radius_mi} mi around ${store}\n\nNothing spends until you set it live in Ads Manager.`, { okText: 'Create paused boost', title: 'Boost on Facebook' });
+    if (!ok) return;
+    try {
+      const cr = await call(false);
+      const d = await cr.json().catch(() => ({}));
+      if (cr.status === 409 && d.already_boosted) { await uiAlert(`Already boosted.\n\n${d.already_boosted.ads_manager_url}`, { title: 'Already boosted' }); return; }
+      if (!cr.ok || !d.ok) throw new Error(d.error || ('HTTP ' + cr.status));
+      await uiAlert(`Boost created — PAUSED ✓\n\nReview & set it live in Ads Manager:\n${d.ads_manager_url}`, { title: 'Boost ready' });
+    } catch (e) { await uiAlert((e && e.message) || 'Boost failed.', { title: 'Boost' }); }
+  }
+  window.ctBoostDraft = ctBoostDraft;
 
   async function ctPublishDraft(id) {
     const ok = await uiConfirm('Post this to Facebook? The cover and photos will be published LIVE to the store’s Page with your caption.', { okText: 'Publish live', title: 'Publish to Facebook' });
