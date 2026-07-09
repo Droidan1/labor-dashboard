@@ -1552,11 +1552,19 @@
             </div>
 
             <div>
-              <div class="flex items-center justify-between mb-1.5">
-                <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">Bin photos <span class="text-opl-inkDimmer dark:text-op-inkDimmer normal-case font-normal tracking-normal">· from today's floor walk</span></label>
-                <span id="ct-photo-count" class="text-[12px] text-opl-inkDim dark:text-op-inkDim"></span>
+              <div class="flex items-center justify-between gap-2 mb-1.5">
+                <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">Bin photos <span class="text-opl-inkDimmer dark:text-op-inkDimmer normal-case font-normal tracking-normal">· by week</span></label>
+                <div class="flex items-center gap-2.5">
+                  <span id="ct-photo-count" class="text-[12px] text-opl-inkDim dark:text-op-inkDim"></span>
+                  <button type="button" id="ct-photo-manage" onclick="ctPhotoToggleManage()" class="text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-op-bad transition-colors">Select to delete</button>
+                </div>
               </div>
-              <div id="ct-photo-pick" class="flex flex-wrap gap-2.5"></div>
+              <div id="ct-photo-delbar" class="hidden items-center gap-2 mb-2 px-2.5 py-1.5 rounded-xl bg-op-bad/10 border border-op-bad/30">
+                <span id="ct-photo-delcount" class="text-[12px] font-semibold text-op-bad">0 selected</span>
+                <button type="button" onclick="ctDeleteSelectedPhotos()" class="ml-auto text-[12px] font-semibold text-white bg-op-bad hover:opacity-90 rounded-lg px-2.5 py-1 transition">Delete</button>
+                <button type="button" onclick="ctPhotoToggleManage()" class="text-[12px] font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink px-1">Done</button>
+              </div>
+              <div id="ct-photo-pick" class="space-y-2.5"></div>
             </div>
 
             <div>
@@ -11393,6 +11401,9 @@
   let ctPhotos = [];
   let ctSelThumb = null;
   let ctSelPhotos = new Set();
+  let ctFlowWeeks = null;      // cached retail-week ranges (marketing_flow) for foldering photos
+  let ctPhotoDelMode = false;  // "select to delete" mode in the Bin photos picker
+  let ctPhotoDel = new Set();
   let ctEditingId = null;
   let ctCaptionSource = 'manual';
   let ctAllDrafts = [];
@@ -11890,10 +11901,14 @@
   async function ctLoadPhotos() {
     const store = el('ct-store') ? el('ct-store').value : '';
     ctSelPhotos = new Set();
+    ctPhotoDelMode = false; ctPhotoDel = new Set();
+    const bar = el('ct-photo-delbar'); if (bar) { bar.classList.add('hidden'); bar.classList.remove('flex'); }
+    const mng = el('ct-photo-manage'); if (mng) mng.textContent = 'Select to delete';
     const pick = el('ct-photo-pick');
     if (!pick) return;
     if (!store) { pick.innerHTML = ''; ctRenderPhotoPicker(); return; }
-    pick.innerHTML = '<div class="col-span-full text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">Loading…</div>';
+    pick.innerHTML = '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">Loading…</div>';
+    await ctEnsureFlowWeeks();
     try {
       const r = await fetch(`${WORKER_BASE}?action=marketing-photos&store=${store}&status=new`, { credentials: 'include' });
       const d = await r.json();
@@ -11903,24 +11918,110 @@
   }
   window.ctLoadPhotos = ctLoadPhotos;
 
-  // 78px photo picker. Numbered badge = carousel order (insertion order in ctSelPhotos).
+  // ── Bin photos: clickable week folders (current week open) + delete mode ──
+  async function ctEnsureFlowWeeks() {
+    if (ctFlowWeeks) return ctFlowWeeks;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=flow-calendar&fy=F26`, { credentials: 'include' });
+      const d = await r.json();
+      ctFlowWeeks = (d && d.weeks) || [];
+    } catch (_) { ctFlowWeeks = []; }
+    return ctFlowWeeks;
+  }
+  function ctPhotoWeekOf(iso) {
+    const day = String(iso || '').slice(0, 10);
+    if (!day || !ctFlowWeeks) return null;
+    return ctFlowWeeks.find(w => w.week_start <= day && day <= w.week_end) || null;
+  }
+  function ctCurrentWeekNo() {
+    const today = new Date().toISOString().slice(0, 10);
+    const w = (ctFlowWeeks || []).find(x => x.week_start <= today && today <= x.week_end);
+    return w ? w.retail_week : null;
+  }
+  function ctShortDate(iso) {
+    try { return new Date(String(iso) + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }); } catch (_) { return iso; }
+  }
+  function ctPhotoTile(p, order) {
+    const type = `<span class="absolute bottom-1 left-1 text-[9px] font-bold uppercase px-1 py-0.5 rounded bg-black/55 text-white">${escapeHtml(p.photo_type || '')}</span>`;
+    if (ctPhotoDelMode) {
+      const on = ctPhotoDel.has(p.id);
+      return `<button type="button" onclick="ctTogglePhotoDelete(${p.id})" class="relative w-[78px] h-[78px] rounded-xl overflow-hidden shrink-0 border-2 ${on ? 'border-op-bad' : 'border-transparent opacity-70 hover:opacity-100'} focus:outline-none transition">
+        <img src="${WORKER_BASE}?action=photo&id=${p.id}" class="w-full h-full object-cover" alt="" loading="lazy">${type}
+        ${on ? '<span class="absolute top-1 right-1 w-5 h-5 rounded-full bg-op-bad text-white text-[11px] font-black grid place-items-center">✓</span>' : ''}
+      </button>`;
+    }
+    const idx = order.indexOf(p.id), on = idx > -1;
+    return `<button type="button" onclick="ctTogglePhoto(${p.id})" class="relative w-[78px] h-[78px] rounded-xl overflow-hidden shrink-0 border-2 ${on ? 'border-accent-green' : 'border-transparent opacity-70 hover:opacity-100'} focus:outline-none transition">
+      <img src="${WORKER_BASE}?action=photo&id=${p.id}" class="w-full h-full object-cover" alt="" loading="lazy">${type}
+      ${on ? `<span class="absolute top-1 right-1 w-5 h-5 rounded-full bg-accent-green text-[#06210f] text-[11px] font-black grid place-items-center">${idx + 1}</span>` : ''}
+    </button>`;
+  }
+
   function ctRenderPhotoPicker() {
     const pick = el('ct-photo-pick');
     if (!pick) return;
     const cnt = el('ct-photo-count'); if (cnt) cnt.textContent = ctPhotos.length ? `${ctSelPhotos.size} of ${ctPhotos.length} selected` : '';
-    if (!ctPhotos.length) { pick.innerHTML = '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">No submitted photos for this store yet.</div>'; return; }
+    const dc = el('ct-photo-delcount'); if (dc) dc.textContent = `${ctPhotoDel.size} selected`;
+    // Group this store's photos into retail-week folders.
+    const groups = {};
+    for (const p of ctPhotos) {
+      const w = ctPhotoWeekOf(p.created_at);
+      const key = w ? 'w' + w.retail_week : 'undated';
+      if (!groups[key]) groups[key] = { week: w ? w.retail_week : -1, sort: w ? w.week_start : '', label: w ? `Week ${w.retail_week} · ${ctShortDate(w.week_start)}–${ctShortDate(w.week_end)}` : 'Undated', photos: [] };
+      groups[key].photos.push(p);
+    }
+    // Always surface the current week's folder (start with this week), even if empty.
+    const cur = ctCurrentWeekNo();
+    if (cur != null && !groups['w' + cur]) {
+      const cw = (ctFlowWeeks || []).find(x => x.retail_week === cur);
+      if (cw) groups['w' + cur] = { week: cur, sort: cw.week_start, label: `Week ${cur} · ${ctShortDate(cw.week_start)}–${ctShortDate(cw.week_end)}`, photos: [] };
+    }
+    const arr = Object.values(groups).sort((a, b) => (b.sort || '').localeCompare(a.sort || ''));
+    if (!arr.length) { pick.innerHTML = '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">No submitted photos for this store yet.</div>'; return; }
     const order = [...ctSelPhotos];
-    pick.innerHTML = ctPhotos.map(p => {
-      const idx = order.indexOf(p.id), on = idx > -1;
-      return `<button type="button" onclick="ctTogglePhoto(${p.id})" class="relative w-[78px] h-[78px] rounded-xl overflow-hidden shrink-0 border-2 ${on ? 'border-accent-green' : 'border-transparent opacity-70 hover:opacity-100'} focus:outline-none transition">
-        <img src="${WORKER_BASE}?action=photo&id=${p.id}" class="w-full h-full object-cover" alt="" loading="lazy">
-        <span class="absolute bottom-1 left-1 text-[9px] font-bold uppercase px-1 py-0.5 rounded bg-black/55 text-white">${escapeHtml(p.photo_type || '')}</span>
-        ${on ? `<span class="absolute top-1 right-1 w-5 h-5 rounded-full bg-accent-green text-[#06210f] text-[11px] font-black grid place-items-center">${idx + 1}</span>` : ''}
-      </button>`;
+    pick.innerHTML = arr.map(g => {
+      const open = (g.week === cur) ? ' open' : '';
+      const inner = g.photos.length ? g.photos.map(p => ctPhotoTile(p, order)).join('') : '<div class="text-[11px] text-opl-inkDim dark:text-op-inkDim py-1">No photos submitted this week yet.</div>';
+      return `<details${open} class="rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border overflow-hidden">
+        <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none bg-opl-panelHi dark:bg-op-panelHi text-[12px] font-semibold text-opl-ink dark:text-op-ink">
+          ${escapeHtml(g.label)}<span class="ml-auto text-[11px] font-normal text-opl-inkDim dark:text-op-inkDim">${g.photos.length}</span>
+        </summary>
+        <div class="p-2.5 flex flex-wrap gap-2.5">${inner}</div>
+      </details>`;
     }).join('');
   }
   function ctTogglePhoto(id) { if (ctSelPhotos.has(id)) ctSelPhotos.delete(id); else ctSelPhotos.add(id); ctRenderPhotoPicker(); ctRenderPreview(); ctMarkDirty(); }
   window.ctTogglePhoto = ctTogglePhoto;
+
+  function ctPhotoToggleManage() {
+    ctPhotoDelMode = !ctPhotoDelMode;
+    ctPhotoDel = new Set();
+    const bar = el('ct-photo-delbar'); if (bar) { bar.classList.toggle('hidden', !ctPhotoDelMode); bar.classList.toggle('flex', ctPhotoDelMode); }
+    const mng = el('ct-photo-manage'); if (mng) mng.textContent = ctPhotoDelMode ? 'Cancel' : 'Select to delete';
+    ctRenderPhotoPicker();
+  }
+  window.ctPhotoToggleManage = ctPhotoToggleManage;
+  function ctTogglePhotoDelete(id) { if (ctPhotoDel.has(id)) ctPhotoDel.delete(id); else ctPhotoDel.add(id); ctRenderPhotoPicker(); }
+  window.ctTogglePhotoDelete = ctTogglePhotoDelete;
+  async function ctDeleteSelectedPhotos() {
+    const n = ctPhotoDel.size;
+    if (!n) return;
+    const ok = await uiConfirm(`Delete ${n} photo${n === 1 ? '' : 's'}? This can't be undone.`, { danger: true, okText: 'Delete' });
+    if (!ok) return;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=photo-delete`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [...ctPhotoDel] }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Delete failed');
+      for (const id of ctPhotoDel) ctSelPhotos.delete(id);
+      ctPhotoDelMode = false; ctPhotoDel = new Set();
+      const bar = el('ct-photo-delbar'); if (bar) { bar.classList.add('hidden'); bar.classList.remove('flex'); }
+      const mng = el('ct-photo-manage'); if (mng) mng.textContent = 'Select to delete';
+      if (d.skipped && d.skipped.length) await uiAlert(`Deleted ${d.deleted}. ${d.skipped.length} kept — still queued in a scheduled post.`, { title: 'Photos' });
+      ctRenderPreview();
+      ctLoadPhotos();
+    } catch (e) { await uiAlert((e && e.message) || 'Delete failed', { title: 'Delete photos' }); }
+  }
+  window.ctDeleteSelectedPhotos = ctDeleteSelectedPhotos;
 
   function ctResetComposer() {
     ctEditingId = null; ctSelThumb = null; ctSelPhotos = new Set(); ctCaptionSource = 'manual'; ctPostType = 'bin_preview'; ctDirty = false;

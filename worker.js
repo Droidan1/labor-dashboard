@@ -6016,6 +6016,38 @@ export default {
       return new Response(JSON.stringify({ ok: true, photos }), { headers: corsJson });
     }
 
+    // Delete submitted photos (admin). POST ?action=photo-delete { ids:[..] } (or { id }).
+    // Removes the R2 objects + rows; refuses any photo queued in a scheduled/publishing post.
+    if (request.method === "POST" && url.searchParams.get("action") === "photo-delete") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const ids = (Array.isArray(b.ids) ? b.ids : [b.id]).map(x => parseInt(x, 10)).filter(Number.isInteger);
+        if (!ids.length) return new Response(JSON.stringify({ error: "No photo ids" }), { status: 400, headers: corsJson });
+        // Guard: never delete a photo referenced by a scheduled/publishing draft.
+        const locked = new Set();
+        const dr = await env.DB.prepare("SELECT photo_ids FROM marketing_drafts WHERE status IN ('scheduled','publishing')").all().catch(() => ({ results: [] }));
+        for (const row of (dr.results || [])) {
+          let pids = []; try { pids = JSON.parse(row.photo_ids || "[]"); } catch (_) {}
+          for (const p of pids) locked.add(Number(p));
+        }
+        let deleted = 0; const skipped = [];
+        for (const id of ids) {
+          if (locked.has(id)) { skipped.push(id); continue; }
+          const row = await env.DB.prepare("SELECT r2_key FROM marketing_photos WHERE id = ?").bind(id).first().catch(() => null);
+          if (!row) continue;
+          if (row.r2_key) await env.MEDIA.delete(row.r2_key).catch(() => {});
+          const res = await env.DB.prepare("DELETE FROM marketing_photos WHERE id = ?").bind(id).run();
+          if (res.meta && res.meta.changes) deleted++;
+        }
+        return new Response(JSON.stringify({ ok: true, deleted, skipped }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
     // Save (create/update) a draft. POST ?action=draft-save
     if (request.method === "POST" && url.searchParams.get("action") === "draft-save") {
       const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
