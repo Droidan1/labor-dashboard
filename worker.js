@@ -1387,6 +1387,13 @@ function computeSalePrice(originalCents, kind, value) {
 // Every-minute cron worker: flip prices at starts_at, revert at ends_at.
 // Per-tick cap keeps us under CPU budget; next tick drains any backlog.
 async function processSaleSchedules(env, now) {
+  // Live Clover PRICE MUTATION — must never run on staging (staging shares real
+  // Clover credentials). Gate on API_ORIGIN; env.name is undefined at runtime, so
+  // gating on it would fail open and flip real prices on staging.
+  if (env && env.API_ORIGIN && env.API_ORIGIN.includes('staging')) {
+    console.log('[cron] processSaleSchedules skipped on staging');
+    return { skipped: 'staging' };
+  }
   const nowIso = now.toISOString();
   const PER_TICK = 50;
   const result = { activated: 0, reverted: 0, errors: [] };
@@ -4973,6 +4980,225 @@ async function sendInviteEmail(email, token, env) {
 }
 
 // ─── Worker export ───────────────────────────────────────────────
+// Shared bin-post publisher — used by the ?action=publish-draft HTTP route and (Phase 6)
+// the scheduler cron. Uploads the cover + photos to the store's FB Page as unpublished
+// photos, then creates a multi-photo feed post. Returns a plain result object (never a
+// Response); the HTTP route maps it to a Response. `published` true = live, false = staged.
+async function publishDraft(env, { draftId, published, token }) {
+  if (!env.DB || !env.MEDIA) return { ok: false, error: "Storage not configured (DB/MEDIA)", status: 500 };
+  const ver = env.META_API_VERSION || META_API_VERSION;
+  const draft = await env.DB.prepare("SELECT * FROM marketing_drafts WHERE id = ?").bind(draftId).first();
+  if (!draft) return { ok: false, error: "Draft not found", status: 404 };
+  const store = String(draft.store || "").toUpperCase();
+
+  // Resolve the Facebook Page for this store.
+  const target = await env.DB.prepare("SELECT page_id, page_name FROM facebook_page_targets WHERE store = ?").bind(store).first().catch(() => null);
+  if (!target || !target.page_id) return { ok: false, error: `No Facebook Page mapped for store ${store}`, status: 400 };
+  const pageId = String(target.page_id);
+
+  // Token: explicit arg → META_PAGE_TOKENS[page_id] → META_PAGE_TOKEN.
+  let tok = String(token || "").trim();
+  if (!tok && env.META_PAGE_TOKENS) {
+    try { const m = JSON.parse(env.META_PAGE_TOKENS); const e = m[pageId]; tok = String((e && (e.token || e)) || "").trim(); } catch (_) {}
+  }
+  if (!tok) tok = String(env.META_PAGE_TOKEN || "").trim();
+  if (!tok) return { ok: false, error: "No Page token — set META_PAGE_TOKENS/META_PAGE_TOKEN or pass token", status: 400 };
+  // Derive the Page access token (works whether token is user/system/page).
+  const pgInfo = await fetch(`https://graph.facebook.com/${ver}/${pageId}?${new URLSearchParams({ fields: "name,access_token", access_token: tok })}`).then(r => r.json()).catch(() => ({}));
+  if (!pgInfo || pgInfo.error || !pgInfo.access_token) {
+    return { ok: false, error: "Couldn't get a Page token — check the token/permissions", detail: pgInfo && pgInfo.error, status: 400 };
+  }
+  const pageToken = pgInfo.access_token;
+
+  // Ordered image list: cover thumbnail first, then the bin photos.
+  const images = [];
+  if (draft.thumbnail_id) {
+    const th = await env.DB.prepare("SELECT r2_key, content_type FROM marketing_thumbnails WHERE id = ?").bind(draft.thumbnail_id).first().catch(() => null);
+    if (th && th.r2_key) images.push({ key: th.r2_key, ct: th.content_type || "image/png" });
+  }
+  let photoIds = []; try { photoIds = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
+  for (const pid of photoIds) {
+    const ph = await env.DB.prepare("SELECT r2_key, content_type FROM marketing_photos WHERE id = ?").bind(pid).first().catch(() => null);
+    if (ph && ph.r2_key) images.push({ key: ph.r2_key, ct: ph.content_type || "image/jpeg" });
+  }
+  if (!images.length) return { ok: false, error: "Draft has no cover or photos to post", status: 400 };
+
+  // Upload each image to the Page as an UNPUBLISHED photo → collect fbids.
+  const fbids = [];
+  for (const img of images) {
+    const obj = await env.MEDIA.get(img.key);
+    if (!obj) return { ok: false, error: `Image missing from storage: ${img.key}`, status: 500 };
+    const bytes = new Uint8Array(await obj.arrayBuffer());
+    const fd = new FormData();
+    fd.append("access_token", pageToken);
+    fd.append("published", "false");
+    fd.append("source", new Blob([bytes], { type: img.ct }), "photo");
+    const upr = await fetch(`https://graph.facebook.com/${ver}/${pageId}/photos`, { method: "POST", body: fd });
+    const upj = await upr.json().catch(() => ({}));
+    if (!upr.ok || !upj.id) {
+      return { ok: false, error: "Facebook photo upload failed", detail: upj && upj.error, status: 502 };
+    }
+    fbids.push(upj.id);
+  }
+
+  // Create the multi-photo feed post referencing the uploaded photos.
+  const feed = new URLSearchParams();
+  feed.set("access_token", pageToken);
+  if (draft.caption) feed.set("message", String(draft.caption));
+  feed.set("published", published ? "true" : "false");
+  fbids.forEach((id, i) => feed.append(`attached_media[${i}]`, JSON.stringify({ media_fbid: id })));
+  const fr = await fetch(`https://graph.facebook.com/${ver}/${pageId}/feed`, { method: "POST", body: feed });
+  const fj = await fr.json().catch(() => ({}));
+  const postId = fj.id || fj.post_id || null;
+  const ok = fr.ok && postId && !(fj && fj.error);
+  const postUrl = postId ? `https://www.facebook.com/${postId}` : null;
+
+  // Log the attempt FIRST (the Phase 6 reaper reconciles from this log), then advance status.
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    "INSERT INTO marketing_publish_log (draft_id, store, page_id, post_id, post_url, response, status, created_at) VALUES (?,?,?,?,?,?,?,?)"
+  ).bind(draftId, store, pageId, postId, postUrl, JSON.stringify(fj).slice(0, 2000), ok ? (published ? "published" : "staged") : "error", now).run().catch(() => {});
+  if (ok) {
+    // Don't silently swallow: a failed UPDATE after a successful post strands the row.
+    // Retry once; if it still fails the log row proves success for the Phase 6 reaper.
+    try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=? WHERE id=?").bind(published ? "published" : "approved", now, draftId).run(); }
+    catch (_) { try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=? WHERE id=?").bind(published ? "published" : "approved", now, draftId).run(); } catch (_) {} }
+  }
+  if (!ok) return { ok: false, error: "Facebook post failed", detail: fj && fj.error, status: 502 };
+  return {
+    ok: true, published, page: { id: pageId, name: target.page_name },
+    postId, postUrl, photos: fbids.length,
+    note: published ? "Published LIVE to the Page." : "Staged as UNPUBLISHED — review it in the Page's Publishing Tools, then publish live.",
+  };
+}
+
+// Interpret an ET wall-clock string ("YYYY-MM-DDTHH:MM", from <input type=datetime-local>)
+// as a UTC instant. DST-safe: the tz offset is computed at that actual date.
+function etWallClockToUtc(wall, tz) {
+  tz = tz || 'America/New_York';
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(String(wall || ''));
+  if (!m) return null;
+  const [, Y, Mo, D, H, Mi] = m.map(Number);
+  const asUtc = Date.UTC(Y, Mo - 1, D, H, Mi);              // pretend the wall time is UTC
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(asUtc)).map(p => [p.type, p.value]));
+  const shownMs = Date.UTC(+parts.year, +parts.month - 1, +parts.day, (+parts.hour) % 24, +parts.minute);
+  const offset = shownMs - asUtc;                            // how far tz leads UTC at this instant
+  const utc = new Date(asUtc - offset);
+  return isNaN(utc.getTime()) ? null : utc;
+}
+
+// Push-only alert to superusers when a scheduled post fails terminally (no human is
+// watching at fire time). Mirrors dispatchCronFailureAlert.
+async function dispatchScheduleFailureAlert(env, draftId, reason) {
+  if (!env.DB || !env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return;
+  const payload = JSON.stringify({
+    title: '⚠️ Scheduled post failed',
+    body: `Post #${draftId}: ${reason}`.slice(0, 180),
+    tag: 'schedule-error', url: '/',
+  });
+  const { results: superusers } = await env.DB.prepare(
+    "SELECT id FROM users WHERE role = 'superuser' AND status = 'active'"
+  ).all();
+  for (const user of (superusers || [])) {
+    const { results: subs } = await env.DB.prepare(
+      'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?'
+    ).bind(user.id).all();
+    for (const sub of (subs || [])) {
+      try {
+        const res = await sendWebPush(env, sub, payload);
+        if (res.expired) await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+      } catch (e) { console.error('Schedule failure push error:', e.message); }
+    }
+  }
+}
+
+// Mark a scheduled post terminally failed (shown on its card) + optionally notify.
+async function failSchedule(env, id, reason, nowIso, notify) {
+  await env.DB.prepare(
+    "UPDATE marketing_drafts SET status='schedule_error', claimed_at=NULL, schedule_error=?, updated_at=? WHERE id=?"
+  ).bind(String(reason || 'failed').slice(0, 300), nowIso, id).run().catch(() => {});
+  if (notify) { try { await dispatchScheduleFailureAlert(env, id, reason); } catch (_) {} }
+}
+
+// Every-minute scheduler: auto-publish due scheduled bin posts, EXACTLY ONCE.
+// Runs off the "* * * * *" cron (alongside processSaleSchedules). Idempotency rests on
+// three guards: atomic claim, reconcile-before-publish (against marketing_publish_log),
+// and a stale-'publishing' reaper for rows a crashed prior tick left mid-flight.
+async function processScheduledPosts(env, now) {
+  if (!env.DB) return { skipped: 'no-db' };
+  const PER_TICK = 5, MAX_ATTEMPTS = 3, CLAIM_STALE_MS = 5 * 60 * 1000, MAX_LATE_MS = 6 * 3600 * 1000;
+  const nowMs = now.getTime(), nowIso = now.toISOString();
+  const out = { published: 0, failed: 0, reaped: 0, skipped: 0 };
+
+  // Has this draft already been posted? (successful log row with a post_id.)
+  const alreadyPosted = async (draftId) =>
+    env.DB.prepare("SELECT post_id FROM marketing_publish_log WHERE draft_id=? AND post_id IS NOT NULL AND status IN ('published','staged') ORDER BY id DESC LIMIT 1")
+      .bind(draftId).first().catch(() => null);
+
+  // 1. Reaper: rescue rows a prior tick left stuck in 'publishing'.
+  const staleIso = new Date(nowMs - CLAIM_STALE_MS).toISOString();
+  const stale = await env.DB.prepare(
+    "SELECT id, publish_attempts FROM marketing_drafts WHERE status='publishing' AND (claimed_at IS NULL OR claimed_at < ?) LIMIT 10"
+  ).bind(staleIso).all().catch(() => ({ results: [] }));
+  for (const row of (stale.results || [])) {
+    const done = await alreadyPosted(row.id);
+    if (done && done.post_id) {
+      await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=? WHERE id=? AND status='publishing'").bind(nowIso, row.id).run().catch(() => {});
+    } else if ((row.publish_attempts || 0) >= MAX_ATTEMPTS) {
+      await failSchedule(env, row.id, 'Gave up after repeated interruptions', nowIso, true);
+    } else {
+      await env.DB.prepare("UPDATE marketing_drafts SET status='scheduled', claimed_at=NULL, next_attempt_at=? WHERE id=? AND status='publishing'").bind(new Date(nowMs + 2 * 60 * 1000).toISOString(), row.id).run().catch(() => {});
+    }
+    out.reaped++;
+  }
+
+  // 2. Due query.
+  const due = await env.DB.prepare(
+    "SELECT id, scheduled_at, publish_live, publish_attempts FROM marketing_drafts WHERE status='scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= ? AND publish_attempts < ? AND (next_attempt_at IS NULL OR next_attempt_at <= ?) ORDER BY scheduled_at ASC LIMIT ?"
+  ).bind(nowIso, MAX_ATTEMPTS, nowIso, PER_TICK).all().catch(() => ({ results: [] }));
+
+  for (const row of (due.results || [])) {
+    // 3. Max-lateness guard — don't publish stale content.
+    if (row.scheduled_at && (nowMs - new Date(row.scheduled_at).getTime()) > MAX_LATE_MS) {
+      await failSchedule(env, row.id, 'Expired — scheduled time passed too long ago', nowIso, true);
+      out.failed++; continue;
+    }
+    // 4. Atomic claim (sole concurrent-tick guard): only one worker wins scheduled->publishing.
+    const claim = await env.DB.prepare(
+      "UPDATE marketing_drafts SET status='publishing', claimed_at=?, publish_attempts=publish_attempts+1 WHERE id=? AND status='scheduled'"
+    ).bind(nowIso, row.id).run();
+    if (!claim.meta || claim.meta.changes !== 1) { out.skipped++; continue; }
+    // 5. Reconcile-before-publish — the only guard against an ambiguous-outcome duplicate.
+    const prior = await alreadyPosted(row.id);
+    if (prior && prior.post_id) {
+      await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=? WHERE id=?").bind(nowIso, row.id).run().catch(() => {});
+      out.published++; continue;
+    }
+    // 6. Publish via the shared publisher, honoring publish_live (default 1 = LIVE).
+    let r;
+    try { r = await publishDraft(env, { draftId: row.id, published: row.publish_live !== 0 }); }
+    catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+    if (r.ok) { out.published++; continue; }  // publishDraft advanced status to published/approved
+    // 7. Failure: transient -> backoff & requeue; terminal / attempts exhausted -> schedule_error + notify.
+    const attempts = (row.publish_attempts || 0) + 1;
+    const errText = String(r.error || "") + " " + JSON.stringify(r.detail || "");
+    const terminalHint = /no cover|no Page token|no Facebook Page|Image missing|Invalid|not found|Storage not configured|has no cover/i.test(errText);
+    const transient = !terminalHint && ((r.status >= 500 || r.status === 429) || /\b(network|timeout|fetch|temporarily|rate limit|try again)\b/i.test(errText));
+    if (transient && attempts < MAX_ATTEMPTS) {
+      const backoffMs = [2, 10, 30][Math.min(attempts - 1, 2)] * 60 * 1000;
+      await env.DB.prepare("UPDATE marketing_drafts SET status='scheduled', claimed_at=NULL, next_attempt_at=?, schedule_error=? WHERE id=?")
+        .bind(new Date(nowMs + backoffMs).toISOString(), String(r.error || 'temporary error').slice(0, 300), row.id).run().catch(() => {});
+    } else {
+      await failSchedule(env, row.id, r.error || 'publish failed', nowIso, true);
+    }
+    out.failed++;
+  }
+  return out;
+}
+
 export default {
   // ── HTTP request handler ──────────────────────────────────────
   async fetch(request, env, ctx) {
@@ -5677,6 +5903,100 @@ export default {
       }
     }
 
+    // ── Content settings (key/value) — e.g. the AI brand guide. Admin only. ──
+    // GET  ?action=content-setting&key=brand_guide  → { value }
+    // POST ?action=content-setting { key, value }
+    if (url.searchParams.get("action") === "content-setting") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      const ALLOWED = ["brand_guide"];
+      try {
+        if (request.method === "GET") {
+          const key = String(url.searchParams.get("key") || "");
+          if (!ALLOWED.includes(key)) return new Response(JSON.stringify({ error: "Unknown setting" }), { status: 400, headers: corsJson });
+          const row = await env.DB.prepare("SELECT value FROM content_settings WHERE key = ?").bind(key).first().catch(() => null);
+          return new Response(JSON.stringify({ ok: true, key, value: (row && row.value) || "" }), { headers: corsJson });
+        }
+        if (request.method === "POST") {
+          const b = await request.json();
+          const key = String(b.key || "");
+          if (!ALLOWED.includes(key)) return new Response(JSON.stringify({ error: "Unknown setting" }), { status: 400, headers: corsJson });
+          const value = b.value == null ? "" : String(b.value);
+          await env.DB.prepare("INSERT INTO content_settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at")
+            .bind(key, value, new Date().toISOString()).run();
+          return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+        }
+        return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // ── AI-generate a branded cover thumbnail via OpenAI gpt-image-1 (admin). ──
+    // POST ?action=thumbnail-generate { prompt, post_type?, quality?, name? }
+    // Uses the saved brand_guide as style context; saves the result to R2 +
+    // marketing_thumbnails so it drops straight into the composer's cover picker.
+    if (request.method === "POST" && url.searchParams.get("action") === "thumbnail-generate") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      if (!env.GEMINI_API_KEY) {
+        return new Response(JSON.stringify({ error: "GEMINI_API_KEY not set — run: wrangler secret put GEMINI_API_KEY --env staging" }), { status: 400, headers: corsJson });
+      }
+      try {
+        const b = await request.json();
+        const userPrompt = String(b.prompt || "").trim();
+        if (!userPrompt) return new Response(JSON.stringify({ error: "Describe the cover you want" }), { status: 400, headers: corsJson });
+        const postType = MARKETING_POST_TYPES.includes(String(b.post_type)) ? String(b.post_type) : null;
+        const quality = ["low", "medium", "high"].includes(String(b.quality)) ? String(b.quality) : "medium";
+        // Brand guide (style context) — capped so a huge paste can't blow the prompt.
+        const bg = await env.DB.prepare("SELECT value FROM content_settings WHERE key = 'brand_guide'").first().catch(() => null);
+        const brandGuide = (bg && bg.value) ? String(bg.value).slice(0, 4000) : "";
+        const prompt = [
+          "Design a square social-media COVER GRAPHIC for a Bargain Lane bin store post.",
+          brandGuide ? `Brand guidelines to follow:\n${brandGuide}` : "",
+          `This cover is for: ${userPrompt}`,
+          "Bold, high-contrast, eye-catching, on-brand. Leave clean negative space where a logo and a short headline could sit.",
+        ].filter(Boolean).join("\n\n");
+        // Google "Nano Banana" (Gemini 2.5 Flash Image). generativelanguage.googleapis.com is
+        // Google-hosted (not Cloudflare), so a Worker reaches it without OpenAI's 1015 edge block.
+        const gModel = env.GEMINI_MODEL || "gemini-2.5-flash-image";
+        const gRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: { responseModalities: ["IMAGE"] },
+          }),
+        });
+        const gText = await gRes.text();
+        let g = {}; try { g = JSON.parse(gText); } catch (_) {}
+        const parts = (((g.candidates || [])[0] || {}).content || {}).parts || [];
+        const inline = (parts.find(p => p.inlineData || p.inline_data) || {});
+        const img = inline.inlineData || inline.inline_data;
+        if (!gRes.ok || !img || !img.data) {
+          const detail = (g && g.error && g.error.message) || (gText || "").slice(0, 400) || `HTTP ${gRes.status}`;
+          return new Response(JSON.stringify({ error: "Image generation failed", provider: "gemini", status: gRes.status, detail }), { status: 502, headers: corsJson });
+        }
+        // Decode base64 → bytes, store in R2, register in marketing_thumbnails.
+        const contentType = img.mimeType || img.mime_type || "image/png";
+        const bytes = Uint8Array.from(atob(img.data), c => c.charCodeAt(0));
+        const ext = contentType.includes("jpeg") ? "jpg" : (contentType.includes("webp") ? "webp" : "png");
+        const key = `marketing/_thumbnails/${crypto.randomUUID()}.${ext}`;
+        await env.MEDIA.put(key, bytes, { httpMetadata: { contentType } });
+        const name = (String(b.name || userPrompt).trim().slice(0, 60)) || "AI cover";
+        const res = await env.DB.prepare(
+          `INSERT INTO marketing_thumbnails (name, r2_key, content_type, bytes, uploaded_by, post_type, active, created_at)
+           VALUES (?,?,?,?,?,?, 1, ?)`
+        ).bind(name, key, contentType, bytes.length, (currentUser && currentUser.email) || null, postType, new Date().toISOString()).run();
+        const id = res.meta && res.meta.last_row_id;
+        return new Response(JSON.stringify({ ok: true, id, name, url: `?action=thumbnail&id=${id}` }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
     // ── Bin-post composer (Slice 1b-2): drafts (admin) ───────────────
     // List submitted photos to pick from. GET ?action=marketing-photos&store=&type=&status=
     if (request.method === "GET" && url.searchParams.get("action") === "marketing-photos") {
@@ -5694,6 +6014,38 @@ export default {
       const { results } = await env.DB.prepare(q).bind(...binds).all();
       const photos = (results || []).map(p => ({ ...p, url: `?action=photo&id=${p.id}` }));
       return new Response(JSON.stringify({ ok: true, photos }), { headers: corsJson });
+    }
+
+    // Delete submitted photos (admin). POST ?action=photo-delete { ids:[..] } (or { id }).
+    // Removes the R2 objects + rows; refuses any photo queued in a scheduled/publishing post.
+    if (request.method === "POST" && url.searchParams.get("action") === "photo-delete") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const ids = (Array.isArray(b.ids) ? b.ids : [b.id]).map(x => parseInt(x, 10)).filter(Number.isInteger);
+        if (!ids.length) return new Response(JSON.stringify({ error: "No photo ids" }), { status: 400, headers: corsJson });
+        // Guard: never delete a photo referenced by a scheduled/publishing draft.
+        const locked = new Set();
+        const dr = await env.DB.prepare("SELECT photo_ids FROM marketing_drafts WHERE status IN ('scheduled','publishing')").all().catch(() => ({ results: [] }));
+        for (const row of (dr.results || [])) {
+          let pids = []; try { pids = JSON.parse(row.photo_ids || "[]"); } catch (_) {}
+          for (const p of pids) locked.add(Number(p));
+        }
+        let deleted = 0; const skipped = [];
+        for (const id of ids) {
+          if (locked.has(id)) { skipped.push(id); continue; }
+          const row = await env.DB.prepare("SELECT r2_key FROM marketing_photos WHERE id = ?").bind(id).first().catch(() => null);
+          if (!row) continue;
+          if (row.r2_key) await env.MEDIA.delete(row.r2_key).catch(() => {});
+          const res = await env.DB.prepare("DELETE FROM marketing_photos WHERE id = ?").bind(id).run();
+          if (res.meta && res.meta.changes) deleted++;
+        }
+        return new Response(JSON.stringify({ ok: true, deleted, skipped }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
     }
 
     // Save (create/update) a draft. POST ?action=draft-save
@@ -5714,10 +6066,16 @@ export default {
         const now = new Date().toISOString();
         if (b.id != null && b.id !== "") {
           const id = parseInt(b.id, 10);
+          const cur = await env.DB.prepare("SELECT status FROM marketing_drafts WHERE id=?").bind(id).first().catch(() => null);
+          if (cur && cur.status === "publishing") return new Response(JSON.stringify({ error: "Post is publishing — can't edit right now" }), { status: 409, headers: corsJson });
           const res = await env.DB.prepare(
             `UPDATE marketing_drafts SET store=?, thumbnail_id=?, photo_ids=?, caption=?, caption_source=?, topic=?, post_type=?, updated_at=? WHERE id=?`
           ).bind(store, thumbnailId, JSON.stringify(photoIds), caption, captionSource, topic, postType, now, id).run();
           if (!res.meta || res.meta.changes === 0) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
+          // A scheduled post must always have an image; an edit that removes them auto-unschedules it.
+          if (cur && cur.status === "scheduled" && !thumbnailId && !photoIds.length) {
+            await env.DB.prepare("UPDATE marketing_drafts SET status='draft', scheduled_at=NULL, schedule_error=? WHERE id=?").bind("Unscheduled — needs a cover or photo", id).run().catch(() => {});
+          }
           return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
         }
         const res = await env.DB.prepare(
@@ -5756,7 +6114,11 @@ export default {
         const b = await request.json();
         const id = parseInt(b.id, 10);
         if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
-        const res = await env.DB.prepare("DELETE FROM marketing_drafts WHERE id = ?").bind(id).run();
+        const res = await env.DB.prepare("DELETE FROM marketing_drafts WHERE id = ? AND status != 'publishing'").bind(id).run();
+        if (!res.meta || res.meta.changes === 0) {
+          const cur = await env.DB.prepare("SELECT status FROM marketing_drafts WHERE id=?").bind(id).first().catch(() => null);
+          if (cur && cur.status === "publishing") return new Response(JSON.stringify({ error: "Post is publishing — try again in a moment" }), { status: 409, headers: corsJson });
+        }
         return new Response(JSON.stringify({ ok: true, deleted: (res.meta && res.meta.changes) || 0 }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
@@ -5853,95 +6215,121 @@ export default {
     // stages the post UNPUBLISHED unless the caller passes { published: true },
     // so a human can review it in the Page's Publishing Tools before it goes live.
     // POST ?action=publish-draft { draft_id, published?, token? }
+    // Schedule a draft to auto-publish at an ET wall-clock time.
+    // POST ?action=draft-schedule { id, et_wall_clock:"YYYY-MM-DDThh:mm", tz?, publish_live? }
+    if (request.method === "POST" && url.searchParams.get("action") === "draft-schedule") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const id = parseInt(b.id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        const draft = await env.DB.prepare("SELECT status, thumbnail_id, photo_ids FROM marketing_drafts WHERE id=?").bind(id).first();
+        if (!draft) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
+        if (draft.status === "published" || draft.status === "publishing") return new Response(JSON.stringify({ error: "That post is already publishing or published" }), { status: 409, headers: corsJson });
+        let pids = []; try { pids = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
+        if (!draft.thumbnail_id && !pids.length) return new Response(JSON.stringify({ error: "Add a cover or a photo before scheduling" }), { status: 400, headers: corsJson });
+        const when = etWallClockToUtc(b.et_wall_clock, b.tz);
+        if (!when) return new Response(JSON.stringify({ error: "Invalid date/time" }), { status: 400, headers: corsJson });
+        if (when.getTime() <= Date.now()) return new Response(JSON.stringify({ error: "Pick a time in the future" }), { status: 400, headers: corsJson });
+        const publishLive = b.publish_live === false ? 0 : 1;
+        const res = await env.DB.prepare(
+          "UPDATE marketing_drafts SET status='scheduled', scheduled_at=?, publish_live=?, schedule_error=NULL, next_attempt_at=NULL, publish_attempts=0, claimed_at=NULL, updated_at=? WHERE id=? AND status NOT IN ('publishing','published')"
+        ).bind(when.toISOString(), publishLive, new Date().toISOString(), id).run();
+        if (!res.meta || res.meta.changes !== 1) return new Response(JSON.stringify({ error: "Couldn't schedule — try again" }), { status: 409, headers: corsJson });
+        return new Response(JSON.stringify({ ok: true, scheduled_at: when.toISOString(), publish_live: publishLive }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // Unschedule (back to Drafts). POST ?action=draft-unschedule { id }
+    if (request.method === "POST" && url.searchParams.get("action") === "draft-unschedule") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const id = parseInt(b.id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        // Conditional claim — refuse if it's mid-publish or already published; keep origin/flow_* provenance.
+        const res = await env.DB.prepare(
+          "UPDATE marketing_drafts SET status='draft', scheduled_at=NULL, schedule_error=NULL, next_attempt_at=NULL, claimed_at=NULL, updated_at=? WHERE id=? AND status IN ('scheduled','schedule_error')"
+        ).bind(new Date().toISOString(), id).run();
+        if (!res.meta || res.meta.changes !== 1) return new Response(JSON.stringify({ error: "Can't unschedule (already publishing, or not scheduled)" }), { status: 409, headers: corsJson });
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // Seed per-store DRAFTS from a Flow Calendar week (Phase 7). Point-in-time snapshot —
+    // does NOT hook flow-week-upsert; editing the calendar later won't mutate seeded drafts.
+    // Lands in Drafts (a Flow week has no image); operator adds a cover/photos then schedules.
+    // POST ?action=flow-schedule-week { fiscal_year?, retail_week, stores[] }
+    if (request.method === "POST" && url.searchParams.get("action") === "flow-schedule-week") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const fy = String(b.fiscal_year || "F26").trim();
+        const wk = parseInt(b.retail_week, 10);
+        if (!Number.isInteger(wk)) return new Response(JSON.stringify({ error: "Invalid retail_week" }), { status: 400, headers: corsJson });
+        const stores = Array.isArray(b.stores) ? [...new Set(b.stores.map(s => String(s).trim().toUpperCase()).filter(s => ALL_STORES.includes(s)))] : [];
+        if (!stores.length) return new Response(JSON.stringify({ error: "Pick at least one store" }), { status: 400, headers: corsJson });
+        const week = await env.DB.prepare("SELECT * FROM marketing_flow WHERE fiscal_year=? AND retail_week=?").bind(fy, wk).first();
+        if (!week) return new Response(JSON.stringify({ error: `No Flow week ${wk} for ${fy}` }), { status: 404, headers: corsJson });
+        const topic = [week.special_event, week.weekly_theme, week.product_focus].filter(Boolean).join(" — ") || `Retail week ${wk}`;
+        const postType = week.special_event ? "event" : (week.weekend_event ? "weekly_promo" : "bin_preview");
+        const now = new Date().toISOString();
+        let created = 0, already = 0;
+        // One INSERT per store (D1 caps bound params at 100/query); uq_drafts_flow_week dedupes re-seeds.
+        for (const store of stores) {
+          try {
+            const res = await env.DB.prepare(
+              `INSERT INTO marketing_drafts (store, photo_ids, caption, caption_source, topic, post_type, status, origin, flow_fiscal_year, flow_retail_week, created_by, created_at, updated_at)
+               VALUES (?, '[]', NULL, 'manual', ?, ?, 'draft', 'flow', ?, ?, ?, ?, ?)`
+            ).bind(store, topic, postType, fy, wk, (currentUser && currentUser.email) || null, now, now).run();
+            if (res.meta && res.meta.changes) created++;
+          } catch (e) {
+            if (/UNIQUE|constraint/i.test(String((e && e.message) || e))) already++;  // already seeded this store/week
+            else throw e;
+          }
+        }
+        return new Response(JSON.stringify({ ok: true, created, already, topic, post_type: postType, week: wk }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
     if (request.method === "POST" && url.searchParams.get("action") === "publish-draft") {
       const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (denied) return denied;
-      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured (DB/MEDIA)" }), { status: 500, headers: corsJson });
-      const ver = env.META_API_VERSION || META_API_VERSION;
+      if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
       try {
         const b = await request.json();
         const draftId = parseInt(b.draft_id, 10);
         if (!Number.isInteger(draftId)) return new Response(JSON.stringify({ error: "Invalid draft_id" }), { status: 400, headers: corsJson });
-        const published = b.published === true;
-        const draft = await env.DB.prepare("SELECT * FROM marketing_drafts WHERE id = ?").bind(draftId).first();
-        if (!draft) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
-        const store = String(draft.store || "").toUpperCase();
-
-        // Resolve the Facebook Page for this store.
-        const target = await env.DB.prepare("SELECT page_id, page_name FROM facebook_page_targets WHERE store = ?").bind(store).first().catch(() => null);
-        if (!target || !target.page_id) return new Response(JSON.stringify({ error: `No Facebook Page mapped for store ${store}` }), { status: 400, headers: corsJson });
-        const pageId = String(target.page_id);
-
-        // Token: explicit body → META_PAGE_TOKENS[page_id] → META_PAGE_TOKEN.
-        let token = String(b.token || "").trim();
-        if (!token && env.META_PAGE_TOKENS) {
-          try { const m = JSON.parse(env.META_PAGE_TOKENS); const e = m[pageId]; token = String((e && (e.token || e)) || "").trim(); } catch (_) {}
+        // Atomic claim so a manual publish and the cron can never both publish the same draft.
+        const claim = await env.DB.prepare(
+          "UPDATE marketing_drafts SET status='publishing', claimed_at=?, publish_attempts=publish_attempts+1 WHERE id=? AND status IN ('draft','approved','scheduled','schedule_error','rejected')"
+        ).bind(new Date().toISOString(), draftId).run();
+        if (!claim.meta || claim.meta.changes !== 1) {
+          const cur = await env.DB.prepare("SELECT status FROM marketing_drafts WHERE id=?").bind(draftId).first().catch(() => null);
+          if (!cur) return new Response(JSON.stringify({ error: "Draft not found" }), { status: 404, headers: corsJson });
+          return new Response(JSON.stringify({ error: cur.status === "published" ? "Already published" : "Post is publishing — try again in a moment" }), { status: 409, headers: corsJson });
         }
-        if (!token) token = String(env.META_PAGE_TOKEN || "").trim();
-        if (!token) return new Response(JSON.stringify({ error: "No Page token — set META_PAGE_TOKENS/META_PAGE_TOKEN or pass token" }), { status: 400, headers: corsJson });
-        // Derive the Page access token (works whether token is user/system/page).
-        const pgInfo = await fetch(`https://graph.facebook.com/${ver}/${pageId}?${new URLSearchParams({ fields: "name,access_token", access_token: token })}`).then(r => r.json()).catch(() => ({}));
-        if (!pgInfo || pgInfo.error || !pgInfo.access_token) {
-          return new Response(JSON.stringify({ error: "Couldn't get a Page token — check the token/permissions", detail: pgInfo && pgInfo.error }), { status: 400, headers: corsJson });
+        const r = await publishDraft(env, { draftId, published: b.published === true, token: b.token });
+        if (!r.ok) {
+          // Release the claim (publishDraft leaves status='publishing' on failure) so it returns to Drafts.
+          await env.DB.prepare("UPDATE marketing_drafts SET status='draft', claimed_at=NULL WHERE id=? AND status='publishing'").bind(draftId).run().catch(() => {});
+          return new Response(JSON.stringify({ error: r.error, detail: r.detail }), { status: r.status || 400, headers: corsJson });
         }
-        const pageToken = pgInfo.access_token;
-
-        // Ordered image list: cover thumbnail first, then the bin photos.
-        const images = [];
-        if (draft.thumbnail_id) {
-          const th = await env.DB.prepare("SELECT r2_key, content_type FROM marketing_thumbnails WHERE id = ?").bind(draft.thumbnail_id).first().catch(() => null);
-          if (th && th.r2_key) images.push({ key: th.r2_key, ct: th.content_type || "image/png" });
-        }
-        let photoIds = []; try { photoIds = JSON.parse(draft.photo_ids || "[]"); } catch (_) {}
-        for (const pid of photoIds) {
-          const ph = await env.DB.prepare("SELECT r2_key, content_type FROM marketing_photos WHERE id = ?").bind(pid).first().catch(() => null);
-          if (ph && ph.r2_key) images.push({ key: ph.r2_key, ct: ph.content_type || "image/jpeg" });
-        }
-        if (!images.length) return new Response(JSON.stringify({ error: "Draft has no cover or photos to post" }), { status: 400, headers: corsJson });
-
-        // Upload each image to the Page as an UNPUBLISHED photo → collect fbids.
-        const fbids = [];
-        for (const img of images) {
-          const obj = await env.MEDIA.get(img.key);
-          if (!obj) return new Response(JSON.stringify({ error: `Image missing from storage: ${img.key}` }), { status: 500, headers: corsJson });
-          const bytes = new Uint8Array(await obj.arrayBuffer());
-          const fd = new FormData();
-          fd.append("access_token", pageToken);
-          fd.append("published", "false");
-          fd.append("source", new Blob([bytes], { type: img.ct }), "photo");
-          const upr = await fetch(`https://graph.facebook.com/${ver}/${pageId}/photos`, { method: "POST", body: fd });
-          const upj = await upr.json().catch(() => ({}));
-          if (!upr.ok || !upj.id) {
-            return new Response(JSON.stringify({ error: "Facebook photo upload failed", detail: upj && upj.error }), { status: 502, headers: corsJson });
-          }
-          fbids.push(upj.id);
-        }
-
-        // Create the multi-photo feed post referencing the uploaded photos.
-        const feed = new URLSearchParams();
-        feed.set("access_token", pageToken);
-        if (draft.caption) feed.set("message", String(draft.caption));
-        feed.set("published", published ? "true" : "false");
-        fbids.forEach((id, i) => feed.append(`attached_media[${i}]`, JSON.stringify({ media_fbid: id })));
-        const fr = await fetch(`https://graph.facebook.com/${ver}/${pageId}/feed`, { method: "POST", body: feed });
-        const fj = await fr.json().catch(() => ({}));
-        const postId = fj.id || fj.post_id || null;
-        const ok = fr.ok && postId && !(fj && fj.error);
-        const postUrl = postId ? `https://www.facebook.com/${postId}` : null;
-
-        // Log the attempt + advance the draft status on success.
-        const now = new Date().toISOString();
-        await env.DB.prepare(
-          "INSERT INTO marketing_publish_log (draft_id, store, page_id, post_id, post_url, response, status, created_at) VALUES (?,?,?,?,?,?,?,?)"
-        ).bind(draftId, store, pageId, postId, postUrl, JSON.stringify(fj).slice(0, 2000), ok ? (published ? "published" : "staged") : "error", now).run().catch(() => {});
-        if (ok) {
-          await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=? WHERE id=?").bind(published ? "published" : "approved", now, draftId).run().catch(() => {});
-        }
-        if (!ok) return new Response(JSON.stringify({ error: "Facebook post failed", detail: fj && fj.error }), { status: 502, headers: corsJson });
         return new Response(JSON.stringify({
-          ok: true, published, page: { id: pageId, name: target.page_name },
-          post_id: postId, post_url: postUrl, photos: fbids.length,
-          note: published ? "Published LIVE to the Page." : "Staged as UNPUBLISHED — review it in the Page's Publishing Tools, then publish live.",
+          ok: true, published: r.published, page: r.page,
+          post_id: r.postId, post_url: r.postUrl, photos: r.photos, note: r.note,
         }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
@@ -9886,9 +10274,11 @@ export default {
       return;
     }
 
-    // "* * * * *" — every-minute sale scheduler
+    // "* * * * *" — every-minute sale scheduler + scheduled bin-post publisher.
+    // Two independent waitUntils so a failure in one can't abort the other.
     if (event.cron === "* * * * *") {
       ctx.waitUntil(processSaleSchedules(env, new Date()));
+      ctx.waitUntil(processScheduledPosts(env, new Date()).then(r => console.log("Scheduled posts:", JSON.stringify(r))));
       return;
     }
 

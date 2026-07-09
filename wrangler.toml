@@ -75,7 +75,9 @@ name = "clover-sales-api-staging"
 # notification jobs (those would double-fire against prod data). Named envs
 # otherwise inherit the top-level [triggers], so this list is explicit.
 [env.staging.triggers]
-crons = ["30 10 * * *"]
+# Meta refresh + the every-minute tick (sale scheduler is prod-gated to skip on
+# staging, so only the scheduled bin-post publisher actually runs here).
+crons = ["30 10 * * *", "* * * * *"]
 
 [env.staging.vars]
 BL1_MERCHANT_ID = "T3M0E73JKKF11"
@@ -99,6 +101,9 @@ VAPID_SUBJECT = "mailto:noreply@retjghub.com"
 # Env-aware hosts (worker.js falls back to prod literals when unset).
 APP_ORIGIN = "https://staging.retjghub.com"
 API_ORIGIN = "https://api-staging.retjghub.com"
+# OPENAI_BASE unset = call api.openai.com directly (the worker retries across
+# Cloudflare's egress-IP pool to dodge OpenAI's edge rate-limit / err 1015).
+# To route via AI Gateway instead, set it to the gateway .../openai URL.
 
 [[env.staging.kv_namespaces]]
 binding = "SALES_SNAPSHOTS"
