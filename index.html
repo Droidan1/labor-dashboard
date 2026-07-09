@@ -1554,17 +1554,9 @@
             <div>
               <div class="flex items-center justify-between gap-2 mb-1.5">
                 <label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim">Bin photos <span class="text-opl-inkDimmer dark:text-op-inkDimmer normal-case font-normal tracking-normal">· by week</span></label>
-                <div class="flex items-center gap-2.5">
-                  <span id="ct-photo-count" class="text-[12px] text-opl-inkDim dark:text-op-inkDim"></span>
-                  <button type="button" id="ct-photo-manage" onclick="ctPhotoToggleManage()" class="text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-op-bad transition-colors">Select to delete</button>
-                </div>
+                <span id="ct-photo-count" class="text-[12px] text-opl-inkDim dark:text-op-inkDim"></span>
               </div>
-              <div id="ct-photo-delbar" class="hidden items-center gap-2 mb-2 px-2.5 py-1.5 rounded-xl bg-op-bad/10 border border-op-bad/30">
-                <span id="ct-photo-delcount" class="text-[12px] font-semibold text-op-bad">0 selected</span>
-                <button type="button" onclick="ctDeleteSelectedPhotos()" class="ml-auto text-[12px] font-semibold text-white bg-op-bad hover:opacity-90 rounded-lg px-2.5 py-1 transition">Delete</button>
-                <button type="button" onclick="ctPhotoToggleManage()" class="text-[12px] font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink px-1">Done</button>
-              </div>
-              <div id="ct-photo-pick" class="space-y-2.5"></div>
+              <div id="ct-photo-pick"></div>
             </div>
 
             <div>
@@ -11404,6 +11396,7 @@
   let ctFlowWeeks = null;      // cached retail-week ranges (marketing_flow) for foldering photos
   let ctPhotoDelMode = false;  // "select to delete" mode in the Bin photos picker
   let ctPhotoDel = new Set();
+  let ctOpenFolder = null;     // Bin photos: open week folder key ('w28'|'undated'); null = folder grid
   let ctEditingId = null;
   let ctCaptionSource = 'manual';
   let ctAllDrafts = [];
@@ -11901,9 +11894,7 @@
   async function ctLoadPhotos() {
     const store = el('ct-store') ? el('ct-store').value : '';
     ctSelPhotos = new Set();
-    ctPhotoDelMode = false; ctPhotoDel = new Set();
-    const bar = el('ct-photo-delbar'); if (bar) { bar.classList.add('hidden'); bar.classList.remove('flex'); }
-    const mng = el('ct-photo-manage'); if (mng) mng.textContent = 'Select to delete';
+    ctOpenFolder = null; ctPhotoDelMode = false; ctPhotoDel = new Set();
     const pick = el('ct-photo-pick');
     if (!pick) return;
     if (!store) { pick.innerHTML = ''; ctRenderPhotoPicker(); return; }
@@ -11957,52 +11948,124 @@
     </button>`;
   }
 
-  function ctRenderPhotoPicker() {
-    const pick = el('ct-photo-pick');
-    if (!pick) return;
-    const cnt = el('ct-photo-count'); if (cnt) cnt.textContent = ctPhotos.length ? `${ctSelPhotos.size} of ${ctPhotos.length} selected` : '';
-    const dc = el('ct-photo-delcount'); if (dc) dc.textContent = `${ctPhotoDel.size} selected`;
-    // Group this store's photos into retail-week folders.
+  // ── Bin photos: OS-style folder wall (Option B) ──────────────────
+  // Root = a grid of week "folders" (each a flat folder glyph with a 2×2
+  // photo peek); opening one swaps this block in place to that week's 78px
+  // tiles behind a "‹ Photos › Week N" breadcrumb. ctOpenFolder holds the
+  // open week key (null = the folder grid). Delete mode is scoped to the
+  // open folder. Grouping/current-week/newest-first logic is unchanged.
+  const CT_FOLDER_PATH = 'M4,23 C4,16 8,13 15,13 L35,13 C39,13 42,15 44,19 L47,24 L85,24 C92,24 95,27 95,34 L95,66 C95,73 91,75 85,75 L15,75 C8,75 4,72 4,65 Z';
+
+  function ctPhotoGroups() {
     const groups = {};
     for (const p of ctPhotos) {
       const w = ctPhotoWeekOf(p.created_at);
       const key = w ? 'w' + w.retail_week : 'undated';
-      if (!groups[key]) groups[key] = { week: w ? w.retail_week : -1, sort: w ? w.week_start : '', label: w ? `Week ${w.retail_week} · ${ctShortDate(w.week_start)}–${ctShortDate(w.week_end)}` : 'Undated', photos: [] };
+      if (!groups[key]) groups[key] = { key, week: w ? w.retail_week : -1, sort: w ? w.week_start : '', label: w ? `Week ${w.retail_week}` : 'Undated', range: w ? `${ctShortDate(w.week_start)}–${ctShortDate(w.week_end)}` : 'Off-calendar', undated: !w, photos: [] };
       groups[key].photos.push(p);
     }
     // Always surface the current week's folder (start with this week), even if empty.
     const cur = ctCurrentWeekNo();
     if (cur != null && !groups['w' + cur]) {
       const cw = (ctFlowWeeks || []).find(x => x.retail_week === cur);
-      if (cw) groups['w' + cur] = { week: cur, sort: cw.week_start, label: `Week ${cur} · ${ctShortDate(cw.week_start)}–${ctShortDate(cw.week_end)}`, photos: [] };
+      if (cw) groups['w' + cur] = { key: 'w' + cur, week: cur, sort: cw.week_start, label: `Week ${cur}`, range: `${ctShortDate(cw.week_start)}–${ctShortDate(cw.week_end)}`, undated: false, photos: [] };
     }
+    // Newest week first; the off-calendar "Undated" folder (sort '') lands last.
     const arr = Object.values(groups).sort((a, b) => (b.sort || '').localeCompare(a.sort || ''));
-    if (!arr.length) { pick.innerHTML = '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">No submitted photos for this store yet.</div>'; return; }
-    const order = [...ctSelPhotos];
-    pick.innerHTML = arr.map(g => {
-      const open = (g.week === cur) ? ' open' : '';
-      const inner = g.photos.length ? g.photos.map(p => ctPhotoTile(p, order)).join('') : '<div class="text-[11px] text-opl-inkDim dark:text-op-inkDim py-1">No photos submitted this week yet.</div>';
-      return `<details${open} class="rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border overflow-hidden">
-        <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none bg-opl-panelHi dark:bg-op-panelHi text-[12px] font-semibold text-opl-ink dark:text-op-ink">
-          ${escapeHtml(g.label)}<span class="ml-auto text-[11px] font-normal text-opl-inkDim dark:text-op-inkDim">${g.photos.length}</span>
-        </summary>
-        <div class="p-2.5 flex flex-wrap gap-2.5">${inner}</div>
-      </details>`;
-    }).join('');
+    return { arr, cur };
   }
+
+  function ctFolderCell(g, cur) {
+    const isCur = g.week === cur && !g.undated;
+    const count = g.photos.length;
+    let peek;
+    if (!count) {
+      peek = `<div class="absolute inset-x-[12%] top-[34%] bottom-[11%] rounded-md border border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi grid place-items-center text-opl-inkDimmer dark:text-op-inkDimmer">
+        <svg viewBox="0 0 24 24" fill="none" class="w-4 h-4"><path d="M4 8l3.5-3.5h5L15 6h5v11H4z" stroke="currentColor" stroke-width="1.4"/></svg>
+      </div>`;
+    } else {
+      const shots = g.photos.slice(0, 4);
+      let c = '';
+      for (let i = 0; i < 4; i++) {
+        c += shots[i]
+          ? `<div class="relative overflow-hidden rounded-[3px] bg-black/20"><img src="${WORKER_BASE}?action=photo&id=${shots[i].id}" loading="lazy" alt="" class="absolute inset-0 w-full h-full object-cover"></div>`
+          : `<div class="rounded-[3px] border border-dashed border-[rgba(20,16,8,0.14)] dark:border-op-border"></div>`;
+      }
+      peek = `<div class="absolute inset-x-[12%] top-[34%] bottom-[11%] grid grid-cols-2 grid-rows-2 gap-[2px]">${c}</div>`;
+    }
+    const selN = g.photos.reduce((n, p) => n + (ctSelPhotos.has(p.id) ? 1 : 0), 0);
+    const strokeCls = isCur ? 'stroke-accent-green' : 'stroke-[rgba(20,16,8,0.2)] dark:stroke-op-borderHi';
+    const dash = g.undated ? ' style="stroke-dasharray:3 2.6"' : '';
+    const pillCls = isCur
+      ? 'text-accent-green bg-accent-green/10 border border-accent-green/40'
+      : (count ? 'text-opl-inkDim dark:text-op-inkDim' : 'text-opl-inkDimmer dark:text-op-inkDimmer') + ' bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.1)] dark:border-op-border';
+    return `<button type="button" onclick="ctOpenPhotoFolder('${g.key}')" class="group flex flex-col gap-1.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green rounded-[14px]" aria-label="Open ${escapeHtml(g.label)}">
+      <div class="relative w-full aspect-[96/78] rounded-[14px] ${isCur ? 'ring-1 ring-accent-green' : ''}">
+        <svg viewBox="0 0 100 80" preserveAspectRatio="none" class="absolute inset-0 w-full h-full fill-opl-panelHi dark:fill-op-panelHi ${strokeCls}" aria-hidden="true"><path d="${CT_FOLDER_PATH}" stroke-width="1.4" vector-effect="non-scaling-stroke"${dash}/></svg>
+        ${peek}
+        <span class="absolute top-0.5 right-0.5 text-[11px] tabular-nums leading-5 px-1.5 rounded-full ${pillCls}">${count}</span>
+      </div>
+      <div class="px-0.5 min-w-0">
+        <div class="text-[12px] font-semibold text-opl-ink dark:text-op-ink flex items-center gap-1.5 truncate">${escapeHtml(g.label)}${isCur ? '<span class="text-[10px] font-bold text-accent-green bg-accent-green/15 rounded-full px-1.5 leading-[1.6]">Now</span>' : ''}${selN ? `<span class="text-[9px] font-extrabold text-[#06210f] bg-accent-green rounded-full px-1.5 leading-[1.7]">${selN}</span>` : ''}</div>
+        <div class="text-[10.5px] text-opl-inkDim dark:text-op-inkDim truncate">${escapeHtml(g.range)}</div>
+      </div>
+    </button>`;
+  }
+
+  function ctRenderFolderGrid(arr, cur) {
+    return `<div class="grid grid-cols-3 sm:grid-cols-4 gap-3">${arr.map(g => ctFolderCell(g, cur)).join('')}</div>`;
+  }
+
+  function ctRenderFolderContents(arr, cur) {
+    const g = arr.find(x => x.key === ctOpenFolder);
+    if (!g) { ctOpenFolder = null; return ctRenderFolderGrid(arr, cur); }
+    const order = [...ctSelPhotos];
+    const body = g.photos.length
+      ? `<div class="flex flex-wrap gap-2.5">${g.photos.map(p => ctPhotoTile(p, order)).join('')}</div>`
+      : '<div class="flex flex-col items-center gap-2 text-center py-7 text-opl-inkDim dark:text-op-inkDim text-[12.5px]"><svg viewBox="0 0 24 24" fill="none" class="w-8 h-8 opacity-50"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke="currentColor" stroke-width="1.4"/></svg>No photos submitted this week yet.</div>';
+    const manageBtn = g.photos.length
+      ? `<button type="button" onclick="ctPhotoToggleManage()" class="ml-auto shrink-0 text-[12px] font-semibold ${ctPhotoDelMode ? 'text-op-bad' : 'text-opl-inkDim dark:text-op-inkDim hover:text-op-bad'} transition-colors">${ctPhotoDelMode ? 'Cancel' : 'Select to delete'}</button>`
+      : '';
+    const delbar = ctPhotoDelMode
+      ? `<div class="flex items-center gap-2 mb-2.5 px-2.5 py-1.5 rounded-xl bg-op-bad/10 border border-op-bad/30">
+          <span class="text-[12px] font-semibold text-op-bad">${ctPhotoDel.size} selected</span>
+          <button type="button" onclick="ctDeleteSelectedPhotos()" class="ml-auto text-[12px] font-semibold text-white bg-op-bad hover:opacity-90 rounded-lg px-2.5 py-1 transition">Delete</button>
+        </div>`
+      : '';
+    return `<div class="rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border overflow-hidden">
+      <div class="flex items-center gap-1.5 px-2.5 py-2 bg-opl-panelHi dark:bg-op-panelHi border-b border-[rgba(20,16,8,0.1)] dark:border-op-border">
+        <button type="button" onclick="ctClosePhotoFolder()" class="flex items-center gap-1 text-[13px] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors shrink-0"><span class="text-[17px] leading-none">‹</span> Photos</button>
+        <span class="text-opl-inkDimmer dark:text-op-inkDimmer shrink-0">›</span>
+        <span class="text-[13px] font-semibold text-opl-ink dark:text-op-ink truncate">${escapeHtml(g.label)} · ${escapeHtml(g.range)}</span>
+        ${manageBtn}
+      </div>
+      <div class="p-2.5">${delbar}${body}</div>
+    </div>`;
+  }
+
+  function ctRenderPhotoPicker() {
+    const pick = el('ct-photo-pick');
+    if (!pick) return;
+    const cnt = el('ct-photo-count'); if (cnt) cnt.textContent = ctPhotos.length ? `${ctSelPhotos.size} of ${ctPhotos.length} attached` : '';
+    const { arr, cur } = ctPhotoGroups();
+    if (!arr.length) { ctOpenFolder = null; pick.innerHTML = '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">No submitted photos for this store yet.</div>'; return; }
+    if (ctOpenFolder && !arr.some(g => g.key === ctOpenFolder)) ctOpenFolder = null;
+    pick.innerHTML = ctOpenFolder ? ctRenderFolderContents(arr, cur) : ctRenderFolderGrid(arr, cur);
+  }
+
+  function ctOpenPhotoFolder(key) { ctOpenFolder = key; ctPhotoDelMode = false; ctPhotoDel = new Set(); ctRenderPhotoPicker(); }
+  window.ctOpenPhotoFolder = ctOpenPhotoFolder;
+  function ctClosePhotoFolder() { ctOpenFolder = null; ctPhotoDelMode = false; ctPhotoDel = new Set(); ctRenderPhotoPicker(); }
+  window.ctClosePhotoFolder = ctClosePhotoFolder;
+
   function ctTogglePhoto(id) { if (ctSelPhotos.has(id)) ctSelPhotos.delete(id); else ctSelPhotos.add(id); ctRenderPhotoPicker(); ctRenderPreview(); ctMarkDirty(); }
   window.ctTogglePhoto = ctTogglePhoto;
 
-  function ctPhotoToggleManage() {
-    ctPhotoDelMode = !ctPhotoDelMode;
-    ctPhotoDel = new Set();
-    const bar = el('ct-photo-delbar'); if (bar) { bar.classList.toggle('hidden', !ctPhotoDelMode); bar.classList.toggle('flex', ctPhotoDelMode); }
-    const mng = el('ct-photo-manage'); if (mng) mng.textContent = ctPhotoDelMode ? 'Cancel' : 'Select to delete';
-    ctRenderPhotoPicker();
-  }
+  function ctPhotoToggleManage() { ctPhotoDelMode = !ctPhotoDelMode; ctPhotoDel = new Set(); ctRenderPhotoPicker(); }
   window.ctPhotoToggleManage = ctPhotoToggleManage;
   function ctTogglePhotoDelete(id) { if (ctPhotoDel.has(id)) ctPhotoDel.delete(id); else ctPhotoDel.add(id); ctRenderPhotoPicker(); }
   window.ctTogglePhotoDelete = ctTogglePhotoDelete;
+
   async function ctDeleteSelectedPhotos() {
     const n = ctPhotoDel.size;
     if (!n) return;
@@ -12014,8 +12077,6 @@
       if (!r.ok || !d.ok) throw new Error(d.error || 'Delete failed');
       for (const id of ctPhotoDel) ctSelPhotos.delete(id);
       ctPhotoDelMode = false; ctPhotoDel = new Set();
-      const bar = el('ct-photo-delbar'); if (bar) { bar.classList.add('hidden'); bar.classList.remove('flex'); }
-      const mng = el('ct-photo-manage'); if (mng) mng.textContent = 'Select to delete';
       if (d.skipped && d.skipped.length) await uiAlert(`Deleted ${d.deleted}. ${d.skipped.length} kept — still queued in a scheduled post.`, { title: 'Photos' });
       ctRenderPreview();
       ctLoadPhotos();
@@ -12025,6 +12086,7 @@
 
   function ctResetComposer() {
     ctEditingId = null; ctSelThumb = null; ctSelPhotos = new Set(); ctCaptionSource = 'manual'; ctPostType = 'bin_preview'; ctDirty = false;
+    ctOpenFolder = null; ctPhotoDelMode = false; ctPhotoDel = new Set();
     ctClearLocal();
     if (el('ct-caption')) el('ct-caption').value = '';
     if (el('ct-topic')) el('ct-topic').value = '';

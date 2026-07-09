@@ -656,6 +656,11 @@ video {
   inset: 0px;
 }
 
+.inset-x-\[12\%\] {
+  left: 12%;
+  right: 12%;
+}
+
 .-bottom-1 {
   bottom: -0.25rem;
 }
@@ -678,6 +683,10 @@ video {
 
 .bottom-3 {
   bottom: 0.75rem;
+}
+
+.bottom-\[11\%\] {
+  bottom: 11%;
 }
 
 .left-0 {
@@ -704,6 +713,10 @@ video {
   right: 0px;
 }
 
+.right-0\.5 {
+  right: 0.125rem;
+}
+
 .right-1 {
   right: 0.25rem;
 }
@@ -724,6 +737,10 @@ video {
   top: 0px;
 }
 
+.top-0\.5 {
+  top: 0.125rem;
+}
+
 .top-1 {
   top: 0.25rem;
 }
@@ -742,6 +759,10 @@ video {
 
 .top-9 {
   top: 2.25rem;
+}
+
+.top-\[34\%\] {
+  top: 34%;
 }
 
 .top-\[44\%\] {
@@ -1023,6 +1044,10 @@ video {
 
 .hidden {
   display: none;
+}
+
+.aspect-\[96\/78\] {
+  aspect-ratio: 96/78;
 }
 
 .aspect-square {
@@ -1594,6 +1619,10 @@ video {
 
 .grid-cols-\[32px_1fr_auto\] {
   grid-template-columns: 32px 1fr auto;
+}
+
+.grid-rows-2 {
+  grid-template-rows: repeat(2, minmax(0, 1fr));
 }
 
 .grid-rows-\[0fr\] {
@@ -2442,6 +2471,18 @@ video {
   background-color: rgb(234 179 8 / var(--tw-bg-opacity, 1));
 }
 
+.fill-opl-panelHi {
+  fill: #fafaf6;
+}
+
+.stroke-\[rgba\(20\2c 16\2c 8\2c 0\.2\)\] {
+  stroke: rgba(20,16,8,0.2);
+}
+
+.stroke-accent-green {
+  stroke: #22c55e;
+}
+
 .stroke-op-bad {
   stroke: #ef4444;
 }
@@ -2612,6 +2653,11 @@ video {
 .py-6 {
   padding-top: 1.5rem;
   padding-bottom: 1.5rem;
+}
+
+.py-7 {
+  padding-top: 1.75rem;
+  padding-bottom: 1.75rem;
 }
 
 .py-8 {
@@ -2924,6 +2970,18 @@ video {
   font-variant-numeric: var(--tw-ordinal) var(--tw-slashed-zero) var(--tw-numeric-figure) var(--tw-numeric-spacing) var(--tw-numeric-fraction);
 }
 
+.leading-5 {
+  line-height: 1.25rem;
+}
+
+.leading-\[1\.6\] {
+  line-height: 1.6;
+}
+
+.leading-\[1\.7\] {
+  line-height: 1.7;
+}
+
 .leading-none {
   line-height: 1;
 }
@@ -3208,6 +3266,10 @@ video {
 
 .opacity-40 {
   opacity: 0.4;
+}
+
+.opacity-50 {
+  opacity: 0.5;
 }
 
 .opacity-60 {
@@ -3710,6 +3772,17 @@ video {
   --tw-ring-offset-width: 1px;
 }
 
+.focus-visible\:ring-2:focus-visible {
+  --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
+  --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+  box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+}
+
+.focus-visible\:ring-accent-green:focus-visible {
+  --tw-ring-opacity: 1;
+  --tw-ring-color: rgb(34 197 94 / var(--tw-ring-opacity, 1));
+}
+
 .active\:scale-90:active {
   --tw-scale-x: .9;
   --tw-scale-y: .9;
@@ -4038,6 +4111,14 @@ video {
 
 .dark\:bg-yellow-900\/40:is(.dark *) {
   background-color: rgb(113 63 18 / 0.4);
+}
+
+.dark\:fill-op-panelHi:is(.dark *) {
+  fill: #16203a;
+}
+
+.dark\:stroke-op-borderHi:is(.dark *) {
+  stroke: rgba(255,255,255,0.1);
 }
 
 .dark\:stroke-op-inkDim:is(.dark *) {
@@ -4386,6 +4467,10 @@ video {
 
   .sm\:grid-cols-3 {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .sm\:grid-cols-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .sm\:grid-cols-\[1fr_1\.3fr\] {
