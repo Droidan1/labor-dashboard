@@ -5786,8 +5786,7 @@ export default {
         if (!ALL_STORES.includes(store)) return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
         const allow = currentUser ? allowedStores(currentUser) : null;
         if (allow && !allow.includes(store)) return new Response(JSON.stringify({ error: "Forbidden for this store" }), { status: 403, headers: corsJson });
-        const TYPES = ["retail", "bins", "event", "team", "other"];
-        const ptype = TYPES.includes(ptypeRaw) ? ptypeRaw : "other";
+        const ptype = MARKETING_POST_TYPES.includes(ptypeRaw) ? ptypeRaw : "other";
         if (!file || typeof file.arrayBuffer !== "function") return new Response(JSON.stringify({ error: "No photo file" }), { status: 400, headers: corsJson });
         const ct = file.type || "application/octet-stream";
         if (!ct.startsWith("image/")) return new Response(JSON.stringify({ error: "File must be an image" }), { status: 400, headers: corsJson });
