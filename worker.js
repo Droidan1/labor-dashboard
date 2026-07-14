@@ -3921,7 +3921,13 @@ function buildSummaryEmailHtml(data, brief) {
 async function dispatchDailySummary(env, date) {
   if (!env.DB) return { error: 'DB not configured' };
 
-  const { data, brief } = await buildAndStoreBrief(env, date);
+  // AI Morning Brief is temporarily removed from the daily email (2026-07 — in
+  // the way and not used enough). We build the summary data directly and skip
+  // brief generation, so no Sonnet call runs on the daily path. The machinery
+  // (buildAndStoreBrief / generateMorningBrief) and the daily-brief /
+  // generate-brief endpoints stay intact for a future re-enable: restore the
+  // buildAndStoreBrief call and pass `brief` to buildSummaryEmailHtml below.
+  const data = await buildDailySummaryData(env, date);
   const { sales: ts, budget: tb } = data.totals;
 
   // Short push body
@@ -3988,7 +3994,7 @@ async function dispatchDailySummary(env, date) {
             from: 'noreply@retjghub.com',
             to: user.email,
             subject: `Sales Summary — ${displayDate}`,
-            html: buildSummaryEmailHtml(data, brief),
+            html: buildSummaryEmailHtml(data, null),
           }),
         });
         if (res.ok) {
