@@ -3933,7 +3933,9 @@ function timingSafeEqualStr(a, b) {
 
 function _fmtDollars(v) {
   if (v == null) return '—';
-  return '$' + v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  const n = Number(v);
+  const abs = Math.abs(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  return (n < 0 ? '-$' : '$') + abs;
 }
 function _fmtVsLW(sales, prior) {
   if (sales == null || prior == null || prior === 0) return '—';
@@ -3963,20 +3965,28 @@ function _fmtVarDollars(v) {
 // no data so the email simply omits the section.
 function renderCategoryTableHtml(cat) {
   if (!cat || !cat.categories || !cat.categories.length) return '';
-  const rows = cat.categories.map(c => `
-    <tr style="border-bottom:1px solid #eee">
-      <td style="padding:8px 8px 8px 22px;color:#333">${_esc(c.category)}</td>
-      <td style="padding:8px 8px;text-align:right;color:#666">${_fmtInt(c.qty)}</td>
-      <td style="padding:8px 8px;text-align:right;font-weight:600;color:#111">${_fmtDollars(c.netSales)}</td>
-      <td style="padding:8px 14px 8px 8px;text-align:right;color:#666">${_fmtDollars(c.asp)}</td>
-    </tr>`).join('');
-  const auctionRow = (cat.auction > 0) ? `
-    <tr style="border-bottom:1px solid #eee;background:#fbfaf5">
-      <td style="padding:8px 8px 8px 22px;color:#333">Auction</td>
-      <td style="padding:8px 8px;text-align:right;color:#bbb">—</td>
-      <td style="padding:8px 8px;text-align:right;font-weight:600;color:#111">${_fmtDollars(cat.auction)}</td>
-      <td style="padding:8px 14px 8px 8px;text-align:right;color:#bbb">—</td>
-    </tr>` : '';
+  const catRow = (name, qty, net, asp, bg = '') => `
+    <tr style="border-bottom:1px solid #eee${bg}">
+      <td style="padding:8px 8px 8px 22px;color:#333">${_esc(name)}</td>
+      <td style="padding:8px 8px;text-align:right;color:${qty == null ? '#bbb' : '#666'}">${qty == null ? '—' : _fmtInt(qty)}</td>
+      <td style="padding:8px 8px;text-align:right;font-weight:600;color:#111">${_fmtDollars(net)}</td>
+      <td style="padding:8px 14px 8px 8px;text-align:right;color:${asp == null ? '#bbb' : '#666'}">${asp == null ? '—' : _fmtDollars(asp)}</td>
+    </tr>`;
+  // Fold low-value / utility L2s (Gift Cards, Custom Sales, refunds, Non-Item…)
+  // into a single "Other" row so the table stays readable and still ties to the
+  // Total. Threshold is on |net| so a large refund category stays visible.
+  const CATEGORY_MIN_NET = 250;
+  const big = [], small = [];
+  for (const c of cat.categories) {
+    (Math.abs(Number(c.netSales) || 0) < CATEGORY_MIN_NET ? small : big).push(c);
+  }
+  let rows = big.map(c => catRow(c.category, c.qty, c.netSales, c.asp)).join('');
+  if (small.length) {
+    const oNet = small.reduce((s, c) => s + (Number(c.netSales) || 0), 0);
+    const oQty = small.reduce((s, c) => s + (Number(c.qty) || 0), 0);
+    rows += catRow('Other', oQty, oNet, null);   // ASP omitted — meaningless for a mixed bucket
+  }
+  const auctionRow = (cat.auction > 0) ? catRow('Auction', null, cat.auction, null, ';background:#fbfaf5') : '';
   const totNet = (Number(cat.totals.netSales) || 0) + (Number(cat.auction) || 0);
   return `
       <h3 style="margin:34px 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#194975">Category Sales · All Stores</h3>
