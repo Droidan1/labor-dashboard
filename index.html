@@ -5467,7 +5467,11 @@
         if (r.bTotal != null) dayMap[key].budget += r.bTotal;
         const liveTotal = isCurrentWeek ? (liveCloverData[storeName]?.total ?? null) : null;
         const isToday = isCurrentWeek && r.date.toDateString() === todayStr;
-        const sales = (isToday && liveTotal != null && liveTotal > 0) ? liveTotal : r.aTotal;
+        const posSales = (isToday && liveTotal != null && liveTotal > 0) ? liveTotal : r.aTotal;
+        // Include manually-entered auction so the combined breakdown matches the
+        // store cards and the daily email. aAuction is null for today's live row
+        // (set in loadStoreFromD1), so today keeps its live-POS behavior.
+        const sales = posSales != null ? posSales + (r.aAuction ?? 0) : null;
         if (sales != null) {
           dayMap[key].sales += sales;
           dayMap[key].hasSales = true;
