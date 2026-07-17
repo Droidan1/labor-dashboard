@@ -3066,7 +3066,7 @@
       box.style.cssText = `max-width:380px;width:100%;background:${bg};color:${fg};border:1px solid ${border};border-radius:16px;padding:22px 22px 18px;box-shadow:0 20px 60px rgba(0,0,0,.4);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;`;
       if (title) { const h = document.createElement('div'); h.textContent = title; h.style.cssText = `font-size:16px;font-weight:700;margin-bottom:8px;color:${fg};`; box.appendChild(h); }
       const p = document.createElement('div'); p.textContent = message;
-      p.style.cssText = `font-size:14px;line-height:1.5;color:${dim};margin-bottom:18px;white-space:pre-wrap;`; box.appendChild(p);
+      p.style.cssText = `font-size:14px;line-height:1.5;color:${dim};margin-bottom:18px;white-space:pre-wrap;overflow-wrap:anywhere;`; box.appendChild(p);
       const rowEl = document.createElement('div'); rowEl.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
       let done = false;
       const onKey = (e) => { if (e.key === 'Escape') finish(cancelText ? false : true); else if (e.key === 'Enter') finish(true); };
