@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hourly Notification — Redesign Preview v3</title>
+<link href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bl-green:#3BB54A; --bl-green-dk:#2d9a3b; --bl-green-br:#4fd361;
+    --bg:#0a0c10; --panel:#11141b; --card:#0e1117; --card-2:#161b24;
+    --line:rgba(255,255,255,.07); --text:#e8eef5; --dim:#8a96a8; --mute:#5a6573;
+    --red:#ef4444; --red-soft:#f87171; --amber:#f59e0b; --amber-soft:#fbbf24;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{
+    background:
+      radial-gradient(circle at 22% 18%,rgba(59,181,74,.07),transparent 55%),
+      radial-gradient(circle at 82% 82%,rgba(59,181,74,.05),transparent 55%),
+      var(--bg);
+    color:var(--text);font-family:'Poppins',system-ui,sans-serif;
+    min-height:100vh;padding:48px 24px;
+  }
+  .page-head{max-width:1180px;margin:0 auto 40px;}
+  .page-head .kicker{
+    font-family:'Luckiest Guy',cursive;color:var(--bl-green);
+    font-size:13px;letter-spacing:.14em;text-transform:uppercase;
+  }
+  .page-head h1{
+    font-family:'Luckiest Guy',cursive;font-size:32px;font-weight:400;
+    letter-spacing:.01em;margin:6px 0 10px;
+  }
+  .page-head p{color:var(--dim);font-size:14px;max-width:680px;line-height:1.6;}
+
+  .grid{
+    max-width:1180px;margin:0 auto;
+    display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:start;
+  }
+  @media (max-width:920px){ .grid{grid-template-columns:1fr;} }
+
+  .col-label{
+    display:flex;align-items:center;gap:10px;margin-bottom:18px;
+  }
+  .col-label .num{
+    width:26px;height:26px;border-radius:8px;background:var(--bl-green);
+    color:#06210b;font-family:'Luckiest Guy',cursive;font-size:14px;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  }
+  .col-label .t{font-weight:600;font-size:15px;}
+  .col-label .tag{
+    margin-left:auto;font-size:10px;font-weight:600;letter-spacing:.08em;
+    text-transform:uppercase;padding:4px 10px;border-radius:99px;
+  }
+  .tag.os{background:rgba(245,158,11,.13);color:var(--amber-soft);border:1px solid rgba(245,158,11,.25);}
+  .tag.app{background:rgba(59,181,74,.13);color:var(--bl-green-br);border:1px solid rgba(59,181,74,.28);}
+
+  .col-note{color:var(--mute);font-size:12px;margin-top:16px;line-height:1.6;}
+  .col-note b{color:var(--dim);font-weight:600;}
+
+  /* ── Phone frame ─────────────────────────────────────────── */
+  .phone{
+    width:390px;max-width:100%;margin:0 auto;
+    background:linear-gradient(180deg,#1a1d24,#0c0e13);
+    border-radius:46px;padding:14px;
+    box-shadow:0 0 0 2px rgba(255,255,255,.04),0 40px 90px rgba(0,0,0,.65);
+  }
+  .phone-screen{
+    background:#000;border-radius:34px;overflow:hidden;
+    min-height:560px;position:relative;
+    display:flex;flex-direction:column;
+  }
+  .notch{
+    position:absolute;top:0;left:50%;transform:translateX(-50%);
+    width:128px;height:26px;background:#000;border-radius:0 0 18px 18px;z-index:5;
+  }
+  /* lock-screen wallpaper for the OS push panel */
+  .lockscreen{
+    flex:1;
+    background:
+      radial-gradient(circle at 50% 22%,rgba(59,181,74,.16),transparent 60%),
+      linear-gradient(170deg,#0d1a12 0%,#070a0e 60%);
+    padding:64px 16px 28px;display:flex;flex-direction:column;gap:18px;
+  }
+  .ls-clock{text-align:center;color:#fff;}
+  .ls-clock .time{font-size:64px;font-weight:300;letter-spacing:-.02em;line-height:1;}
+  .ls-clock .date{font-size:15px;color:rgba(255,255,255,.7);margin-top:6px;font-weight:400;}
+
+  /* ── ACTUAL OS push notification (constrained) ───────────── */
+  .os-push{
+    background:rgba(28,30,36,.72);
+    backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);
+    border-radius:20px;padding:14px 15px;
+    border:1px solid rgba(255,255,255,.07);
+    box-shadow:0 8px 30px rgba(0,0,0,.4);
+    animation:drop .5s cubic-bezier(.22,1,.36,1) both;
+  }
+  @keyframes drop{from{opacity:0;transform:translateY(-12px) scale(.97);}to{opacity:1;transform:none;}}
+  .os-top{display:flex;align-items:center;gap:9px;margin-bottom:7px;}
+  .os-logo{
+    width:24px;height:24px;border-radius:6px;flex-shrink:0;
+    background:linear-gradient(135deg,var(--bl-green),var(--bl-green-dk));
+    display:flex;align-items:center;justify-content:center;overflow:hidden;
+  }
+  .os-logo img{width:100%;height:100%;object-fit:contain;}
+  .os-app{
+    font-size:11px;font-weight:600;color:rgba(255,255,255,.55);
+    letter-spacing:.04em;text-transform:uppercase;flex:1;
+  }
+  .os-time{font-size:11px;color:rgba(255,255,255,.4);}
+  .os-title{font-size:14px;font-weight:600;color:#fff;margin-bottom:3px;}
+  .os-body{
+    font-size:13px;color:rgba(255,255,255,.82);line-height:1.55;
+    font-variant-numeric:tabular-nums;white-space:pre-line;
+  }
+  .os-body .neg{color:#ff8a8a;font-weight:600;}
+  .os-body .bud{color:rgba(255,255,255,.5);}
+  .os-actions{
+    display:flex;gap:8px;margin-top:11px;padding-top:11px;
+    border-top:1px solid rgba(255,255,255,.08);
+  }
+  .os-actions button{
+    flex:1;background:rgba(255,255,255,.06);border:none;color:#fff;
+    font-family:inherit;font-size:12px;font-weight:600;
+    padding:8px;border-radius:9px;cursor:pointer;
+  }
+  .os-actions button.primary{background:var(--bl-green);color:#06210b;}
+
+  /* ── IN-APP Hourly Snapshot (the mockup, BL-branded) ─────── */
+  .appscreen{
+    flex:1;background:
+      radial-gradient(circle at 50% 0%,rgba(59,181,74,.06),transparent 55%),
+      var(--card);
+    overflow-y:auto;
+  }
+  .as-statusbar{
+    height:42px;display:flex;align-items:flex-end;justify-content:space-between;
+    padding:0 26px 6px;font-size:13px;font-weight:600;color:#fff;
+  }
+  .card{
+    margin:6px 12px 16px;
+    background:linear-gradient(180deg,rgba(22,27,36,.6),rgba(14,17,23,.6));
+    border:1px solid var(--line);border-radius:22px;overflow:hidden;
+    animation:drop .55s cubic-bezier(.22,1,.36,1) both;
+  }
+  .c-head{
+    display:flex;align-items:center;gap:11px;padding:16px 18px 13px;
+    border-bottom:1px solid var(--line);
+  }
+  .c-logo{
+    width:34px;height:34px;border-radius:9px;flex-shrink:0;
+    background:linear-gradient(135deg,var(--bl-green),var(--bl-green-dk));
+    display:flex;align-items:center;justify-content:center;overflow:hidden;
+    box-shadow:0 4px 14px rgba(59,181,74,.35);
+  }
+  .c-logo img{width:100%;height:100%;object-fit:contain;}
+  .c-brand{flex:1;}
+  .c-brand .nm{
+    font-family:'Luckiest Guy',cursive;font-size:15px;letter-spacing:.03em;
+    color:var(--text);line-height:1;
+  }
+  .c-brand .sub{font-size:10px;color:var(--mute);letter-spacing:.1em;text-transform:uppercase;margin-top:4px;}
+  .c-time{font-size:12px;color:var(--mute);font-variant-numeric:tabular-nums;}
+
+  .c-summary{padding:18px 18px 14px;}
+  .c-summary .lbl{
+    font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--mute);margin-bottom:8px;
+  }
+  .c-summary .row{display:flex;align-items:baseline;gap:9px;}
+  .c-total{
+    font-family:'Luckiest Guy',cursive;font-size:34px;letter-spacing:.01em;
+    color:var(--text);line-height:1;
+  }
+  .c-of{font-size:14px;color:var(--mute);font-variant-numeric:tabular-nums;}
+  .c-badge{
+    margin-left:auto;font-size:12px;font-weight:600;padding:5px 12px;
+    border-radius:99px;font-variant-numeric:tabular-nums;
+    background:rgba(239,68,68,.14);color:var(--red-soft);
+    border:1px solid rgba(239,68,68,.3);
+  }
+
+  .c-list{padding:6px 0 4px;}
+  .s-row{padding:11px 18px;animation:rowIn .45s ease both;}
+  .s-row:nth-child(1){animation-delay:.06s;}
+  .s-row:nth-child(2){animation-delay:.10s;}
+  .s-row:nth-child(3){animation-delay:.14s;}
+  .s-row:nth-child(4){animation-delay:.18s;}
+  .s-row:nth-child(5){animation-delay:.22s;}
+  .s-row:nth-child(6){animation-delay:.26s;}
+  @keyframes rowIn{from{opacity:0;transform:translateX(-6px);}to{opacity:1;transform:none;}}
+  .s-top{display:flex;align-items:center;gap:9px;margin-bottom:8px;}
+  .s-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+  .s-name{font-size:14px;font-weight:600;color:var(--text);flex:1;}
+  .s-money{font-size:13px;font-variant-numeric:tabular-nums;display:flex;gap:5px;align-items:baseline;}
+  .s-money .a{color:var(--text);font-weight:600;}
+  .s-money .sl{color:var(--mute);}
+  .s-money .b{color:var(--dim);}
+  .s-pct{
+    font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;
+    min-width:46px;text-align:center;font-variant-numeric:tabular-nums;flex-shrink:0;
+  }
+  .s-track{height:5px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden;}
+  .s-fill{height:100%;border-radius:99px;}
+
+  .red  .s-pct,.b-red  {background:rgba(239,68,68,.14);color:var(--red-soft);border:1px solid rgba(239,68,68,.28);}
+  .amber .s-pct,.b-amber{background:rgba(245,158,11,.14);color:var(--amber-soft);border:1px solid rgba(245,158,11,.28);}
+  .green .s-pct,.b-green{background:rgba(59,181,74,.16);color:var(--bl-green-br);border:1px solid rgba(59,181,74,.32);}
+  .d-red{background:var(--red);} .d-amber{background:var(--amber);} .d-green{background:var(--bl-green);}
+  .f-red{background:linear-gradient(90deg,var(--red),var(--red-soft));}
+  .f-amber{background:linear-gradient(90deg,var(--amber),var(--amber-soft));}
+  .f-green{background:linear-gradient(90deg,var(--bl-green),var(--bl-green-br));}
+
+  .c-foot{
+    padding:13px 18px;display:flex;justify-content:space-between;align-items:center;
+    border-top:1px solid var(--line);
+  }
+  .c-foot .l{font-size:11px;color:var(--mute);font-variant-numeric:tabular-nums;}
+  .c-foot .r{
+    font-size:11px;font-weight:600;color:var(--bl-green-br);
+    display:flex;align-items:center;gap:5px;
+  }
+  .c-refresh{
+    margin:0 12px 18px;display:flex;align-items:center;justify-content:center;gap:7px;
+    color:var(--mute);font-size:11px;
+  }
+  .pulse{width:6px;height:6px;border-radius:50%;background:var(--bl-green);
+    box-shadow:0 0 0 0 rgba(59,181,74,.6);animation:pulse 2s infinite;}
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(59,181,74,.5);}
+    70%{box-shadow:0 0 0 8px rgba(59,181,74,0);}
+    100%{box-shadow:0 0 0 0 rgba(59,181,74,0);}
+  }
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <div class="kicker">Bargain Lane · RETJG Hub · v3</div>
+  <h1>Hourly Notification — Redesign v3</h1>
+  <p>"Chain" → <b>All Stores</b>, and every line now ends with the
+     <b>% difference</b> after the actual / budget dollars. The in-app
+     Hourly Snapshot (right) is unchanged: the mockup reskinned to brand (Luckiest Guy
+     headers, <span style="color:var(--bl-green-br)">#3BB54A</span> green, dark theme).</p>
+</div>
+
+<div class="grid">
+
+  <!-- ───────────── PANEL 1 — actual OS push ───────────── -->
+  <div>
+    <div class="col-label">
+      <div class="num">1</div>
+      <div class="t">The push notification</div>
+      <div class="tag os">OS-rendered · limited styling</div>
+    </div>
+
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="notch"></div>
+        <div class="lockscreen">
+          <div class="ls-clock">
+            <div class="time">4:00</div>
+            <div class="date">Sunday, May 17</div>
+          </div>
+
+          <div class="os-push">
+            <div class="os-top">
+              <div class="os-logo"><img src="../BLlogo.svg" alt="BL"
+                   onerror="this.parentNode.textContent='BL';this.parentNode.style.font='700 11px Poppins';this.parentNode.style.color='#fff'"></div>
+              <div class="os-app">Bargain Lane · RETJG Hub</div>
+              <div class="os-time">now</div>
+            </div>
+            <div class="os-title">Sales Update — 4:00 PM</div>
+            <div class="os-body">All Stores $26.0K <span class="bud">/ $37.6K</span>  <span class="neg">−31%</span>
+Coliseum $10,214 <span class="bud">/ $11,899</span>  <span class="neg">−14%</span>
+South Bend $5,075 <span class="bud">/ $6,816</span>  <span class="neg">−26%</span>
+Dupont $2,393 <span class="bud">/ $5,056</span>  <span class="neg">−53%</span>
+Holland $3,274 <span class="bud">/ $6,415</span>  <span class="neg">−49%</span>
+Wyoming $3,200 <span class="bud">/ $4,000</span>  <span class="neg">−20%</span>
+Battle Creek $1,844 <span class="bud">/ $2,250</span>  <span class="neg">−18%</span></div>
+            <div class="os-actions">
+              <button class="primary">View snapshot</button>
+              <button>Dismiss</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-note">
+      <b>v3 changes:</b> "Chain" is now <b>All Stores</b>, and each line ends with the
+      <b>% difference</b> after the dollars (<code>Name $actual / $budget −N%</code>).
+      Collapsed, iOS shows the All Stores line + the first store or two; expanded
+      (long-press / pull) shows all six. Budget figures are dimmed for scannability —
+      real OS body text is a single color, so on-device the dim/red is approximate.
+      Logo, title, and tap-through are fully controllable; bars/colors/layout are not
+      (OS limitation).
+    </div>
+  </div>
+
+  <!-- ───────────── PANEL 2 — in-app screen ───────────── -->
+  <div>
+    <div class="col-label">
+      <div class="num">2</div>
+      <div class="t">Tap → in-app Hourly Snapshot</div>
+      <div class="tag app">In-app · full control</div>
+    </div>
+
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="notch"></div>
+        <div class="appscreen">
+          <div class="as-statusbar"><span>4:00</span><span>RETJG Hub</span></div>
+
+          <div class="card">
+            <div class="c-head">
+              <div class="c-logo"><img src="../BLlogo.svg" alt="BL"
+                   onerror="this.parentNode.textContent='BL';this.parentNode.style.font='700 13px Poppins';this.parentNode.style.color='#fff'"></div>
+              <div class="c-brand">
+                <div class="nm">Hourly Snapshot</div>
+                <div class="sub">Bargain Lane · Chain-wide</div>
+              </div>
+              <div class="c-time">4:00 PM</div>
+            </div>
+
+            <div class="c-summary">
+              <div class="lbl">Sales vs Budget · Day-to-date</div>
+              <div class="row">
+                <div class="c-total">$26.0K</div>
+                <div class="c-of">/ $37.6K</div>
+                <div class="c-badge">−31%</div>
+              </div>
+            </div>
+
+            <div class="c-list">
+              <div class="s-row amber">
+                <div class="s-top">
+                  <div class="s-dot d-amber"></div><div class="s-name">Coliseum</div>
+                  <div class="s-money"><span class="a">$10,214</span><span class="sl">/</span><span class="b">$11,899</span></div>
+                  <div class="s-pct">−14%</div>
+                </div>
+                <div class="s-track"><div class="s-fill f-amber" style="width:86%"></div></div>
+              </div>
+              <div class="s-row red">
+                <div class="s-top">
+                  <div class="s-dot d-red"></div><div class="s-name">South Bend</div>
+                  <div class="s-money"><span class="a">$5,075</span><span class="sl">/</span><span class="b">$6,816</span></div>
+                  <div class="s-pct">−26%</div>
+                </div>
+                <div class="s-track"><div class="s-fill f-red" style="width:74%"></div></div>
+              </div>
+              <div class="s-row red">
+                <div class="s-top">
+                  <div class="s-dot d-red"></div><div class="s-name">Dupont</div>
+                  <div class="s-money"><span class="a">$2,393</span><span class="sl">/</span><span class="b">$5,056</span></div>
+                  <div class="s-pct">−53%</div>
+                </div>
+                <div class="s-track"><div class="s-fill f-red" style="width:47%"></div></div>
+              </div>
+              <div class="s-row red">
+                <div class="s-top">
+                  <div class="s-dot d-red"></div><div class="s-name">Holland</div>
+                  <div class="s-money"><span class="a">$3,274</span><span class="sl">/</span><span class="b">$6,415</span></div>
+                  <div class="s-pct">−49%</div>
+                </div>
+                <div class="s-track"><div class="s-fill f-red" style="width:51%"></div></div>
+              </div>
+              <div class="s-row amber">
+                <div class="s-top">
+                  <div class="s-dot d-amber"></div><div class="s-name">Wyoming</div>
+                  <div class="s-money"><span class="a">$3,200</span><span class="sl">/</span><span class="b">$4,000</span></div>
+                  <div class="s-pct">−20%</div>
+                </div>
+                <div class="s-track"><div class="s-fill f-amber" style="width:80%"></div></div>
+              </div>
+              <div class="s-row amber">
+                <div class="s-top">
+                  <div class="s-dot d-amber"></div><div class="s-name">Battle Creek</div>
+                  <div class="s-money"><span class="a">$1,844</span><span class="sl">/</span><span class="b">$2,250</span></div>
+                  <div class="s-pct">−18%</div>
+                </div>
+                <div class="s-track"><div class="s-fill f-amber" style="width:82%"></div></div>
+              </div>
+            </div>
+
+            <div class="c-foot">
+              <div class="l">Sun, May 17 · 4:00 PM ET</div>
+              <div class="r">Open dashboard →</div>
+            </div>
+          </div>
+
+          <div class="c-refresh"><span class="pulse"></span> Live · refreshes every hour</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-note">
+      <b>Fully controllable.</b> This is the mockup reskinned to the app: Luckiest Guy on
+      the headers + chain total, Poppins body with tabular numbers, the real BL logo,
+      brand-green for on-target stores (replacing the mockup's blue), and the app's dark
+      surface treatment. Auto-refreshes while open.
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

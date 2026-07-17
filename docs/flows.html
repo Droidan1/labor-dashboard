@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BL Dashboard — Workflow Map</title>
+
+<!-- ─────────────────────────────────────────────────────────────────────────
+  WORKFLOW MAP
+  Self-contained interactive architecture diagram. Click a workflow on the
+  left, then play/step through to see how data flows between packages.
+  Driven by the JSON in <script id="workflow-data" type="application/json">.
+─────────────────────────────────────────────────────────────────────────── -->
+
+<style>
+  :root {
+    --bg:        #0f1419;
+    --surface:   #1a2028;
+    --surface-2: #232a34;
+    --border:    #2d3540;
+    --text:      #e8eef5;
+    --text-dim:  #8a96a8;
+    --text-mute: #5a6573;
+    --accent:    #3bb54a;
+    --accent-bright: #4fd361;
+    --accent-dim:  rgba(59,181,74,0.25);
+    --warn:      #f59e0b;
+    --node-fill: #232a34;
+    --node-stroke: #3a4452;
+    --edge:      #3a4452;
+    --edge-trail: rgba(59,181,74,0.35);
+    --edge-active: var(--accent-bright);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Roboto Mono", monospace;
+    font-size: 13px;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  /* ── Layout ───────────────────────────────────────────────────────── */
+  .app {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    grid-template-rows: 56px 1fr;
+    height: 100vh;
+  }
+
+  header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: 0;
+    color: var(--accent);
+  }
+  header .subtitle {
+    color: var(--text-mute);
+    font-size: 12px;
+  }
+  header .spacer { flex: 1; }
+  header .repo-link {
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 11px;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  header .repo-link:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ── Sidebar ──────────────────────────────────────────────────────── */
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 16px 0 24px;
+  }
+  .sidebar h2 {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-mute);
+    margin: 20px 24px 8px;
+  }
+  .sidebar h2:first-child { margin-top: 0; }
+
+  .workflow-btn {
+    display: block;
+    width: 100%;
+    padding: 10px 24px;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .workflow-btn:hover {
+    background: rgba(59,181,74,0.07);
+    color: var(--text);
+  }
+  .workflow-btn.active {
+    background: rgba(59,181,74,0.12);
+    color: var(--accent-bright);
+    border-left-color: var(--accent);
+  }
+  .workflow-btn .label { display: block; font-weight: 600; }
+  .workflow-btn .meta {
+    display: block;
+    font-size: 10px;
+    color: var(--text-mute);
+    margin-top: 2px;
+  }
+
+  /* ── Main canvas ──────────────────────────────────────────────────── */
+  main {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .canvas-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 50% 30%, rgba(59,181,74,0.04), transparent 60%),
+      var(--bg);
+  }
+
+  svg.diagram {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* Edge styling */
+  .edge {
+    fill: none;
+    stroke: var(--edge);
+    stroke-width: 1.5;
+    transition: stroke 0.4s, stroke-width 0.4s, opacity 0.4s;
+    opacity: 0.5;
+  }
+  .edge.trail {
+    stroke: var(--edge-trail);
+    stroke-width: 2;
+    opacity: 1;
+  }
+  .edge.active {
+    stroke: var(--edge-active);
+    stroke-width: 3;
+    opacity: 1;
+    stroke-dasharray: 8 4;
+    animation: edge-flow 1.2s linear infinite;
+  }
+  @keyframes edge-flow {
+    to { stroke-dashoffset: -24; }
+  }
+
+  /* Node styling */
+  .node rect {
+    fill: var(--node-fill);
+    stroke: var(--node-stroke);
+    stroke-width: 1.5;
+    transition: fill 0.3s, stroke 0.3s, filter 0.3s;
+  }
+  .node text {
+    fill: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    pointer-events: none;
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .node .sublabel {
+    font-size: 9px;
+    font-weight: 400;
+    fill: var(--text-mute);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .node.touched rect {
+    stroke: var(--accent);
+    stroke-width: 2;
+  }
+  .node.active rect {
+    fill: rgba(59,181,74,0.18);
+    stroke: var(--accent-bright);
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 12px rgba(79,211,97,0.55));
+  }
+  .node.active text { fill: var(--accent-bright); }
+
+  /* Edge labels */
+  .edge-label {
+    font-size: 10px;
+    fill: var(--text-dim);
+    font-family: inherit;
+    text-anchor: middle;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .edge-label.visible { opacity: 1; }
+  .edge-label-bg {
+    fill: var(--bg);
+    stroke: var(--accent);
+    stroke-width: 1;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .edge-label-bg.visible { opacity: 0.95; }
+  .edge-label.active { fill: var(--accent-bright); font-weight: 600; }
+
+  /* Arrow markers */
+  marker path {
+    fill: var(--edge);
+    transition: fill 0.4s;
+  }
+  marker.trail path { fill: var(--edge-trail); }
+  marker.active path { fill: var(--edge-active); }
+
+  /* ── Step controls ────────────────────────────────────────────────── */
+  .controls {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 16px 24px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 24px;
+    align-items: center;
+    min-height: 110px;
+  }
+
+  .control-buttons {
+    display: flex;
+    gap: 8px;
+  }
+  .control-buttons button {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .control-buttons button:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent-bright);
+  }
+  .control-buttons button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+  .control-buttons button.play {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+    width: auto;
+    padding: 0 16px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 11px;
+  }
+  .control-buttons button.play:hover:not(:disabled) {
+    background: var(--accent-bright);
+    color: white;
+  }
+
+  .step-info {
+    min-width: 0;
+  }
+  .step-info .header-line {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+  .step-counter {
+    font-size: 10px;
+    color: var(--text-mute);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .step-edge {
+    font-size: 11px;
+    color: var(--accent-bright);
+    font-weight: 600;
+  }
+  .step-payload {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    word-break: break-word;
+  }
+  .step-payload code {
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: var(--text);
+    font-size: 10px;
+    border: 1px solid var(--border);
+  }
+  .step-note {
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .workflow-summary {
+    text-align: right;
+    color: var(--text-mute);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .workflow-summary .name {
+    color: var(--accent-bright);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  /* Empty state */
+  .empty-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    color: var(--text-mute);
+    text-align: center;
+    pointer-events: none;
+  }
+  .empty-state .arrow {
+    color: var(--accent);
+    font-size: 24px;
+    animation: nudge 2s ease-in-out infinite;
+  }
+  @keyframes nudge {
+    0%, 100% { transform: translateX(0); }
+    50% { transform: translateX(-8px); }
+  }
+
+  /* Tier band labels (subtle) */
+  .tier-label {
+    fill: var(--text-mute);
+    font-size: 9px;
+    font-family: inherit;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    pointer-events: none;
+    opacity: 0.5;
+  }
+</style>
+</head>
+<body>
+
+<!-- ── JSON: packages + workflows ─────────────────────────────────────────
+  Edit this block to add/modify packages or workflows. The diagram and
+  sidebar regenerate on load. Coordinates are in viewBox units (0–1200 x,
+  0–700 y) so positions are screen-resolution-independent.
+─────────────────────────────────────────────────────────────────────────── -->
+<script id="workflow-data" type="application/json">
+{
+  "packages": [
+    { "id": "browser",   "label": "Browser PWA",  "sub": "index.html",      "x": 130, "y": 90,  "w": 180, "h": 60, "tier": "Client" },
+    { "id": "sw",        "label": "Service Worker","sub": "sw.js",          "x": 420, "y": 90,  "w": 180, "h": 60, "tier": "Client" },
+    { "id": "cron",      "label": "Cron Triggers","sub": "Cloudflare",     "x": 880, "y": 90,  "w": 180, "h": 60, "tier": "Scheduler" },
+
+    { "id": "worker",    "label": "Cloudflare Worker","sub": "worker.js",  "x": 380, "y": 300, "w": 320, "h": 80, "tier": "Compute" },
+
+    { "id": "d1",        "label": "D1",           "sub": "daily_sales · users · etc",  "x": 60,  "y": 530, "w": 180, "h": 60, "tier": "Storage" },
+    { "id": "kv",        "label": "KV",           "sub": "SALES_SNAPSHOTS","x": 270, "y": 530, "w": 160, "h": 60, "tier": "Storage" },
+
+    { "id": "clover",    "label": "Clover API",   "sub": "/v3/merchants",  "x": 470, "y": 530, "w": 160, "h": 60, "tier": "External" },
+    { "id": "sheets",    "label": "Google Sheets","sub": "GViz API",       "x": 660, "y": 530, "w": 160, "h": 60, "tier": "External" },
+    { "id": "resend",    "label": "Resend",       "sub": "Email",          "x": 850, "y": 530, "w": 130, "h": 60, "tier": "External" },
+    { "id": "webpush",   "label": "Web Push",     "sub": "VAPID",          "x": 1000,"y": 530, "w": 130, "h": 60, "tier": "External" }
+  ],
+
+  "tiers": [
+    { "label": "Client",    "y": 60  },
+    { "label": "Compute",   "y": 270 },
+    { "label": "Storage / External", "y": 500 }
+  ],
+
+  "workflows": [
+    {
+      "id": "login-passkey",
+      "label": "Login (Passkey)",
+      "category": "Auth",
+      "summary": "WebAuthn passkey challenge → signature verify → session cookie.",
+      "steps": [
+        { "from": "browser", "to": "worker", "label": "POST ?action=passkey-start",
+          "payload": "{ email }",
+          "note": "Browser requests a WebAuthn challenge for this email." },
+        { "from": "worker",  "to": "d1",     "label": "SELECT webauthn_credentials",
+          "payload": "WHERE user.email = ?",
+          "note": "Look up registered passkey credentials for the account." },
+        { "from": "d1",      "to": "worker", "label": "credential rows",
+          "payload": "[{ credential_id, public_key }, ...]",
+          "note": "Return allowed credentials so the browser can prompt the right authenticator." },
+        { "from": "worker",  "to": "browser","label": "challenge response",
+          "payload": "{ challenge, allowedCredentials[] }",
+          "note": "Worker stores the challenge in a session and returns it to the browser." },
+        { "from": "browser", "to": "worker", "label": "POST ?action=passkey-verify",
+          "payload": "{ id, signature, clientDataJSON, authenticatorData }",
+          "note": "Browser signs the challenge via the user's authenticator and posts back." },
+        { "from": "worker",  "to": "d1",     "label": "verify + UPDATE users",
+          "payload": "SET last_login = NOW()",
+          "note": "Worker verifies the signature against the public key, then bumps last_login." },
+        { "from": "worker",  "to": "browser","label": "Set-Cookie: session",
+          "payload": "HttpOnly; SameSite=None; Secure",
+          "note": "Authenticated. Subsequent requests carry this cookie via credentials:'include'." }
+      ]
+    },
+
+    {
+      "id": "view-dashboard",
+      "label": "View Dashboard",
+      "category": "Reads",
+      "summary": "On load: fetch historical D1 sales + live Clover totals in parallel for each store.",
+      "steps": [
+        { "from": "browser", "to": "worker", "label": "GET ?history_d1=true&store=BL1",
+          "payload": "from=2025-01-01&to=2026-12-31",
+          "note": "One request per store (×6 in parallel). Fetches the historical sales window." },
+        { "from": "worker",  "to": "d1",     "label": "SELECT daily_sales",
+          "payload": "WHERE store=? AND date BETWEEN ? AND ?",
+          "note": "Pulls one row per (store, date) — total, retail, bin, auction, budget, etc." },
+        { "from": "d1",      "to": "worker", "label": "rows[]",
+          "payload": "[{ date, total, retail, bin, auction, budget, ... }]",
+          "note": "Daily rows. After Phase 3, total = sum of category netSales (POS revenue only)." },
+        { "from": "worker",  "to": "browser","label": "JSON history",
+          "payload": "{ '2026-05-13': { total, retail, bin, auction, ... } }",
+          "note": "Keyed by date. Cached by cachedFetch() for 5 minutes." },
+        { "from": "browser", "to": "worker", "label": "GET ?store=BL1&since=startOfToday",
+          "payload": "since = midnight ET today (ms)",
+          "note": "Parallel ×6 stores. Fetches today's live Clover orders for combined-total display." },
+        { "from": "worker",  "to": "clover", "label": "GET /v3/orders + /refunds + /credits",
+          "payload": "expand=payments,lineItems.item,lineItems.discounts",
+          "note": "Fetches orders, regular refunds, manual refunds (credits), and item-category map." },
+        { "from": "clover",  "to": "worker", "label": "Clover payload",
+          "payload": "{ elements[], refunds[], credits[], itemCatMap }",
+          "note": "Worker runs aggregateItemSales → category-based bin/retail with refund attribution." },
+        { "from": "worker",  "to": "kv",     "label": "snapshot-on-fetch (background)",
+          "payload": "PUT items:bl1:2026-05-13 + sales:bl1:2026-05-13",
+          "note": "ctx.waitUntil() — saves the day's snapshot to KV without blocking the response." },
+        { "from": "worker",  "to": "browser","label": "live response",
+          "payload": "{ elements, refundCents, binNet, retailNet }",
+          "note": "Browser combines historical + live to populate store cards." }
+      ]
+    },
+
+    {
+      "id": "pull-to-refresh",
+      "label": "Pull-to-Refresh",
+      "category": "Reads",
+      "summary": "Touch gesture clears in-memory cache, then re-runs the View Dashboard flow.",
+      "steps": [
+        { "from": "browser", "to": "browser", "label": "touchend (state=ready)",
+          "payload": "tanh-damped travel ≥ THRESHOLD (44px)",
+          "note": "PTR state machine: idle → tracking → pulling → ready → loading." },
+        { "from": "browser", "to": "browser", "label": "_apiCache.clear()",
+          "payload": "5-min cachedFetch entries dropped",
+          "note": "loadAll(true) wipes the API cache so the next fetch goes to network." },
+        { "from": "browser", "to": "worker", "label": "history_d1 + live fetches",
+          "payload": "Same as View Dashboard, no cache hit",
+          "note": "All 12 requests (6 history + 6 live) re-issued to the worker." },
+        { "from": "worker",  "to": "clover", "label": "Re-fetch today's orders",
+          "payload": "Fresh /v3/orders pull",
+          "note": "Worker has its own no-cache pass-through for live data." },
+        { "from": "clover",  "to": "browser","label": "Updated data",
+          "payload": "Latest order totals + refunds",
+          "note": "Browser re-renders all store cards + Item Sales view." }
+      ]
+    },
+
+    {
+      "id": "daily-summary",
+      "label": "Daily Summary Email",
+      "category": "Notifications",
+      "summary": "Cron '0 10 * * *' UTC → ~5 AM ET. Sends yesterday's totals to all active users.",
+      "steps": [
+        { "from": "cron",    "to": "worker", "label": "scheduled(event)",
+          "payload": "event.cron === '0 10 * * *'",
+          "note": "Cloudflare cron invokes worker.scheduled(). Worker routes by cron string." },
+        { "from": "worker",  "to": "d1",     "label": "SELECT users",
+          "payload": "WHERE status='active'",
+          "note": "All active users — daily summary goes to everyone (not just superusers)." },
+        { "from": "worker",  "to": "d1",     "label": "SELECT notification_preferences",
+          "payload": "WHERE user_id IN (...) AND daily_summary = 1",
+          "note": "Filters to users who haven't opted out." },
+        { "from": "worker",  "to": "d1",     "label": "SELECT daily_sales",
+          "payload": "WHERE date = yesterday AND store IN ALL_STORES",
+          "note": "Gets yesterday's totals across all stores for the email body." },
+        { "from": "worker",  "to": "resend", "label": "POST /emails",
+          "payload": "{ from: noreply@retjghub.com, to, subject, html }",
+          "note": "One email per opted-in user. Bin Products, Refunds, Manual Refunds all reconciled." },
+        { "from": "worker",  "to": "webpush","label": "POST web-push",
+          "payload": "encrypted VAPID payload",
+          "note": "Parallel push notification to each user's registered devices." },
+        { "from": "worker",  "to": "d1",     "label": "INSERT notification_log",
+          "payload": "VALUES (id, user_id, type='daily-summary', sent_at)",
+          "note": "Audit trail of what was sent to whom." }
+      ]
+    },
+
+    {
+      "id": "weekly-digest",
+      "label": "Weekly Digest",
+      "category": "Notifications",
+      "summary": "Cron '0 11 * * 1' (Cloudflare 1=Sunday). Mon morning ET digest of the prior week.",
+      "steps": [
+        { "from": "cron",    "to": "worker", "label": "scheduled(event)",
+          "payload": "event.cron === '0 11 * * 1' (Sunday)",
+          "note": "Cloudflare uses 1=Sun, 7=Sat — not POSIX 0–6. Confirmed via notification_log." },
+        { "from": "worker",  "to": "d1",     "label": "SELECT active users + weekly_digest pref",
+          "payload": "JOIN notification_preferences",
+          "note": "Subset of users who haven't disabled the weekly digest." },
+        { "from": "worker",  "to": "d1",     "label": "SELECT daily_sales for last Mon–Sun",
+          "payload": "WHERE date BETWEEN ? AND ?",
+          "note": "Computes 7-day totals + per-day breakdown for the email." },
+        { "from": "worker",  "to": "resend", "label": "Weekly digest emails",
+          "payload": "Subject: 'Weekly Sales — Week 20'",
+          "note": "Per-store totals, week-over-week comparisons, week-to-date best/worst day." },
+        { "from": "worker",  "to": "webpush","label": "Weekly digest push",
+          "payload": "tag: 'weekly-digest'",
+          "note": "Browsers replace the prior week's notification by tag." }
+      ]
+    },
+
+    {
+      "id": "hourly-summary",
+      "label": "Hourly Interval Summary",
+      "category": "Notifications",
+      "summary": "Cron '0 * * * *'. Every hour, sends live sales push to opted-in users.",
+      "steps": [
+        { "from": "cron",    "to": "worker", "label": "scheduled(event)",
+          "payload": "event.cron === '0 * * * *'",
+          "note": "Top of every hour, 24/7." },
+        { "from": "worker",  "to": "clover", "label": "fetchItemOrders (per store)",
+          "payload": "since=startOfToday",
+          "note": "Live day-to-date orders across all 6 stores in parallel." },
+        { "from": "clover",  "to": "worker", "label": "Order elements",
+          "payload": "{ elements[] }",
+          "note": "Worker runs aggregateOrders for total / orderCount / avgCart per store." },
+        { "from": "worker",  "to": "d1",     "label": "SELECT push_subscriptions",
+          "payload": "JOIN notification_preferences WHERE push_enabled=1 AND interval_summary=1",
+          "note": "Only users who've opted into the hourly tile." },
+        { "from": "worker",  "to": "webpush","label": "Per-store interval push",
+          "payload": "title: 'BL14 — 11 AM', body: '$3,200 / target $4K'",
+          "note": "Single push that summarizes the most-recent hour vs target across permitted stores." }
+      ]
+    },
+
+    {
+      "id": "nightly-rollup",
+      "label": "Nightly Snapshot Rollup",
+      "category": "Cron Jobs",
+      "summary": "Cron '55 3 * * *' (11:55 PM ET). The big one — writes the day's canonical totals to D1 + KV.",
+      "steps": [
+        { "from": "cron",    "to": "worker", "label": "scheduled(event)",
+          "payload": "event.cron === '55 3 * * *'",
+          "note": "11:55 PM ET — last chance to snapshot before midnight rolls the day." },
+        { "from": "worker",  "to": "clover", "label": "fetchItemOrders (×6 stores parallel)",
+          "payload": "expand=payments,lineItems.item,lineItems.discounts,discounts",
+          "note": "Full day's orders with line items expanded for category mapping." },
+        { "from": "worker",  "to": "clover", "label": "fetchRefundElements",
+          "payload": "GET /v3/refunds",
+          "note": "Regular order-linked refunds. Order ID → category attribution." },
+        { "from": "worker",  "to": "clover", "label": "fetchManualRefunds",
+          "payload": "GET /v3/credits",
+          "note": "Manual Refunds (Clover calls these 'Credits' internally). Phase 2H." },
+        { "from": "worker",  "to": "clover", "label": "fetchItemCategoryMap",
+          "payload": "GET /v3/items?expand=categories",
+          "note": "Cached in KV for 24h. Maps each itemId → L3 category name." },
+        { "from": "worker",  "to": "clover", "label": "fetchCrossDayOrdersForRefunds",
+          "payload": "GET /v3/orders/{id} per cross-day refund",
+          "note": "For refunds whose original order isn't in today's fetch — Phase 2F." },
+        { "from": "worker",  "to": "worker", "label": "aggregateItemSales(...)",
+          "payload": "→ { categories[], totals }",
+          "note": "Skips negative-total orders (Phase 6ba2d20), attributes refunds by order ID, adds Manual Refund L2 row." },
+        { "from": "worker",  "to": "worker", "label": "aggregateOrders(...)",
+          "payload": "→ { total, orderCount, avgCart, avgItems, avgASP }",
+          "note": "Uses payment.amount (Phase 2G) for original pre-refund net. Provides POS metrics." },
+        { "from": "worker",  "to": "d1",     "label": "UPSERT daily_sales",
+          "payload": "SET total = itemSalesGrandTotal, retail, bin, ...",
+          "note": "Phase 3: D1.total now comes from aggregateItemSales (single source of truth)." },
+        { "from": "worker",  "to": "kv",     "label": "PUT items:{store}:{date}",
+          "payload": "Full category breakdown with L3 rows + refund attribution",
+          "note": "What the Item Sales tab reads. Single source of truth for the breakdown." },
+        { "from": "worker",  "to": "kv",     "label": "writeWeekSummary if week complete",
+          "payload": "PUT week-summary:{store}:{week}-{year}",
+          "note": "Pre-rolls the weekly aggregate so WRS doesn't recompute on every page view." }
+      ]
+    },
+
+    {
+      "id": "manual-refund-reconciliation",
+      "label": "Manual Refund Reconciliation",
+      "category": "Data Reconciliation",
+      "summary": "How a Clover Manual Refund flows through aggregation without double-counting.",
+      "steps": [
+        { "from": "clover",  "to": "worker", "label": "Twin records returned",
+          "payload": "negative-total order + matching /v3/credits entry",
+          "note": "Clover creates BOTH: an 'order' with a Manual Transaction line item (-$X) AND a credit record." },
+        { "from": "worker",  "to": "worker", "label": "aggregateItemSales (main loop)",
+          "payload": "if (order.total <= 0) continue;",
+          "note": "Phase commit 6ba2d20 skips negative-total orders so they don't dump into the 'Refund' L2 bucket." },
+        { "from": "worker",  "to": "worker", "label": "manual refund attribution",
+          "payload": "subtract credit.amount from 'Manual Refund' L2",
+          "note": "Only the /v3/credits record contributes — no double-deduction." },
+        { "from": "worker",  "to": "worker", "label": "fetchRefundsTotal (Phase 2H)",
+          "payload": "regular_refunds + manual_credits (pre-tax)",
+          "note": "Both sources flow through applyRefundsToAggregate which deducts from data.total." },
+        { "from": "worker",  "to": "d1",     "label": "daily_sales.total",
+          "payload": "= aggregateItemSales grand total",
+          "note": "Phase 3 alignment: store-card total = sum of category netSales = Clover Sales Summary." },
+        { "from": "worker",  "to": "kv",     "label": "items:{store}:{date}",
+          "payload": "Includes Manual Refund L2 row with negative netSales",
+          "note": "Item Sales tab shows the manual refund attributed to its own category." }
+      ]
+    },
+
+    {
+      "id": "weekly-retail-summary",
+      "label": "Weekly Retail Summary",
+      "category": "Reads",
+      "summary": "Pre-rolled when possible, falls back to live aggregation per store.",
+      "steps": [
+        { "from": "browser", "to": "worker", "label": "GET ?action=weekly-summary",
+          "payload": "week=20&year=2026",
+          "note": "User clicks the WRS nav item or picks a different week from the dropdown." },
+        { "from": "worker",  "to": "d1",     "label": "resolveWeekDates",
+          "payload": "SELECT DISTINCT date FROM daily_sales WHERE week=?",
+          "note": "Sheet-derived ISO week numbers — finds the 7 dates that belong to this week." },
+        { "from": "worker",  "to": "d1",     "label": "buildStoreWeekly (×6 parallel)",
+          "payload": "SELECT daily_sales rows for those dates",
+          "note": "Per store: sum total + auction = netSales, sum retail/bin/budget, weight labor%." },
+        { "from": "worker",  "to": "kv",     "label": "GET items:{store}:{date} ×7",
+          "payload": "Item snapshots for the 7 days",
+          "note": "mergeItemSnapshots collapses 7 daily breakdowns into one weekly L2 view." },
+        { "from": "worker",  "to": "worker", "label": "inject Auction L2 row",
+          "payload": "{ category: 'Auction', netSales: sum(auction) }",
+          "note": "Synthetic row so the per-store L2 table sums to the auction-inclusive Net Sales." },
+        { "from": "worker",  "to": "browser","label": "Weekly bundle",
+          "payload": "{ stores, company.totals, company.l2Matrix }",
+          "note": "Renders 3 tabs: Summary (KPI table + L2×store matrix), T13, per-store deep dive." }
+      ]
+    },
+
+    {
+      "id": "sheets-backfill",
+      "label": "Google Sheets Backfill",
+      "category": "Data Sync",
+      "summary": "Admin-triggered sync of budgets + labor + manually-entered auction from the master sheet.",
+      "steps": [
+        { "from": "browser", "to": "worker", "label": "POST ?action=backfill-sheet",
+          "payload": "X-Snapshot-Secret header",
+          "note": "Admin-only endpoint. Triggered manually after Sheet edits or on a schedule." },
+        { "from": "worker",  "to": "sheets", "label": "GViz query",
+          "payload": "GET /gviz/tq?tqx=out:json",
+          "note": "Public read-only access via the GViz API. No OAuth needed for public sheets." },
+        { "from": "sheets",  "to": "worker", "label": "JSONP rows",
+          "payload": "{ table: { rows: [{ c: [...] }] } }",
+          "note": "Worker parses week, date, budget, retail/bin/auction columns by index." },
+        { "from": "worker",  "to": "kv",     "label": "GET sales:{store}:{date}",
+          "payload": "Existing Clover snapshot for the date",
+          "note": "Read-only — Clover-side values used to fill kvData?.total | aTotal fallback chain." },
+        { "from": "worker",  "to": "d1",     "label": "UPSERT daily_sales",
+          "payload": "ON CONFLICT … COALESCE preserves cron-written values",
+          "note": "Sheet wins on week/budget/auction/labor_pct. Cron wins on total/retail/bin/orderCount." },
+        { "from": "worker",  "to": "browser","label": "{ summary, results }",
+          "payload": "Per-store row counts + errors",
+          "note": "Browser shows which stores backfilled successfully." }
+      ]
+    },
+
+    {
+      "id": "push-subscribe",
+      "label": "Subscribe to Push Notifications",
+      "category": "Notifications",
+      "summary": "Browser requests permission, generates a VAPID subscription, registers it with the worker.",
+      "steps": [
+        { "from": "browser", "to": "browser", "label": "Notification.requestPermission()",
+          "payload": "'default' → 'granted' (user prompt)",
+          "note": "Native browser prompt. iOS Safari only allows from installed PWA, not regular Safari." },
+        { "from": "browser", "to": "sw",     "label": "navigator.serviceWorker.ready",
+          "payload": "Active SW instance",
+          "note": "The push subscription is created against the active Service Worker registration." },
+        { "from": "sw",      "to": "browser","label": "pushManager.subscribe",
+          "payload": "{ applicationServerKey: VAPID_PUBLIC_KEY }",
+          "note": "Browser → push service handshake. Returns a PushSubscription object." },
+        { "from": "browser", "to": "worker", "label": "POST ?action=push-subscribe",
+          "payload": "{ endpoint, keys: { p256dh, auth } }",
+          "note": "Registers the subscription with the worker for future notifications." },
+        { "from": "worker",  "to": "d1",     "label": "INSERT push_subscriptions",
+          "payload": "VALUES (id, user_id, endpoint, p256dh, auth, created_at)",
+          "note": "Stored per-user. A single user can have multiple subscriptions (phone + laptop)." },
+        { "from": "worker",  "to": "browser","label": "{ ok: true }",
+          "payload": "201 Created",
+          "note": "Future cron-triggered push notifications will fan out to this endpoint." }
+      ]
+    },
+
+    {
+      "id": "push-receive",
+      "label": "Push Notification Receive + Tap",
+      "category": "Notifications",
+      "summary": "Service Worker receives a push, shows a notification, handles the user tap.",
+      "steps": [
+        { "from": "worker",  "to": "webpush","label": "POST encrypted payload",
+          "payload": "Signed VAPID JWT + AES-GCM ciphertext",
+          "note": "Worker uses sendWebPush() helper with the subscription's p256dh + auth keys." },
+        { "from": "webpush", "to": "sw",     "label": "'push' event",
+          "payload": "ServiceWorkerGlobalScope#push",
+          "note": "Push service relays to the user's Service Worker even when the PWA is closed." },
+        { "from": "sw",      "to": "sw",     "label": "self.registration.showNotification",
+          "payload": "{ title, body, tag, icon, badge, data: { url } }",
+          "note": "Renders the OS-level notification. tag dedupes (e.g. 'daily-summary' replaces yesterday's)." },
+        { "from": "sw",      "to": "browser","label": "User taps → 'notificationclick'",
+          "payload": "data.url for deep-link",
+          "note": "Service Worker focuses an existing app window or opens a new one to the deep link." },
+        { "from": "browser", "to": "worker", "label": "Auto-fetch latest data",
+          "payload": "loadAll() runs on PWA focus",
+          "note": "PWA picks up where it left off, fetches fresh data on focus." }
+      ]
+    }
+  ]
+}
+</script>
+
+<!-- ── App shell ─────────────────────────────────────────────────────── -->
+<div class="app">
+  <header>
+    <h1>BL Dashboard · Workflow Map</h1>
+    <span class="subtitle">click a flow → step through how data moves between packages</span>
+    <span class="spacer"></span>
+    <a class="repo-link" href="https://github.com/Droidan1/labor-dashboard" target="_blank" rel="noopener">github ↗</a>
+  </header>
+
+  <aside class="sidebar" id="sidebar"></aside>
+
+  <main>
+    <div class="canvas-wrap">
+      <svg class="diagram" id="diagram" viewBox="0 0 1200 660" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <!-- Default arrowhead -->
+          <marker id="arrow-default" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" />
+          </marker>
+          <marker id="arrow-trail" class="trail" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" />
+          </marker>
+          <marker id="arrow-active" class="active" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" />
+          </marker>
+        </defs>
+        <g id="tier-labels"></g>
+        <g id="edges-layer"></g>
+        <g id="nodes-layer"></g>
+        <g id="labels-layer"></g>
+      </svg>
+      <div class="empty-state" id="empty-state">
+        <div class="arrow">←</div>
+        <div>Select a workflow to begin</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="control-buttons">
+        <button id="btn-first"   title="First step">⏮</button>
+        <button id="btn-prev"    title="Previous step">◀</button>
+        <button id="btn-play"    class="play" title="Play">Play</button>
+        <button id="btn-next"    title="Next step">▶</button>
+        <button id="btn-last"    title="Last step">⏭</button>
+      </div>
+
+      <div class="step-info" id="step-info">
+        <div class="header-line">
+          <span class="step-counter" id="step-counter">— / —</span>
+          <span class="step-edge" id="step-edge">Select a workflow on the left</span>
+        </div>
+        <div class="step-note" id="step-note">Click any workflow in the sidebar to see how data flows.</div>
+        <div class="step-payload" id="step-payload"></div>
+      </div>
+
+      <div class="workflow-summary" id="workflow-summary"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────
+//  LOAD DATA
+// ─────────────────────────────────────────────────────────────────────────
+const DATA = JSON.parse(document.getElementById('workflow-data').textContent);
+const PKG_BY_ID = Object.fromEntries(DATA.packages.map(p => [p.id, p]));
+
+// State
+let currentWorkflow = null;
+let currentStepIdx  = -1;     // -1 = no step active
+let playing         = false;
+let playTimer       = null;
+const STEP_MS       = 1400;
+
+// ─────────────────────────────────────────────────────────────────────────
+//  RENDER PACKAGES
+// ─────────────────────────────────────────────────────────────────────────
+function renderTierLabels() {
+  const g = document.getElementById('tier-labels');
+  if (!DATA.tiers) return;
+  for (const t of DATA.tiers) {
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('class', 'tier-label');
+    text.setAttribute('x', 24);
+    text.setAttribute('y', t.y);
+    text.textContent = t.label;
+    g.appendChild(text);
+  }
+}
+
+function renderNodes() {
+  const g = document.getElementById('nodes-layer');
+  for (const p of DATA.packages) {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    node.setAttribute('class', 'node');
+    node.setAttribute('id', `node-${p.id}`);
+    node.dataset.id = p.id;
+
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', p.x);
+    rect.setAttribute('y', p.y);
+    rect.setAttribute('width', p.w);
+    rect.setAttribute('height', p.h);
+    rect.setAttribute('rx', 8);
+    node.appendChild(rect);
+
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', p.x + p.w / 2);
+    label.setAttribute('y', p.y + p.h / 2 - (p.sub ? 7 : 0));
+    label.textContent = p.label;
+    node.appendChild(label);
+
+    if (p.sub) {
+      const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      sub.setAttribute('class', 'sublabel');
+      sub.setAttribute('x', p.x + p.w / 2);
+      sub.setAttribute('y', p.y + p.h / 2 + 10);
+      sub.textContent = p.sub;
+      node.appendChild(sub);
+    }
+
+    g.appendChild(node);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  EDGE GEOMETRY
+//  Each step renders its own edge between the two nodes' centers. We use
+//  an offset curve when the two nodes have edges in both directions in
+//  the active workflow, so they don't visually collide.
+// ─────────────────────────────────────────────────────────────────────────
+function edgeKey(a, b) {
+  return [a, b].sort().join('|');
+}
+
+function nodeCenter(p) {
+  return { x: p.x + p.w / 2, y: p.y + p.h / 2 };
+}
+
+// Edge endpoint trimmed to the rect boundary so the arrow lands on the edge
+// of the box, not at its center.
+function edgeEndpoint(from, to) {
+  const cFrom = nodeCenter(from);
+  const cTo   = nodeCenter(to);
+  const dx = cTo.x - cFrom.x;
+  const dy = cTo.y - cFrom.y;
+  const slope = dy / dx;
+  // Half-widths
+  const hwTo = to.w / 2, hhTo = to.h / 2;
+  let tx, ty;
+  if (Math.abs(slope) * hwTo < hhTo) {
+    // Intersects left/right side
+    const xSign = dx > 0 ? -1 : 1;
+    tx = cTo.x + xSign * hwTo;
+    ty = cTo.y + xSign * hwTo * slope;
+  } else {
+    // Intersects top/bottom side
+    const ySign = dy > 0 ? -1 : 1;
+    tx = cTo.x + ySign * hhTo / slope;
+    ty = cTo.y + ySign * hhTo;
+  }
+  return { x: tx, y: ty };
+}
+
+function startEndpoint(from, to) {
+  // Just swap and reuse — we want the boundary point on the FROM node nearest TO
+  const ep = edgeEndpoint(to, from);
+  return ep;
+}
+
+// Build a path: straight line for same-node (self-loop) or different nodes.
+// For self-loops (from===to), draw a small circular arc on the right side.
+function pathFor(stepFrom, stepTo, offsetIdx = 0) {
+  const from = PKG_BY_ID[stepFrom];
+  const to   = PKG_BY_ID[stepTo];
+  if (!from || !to) return '';
+  if (stepFrom === stepTo) {
+    // Self-loop: arc on the right side of the node
+    const cx = from.x + from.w;
+    const cy = from.y + from.h / 2;
+    return `M ${cx - 4} ${cy - 14} C ${cx + 40} ${cy - 22}, ${cx + 40} ${cy + 22}, ${cx - 4} ${cy + 14}`;
+  }
+  const s = startEndpoint(from, to);
+  const e = edgeEndpoint(from, to);
+  // Slight offset for bidirectional pairs
+  const dx = e.x - s.x, dy = e.y - s.y;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  const nx = -dy / len, ny = dx / len; // normal
+  const off = offsetIdx * 14;
+  const mx = (s.x + e.x) / 2 + nx * off;
+  const my = (s.y + e.y) / 2 + ny * off;
+  return `M ${s.x} ${s.y} Q ${mx} ${my} ${e.x} ${e.y}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  RENDER SIDEBAR
+// ─────────────────────────────────────────────────────────────────────────
+function renderSidebar() {
+  const side = document.getElementById('sidebar');
+  // Group by category, preserving first-appearance order
+  const byCategory = new Map();
+  for (const wf of DATA.workflows) {
+    const cat = wf.category || 'Other';
+    if (!byCategory.has(cat)) byCategory.set(cat, []);
+    byCategory.get(cat).push(wf);
+  }
+  let html = '';
+  for (const [cat, wfs] of byCategory) {
+    html += `<h2>${escapeHtml(cat)}</h2>`;
+    for (const wf of wfs) {
+      html += `<button class="workflow-btn" data-id="${wf.id}">
+        <span class="label">${escapeHtml(wf.label)}</span>
+        <span class="meta">${wf.steps.length} steps</span>
+      </button>`;
+    }
+  }
+  side.innerHTML = html;
+  side.addEventListener('click', e => {
+    const btn = e.target.closest('.workflow-btn');
+    if (!btn) return;
+    selectWorkflow(btn.dataset.id);
+  });
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[c]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  WORKFLOW SELECTION + RENDERING
+// ─────────────────────────────────────────────────────────────────────────
+function selectWorkflow(id) {
+  const wf = DATA.workflows.find(w => w.id === id);
+  if (!wf) return;
+  stopPlaying();
+  currentWorkflow = wf;
+  currentStepIdx  = -1;
+
+  // Sidebar active state
+  for (const btn of document.querySelectorAll('.workflow-btn')) {
+    btn.classList.toggle('active', btn.dataset.id === id);
+  }
+
+  // Hide empty state, render workflow edges (all faded), summary, then advance to step 0
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('workflow-summary').innerHTML =
+    `<div class="name">${escapeHtml(wf.label)}</div><div>${escapeHtml(wf.summary || '')}</div>`;
+  renderWorkflowEdges();
+  goToStep(0);
+}
+
+function renderWorkflowEdges() {
+  const layer = document.getElementById('edges-layer');
+  const labelLayer = document.getElementById('labels-layer');
+  layer.innerHTML = '';
+  labelLayer.innerHTML = '';
+  if (!currentWorkflow) return;
+
+  // Track how many parallel offsets we've used for each (from,to) ordered pair
+  const offsetCount = new Map();
+
+  currentWorkflow.steps.forEach((step, idx) => {
+    const k = `${step.from}->${step.to}`;
+    const offsetIdx = offsetCount.get(k) || 0;
+    offsetCount.set(k, offsetIdx + 1);
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('class', 'edge');
+    path.setAttribute('id', `edge-${idx}`);
+    path.setAttribute('d', pathFor(step.from, step.to, offsetIdx));
+    path.setAttribute('marker-end', 'url(#arrow-default)');
+    layer.appendChild(path);
+
+    // Label group (background + text) positioned at midpoint of path
+    const labelGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    labelGroup.setAttribute('id', `label-${idx}`);
+    const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    bgRect.setAttribute('class', 'edge-label-bg');
+    bgRect.setAttribute('rx', 4);
+    labelGroup.appendChild(bgRect);
+    const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    txt.setAttribute('class', 'edge-label');
+    txt.textContent = step.label;
+    labelGroup.appendChild(txt);
+    labelLayer.appendChild(labelGroup);
+
+    // Position label at the path midpoint after it's in the DOM
+    requestAnimationFrame(() => {
+      const total = path.getTotalLength();
+      const mid = path.getPointAtLength(total / 2);
+      txt.setAttribute('x', mid.x);
+      txt.setAttribute('y', mid.y - 6);
+      // Size background to text
+      const bbox = txt.getBBox();
+      bgRect.setAttribute('x', bbox.x - 6);
+      bgRect.setAttribute('y', bbox.y - 3);
+      bgRect.setAttribute('width', bbox.width + 12);
+      bgRect.setAttribute('height', bbox.height + 6);
+    });
+  });
+}
+
+function goToStep(idx) {
+  if (!currentWorkflow) return;
+  const total = currentWorkflow.steps.length;
+  if (idx < 0) idx = 0;
+  if (idx >= total) idx = total - 1;
+  currentStepIdx = idx;
+
+  // Reset all edges and nodes
+  for (const p of DATA.packages) {
+    const node = document.getElementById(`node-${p.id}`);
+    if (node) node.classList.remove('active', 'touched');
+  }
+  for (let i = 0; i < total; i++) {
+    const e = document.getElementById(`edge-${i}`);
+    const l = document.getElementById(`label-${i}`);
+    if (!e) continue;
+    e.classList.remove('active', 'trail');
+    e.setAttribute('marker-end', 'url(#arrow-default)');
+    if (l) {
+      l.querySelector('.edge-label').classList.remove('visible', 'active');
+      l.querySelector('.edge-label-bg').classList.remove('visible');
+    }
+  }
+
+  // Mark traversed steps (the trail) and the active step
+  currentWorkflow.steps.forEach((step, i) => {
+    if (i < idx) {
+      const e = document.getElementById(`edge-${i}`);
+      if (e) {
+        e.classList.add('trail');
+        e.setAttribute('marker-end', 'url(#arrow-trail)');
+      }
+      const fromNode = document.getElementById(`node-${step.from}`);
+      const toNode = document.getElementById(`node-${step.to}`);
+      if (fromNode) fromNode.classList.add('touched');
+      if (toNode) toNode.classList.add('touched');
+    }
+  });
+
+  const step = currentWorkflow.steps[idx];
+  const e = document.getElementById(`edge-${idx}`);
+  const l = document.getElementById(`label-${idx}`);
+  if (e) {
+    e.classList.add('active');
+    e.setAttribute('marker-end', 'url(#arrow-active)');
+  }
+  if (l) {
+    l.querySelector('.edge-label').classList.add('visible', 'active');
+    l.querySelector('.edge-label-bg').classList.add('visible');
+  }
+  const fromNode = document.getElementById(`node-${step.from}`);
+  const toNode = document.getElementById(`node-${step.to}`);
+  if (fromNode) fromNode.classList.add('active');
+  if (toNode) toNode.classList.add('active');
+
+  // Update step info
+  document.getElementById('step-counter').textContent = `Step ${idx + 1} / ${total}`;
+  const fromPkg = PKG_BY_ID[step.from];
+  const toPkg = PKG_BY_ID[step.to];
+  document.getElementById('step-edge').textContent =
+    `${fromPkg ? fromPkg.label : step.from} → ${toPkg ? toPkg.label : step.to} · ${step.label}`;
+  document.getElementById('step-note').textContent = step.note || '';
+  document.getElementById('step-payload').innerHTML = step.payload
+    ? `<code>${escapeHtml(step.payload)}</code>`
+    : '';
+
+  updateButtons();
+}
+
+function updateButtons() {
+  if (!currentWorkflow) return;
+  const total = currentWorkflow.steps.length;
+  document.getElementById('btn-first').disabled = currentStepIdx <= 0;
+  document.getElementById('btn-prev').disabled = currentStepIdx <= 0;
+  document.getElementById('btn-next').disabled = currentStepIdx >= total - 1;
+  document.getElementById('btn-last').disabled = currentStepIdx >= total - 1;
+  document.getElementById('btn-play').textContent = playing ? 'Pause' : 'Play';
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  PLAYBACK
+// ─────────────────────────────────────────────────────────────────────────
+function play() {
+  if (!currentWorkflow) return;
+  playing = true;
+  updateButtons();
+  const tick = () => {
+    if (!playing || !currentWorkflow) return;
+    if (currentStepIdx >= currentWorkflow.steps.length - 1) {
+      stopPlaying();
+      return;
+    }
+    goToStep(currentStepIdx + 1);
+    playTimer = setTimeout(tick, STEP_MS);
+  };
+  playTimer = setTimeout(tick, STEP_MS);
+}
+
+function stopPlaying() {
+  playing = false;
+  if (playTimer) clearTimeout(playTimer);
+  playTimer = null;
+  updateButtons();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  WIRE UP
+// ─────────────────────────────────────────────────────────────────────────
+document.getElementById('btn-first').addEventListener('click', () => { stopPlaying(); goToStep(0); });
+document.getElementById('btn-prev').addEventListener('click', () => { stopPlaying(); goToStep(currentStepIdx - 1); });
+document.getElementById('btn-next').addEventListener('click', () => { stopPlaying(); goToStep(currentStepIdx + 1); });
+document.getElementById('btn-last').addEventListener('click', () => {
+  stopPlaying();
+  if (currentWorkflow) goToStep(currentWorkflow.steps.length - 1);
+});
+document.getElementById('btn-play').addEventListener('click', () => {
+  if (!currentWorkflow) return;
+  if (playing) stopPlaying();
+  else play();
+});
+
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, textarea')) return;
+  if (e.key === 'ArrowLeft') { stopPlaying(); goToStep(currentStepIdx - 1); }
+  else if (e.key === 'ArrowRight') { stopPlaying(); goToStep(currentStepIdx + 1); }
+  else if (e.key === ' ') { e.preventDefault(); if (currentWorkflow) (playing ? stopPlaying() : play()); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+//  INITIAL RENDER
+// ─────────────────────────────────────────────────────────────────────────
+renderTierLabels();
+renderNodes();
+renderSidebar();
+updateButtons();
+</script>
+
+</body>
+</html>
