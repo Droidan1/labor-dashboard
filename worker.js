@@ -3550,7 +3550,12 @@ async function buildDailyCategoryData(env, date) {
   if (!merged || !merged.categories || !merged.categories.length) return null;
   let auction = 0;
   if (env.DB) {
-    const row = await env.DB.prepare("SELECT SUM(auction) AS a FROM daily_sales WHERE date = ?").bind(date).first().catch(() => null);
+    // Scope to ALL_STORES: daily_sales still holds rows for retired BL12
+    // (Wyoming), whose budget/auction duplicate BL16 (Indy East) — see the
+    // store filter in buildWeeklyByDayData.
+    const row = await env.DB.prepare(
+      `SELECT SUM(auction) AS a FROM daily_sales WHERE date = ? AND store IN (${ALL_STORES.map(() => "?").join(",")})`
+    ).bind(date, ...ALL_STORES).first().catch(() => null);
     auction = Number(row && row.a) || 0;
   }
   return { categories: merged.categories, totals: merged.totals, auction };
@@ -3571,11 +3576,17 @@ async function buildWeeklyByDayData(env, date) {
     if (!dates || !dates.length) return null;
     dates = dates.slice().sort();
 
+    // Scope every aggregate to ALL_STORES. daily_sales still holds rows for the
+    // retired BL12 (Wyoming) carrying a duplicate of BL16 (Indy East)'s budget
+    // with no sales, so an unfiltered SUM(budget) double-counts Indy's budget
+    // (~$65k/month) while sales look fine. Table 1 avoids this by iterating
+    // ALL_STORES; these cross-store aggregates must filter explicitly.
+    const storePh = ALL_STORES.map(() => "?").join(",");
     const ph = dates.map(() => "?").join(",");
     const { results } = await env.DB.prepare(
       `SELECT date, SUM(total) AS pos, SUM(auction) AS auction, SUM(budget) AS budget, COUNT(total) AS reported
-       FROM daily_sales WHERE date IN (${ph}) GROUP BY date`
-    ).bind(...dates).all();
+       FROM daily_sales WHERE date IN (${ph}) AND store IN (${storePh}) GROUP BY date`
+    ).bind(...dates, ...ALL_STORES).all();
     const byDate = {};
     for (const r of (results || [])) byDate[r.date] = r;
 
@@ -3612,8 +3623,9 @@ async function buildWeeklyByDayData(env, date) {
     // Month-to-date: reported sales vs budget over month-start..covered-date.
     const monthStart = date.slice(0, 7) + "-01";
     const mRow = await env.DB.prepare(
-      "SELECT SUM(total) AS pos, SUM(auction) AS auction, SUM(budget) AS budget FROM daily_sales WHERE date >= ? AND date <= ?"
-    ).bind(monthStart, date).first().catch(() => null);
+      `SELECT SUM(total) AS pos, SUM(auction) AS auction, SUM(budget) AS budget
+       FROM daily_sales WHERE date >= ? AND date <= ? AND store IN (${storePh})`
+    ).bind(monthStart, date, ...ALL_STORES).first().catch(() => null);
     const mtdSales = mRow ? (Number(mRow.pos) || 0) + (Number(mRow.auction) || 0) : 0;
     const mtdBudget = mRow ? (Number(mRow.budget) || 0) : 0;
 
