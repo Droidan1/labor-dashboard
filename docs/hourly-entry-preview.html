@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hourly Snapshot — Entry Point Options</title>
+<link href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* App-faithful tokens (pulled from index.html) */
+  :root{
+    --green:#3BB54A; --green-dk:#2d9a3b; --ink:#194975;
+    --body-bg:#F6F6F6; --surface:#ffffff; --border:#e5e7eb;
+    --txt:#111827; --txt-2:#4b5563; --txt-mute:#9ca3af; --txt-dim:#6b7280;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{
+    background:var(--body-bg); color:var(--txt);
+    font-family:'Poppins',system-ui,sans-serif; padding:40px 24px 64px;
+  }
+  .wrap{max-width:1180px;margin:0 auto;}
+  .pg-kicker{font-family:'Luckiest Guy',cursive;color:var(--green);
+    font-size:13px;letter-spacing:.12em;text-transform:uppercase;}
+  .pg-title{font-family:'Luckiest Guy',cursive;font-size:30px;font-weight:400;
+    margin:6px 0 8px;color:#1f2937;}
+  .pg-sub{color:var(--txt-dim);font-size:14px;max-width:720px;line-height:1.6;margin-bottom:36px;}
+
+  .opt{margin-bottom:48px;}
+  .opt-head{display:flex;align-items:center;gap:12px;margin-bottom:6px;}
+  .opt-num{width:28px;height:28px;border-radius:8px;background:var(--green);
+    color:#fff;font-family:'Luckiest Guy',cursive;font-size:15px;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .opt-name{font-size:18px;font-weight:700;color:#1f2937;}
+  .opt-rec{margin-left:auto;font-size:10px;font-weight:700;letter-spacing:.08em;
+    text-transform:uppercase;padding:5px 11px;border-radius:99px;
+    background:rgba(59,181,74,.12);color:var(--green-dk);border:1px solid rgba(59,181,74,.3);}
+  .opt-desc{color:var(--txt-dim);font-size:13px;margin:2px 0 18px;line-height:1.6;}
+  .opt-desc b{color:var(--txt-2);}
+
+  .stage{background:#eceef0;border:1px solid var(--border);border-radius:16px;
+    padding:28px;display:flex;gap:36px;flex-wrap:wrap;align-items:flex-start;}
+  .stage.dark{background:#0e1117;border-color:#232a34;}
+  .cap{font-size:11px;color:var(--txt-mute);text-transform:uppercase;
+    letter-spacing:.1em;margin-bottom:10px;font-weight:600;}
+  .stage.dark .cap{color:#5a6573;}
+
+  /* ── Faithful sidebar ───────────────────────────────────── */
+  .sb{width:248px;background:var(--surface);border:1px solid var(--border);
+    border-radius:14px;padding:14px 0;box-shadow:0 4px 16px rgba(0,0,0,.05);}
+  .sb-logo{display:flex;align-items:center;gap:10px;padding:4px 16px 16px;
+    border-bottom:1px solid var(--border);margin-bottom:8px;}
+  .sb-logo .mark{width:34px;height:34px;border-radius:8px;background:#fff;
+    border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  .sb-logo .mark img{width:80%;height:80%;object-fit:contain;}
+  .sb-logo .wm{font-family:'Luckiest Guy',cursive;color:var(--green);
+    font-size:15px;letter-spacing:.02em;}
+  .nav{padding:0 8px;display:flex;flex-direction:column;gap:4px;}
+  .nav-item{display:flex;align-items:center;height:44px;border-radius:8px;
+    color:var(--txt-2);font-size:.875rem;font-weight:500;
+    border-left:2px solid transparent;cursor:default;}
+  .nav-item:hover{background:#f9fafb;color:var(--txt);}
+  .nav-item.active{background:rgba(59,181,74,.08);color:var(--ink);
+    border-left-color:var(--green);font-weight:600;}
+  .nav-item.is-new{background:rgba(59,181,74,.08);color:var(--ink);
+    border-left-color:var(--green);font-weight:600;
+    box-shadow:0 0 0 2px rgba(59,181,74,.18);}
+  .nav-ic{flex-shrink:0;width:48px;display:grid;place-content:center;}
+  .nav-ic svg{width:18px;height:18px;}
+  .nav-lbl{flex:1;}
+  .new-tag{font-size:9px;font-weight:700;letter-spacing:.06em;
+    background:var(--green);color:#fff;padding:2px 6px;border-radius:4px;
+    margin-right:14px;text-transform:uppercase;}
+  .pulse-dot{width:6px;height:6px;border-radius:50%;background:var(--green);
+    margin-right:16px;box-shadow:0 0 0 0 rgba(59,181,74,.55);
+    animation:pl 2s infinite;}
+  @keyframes pl{0%{box-shadow:0 0 0 0 rgba(59,181,74,.5)}
+    70%{box-shadow:0 0 0 7px rgba(59,181,74,0)}100%{box-shadow:0 0 0 0 rgba(59,181,74,0)}}
+
+  /* ── Faithful dashboard header ─────────────────────────── */
+  .dash{width:100%;max-width:760px;}
+  .dash-bar{background:var(--surface);border:1px solid var(--border);
+    border-radius:14px 14px 0 0;border-bottom:none;padding:18px 22px;
+    display:flex;align-items:center;justify-content:space-between;}
+  .dash-bar h1{font-family:'Luckiest Guy',cursive;color:var(--green);
+    font-size:24px;font-weight:400;line-height:1;}
+  .dash-bar .upd{font-size:13px;color:var(--txt-mute);margin-top:5px;}
+  .dash-actions{display:flex;align-items:center;gap:10px;}
+
+  .pill{height:38px;border-radius:99px;display:flex;align-items:center;
+    gap:7px;padding:0 16px;font-size:13px;font-weight:600;cursor:pointer;
+    font-family:inherit;border:1px solid transparent;transition:.18s;}
+  .pill svg{width:15px;height:15px;}
+  .pill-refresh{background:var(--green);color:#fff;}
+  .pill-refresh:hover{background:var(--green-dk);}
+  .pill-hourly{background:#fff;color:var(--ink);border-color:var(--border);}
+  .pill-hourly:hover{border-color:var(--green);color:var(--green-dk);
+    box-shadow:0 0 0 3px rgba(59,181,74,.12);}
+
+  .dash-body{background:var(--surface);border:1px solid var(--border);
+    border-radius:0 0 14px 14px;padding:20px 22px 26px;}
+  .wkrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .wklbl{font-size:11px;font-weight:600;color:var(--txt-mute);
+    text-transform:uppercase;letter-spacing:.08em;}
+  .wksel{height:38px;padding:0 30px 0 14px;border-radius:8px;
+    border:1px solid var(--border);background:#fff;font-size:13px;
+    font-weight:500;color:var(--txt-2);display:flex;align-items:center;}
+  .chip{height:32px;display:flex;align-items:center;gap:6px;padding:0 12px;
+    border-radius:99px;font-size:12px;font-weight:600;cursor:pointer;
+    background:#fff;border:1px solid rgba(59,181,74,.35);color:var(--green-dk);
+    transition:.15s;}
+  .chip:hover{background:rgba(59,181,74,.08);}
+  .chip .pulse-dot{margin:0;}
+  .ghost{margin-top:18px;height:96px;border-radius:12px;
+    background:linear-gradient(180deg,#fafafa,#f3f4f6);
+    border:1px solid var(--border);display:flex;align-items:center;
+    justify-content:center;color:var(--txt-mute);font-size:12px;}
+
+  .notes{margin-top:18px;display:flex;gap:28px;flex-wrap:wrap;}
+  .note{flex:1;min-width:200px;font-size:12.5px;line-height:1.65;color:var(--txt-dim);}
+  .note h4{font-size:11px;text-transform:uppercase;letter-spacing:.1em;
+    margin-bottom:7px;font-weight:700;}
+  .note.good h4{color:var(--green-dk);}
+  .note.bad h4{color:#b45309;}
+  .note ul{list-style:none;}
+  .note li{position:relative;padding-left:16px;margin-bottom:4px;}
+  .note.good li::before{content:'+';position:absolute;left:0;color:var(--green);font-weight:700;}
+  .note.bad li::before{content:'–';position:absolute;left:0;color:#d97706;font-weight:700;}
+
+  .reco{margin-top:8px;background:#fff;border:1px solid rgba(59,181,74,.3);
+    border-radius:14px;padding:22px 24px;}
+  .reco h3{font-family:'Luckiest Guy',cursive;color:var(--green);
+    font-size:18px;font-weight:400;margin-bottom:8px;}
+  .reco p{font-size:13.5px;color:var(--txt-2);line-height:1.7;}
+  .reco b{color:var(--ink);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="pg-kicker">Bargain Lane · RETJG Hub</div>
+  <div class="pg-title">Hourly Snapshot — Manual Entry Point</div>
+  <div class="pg-sub">
+    Right now the Hourly Snapshot only opens from a notification tap. These are
+    three ways to reach it on demand, rendered in the app's real chrome (light
+    theme, exact colors, Luckiest&nbsp;Guy headers, 44px nav rows). Pick one — or
+    A + B together.
+  </div>
+
+  <!-- ── OPTION A ── -->
+  <div class="opt">
+    <div class="opt-head">
+      <div class="opt-num">A</div>
+      <div class="opt-name">Sidebar nav item</div>
+      <div class="opt-rec">Recommended</div>
+    </div>
+    <div class="opt-desc">
+      A permanent <b>"Hourly"</b> row in the left nav, between Dashboard and
+      Weekly Retail Summary. Always visible, matches the existing nav model,
+      one click from anywhere. A live-pulse dot signals it's real-time.
+    </div>
+    <div class="stage">
+      <div>
+        <div class="cap">Default</div>
+        <div class="sb">
+          <div class="sb-logo">
+            <div class="mark"><img src="../BLlogo.svg" alt="BL"
+              onerror="this.parentNode.textContent='BL';this.parentNode.style.font='700 12px Poppins';this.parentNode.style.color='#3BB54A'"></div>
+            <div class="wm">RETJG Hub</div>
+          </div>
+          <div class="nav">
+            <div class="nav-item active">
+              <span class="nav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
+              <span class="nav-lbl">Dashboard</span>
+            </div>
+            <div class="nav-item is-new">
+              <span class="nav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg></span>
+              <span class="nav-lbl">Hourly</span>
+              <span class="pulse-dot"></span>
+            </div>
+            <div class="nav-item">
+              <span class="nav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
+              <span class="nav-lbl">Weekly Retail Summary</span>
+            </div>
+            <div class="nav-item">
+              <span class="nav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
+              <span class="nav-lbl">Inventory</span>
+            </div>
+            <div class="nav-item">
+              <span class="nav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></span>
+              <span class="nav-lbl">Users</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="cap">Hover state</div>
+        <div class="sb">
+          <div class="sb-logo">
+            <div class="mark"><img src="../BLlogo.svg" alt="BL"
+              onerror="this.parentNode.textContent='BL';this.parentNode.style.font='700 12px Poppins';this.parentNode.style.color='#3BB54A'"></div>
+            <div class="wm">RETJG Hub</div>
+          </div>
+          <div class="nav">
+            <div class="nav-item">
+              <span class="nav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
+              <span class="nav-lbl">Dashboard</span>
+            </div>
+            <div class="nav-item" style="background:#f9fafb;color:#111827;">
+              <span class="nav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg></span>
+              <span class="nav-lbl">Hourly</span>
+              <span class="new-tag">New</span>
+            </div>
+            <div class="nav-item">
+              <span class="nav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
+              <span class="nav-lbl">Weekly Retail Summary</span>
+            </div>
+            <div class="nav-item">
+              <span class="nav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
+              <span class="nav-lbl">Inventory</span>
+            </div>
+            <div class="nav-item">
+              <span class="nav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></span>
+              <span class="nav-lbl">Users</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <div class="note good"><h4>Why this</h4><ul>
+          <li>Always reachable, every page</li>
+          <li>Matches the established nav pattern — zero learning curve</li>
+          <li>Pulse dot communicates "live / real-time"</li>
+          <li>Collapsed sidebar still shows the clock icon</li>
+        </ul></div>
+        <div class="note bad"><h4>Trade-off</h4><ul>
+          <li>One more permanent row in the nav</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── OPTION B ── -->
+  <div class="opt">
+    <div class="opt-head">
+      <div class="opt-num">B</div>
+      <div class="opt-name">Dashboard header quick-action</div>
+    </div>
+    <div class="opt-desc">
+      A <b>"Hourly"</b> pill next to Refresh in the dashboard header. Contextual,
+      zero nav clutter — but only present on the dashboard page.
+    </div>
+    <div class="stage">
+      <div class="dash">
+        <div class="cap">Dashboard header</div>
+        <div class="dash-bar">
+          <div>
+            <h1>Dashboard</h1>
+            <div class="upd">Updated 4:00:14 PM · Target: 14%</div>
+          </div>
+          <div class="dash-actions">
+            <button class="pill pill-hourly">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
+              Hourly
+            </button>
+            <button class="pill pill-refresh">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+        <div class="dash-body">
+          <div class="wkrow">
+            <span class="wklbl">Viewing Week:</span>
+            <span class="wksel">Week 20 ▾</span>
+          </div>
+          <div class="ghost">… store cards …</div>
+        </div>
+      </div>
+      <div class="notes">
+        <div class="note good"><h4>Why this</h4><ul>
+          <li>No new nav row — keeps the sidebar lean</li>
+          <li>Sits right where managers already look for Refresh</li>
+          <li>Pairs naturally with the existing refresh action</li>
+        </ul></div>
+        <div class="note bad"><h4>Trade-off</h4><ul>
+          <li>Only visible on the Dashboard page</li>
+          <li>Hidden on narrow phones (header buttons are tight)</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── OPTION C ── -->
+  <div class="opt">
+    <div class="opt-head">
+      <div class="opt-num">C</div>
+      <div class="opt-name">Live chip in the week row</div>
+    </div>
+    <div class="opt-desc">
+      A small <b>● Hourly</b> chip beside the week selector — lightweight, sits
+      next to the data it summarizes.
+    </div>
+    <div class="stage">
+      <div class="dash">
+        <div class="cap">Below the header</div>
+        <div class="dash-body" style="border-radius:14px;border:1px solid var(--border);">
+          <div class="wkrow">
+            <span class="wklbl">Viewing Week:</span>
+            <span class="wksel">Week 20 ▾</span>
+            <button class="chip"><span class="pulse-dot"></span> Hourly Snapshot</button>
+          </div>
+          <div class="ghost">… store cards …</div>
+        </div>
+      </div>
+      <div class="notes">
+        <div class="note good"><h4>Why this</h4><ul>
+          <li>Most lightweight — no nav row, no header crowding</li>
+          <li>Adjacent to the sales context it reflects</li>
+        </ul></div>
+        <div class="note bad"><h4>Trade-off</h4><ul>
+          <li>Lowest discoverability of the three</li>
+          <li>Dashboard-only, like Option B</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="reco">
+    <h3>Recommendation</h3>
+    <p>
+      Go with <b>Option A (sidebar item)</b>. It's the only one reachable from
+      every page, it reuses a pattern managers already know, and the pulse dot
+      sells the "live" nature. It's also the smallest code change — one nav row +
+      a route case that calls the <code>openHourlySnapshot()</code> we already
+      built. If you want it doubly visible, add <b>Option B</b> too — they don't
+      conflict (sidebar = global, header pill = in-context shortcut). I'd skip C
+      unless you specifically want the lightest footprint.
+    </p>
+  </div>
+
+</div>
+</body>
+</html>
