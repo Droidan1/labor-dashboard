@@ -410,6 +410,28 @@
       70%  { box-shadow: 0 0 0 12px rgba(34,197,94,0); }
       100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
     }
+
+    /* Bottom-nav center "Submit" action — soft-green tinted squircle. */
+    #bn-submit-photos { color: inherit; }
+    .bn-submit-ic {
+      width: 46px; height: 46px; border-radius: 15px; margin-top: -3px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(34,197,94,.12); color: #16a34a; transition: background .15s ease;
+    }
+    .dark .bn-submit-ic { background: rgba(34,197,94,.16); color: #22c55e; }
+    .bn-submit-ic svg { width: 24px; height: 24px; }
+    .bn-submit-lab { color: #16a34a; }
+    .dark .bn-submit-lab { color: #22c55e; }
+    /* Slightly stronger tint while the Submit page is the active tab. */
+    #bn-submit-photos.text-accent-green .bn-submit-ic { background: rgba(34,197,94,.22); }
+    .dark #bn-submit-photos.text-accent-green .bn-submit-ic { background: rgba(34,197,94,.26); }
+    /* Non-admin bar: real flex groups + centered Submit + rounded top.
+       Admins/superusers keep today's bar — the groups collapse (display:contents)
+       so the tabs fall back into one flat, evenly-spaced row, unchanged. */
+    #bottom-nav .bn-group { display: contents; }
+    #bottom-nav.bn-mgr { align-items: center; border-top-left-radius: 20px; border-top-right-radius: 20px; }
+    #bottom-nav.bn-mgr .bn-group { display: flex; flex: 1 1 0%; }
+    #bottom-nav.bn-mgr .bn-group-r { justify-content: flex-end; }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -595,21 +617,29 @@
     <div id="sidebar-overlay" class="sidebar-overlay" onclick="document.getElementById('sidebar').classList.add('collapsed');this.style.display='none';localStorage.setItem('sidebarCollapsed','true')"></div>
 
     <nav id="bottom-nav" class="lg:hidden fixed left-0 right-0 bottom-0 z-30 flex border-t border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel transition-transform duration-300" style="padding:10px 6px calc(12px + env(safe-area-inset-bottom))">
-      <button data-tab="dashboard" onclick="navigateToPage('dashboard')" class="bn-tab flex-1 flex flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
-        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Dashboard
+      <div class="bn-group flex-1 flex">
+        <button data-tab="dashboard" onclick="navigateToPage('dashboard')" class="bn-tab flex-1 flex flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
+          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Dashboard
+        </button>
+        <button data-tab="weekly-summary" onclick="navigateToPage('weekly-summary')" class="bn-tab flex-1 flex flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
+          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Retail
+        </button>
+        <button id="bn-inventory" data-tab="inventory" onclick="navigateToPage('inventory')" class="bn-tab hidden flex-1 flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
+          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>Inventory
+        </button>
+      </div>
+      <button id="bn-submit-photos" data-tab="submit-photos" onclick="navigateToPage('submit-photos')" aria-label="Submit photos" class="bn-tab hidden flex-shrink-0 flex-col items-center gap-1 py-1 px-2 text-[11px] font-semibold">
+        <span class="bn-submit-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
+        <span class="bn-submit-lab">Submit</span>
       </button>
-      <button data-tab="weekly-summary" onclick="navigateToPage('weekly-summary')" class="bn-tab flex-1 flex flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
-        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Retail
-      </button>
-      <button id="bn-inventory" data-tab="inventory" onclick="navigateToPage('inventory')" class="bn-tab hidden flex-1 flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
-        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>Inventory
-      </button>
-      <button id="bn-supply" data-tab="supply-request" onclick="navigateToPage('supply-request')" class="bn-tab hidden flex-1 flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
-        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>Supply
-      </button>
-      <button id="bn-more" onclick="openMoreSheet()" class="bn-tab flex-1 flex flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
-        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>More
-      </button>
+      <div class="bn-group bn-group-r flex-1 flex justify-end">
+        <button id="bn-supply" data-tab="supply-request" onclick="navigateToPage('supply-request')" class="bn-tab hidden flex-1 flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
+          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>Supply
+        </button>
+        <button id="bn-more" onclick="openMoreSheet()" class="bn-tab flex-1 flex flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
+          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>More
+        </button>
+      </div>
     </nav>
 
     <!-- Main content -->
@@ -16291,9 +16321,14 @@
 
     function syncBottomNav(page) {
       // role-gated tabs / rows
+      // Admins/superusers keep today's flat bar; everyone else gets the
+      // centered Submit button. (Inventory tab is the admin/superuser marker.)
+      var isAdminBar = vis('nav-inventory');
+      if (nav) nav.classList.toggle('bn-mgr', !isAdminBar);
       gate('bn-inventory', vis('nav-inventory'), 'flex');
       gate('bn-supply', vis('nav-supply-request'), 'flex');
-      gate('more-submit-photos', vis('nav-submit-photos'));
+      gate('bn-submit-photos', !isAdminBar, 'flex');              // center Submit: non-admins only
+      gate('more-submit-photos', isAdminBar && vis('nav-submit-photos')); // admins reach it via More
       gate('more-flow-calendar', vis('nav-flow-calendar'));
       gate('more-content', vis('nav-content'));
       gate('more-marketing', vis('nav-marketing-ads'));
@@ -16301,7 +16336,8 @@
       gate('more-admin', vis('nav-admin-settings'));
       gate('more-settings', vis('nav-settings'));
       // active tab
-      var morePages = { 'marketing': 1, 'flow-calendar': 1, 'submit-photos': 1, 'content': 1, 'users': 1, 'admin-settings': 1, 'settings': 1 };
+      var morePages = { 'marketing': 1, 'flow-calendar': 1, 'content': 1, 'users': 1, 'admin-settings': 1, 'settings': 1 };
+      if (isAdminBar) morePages['submit-photos'] = 1; // admins: Submit Photos lives under More
       // Detail pages are sub-pages of Dashboard — keep that tab highlighted.
       var detailPages = { 'store-detail': 1, 'all-stores-detail': 1 };
       var activeTab = morePages[page] ? 'more' : (detailPages[page] ? 'dashboard' : page);
