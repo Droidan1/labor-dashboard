@@ -429,12 +429,18 @@
     #bottom-nav .bn-group { display: contents; }
     #bottom-nav.bn-mgr .bn-group { display: flex; flex: 1 1 0%; }
     #bottom-nav.bn-mgr .bn-group-r { justify-content: flex-end; }
-    /* Floating island chrome (all roles): full border, rounded, lifted. */
+    /* Floating island chrome (all roles): frosted glass, full border,
+       rounded, lifted. Light is more opaque (82%) so busy content
+       underneath doesn't tint it muddy; dark leans clearer (64%). */
     .bn-float {
+      background: rgba(255,255,255,.82);
+      -webkit-backdrop-filter: blur(16px) saturate(1.4);
+      backdrop-filter: blur(16px) saturate(1.4);
       border: 1px solid rgba(20,16,8,.10); border-radius: 20px;
       box-shadow: 0 12px 32px rgba(20,16,8,.16), 0 2px 8px rgba(20,16,8,.08);
     }
     .dark .bn-float {
+      background: rgba(16,24,38,.64);
       border-color: rgba(255,255,255,.10);
       box-shadow: 0 12px 32px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4);
     }
@@ -645,7 +651,7 @@
     <!-- Floating icon-only bar (all roles). Non-admins get the centered Submit
          squircle (.bn-mgr groups); admins/superusers get 5 flat even icons and
          reach Submit Photos via the More sheet. Labels removed → aria-labels. -->
-    <nav id="bottom-nav" class="lg:hidden fixed z-30 flex items-center bg-opl-panel dark:bg-op-panel bn-float bn-skinny transition-transform duration-300" style="left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));padding:7px 8px">
+    <nav id="bottom-nav" class="lg:hidden fixed z-30 flex items-center bn-float bn-skinny transition-transform duration-300" style="left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));padding:7px 8px">
       <div class="bn-group flex-1 flex">
         <button data-tab="dashboard" aria-label="Dashboard" onclick="navigateToPage('dashboard')" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
           <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
