@@ -4776,11 +4776,16 @@ async function notifyPhotoUpload(env, { store, count, photoType, uploaderEmail }
   const n = Math.max(1, parseInt(count, 10) || 1);
   const typeLabel = { retail: 'Retail floor', bins: 'Bins', event: 'Event', team: 'Team', other: 'Other' }[photoType] || null;
   const who = uploaderEmail || 'A store';
+  // Deep-link straight to the Content page's folder for this store/week/type.
+  // cf_date (upload day) lets the client resolve the retail-week folder even
+  // if the notification is tapped later; the client validates before drilling in.
+  const params = new URLSearchParams({ cf_store: store, cf_date: new Date().toISOString().slice(0, 10) });
+  if (photoType) params.set('cf_type', photoType);
   const payload = JSON.stringify({
     title: `📸 ${n} new photo${n === 1 ? '' : 's'} — ${storeLabel}`,
     body: `${who}${typeLabel ? ` · ${typeLabel}` : ''}`,
     tag: `photo-upload-${store}`,
-    url: '/index.html#content',
+    url: `/index.html?${params.toString()}#content`,
   });
 
   const { results: admins } = await env.DB.prepare(

@@ -6428,16 +6428,23 @@
   // dashboard so a notification tap is never broken.
   function handleDeepLink(rawUrl) {
     if (!rawUrl) return;
-    let view = null, hash = null;
+    let view = null, hash = null, cf = null;
+    const readCf = (sp) => {
+      const s = sp.get('cf_store');
+      return s ? { store: s, date: sp.get('cf_date') || null, type: sp.get('cf_type') || null } : null;
+    };
     try {
       const u = new URL(rawUrl, window.location.origin);
       view = u.searchParams.get('view');
       hash = u.hash ? u.hash.slice(1) : null;
+      cf = readCf(u.searchParams);
     } catch (_) {
       const qIdx = rawUrl.indexOf('?');
       if (qIdx !== -1) {
         const amp = rawUrl.slice(qIdx + 1).split('#')[0];
-        view = new URLSearchParams(amp).get('view');
+        const sp = new URLSearchParams(amp);
+        view = sp.get('view');
+        cf = readCf(sp);
       }
       const hIdx = rawUrl.indexOf('#');
       if (hIdx !== -1) hash = rawUrl.slice(hIdx + 1);
@@ -6450,6 +6457,13 @@
         // Phase 3 not yet shipped — land on the dashboard rather than nowhere.
         navigateToPage('dashboard');
       }
+      return;
+    }
+    // Photo-upload notification → open the Content page at the exact
+    // store/week/type folder (initContent consumes window.__ctDeepLink).
+    if (cf && cf.store && typeof navigateToPage === 'function') {
+      window.__ctDeepLink = cf;
+      navigateToPage('content');
       return;
     }
     if (hash && typeof navigateToPage === 'function') {
@@ -11879,15 +11893,52 @@
       ctSetTab('compose');
       const saved = ctReadLocal();
       ctResetComposer();   // baseline (also clears storage) — then overlay any autosaved draft
-      if (saved && (saved.caption || saved.topic || saved.thumb || (saved.photos && saved.photos.length))) {
+      if (window.__ctDeepLink) {
+        // A notification deep-link drives store/week/type below — skip the default load.
+      } else if (saved && (saved.caption || saved.topic || saved.thumb || (saved.photos && saved.photos.length))) {
         await ctRehydrateFrom(saved);
       } else {
         ctLoadPhotos();
       }
     }
+    // Notification deep-link (photo-upload push) → open the exact store/week/type folder.
+    if (window.__ctDeepLink) {
+      const dl = window.__ctDeepLink; window.__ctDeepLink = null;
+      await ctDeepLinkToFolder(dl.store, dl.date, dl.type);
+    }
     // Re-entry: preserve the in-progress composer (thumb / photos / caption); lists refreshed above.
   }
   window.initContent = initContent;
+
+  // Open the Content photo picker straight to a store's week + type sub-folder,
+  // in response to a photo-upload notification. Resolves the retail-week folder
+  // from the notification date (falls back to the newest photo's week, then the
+  // current week), and only drills into the type sub-folder if it has photos.
+  async function ctDeepLinkToFolder(store, dateStr, type) {
+    const sel = el('ct-store');
+    if (!sel) return;
+    if (store && Array.from(sel.options).some(o => o.value === store)) sel.value = store;
+    if (typeof ctSetTab === 'function') ctSetTab('compose');
+    await ctLoadPhotos();                       // loads this store's photos + flow weeks; resets folder state
+    const { arr } = ctPhotoGroups();
+    let weekKey = null;
+    if (dateStr) { const w = ctPhotoWeekOf(dateStr); if (w) weekKey = 'w' + w.retail_week; }
+    if ((!weekKey || !arr.some(g => g.key === weekKey)) && ctPhotos.length) {
+      const newest = ctPhotos.reduce((a, b) => ((a.created_at || '') > (b.created_at || '') ? a : b));
+      const w = ctPhotoWeekOf(newest.created_at); if (w) weekKey = 'w' + w.retail_week;
+    }
+    if (weekKey && arr.some(g => g.key === weekKey)) {
+      ctOpenFolder = weekKey;
+      const g = arr.find(x => x.key === weekKey);
+      const norm = ctNormPhotoType(type);
+      ctOpenType = (type && ctTypeGroups(g.photos).some(t => t.key === norm)) ? norm : null;
+    } else {
+      ctOpenFolder = null; ctOpenType = null;
+    }
+    ctPhotoDelMode = false; ctPhotoDel = new Set();
+    ctRenderPhotoPicker();
+  }
+  window.ctDeepLinkToFolder = ctDeepLinkToFolder;
 
   // Restore a composer draft autosaved to localStorage (survives reload / PWA update).
   async function ctRehydrateFrom(s) {
@@ -16022,11 +16073,14 @@
     initPasskeyLoginButton();
     checkAuth().then(authed => {
       if (!authed) return;
-      const dlView = new URLSearchParams(window.location.search).get('view');
+      const dlSearch = new URLSearchParams(window.location.search);
+      // A deep link is anything the SW may have opened us with: an hourly view,
+      // a #hash page, or a photo-upload folder link (cf_store).
+      const dlDeep = dlSearch.get('view') || dlSearch.get('cf_store') || (window.location.hash ? window.location.hash.slice(1) : '');
       const loaded = loadAll();
       // "What's New" popup — show once data has painted, unless a deep link
       // is taking over the screen. Persists only when the user hits Dismiss.
-      if (!dlView) Promise.resolve(loaded).finally(() => {
+      if (!dlDeep) Promise.resolve(loaded).finally(() => {
         setTimeout(maybeShowWhatsNew, 700);
         // First-time pull-to-refresh hint (mobile, unobtrusive top chip).
         setTimeout(maybePtrHint, 1000);
@@ -16041,10 +16095,10 @@
           firstHint('dash-channel', '#cm-retail-col', "New — tap <b>Retail</b> or <b>BIN</b> to filter the metrics below to just that channel.");
         }, 1800);
       });
-      // Cold-start deep link: SW opened a fresh window at /?view=hourly.
-      // Route after initial data loads so Phase 3's screen has live data,
-      // then strip the param so a manual refresh doesn't re-trigger it.
-      if (dlView) {
+      // Cold-start deep link: SW opened a fresh window (e.g. /?view=hourly or
+      // /?cf_store=…#content). Route after initial data loads, then strip the
+      // params so a manual refresh doesn't re-trigger it.
+      if (dlDeep) {
         Promise.resolve(loaded).finally(() => {
           handleDeepLink(window.location.href);
           history.replaceState({}, '', window.location.pathname);
