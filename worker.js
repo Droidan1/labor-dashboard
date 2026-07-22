@@ -4767,6 +4767,44 @@ async function notifySupplyRequestNew(env, { requestId, requesterId, requesterEm
   }
 }
 
+// Notify admins/superusers via web push when a store submits new photos.
+// Fired fire-and-forget from ?action=notify-photo-upload after a Submit-Photos
+// batch. Respects each recipient's upload_alerts preference (default on).
+async function notifyPhotoUpload(env, { store, count, photoType, uploaderEmail }) {
+  if (!env.DB) return;
+  const storeLabel = STORE_LABELS[store] || store;
+  const n = Math.max(1, parseInt(count, 10) || 1);
+  const typeLabel = { retail: 'Retail floor', bins: 'Bins', event: 'Event', team: 'Team', other: 'Other' }[photoType] || null;
+  const who = uploaderEmail || 'A store';
+  const payload = JSON.stringify({
+    title: `📸 ${n} new photo${n === 1 ? '' : 's'} — ${storeLabel}`,
+    body: `${who}${typeLabel ? ` · ${typeLabel}` : ''}`,
+    tag: `photo-upload-${store}`,
+    url: '/index.html#content',
+  });
+
+  const { results: admins } = await env.DB.prepare(
+    "SELECT id FROM users WHERE role IN ('superuser', 'admin') AND status = 'active'"
+  ).all();
+  if (!admins?.length) return;
+  const ids = admins.map(u => u.id);
+  const placeholders = ids.map(() => '?').join(',');
+  const { results: subs } = await env.DB.prepare(
+    `SELECT ps.endpoint, ps.p256dh, ps.auth
+     FROM push_subscriptions ps
+     JOIN notification_preferences np ON np.user_id = ps.user_id
+     WHERE ps.user_id IN (${placeholders}) AND np.push_enabled = 1 AND np.upload_alerts != 0`
+  ).bind(...ids).all();
+  for (const sub of (subs || [])) {
+    try {
+      const res = await sendWebPush(env, sub, payload);
+      if (res.expired) {
+        await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+      }
+    } catch (e) { console.error('Photo upload push error:', e.message); }
+  }
+}
+
 // Notify the requester (push + email) when their request status changes.
 async function notifySupplyStatusChange(env, { requestId, requesterId, requesterEmail, store, oldStatus, newStatus, note }) {
   if (!env.DB) return;
@@ -6083,6 +6121,45 @@ export default {
         ).bind(store, ptype, key, ct, bytes, (currentUser && currentUser.email) || null, note, now.toISOString()).run();
         const id = res.meta && res.meta.last_row_id;
         return new Response(JSON.stringify({ ok: true, id, store, photo_type: ptype, r2_key: key, bytes, url: `?action=photo&id=${id}` }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // POST ?action=notify-photo-upload { store, count, photo_type } — batched
+    // push to admins/superusers after a Submit-Photos upload. Only notifies
+    // when the caller is a non-admin (manager/DM/store user); the uploader
+    // identity comes from the session, not the request body.
+    if (request.method === "POST" && url.searchParams.get("action") === "notify-photo-upload") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      if (!env.DB) return new Response(JSON.stringify({ ok: true, notified: false }), { headers: corsJson });
+      try {
+        const b = await request.json().catch(() => ({}));
+        const store = String(b.store || "").trim().toUpperCase();
+        if (!ALL_STORES.includes(store)) return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+        // A store user can only trigger alerts for a store they can upload to.
+        const allow = allowedStores(currentUser);
+        if (allow && !allow.includes(store)) return new Response(JSON.stringify({ error: "Forbidden for this store" }), { status: 403, headers: corsJson });
+        // Admins uploading their own photos shouldn't alert the other admins.
+        const isAdminUser = currentUser.role === 'superuser' || currentUser.role === 'admin';
+        if (isAdminUser) return new Response(JSON.stringify({ ok: true, notified: false }), { headers: corsJson });
+        // Tie the alert to REAL rows: count this uploader's photos for this store
+        // in the last 5 min rather than trusting the client-supplied count. No
+        // recent upload → nothing to announce (blocks forged/empty notifications).
+        const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        const row = await env.DB.prepare(
+          "SELECT COUNT(*) AS n FROM marketing_photos WHERE uploader = ? AND store = ? AND created_at >= ?"
+        ).bind(currentUser.email, store, since).first();
+        const realCount = (row && row.n) || 0;
+        if (realCount < 1) return new Response(JSON.stringify({ ok: true, notified: false }), { headers: corsJson });
+        const TYPES = ["retail", "bins", "event", "team", "other"];
+        const pt = String(b.photo_type || "").trim().toLowerCase();
+        ctx.waitUntil(notifyPhotoUpload(env, {
+          store, count: realCount,
+          photoType: TYPES.includes(pt) ? pt : null,
+          uploaderEmail: currentUser.email,
+        }));
+        return new Response(JSON.stringify({ ok: true, notified: true }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
       }
@@ -9365,14 +9442,15 @@ export default {
       try {
         const [subRow, prefRow] = await Promise.all([
           env.DB.prepare("SELECT COUNT(*) AS cnt FROM push_subscriptions WHERE user_id = ?").bind(currentUser.id).first(),
-          env.DB.prepare("SELECT push_enabled, daily_summary, weekly_digest, interval_summary, supply_notifications FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
+          env.DB.prepare("SELECT push_enabled, daily_summary, weekly_digest, interval_summary, supply_notifications, upload_alerts FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
         ]);
         const cnt = subRow?.cnt ?? 0;
         const dailySummary       = prefRow ? !!prefRow.daily_summary       : true;
         const weeklyDigest       = prefRow ? !!prefRow.weekly_digest       : true;
         const intervalSummary    = prefRow?.interval_summary               ?? 'off';
         const supplyNotifications = prefRow ? !!prefRow.supply_notifications : true;
-        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest, intervalSummary, supplyNotifications }), { headers: corsJson });
+        const uploadAlerts       = prefRow ? !!prefRow.upload_alerts       : true;
+        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest, intervalSummary, supplyNotifications, uploadAlerts }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
@@ -9448,13 +9526,21 @@ export default {
         if (typeof body.weekly_digest  === 'boolean') fields.weekly_digest  = body.weekly_digest  ? 1 : 0;
         if (['off', '1h', '3h'].includes(body.interval_summary)) fields.interval_summary = body.interval_summary;
         if (typeof body.supply_notifications === 'boolean') fields.supply_notifications = body.supply_notifications ? 1 : 0;
+        if (typeof body.upload_alerts === 'boolean') fields.upload_alerts = body.upload_alerts ? 1 : 0;
         if (!Object.keys(fields).length) return new Response(JSON.stringify({ error: "Nothing to update" }), { status: 400, headers: corsJson });
         const now = new Date().toISOString();
-        const setClauses = Object.keys(fields).map(k => `${k} = ?`).join(', ');
+        // Persist chosen values even on a first-ever insert: a bare INSERT with
+        // no conflict skips the ON CONFLICT branch, so the toggled columns must
+        // be in the INSERT list too (unspecified prefs fall back to column
+        // DEFAULTs). Column names come from the fixed whitelist above.
+        const cols = Object.keys(fields);
+        const insertCols = ['user_id', ...cols, 'updated_at'];
+        const ph = insertCols.map(() => '?').join(', ');
+        const updateSet = [...cols.map(k => `${k} = excluded.${k}`), 'updated_at = excluded.updated_at'].join(', ');
         await env.DB.prepare(
-          `INSERT INTO notification_preferences (user_id, push_enabled, daily_summary, updated_at) VALUES (?, 1, 1, ?)
-           ON CONFLICT(user_id) DO UPDATE SET ${setClauses}, updated_at = ?`
-        ).bind(currentUser.id, now, ...Object.values(fields), now).run();
+          `INSERT INTO notification_preferences (${insertCols.join(', ')}) VALUES (${ph})
+           ON CONFLICT(user_id) DO UPDATE SET ${updateSet}`
+        ).bind(currentUser.id, ...cols.map(k => fields[k]), now).run();
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });

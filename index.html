@@ -2280,6 +2280,15 @@
                   <input type="checkbox" id="notif-supply-toggle" onchange="updateNotifPrefs()"
                     class="w-4 h-4 accent-[#3BB54A] cursor-pointer ml-4">
                 </label>
+                <!-- Photo upload alerts (admin/superuser only — revealed by applyRoleUI) -->
+                <label id="notif-upload-alerts-row" class="hidden flex items-center justify-between cursor-pointer pt-1">
+                  <div>
+                    <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Photo upload alerts</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Get a push when a store submits new photos</p>
+                  </div>
+                  <input type="checkbox" id="notif-upload-alerts-toggle" onchange="updateNotifPrefs()"
+                    class="w-4 h-4 accent-[#3BB54A] cursor-pointer ml-4">
+                </label>
               </div>
             </div>
           </div>
@@ -6807,9 +6816,11 @@
           const daily  = el('notif-daily-summary-toggle');
           const weekly = el('notif-weekly-digest-toggle');
           const supply = el('notif-supply-toggle');
+          const upload = el('notif-upload-alerts-toggle');
           if (daily)  daily.checked  = d.dailySummary !== false;
           if (weekly) weekly.checked = d.weeklyDigest !== false;
           if (supply) supply.checked = d.supplyNotifications !== false;
+          if (upload) upload.checked = d.uploadAlerts !== false;
           // Interval summary radio
           const interval = d.intervalSummary || 'off';
           const radio = document.querySelector(`input[name="interval-summary"][value="${interval}"]`);
@@ -6922,11 +6933,13 @@
     const daily    = el('notif-daily-summary-toggle');
     const weekly   = el('notif-weekly-digest-toggle');
     const supply   = el('notif-supply-toggle');
+    const upload   = el('notif-upload-alerts-toggle');
     const intervalRadio = document.querySelector('input[name="interval-summary"]:checked');
     const body = {};
     if (daily)  body.daily_summary = daily.checked;
     if (weekly) body.weekly_digest = weekly.checked;
     if (supply) body.supply_notifications = supply.checked;
+    if (upload) body.upload_alerts = upload.checked;
     if (intervalRadio) body.interval_summary = intervalRadio.value;
     if (!Object.keys(body).length) return;
     try {
@@ -11469,6 +11482,16 @@
       } catch (_) { fail++; }
     }
     btn.disabled = false; btn.textContent = 'Submit photos';
+    if (ok > 0) {
+      // Fire-and-forget: one batched alert to admins/superusers that this store
+      // submitted photos. The worker re-derives the uploader from the session
+      // and only notifies when the uploader is a non-admin (manager/DM/store).
+      fetch(`${WORKER_BASE}?action=notify-photo-upload`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ store, count: ok, photo_type: spType }),
+      }).catch(() => {});
+    }
     if (fail === 0) {
       show(`✓ Sent ${ok} photo${ok === 1 ? '' : 's'} to marketing. Thank you!`, 'text-accent-green');
       spFiles = []; el('sp-files').value = ''; el('sp-thumbs').innerHTML = ''; el('sp-note').value = '';
@@ -11487,6 +11510,7 @@
   let ctPhotoDelMode = false;  // "select to delete" mode in the Bin photos picker
   let ctPhotoDel = new Set();
   let ctOpenFolder = null;     // Bin photos: open week folder key ('w28'|'undated'); null = folder grid
+  let ctOpenType = null;       // within an open week: photo_type sub-folder ('retail'|'bins'|…); null = type grid
   let ctEditingId = null;
   let ctCaptionSource = 'manual';
   let ctAllDrafts = [];
@@ -11984,7 +12008,7 @@
   async function ctLoadPhotos() {
     const store = el('ct-store') ? el('ct-store').value : '';
     ctSelPhotos = new Set();
-    ctOpenFolder = null; ctPhotoDelMode = false; ctPhotoDel = new Set();
+    ctOpenFolder = null; ctOpenType = null; ctPhotoDelMode = false; ctPhotoDel = new Set();
     const pick = el('ct-photo-pick');
     if (!pick) return;
     if (!store) { pick.innerHTML = ''; ctRenderPhotoPicker(); return; }
@@ -12045,6 +12069,52 @@
   // open week key (null = the folder grid). Delete mode is scoped to the
   // open folder. Grouping/current-week/newest-first logic is unchanged.
   const CT_FOLDER_PATH = 'M4,23 C4,16 8,13 15,13 L35,13 C39,13 42,15 44,19 L47,24 L85,24 C92,24 95,27 95,34 L95,66 C95,73 91,75 85,75 L15,75 C8,75 4,72 4,65 Z';
+
+  // Photo-type sub-folders shown inside an open week. Keys mirror the
+  // Submit-Photos upload chips (renderSpTypes) and marketing_photos.photo_type;
+  // any unrecognized tag (incl. 'team' or blank) folds into 'other'.
+  const CT_PHOTO_TYPES = [
+    { key: 'retail', label: 'Retail' },
+    { key: 'bins',   label: 'Bins' },
+    { key: 'event',  label: 'Event' },
+    { key: 'other',  label: 'Other' },
+  ];
+  function ctNormPhotoType(t) {
+    const k = String(t || '').trim().toLowerCase();
+    return CT_PHOTO_TYPES.some(x => x.key === k) ? k : 'other';
+  }
+  function ctTypeLabel(key) { const t = CT_PHOTO_TYPES.find(x => x.key === key); return t ? t.label : 'Other'; }
+  // Bucket one week's photos into type sub-folders (canonical order, non-empty only).
+  function ctTypeGroups(photos) {
+    const by = {};
+    for (const p of photos) { const k = ctNormPhotoType(p.photo_type); (by[k] || (by[k] = [])).push(p); }
+    return CT_PHOTO_TYPES.filter(t => by[t.key]).map(t => ({ key: t.key, label: t.label, photos: by[t.key] }));
+  }
+  // A photo-type sub-folder card — mirrors ctFolderCell's glyph + 2×2 peek,
+  // minus the week-specific chrome (Now badge, range, dashed "undated").
+  function ctTypeCell(t) {
+    const count = t.photos.length;
+    const shots = t.photos.slice(0, 4);
+    let c = '';
+    for (let i = 0; i < 4; i++) {
+      c += shots[i]
+        ? `<div class="relative overflow-hidden rounded-[3px] bg-black/20"><img src="${WORKER_BASE}?action=photo&id=${shots[i].id}" loading="lazy" alt="" class="absolute inset-0 w-full h-full object-cover"></div>`
+        : `<div class="rounded-[3px] border border-dashed border-[rgba(20,16,8,0.14)] dark:border-op-border"></div>`;
+    }
+    const peek = `<div class="absolute inset-x-[12%] top-[34%] bottom-[11%] grid grid-cols-2 grid-rows-2 gap-[2px]">${c}</div>`;
+    const selN = t.photos.reduce((n, p) => n + (ctSelPhotos.has(p.id) ? 1 : 0), 0);
+    return `<button type="button" onclick="ctOpenPhotoType('${t.key}')" class="group flex flex-col gap-1.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green rounded-[14px]" aria-label="Open ${escapeHtml(t.label)}">
+      <div class="relative w-full aspect-[96/78] rounded-[14px]">
+        <svg viewBox="0 0 100 80" preserveAspectRatio="none" class="absolute inset-0 w-full h-full fill-opl-panelHi dark:fill-op-panelHi stroke-[rgba(20,16,8,0.2)] dark:stroke-op-borderHi" aria-hidden="true"><path d="${CT_FOLDER_PATH}" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg>
+        ${peek}
+        <span class="absolute top-0.5 right-0.5 text-[11px] tabular-nums leading-5 px-1.5 rounded-full text-opl-inkDim dark:text-op-inkDim bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.1)] dark:border-op-border">${count}</span>
+      </div>
+      <div class="px-0.5 min-w-0">
+        <div class="text-[12px] font-semibold text-opl-ink dark:text-op-ink flex items-center gap-1.5 truncate">${escapeHtml(t.label)}${selN ? `<span class="text-[9px] font-extrabold text-[#06210f] bg-accent-green rounded-full px-1.5 leading-[1.7]">${selN}</span>` : ''}</div>
+        <div class="text-[10.5px] text-opl-inkDim dark:text-op-inkDim truncate">${count} photo${count === 1 ? '' : 's'}</div>
+      </div>
+    </button>`;
+  }
 
   function ctPhotoGroups() {
     const groups = {};
@@ -12108,12 +12178,37 @@
 
   function ctRenderFolderContents(arr, cur) {
     const g = arr.find(x => x.key === ctOpenFolder);
-    if (!g) { ctOpenFolder = null; return ctRenderFolderGrid(arr, cur); }
+    if (!g) { ctOpenFolder = null; ctOpenType = null; return ctRenderFolderGrid(arr, cur); }
+    const typeGroups = ctTypeGroups(g.photos);
+    if (ctOpenType && !typeGroups.some(t => t.key === ctOpenType)) ctOpenType = null;
+    // Week crumb: plain text at the type-grid level; a clickable "back to types" link once a type is open.
+    const weekCrumb = ctOpenType
+      ? `<button type="button" onclick="ctBackToTypes()" class="text-[13px] font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors shrink-0 truncate">${escapeHtml(g.label)}</button>`
+      : `<span class="text-[13px] font-semibold text-opl-ink dark:text-op-ink truncate">${escapeHtml(g.label)} · ${escapeHtml(g.range)}</span>`;
+    const crumbBar = (tail) => `<div class="flex items-center gap-1.5 px-2.5 py-2 bg-opl-panelHi dark:bg-op-panelHi border-b border-[rgba(20,16,8,0.1)] dark:border-op-border">
+        <button type="button" onclick="ctClosePhotoFolder()" class="flex items-center gap-1 text-[13px] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors shrink-0"><span class="text-[17px] leading-none">‹</span> Photos</button>
+        <span class="text-opl-inkDimmer dark:text-op-inkDimmer shrink-0">›</span>
+        ${weekCrumb}${tail}
+      </div>`;
+
+    // ── Level 2: type sub-folder grid (no type open) ──
+    if (!ctOpenType) {
+      const body = typeGroups.length
+        ? `<div class="grid grid-cols-3 sm:grid-cols-4 gap-3">${typeGroups.map(t => ctTypeCell(t)).join('')}</div>`
+        : '<div class="flex flex-col items-center gap-2 text-center py-7 text-opl-inkDim dark:text-op-inkDim text-[12.5px]"><svg viewBox="0 0 24 24" fill="none" class="w-8 h-8 opacity-50"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke="currentColor" stroke-width="1.4"/></svg>No photos submitted this week yet.</div>';
+      return `<div class="rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border overflow-hidden">
+      ${crumbBar('')}
+      <div class="p-2.5">${body}</div>
+    </div>`;
+    }
+
+    // ── Level 3: one type's tiles + delete mode ──
+    const tg = typeGroups.find(t => t.key === ctOpenType);
     const order = [...ctSelPhotos];
-    const body = g.photos.length
-      ? `<div class="flex flex-wrap gap-2.5">${g.photos.map(p => ctPhotoTile(p, order)).join('')}</div>`
-      : '<div class="flex flex-col items-center gap-2 text-center py-7 text-opl-inkDim dark:text-op-inkDim text-[12.5px]"><svg viewBox="0 0 24 24" fill="none" class="w-8 h-8 opacity-50"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke="currentColor" stroke-width="1.4"/></svg>No photos submitted this week yet.</div>';
-    const manageBtn = g.photos.length
+    const body = tg.photos.length
+      ? `<div class="flex flex-wrap gap-2.5">${tg.photos.map(p => ctPhotoTile(p, order)).join('')}</div>`
+      : '<div class="text-center py-7 text-opl-inkDim dark:text-op-inkDim text-[12.5px]">No photos in this folder.</div>';
+    const manageBtn = tg.photos.length
       ? `<button type="button" onclick="ctPhotoToggleManage()" class="ml-auto shrink-0 text-[12px] font-semibold ${ctPhotoDelMode ? 'text-op-bad' : 'text-opl-inkDim dark:text-op-inkDim hover:text-op-bad'} transition-colors">${ctPhotoDelMode ? 'Cancel' : 'Select to delete'}</button>`
       : '';
     const delbar = ctPhotoDelMode
@@ -12122,13 +12217,12 @@
           <button type="button" onclick="ctDeleteSelectedPhotos()" class="ml-auto text-[12px] font-semibold text-white bg-op-bad hover:opacity-90 rounded-lg px-2.5 py-1 transition">Delete</button>
         </div>`
       : '';
-    return `<div class="rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border overflow-hidden">
-      <div class="flex items-center gap-1.5 px-2.5 py-2 bg-opl-panelHi dark:bg-op-panelHi border-b border-[rgba(20,16,8,0.1)] dark:border-op-border">
-        <button type="button" onclick="ctClosePhotoFolder()" class="flex items-center gap-1 text-[13px] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors shrink-0"><span class="text-[17px] leading-none">‹</span> Photos</button>
+    const typeTail = `
         <span class="text-opl-inkDimmer dark:text-op-inkDimmer shrink-0">›</span>
-        <span class="text-[13px] font-semibold text-opl-ink dark:text-op-ink truncate">${escapeHtml(g.label)} · ${escapeHtml(g.range)}</span>
-        ${manageBtn}
-      </div>
+        <span class="text-[13px] font-semibold text-opl-ink dark:text-op-ink truncate">${escapeHtml(ctTypeLabel(ctOpenType))}</span>
+        ${manageBtn}`;
+    return `<div class="rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border overflow-hidden">
+      ${crumbBar(typeTail)}
       <div class="p-2.5">${delbar}${body}</div>
     </div>`;
   }
@@ -12140,13 +12234,18 @@
     const { arr, cur } = ctPhotoGroups();
     if (!arr.length) { ctOpenFolder = null; pick.innerHTML = '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">No submitted photos for this store yet.</div>'; return; }
     if (ctOpenFolder && !arr.some(g => g.key === ctOpenFolder)) ctOpenFolder = null;
+    if (!ctOpenFolder) ctOpenType = null;
     pick.innerHTML = ctOpenFolder ? ctRenderFolderContents(arr, cur) : ctRenderFolderGrid(arr, cur);
   }
 
-  function ctOpenPhotoFolder(key) { ctOpenFolder = key; ctPhotoDelMode = false; ctPhotoDel = new Set(); ctRenderPhotoPicker(); }
+  function ctOpenPhotoFolder(key) { ctOpenFolder = key; ctOpenType = null; ctPhotoDelMode = false; ctPhotoDel = new Set(); ctRenderPhotoPicker(); }
   window.ctOpenPhotoFolder = ctOpenPhotoFolder;
-  function ctClosePhotoFolder() { ctOpenFolder = null; ctPhotoDelMode = false; ctPhotoDel = new Set(); ctRenderPhotoPicker(); }
+  function ctClosePhotoFolder() { ctOpenFolder = null; ctOpenType = null; ctPhotoDelMode = false; ctPhotoDel = new Set(); ctRenderPhotoPicker(); }
   window.ctClosePhotoFolder = ctClosePhotoFolder;
+  function ctOpenPhotoType(key) { ctOpenType = key; ctPhotoDelMode = false; ctPhotoDel = new Set(); ctRenderPhotoPicker(); }
+  window.ctOpenPhotoType = ctOpenPhotoType;
+  function ctBackToTypes() { ctOpenType = null; ctPhotoDelMode = false; ctPhotoDel = new Set(); ctRenderPhotoPicker(); }
+  window.ctBackToTypes = ctBackToTypes;
 
   function ctTogglePhoto(id) { if (ctSelPhotos.has(id)) ctSelPhotos.delete(id); else ctSelPhotos.add(id); ctRenderPhotoPicker(); ctRenderPreview(); ctMarkDirty(); }
   window.ctTogglePhoto = ctTogglePhoto;
@@ -15275,6 +15374,8 @@
     // Flow Calendar admin editor: only admins/superusers see the Edit toggle.
     fcCanEdit = isAdmin;
     const fcEd = el('fc-edit-toggle'); if (fcEd) fcEd.classList.toggle('hidden', !isAdmin);
+    // Photo upload alerts toggle (Settings › Notifications): admin/superuser only.
+    const uaRow = el('notif-upload-alerts-row'); if (uaRow) uaRow.classList.toggle('hidden', !isAdmin);
     el('nav-inventory').classList.toggle('hidden', !isAdmin);
     el('nav-supply-request').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');
     el('nav-users').classList.toggle('hidden', !isAdmin);
