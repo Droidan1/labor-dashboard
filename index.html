@@ -444,6 +444,15 @@
       border-color: rgba(255,255,255,.10);
       box-shadow: 0 12px 32px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4);
     }
+    /* Perf: keep the bar on its own compositor layer so the scroll-hide
+       slide doesn't re-rasterize the blur every frame. */
+    .bn-float { will-change: transform; }
+    /* Old WebKit/browsers without backdrop-filter: translucent-over-content
+       would be unreadable mush — fall back to the solid panel colors. */
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+      .bn-float { background: #ffffff; }
+      .dark .bn-float { background: #101826; }
+    }
     /* Icon-only + skinny: taller tap targets, no label gap. */
     .bn-skinny .bn-tab { padding-top: 11px; padding-bottom: 11px; position: relative; }
     .bn-skinny #bn-submit-photos { padding: 0 4px; }
@@ -15432,6 +15441,11 @@
     const adminOpt = el('invite-role-admin');
     if (adminOpt) adminOpt.classList.toggle('hidden', !isSuperuser);
 
+    // Role is now known — let the bottom nav decide admin vs manager layout
+    // and correct any pre-auth boot state immediately (not on next nav).
+    window.__bnRoleReady = true;
+    try { if (window.__syncBottomNav) window.__syncBottomNav(window.__bnPage || 'dashboard'); } catch (e) {}
+
     // Restrict visible stores to user's allowed list (null = all stores for superuser/admin)
     if (user.stores && user.stores.length) {
       const allowed = user.stores; // e.g. ['BL1']
@@ -16521,15 +16535,22 @@
     }
 
     function syncBottomNav(page) {
+      if (page) window.__bnPage = page; // remembered so applyRoleUI can re-sync
       // role-gated tabs / rows
-      // Admins/superusers keep today's flat bar; everyone else gets the
+      // Admins/superusers keep the flat 5-icon bar; everyone else gets the
       // centered Submit button. (Inventory tab is the admin/superuser marker.)
+      // BOOT RACE GUARD: until applyRoleUI has run (__bnRoleReady), every
+      // role-gated sidebar item is hidden, which looks identical to a
+      // non-admin — deciding then would flash the Submit button at admins.
+      // Before the role is known, show only the always-on tabs.
+      var roleReady = !!window.__bnRoleReady;
       var isAdminBar = vis('nav-inventory');
-      if (nav) nav.classList.toggle('bn-mgr', !isAdminBar);
+      var mgrBar = roleReady && !isAdminBar; // manager-style bar w/ center Submit
+      if (nav) nav.classList.toggle('bn-mgr', mgrBar);
       gate('bn-inventory', vis('nav-inventory'), 'flex');
       gate('bn-supply', vis('nav-supply-request'), 'flex');
-      gate('bn-submit-photos', !isAdminBar, 'flex');              // center Submit: non-admins only
-      gate('more-submit-photos', isAdminBar && vis('nav-submit-photos')); // admins reach it via More
+      gate('bn-submit-photos', mgrBar, 'flex');                     // center Submit: non-admins only
+      gate('more-submit-photos', !mgrBar && vis('nav-submit-photos')); // admins reach it via More
       gate('more-flow-calendar', vis('nav-flow-calendar'));
       gate('more-content', vis('nav-content'));
       gate('more-marketing', vis('nav-marketing-ads'));
@@ -16538,7 +16559,7 @@
       gate('more-settings', vis('nav-settings'));
       // active tab
       var morePages = { 'marketing': 1, 'flow-calendar': 1, 'content': 1, 'users': 1, 'admin-settings': 1, 'settings': 1 };
-      if (isAdminBar) morePages['submit-photos'] = 1; // admins: Submit Photos lives under More
+      if (!mgrBar) morePages['submit-photos'] = 1; // no center button → page lives under More
       // Detail pages are sub-pages of Dashboard — keep that tab highlighted.
       var detailPages = { 'store-detail': 1, 'all-stores-detail': 1 };
       var activeTab = morePages[page] ? 'more' : (detailPages[page] ? 'dashboard' : page);
