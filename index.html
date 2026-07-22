@@ -478,6 +478,9 @@
     /* Scroll-hide: translateY(100%) alone leaves a floating bar peeking
        above its bottom offset — push it fully past offset + shadow. */
     .bn-float.translate-y-full { transform: translateY(calc(100% + 44px + env(safe-area-inset-bottom))); }
+    /* Horizontal snap scroller (Content live-preview carousel) — no scrollbar. */
+    .ct-hscroll { -ms-overflow-style: none; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .ct-hscroll::-webkit-scrollbar { display: none; }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -1680,9 +1683,9 @@
                 <div class="ml-auto text-opl-inkDim dark:text-op-inkDim tracking-widest text-sm">···</div>
               </div>
               <div class="relative aspect-square bg-opl-panelHi dark:bg-op-panelHi overflow-hidden">
-                <img id="ct-pv-cover" alt="" class="absolute inset-0 w-full h-full object-cover hidden">
-                <div id="ct-pv-cover-empty" class="absolute inset-0 grid place-items-center text-[12px] text-opl-inkDim dark:text-op-inkDim">Pick a cover thumbnail</div>
-                <div id="ct-pv-dots" class="absolute bottom-3 right-3 flex gap-1"></div>
+                <div id="ct-pv-carousel" onscroll="ctPvSyncDots()" class="ct-hscroll absolute inset-0 flex overflow-x-auto snap-x snap-mandatory scroll-smooth"></div>
+                <div id="ct-pv-cover-empty" class="absolute inset-0 grid place-items-center text-[12px] text-opl-inkDim dark:text-op-inkDim pointer-events-none">Pick a cover or select photos to preview</div>
+                <div id="ct-pv-dots" class="absolute bottom-3 right-3 flex gap-1 pointer-events-none"></div>
               </div>
               <div class="px-3.5 py-3">
                 <div class="flex items-center gap-3.5 text-opl-inkDim dark:text-op-inkDim text-[15px] mb-2"><span>♡</span><span>✉</span><span>↗</span><span class="ml-auto">⌗</span></div>
@@ -11555,6 +11558,7 @@
     const compose = el('ct-pane-compose'), thumbs = el('ct-pane-thumbs'), pipeline = el('ct-pipeline');
     if (compose) compose.classList.toggle('hidden', tab !== 'compose');
     if (thumbs)  thumbs.classList.toggle('hidden', tab !== 'thumbs');
+    if (tab === 'thumbs') ctRenderThumbGrid();   // lazily build the grid on first switch (deferred from init)
     if (pipeline) {
       pipeline.classList.toggle('hidden', tab === 'thumbs');  // shown on compose + posts
       const below = (tab === 'compose');                       // sits under the composer only on Compose
@@ -11849,18 +11853,25 @@
     if (el('ct-pv-handle'))  el('ct-pv-handle').textContent = handle;
     if (el('ct-pv-handle2')) el('ct-pv-handle2').textContent = handle;
     if (el('ct-pv-sub'))     el('ct-pv-sub').textContent = name + (code ? ' · ' + code : '');
-    const img = el('ct-pv-cover'), empty = el('ct-pv-cover-empty');
-    if (img) {
-      if (ctSelThumb) {
-        if (img.dataset.thumb !== String(ctSelThumb)) { img.src = `${WORKER_BASE}?action=thumbnail&id=${ctSelThumb}`; img.dataset.thumb = String(ctSelThumb); }
-        img.classList.remove('hidden'); if (empty) empty.classList.add('hidden');
-      } else {
-        img.classList.add('hidden'); img.removeAttribute('src'); img.dataset.thumb = ''; if (empty) empty.classList.remove('hidden');
-      }
+    // Carousel: cover (if any) + every selected photo, in order. Rebuild only
+    // when the image SET changes (dataset sig), so caption keystrokes don't
+    // re-fetch/re-decode the slides.
+    const car = el('ct-pv-carousel'), empty = el('ct-pv-cover-empty'), dots = el('ct-pv-dots');
+    const order = [...ctSelPhotos];
+    const sig = (ctSelThumb ? 't' + ctSelThumb : '') + '|' + order.join(',');
+    if (car && car.dataset.sig !== sig) {
+      car.dataset.sig = sig;
+      const slide = (src) => `<div class="ct-pv-slide relative flex-none w-full h-full snap-center"><img src="${src}" alt="" loading="lazy" decoding="async" class="absolute inset-0 w-full h-full object-cover"></div>`;
+      const slides = [];
+      if (ctSelThumb) slides.push(slide(`${WORKER_BASE}?action=thumbnail&id=${ctSelThumb}`));
+      for (const pid of order) slides.push(slide(`${WORKER_BASE}?action=photo&id=${pid}`));
+      car.innerHTML = slides.join('');
+      car.scrollLeft = 0;
+      const n = slides.length;
+      if (empty) empty.classList.toggle('hidden', n > 0);
+      if (dots) dots.innerHTML = n > 1 ? Array.from({ length: Math.min(n, 8) }, (_, i) => `<span class="ct-pv-dot w-1.5 h-1.5 rounded-full ${i === 0 ? 'bg-white' : 'bg-white/40'}"></span>`).join('') : '';
     }
-    const nPhotos = ctSelPhotos.size, total = (ctSelThumb ? 1 : 0) + nPhotos;
-    const dots = el('ct-pv-dots');
-    if (dots) dots.innerHTML = total > 1 ? Array.from({ length: Math.min(total, 5) }, (_, i) => `<span class="w-1.5 h-1.5 rounded-full ${i === 0 ? 'bg-white' : 'bg-white/40'}"></span>`).join('') : '';
+    const nPhotos = ctSelPhotos.size;
     const foot = el('ct-preview-foot');
     if (foot) {
       const bits = [];
@@ -11871,6 +11882,17 @@
     ctUpdateCaptionUI();
   }
   window.ctRenderPreview = ctRenderPreview;
+  // Highlight the dot for the currently-scrolled preview slide.
+  function ctPvSyncDots() {
+    const car = el('ct-pv-carousel'), dots = el('ct-pv-dots'); if (!car || !dots) return;
+    const active = Math.round(car.scrollLeft / (car.clientWidth || 1));
+    dots.querySelectorAll('.ct-pv-dot').forEach((d, i) => {
+      const on = i === Math.min(active, dots.children.length - 1);
+      d.classList.toggle('bg-white', on);
+      d.classList.toggle('bg-white/40', !on);
+    });
+  }
+  window.ctPvSyncDots = ctPvSyncDots;
 
   // Caption text + char counter only — never touches the cover image (safe per keystroke).
   function ctUpdateCaptionUI() {
@@ -11986,8 +12008,8 @@
       const d = await r.json();
       ctThumbs = (d && d.thumbnails) || [];
     } catch (_) { ctThumbs = []; }
-    ctRenderThumbGrid();
     ctRenderThumbPicker();
+    if (ctTab === 'thumbs') ctRenderThumbGrid();   // build the full grid only when its tab is showing
     ctUpdateCounts();
   }
 
@@ -12064,12 +12086,14 @@
     if (!pick) return;
     if (!store) { pick.innerHTML = ''; ctRenderPhotoPicker(); return; }
     pick.innerHTML = '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">Loading…</div>';
-    await ctEnsureFlowWeeks();
-    try {
-      const r = await fetch(`${WORKER_BASE}?action=marketing-photos&store=${store}&status=new`, { credentials: 'include' });
-      const d = await r.json();
-      ctPhotos = (d && d.photos) || [];
-    } catch (_) { ctPhotos = []; }
+    // Flow weeks + photos are independent — fetch in parallel (grouping still
+    // needs the weeks, so we render after both settle, but save one round-trip).
+    const [, d] = await Promise.all([
+      ctEnsureFlowWeeks(),
+      fetch(`${WORKER_BASE}?action=marketing-photos&store=${store}&status=new`, { credentials: 'include' })
+        .then(r => r.json()).catch(() => ({})),
+    ]);
+    ctPhotos = (d && d.photos) || [];
     ctRenderPhotoPicker();
   }
   window.ctLoadPhotos = ctLoadPhotos;
@@ -12099,17 +12123,20 @@
   }
   function ctPhotoTile(p, order) {
     const type = `<span class="absolute bottom-1 left-1 text-[9px] font-bold uppercase px-1 py-0.5 rounded bg-black/55 text-white">${escapeHtml(p.photo_type || '')}</span>`;
+    const imgTag = `<img src="${WORKER_BASE}?action=photo&id=${p.id}" width="78" height="78" class="w-full h-full object-cover" alt="" loading="lazy" decoding="async">`;
     if (ctPhotoDelMode) {
       const on = ctPhotoDel.has(p.id);
       return `<button type="button" onclick="ctTogglePhotoDelete(${p.id})" class="relative w-[78px] h-[78px] rounded-xl overflow-hidden shrink-0 border-2 ${on ? 'border-op-bad' : 'border-transparent opacity-70 hover:opacity-100'} focus:outline-none transition">
-        <img src="${WORKER_BASE}?action=photo&id=${p.id}" class="w-full h-full object-cover" alt="" loading="lazy">${type}
+        ${imgTag}${type}
         ${on ? '<span class="absolute top-1 right-1 w-5 h-5 rounded-full bg-op-bad text-white text-[11px] font-black grid place-items-center">✓</span>' : ''}
       </button>`;
     }
+    // Badge span is always rendered (hidden when unselected) so selection
+    // toggles can update it in place without rebuilding the tile / re-decoding.
     const idx = order.indexOf(p.id), on = idx > -1;
-    return `<button type="button" onclick="ctTogglePhoto(${p.id})" class="relative w-[78px] h-[78px] rounded-xl overflow-hidden shrink-0 border-2 ${on ? 'border-accent-green' : 'border-transparent opacity-70 hover:opacity-100'} focus:outline-none transition">
-      <img src="${WORKER_BASE}?action=photo&id=${p.id}" class="w-full h-full object-cover" alt="" loading="lazy">${type}
-      ${on ? `<span class="absolute top-1 right-1 w-5 h-5 rounded-full bg-accent-green text-[#06210f] text-[11px] font-black grid place-items-center">${idx + 1}</span>` : ''}
+    return `<button type="button" data-pid="${p.id}" onclick="ctTogglePhoto(${p.id})" class="ct-tile relative w-[78px] h-[78px] rounded-xl overflow-hidden shrink-0 border-2 ${on ? 'border-accent-green' : 'border-transparent opacity-70 hover:opacity-100'} focus:outline-none transition">
+      ${imgTag}${type}
+      <span class="ct-tile-badge absolute top-1 right-1 w-5 h-5 rounded-full bg-accent-green text-[#06210f] text-[11px] font-black grid place-items-center${on ? '' : ' hidden'}">${on ? idx + 1 : ''}</span>
     </button>`;
   }
 
@@ -12149,7 +12176,7 @@
     let c = '';
     for (let i = 0; i < 4; i++) {
       c += shots[i]
-        ? `<div class="relative overflow-hidden rounded-[3px] bg-black/20"><img src="${WORKER_BASE}?action=photo&id=${shots[i].id}" loading="lazy" alt="" class="absolute inset-0 w-full h-full object-cover"></div>`
+        ? `<div class="relative overflow-hidden rounded-[3px] bg-black/20"><img src="${WORKER_BASE}?action=photo&id=${shots[i].id}" loading="lazy" decoding="async" alt="" class="absolute inset-0 w-full h-full object-cover"></div>`
         : `<div class="rounded-[3px] border border-dashed border-[rgba(20,16,8,0.14)] dark:border-op-border"></div>`;
     }
     const peek = `<div class="absolute inset-x-[12%] top-[34%] bottom-[11%] grid grid-cols-2 grid-rows-2 gap-[2px]">${c}</div>`;
@@ -12199,7 +12226,7 @@
       let c = '';
       for (let i = 0; i < 4; i++) {
         c += shots[i]
-          ? `<div class="relative overflow-hidden rounded-[3px] bg-black/20"><img src="${WORKER_BASE}?action=photo&id=${shots[i].id}" loading="lazy" alt="" class="absolute inset-0 w-full h-full object-cover"></div>`
+          ? `<div class="relative overflow-hidden rounded-[3px] bg-black/20"><img src="${WORKER_BASE}?action=photo&id=${shots[i].id}" loading="lazy" decoding="async" alt="" class="absolute inset-0 w-full h-full object-cover"></div>`
           : `<div class="rounded-[3px] border border-dashed border-[rgba(20,16,8,0.14)] dark:border-op-border"></div>`;
       }
       peek = `<div class="absolute inset-x-[12%] top-[34%] bottom-[11%] grid grid-cols-2 grid-rows-2 gap-[2px]">${c}</div>`;
@@ -12298,7 +12325,26 @@
   function ctBackToTypes() { ctOpenType = null; ctPhotoDelMode = false; ctPhotoDel = new Set(); ctRenderPhotoPicker(); }
   window.ctBackToTypes = ctBackToTypes;
 
-  function ctTogglePhoto(id) { if (ctSelPhotos.has(id)) ctSelPhotos.delete(id); else ctSelPhotos.add(id); ctRenderPhotoPicker(); ctRenderPreview(); ctMarkDirty(); }
+  function ctTogglePhoto(id) { if (ctSelPhotos.has(id)) ctSelPhotos.delete(id); else ctSelPhotos.add(id); ctSyncTileSelection(); ctRenderPreview(); ctMarkDirty(); }
+  // Update selection borders + order badges on the visible tiles in place —
+  // NO innerHTML rebuild, so <img> nodes are reused (no re-fetch/re-decode).
+  // Deselecting a middle photo renumbers the rest, so every visible tile is
+  // resynced. Also refreshes the header "N of M attached" count.
+  function ctSyncTileSelection() {
+    const host = el('ct-photo-pick'); if (!host) return;
+    const order = [...ctSelPhotos];
+    host.querySelectorAll('.ct-tile[data-pid]').forEach(btn => {
+      const pid = Number(btn.dataset.pid);
+      const idx = order.indexOf(pid), on = idx > -1;
+      btn.classList.toggle('border-accent-green', on);
+      btn.classList.toggle('border-transparent', !on);
+      btn.classList.toggle('opacity-70', !on);
+      const badge = btn.querySelector('.ct-tile-badge');
+      if (badge) { badge.classList.toggle('hidden', !on); if (on) badge.textContent = idx + 1; }
+    });
+    const cnt = el('ct-photo-count'); if (cnt) cnt.textContent = ctPhotos.length ? `${ctSelPhotos.size} of ${ctPhotos.length} attached` : '';
+  }
+  window.ctSyncTileSelection = ctSyncTileSelection;
   window.ctTogglePhoto = ctTogglePhoto;
 
   function ctPhotoToggleManage() { ctPhotoDelMode = !ctPhotoDelMode; ctPhotoDel = new Set(); ctRenderPhotoPicker(); }
