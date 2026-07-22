@@ -5188,23 +5188,33 @@ function getSessionCookie(request, env) {
 }
 
 // Returns user row or null.
+// Derived R2 key for a photo's small thumbnail (client-generated JPEG). The
+// photo-serve endpoint tries this key for size=thumb and falls back to the
+// original, so no schema/column change is needed.
+function thumbKeyOf(k) { return String(k).replace(/\.[a-z0-9]+$/i, '') + '.thumb.jpg'; }
+
 async function getAuthUser(request, env) {
   if (!env.DB) return null;
   const sessionId = getSessionCookie(request, env);
   if (!sessionId) return null;
   const now = new Date().toISOString();
   const { results } = await env.DB.prepare(
-    `SELECT u.id, u.email, u.role, u.stores, u.status
+    `SELECT u.id, u.email, u.role, u.stores, u.status, s.expires_at
      FROM sessions s JOIN users u ON s.user_id = u.id
      WHERE s.id = ? AND s.expires_at > ? AND u.status = 'active'`
   ).bind(sessionId, now).all();
   if (!results || !results.length) return null;
   const user = results[0];
+  const expiresAt = user.expires_at; delete user.expires_at;
   user.stores = user.stores ? JSON.parse(user.stores) : null;
-  // Roll expiry 7 more days on each use (sliding window)
-  const newExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?')
-    .bind(newExpiry, sessionId).run().catch(() => {});
+  // Sliding 7-day expiry, but roll at most ~once/day. Without this throttle every
+  // request (incl. every ?action=photo image load) fired a session-row UPDATE, so
+  // a folder of dozens of photos became dozens of D1 writes contending on one row.
+  const rollTo = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  if (!expiresAt || (rollTo - new Date(expiresAt).getTime()) > 24 * 60 * 60 * 1000) {
+    env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?')
+      .bind(new Date(rollTo).toISOString(), sessionId).run().catch(() => {});
+  }
   return user;
 }
 
@@ -6120,6 +6130,17 @@ export default {
         const ext = (ct.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "jpg";
         const key = `marketing/${store}/${ptype}/${ym}/${crypto.randomUUID()}.${ext}`;
         await env.MEDIA.put(key, buf, { httpMetadata: { contentType: ct } });
+        // Optional client-generated thumbnail (small JPEG) stored at the derived
+        // key; served for grids/peeks. Best-effort — the original is authoritative.
+        const thumbFile = form.get("thumb");
+        if (thumbFile && typeof thumbFile.arrayBuffer === "function") {
+          try {
+            const tbuf = await thumbFile.arrayBuffer();
+            if (tbuf.byteLength && tbuf.byteLength <= 512 * 1024) {
+              await env.MEDIA.put(thumbKeyOf(key), tbuf, { httpMetadata: { contentType: "image/jpeg" } });
+            }
+          } catch (_) { /* thumb is optional */ }
+        }
         const res = await env.DB.prepare(
           `INSERT INTO marketing_photos (store, photo_type, r2_key, content_type, bytes, uploader, note, status, created_at)
            VALUES (?,?,?,?,?,?,?, 'new', ?)`
@@ -6180,11 +6201,19 @@ export default {
       if (!row) return new Response("Not found", { status: 404, headers: corsHeaders });
       const allow = currentUser ? allowedStores(currentUser) : null;
       if (allow && !allow.includes(row.store)) return new Response("Forbidden", { status: 403, headers: corsHeaders });
-      const obj = await env.MEDIA.get(row.r2_key);
+      // size=thumb → serve the small derivative if present, else fall back to the
+      // original (older photos have no thumb until backfilled).
+      let obj = null, ctype = row.content_type || "image/jpeg";
+      if (url.searchParams.get("size") === "thumb") {
+        obj = await env.MEDIA.get(thumbKeyOf(row.r2_key));
+        if (obj) ctype = "image/jpeg";
+      }
+      if (!obj) obj = await env.MEDIA.get(row.r2_key);
       if (!obj) return new Response("Gone", { status: 404, headers: corsHeaders });
       const h = new Headers(corsHeaders);
-      h.set("Content-Type", row.content_type || "image/jpeg");
-      h.set("Cache-Control", "private, max-age=3600");
+      h.set("Content-Type", ctype);
+      // A given id+size never changes its bytes → cache hard in the browser.
+      h.set("Cache-Control", "private, max-age=2592000, immutable");
       return new Response(obj.body, { headers: h });
     }
 
