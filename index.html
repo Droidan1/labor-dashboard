@@ -410,6 +410,40 @@
       70%  { box-shadow: 0 0 0 12px rgba(34,197,94,0); }
       100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
     }
+
+    /* Bottom-nav center "Submit" action — soft-green tinted squircle. */
+    #bn-submit-photos { color: inherit; }
+    .bn-submit-ic {
+      width: 40px; height: 40px; border-radius: 13px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(34,197,94,.12); color: #16a34a; transition: background .15s ease;
+    }
+    .dark .bn-submit-ic { background: rgba(34,197,94,.16); color: #22c55e; }
+    .bn-submit-ic svg { width: 21px; height: 21px; }
+    /* Slightly stronger tint while the Submit page is the active tab. */
+    #bn-submit-photos.text-accent-green .bn-submit-ic { background: rgba(34,197,94,.22); }
+    .dark #bn-submit-photos.text-accent-green .bn-submit-ic { background: rgba(34,197,94,.26); }
+    /* Non-admin bar: flex groups keep the Submit squircle dead-center.
+       Admins/superusers have no Submit button — the groups collapse
+       (display:contents) into one flat, evenly-spaced 5-icon row. */
+    #bottom-nav .bn-group { display: contents; }
+    #bottom-nav.bn-mgr .bn-group { display: flex; flex: 1 1 0%; }
+    #bottom-nav.bn-mgr .bn-group-r { justify-content: flex-end; }
+    /* Floating island chrome (all roles): full border, rounded, lifted. */
+    .bn-float {
+      border: 1px solid rgba(20,16,8,.10); border-radius: 20px;
+      box-shadow: 0 12px 32px rgba(20,16,8,.16), 0 2px 8px rgba(20,16,8,.08);
+    }
+    .dark .bn-float {
+      border-color: rgba(255,255,255,.10);
+      box-shadow: 0 12px 32px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4);
+    }
+    /* Icon-only + skinny: taller tap targets, no label gap. */
+    .bn-skinny .bn-tab { padding-top: 9px; padding-bottom: 9px; }
+    .bn-skinny #bn-submit-photos { padding: 0 4px; }
+    /* Scroll-hide: translateY(100%) alone leaves a floating bar peeking
+       above its bottom offset — push it fully past offset + shadow. */
+    .bn-float.translate-y-full { transform: translateY(calc(100% + 44px + env(safe-area-inset-bottom))); }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -594,22 +628,32 @@
     </aside>
     <div id="sidebar-overlay" class="sidebar-overlay" onclick="document.getElementById('sidebar').classList.add('collapsed');this.style.display='none';localStorage.setItem('sidebarCollapsed','true')"></div>
 
-    <nav id="bottom-nav" class="lg:hidden fixed left-0 right-0 bottom-0 z-30 flex border-t border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel transition-transform duration-300" style="padding:10px 6px calc(12px + env(safe-area-inset-bottom))">
-      <button data-tab="dashboard" onclick="navigateToPage('dashboard')" class="bn-tab flex-1 flex flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
-        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Dashboard
+    <!-- Floating icon-only bar (all roles). Non-admins get the centered Submit
+         squircle (.bn-mgr groups); admins/superusers get 5 flat even icons and
+         reach Submit Photos via the More sheet. Labels removed → aria-labels. -->
+    <nav id="bottom-nav" class="lg:hidden fixed z-30 flex items-center bg-opl-panel dark:bg-op-panel bn-float bn-skinny transition-transform duration-300" style="left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));padding:5px 8px">
+      <div class="bn-group flex-1 flex">
+        <button data-tab="dashboard" aria-label="Dashboard" onclick="navigateToPage('dashboard')" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        </button>
+        <button data-tab="weekly-summary" aria-label="Retail" onclick="navigateToPage('weekly-summary')" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        </button>
+        <button id="bn-inventory" data-tab="inventory" aria-label="Inventory" onclick="navigateToPage('inventory')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+        </button>
+      </div>
+      <button id="bn-submit-photos" data-tab="submit-photos" onclick="navigateToPage('submit-photos')" aria-label="Submit photos" class="bn-tab hidden flex-shrink-0 flex-col items-center font-semibold">
+        <span class="bn-submit-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
       </button>
-      <button data-tab="weekly-summary" onclick="navigateToPage('weekly-summary')" class="bn-tab flex-1 flex flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
-        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Retail
-      </button>
-      <button id="bn-inventory" data-tab="inventory" onclick="navigateToPage('inventory')" class="bn-tab hidden flex-1 flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
-        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>Inventory
-      </button>
-      <button id="bn-supply" data-tab="supply-request" onclick="navigateToPage('supply-request')" class="bn-tab hidden flex-1 flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
-        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>Supply
-      </button>
-      <button id="bn-more" onclick="openMoreSheet()" class="bn-tab flex-1 flex flex-col items-center gap-1 py-1 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim">
-        <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>More
-      </button>
+      <div class="bn-group bn-group-r flex-1 flex justify-end">
+        <button id="bn-supply" data-tab="supply-request" aria-label="Supply" onclick="navigateToPage('supply-request')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+        </button>
+        <button id="bn-more" aria-label="More" onclick="openMoreSheet()" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+        </button>
+      </div>
     </nav>
 
     <!-- Main content -->
@@ -3066,7 +3110,7 @@
       box.style.cssText = `max-width:380px;width:100%;background:${bg};color:${fg};border:1px solid ${border};border-radius:16px;padding:22px 22px 18px;box-shadow:0 20px 60px rgba(0,0,0,.4);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;`;
       if (title) { const h = document.createElement('div'); h.textContent = title; h.style.cssText = `font-size:16px;font-weight:700;margin-bottom:8px;color:${fg};`; box.appendChild(h); }
       const p = document.createElement('div'); p.textContent = message;
-      p.style.cssText = `font-size:14px;line-height:1.5;color:${dim};margin-bottom:18px;white-space:pre-wrap;`; box.appendChild(p);
+      p.style.cssText = `font-size:14px;line-height:1.5;color:${dim};margin-bottom:18px;white-space:pre-wrap;overflow-wrap:anywhere;`; box.appendChild(p);
       const rowEl = document.createElement('div'); rowEl.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
       let done = false;
       const onKey = (e) => { if (e.key === 'Escape') finish(cancelText ? false : true); else if (e.key === 'Enter') finish(true); };
@@ -5009,7 +5053,6 @@
             <div class="mt-1.5 text-xs tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(m.store.split("/")[0])}</div>
           </div>
           <div class="flex items-center gap-2">
-            ${isCurrentWeek ? `<span id="score-ring-${cardCode}"></span>` : ''}
             <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-[0.06em]"
                   style="border:1px solid ${v1Live ? 'rgba(34,197,94,0.4)' : 'rgba(136,147,167,0.35)'};color:${v1Live ? V1G : '#8893a7'}">
               <span style="width:6px;height:6px;border-radius:9999px;background:${v1Live ? V1G : '#8893a7'}"></span>${v1Live ? 'LIVE' : 'OFFLINE'}
@@ -5070,12 +5113,17 @@
       if (isTodayOnly && dashCardCh[cardCode]) applyCardChannel(cardCode);
       loadStoreHourlySpark(v1SparkKey, v1SparkDate, v1SparkColor, v1SparkId);
     }
-    if (isCurrentWeek) loadStoreScores();
+    // AI budget-odds score hidden from store cards (2026-07 — in the way, not
+    // used enough). Re-enable by restoring the #score-ring slot in the card
+    // header template above and uncommenting the call below.
+    // if (isCurrentWeek) loadStoreScores();
   }
 
   // ═══════════════════════════════════════════════════════════════
-  //  WEEKLY BUDGET ODDS (per-store score ring)
+  //  WEEKLY BUDGET ODDS (per-store score ring)  — CURRENTLY DISABLED
   // ═══════════════════════════════════════════════════════════════
+  // Hidden from store cards 2026-07 (see the disabled loadStoreScores() caller
+  // and the removed #score-ring slot). Functions kept intact for re-enable.
   // Fetched once per few minutes, patched into each current-week card's header
   // #score-ring-<code>. A compact radial gauge (number + colored ring); tapping
   // opens a popover with the run-rate needed.
@@ -5463,7 +5511,11 @@
         if (r.bTotal != null) dayMap[key].budget += r.bTotal;
         const liveTotal = isCurrentWeek ? (liveCloverData[storeName]?.total ?? null) : null;
         const isToday = isCurrentWeek && r.date.toDateString() === todayStr;
-        const sales = (isToday && liveTotal != null && liveTotal > 0) ? liveTotal : r.aTotal;
+        const posSales = (isToday && liveTotal != null && liveTotal > 0) ? liveTotal : r.aTotal;
+        // Include manually-entered auction so the combined breakdown matches the
+        // store cards and the daily email. aAuction is null for today's live row
+        // (set in loadStoreFromD1), so today keeps its live-POS behavior.
+        const sales = posSales != null ? posSales + (r.aAuction ?? 0) : null;
         if (sales != null) {
           dayMap[key].sales += sales;
           dayMap[key].hasSales = true;
@@ -16450,9 +16502,14 @@
 
     function syncBottomNav(page) {
       // role-gated tabs / rows
+      // Admins/superusers keep today's flat bar; everyone else gets the
+      // centered Submit button. (Inventory tab is the admin/superuser marker.)
+      var isAdminBar = vis('nav-inventory');
+      if (nav) nav.classList.toggle('bn-mgr', !isAdminBar);
       gate('bn-inventory', vis('nav-inventory'), 'flex');
       gate('bn-supply', vis('nav-supply-request'), 'flex');
-      gate('more-submit-photos', vis('nav-submit-photos'));
+      gate('bn-submit-photos', !isAdminBar, 'flex');              // center Submit: non-admins only
+      gate('more-submit-photos', isAdminBar && vis('nav-submit-photos')); // admins reach it via More
       gate('more-flow-calendar', vis('nav-flow-calendar'));
       gate('more-content', vis('nav-content'));
       gate('more-marketing', vis('nav-marketing-ads'));
@@ -16460,7 +16517,8 @@
       gate('more-admin', vis('nav-admin-settings'));
       gate('more-settings', vis('nav-settings'));
       // active tab
-      var morePages = { 'marketing': 1, 'flow-calendar': 1, 'submit-photos': 1, 'content': 1, 'users': 1, 'admin-settings': 1, 'settings': 1 };
+      var morePages = { 'marketing': 1, 'flow-calendar': 1, 'content': 1, 'users': 1, 'admin-settings': 1, 'settings': 1 };
+      if (isAdminBar) morePages['submit-photos'] = 1; // admins: Submit Photos lives under More
       // Detail pages are sub-pages of Dashboard — keep that tab highlighted.
       var detailPages = { 'store-detail': 1, 'all-stores-detail': 1 };
       var activeTab = morePages[page] ? 'more' : (detailPages[page] ? 'dashboard' : page);

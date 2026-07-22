@@ -3544,6 +3544,113 @@ async function buildDailySummaryData(env, date) {
   return { date, stores, totals: { retail: totRetail, bin: totBin, auction: totAuction, sales: totSales, budget: totBudget } };
 }
 
+// Consolidated L2 category sales for ONE day across all stores, read from the
+// nightly `items:<store>:<date>` KV snapshots (no live Clover calls). Returns
+// merged { categories[] (sorted by net desc), totals } plus the day's auction
+// dollars (rendered as a sales-only row so the table Total ties to the By-Store
+// Total). Returns null when no snapshots exist for the day.
+async function buildDailyCategoryData(env, date) {
+  if (!env.SALES_SNAPSHOTS) return null;
+  const snaps = await Promise.all(
+    ALL_STORES.map(s => env.SALES_SNAPSHOTS.get(`items:${s.toLowerCase()}:${date}`, "json").catch(() => null))
+  );
+  const present = snaps.filter(Boolean);
+  if (!present.length) return null;
+  const merged = mergeItemSnapshots(present); // { categories, totals, orderCount }
+  if (!merged || !merged.categories || !merged.categories.length) return null;
+  let auction = 0;
+  if (env.DB) {
+    // Scope to ALL_STORES: daily_sales still holds rows for retired BL12
+    // (Wyoming), whose budget/auction duplicate BL16 (Indy East) — see the
+    // store filter in buildWeeklyByDayData.
+    const row = await env.DB.prepare(
+      `SELECT SUM(auction) AS a FROM daily_sales WHERE date = ? AND store IN (${ALL_STORES.map(() => "?").join(",")})`
+    ).bind(date, ...ALL_STORES).first().catch(() => null);
+    auction = Number(row && row.a) || 0;
+  }
+  return { categories: merged.categories, totals: merged.totals, auction };
+}
+
+// Consolidated week-by-day actual vs budget for the retail week containing
+// `date`, for the app-style "Daily Breakdown" table. Actual = POS total +
+// auction (matches the By-Store Total). Month- and week-to-date totals prorate
+// budget to the ELAPSED days (through `date`), so the % is a true like-for-like
+// rather than partial sales vs a full-period budget. Returns null on failure.
+async function buildWeeklyByDayData(env, date) {
+  if (!env.DB) return null;
+  try {
+    const year = date.slice(0, 4);
+    const wkRow = await env.DB.prepare("SELECT week FROM daily_sales WHERE date = ? LIMIT 1").bind(date).first().catch(() => null);
+    const weekLabel = wkRow && wkRow.week != null ? String(wkRow.week) : null;
+    let dates = weekLabel ? await resolveWeekDates(env, weekLabel, year) : null;
+    if (!dates || !dates.length) return null;
+    dates = dates.slice().sort();
+
+    // Scope every aggregate to ALL_STORES. daily_sales still holds rows for the
+    // retired BL12 (Wyoming) carrying a duplicate of BL16 (Indy East)'s budget
+    // with no sales, so an unfiltered SUM(budget) double-counts Indy's budget
+    // (~$65k/month) while sales look fine. Table 1 avoids this by iterating
+    // ALL_STORES; these cross-store aggregates must filter explicitly.
+    const storePh = ALL_STORES.map(() => "?").join(",");
+    const ph = dates.map(() => "?").join(",");
+    const { results } = await env.DB.prepare(
+      `SELECT date, SUM(total) AS pos, SUM(auction) AS auction, SUM(budget) AS budget, COUNT(total) AS reported
+       FROM daily_sales WHERE date IN (${ph}) AND store IN (${storePh}) GROUP BY date`
+    ).bind(...dates, ...ALL_STORES).all();
+    const byDate = {};
+    for (const r of (results || [])) byDate[r.date] = r;
+
+    // The email goes out the morning after the covered date; that calendar day
+    // (if it falls inside this week) is "today" — in progress, not yet reported.
+    const sendDay = new Date(new Date(date + "T12:00:00Z").getTime() + 86400000).toISOString().slice(0, 10);
+
+    let wtdSales = 0, wtdBudget = 0, reportedDays = 0;
+    const days = dates.map(dd => {
+      const r = byDate[dd];
+      const hasActual = !!(r && r.pos != null);
+      const actual = hasActual ? (Number(r.pos) || 0) + (Number(r.auction) || 0) : null;
+      const budget = r ? (Number(r.budget) || 0) : 0;
+      let state;
+      if (dd <= date) {
+        wtdBudget += budget;                 // elapsed day → its budget counts
+        if (hasActual) { state = "reported"; reportedDays++; wtdSales += actual; }
+        else state = "pending";              // elapsed but no data (rare)
+      } else if (dd === sendDay) {
+        state = "today";
+      } else {
+        state = "pending";
+      }
+      const d12 = new Date(dd + "T12:00:00Z");
+      return {
+        date: dd,
+        dow: d12.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase(),
+        dayNum: d12.getUTCDate(),
+        actual, budget, state,
+        variance: state === "reported" ? actual - budget : null,
+      };
+    });
+
+    // Month-to-date: reported sales vs budget over month-start..covered-date.
+    const monthStart = date.slice(0, 7) + "-01";
+    const mRow = await env.DB.prepare(
+      `SELECT SUM(total) AS pos, SUM(auction) AS auction, SUM(budget) AS budget
+       FROM daily_sales WHERE date >= ? AND date <= ? AND store IN (${storePh})`
+    ).bind(monthStart, date, ...ALL_STORES).first().catch(() => null);
+    const mtdSales = mRow ? (Number(mRow.pos) || 0) + (Number(mRow.auction) || 0) : 0;
+    const mtdBudget = mRow ? (Number(mRow.budget) || 0) : 0;
+
+    return {
+      weekLabel,
+      days,
+      wtd: { sales: wtdSales, budget: wtdBudget, reportedDays, totalDays: dates.length },
+      mtd: { sales: mtdSales, budget: mtdBudget, monthLabel: new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long" }) },
+    };
+  } catch (e) {
+    console.error("buildWeeklyByDayData error:", e.message);
+    return null;
+  }
+}
+
 // ─── AI Morning Brief ──────────────────────────────────────────────────────
 // A 2–4 sentence narrative summary of yesterday's cross-store performance,
 // written by Claude (Sonnet 4.6). One non-streaming Messages API call per
@@ -3848,7 +3955,9 @@ function timingSafeEqualStr(a, b) {
 
 function _fmtDollars(v) {
   if (v == null) return '—';
-  return '$' + v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  const n = Number(v);
+  const abs = Math.abs(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  return (n < 0 ? '-$' : '$') + abs;
 }
 function _fmtVsLW(sales, prior) {
   if (sales == null || prior == null || prior === 0) return '—';
@@ -3865,8 +3974,157 @@ function _vsColor(sales, ref) {
   if (sales == null || ref == null || ref === 0) return '#888';
   return sales >= ref ? '#2d8a2d' : '#c0392b';
 }
+function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function _fmtInt(v) { return (Math.round(Number(v) || 0)).toLocaleString('en-US'); }
+function _fmtVarDollars(v) {
+  if (v == null) return '—';
+  const sign = v >= 0 ? '+' : '−';
+  return `${sign}$${Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 
-function buildSummaryEmailHtml(data, brief) {
+// Consolidated L2 category table (Category | Units | Net Sales | ASP) with an
+// Auction sales-only row so the Total ties to the By-Store Total. Returns '' if
+// no data so the email simply omits the section.
+function renderCategoryTableHtml(cat) {
+  if (!cat || !cat.categories || !cat.categories.length) return '';
+  const catRow = (name, qty, net, asp, bg = '') => `
+    <tr style="border-bottom:1px solid #eee${bg}">
+      <td style="padding:8px 8px 8px 22px;color:#333">${_esc(name)}</td>
+      <td style="padding:8px 8px;text-align:right;color:${qty == null ? '#bbb' : '#666'}">${qty == null ? '—' : _fmtInt(qty)}</td>
+      <td style="padding:8px 8px;text-align:right;font-weight:600;color:#111">${_fmtDollars(net)}</td>
+      <td style="padding:8px 14px 8px 8px;text-align:right;color:${asp == null ? '#bbb' : '#666'}">${asp == null ? '—' : _fmtDollars(asp)}</td>
+    </tr>`;
+  // Fold low-value / utility L2s (Gift Cards, Custom Sales, refunds, Non-Item…)
+  // into a single "Other" row so the table stays readable and still ties to the
+  // Total. Threshold is on |net| so a large refund category stays visible.
+  const CATEGORY_MIN_NET = 250;
+  const big = [], small = [];
+  for (const c of cat.categories) {
+    (Math.abs(Number(c.netSales) || 0) < CATEGORY_MIN_NET ? small : big).push(c);
+  }
+  let rows = big.map(c => catRow(c.category, c.qty, c.netSales, c.asp)).join('');
+  if (small.length) {
+    const oNet = small.reduce((s, c) => s + (Number(c.netSales) || 0), 0);
+    const oQty = small.reduce((s, c) => s + (Number(c.qty) || 0), 0);
+    rows += catRow('Other', oQty, oNet, null);   // ASP omitted — meaningless for a mixed bucket
+  }
+  const auctionRow = (cat.auction > 0) ? catRow('Auction', null, cat.auction, null, ';background:#fbfaf5') : '';
+  const totNet = (Number(cat.totals.netSales) || 0) + (Number(cat.auction) || 0);
+  return `
+      <h3 style="margin:34px 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#194975">Category Sales · All Stores</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="background:#3BB54A;color:#fff">
+            <th style="padding:9px 8px 9px 22px;text-align:left;font-weight:600">Category</th>
+            <th style="padding:9px 8px;text-align:right;font-weight:600">Units</th>
+            <th style="padding:9px 8px;text-align:right;font-weight:600">Net Sales</th>
+            <th style="padding:9px 14px 9px 8px;text-align:right;font-weight:600">ASP</th>
+          </tr>
+        </thead>
+        <tbody>${rows}${auctionRow}</tbody>
+        <tfoot>
+          <tr style="background:#f7f7f7;font-weight:700;border-top:2px solid #3BB54A">
+            <td style="padding:10px 8px 10px 22px;color:#111">Total</td>
+            <td style="padding:10px 8px;text-align:right;color:#111">${_fmtInt(cat.totals.qty)}</td>
+            <td style="padding:10px 8px;text-align:right;color:#111">${_fmtDollars(totNet)}</td>
+            <td style="padding:10px 14px 10px 8px;text-align:right;color:#111">${_fmtDollars(cat.totals.asp)}</td>
+          </tr>
+        </tfoot>
+      </table>`;
+}
+
+// Email-safe progress bar (percent-width nested table; no flexbox — Outlook OK).
+function _barHtml(pct, color) {
+  const w = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+  const rest = 100 - w;
+  const fill = w > 0 ? `<td width="${w}%" style="background:${color};font-size:0;line-height:0;height:5px;border-radius:4px">&nbsp;</td>` : '';
+  const empty = rest > 0 ? `<td width="${rest}%" style="font-size:0;line-height:0;height:5px">&nbsp;</td>` : '';
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;background:#edeff2;border-radius:4px;table-layout:fixed;margin-top:7px"><tr>${fill}${empty}</tr></table>`;
+}
+
+// App-style "Daily Breakdown" — one card per day (date badge, actual, budget,
+// progress bar, variance) plus a Month-to-Date header and Week-to-Date footer,
+// both with budget prorated to elapsed days. Returns '' if no data.
+function renderWeeklyBreakdownHtml(wk) {
+  if (!wk || !wk.days || !wk.days.length) return '';
+  const dayRows = wk.days.map(d => {
+    const isToday = d.state === 'today';
+    const badgeBg = isToday ? '#22c55e' : '#f1f3f5';
+    const badgeDow = isToday ? '#eafff0' : '#9aa1a9';
+    const badgeNum = isToday ? '#ffffff' : '#333333';
+    // Only fully-reported days show a dollar figure. Today (partial/in-progress)
+    // and pending/future days render "—" even if D1 holds a 0 or partial value.
+    const showActual = d.state === 'reported' && d.actual != null;
+    const actualStr = showActual ? _fmtDollars(d.actual) : '—';
+    const actualColor = showActual ? '#111' : '#9aa1a9';
+    let attain = 0, barColor = '#22c55e';
+    if (d.state === 'reported' && d.budget > 0) { attain = (d.actual / d.budget) * 100; barColor = attain >= 100 ? '#22c55e' : '#F5A623'; }
+    const bar = d.state === 'reported' ? _barHtml(attain, barColor) : _barHtml(0, barColor);
+    let varStr = '—', varColor = '#9aa1a9';
+    if (d.state === 'reported') { varStr = _fmtVarDollars(d.variance); varColor = d.variance >= 0 ? '#2d8a2d' : '#c0392b'; }
+    else if (d.state === 'pending') { varStr = 'pending'; }
+    return `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-bottom:1px solid #eef0f2">
+        <tr>
+          <td width="52" valign="middle" style="padding:11px 0">
+            <table role="presentation" width="46" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+              <tr><td align="center" style="background:${badgeBg};border-radius:11px;padding:6px 0">
+                <div style="font-size:9px;font-weight:800;letter-spacing:.05em;color:${badgeDow}">${d.dow}</div>
+                <div style="font-size:18px;font-weight:800;line-height:1.05;color:${badgeNum}">${d.dayNum}</div>
+              </td></tr>
+            </table>
+          </td>
+          <td valign="middle" style="padding:11px 0 11px 14px">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+              <tr>
+                <td style="font-size:18px;font-weight:800;color:${actualColor}">${actualStr}</td>
+                <td align="right" style="font-size:12px;color:#9aa1a9">vs ${_fmtDollars(d.budget)}</td>
+              </tr>
+            </table>
+            ${bar}
+          </td>
+          <td width="104" valign="middle" align="right" style="padding:11px 0;font-size:14px;font-weight:800;color:${varColor}">${varStr}</td>
+        </tr>
+      </table>`;
+  }).join('');
+
+  const m = wk.mtd, w = wk.wtd;
+  const mVar = m.sales - m.budget, mColor = mVar >= 0 ? '#2d8a2d' : '#c0392b';
+  const wVar = w.sales - w.budget, wColor = wVar >= 0 ? '#2d8a2d' : '#c0392b';
+  const mtdHeader = `
+      <div style="background:#f0fbf3;border:1px solid #d7efdd;border-radius:8px;padding:11px 14px;margin-bottom:12px">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+          <tr>
+            <td style="font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#2d8a2d">${_esc(m.monthLabel)} · Month to Date</td>
+            <td align="right" style="font-size:14px;font-weight:800;color:${mColor}">${_fmtVarDollars(mVar)}</td>
+          </tr>
+          <tr><td colspan="2" style="padding-top:3px">
+            <span style="font-size:17px;font-weight:800;color:#111">${_fmtDollars(m.sales)}</span>
+            <span style="color:#c4c9cf">/</span>
+            <span style="font-size:14px;color:#8a929c;font-weight:600">${_fmtDollars(m.budget)}</span>
+          </td></tr>
+        </table>
+      </div>`;
+  const weekFooter = `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-top:2px solid #3BB54A;margin-top:2px">
+        <tr>
+          <td style="padding-top:13px">
+            <span style="font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#194975">Week ${_esc(wk.weekLabel || '')} · to date</span><br>
+            <span style="font-size:17px;font-weight:800;color:#111">${_fmtDollars(w.sales)}</span>
+            <span style="font-size:13px;color:#8a929c;font-weight:600">vs ${_fmtDollars(w.budget)}</span>
+            <span style="font-size:12px;color:#9aa1a9">· ${w.reportedDays} of ${w.totalDays} days reported</span>
+          </td>
+          <td align="right" valign="bottom" style="padding-top:13px;font-size:15px;font-weight:800;color:${wColor}">${_fmtVarDollars(wVar)}</td>
+        </tr>
+      </table>`;
+  return `
+      <h3 style="margin:34px 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#194975">Daily Breakdown · All Stores</h3>
+      ${mtdHeader}
+      ${dayRows}
+      ${weekFooter}`;
+}
+
+function buildSummaryEmailHtml(data, brief, categoryData, weeklyData) {
   const { date, stores, totals } = data;
   const displayDate = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 
@@ -3885,6 +4143,7 @@ function buildSummaryEmailHtml(data, brief) {
       <td style="padding:9px 8px;text-align:right;color:#666">${_fmtDollars(bin)}</td>
       <td style="padding:9px 8px;text-align:right;color:${auction ? '#666' : '#bbb'}">${_fmtDollars(auction)}</td>
       <td style="padding:9px 8px;text-align:right;font-weight:700;color:#111;background:#f4faf5">${_fmtDollars(sales)}</td>
+      <td style="padding:9px 8px;text-align:right;color:#333">${_fmtDollars(budget)}</td>
       <td style="padding:9px 14px 9px 8px;text-align:right;color:${_vsColor(sales,budget)}">${_fmtVsBudget(sales,budget)}</td>
     </tr>`).join('');
 
@@ -3904,6 +4163,7 @@ function buildSummaryEmailHtml(data, brief) {
             <th style="padding:9px 8px;text-align:right;font-weight:600">${dot('#bcd9ff')}BIN</th>
             <th style="padding:9px 8px;text-align:right;font-weight:600">${dot('#d6caff')}Auction</th>
             <th style="padding:9px 8px;text-align:right;font-weight:700;background:#33a544">Total</th>
+            <th style="padding:9px 8px;text-align:right;font-weight:600">Budget</th>
             <th style="padding:9px 14px 9px 8px;text-align:right;font-weight:600">vs Budget</th>
           </tr>
         </thead>
@@ -3915,10 +4175,13 @@ function buildSummaryEmailHtml(data, brief) {
             <td style="padding:11px 8px;text-align:right;color:#333">${_fmtDollars(tbn)}</td>
             <td style="padding:11px 8px;text-align:right;color:#333">${_fmtDollars(tau)}</td>
             <td style="padding:11px 8px;text-align:right;color:#111;background:#eef7f0">${_fmtDollars(ts)}</td>
+            <td style="padding:11px 8px;text-align:right;color:#111">${_fmtDollars(tb)}</td>
             <td style="padding:11px 14px 11px 8px;text-align:right;color:${_vsColor(ts,tb)}">${_fmtVsBudget(ts,tb)}</td>
           </tr>
         </tfoot>
       </table>
+      ${renderCategoryTableHtml(categoryData)}
+      ${renderWeeklyBreakdownHtml(weeklyData)}
       <p style="margin-top:28px;font-size:12px;color:#aaa">
         <a href="https://www.retjghub.com" style="color:#3BB54A;text-decoration:none">Open Dashboard</a>
         &nbsp;·&nbsp; Bargain Lane Notification System
@@ -3931,8 +4194,23 @@ function buildSummaryEmailHtml(data, brief) {
 async function dispatchDailySummary(env, date) {
   if (!env.DB) return { error: 'DB not configured' };
 
-  const { data, brief } = await buildAndStoreBrief(env, date);
+  // AI Morning Brief is temporarily removed from the daily email (2026-07 — in
+  // the way and not used enough). We build the summary data directly and skip
+  // brief generation, so no Sonnet call runs on the daily path. The machinery
+  // (buildAndStoreBrief / generateMorningBrief) and the daily-brief /
+  // generate-brief endpoints stay intact for a future re-enable: restore the
+  // buildAndStoreBrief call and pass `brief` to buildSummaryEmailHtml below.
+  const data = await buildDailySummaryData(env, date);
   const { sales: ts, budget: tb } = data.totals;
+
+  // New tables: consolidated L2 categories (from KV item snapshots) and the
+  // app-style week-by-day breakdown (one D1 query). Both are best-effort — a
+  // null result just omits that section from the email.
+  const [categoryData, weeklyData] = await Promise.all([
+    buildDailyCategoryData(env, date).catch(() => null),
+    buildWeeklyByDayData(env, date).catch(() => null),
+  ]);
+  const emailHtml = buildSummaryEmailHtml(data, null, categoryData, weeklyData);
 
   // Short push body
   const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
@@ -3998,7 +4276,7 @@ async function dispatchDailySummary(env, date) {
             from: 'noreply@retjghub.com',
             to: user.email,
             subject: `Sales Summary — ${displayDate}`,
-            html: buildSummaryEmailHtml(data, brief),
+            html: emailHtml,
           }),
         });
         if (res.ok) {
@@ -9382,6 +9660,31 @@ export default {
       try {
         const result = await dispatchDailySummary(env, dateParam);
         return new Response(JSON.stringify(result), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=preview-daily-summary[&date=YYYY-MM-DD]
+    // Renders the daily-summary email HTML WITHOUT sending anything. Read-only,
+    // superuser/admin-secret only. Used to eyeball the layout in a browser.
+    if (request.method === "GET" && url.searchParams.get("action") === "preview-daily-summary") {
+      const isAdminReq = request.headers.get('X-Snapshot-Secret') === env.SNAPSHOT_SECRET;
+      if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      const dateParam = url.searchParams.get("date") || (() => {
+        const y = new Date(); y.setUTCDate(y.getUTCDate() - 1);
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(y);
+      })();
+      try {
+        const data = await buildDailySummaryData(env, dateParam);
+        const [categoryData, weeklyData] = await Promise.all([
+          buildDailyCategoryData(env, dateParam).catch(() => null),
+          buildWeeklyByDayData(env, dateParam).catch(() => null),
+        ]);
+        const html = buildSummaryEmailHtml(data, null, categoryData, weeklyData);
+        return new Response(html, { headers: { ...corsHeaders, "Content-Type": "text/html; charset=utf-8" } });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
