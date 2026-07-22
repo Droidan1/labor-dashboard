@@ -481,6 +481,17 @@
     /* Horizontal snap scroller (Content live-preview carousel) — no scrollbar. */
     .ct-hscroll { -ms-overflow-style: none; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
     .ct-hscroll::-webkit-scrollbar { display: none; }
+    /* Bottom-nav clearance. The floating nav is offset by
+       env(safe-area-inset-bottom) [bottom:calc(12px + env(...))], so the
+       scroller's bottom padding must include that inset too — otherwise on
+       Android gesture-nav phones (nonzero inset) the bar rises and hides the
+       last content (e.g. the Supply page's Submit button), which reads as
+       "can't scroll down". 7rem + inset keeps ~32px clearance on every device.
+       Higher specificity than max-lg:pb-24, which stays as the env()-less
+       fallback. */
+    @media not all and (min-width: 1024px) {
+      #main-scroll { padding-bottom: calc(7rem + env(safe-area-inset-bottom)); }
+    }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -6690,6 +6701,11 @@
     if (pushHistory && currentPage && currentPage !== page) {
       pushNavHistory();
     }
+    // Defensive: never let a leaked scroll-lock survive a page change. The
+    // hourly-snapshot overlay sets body.style.overflow='hidden' and only
+    // restores it via its own Close button; if it's ever dismissed another way
+    // (Android back gesture, etc.) scrolling would stay frozen app-wide.
+    if (document.body.style.overflow) document.body.style.overflow = '';
     const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
