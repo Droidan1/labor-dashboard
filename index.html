@@ -12565,8 +12565,9 @@
   window.ctRenderPipeline = ctRenderPipeline;
 
   // ── Published archive: Week folder → post-type sub-folder → post cards ──
-  // Week = the retail week a post was published (updated_at proxy → created_at).
-  function ctPubDateOf(p) { return p.updated_at || p.created_at || ''; }
+  // Week = the retail week a post was published (real published_at; older rows
+  // fall back to updated_at → created_at).
+  function ctPubDateOf(p) { return p.published_at || p.updated_at || p.created_at || ''; }
   function ctPubWeekGroups(posts) {
     const groups = {};
     for (const p of posts) {

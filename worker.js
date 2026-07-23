@@ -5392,8 +5392,8 @@ async function publishDraft(env, { draftId, published, token }) {
   if (ok) {
     // Don't silently swallow: a failed UPDATE after a successful post strands the row.
     // Retry once; if it still fails the log row proves success for the Phase 6 reaper.
-    try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=? WHERE id=?").bind(published ? "published" : "approved", now, draftId).run(); }
-    catch (_) { try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=? WHERE id=?").bind(published ? "published" : "approved", now, draftId).run(); } catch (_) {} }
+    try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(published ? "published" : "approved", now, published ? now : null, draftId).run(); }
+    catch (_) { try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(published ? "published" : "approved", now, published ? now : null, draftId).run(); } catch (_) {} }
   }
   if (!ok) return { ok: false, error: "Facebook post failed", detail: fj && fj.error, status: 502 };
   return {
@@ -5477,7 +5477,7 @@ async function processScheduledPosts(env, now) {
   for (const row of (stale.results || [])) {
     const done = await alreadyPosted(row.id);
     if (done && done.post_id) {
-      await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=? WHERE id=? AND status='publishing'").bind(nowIso, row.id).run().catch(() => {});
+      await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=? AND status='publishing'").bind(nowIso, nowIso, row.id).run().catch(() => {});
     } else if ((row.publish_attempts || 0) >= MAX_ATTEMPTS) {
       await failSchedule(env, row.id, 'Gave up after repeated interruptions', nowIso, true);
     } else {
@@ -5505,7 +5505,7 @@ async function processScheduledPosts(env, now) {
     // 5. Reconcile-before-publish — the only guard against an ambiguous-outcome duplicate.
     const prior = await alreadyPosted(row.id);
     if (prior && prior.post_id) {
-      await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=? WHERE id=?").bind(nowIso, row.id).run().catch(() => {});
+      await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(nowIso, nowIso, row.id).run().catch(() => {});
       out.published++; continue;
     }
     // 6. Publish via the shared publisher, honoring publish_live (default 1 = LIVE).
