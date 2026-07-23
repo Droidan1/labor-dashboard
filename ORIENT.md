@@ -45,6 +45,10 @@ An installable **PWA sales + labor dashboard** for the Bargain Lane / RETJG reta
 - **Repo:** github.com/Droidan1/labor-dashboard (default branch `main`)
 - **Deep knowledge:** the per-topic notes in Claude's auto-memory (`~/.claude/projects/-Users-brianhoward-Desktop-labor-dashboard/memory/`) — deploy mechanics, marketing pipeline, staging infra, etc.
 
+## Recent changes — 2026-07-23
+
+- **Content: a post moves to Scheduled the instant Publish is clicked** (`main` @ `d23bf09`, sw `v49`, frontend only). `ctPublishDraft` awaited the *entire* `publish-draft` request before re-rendering the board, so a multi-photo Facebook post (which can take a minute+, or hit a proxy timeout) left the card sitting in **Drafts** with no feedback until the request returned or the user manually refreshed — then it jumped to Scheduled. It now **optimistically flips the local draft to `publishing`** (a status that already renders in the **Scheduled** lane with the live progress bar) the moment Publish is confirmed, stamping a fresh `claimed_at` so the bar + elapsed timer start from now rather than the draft's stale `updated_at`. The existing `ctLoadDrafts()` call still reconciles to the real server status afterward (published / error / etc.), so the optimism is never load-bearing; the flip is a no-op for an already-published or unknown draft.
+
 ## Recent changes — 2026-07-22
 
 A heavy day on the **Content** (Content Studio composer) and photo pipeline, all shipped to prod (`main` advanced `111c815` → **`fd9ed6e`**, sw **`v36` → `v46`**). Newest last:
