@@ -12345,8 +12345,12 @@
     const body = tg.photos.length
       ? `<div class="flex flex-wrap gap-2.5">${tg.photos.map(p => ctPhotoTile(p, order)).join('')}</div>`
       : '<div class="text-center py-7 text-opl-inkDim dark:text-op-inkDim text-[12.5px]">No photos in this folder.</div>';
+    const allSel = tg.photos.length > 0 && tg.photos.every(p => ctSelPhotos.has(p.id));
+    const selAllBtn = (tg.photos.length && !ctPhotoDelMode)
+      ? `<button type="button" onclick="ctSelectAllInFolder()" class="shrink-0 text-[12px] font-semibold text-accent-green hover:underline transition-colors">${allSel ? 'Deselect all' : 'Select all'}</button>`
+      : '';
     const manageBtn = tg.photos.length
-      ? `<button type="button" onclick="ctPhotoToggleManage()" class="ml-auto shrink-0 text-[12px] font-semibold ${ctPhotoDelMode ? 'text-op-bad' : 'text-opl-inkDim dark:text-op-inkDim hover:text-op-bad'} transition-colors">${ctPhotoDelMode ? 'Cancel' : 'Select to delete'}</button>`
+      ? `<button type="button" onclick="ctPhotoToggleManage()" class="shrink-0 text-[12px] font-semibold ${ctPhotoDelMode ? 'text-op-bad' : 'text-opl-inkDim dark:text-op-inkDim hover:text-op-bad'} transition-colors">${ctPhotoDelMode ? 'Cancel' : 'Select to delete'}</button>`
       : '';
     const delbar = ctPhotoDelMode
       ? `<div class="flex items-center gap-2 mb-2.5 px-2.5 py-1.5 rounded-xl bg-op-bad/10 border border-op-bad/30">
@@ -12357,7 +12361,7 @@
     const typeTail = `
         <span class="text-opl-inkDimmer dark:text-op-inkDimmer shrink-0">›</span>
         <span class="text-[13px] font-semibold text-opl-ink dark:text-op-ink truncate">${escapeHtml(ctTypeLabel(ctOpenType))}</span>
-        ${manageBtn}`;
+        <span class="ml-auto flex items-center gap-3 shrink-0">${selAllBtn}${manageBtn}</span>`;
     return `<div class="rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border overflow-hidden">
       ${crumbBar(typeTail)}
       <div class="p-2.5">${delbar}${body}</div>
@@ -12385,6 +12389,20 @@
   window.ctBackToTypes = ctBackToTypes;
 
   function ctTogglePhoto(id) { if (ctSelPhotos.has(id)) ctSelPhotos.delete(id); else ctSelPhotos.add(id); ctSyncTileSelection(); ctRenderPreview(); ctMarkDirty(); }
+  // Select (or, if all already selected, deselect) every photo in the currently
+  // open week+type folder — so the whole folder can be attached without tapping
+  // each tile. Full re-render updates the tiles + the button's Select/Deselect label.
+  function ctSelectAllInFolder() {
+    if (!ctOpenFolder || !ctOpenType || ctPhotoDelMode) return;
+    const { arr } = ctPhotoGroups();
+    const g = arr.find(x => x.key === ctOpenFolder); if (!g) return;
+    const tg = ctTypeGroups(g.photos).find(t => t.key === ctOpenType); if (!tg || !tg.photos.length) return;
+    const ids = tg.photos.map(p => p.id);
+    if (ids.every(id => ctSelPhotos.has(id))) ids.forEach(id => ctSelPhotos.delete(id));  // all on → clear this folder
+    else ids.forEach(id => ctSelPhotos.add(id));                                           // else → add all (in folder order)
+    ctRenderPhotoPicker(); ctRenderPreview(); ctMarkDirty();
+  }
+  window.ctSelectAllInFolder = ctSelectAllInFolder;
   // Update selection borders + order badges on the visible tiles in place —
   // NO innerHTML rebuild, so <img> nodes are reused (no re-fetch/re-decode).
   // Deselecting a middle photo renumbers the rest, so every visible tile is
