@@ -2952,11 +2952,13 @@
     "BL1/BL6 Coliseum",
     "BL2/BL7 South Bend",
     "BL4/BL5 Dupont",
-    "BL8/BL9 Holland",
     "BL14/B15 Battle Creek",
     "BL16/BL17 Indy East",
+    "BL8/BL9 Holland",       // shown last everywhere (cards + dropdowns) per request
   ];
-  const COLORS = ["#3BB54A","#194975","#00B8FF","#f59e0b","#ef4444","#ec4899"];
+  // Parallel to STORES by index (metrics map uses COLORS[i]); Holland's amber
+  // moved to the end alongside it so every store keeps its accent color.
+  const COLORS = ["#3BB54A","#194975","#00B8FF","#ef4444","#ec4899","#f59e0b"];
   const MAX_TXN_DURATION_MS = 30 * 60 * 1000; // 30 min – filter out tabs/holds
   const C = {
     MONTH:1, WEEK:2, DATE:3,         // A–C: date identifiers
@@ -4471,11 +4473,6 @@
       store: s, name: shortName(s), color: COLORS[i],
       ...sumRows(filterRows(allStoreData[s] || [])),
     }));
-    // Holland (BL8) shows last in the store cards (per request). Reorder AFTER
-    // the map so each store keeps its own color; only the card order changes
-    // (dropdowns/selects iterate STORES directly and are unaffected). Array
-    // sort is stable, so the other stores keep their relative order.
-    metrics.sort((a, b) => (a.store.startsWith('BL8/') ? 1 : 0) - (b.store.startsWith('BL8/') ? 1 : 0));
 
     // Labor calc uses the day-filtered metrics (the labor chart respects
     // the day selector). Weekly tA/tB are computed separately below so
