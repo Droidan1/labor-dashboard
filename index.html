@@ -1725,7 +1725,7 @@
         </div>
 
         <!-- ── POST PIPELINE (visible on Compose + Posts tabs) ── -->
-        <div id="ct-pipeline" class="mt-10 pt-8 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <div id="ct-pipeline" class="hidden mt-6">
           <div class="flex items-center justify-between gap-2 mb-4">
             <h2 class="text-base font-bold text-opl-ink dark:text-op-ink">Post pipeline</h2>
             <div class="flex items-center gap-2">
@@ -11579,6 +11579,8 @@
   let ctEditingId = null;
   let ctCaptionSource = 'manual';
   let ctAllDrafts = [];
+  let ctPubWeek = null;   // Published archive: open week folder key ('w28'|'undated'); null = week grid
+  let ctPubType = null;   // open post_type within the week; null = type grid
   let ctTab = 'compose';
   let ctPostType = 'bin_preview';
   let ctInited = false;
@@ -11607,13 +11609,7 @@
     if (compose) compose.classList.toggle('hidden', tab !== 'compose');
     if (thumbs)  thumbs.classList.toggle('hidden', tab !== 'thumbs');
     if (tab === 'thumbs') ctRenderThumbGrid();   // lazily build the grid on first switch (deferred from init)
-    if (pipeline) {
-      pipeline.classList.toggle('hidden', tab === 'thumbs');  // shown on compose + posts
-      const below = (tab === 'compose');                       // sits under the composer only on Compose
-      pipeline.classList.toggle('mt-10', below);
-      pipeline.classList.toggle('pt-8', below);
-      pipeline.classList.toggle('border-t', below);
-    }
+    if (pipeline) pipeline.classList.toggle('hidden', tab !== 'posts');  // Post pipeline lives on the Posts tab only
   }
   window.ctSetTab = ctSetTab;
 
@@ -12488,6 +12484,7 @@
       const d = await r.json();
       ctAllDrafts = (d && d.drafts) || [];
     } catch (_) { ctAllDrafts = []; }
+    await ctEnsureFlowWeeks();   // retail-week ranges for the Published folder archive
     ctRenderPipeline();
     ctUpdateCounts();
   }
@@ -12560,12 +12557,73 @@
     const published = rows.filter(d => d.status === 'published');
     ctFillLane('ct-drafts', drafts, 'draft', 'No drafts yet.');
     ctFillLane('ct-scheduled', scheduled, 'scheduled', 'Nothing scheduled yet.');
-    ctFillLane('ct-published', published, 'published', 'Nothing published yet.');
+    ctFillPublished('ct-published', published);   // Week → post-type folder archive
     ctSetLaneCount('ct-drafts-label', 'Drafts', drafts.length);
     ctSetLaneCount('ct-scheduled-label', 'Scheduled', scheduled.length);
     ctSetLaneCount('ct-published-label', 'Published', published.length);
   }
   window.ctRenderPipeline = ctRenderPipeline;
+
+  // ── Published archive: Week folder → post-type sub-folder → post cards ──
+  // Week = the retail week a post was published (updated_at proxy → created_at).
+  function ctPubDateOf(p) { return p.updated_at || p.created_at || ''; }
+  function ctPubWeekGroups(posts) {
+    const groups = {};
+    for (const p of posts) {
+      const w = ctPhotoWeekOf(ctPubDateOf(p));
+      const key = w ? 'w' + w.retail_week : 'undated';
+      if (!groups[key]) groups[key] = { key, sort: w ? w.week_start : '', label: w ? `Week ${w.retail_week}` : 'Undated', range: w ? `${ctShortDate(w.week_start)}–${ctShortDate(w.week_end)}` : 'Off-calendar', posts: [] };
+      groups[key].posts.push(p);
+    }
+    return Object.values(groups).sort((a, b) => (b.sort || '').localeCompare(a.sort || '')); // newest week first, Undated last
+  }
+  function ctPubTypeGroups(posts) {
+    const by = {};
+    for (const p of posts) { const k = CT_POST_TYPES.some(t => t.key === p.post_type) ? p.post_type : 'other'; (by[k] || (by[k] = [])).push(p); }
+    return CT_POST_TYPES.filter(t => by[t.key]).map(t => ({ key: t.key, label: t.label, posts: by[t.key] })); // canonical order, non-empty only
+  }
+  function ctPubFolderRow(onclick, label, sub, count) {
+    return `<button type="button" onclick="${onclick}" class="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-[rgba(20,16,8,0.1)] dark:border-op-border bg-opl-panelHi dark:bg-op-panelHi hover:border-accent-green/50 transition text-left">
+      <svg viewBox="0 0 24 24" class="w-5 h-5 shrink-0 stroke-accent-green fill-none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <span class="min-w-0 flex-1"><span class="block text-[13px] font-semibold text-opl-ink dark:text-op-ink truncate">${escapeHtml(label)}</span>${sub ? `<span class="block text-[11px] text-opl-inkDim dark:text-op-inkDim truncate">${escapeHtml(sub)}</span>` : ''}</span>
+      <span class="shrink-0 text-[11px] tabular-nums px-1.5 rounded-full bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.1)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim">${count}</span>
+      <span class="shrink-0 text-opl-inkDimmer dark:text-op-inkDimmer">›</span>
+    </button>`;
+  }
+  function ctPubCrumb(parts) {
+    return `<div class="flex items-center flex-wrap gap-1.5 mb-2.5">` + parts.map((p, i) => {
+      const sep = i ? '<span class="text-opl-inkDimmer dark:text-op-inkDimmer text-[12px]">›</span>' : '';
+      return sep + (p.onclick
+        ? `<button type="button" onclick="${p.onclick}" class="text-[12px] font-semibold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">${escapeHtml(p.label)}</button>`
+        : `<span class="text-[12px] font-semibold text-opl-ink dark:text-op-ink truncate">${escapeHtml(p.label)}</span>`);
+    }).join('') + `</div>`;
+  }
+  function ctFillPublished(id, posts) {
+    const wrap = el(id); if (!wrap) return;
+    if (!posts.length) { ctPubWeek = null; ctPubType = null; wrap.innerHTML = '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim py-2">Nothing published yet.</div>'; return; }
+    const weeks = ctPubWeekGroups(posts);
+    if (ctPubWeek && !weeks.some(w => w.key === ctPubWeek)) { ctPubWeek = null; ctPubType = null; }
+    if (!ctPubWeek) {   // Level 1 — week folders
+      wrap.innerHTML = `<div class="space-y-2">${weeks.map(w => ctPubFolderRow(`ctPubOpenWeek('${w.key}')`, w.label, w.range, w.posts.length)).join('')}</div>`;
+      return;
+    }
+    const wg = weeks.find(w => w.key === ctPubWeek);
+    const types = ctPubTypeGroups(wg.posts);
+    if (ctPubType && !types.some(t => t.key === ctPubType)) ctPubType = null;
+    if (!ctPubType) {   // Level 2 — post-type sub-folders
+      wrap.innerHTML = ctPubCrumb([{ label: 'Published', onclick: 'ctPubClose()' }, { label: wg.label }])
+        + `<div class="space-y-2">${types.map(t => ctPubFolderRow(`ctPubOpenType('${t.key}')`, t.label, null, t.posts.length)).join('')}</div>`;
+      return;
+    }
+    const tg = types.find(t => t.key === ctPubType);   // Level 3 — the posts
+    wrap.innerHTML = ctPubCrumb([{ label: 'Published', onclick: 'ctPubClose()' }, { label: wg.label, onclick: 'ctPubBack()' }, { label: tg.label }])
+      + `<div class="space-y-2.5">${tg.posts.map(p => ctPipelineCard(p, 'published')).join('')}</div>`;
+  }
+  function ctPubOpenWeek(k) { ctPubWeek = k; ctPubType = null; ctRenderPipeline(); }
+  function ctPubOpenType(k) { ctPubType = k; ctRenderPipeline(); }
+  function ctPubBack() { ctPubType = null; ctRenderPipeline(); }
+  function ctPubClose() { ctPubWeek = null; ctPubType = null; ctRenderPipeline(); }
+  window.ctPubOpenWeek = ctPubOpenWeek; window.ctPubOpenType = ctPubOpenType; window.ctPubBack = ctPubBack; window.ctPubClose = ctPubClose;
 
   async function ctEditDraft(id) {
     let d = null;
