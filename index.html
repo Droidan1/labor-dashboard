@@ -4471,6 +4471,11 @@
       store: s, name: shortName(s), color: COLORS[i],
       ...sumRows(filterRows(allStoreData[s] || [])),
     }));
+    // Holland (BL8) shows last in the store cards (per request). Reorder AFTER
+    // the map so each store keeps its own color; only the card order changes
+    // (dropdowns/selects iterate STORES directly and are unaffected). Array
+    // sort is stable, so the other stores keep their relative order.
+    metrics.sort((a, b) => (a.store.startsWith('BL8/') ? 1 : 0) - (b.store.startsWith('BL8/') ? 1 : 0));
 
     // Labor calc uses the day-filtered metrics (the labor chart respects
     // the day selector). Weekly tA/tB are computed separately below so
