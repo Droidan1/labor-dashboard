@@ -2944,6 +2944,13 @@
   // ═══════════════════════════════════════════════════════════════
   const SHEET_ID     = "17byTs8k0CjH5gPOuBncq3RS3rL4PJR0PamdnbkKPss8";
   const LABOR_TARGET = 14;
+  // Worker API origin. Declared HERE, at the very top of the script, on purpose:
+  // 51 of its ~129 uses sit above where it used to be declared (~line 10640), so
+  // it only worked because nothing happened to call those functions before the
+  // declaration executed. A `const` is in its temporal dead zone until then — any
+  // load-time call would have thrown "Cannot access 'WORKER_BASE' before
+  // initialization". Keep this above all uses; don't move it back down.
+  const WORKER_BASE = 'https://api.retjghub.com/';
   // Dashboard store roster. Wyoming (BL12) is removed here because the store
   // is closed — it still appears on the Weekly Retail Summary page, which uses
   // its own WRS_STORE_KEYS list. Indy East (BL16/BL17) is added as a card;
@@ -10638,7 +10645,6 @@
     'Seasonal', 'Bin Products', 'Gift Cards',
   ];
   const SNAPSHOT_SECRET = 'mapcaj-saTxa2-1';
-  const WORKER_BASE = 'https://api.retjghub.com/';
 
   // ── Client-side API response cache (5-minute TTL) ────────────────────────────
   // Keyed by full URL string. Only caches successful, non-error responses.
