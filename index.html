@@ -12738,6 +12738,17 @@
   async function ctPublishDraft(id) {
     const ok = await uiConfirm('Post this to Facebook? The cover and photos will be published LIVE to the store’s Page with your caption.', { okText: 'Publish live', title: 'Publish to Facebook' });
     if (!ok) return;
+
+    // Optimistically move the card into the Scheduled lane as "Posting…" the
+    // instant Publish is confirmed. The publish request below is awaited and can
+    // take a minute+ for a multi-photo post (or hit an intermediary timeout);
+    // without this the card would sit in Drafts with no feedback until it
+    // returns or the user manually refreshes. Fresh claimed_at so the progress
+    // bar/elapsed start from now, not the draft's old updated_at. ctLoadDrafts()
+    // below reconciles against the real server status either way.
+    const opt = (ctAllDrafts || []).find(d => d.id === id);
+    if (opt && opt.status !== 'published') { opt.status = 'publishing'; opt.claimed_at = new Date().toISOString(); ctRenderPipeline(); }
+
     let resp = null, netError = false;
     try {
       const r = await fetch(`${WORKER_BASE}?action=publish-draft`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ draft_id: id, published: true }) });
