@@ -12513,7 +12513,7 @@
       ? `<img src="${WORKER_BASE}?action=thumbnail&id=${dr.thumbnail_id}" class="w-10 h-10 rounded-lg object-cover shrink-0" alt="" loading="lazy">`
       : '<div class="w-10 h-10 rounded-lg bg-black/20 dark:bg-white/5 shrink-0"></div>';
     const title = escapeHtml(dr.caption || dr.topic || (ctStoreLabel(dr.store) + ' post'));
-    let meta, metaClass, actions;
+    let meta, metaClass, actions, extra = '';
     if (kind === 'published') {
       meta = (dr.post_url ? 'Live' : 'Posted') + ' · ' + escapeHtml(ctStoreLabel(dr.store));
       metaClass = 'text-accent-green';
@@ -12526,9 +12526,19 @@
         actions = `<button onclick="ctSchedule(${dr.id})" class="shrink-0 text-[11px] font-semibold text-accent-green px-1">Retry</button>`
           + `<button onclick="ctUnschedule(${dr.id})" class="shrink-0 text-[11px] font-semibold text-opl-inkDim dark:text-op-inkDim px-1">To drafts</button>`;
       } else if (dr.status === 'publishing') {
-        meta = 'Publishing…';
+        // Live progress for a long multi-photo upload. Facebook has no % API, so
+        // the bar eases asymptotically toward ~94% off a photo-count estimate and
+        // the text shows the real elapsed time; the ctPub ticker updates both each
+        // second and re-fetches until the card flips to Published.
+        const nPhotos = (dr.photo_ids || []).length;
+        const start = new Date(dr.claimed_at || dr.updated_at || Date.now()).getTime();
+        const est = Math.max(15000, 10000 + nPhotos * 2000);
+        meta = `Posting${nPhotos ? ' ' + nPhotos + ' photo' + (nPhotos === 1 ? '' : 's') : ''}… <span class="ct-pub-el tabular-nums font-semibold" data-pub-el="${dr.id}">0s</span>`;
         metaClass = 'text-accent-blue';
-        actions = '';
+        actions = `<span class="shrink-0 inline-block w-3.5 h-3.5 rounded-full border-2 border-accent-blue/30 border-t-accent-blue animate-spin" aria-label="Posting"></span>`;
+        extra = `<div class="ct-pub-track mt-1.5 h-1.5 rounded-full bg-[rgba(20,16,8,0.08)] dark:bg-op-panelHi overflow-hidden" data-pub-start="${start}" data-pub-est="${est}" data-pub-id="${dr.id}">
+          <div class="ct-pub-bar h-full rounded-full bg-accent-blue transition-[width] duration-1000 ease-linear" style="width:6%"></div>
+        </div>`;
       } else {
         const flow = dr.origin === 'flow' ? ' · from Flow' : '';
         const staged = dr.publish_live === 0 ? ' · staged' : '';
@@ -12550,6 +12560,7 @@
       <div class="min-w-0 flex-1">
         <div class="text-[13px] font-semibold text-opl-ink dark:text-op-ink truncate">${title}</div>
         <div class="text-[11px] ${metaClass} truncate mt-0.5">${meta}</div>
+        ${extra}
       </div>
       ${actions}
     </div>`;
@@ -12576,8 +12587,37 @@
     ctSetLaneCount('ct-drafts-label', 'Drafts', drafts.length);
     ctSetLaneCount('ct-scheduled-label', 'Scheduled', scheduled.length);
     ctSetLaneCount('ct-published-label', 'Published', published.length);
+    ctEnsurePubTicker();   // animate any "publishing" cards' progress bar + elapsed time
   }
   window.ctRenderPipeline = ctRenderPipeline;
+
+  // Live "posting to Facebook" progress: a 1s ticker updates every publishing
+  // card's elapsed-time text + eases its bar toward ~94% (no FB % API), and every
+  // ~15s re-fetches the board so a finished post advances to Published on its own.
+  // Self-stops when no card is publishing.
+  let ctPubTick = null, ctPubTicks = 0;
+  function ctFmtElapsed(ms) { const s = Math.max(0, Math.floor(ms / 1000)); return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's'; }
+  function ctPubTickOnce() {
+    const tracks = document.querySelectorAll('.ct-pub-track[data-pub-start]');
+    if (!tracks.length) { if (ctPubTick) { clearInterval(ctPubTick); ctPubTick = null; } return; }
+    const now = Date.now();
+    tracks.forEach(t => {
+      const start = Number(t.dataset.pubStart) || now;
+      const est = Number(t.dataset.pubEst) || 60000;
+      const elapsed = Math.max(0, now - start);
+      const pct = Math.min(94, 6 + 88 * (1 - Math.exp(-elapsed / est)));   // asymptotic: never falsely "done"
+      const bar = t.querySelector('.ct-pub-bar'); if (bar) bar.style.width = pct.toFixed(1) + '%';
+      const lbl = document.querySelector(`.ct-pub-el[data-pub-el="${t.dataset.pubId}"]`); if (lbl) lbl.textContent = ctFmtElapsed(elapsed);
+    });
+    // Re-check the server roughly every 15s so completion is picked up.
+    if (++ctPubTicks % 15 === 0) ctLoadDrafts();
+  }
+  function ctEnsurePubTicker() {
+    if (ctPubTick || !document.querySelector('.ct-pub-track')) return;
+    ctPubTicks = 0;
+    ctPubTick = setInterval(ctPubTickOnce, 1000);
+    ctPubTickOnce();
+  }
 
   // ── Published archive: Week folder → post-type sub-folder → post cards ──
   // Week = the retail week a post was published (real published_at; older rows
