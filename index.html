@@ -4948,9 +4948,58 @@
     finally { dashCardChLoading[code] = false; applyCardChannel(code); }
   }
 
+  // ── "vs last year" (YoY) comparison ─────────────────────────────────────
+  // Aligned date = same weekday of the same retail week last year = exactly
+  // 364 days (52 weeks) back. UTC math — immune to DST. Data comes from
+  // last_year_sales (migration-028, one-time CSV import of daily retail/bin
+  // net sales; 'Indy' rows are Wyoming-era data reused for BL16 by design).
+  // Cards render empty slots; loadLYComparison() fills them async after the
+  // fetch — same patch-by-id pattern as the hourly sparkline. Slots stay
+  // empty (feature invisible) when either side of the comparison is 0.
+  let dashCardLY = {};   // cardCode -> {net, retail, bin} — TY values at render
+  function lyDateOf(dateStr) {
+    const [y, m, d] = String(dateStr).split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d) - 364 * 86400000).toISOString().slice(0, 10);
+  }
+  const LY_UP = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>';
+  const LY_DOWN = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto" aria-hidden="true"><path d="M3 7l6 6 4-4 8 8"/><path d="M21 10v7h-7"/></svg>';
+  function fillLYPill(code, ty, lyNet) {
+    const slot = document.getElementById('ly-pill-' + code);
+    if (!slot) return;
+    if (!(lyNet > 0) || !(ty.net > 0)) { slot.innerHTML = ''; return; }
+    const pct = (ty.net - lyNet) / lyNet * 100, up = pct >= 0;
+    const c = up ? '#22c55e' : '#ef4444';
+    slot.innerHTML = `<span style="display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:3px 9px;border-radius:9999px;font-size:11px;font-weight:700;background:${up ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)'};border:1px solid ${up ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};color:${c}" title="Same day/week last year: ${fmtDollar(lyNet)}">${up ? LY_UP : LY_DOWN}${up ? '+' : '−'}${Math.abs(pct).toFixed(1)}% vs last year</span>`;
+  }
+  function fillLYTile(slotId, tyVal, lyVal) {
+    const slot = document.getElementById(slotId);
+    if (!slot) return;
+    if (!(lyVal > 0) || !(tyVal > 0)) { slot.innerHTML = ''; return; }
+    const pct = (tyVal - lyVal) / lyVal * 100, up = pct >= 0;
+    slot.innerHTML = `<div style="margin-top:3px;display:flex;align-items:center;gap:3px;font-size:10px;font-weight:700;color:${up ? '#22c55e' : '#ef4444'}" title="Last year: ${fmtDollar(lyVal)}">${up ? LY_UP : LY_DOWN}${up ? '+' : '−'}${Math.abs(pct).toFixed(1)}% LY</div>`;
+  }
+  async function loadLYComparison() {
+    try {
+      const from = lyDateOf(dateRange.from), to = lyDateOf(dateRange.to);
+      const d = await cachedFetch(`${WORKER_BASE}?action=ly-sales&from=${from}&to=${to}`, { credentials: 'include' });
+      const byStore = {};
+      for (const r of ((d && d.rows) || [])) {
+        const s = byStore[r.store] || (byStore[r.store] = { retail: 0, bin: 0 });
+        s.retail += r.retail || 0; s.bin += r.bin || 0;
+      }
+      for (const [code, ty] of Object.entries(dashCardLY)) {
+        const ly = byStore[code] || { retail: 0, bin: 0 };
+        fillLYPill(code, ty, ly.retail + ly.bin);
+        fillLYTile('ly-retail-' + code, ty.retail, ly.retail);
+        fillLYTile('ly-bin-' + code, ty.bin, ly.bin);
+      }
+    } catch (_) { /* comparison is additive — leave slots empty on failure */ }
+  }
+
   function renderCards(metrics) {
     const container = el("store-cards");
     container.innerHTML = "";
+    dashCardLY = {};   // fresh TY stash — cards are rebuilt below
 
     const isCurrentWeek = selIncludesToday();
     const todayStr = etTodayStr();
@@ -5105,9 +5154,9 @@
       const v1SparkDate = dateRange.to;   // hourly spark = last day of the range
       const v1Spark = '<div id="' + v1SparkId + '" style="width:104px;height:44px;flex:0 0 auto;display:flex;align-items:center;justify-content:center">' + v1SparkSkel + '</div>';
       const cardCode = m.store.split('/')[0];
-      const tile = (l, v) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
+      const tile = (l, v, lySlot) => `<div class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div>${lySlot ? `<div id="${lySlot}"></div>` : ''}</div>`;
       // Clickable channel tile (Retail / BIN) — taps filter this card's matrix.
-      const chTile = (l, v, ch) => `<div data-ch="${ch}" role="button" tabindex="0" onclick="setCardChannel('${cardCode}','${ch}')" title="Tap to filter metrics to ${l}" class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5 cursor-pointer transition hover:border-accent-green/40"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div></div>`;
+      const chTile = (l, v, ch, lySlot) => `<div data-ch="${ch}" role="button" tabindex="0" onclick="setCardChannel('${cardCode}','${ch}')" title="Tap to filter metrics to ${l}" class="rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.025)] px-3 py-2.5 cursor-pointer transition hover:border-accent-green/40"><div class="text-[10px] font-semibold uppercase tracking-[0.07em] text-opl-inkDim dark:text-op-inkDim">${l}</div><div class="mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div>${lySlot ? `<div id="${lySlot}"></div>` : ''}</div>`;
       const mtile = (l, v, icon) => `<div class="relative overflow-hidden rounded-[8px] border border-accent-green/20 bg-accent-green/10 px-2.5 py-2.5 text-center"><div class="relative text-[10px] font-bold uppercase tracking-[0.06em] text-accent-green">${l}</div><div data-mx="${icon}" class="relative mt-1 text-sm font-bold tabular-nums text-opl-ink dark:text-op-ink">${v}</div>${icon ? matrixTileWatermark(icon) : ''}</div>`;
 
       const div = document.createElement("div");
@@ -5142,6 +5191,7 @@
                     ? '<span class="text-base font-medium text-opl-inkDim dark:text-op-inkDim">No transactions yet</span>'
                     : fmtDollar(v1Total))}</div>
             ${v1Error ? '' : (v1Delta != null ? `<div class="mt-1.5 text-xs font-semibold"><span style="color:${v1Ahead ? V1G : V1B}">${v1Delta >= 0 ? '+' : '−'}${fmtDollar(Math.abs(v1Delta))}</span> <span class="text-sm font-semibold text-opl-ink dark:text-op-ink">vs ${fmtDollar(v1Budget)}</span></div>` : `<div class="mt-1.5 text-xs text-opl-inkDim dark:text-op-inkDim">no budget</div>`)}
+            ${v1Error ? '' : `<div id="ly-pill-${cardCode}"></div>`}
           </div>
           ${v1Spark}
         </div>
@@ -5157,7 +5207,7 @@
         </div>
 
         <div class="mt-4 grid grid-cols-3 gap-2">
-          ${isTodayOnly ? chTile('Retail', fmtDollar(v1Retail), 'retail') : tile('Retail', fmtDollar(v1Retail))}${isTodayOnly ? chTile('BIN', fmtDollar(v1Bin), 'bin') : tile('BIN', fmtDollar(v1Bin))}${tile('Auction', fmtDollar(v1Auction))}
+          ${isTodayOnly ? chTile('Retail', fmtDollar(v1Retail), 'retail', 'ly-retail-' + cardCode) : tile('Retail', fmtDollar(v1Retail), 'ly-retail-' + cardCode)}${isTodayOnly ? chTile('BIN', fmtDollar(v1Bin), 'bin', 'ly-bin-' + cardCode) : tile('BIN', fmtDollar(v1Bin), 'ly-bin-' + cardCode)}${tile('Auction', fmtDollar(v1Auction))}
         </div>
 
         <div class="mt-2 grid grid-cols-4 gap-2">
@@ -5173,6 +5223,8 @@
       container.appendChild(div);
       // Stash this card's blended matrix values + re-apply any active channel
       // filter (the card was just rebuilt fresh in the blended state).
+      // TY values for the async "vs last year" fill (loadLYComparison below).
+      dashCardLY[cardCode] = { net: v1Total, retail: v1Retail, bin: v1Bin };
       dashCardBlended[cardCode] = {
         cart: v1Cart != null ? '$' + Number(v1Cart).toFixed(2) : '—',
         items: v1Items != null ? Number(v1Items).toFixed(1) : '—',
@@ -5183,6 +5235,7 @@
       if (isTodayOnly && dashCardCh[cardCode]) applyCardChannel(cardCode);
       loadStoreHourlySpark(v1SparkKey, v1SparkDate, v1SparkColor, v1SparkId);
     }
+    loadLYComparison();   // fill the "vs last year" pill + tile slots async
     // AI budget-odds score hidden from store cards (2026-07 — in the way, not
     // used enough). Re-enable by restoring the #score-ring slot in the card
     // header template above and uncommenting the call below.

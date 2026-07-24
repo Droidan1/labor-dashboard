@@ -9597,6 +9597,26 @@ export default {
       }
     }
 
+    // GET ?action=ly-sales&from=YYYY-MM-DD&to=YYYY-MM-DD
+    // Last-year daily net sales (retail/bin split) for the store cards'
+    // "vs last year" comparison. One-time import from the owner's CSV
+    // (migration-028; 'Indy' rows are Wyoming-era data reused for BL16).
+    // Any logged-in user; read-only, range-bounded (no IN lists).
+    if (request.method === "GET" && url.searchParams.get("action") === "ly-sales") {
+      const from = url.searchParams.get("from"), to = url.searchParams.get("to");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from || "") || !/^\d{4}-\d{2}-\d{2}$/.test(to || "")) {
+        return new Response(JSON.stringify({ error: "from/to required (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+      }
+      try {
+        const { results } = await env.DB.prepare(
+          "SELECT store, date, retail, bin FROM last_year_sales WHERE date >= ? AND date <= ?"
+        ).bind(from, to).all();
+        return new Response(JSON.stringify({ rows: results || [] }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     // GET ?action=daily-brief[&date=YYYY-MM-DD]
     // Returns the cached AI morning brief for the dashboard. Defaults to
     // yesterday (ET). Any logged-in user; brief is chain-wide.
