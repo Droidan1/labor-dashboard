@@ -4961,9 +4961,6 @@
     const [y, m, d] = String(dateStr).split('-').map(Number);
     return new Date(Date.UTC(y, m - 1, d) - 364 * 86400000).toISOString().slice(0, 10);
   }
-  // Whole-dollar money for the compact LY indicators — fmtDollar's forced
-  // ".00" is too much noise inside an 11px pill.
-  const lyMoney = (n) => '$' + Math.round(n).toLocaleString('en-US');
   const LY_UP = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>';
   const LY_DOWN = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto" aria-hidden="true"><path d="M3 7l6 6 4-4 8 8"/><path d="M21 10v7h-7"/></svg>';
   function fillLYPill(code, ty, lyNet) {
@@ -4972,14 +4969,20 @@
     if (!(lyNet > 0) || !(ty.net > 0)) { slot.innerHTML = ''; return; }
     const pct = (ty.net - lyNet) / lyNet * 100, up = pct >= 0;
     const c = up ? '#22c55e' : '#ef4444';
-    slot.innerHTML = `<span style="display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:3px 9px;border-radius:9999px;font-size:11px;font-weight:700;background:${up ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)'};border:1px solid ${up ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};color:${c}" title="Last year, same weekday of the same retail week">${up ? LY_UP : LY_DOWN}${lyMoney(lyNet)} ${up ? '+' : '−'}${Math.abs(pct).toFixed(1)}% LY</span>`;
+    slot.innerHTML = `<span style="display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:3px 9px;border-radius:9999px;font-size:11px;font-weight:700;background:${up ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)'};border:1px solid ${up ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};color:${c}" title="Last year, same weekday of the same retail week">${up ? LY_UP : LY_DOWN}${fmtDollar(lyNet)} ${up ? '+' : '−'}${Math.abs(pct).toFixed(1)}% LY</span>`;
   }
   function fillLYTile(slotId, tyVal, lyVal) {
     const slot = document.getElementById(slotId);
     if (!slot) return;
     if (!(lyVal > 0) || !(tyVal > 0)) { slot.innerHTML = ''; return; }
     const pct = (tyVal - lyVal) / lyVal * 100, up = pct >= 0;
-    slot.innerHTML = `<div style="margin-top:3px;display:flex;align-items:center;gap:3px;font-size:10px;font-weight:700;color:${up ? '#22c55e' : '#ef4444'}" title="Last year: ${lyMoney(lyVal)}">${up ? LY_UP : LY_DOWN}${up ? '+' : '−'}${Math.abs(pct).toFixed(1)}% LY</div>`;
+    // Two lines: LY amount, then arrow + percentage. A 1/3-width tile has only
+    // ~68px of content width and "↗ $13,899.00" measures 74px, so keeping the
+    // arrow with the amount overflows on 5-digit stores; pairing it with the
+    // shorter percentage measures 62px and fits with headroom. The amount at
+    // 10px is always narrower than the same figure on the tile's 14px value
+    // line above it, so if the tile renders its own total it renders this too.
+    slot.innerHTML = `<div style="margin-top:3px;line-height:1.35;font-size:10px;font-weight:700;color:${up ? '#22c55e' : '#ef4444'}" title="Last year, same weekday of the same retail week"><div style="white-space:nowrap">${fmtDollar(lyVal)}</div><div style="display:flex;align-items:center;gap:3px;white-space:nowrap">${up ? LY_UP : LY_DOWN}${up ? '+' : '−'}${Math.abs(pct).toFixed(1)}% LY</div></div>`;
   }
   async function loadLYComparison() {
     try {
