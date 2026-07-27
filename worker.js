@@ -3874,7 +3874,7 @@ async function buildMorningBriefingData(env) {
   const yesterdayStr = yd.toISOString().slice(0, 10);
 
   const [{ results: yRows }, { results: tRows }] = await Promise.all([
-    env.DB.prepare('SELECT store, total, budget, labor_pct, order_count FROM daily_sales WHERE date = ?').bind(yesterdayStr).all(),
+    env.DB.prepare('SELECT store, total, auction, budget, labor_pct, order_count FROM daily_sales WHERE date = ?').bind(yesterdayStr).all(),
     env.DB.prepare('SELECT store, budget FROM daily_sales WHERE date = ?').bind(todayStr).all(),
   ]);
 
@@ -3896,11 +3896,25 @@ async function buildMorningBriefingData(env) {
     const merged = snaps[i] ? mergeItemSnapshots([snaps[i]]) : null;
     // gpmPct is stored 0–100 (e.g. 43.0); the spec wants a decimal fraction, so /100.
     const t = merged && merged.totals;
+    // CONTRACT: netSales is the store's TOTAL net for the day and is the figure
+    // budgetForSalesDate is set against — netSales === posSales + auctionSales.
+    // It previously carried POS only while the budget assumed auction counted
+    // toward it, which overstated every auction store's miss (chain-wide that
+    // was ~2x the real variance). The two components ship alongside it so a
+    // consumer can still split the channels without re-deriving either.
+    // null means "no data for that day", never 0.
+    const posSales = y.total ?? null;
+    const auctionSales = y.auction ?? null;
+    const netSales = (posSales == null && auctionSales == null)
+      ? null
+      : (posSales ?? 0) + (auctionSales ?? 0);
     return {
       storeId: store,
       name: STORE_LABELS[store] || store,
       salesDate: yesterdayStr,            // the day netSales covers (yesterday, ET)
-      netSales: y.total ?? null,          // yesterday's FINAL net sales (POS; excludes auction)
+      netSales,                           // TOTAL net = posSales + auctionSales
+      posSales,                           // point-of-sale component
+      auctionSales,                       // auction component (null if the store runs no auctions)
       budgetForSalesDate: y.budget ?? null, // budget that applied to yesterday (compare vs netSales)
       todayBudget: tMap[store]?.budget ?? null, // today's forward target
       // Tier 2/3 — from the same daily_sales row. labor_pct is stored in percent
@@ -3913,7 +3927,9 @@ async function buildMorningBriefingData(env) {
       transactions: y.order_count ?? null,
       // Tier 1 — from the item snapshot (KV). gross margin as a fraction; no
       // planned margin or per-category budget exists in our system, so those
-      // spec fields are intentionally absent.
+      // spec fields are intentionally absent. NOTE: grossMargin and every
+      // categories[].netSales below are POS-ONLY (auction has no item detail),
+      // so they sum to posSales, NOT to the top-level netSales.
       grossMargin: t && t.netSales > 0 ? t.gpmPct / 100 : null,
       categories: merged ? merged.categories.map(c => ({
         name: c.category,
