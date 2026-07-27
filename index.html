@@ -4591,7 +4591,11 @@
     const isCurrentWeek = selIncludesToday();
     let todayTotal = 0, todayRetail = 0, todayBin = 0, todayAuction = 0;
     let todayTotalBudget = 0;
-    let storesWithData = 0;
+    // Which stores actually contributed data for THIS selection. A Set, because
+    // the live and historical loops below can each see the same store and the
+    // old counter double-counted (then hid it behind Math.min), so it always
+    // read "6 of 6" — even with every live fetch failing.
+    const reportingStores = new Set();
     let allOrderCount = 0, allTxnTimeTotal = 0, allTxnTimeCount = 0, allItemCount = 0, allCartTotal = 0, allASPTotal = 0, allASPCount = 0;
 
     // Live when the current week is shown whole, or the selection includes today.
@@ -4605,6 +4609,9 @@
     if (showLive) {
       for (const s of STORES) {
         const live = liveCloverData[s];
+        // Reporting = the fetch came back. A store that is genuinely at $0 (early
+        // morning, closed) IS reporting; only a failed fetch is not.
+        if (live != null) reportingStores.add(s);
         if (live != null && live.total > 0) {
           todayTotal += live.total;
           todayRetail += live.retail;
@@ -4624,7 +4631,6 @@
             allASPTotal += live.avgASP * live.orderCount;
             allASPCount += live.orderCount;
           }
-          storesWithData++;
         }
 
         const todayRow = getTodayRow(s);
@@ -4660,6 +4666,7 @@
         for (const [dateKey, snap] of Object.entries(storeHist)) {
           if (!matchesCloverDate(dateKey, weekRows)) continue;
           hasAnyHistData = true;
+          reportingStores.add(s);   // has data INSIDE the selection, not just any history
           todayTotal += snap.total || 0;
           todayRetail += snap.retail || 0;
           todayBin += snap.bin || 0;
@@ -4679,7 +4686,6 @@
             allASPCount += snap.orderCount;
           }
         }
-        if (Object.keys(storeHist).length > 0) storesWithData++;
       }
       if (hasAnyHistData || historicalDataLoading) {
         el("today-total-card").classList.remove("hidden");
@@ -4706,7 +4712,21 @@
     el("c-today-card-label").textContent = `${cardLabel} · All Stores`;
 
     const grandTotal = todayTotal + todayAuction;
+    const storesWithData = reportingStores.size;
     const hasData = !isLoading && storesWithData > 0;
+
+    // A live fetch that FAILED drops that store's revenue but not its budget
+    // (budget comes from the Sheet rows and is added unconditionally above), so
+    // a chain-wide pace / vs-budget figure would read as a real shortfall that
+    // is actually a network error. Those two are genuinely not computable while
+    // a store is dark, so we name the gap instead of printing a wrong number.
+    // Budget itself stays whole — today's target doesn't depend on Clover.
+    const liveDark = (showLive && !liveDataLoading)
+      ? STORES.filter(s => liveCloverErrors[s]).map(shortName)
+      : [];
+    const darkNote = liveDark.length === 0 ? ''
+      : (liveDark.length <= 2 ? liveDark.join(' and ') + ' not reporting'
+                              : liveDark.length + ' stores not reporting');
 
     // LIVE pill — green LIVE on the current-day live view, dim OFFLINE on
     // past-day / historical views.
@@ -4732,7 +4752,13 @@
     const paceBase = 'mt-1 font-geist font-extrabold tabular-nums leading-none text-4xl sm:text-5xl tracking-tight ';
     const paceEl = el("h-pace");
     const barEl = el("h-bar-fill");
-    if (hasData && todayTotalBudget > 0) {
+    if (darkNote) {
+      // Not computable — see liveDark above.
+      paceEl.textContent = '—';
+      paceEl.className = paceBase + 'text-opl-inkDim dark:text-op-inkDim';
+      barEl.style.width = '0%';
+      barEl.className = 'h-full rounded-full transition-[width] duration-500 bg-op-warn/30';
+    } else if (hasData && todayTotalBudget > 0) {
       const pacePct = Math.round(grandTotal / todayTotalBudget * 100);
       const ahead = grandTotal >= todayTotalBudget;
       paceEl.textContent = pacePct + '%';
@@ -4746,12 +4772,19 @@
       paceEl.className = paceBase + 'text-accent-green';
       barEl.style.width = '0%';
     }
-    el("h-reporting").textContent = hasData ? `${Math.min(storesWithData, STORES.length)} of ${STORES.length} reporting` : '';
+    const repEl = el("h-reporting");
+    repEl.textContent = hasData ? `${storesWithData} of ${STORES.length} reporting` : '';
+    repEl.className = 'mt-1.5 text-[11px] ' + (darkNote
+      ? 'font-semibold text-op-warn'
+      : 'text-opl-inkDim dark:text-op-inkDim');
 
     el("c-today-budget").textContent = todayTotalBudget > 0 ? fmtDollar(todayTotalBudget) : '—';
 
     const diffEl = el("c-today-diff");
-    if (hasData && todayTotalBudget > 0) {
+    if (darkNote) {
+      diffEl.className = 'font-semibold text-op-warn';
+      diffEl.textContent = `${darkNote} — pace unavailable`;
+    } else if (hasData && todayTotalBudget > 0) {
       const diff = grandTotal - todayTotalBudget;
       const isPositive = diff >= 0;
       diffEl.className = 'font-semibold';
