@@ -7680,13 +7680,13 @@
                  onclick="srToggleDetail('${r.id}')">
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 flex-wrap mb-1">
-                  <span class="text-sm font-semibold text-gray-900 dark:text-white">${lbl}</span>
+                  <span class="text-sm font-semibold text-gray-900 dark:text-white">${escapeHtml(lbl)}</span>
                   ${r.priority==='urgent'?priorityBadge('urgent'):''}
                   ${statusBadge(r.status)}
                 </div>
                 <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
                   <span>${dated}</span><span>·</span><span>${nItems}</span>
-                  ${r.invoice_number?`<span>·</span><span class="font-medium">Inv #${r.invoice_number}</span>`:''}
+                  ${r.invoice_number?`<span>·</span><span class="font-medium">Inv #${escapeHtml(r.invoice_number)}</span>`:''}
                   ${r.cost!=null?`<span>·</span><span class="font-semibold text-gray-700 dark:text-gray-200">${fmtSRMoney(r.cost)}</span>`:''}
                 </div>
               </div>
@@ -7718,9 +7718,9 @@
         const resp = await fetch(`${WORKER_BASE}?action=supply-request&id=${id}`, { credentials:'include' });
         const data = await resp.json();
         if (data.ok) { srDetailCache[id] = data.request; srRenderDetail(id, data.request); }
-        else panel.innerHTML = `<div class="pt-4 text-red-400 text-sm">Error: ${data.error}</div>`;
+        else panel.innerHTML = `<div class="pt-4 text-red-400 text-sm">Error: ${escapeHtml(data.error)}</div>`;
       } catch(e) {
-        panel.innerHTML = `<div class="pt-4 text-red-400 text-sm">Failed: ${e.message}</div>`;
+        panel.innerHTML = `<div class="pt-4 text-red-400 text-sm">Failed: ${escapeHtml(e.message)}</div>`;
       }
     }
     window.srToggleDetail = srToggleDetail;
@@ -7732,10 +7732,10 @@
       // Items table
       const itemRows = (req.items||[]).map(it=>`
         <tr class="border-b border-gray-100 dark:border-gray-700/50 last:border-0">
-          <td class="py-1.5 pr-3 text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">${it.category}</td>
-          <td class="py-1.5 pr-3 text-sm font-medium text-gray-800 dark:text-gray-200">${it.item_name}</td>
+          <td class="py-1.5 pr-3 text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">${escapeHtml(it.category)}</td>
+          <td class="py-1.5 pr-3 text-sm font-medium text-gray-800 dark:text-gray-200">${escapeHtml(it.item_name)}</td>
           <td class="py-1.5 pr-3 text-sm text-gray-600 dark:text-gray-300 text-center whitespace-nowrap">${it.quantity} ${it.unit}</td>
-          <td class="py-1.5 text-xs text-gray-400">${it.notes||''}</td>
+          <td class="py-1.5 text-xs text-gray-400">${escapeHtml(it.notes||'')}</td>
         </tr>`).join('');
 
       // Timeline
@@ -7746,13 +7746,13 @@
           : `<div class="w-6 h-6 rounded-full bg-[#3BB54A]/15 flex items-center justify-center flex-shrink-0 mt-0.5"><svg width="11" height="11" fill="none" stroke="#3BB54A" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>`;
         const statusLabels = {pending:'Pending',under_review:'Under Review',on_hold:'On Hold',ordered:'Ordered'};
         const body = isComment
-          ? `<p class="text-sm text-gray-700 dark:text-gray-300">${h.note}</p>`
-          : `<p class="text-sm text-gray-700 dark:text-gray-300">Status changed to <span class="font-semibold">${statusLabels[h.new_status]||h.new_status}</span>${h.note?` <span class="text-gray-400">— ${h.note}</span>`:''}</p>`;
+          ? `<p class="text-sm text-gray-700 dark:text-gray-300">${escapeHtml(h.note)}</p>`
+          : `<p class="text-sm text-gray-700 dark:text-gray-300">Status changed to <span class="font-semibold">${escapeHtml(statusLabels[h.new_status]||h.new_status)}</span>${h.note?` <span class="text-gray-400">— ${escapeHtml(h.note)}</span>`:''}</p>`;
         return `<div class="flex gap-2.5 items-start">
           ${icon}
           <div class="flex-1 min-w-0 pt-0.5">
             <div class="flex flex-wrap gap-x-2 mb-0.5">
-              <span class="text-xs font-medium text-gray-500 dark:text-gray-400">${h.changed_by_email}</span>
+              <span class="text-xs font-medium text-gray-500 dark:text-gray-400">${escapeHtml(h.changed_by_email)}</span>
               <span class="text-xs text-gray-400">${fmtSRDate(h.changed_at)}</span>
             </div>
             ${body}
@@ -7763,7 +7763,7 @@
       panel.innerHTML = `
         <div class="pt-4 space-y-4">
           ${req.notes?`<div class="bg-gray-50 dark:bg-gray-700/40 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-gray-300">
-            <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Notes: </span>${req.notes}</div>`:''}
+            <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Notes: </span>${escapeHtml(req.notes)}</div>`:''}
 
           <div>
             <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Items</div>
@@ -7813,7 +7813,7 @@
         if (data2.ok) { srDetailCache[reqId] = data2.request; srRenderDetail(reqId, data2.request); }
       } catch(e) {
         inp.value = note;
-        uiAlert(`Failed: ${e.message}`);
+        uiAlert(`Failed: ${escapeHtml(e.message)}`);
       } finally { if(inp) inp.disabled = false; }
     }
     window.srAddComment = srAddComment;
@@ -7863,7 +7863,7 @@
         srRenderAllList(reqs);
       } catch(e) {
         const l = el('sr-all-list');
-        if (l) l.innerHTML = `<div class="text-center py-10 text-red-400 text-sm">Failed: ${e.message}</div>`;
+        if (l) l.innerHTML = `<div class="text-center py-10 text-red-400 text-sm">Failed: ${escapeHtml(e.message)}</div>`;
       }
     }
 
@@ -7908,15 +7908,15 @@
                  onclick="srToggleSuperDetail('${r.id}')">
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 flex-wrap mb-1">
-                  <span class="text-sm font-semibold text-gray-900 dark:text-white">${lbl}</span>
+                  <span class="text-sm font-semibold text-gray-900 dark:text-white">${escapeHtml(lbl)}</span>
                   ${r.priority==='urgent'?priorityBadge('urgent'):''}
                   ${statusBadge(r.status)}
                 </div>
                 <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
                   <span>${dated}</span><span>·</span>
-                  <span class="font-medium text-gray-600 dark:text-gray-300">${r.user_email}</span>
+                  <span class="font-medium text-gray-600 dark:text-gray-300">${escapeHtml(r.user_email)}</span>
                   <span>·</span><span>${nItems}</span>
-                  ${r.invoice_number?`<span>·</span><span class="font-medium">Inv #${r.invoice_number}</span>`:''}
+                  ${r.invoice_number?`<span>·</span><span class="font-medium">Inv #${escapeHtml(r.invoice_number)}</span>`:''}
                   ${r.cost!=null?`<span>·</span><span class="font-semibold text-gray-700 dark:text-gray-200">${fmtSRMoney(r.cost)}</span>`:''}
                 </div>
               </div>
@@ -7943,8 +7943,8 @@
         const resp = await fetch(`${WORKER_BASE}?action=supply-request&id=${id}`, { credentials:'include' });
         const data = await resp.json();
         if (data.ok) { srDetailCache[id] = data.request; srRenderSuperDetail(id, data.request); }
-        else panel.innerHTML = `<div class="pt-4 text-red-400 text-sm">Error: ${data.error}</div>`;
-      } catch(e) { panel.innerHTML = `<div class="pt-4 text-red-400 text-sm">Failed: ${e.message}</div>`; }
+        else panel.innerHTML = `<div class="pt-4 text-red-400 text-sm">Error: ${escapeHtml(data.error)}</div>`;
+      } catch(e) { panel.innerHTML = `<div class="pt-4 text-red-400 text-sm">Failed: ${escapeHtml(e.message)}</div>`; }
     }
     window.srToggleSuperDetail = srToggleSuperDetail;
 
@@ -7954,10 +7954,10 @@
 
       const itemRows = (req.items||[]).map(it=>`
         <tr class="border-b border-gray-100 dark:border-gray-700/50 last:border-0">
-          <td class="py-1.5 pr-3 text-xs text-gray-400 whitespace-nowrap">${it.category}</td>
-          <td class="py-1.5 pr-3 text-sm font-medium text-gray-800 dark:text-gray-200">${it.item_name}</td>
+          <td class="py-1.5 pr-3 text-xs text-gray-400 whitespace-nowrap">${escapeHtml(it.category)}</td>
+          <td class="py-1.5 pr-3 text-sm font-medium text-gray-800 dark:text-gray-200">${escapeHtml(it.item_name)}</td>
           <td class="py-1.5 pr-3 text-sm text-center whitespace-nowrap text-gray-600 dark:text-gray-300">${it.quantity} ${it.unit}</td>
-          <td class="py-1.5 text-xs text-gray-400">${it.notes||''}</td>
+          <td class="py-1.5 text-xs text-gray-400">${escapeHtml(it.notes||'')}</td>
         </tr>`).join('');
 
       const statusLabels = {pending:'Pending',under_review:'Under Review',on_hold:'On Hold',ordered:'Ordered'};
@@ -7970,16 +7970,16 @@
           ? `<div class="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center flex-shrink-0 mt-0.5"><svg width="11" height="11" fill="none" stroke="#3b82f6" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>`
           : `<div class="w-6 h-6 rounded-full bg-[#3BB54A]/15 flex items-center justify-center flex-shrink-0 mt-0.5"><svg width="11" height="11" fill="none" stroke="#3BB54A" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>`;
         const body = isComment
-          ? `<p class="text-sm text-gray-700 dark:text-gray-300">${h.note}</p>`
-          : `<p class="text-sm text-gray-700 dark:text-gray-300">Status → <span class="font-semibold">${statusLabels[h.new_status]||h.new_status}</span>${h.note?` <span class="text-gray-400">— ${h.note}</span>`:''}</p>`;
-        return `<div class="flex gap-2.5 items-start">${icon}<div class="flex-1 min-w-0 pt-0.5"><div class="flex flex-wrap gap-x-2 mb-0.5"><span class="text-xs font-medium text-gray-500 dark:text-gray-400">${h.changed_by_email}</span><span class="text-xs text-gray-400">${fmtSRDate(h.changed_at)}</span></div>${body}</div></div>`;
+          ? `<p class="text-sm text-gray-700 dark:text-gray-300">${escapeHtml(h.note)}</p>`
+          : `<p class="text-sm text-gray-700 dark:text-gray-300">Status → <span class="font-semibold">${escapeHtml(statusLabels[h.new_status]||h.new_status)}</span>${h.note?` <span class="text-gray-400">— ${escapeHtml(h.note)}</span>`:''}</p>`;
+        return `<div class="flex gap-2.5 items-start">${icon}<div class="flex-1 min-w-0 pt-0.5"><div class="flex flex-wrap gap-x-2 mb-0.5"><span class="text-xs font-medium text-gray-500 dark:text-gray-400">${escapeHtml(h.changed_by_email)}</span><span class="text-xs text-gray-400">${fmtSRDate(h.changed_at)}</span></div>${body}</div></div>`;
       }).join('');
 
       const inpCls = 'rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700/80 text-gray-900 dark:text-white text-sm px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#3BB54A]/50 focus:border-[#3BB54A]';
 
       panel.innerHTML = `
         <div class="pt-4 space-y-4">
-          ${req.notes?`<div class="bg-gray-50 dark:bg-gray-700/40 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-gray-300"><span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Notes: </span>${req.notes}</div>`:''}
+          ${req.notes?`<div class="bg-gray-50 dark:bg-gray-700/40 rounded-lg px-3 py-2 text-sm text-gray-700 dark:text-gray-300"><span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Notes: </span>${escapeHtml(req.notes)}</div>`:''}
 
           <div>
             <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Items</div>
