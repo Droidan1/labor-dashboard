@@ -492,6 +492,51 @@
     @media not all and (min-width: 1024px) {
       #main-scroll { padding-bottom: calc(7rem + env(safe-area-inset-bottom)); }
     }
+
+    /* ── Print (Settings → Print dashboard; web only) ────────────────────────
+       #print-report is a body-level sibling of #app and is the ONLY thing that
+       prints: the app UI (dark panels, nav, buttons, sparklines) is hidden and
+       the report is laid out for Letter portrait in black-on-white. Direction is
+       carried by +/− signs and weight as well as color, so a monochrome office
+       printer loses nothing. print-color-adjust keeps the grayscale channel-mix
+       bar from being dropped as a "background". */
+    #print-report { display: none; }
+    @media print {
+      @page { size: letter portrait; margin: 0.5in; }
+      html, body { background: #fff !important; }
+      body > *:not(#print-report) { display: none !important; }
+      #print-report {
+        display: block !important;
+        color: #14110a;
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+      }
+      #print-report .pr-num { font-variant-numeric: tabular-nums; }
+      #print-report .pr-pos { color: #1a7a3c; font-weight: 600; }
+      #print-report .pr-neg { color: #a32d2d; font-weight: 600; }
+      #print-report .pr-hd { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; border-bottom: 1.5px solid #14110a; padding-bottom: 8px; }
+      #print-report .pr-brand { font-size: 17pt; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; line-height: 1.1; }
+      #print-report .pr-brandsub { font-size: 7pt; color: #6b6453; letter-spacing: .1em; text-transform: uppercase; margin-top: 3px; }
+      #print-report .pr-meta { text-align: right; font-size: 7pt; color: #6b6453; line-height: 1.5; }
+      #print-report .pr-meta b { color: #14110a; font-size: 9pt; }
+      #print-report .pr-kpis { display: flex; gap: 8px; margin-top: 12px; }
+      #print-report .pr-kpi { flex: 1; border: 0.5pt solid #d6d3ca; padding: 6px 7px; }
+      #print-report .pr-kl { font-size: 6pt; letter-spacing: .09em; text-transform: uppercase; color: #6b6453; }
+      #print-report .pr-kv { font-size: 14pt; font-weight: 600; margin-top: 2px; }
+      #print-report .pr-ks { font-size: 6.5pt; color: #6b6453; margin-top: 1px; }
+      #print-report .pr-sec { font-size: 6pt; letter-spacing: .1em; text-transform: uppercase; color: #6b6453; margin: 13px 0 5px; border-bottom: 0.5pt solid #d6d3ca; padding-bottom: 2px; }
+      #print-report .pr-mixbar { display: flex; height: 8px; border: 0.5pt solid #b4b2a9; margin-bottom: 4px; }
+      #print-report .pr-mixleg { display: flex; gap: 14px; font-size: 6.5pt; }
+      #print-report .pr-mixleg i { display: inline-block; width: 6px; height: 6px; border: 0.5pt solid #8a877d; margin-right: 3px; }
+      #print-report .pr-bud { display: flex; gap: 8px; }
+      #print-report .pr-budbox { flex: 1; border: 0.5pt solid #d6d3ca; padding: 6px 7px; display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+      #print-report table { width: 100%; border-collapse: collapse; font-size: 7pt; }
+      #print-report th { font-size: 5.8pt; letter-spacing: .06em; text-transform: uppercase; color: #6b6453; font-weight: 600; text-align: right; padding: 0 2px 3px; border-bottom: 1pt solid #14110a; }
+      #print-report th.pr-l, #print-report td.pr-l { text-align: left; }
+      #print-report td { text-align: right; padding: 3px 2px; border-bottom: 0.5pt solid #e5e3db; }
+      #print-report tr.pr-tot td { border-top: 1pt solid #14110a; border-bottom: none; font-weight: 600; padding-top: 4px; }
+      #print-report .pr-ft { display: flex; justify-content: space-between; font-size: 5.8pt; color: #9c9484; margin-top: 12px; border-top: 0.5pt solid #d6d3ca; padding-top: 5px; }
+    }
   </style>
   <script>
     // Apply dark mode before paint to prevent flash
@@ -1969,6 +2014,23 @@
       </div>
       <div class="max-w-3xl mx-auto px-6 py-6 space-y-2">
 
+        <!-- Print dashboard row -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
+          <div class="w-full flex items-center gap-4 px-5 py-4">
+            <span class="flex-shrink-0 w-8 h-8 rounded-lg bg-[#3BB54A]/10 flex items-center justify-center">
+              <svg class="w-4 h-4 text-accent-green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            </span>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-semibold text-gray-900 dark:text-op-ink">Print dashboard</div>
+              <div class="text-xs text-gray-400 dark:text-op-inkDim">One-page report: totals, budget pace, vs last year and a per-store table.</div>
+            </div>
+            <select id="print-range-select" aria-label="Date range to print"
+              class="flex-shrink-0 rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-700 dark:text-op-ink text-xs font-semibold px-2 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+            <button onclick="printDashboard(this)"
+              class="flex-shrink-0 px-3.5 py-2 text-xs font-semibold rounded-lg border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-accent-green/50 transition-colors disabled:opacity-50">Print</button>
+          </div>
+        </div>
+
         <!-- Show tips again row -->
         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
           <div class="w-full flex items-center gap-4 px-5 py-4">
@@ -2900,6 +2962,11 @@
       </div>
     </div>
   </div>
+
+  <!-- Print-only report (Settings → Print dashboard). Body-level sibling of
+       #app on purpose: the print stylesheet hides every other body child, so
+       this must not live inside #app. Filled by buildPrintReport() on click. -->
+  <div id="print-report" aria-hidden="true"></div>
 
   <!-- ─────────── What's New popup (shown on open until dismissed) ─────────── -->
   <div id="whatsnew-modal" class="hidden fixed inset-0 z-[70] flex items-center justify-center p-4">
@@ -4957,6 +5024,7 @@
   // fetch — same patch-by-id pattern as the hourly sparkline. Slots stay
   // empty (feature invisible) when either side of the comparison is 0.
   let dashCardLY = {};   // cardCode -> {net, retail, bin} — TY values at render
+  let dashLYByStore = {};   // cardCode -> {retail, bin} — LY sums for the range (also used by print)
   function lyDateOf(dateStr) {
     const [y, m, d] = String(dateStr).split('-').map(Number);
     return new Date(Date.UTC(y, m - 1, d) - 364 * 86400000).toISOString().slice(0, 10);
@@ -4997,6 +5065,7 @@
         const s = byStore[r.store] || (byStore[r.store] = { retail: 0, bin: 0 });
         s.retail += r.retail || 0; s.bin += r.bin || 0;
       }
+      dashLYByStore = byStore;   // reused by the print report
       for (const [code, ty] of Object.entries(dashCardLY)) {
         const ly = byStore[code] || { retail: 0, bin: 0 };
         fillLYPill(code, ty, ly.retail + ly.bin);
@@ -5005,6 +5074,144 @@
       }
     } catch (_) { /* comparison is additive — leave slots empty on failure */ }
   }
+
+  // ── Settings → Print dashboard (web only) ────────────────────────────────
+  // Builds a static one-page Letter report into #print-report from dashCardPrint
+  // (stashed by renderCards) so the paper can never drift from the screen. The
+  // Weekly/Monthly blocks are week/month-anchored rather than range-derived, so
+  // those two are read as already-formatted strings out of the live DOM.
+  let dashCardPrint = {};
+  const prTxt = (id) => { const e = el(id); const t = e ? (e.textContent || '').trim() : ''; return t && t !== '—' ? t : '—'; };
+  function prSigned(n) {
+    if (n == null) return '—';
+    return `<span class="${n >= 0 ? 'pr-pos' : 'pr-neg'}">${n >= 0 ? '+' : '−'}${fmtDollar(Math.abs(n))}</span>`;
+  }
+  function prPct(n) {
+    if (n == null || !isFinite(n)) return '—';
+    return `<span class="${n >= 0 ? 'pr-pos' : 'pr-neg'}">${n >= 0 ? '+' : '−'}${Math.abs(n).toFixed(1)}%</span>`;
+  }
+  // Returns the number of store rows written, so the caller can refuse to print
+  // an empty report (e.g. Settings opened before the dashboard ever rendered).
+  function buildPrintReport() {
+    const slot = el('print-report'); if (!slot) return 0;
+    // STORES order (Holland last) — same order the cards render in.
+    const rows = STORES.map(s => s.split('/')[0]).map(code => {
+      const p = dashCardPrint[code]; if (!p) return null;
+      const ly = dashLYByStore[code];
+      // NOTE: TY net vs LY retail+bin — deliberately the SAME comparison the
+      // on-screen pill makes (the LY import has no auction channel), so the
+      // printout matches the card rather than quietly using different math.
+      const lyNet = ly ? (ly.retail || 0) + (ly.bin || 0) : 0;
+      const lyPct = (lyNet > 0 && p.net > 0) ? (p.net - lyNet) / lyNet * 100 : null;
+      return { code, ...p, lyNet, lyPct };
+    }).filter(Boolean);
+
+    const sum = (f) => rows.reduce((a, r) => a + (Number(r[f]) || 0), 0);
+    const tNet = sum('net'), tBud = sum('budget'), tRetail = sum('retail'), tBin = sum('bin'),
+          tAuction = sum('auction'), tLY = sum('lyNet'), tOrders = sum('orders');
+    const tDelta = tNet - tBud;
+    const tPace = tBud > 0 ? Math.round(tNet / tBud * 100) : null;
+    const tLYPct = (tLY > 0 && tNet > 0) ? (tNet - tLY) / tLY * 100 : null;
+    const reporting = rows.filter(r => r.hasData).length;
+    // Order-weighted so the ops figures match the blended totals.
+    const wAvg = (f) => { let n = 0, d = 0; for (const r of rows) { if (r[f] != null && r.orders > 0) { n += r[f] * r.orders; d += r.orders; } } return d > 0 ? n / d : null; };
+    const cart = wAvg('cart'), items = wAvg('items'), asp = wAvg('asp');
+    const pctOf = (v) => tNet > 0 ? (v / tNet * 100) : 0;
+
+    const stamp = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' });
+    // Exact dates are worth printing (the paper gets filed), but a single-day
+    // range shouldn't read "2026-07-24 – 2026-07-24".
+    const dates = dateRange.from === dateRange.to
+      ? escapeHtml(dateRange.from || '')
+      : `${escapeHtml(dateRange.from || '')} – ${escapeHtml(dateRange.to || '')}`;
+    const cell = (v) => `<td class="pr-num">${v}</td>`;
+    slot.innerHTML = `
+      <div class="pr-hd">
+        <div><div class="pr-brand">Bargain Lane</div><div class="pr-brandsub">Sales dashboard · all stores</div></div>
+        <div class="pr-meta"><b>${escapeHtml(dateRange.label || '')}</b><br>${dates}<br>Generated ${escapeHtml(stamp)} ET · ${reporting} of ${rows.length} reporting</div>
+      </div>
+      <div class="pr-kpis">
+        <div class="pr-kpi"><div class="pr-kl">Net sales</div><div class="pr-kv pr-num">${fmtDollar(tNet)}</div><div class="pr-ks pr-num">${tOrders ? tOrders.toLocaleString('en-US') + ' orders' : '&nbsp;'}</div></div>
+        <div class="pr-kpi"><div class="pr-kl">Budget</div><div class="pr-kv pr-num">${tBud > 0 ? fmtDollar(tBud) : '—'}</div><div class="pr-ks pr-num">${tBud > 0 ? prSigned(tDelta) : '&nbsp;'}</div></div>
+        <div class="pr-kpi"><div class="pr-kl">Pace</div><div class="pr-kv pr-num">${tPace != null ? tPace + '%' : '—'}</div><div class="pr-ks">of budget</div></div>
+        <div class="pr-kpi"><div class="pr-kl">vs last year</div><div class="pr-kv pr-num">${prPct(tLYPct)}</div><div class="pr-ks pr-num">${tLY > 0 ? 'LY ' + fmtDollar(tLY) : 'no LY data'}</div></div>
+      </div>
+      <div class="pr-sec">Channel mix</div>
+      <div class="pr-mixbar">
+        <div style="width:${pctOf(tRetail).toFixed(1)}%;background:#14110a"></div>
+        <div style="width:${pctOf(tBin).toFixed(1)}%;background:#8a877d"></div>
+        <div style="width:${pctOf(tAuction).toFixed(1)}%;background:#d6d3ca"></div>
+      </div>
+      <div class="pr-mixleg">
+        <span><i style="background:#14110a"></i>Retail ${pctOf(tRetail).toFixed(1)}% · <span class="pr-num">${fmtDollar(tRetail)}</span></span>
+        <span><i style="background:#8a877d"></i>Bins ${pctOf(tBin).toFixed(1)}% · <span class="pr-num">${fmtDollar(tBin)}</span></span>
+        <span><i style="background:#d6d3ca"></i>Auction ${pctOf(tAuction).toFixed(1)}% · <span class="pr-num">${fmtDollar(tAuction)}</span></span>
+      </div>
+      <div class="pr-sec">Budget to date</div>
+      <div class="pr-bud">
+        <div class="pr-budbox"><span class="pr-kl">${escapeHtml(prTxt('c-period-label'))}</span><span class="pr-num"><b>${escapeHtml(prTxt('c-total'))}</b> <span style="color:#6b6453">/ ${escapeHtml(prTxt('c-budget'))}</span> ${escapeHtml(prTxt('c-variance'))}</span></div>
+        <div class="pr-budbox"><span class="pr-kl">${escapeHtml(prTxt('c-month-label'))}</span><span class="pr-num"><b>${escapeHtml(prTxt('c-month-total'))}</b> <span style="color:#6b6453">/ ${escapeHtml(prTxt('c-month-budget'))}</span> ${escapeHtml(prTxt('c-month-variance'))}</span></div>
+      </div>
+      <div class="pr-sec">By store</div>
+      <table><thead><tr>
+        <th class="pr-l">Store</th><th>Net</th><th>Budget</th><th>+/−</th><th>Pace</th>
+        <th>Retail</th><th>Bins</th><th>Auction</th><th>LY</th><th>vs LY</th>
+      </tr></thead><tbody>
+        ${rows.map(r => `<tr><td class="pr-l">${escapeHtml(r.name)}</td>${cell(fmtDollar(r.net))}${cell(r.budget > 0 ? fmtDollar(r.budget) : '—')}${cell(r.budget > 0 ? prSigned(r.delta) : '—')}${cell(r.pct != null ? r.pct + '%' : '—')}${cell(fmtDollar(r.retail))}${cell(fmtDollar(r.bin))}${cell(r.auction ? fmtDollar(r.auction) : '—')}${cell(r.lyNet > 0 ? fmtDollar(r.lyNet) : '—')}${cell(prPct(r.lyPct))}</tr>`).join('')}
+        <tr class="pr-tot"><td class="pr-l">All stores</td>${cell(fmtDollar(tNet))}${cell(tBud > 0 ? fmtDollar(tBud) : '—')}${cell(tBud > 0 ? prSigned(tDelta) : '—')}${cell(tPace != null ? tPace + '%' : '—')}${cell(fmtDollar(tRetail))}${cell(fmtDollar(tBin))}${cell(tAuction ? fmtDollar(tAuction) : '—')}${cell(tLY > 0 ? fmtDollar(tLY) : '—')}${cell(prPct(tLYPct))}</tr>
+      </tbody></table>
+      <div class="pr-sec">Operations · all stores</div>
+      <table><thead><tr><th class="pr-l">Avg cart</th><th class="pr-l">Items / order</th><th class="pr-l">Orders</th><th class="pr-l">Avg selling price</th></tr></thead>
+      <tbody><tr>
+        <td class="pr-l pr-num">${cart != null ? '$' + cart.toFixed(2) : '—'}</td>
+        <td class="pr-l pr-num">${items != null ? items.toFixed(1) : '—'}</td>
+        <td class="pr-l pr-num">${tOrders ? tOrders.toLocaleString('en-US') : '—'}</td>
+        <td class="pr-l pr-num">${asp != null ? '$' + asp.toFixed(2) : '—'}</td>
+      </tr></tbody></table>
+      <div class="pr-ft"><span>www.retjghub.com · internal use only</span><span>Printed from the RETJG Hub dashboard</span></div>`;
+    return rows.length;
+  }
+
+  // Apply the chosen range, make sure the LY numbers are in, print, then put the
+  // range back — printing from Settings shouldn't silently change what the
+  // dashboard shows when the user navigates back to it.
+  async function printDashboard(btn) {
+    const sel = el('print-range-select');
+    const pid = sel ? sel.value : 'current';
+    const prev = { presetId: dateRange.presetId, from: dateRange.from, to: dateRange.to };
+    const label = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
+    try {
+      if (pid !== 'current' && pid !== prev.presetId) setDateRange(pid);
+      await loadLYComparison();
+      if (!buildPrintReport()) {
+        await uiAlert('Dashboard data hasn’t loaded yet. Open the Dashboard, let it finish loading, then print.', { title: 'Nothing to print' });
+        return;
+      }
+      window.print();
+    } catch (e) {
+      await uiAlert("Couldn't build the printout: " + (e && e.message ? e.message : 'unknown error'), { title: 'Print dashboard' });
+    } finally {
+      if (pid !== 'current' && pid !== prev.presetId) setDateRange(prev.presetId, prev.from, prev.to);
+      if (btn) { btn.disabled = false; btn.textContent = label || 'Print'; }
+    }
+  }
+  window.printDashboard = printDashboard;
+
+  // Fill the Settings range picker from the dashboard's own preset list, so the
+  // two can't drift. 'custom' needs explicit dates, so it isn't offered here —
+  // instead, a custom range that's already active shows up as "Current range".
+  function initPrintRangeSelect() {
+    const sel = el('print-range-select'); if (!sel) return;
+    const opts = [];
+    if (dateRange.presetId === 'custom') opts.push(`<option value="current">Current range (${escapeHtml(dateRange.label || 'custom')})</option>`);
+    for (const p of RANGE_PRESETS) {
+      if (p.id === 'custom') continue;
+      opts.push(`<option value="${p.id}"${p.id === dateRange.presetId ? ' selected' : ''}>${escapeHtml(p.label)}</option>`);
+    }
+    sel.innerHTML = opts.join('');
+  }
+  window.initPrintRangeSelect = initPrintRangeSelect;
 
   function renderCards(metrics) {
     const container = el("store-cards");
@@ -5235,6 +5442,14 @@
       // filter (the card was just rebuilt fresh in the blended state).
       // TY values for the async "vs last year" fill (loadLYComparison below).
       dashCardLY[cardCode] = { net: v1Total, retail: v1Retail, bin: v1Bin };
+      // Same numbers again for Settings → Print dashboard, so the printout is
+      // built from what the card just rendered and can never drift from it.
+      dashCardPrint[cardCode] = {
+        name: m.name, net: v1Total, budget: v1Budget, delta: v1Delta, pct: v1Pct,
+        retail: v1Retail, bin: v1Bin, auction: v1Auction,
+        cart: v1Cart, items: v1Items, orders: v1Orders, asp: v1Asp,
+        hasData: !v1Error && !v1OfflineNow,
+      };
       dashCardBlended[cardCode] = {
         cart: v1Cart != null ? '$' + Number(v1Cart).toFixed(2) : '—',
         items: v1Items != null ? Number(v1Items).toFixed(1) : '—',
@@ -14748,7 +14963,7 @@
     const orig = window.navigateToPage;
     window.navigateToPage = function(page) {
       orig(page);
-      if (page === 'settings') { refreshItemCostsStatus(); loadCategoryCosts(); }
+      if (page === 'settings') { refreshItemCostsStatus(); loadCategoryCosts(); initPrintRangeSelect(); }
     };
   })();
 
