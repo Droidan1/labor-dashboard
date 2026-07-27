@@ -5031,13 +5031,20 @@
   }
   const LY_UP = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>';
   const LY_DOWN = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto" aria-hidden="true"><path d="M3 7l6 6 4-4 8 8"/><path d="M21 10v7h-7"/></svg>';
+  // LIKE-FOR-LIKE RULE: compare Retail + Bins on BOTH sides, never net-vs-LY.
+  // The last-year import has no auction channel, so putting TY net (which
+  // includes auction) against it overstated growth for any store that runs
+  // auctions — ~4% of sales chain-wide. tyCmp deliberately drops auction to
+  // match what the LY side can actually offer; the tooltip says so, since the
+  // pill sits under a Net figure that DOES include auction.
   function fillLYPill(code, ty, lyNet) {
     const slot = document.getElementById('ly-pill-' + code);
     if (!slot) return;
-    if (!(lyNet > 0) || !(ty.net > 0)) { slot.innerHTML = ''; return; }
-    const pct = (ty.net - lyNet) / lyNet * 100, up = pct >= 0;
+    const tyCmp = (ty.retail || 0) + (ty.bin || 0);
+    if (!(lyNet > 0) || !(tyCmp > 0)) { slot.innerHTML = ''; return; }
+    const pct = (tyCmp - lyNet) / lyNet * 100, up = pct >= 0;
     const c = up ? '#22c55e' : '#ef4444';
-    slot.innerHTML = `<span style="display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:3px 9px;border-radius:9999px;font-size:11px;font-weight:700;background:${up ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)'};border:1px solid ${up ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};color:${c}" title="Last year, same weekday of the same retail week">${up ? LY_UP : LY_DOWN}${fmtDollar(lyNet)} ${up ? '+' : '−'}${Math.abs(pct).toFixed(1)}% LY</span>`;
+    slot.innerHTML = `<span style="display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:3px 9px;border-radius:9999px;font-size:11px;font-weight:700;background:${up ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)'};border:1px solid ${up ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};color:${c}" title="Retail + Bins vs the same weekday of the same retail week last year (auction excluded — no last-year auction data)">${up ? LY_UP : LY_DOWN}${fmtDollar(lyNet)} ${up ? '+' : '−'}${Math.abs(pct).toFixed(1)}% LY</span>`;
   }
   function fillLYTile(slotId, tyVal, lyVal) {
     const slot = document.getElementById(slotId);
@@ -5098,11 +5105,12 @@
     const rows = STORES.map(s => s.split('/')[0]).map(code => {
       const p = dashCardPrint[code]; if (!p) return null;
       const ly = dashLYByStore[code];
-      // NOTE: TY net vs LY retail+bin — deliberately the SAME comparison the
-      // on-screen pill makes (the LY import has no auction channel), so the
-      // printout matches the card rather than quietly using different math.
+      // Like-for-like, same rule as the on-screen pill: Retail + Bins on BOTH
+      // sides (the LY import has no auction channel), so the printout matches
+      // the card and neither overstates growth.
       const lyNet = ly ? (ly.retail || 0) + (ly.bin || 0) : 0;
-      const lyPct = (lyNet > 0 && p.net > 0) ? (p.net - lyNet) / lyNet * 100 : null;
+      const tyCmp = (p.retail || 0) + (p.bin || 0);
+      const lyPct = (lyNet > 0 && tyCmp > 0) ? (tyCmp - lyNet) / lyNet * 100 : null;
       return { code, ...p, lyNet, lyPct };
     }).filter(Boolean);
 
@@ -5111,7 +5119,9 @@
           tAuction = sum('auction'), tLY = sum('lyNet'), tOrders = sum('orders');
     const tDelta = tNet - tBud;
     const tPace = tBud > 0 ? Math.round(tNet / tBud * 100) : null;
-    const tLYPct = (tLY > 0 && tNet > 0) ? (tNet - tLY) / tLY * 100 : null;
+    // Chain-wide YoY on the same like-for-like basis as the rows: Retail + Bins.
+    const tLYCmp = tRetail + tBin;
+    const tLYPct = (tLY > 0 && tLYCmp > 0) ? (tLYCmp - tLY) / tLY * 100 : null;
     const reporting = rows.filter(r => r.hasData).length;
     // Order-weighted so the ops figures match the blended totals.
     const wAvg = (f) => { let n = 0, d = 0; for (const r of rows) { if (r[f] != null && r.orders > 0) { n += r[f] * r.orders; d += r.orders; } } return d > 0 ? n / d : null; };
@@ -5134,7 +5144,7 @@
         <div class="pr-kpi"><div class="pr-kl">Net sales</div><div class="pr-kv pr-num">${fmtDollar(tNet)}</div><div class="pr-ks pr-num">${tOrders ? tOrders.toLocaleString('en-US') + ' orders' : '&nbsp;'}</div></div>
         <div class="pr-kpi"><div class="pr-kl">Budget</div><div class="pr-kv pr-num">${tBud > 0 ? fmtDollar(tBud) : '—'}</div><div class="pr-ks pr-num">${tBud > 0 ? prSigned(tDelta) : '&nbsp;'}</div></div>
         <div class="pr-kpi"><div class="pr-kl">Pace</div><div class="pr-kv pr-num">${tPace != null ? tPace + '%' : '—'}</div><div class="pr-ks">of budget</div></div>
-        <div class="pr-kpi"><div class="pr-kl">vs last year</div><div class="pr-kv pr-num">${prPct(tLYPct)}</div><div class="pr-ks pr-num">${tLY > 0 ? 'LY ' + fmtDollar(tLY) : 'no LY data'}</div></div>
+        <div class="pr-kpi"><div class="pr-kl">vs last year</div><div class="pr-kv pr-num">${prPct(tLYPct)}</div><div class="pr-ks pr-num">${tLY > 0 ? 'LY ' + fmtDollar(tLY) + ' · retail + bins' : 'no LY data'}</div></div>
       </div>
       <div class="pr-sec">Channel mix</div>
       <div class="pr-mixbar">
@@ -5168,7 +5178,8 @@
         <td class="pr-l pr-num">${tOrders ? tOrders.toLocaleString('en-US') : '—'}</td>
         <td class="pr-l pr-num">${asp != null ? '$' + asp.toFixed(2) : '—'}</td>
       </tr></tbody></table>
-      <div class="pr-ft"><span>www.retjghub.com · internal use only</span><span>Printed from the RETJG Hub dashboard</span></div>`;
+      <div class="pr-ft"><span>LY / vs LY compare Retail + Bins only — the last-year figures carry no auction channel.</span></div>
+      <div class="pr-ft" style="border-top:none;margin-top:2px;padding-top:0"><span>www.retjghub.com · internal use only</span><span>Printed from the RETJG Hub dashboard</span></div>`;
     return rows.length;
   }
 
