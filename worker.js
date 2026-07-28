@@ -10,7 +10,11 @@
 // looks similar — "$1 Accessories", "$10 Boots", "$2 Clear Snack Bag",
 // "50373 Large Gift Bag". Note \bfill a bag\b rather than \bbag\b is what keeps
 // the gift/snack bags out. Add new bin spellings HERE and nowhere else.
-const BIN_PATTERNS = [/\bbin\b/i, /\bfill a bag\b/i, /\bglass case\b/i];
+// "Ikea Bag" ($5, stocked at BL2/BL4/BL8/BL14/BL16) is a bin sale but is
+// unguessable from its name, so it needs an explicit entry. It previously
+// relied on a single per-item override at BL4 only, which meant the other four
+// stores would not have counted it as bin had it sold.
+const BIN_PATTERNS = [/\bbin\b/i, /\bfill a bag\b/i, /\bglass case\b/i, /\bikea bag\b/i];
 const MAX_TXN_DURATION_MS = 30 * 60 * 1000;
 const ALL_STORES = ["BL1", "BL2", "BL4", "BL8", "BL14", "BL16"];
 // The Weekly Retail Summary re-admits the closed Wyoming (BL12) as frozen
