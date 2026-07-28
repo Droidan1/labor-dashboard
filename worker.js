@@ -2358,6 +2358,15 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   const l3Cats = {};      // L2 → L3 → { qty, gross, discounts, refunds, net, cost }
   const unmappedL3 = {};
   const noCategory = {};
+  // Items whose L2 was resolved by a FALLBACK rather than a real Clover L3.
+  // unmappedL3 catches "has a Clover category we don't map" and noCategory
+  // catches "fell through everything", but neither sees the middle — items
+  // matched by override / IM number / name / heuristic / pattern. Those are
+  // exactly the rows that render as "[Name match] …", "[Heuristic] …" etc., and
+  // their item identity was previously discarded at aggregation, so there was
+  // no way to find out which products to fix. Keyed by item name →
+  // { qty, net, itemId, source, l2 }.
+  const fallbackItems = {};
   // Map line-item id → { l2, l3Key } for refund attribution after the main loop.
   // Built during the per-order line-item walk so refunds from /v3/refunds (which
   // reference lineItem.id) can be attributed back to the originating category.
@@ -2614,6 +2623,23 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         l3Key = li.name || "(unnamed)";
       } else {
         l3Key = "[Other] " + l2;
+      }
+
+      // Capture the ITEM behind every fallback-resolved row (see fallbackItems
+      // above). "custom" is excluded because those already keep the raw item
+      // name as their L3 and are tracked by noCategory.
+      if (l2Source && l2Source !== "clover-l3" && l2Source !== "custom") {
+        const fbKey = li.name || "(unnamed)";
+        const fb = fallbackItems[fbKey] ||
+          { qty: 0, gross: 0, itemId: itemId || null, source: l2Source, l2 };
+        fb.qty += qty;
+        // GROSS line revenue (signed, so refunds net out). Deliberately not
+        // called "net": discounts/refunds are applied to the L2/L3 rows later,
+        // so this runs ~10% above the netSales shown on the dashboard. It is a
+        // ranking signal for "which product to fix first", not a reported figure.
+        fb.gross += priceCents / 100;
+        if (!fb.itemId && itemId) fb.itemId = itemId;
+        fallbackItems[fbKey] = fb;
       }
 
       const cat = getCat(l2);
@@ -2956,6 +2982,17 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     },
     _debug: {
       unmappedL3, noCategory,
+      // Top 100 by net keeps the snapshot small (a store-day is ~18 KB today)
+      // while still covering everything worth acting on; fallbackItemsTotal
+      // reports the true count so a truncated list is never mistaken for
+      // complete.
+      fallbackItems: Object.fromEntries(
+        Object.entries(fallbackItems)
+          .sort((a, b) => b[1].gross - a[1].gross)
+          .slice(0, 100)
+          .map(([k, v]) => [k, { ...v, qty: Math.round(v.qty), gross: roundCents(v.gross) }])
+      ),
+      fallbackItemsTotal: Object.keys(fallbackItems).length,
       itemCatMapSize: Object.keys(itemCatMap).length,
       itemCostsCount: Object.keys(icItems).length,
     },
@@ -8319,17 +8356,25 @@ export default {
         return new Response(JSON.stringify({ error: "Missing start or end param (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
       }
 
+      // store=all scans every store; otherwise just the one requested.
+      const scanStores = storeParam === "ALL" ? ALL_STORES : [storeParam];
+
       // Union { name → {qty, net, itemId} } and { l3 → {qty, net} } across the range.
       const agg = {};
       const l3Agg = {};
+      // Items resolved by a fallback rather than a real Clover L3 — the products
+      // that land in the "Other" row. Keyed name → {qty, net, itemId, source, l2, stores}.
+      const fbAgg = {};
+      let fbTruncated = false;
       const current = new Date(start + "T00:00:00Z");
       const endDate = new Date(end + "T00:00:00Z");
       const datesScanned = [];
       while (current <= endDate) {
         const dateStr = current.toISOString().slice(0, 10);
         datesScanned.push(dateStr);
+        for (const st of scanStores) {
         const snap = await env.SALES_SNAPSHOTS.get(
-          `items:${storeParam.toLowerCase()}:${dateStr}`, "json"
+          `items:${st.toLowerCase()}:${dateStr}`, "json"
         );
         const noCat = snap?._debug?.noCategory;
         if (noCat && typeof noCat === "object") {
@@ -8366,6 +8411,21 @@ export default {
             l3Agg[l3] = prior;
           }
         }
+        const fbs = snap?._debug?.fallbackItems;
+        if (fbs && typeof fbs === "object") {
+          if (Number(snap._debug.fallbackItemsTotal) > Object.keys(fbs).length) fbTruncated = true;
+          for (const [name, val] of Object.entries(fbs)) {
+            if (!val || typeof val !== "object") continue;
+            const prior = fbAgg[name] ||
+              { name, itemId: null, qty: 0, gross: 0, source: val.source || null, l2: val.l2 || null, stores: [] };
+            prior.qty += Number(val.qty) || 0;
+            prior.gross += Number(val.gross) || 0;
+            if (!prior.itemId && val.itemId) prior.itemId = val.itemId;
+            if (!prior.stores.includes(st)) prior.stores.push(st);
+            fbAgg[name] = prior;
+          }
+        }
+        }
         current.setUTCDate(current.getUTCDate() + 1);
       }
 
@@ -8376,8 +8436,18 @@ export default {
         .map(i => ({ ...i, qty: roundCents(i.qty), net: roundCents(i.net) }))
         .sort((a, b) => b.net - a.net);
 
+      const fallbackItems = Object.values(fbAgg)
+        .map(i => ({ ...i, qty: Math.round(i.qty), gross: roundCents(i.gross) }))
+        .sort((a, b) => b.gross - a.gross);
+      const fallbackGross = roundCents(fallbackItems.reduce((t, i) => t + i.gross, 0));
+
       return new Response(JSON.stringify({
         store: storeParam, start, end, datesScanned, items, l3Categories,
+        // Products landing in the "Other" bucket, biggest revenue first.
+        // `source` says which fallback fired: override | im | name | heuristic | pattern.
+        // NOTE: `gross` is pre-discount line revenue — a ranking signal, not a
+        // reported figure. It runs above the netSales shown on the dashboard.
+        fallbackItems, fallbackGross, fallbackTruncated: fbTruncated,
       }), { headers: corsJson });
     }
 
