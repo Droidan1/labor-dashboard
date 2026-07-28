@@ -1,4 +1,15 @@
 // ─── Constants ───────────────────────────────────────────────────
+// SINGLE SOURCE OF TRUTH for "is this a bin sale?" — used via isBinItem() by
+// BOTH the Retail-vs-BIN channel split on the store cards AND the Bin Products
+// L2 categorisation in Item Sales. These were three separate copies of the same
+// regex; if they drift, the BIN tile and the Bin Products category silently
+// disagree. Verified against the live Clover catalog (5,596 items / 330 distinct
+// names across all six stores): matches exactly the 17 real bin names
+// ($0.50–$10 Bin incl. the "Indy" variants, Fill A Bag incl. $15/$30 variants,
+// Glass Case / Mystery Box) and correctly excludes flat-price retail that merely
+// looks similar — "$1 Accessories", "$10 Boots", "$2 Clear Snack Bag",
+// "50373 Large Gift Bag". Note \bfill a bag\b rather than \bbag\b is what keeps
+// the gift/snack bags out. Add new bin spellings HERE and nowhere else.
 const BIN_PATTERNS = [/\bbin\b/i, /\bfill a bag\b/i, /\bglass case\b/i];
 const MAX_TXN_DURATION_MS = 30 * 60 * 1000;
 const ALL_STORES = ["BL1", "BL2", "BL4", "BL8", "BL14", "BL16"];
@@ -2544,7 +2555,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
             if (/\bGIFT\s*CARD\b/i.test(li.name || "")) {
               l2 = "Gift Cards";
               l2Source = "heuristic";
-            } else if (/\bBIN\b|FILL A BAG|GLASS CASE/i.test(li.name || "")) {
+            } else if (isBinItem(li.name || "")) {
               // Matches "Bin", "$3 Bin", "Fill a Bag", etc. — same patterns as
               // the live-tile isBinItem(). Safety net when Clover catalog loses
               // the "Bin Products" category assignment (e.g. after item edit).
@@ -2770,7 +2781,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         const liName = li.name || "";
         const n = liName.toUpperCase();
         if (/\bGIFT\s*CARD\b/i.test(liName)) l2 = "Gift Cards";
-        else if (/\bBIN\b|FILL A BAG|GLASS CASE/i.test(liName)) l2 = "Bin Products";
+        else if (isBinItem(liName)) l2 = "Bin Products";
         else if (/EASTER|VALENTINE|CHRISTMAS|HALLOWEEN|FOURTH OF JULY|4TH OF JULY|ST[.\s]*PATRICK|HOLIDAY|SEASONAL/i.test(n)) l2 = "Seasonal";
         else if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV|RECLINER|LOVESEAT|OTTOMAN|MATTRESS/i.test(n)) l2 = "Furniture";
         else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE/i.test(n)) l2 = "Home";
