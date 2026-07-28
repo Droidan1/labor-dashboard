@@ -1615,7 +1615,12 @@ async function fetchManualRefunds(store, env, sinceTimestamp, untilTimestamp = n
 //   Full refund  → order.total === 0 AND payment sum ≈ refund.amount
 //   Partial refund → order has an order-level refund attached (delta between
 //                    payment sum and order.total equals the refund amount)
-async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = null, sameDayOrders = null) {
+// preRefundElements / preManualRefunds: when the caller has ALREADY paged
+// /v3/refunds and /v3/manual_refunds for this exact window (the snapshot handler
+// and the nightly cron both do, to build the category bin/retail override),
+// pass them here instead of letting this function re-fetch the same two
+// endpoints. Both default to null, which is byte-identical to the old behaviour.
+async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = null, sameDayOrders = null, preRefundElements = null, preManualRefunds = null) {
   const merchantId = env[`${store}_MERCHANT_ID`];
   const apiToken = env[`${store}_API_TOKEN`];
   if (!merchantId || !apiToken) return 0;
@@ -1648,6 +1653,28 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
 
   let total = 0;
   let skipped = 0;
+
+  // One refund record → running totals. Shared by both paths below so the
+  // pre-fetched and self-fetched cases can never diverge in their math.
+  const addRefund = (r) => {
+    // refund.amount includes tax; subtract tax to match Clover's pre-tax "Refunds" line.
+    const gross = r.amount || 0;
+    const tax = r.taxAmount || 0;
+    const preTax = gross - tax;
+
+    // Skip if this amount is already reflected in a same-day order.total.
+    if (alreadyReflected.has(preTax) && alreadyReflected.get(preTax) > 0) {
+      alreadyReflected.set(preTax, alreadyReflected.get(preTax) - 1);
+      skipped += preTax;
+      return;
+    }
+    total += preTax;
+  };
+
+  if (preRefundElements) {
+    // Caller already paged /v3/refunds for this exact window — reuse it.
+    for (const r of preRefundElements) addRefund(r);
+  } else {
   let offset = 0;
   const limit = 1000;
   const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
@@ -1659,20 +1686,7 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
       if (untilTimestamp) url += `&filter=createdTime<${untilTimestamp}`;
       const data = await cloverFetchWithRetry(url, headers, `Clover refunds ${store}`);
       if (!data?.elements?.length) break;
-      for (const r of data.elements) {
-        // refund.amount includes tax; subtract tax to match Clover's pre-tax "Refunds" line.
-        const gross = r.amount || 0;
-        const tax = r.taxAmount || 0;
-        const preTax = gross - tax;
-
-        // Skip if this amount is already reflected in a same-day order.total.
-        if (alreadyReflected.has(preTax) && alreadyReflected.get(preTax) > 0) {
-          alreadyReflected.set(preTax, alreadyReflected.get(preTax) - 1);
-          skipped += preTax;
-          continue;
-        }
-        total += preTax;
-      }
+      for (const r of data.elements) addRefund(r);
       if (data.elements.length < limit) break;
       offset += limit;
     }
@@ -1683,6 +1697,7 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
     console.warn(`fetchRefundsTotal(${store}) error:`, e.message);
     return 0;
   }
+  }
   if (skipped > 0) {
     console.log(`fetchRefundsTotal(${store}): skipped ${skipped/100} same-day refunds (already in order.total), deducting ${total/100}`);
   }
@@ -1692,7 +1707,7 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
   // not linked to a specific order). Without this, totals over-report
   // by the manual-refund total.
   try {
-    const mrElements = await fetchManualRefunds(store, env, sinceTimestamp, untilTimestamp);
+    const mrElements = preManualRefunds || await fetchManualRefunds(store, env, sinceTimestamp, untilTimestamp);
     let manualTotalCents = 0;
     for (const mr of mrElements) {
       const gross = mr.amount || 0;
@@ -3090,7 +3105,7 @@ function applyRefundsToAggregate(data, refundCents) {
 }
 
 // ─── Fetch and aggregate for a store, then snapshot ──────────────
-async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, untilTimestamp = null, binRetailOverride = null, preElements = null) {
+async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, untilTimestamp = null, binRetailOverride = null, preElements = null, preRefundElements = null, preManualRefunds = null) {
   // preElements: when provided (e.g. the clientCreatedTime sweep), skip the
   // createdTime fetch and aggregate this exact set instead. Default (null) is
   // byte-identical to the original behavior.
@@ -3105,7 +3120,7 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
   // sameDayOrders so fetchRefundsTotal returns ALL refunds (same-day + cross-day),
   // not just cross-day. Without this, refunded orders contribute their original
   // pre-refund revenue and the refund deduction would be missing.
-  const refundCents = await fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp, null);
+  const refundCents = await fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp, null, preRefundElements, preManualRefunds);
   applyRefundsToAggregate(data, refundCents);
 
   // Phase 2D: when caller provides category-based bin/retail (computed via
@@ -7611,12 +7626,18 @@ export default {
           // the full item-sales snapshot to KV so the Item Sales tab reflects
           // the latest aggregateItemSales output (refund attribution etc.).
           let binRetailOverride = null;
+          // Hoisted so they survive the try and can be handed to
+          // fetchAggregateAndSnapshot below instead of being re-fetched. If the
+          // block throws before assigning, they stay null and it fetches its own
+          // (the original behaviour).
+          let preOrders = null, preRefunds = null, preManual = null;
           try {
             const [elements, refundElements, manualRefundElements] = await Promise.all([
               fetchItemOrders(store, env, startOfDay, untilTs),
               fetchRefundElements(store, env, startOfDay, untilTs),
               fetchManualRefunds(store, env, startOfDay, untilTs),
             ]);
+            preOrders = elements; preRefunds = refundElements; preManual = manualRefundElements;
             if (elements && elements.length > 0) {
               const itemCatMap = await fetchItemCategoryMap(store, env);
               // Phase 2F: fetch original orders for cross-day refunds so they
@@ -7647,7 +7668,7 @@ export default {
           } catch (e) {
             console.warn(`Admin snapshot override prep failed for ${store}: ${e.message}`);
           }
-          return fetchAggregateAndSnapshot(store, env, startOfDay, dateStr, untilTs, binRetailOverride);
+          return fetchAggregateAndSnapshot(store, env, startOfDay, dateStr, untilTs, binRetailOverride, preOrders, preRefunds, preManual);
         })
       );
       const results = {};
@@ -10796,12 +10817,18 @@ export default {
         // single source of truth.
         let itemData = null;
         let binRetailOverride = null;
+        // Hoisted so they survive the try and can be handed to
+        // fetchAggregateAndSnapshot below instead of being re-fetched. If the
+        // block throws before assigning, they stay null and it fetches its own
+        // (the original behaviour).
+        let preOrders = null, preRefunds = null, preManual = null;
         try {
           const [elements, refundElements, manualRefundElements] = await Promise.all([
             fetchItemOrders(store, env, startOfDay),
             fetchRefundElements(store, env, startOfDay),
             fetchManualRefunds(store, env, startOfDay),
           ]);
+          preOrders = elements; preRefunds = refundElements; preManual = manualRefundElements;
           if (elements && elements.length > 0) {
             const itemCatMap = await fetchItemCategoryMap(store, env);
             const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
@@ -10826,7 +10853,7 @@ export default {
         }
 
         // Sales snapshot (now with category-based bin/retail if available)
-        const data = await fetchAggregateAndSnapshot(store, env, startOfDay, todayStr, null, binRetailOverride);
+        const data = await fetchAggregateAndSnapshot(store, env, startOfDay, todayStr, null, binRetailOverride, preOrders, preRefunds, preManual);
         results[store] = { sales: data ? "ok" : "skipped" };
 
         // Persist the item snapshot we already computed above.
