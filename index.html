@@ -16354,7 +16354,7 @@
         <td class="px-4 py-3 text-gray-400 dark:text-gray-500 text-xs">${lastLogin}</td>
         <td class="px-4 py-3 text-right whitespace-nowrap">
           <button onclick="openEditUserModal('${u.id}')" class="text-gray-400 hover:text-[#3BB54A]" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-          <button onclick="resendInvite('${escapeHtml(u.email)}')" class="text-gray-400 hover:text-blue-500 ml-2" title="Resend invite link"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+          <button onclick="resendInvite('${escapeHtml(u.email)}')" class="text-gray-400 hover:text-blue-500 ml-2" title="Resend welcome email"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
           ${deleteBtn}
         </td>
       </tr>`;
@@ -16396,7 +16396,7 @@
       const data = await resp.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
       closeInviteModal();
-      usersSetStatus(`Invite sent to ${email}.`, 'ok');
+      usersSetStatus(`Welcome email sent to ${email}.`, 'ok');
       loadUsers();
     } catch (e) {
       showInviteStatus(e.message, 'error');
@@ -16479,7 +16479,7 @@
       });
       const data = await resp.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
-      usersSetStatus(`Invite resent to ${email}.`, 'ok');
+      usersSetStatus(`Welcome email resent to ${email}.`, 'ok');
     } catch (e) {
       usersSetStatus('Failed to resend: ' + e.message, 'error');
     }
