@@ -1505,12 +1505,20 @@ async function fetchItemCategoryMap(store, env) {
   const map = {};
   let offset = 0;
   const limit = 1000;
+  let complete = true;
 
   while (true) {
     const url = `https://api.clover.com/v3/merchants/${merchantId}/items?expand=categories&limit=${limit}&offset=${offset}`;
-    const resp = await fetch(url, {
+    // cloverFetch (not bare fetch) so a 429 on a later page is retried.
+    const resp = await cloverFetch(url, {
       headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
     });
+    // A failed page is NOT the end of the catalog. This used to fall through
+    // to the `!data?.elements?.length` break below, which silently truncated
+    // the map and then cached the truncated copy for 24h — every item past the
+    // cut fell back to name/heuristic categorization. Only stores with >1000
+    // items ever request a second page, so only BL1 was hit.
+    if (!resp.ok) { complete = false; break; }
     const data = await resp.json();
     if (!data?.elements?.length) break;
 
@@ -1524,7 +1532,9 @@ async function fetchItemCategoryMap(store, env) {
     offset += limit;
   }
 
-  if (env.SALES_SNAPSHOTS) {
+  // Never cache a partial map — the 24h TTL would freeze the gap in place.
+  // Serve what we have for this request; the next one retries from Clover.
+  if (env.SALES_SNAPSHOTS && complete) {
     await env.SALES_SNAPSHOTS.put(cacheKey, JSON.stringify(map), { expirationTtl: 86400 });
   }
 
