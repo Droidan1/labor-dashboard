@@ -8,7 +8,11 @@ cd "$(dirname "$0")/.."
 rm -rf dist
 mkdir -p dist/html
 
+# ⚠️ This is an explicit allowlist — a new asset that isn't listed here is
+# committed to the repo but NEVER reaches production, and 404s silently.
+# BLlogo.svg is still used by the Bargain Lane Hourly Snapshot panel.
 cp index.html sw.js manifest.json \
+   retjg-logo.png retjg-logo-email.png \
    BLlogo.svg icon-192.png icon-512.png apple-touch-icon.png \
    dist/
 
