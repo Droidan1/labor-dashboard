@@ -4241,7 +4241,7 @@ function buildSummaryEmailHtml(data, brief, categoryData, weeklyData) {
 
   return `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:32px 24px;background:#fff">
-      <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:44px;margin-bottom:20px">
+      <img src="https://www.retjghub.com/retjg-logo-email.png" alt="RETJG HUB" width="44" height="44" style="display:block;margin-bottom:20px">
       <h2 style="margin:0 0 4px;font-size:20px;color:#194975">Daily Sales Summary</h2>
       <p style="margin:0 0 24px;font-size:14px;color:#666">${displayDate}</p>
       ${briefBox}
@@ -4274,7 +4274,7 @@ function buildSummaryEmailHtml(data, brief, categoryData, weeklyData) {
       ${renderWeeklyBreakdownHtml(weeklyData)}
       <p style="margin-top:28px;font-size:12px;color:#aaa">
         <a href="https://www.retjghub.com" style="color:#3BB54A;text-decoration:none">Open Dashboard</a>
-        &nbsp;·&nbsp; Bargain Lane Notification System
+        &nbsp;·&nbsp; RETJG HUB Notification System
         &nbsp;·&nbsp; To stop receiving these, open Settings → Notifications.
       </p>
     </div>`;
@@ -4450,7 +4450,7 @@ function buildWeeklyDigestEmailHtml(data) {
 
   return `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:620px;margin:0 auto;padding:32px 24px;background:#fff">
-      <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:44px;margin-bottom:20px">
+      <img src="https://www.retjghub.com/retjg-logo-email.png" alt="RETJG HUB" width="44" height="44" style="display:block;margin-bottom:20px">
       <h2 style="margin:0 0 4px;font-size:20px;color:#194975">Weekly Sales Digest</h2>
       <p style="margin:0 0 24px;font-size:14px;color:#666">${weekLabel}</p>
       <table style="width:100%;border-collapse:collapse;font-size:14px">
@@ -4476,7 +4476,7 @@ function buildWeeklyDigestEmailHtml(data) {
       </table>
       <p style="margin-top:28px;font-size:12px;color:#aaa">
         <a href="https://www.retjghub.com" style="color:#3BB54A;text-decoration:none">Open Dashboard</a>
-        &nbsp;·&nbsp; Bargain Lane Notification System
+        &nbsp;·&nbsp; RETJG HUB Notification System
         &nbsp;·&nbsp; To stop receiving these, open Settings → Notifications.
       </p>
     </div>`;
@@ -4747,7 +4747,7 @@ function buildSupplyRequestEmailHtml({ requesterEmail, store, priority, notes, i
     ${notes ? `<div style="background:#0f172a;border-radius:8px;padding:14px 16px;margin-bottom:16px;"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Request Notes</div><div style="font-size:14px;color:#e2e8f0;">${notes}</div></div>` : ''}
   </div>
   <div style="background:#0f172a;border-radius:0 0 12px 12px;padding:16px 28px;text-align:center;">
-    <div style="font-size:12px;color:#475569;">Bargain Lane Dashboard · Supply Requests</div>
+    <div style="font-size:12px;color:#475569;">RETJG HUB · Supply Requests</div>
   </div>
 </div></body></html>`;
 }
@@ -4782,7 +4782,7 @@ function buildStatusUpdateEmailHtml({ store, oldStatus, newStatus, note, request
     ${note ? `<div style="background:#0f172a;border-radius:8px;padding:14px 16px;"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Note from Admin</div><div style="font-size:14px;color:#e2e8f0;">${note}</div></div>` : ''}
   </div>
   <div style="background:#0f172a;border-radius:0 0 12px 12px;padding:16px 28px;text-align:center;">
-    <div style="font-size:12px;color:#475569;">Bargain Lane Dashboard · Supply Requests</div>
+    <div style="font-size:12px;color:#475569;">RETJG HUB · Supply Requests</div>
   </div>
 </div></body></html>`;
 }
@@ -4832,7 +4832,7 @@ async function notifySupplyRequestNew(env, { requestId, requesterId, requesterEm
           method: 'POST',
           headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            from: 'Bargain Lane Dashboard <noreply@retjghub.com>',
+            from: 'RETJG HUB <noreply@retjghub.com>',
             to: u.email,
             subject: `${urgentPrefix}New Supply Request — ${storeLabel}`,
             html,
@@ -4947,7 +4947,7 @@ async function notifySupplyStatusChange(env, { requestId, requesterId, requester
       method: 'POST',
       headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from: 'Bargain Lane Dashboard <noreply@retjghub.com>',
+        from: 'RETJG HUB <noreply@retjghub.com>',
         to: requesterEmail,
         subject: `Supply Request Update — ${storeLabel}`,
         html,
@@ -5361,10 +5361,10 @@ async function sendMagicLinkEmail(email, token, otpCode, env) {
     body: JSON.stringify({
       from: 'noreply@retjghub.com',
       to: email,
-      subject: 'Your Bargain Lane Dashboard login link',
+      subject: 'Your RETJG HUB login link',
       html: `
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
-          <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:48px;margin-bottom:24px">
+          <img src="https://www.retjghub.com/retjg-logo-email.png" alt="RETJG HUB" width="48" height="48" style="display:block;margin-bottom:24px">
           <h2 style="margin:0 0 8px">Sign in to your dashboard</h2>
           <p style="color:#555;margin:0 0 24px">Click the button below to sign in. This link expires in 15 minutes and can only be used once.</p>
           <a href="${link}" style="display:inline-block;background:#3BB54A;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:600">Sign in</a>
@@ -5382,8 +5382,26 @@ async function sendMagicLinkEmail(email, token, otpCode, env) {
   }
 }
 
+// Welcome email for a newly added user. Sent by ?action=create-user and again
+// by ?action=resend-invite.
+//
+// The button deliberately points at the app itself rather than a tokenized
+// magic link. The install instructions below stay useful for months, and a 24h
+// link would be long dead by the time someone digs this email back out of their
+// inbox to set up a second device. Everyone signs in the same way instead —
+// email address, then the 6-digit code — so there is one flow to explain and it
+// works identically on web and in the installed app. `token` is still accepted
+// so the two call sites are unchanged; it is intentionally unused. Don't
+// "fix" that by reintroducing the link.
+//
+// The logo is a PNG, not the SVG used in the app — Gmail, Outlook and Yahoo all
+// block SVG images. Its URL is deliberately prod-absolute even on staging:
+// a mail client fetches it from the public internet long after the send, so it
+// has to be a stable, reachable host. Links, by contrast, follow appOrigin.
 async function sendInviteEmail(email, token, env) {
-  const link = `${apiOrigin(env)}/?action=auth-verify&token=${token}`;
+  const site = appOrigin(env);
+  const siteLabel = site.replace(/^https?:\/\//, '');
+  const green = '#3BB54A';
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -5391,16 +5409,47 @@ async function sendInviteEmail(email, token, env) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: 'noreply@retjghub.com',
+      from: 'RETJG HUB <noreply@retjghub.com>',
       to: email,
-      subject: "You've been invited to Bargain Lane Dashboard",
+      subject: "You're in — welcome to RETJG HUB",
       html: `
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
-          <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:48px;margin-bottom:24px">
-          <h2 style="margin:0 0 8px">You've been invited</h2>
-          <p style="color:#555;margin:0 0 24px">You've been given access to the Bargain Lane Dashboard. Click the button below to sign in and get started. This link expires in 24 hours.</p>
-          <a href="${link}" style="display:inline-block;background:#3BB54A;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:600">Accept Invite</a>
-          <p style="color:#999;font-size:12px;margin-top:24px">If you weren't expecting this, you can ignore this email.</p>
+          <img src="https://www.retjghub.com/retjg-logo-email.png" alt="RETJG HUB" width="48" height="48" style="display:block;margin-bottom:26px">
+          <h2 style="margin:0 0 8px;font-size:22px">You're in</h2>
+          <p style="color:#555;margin:0 0 24px;line-height:1.6">
+            <strong>RETJG HUB</strong> brings the reporting and day-to-day tools for our businesses into one app.
+            You'll see whatever you've been given access to.
+          </p>
+
+          <div style="border-left:3px solid ${green};padding:0 0 0 16px;margin:0 0 18px">
+            <p style="margin:0 0 4px;font-weight:600">1 &middot; Sign in</p>
+            <p style="color:#555;font-size:14px;margin:0 0 12px;line-height:1.6">
+              Open the hub, tap <em>Already have an account?</em>, and enter this email address.
+              We'll send you a <strong>6-digit code</strong> to type in.
+            </p>
+            <a href="${site}" style="display:inline-block;background:${green};color:#fff;text-decoration:none;padding:11px 26px;border-radius:8px;font-weight:600">Open RETJG HUB</a>
+          </div>
+
+          <div style="border-left:3px solid #e5e5e5;padding:0 0 0 16px;margin:0 0 18px">
+            <p style="margin:0 0 4px;font-weight:600">2 &middot; Add it to your phone</p>
+            <p style="color:#555;font-size:14px;margin:0;line-height:1.6">
+              <strong>iPhone:</strong> Safari &rarr; Share &rarr; Add to Home Screen<br>
+              <strong>Android:</strong> Chrome &rarr; &#8942; &rarr; Install app<br>
+              <span style="color:#777">Look for the <strong>RETJG Hub</strong> icon.</span>
+            </p>
+          </div>
+
+          <div style="border-left:3px solid #e5e5e5;padding:0 0 0 16px;margin:0 0 18px">
+            <p style="margin:0 0 4px;font-weight:600">3 &middot; Skip the code next time</p>
+            <p style="color:#555;font-size:14px;margin:0;line-height:1.6">
+              In Settings, turn on <strong>Face Unlock / Biometrics</strong> to sign in without a code.
+            </p>
+          </div>
+
+          <p style="color:#777;font-size:13px;margin:22px 0 0;line-height:1.6">
+            On a computer? Chrome and Edge can install it from the address bar &mdash; or just use
+            <a href="${site}" style="color:${green};text-decoration:none">${siteLabel}</a>.
+          </p>
         </div>`,
     }),
   });
@@ -9704,7 +9753,7 @@ export default {
           return new Response(JSON.stringify({ ok: false, error: "No subscriptions found for this user" }), { status: 404, headers: corsJson });
         }
         const payload = JSON.stringify({
-          title: 'Bargain Lane Dashboard',
+          title: 'RETJG HUB',
           body: 'Test notification — push is working! ✅',
           tag: 'test',
         });

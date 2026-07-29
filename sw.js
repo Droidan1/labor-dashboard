@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dashboard-cache-v59';
+const CACHE_NAME = 'dashboard-cache-v60';
 
 // Pre-fetched and cached on install
 const PRECACHE_ASSETS = [
@@ -7,6 +7,7 @@ const PRECACHE_ASSETS = [
   './tailwind.css',
   './apple-touch-icon.png',
   './icon-192.png',
+  './retjg-logo.png',
 ];
 
 // CDN + font hosts: versioned/immutable — serve cache-first
@@ -59,7 +60,7 @@ self.addEventListener('activate', event => {
 // ── Push notification handlers ────────────────────────────────────────────────
 
 self.addEventListener('push', event => {
-  let data = { title: 'Bargain Lane Dashboard', body: 'New update', tag: 'default' };
+  let data = { title: 'RETJG HUB', body: 'New update', tag: 'default' };
   if (event.data) {
     try { data = { ...data, ...JSON.parse(event.data.text()) }; }
     catch (e) { data.body = event.data.text(); }
