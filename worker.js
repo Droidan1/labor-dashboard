@@ -3041,9 +3041,16 @@ async function fetchItemOrders(store, env, sinceTimestamp, untilTimestamp = null
       + `&expand=payments,lineItems.item,lineItems.discounts,discounts`
       + `&limit=${limit}&offset=${offset}`;
     if (untilTimestamp) cloverUrl += `&filter=createdTime<${untilTimestamp}`;
-    const resp = await fetch(cloverUrl, {
+    // cloverFetch (not bare fetch) so a 429 on a later page is retried.
+    const resp = await cloverFetch(cloverUrl, {
       headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
     });
+    // A failed page is NOT the end of the order list. This used to fall through
+    // to the `!data?.elements?.length` break below and return a SILENTLY
+    // TRUNCATED array that callers could not tell from a genuinely short day.
+    // Return null instead — the same "couldn't fetch" signal this function
+    // already uses for missing credentials, which every caller handles.
+    if (!resp.ok) return null;
     const data = await resp.json();
     if (!data?.elements?.length) break;
     allElements.push(...data.elements);
@@ -7145,6 +7152,11 @@ export default {
         fetchItemOverrides(env),
         fetchItemCosts(env),
       ]);
+      // aggregateOrders iterates `elements` unguarded, so a null (no creds /
+      // Clover fetch failed) would throw "not iterable" rather than report why.
+      if (!elements) {
+        return new Response(JSON.stringify({ error: `store ${store} not configured or Clover fetch failed` }), { status: 502, headers: corsJson });
+      }
       const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
 
       // ── Path A: aggregateOrders ─────────────────────────
@@ -8082,7 +8094,13 @@ export default {
           + `&filter=createdTime<${untilTs}`
           + `&expand=payments,lineItems.item,lineItems.discounts,lineItems.modifications,lineItems.refunds,discounts,credits,refunds,serviceCharge`
           + `&limit=${limit}&offset=${offset}`;
-        const resp = await fetch(url, { headers });
+        // Same failed-page-is-not-end-of-list hazard as fetchItemOrders. This
+        // one is read-only and single-day so it can't truncate in practice,
+        // but a silent partial would make the diagnostic lie about a mismatch.
+        const resp = await cloverFetch(url, { headers });
+        if (!resp.ok) {
+          return new Response(JSON.stringify({ error: `Clover orders fetch failed: HTTP ${resp.status}` }), { status: 502, headers: corsJson });
+        }
         const data = await resp.json();
         if (!data?.elements?.length) break;
         orders.push(...data.elements);
@@ -8314,6 +8332,18 @@ export default {
         fetchItemOverrides(env),
         fetchItemCosts(env),
       ]);
+
+      // Independent record of what each store/date actually sold, used below to
+      // refuse writing an empty snapshot over a real day. One query for the
+      // whole range rather than per-date. Keyed `STORE|YYYY-MM-DD`.
+      const d1Totals = {};
+      if (env.DB) {
+        const { results: dRows } = await env.DB
+          .prepare("SELECT store, date, total FROM daily_sales WHERE date >= ? AND date <= ?")
+          .bind(start, end).all().catch(() => ({ results: [] }));
+        for (const r of (dRows || [])) d1Totals[`${r.store}|${r.date}`] = r.total || 0;
+      }
+
       const catMapCache = {};
       const summary = {};
       for (const store of stores) {
@@ -8344,8 +8374,31 @@ export default {
               fetchItemOrders(store, env, sinceTs, untilTs),
               fetchRefundElements(store, env, sinceTs, untilTs),
             ]);
-            if (!elements) { storeOut.details.push({ date: dateStr, note: "no credentials" }); continue; }
+            if (!elements) { storeOut.errors++; storeOut.details.push({ date: dateStr, error: "no credentials, or Clover fetch failed" }); continue; }
             const itemData = aggregateItemSales(elements, catMapCache[store], store, dateStr, overrides, itemCosts, refundElements);
+
+            // ── Zero-order guard (mirrors ?action=items-snapshot) ──────────
+            // Clover's orders API only reaches back ~90 days; older dates come
+            // back as an EMPTY array, not an error. Writing that result blanks
+            // a real day's item detail permanently — it destroyed 104 days of
+            // BL1 history on 2026-07-28. Two independent ways to notice the day
+            // was not actually empty; either one blocks the write.
+            if (itemData.orderCount === 0) {
+              const existing = env.SALES_SNAPSHOTS
+                ? await env.SALES_SNAPSHOTS.get(key, "json")
+                : null;
+              const d1Total = d1Totals[`${store}|${dateStr}`] || 0;
+              if (existing?.categories?.length > 0 || d1Total > 0) {
+                storeOut.skipped++;
+                storeOut.details.push({
+                  date: dateStr,
+                  note: "zero-order guard: Clover returned no orders but this day has sales — existing snapshot preserved",
+                  d1Total,
+                });
+                continue;
+              }
+            }
+
             await saveItemSalesSnapshot(env, store, dateStr, itemData);
             storeOut.written++;
           } catch (e) {
