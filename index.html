@@ -7845,6 +7845,7 @@
       pane.innerHTML = `
         <div class="space-y-4">
           <div id="sr-all-filters" class="flex flex-wrap gap-2 items-center"></div>
+          <div id="sr-purge-panel" class="hidden"></div>
           <div id="sr-all-list">
             <div class="text-center py-10 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading…</div>
           </div>
@@ -7882,7 +7883,8 @@
         + sel('sr-f-status', statusOpts, srAllFilters.status)
         + sel('sr-f-pri', priOpts, srAllFilters.priority)
         + `<button onclick="srLoadAllRequests()" title="Refresh" aria-label="Refresh" class="w-[34px] h-[34px] grid place-items-center rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-500 dark:text-op-inkDim hover:border-accent-green/40 transition-colors"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
-           <button onclick="srExportCSV()" class="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-700 dark:text-op-ink text-xs font-semibold rounded-lg hover:border-accent-green/40 transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>CSV</button>`;
+           <button onclick="srExportCSV()" class="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-700 dark:text-op-ink text-xs font-semibold rounded-lg hover:border-accent-green/40 transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>CSV</button>
+           <button id="sr-purge-btn" onclick="srPurgeToggle()" class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-700 dark:text-op-ink text-xs font-semibold rounded-lg hover:border-op-bad/50 hover:text-op-bad transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>Clean up</button>`;
     }
 
     function srAllFilter() {
@@ -8164,6 +8166,146 @@
       a.click();
     }
     window.srExportCSV = srExportCSV;
+
+    // ── Bulk purge: delete requests older than 30 days ──────────────────────
+    // Lives in the All Requests pane, which is superuser-only; the worker
+    // re-checks the role regardless. Statuses are chosen at purge time rather
+    // than fixed, because the two things you might want to clear out pull in
+    // opposite directions: finished ("Ordered") requests are safe to remove but
+    // carry the cost the Budget/Reports tabs report on, while the stale-looking
+    // ones are still-open work. The panel shows both consequences live.
+    const SR_PURGE_ORDER = ['ordered','pending','under_review','on_hold'];
+    let srPurgeData = null;
+
+    function srPurgeToggle() {
+      const p = el('sr-purge-panel');
+      if (!p) return;
+      const opening = p.classList.contains('hidden');
+      p.classList.toggle('hidden', !opening);
+      if (opening) srPurgeLoad();
+    }
+    window.srPurgeToggle = srPurgeToggle;
+
+    async function srPurgeLoad() {
+      const p = el('sr-purge-panel');
+      if (!p) return;
+      p.innerHTML = `<div class="rounded-xl border border-gray-200 dark:border-op-border p-4 text-sm text-gray-400 dark:text-gray-500 animate-pulse">Checking what's older than 30 days…</div>`;
+      try {
+        const resp = await fetch(`${WORKER_BASE}?action=supply-requests-purge-preview&days=30`, { credentials:'include' });
+        const data = await resp.json();
+        if (!data.ok) throw new Error(data.error || 'Preview failed');
+        srPurgeData = data;
+        srPurgeRender(data);
+      } catch(e) {
+        p.innerHTML = `<div class="rounded-xl border border-op-bad/40 p-4 text-sm text-op-bad">Couldn't check: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    function srPurgeRender(data) {
+      const p  = el('sr-purge-panel');
+      const by = data.byStatus || {};
+      const total = Object.values(by).reduce((a,s) => a + (s.count||0), 0);
+      if (!total) {
+        p.innerHTML = `<div class="rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.03)] p-4 text-sm text-opl-inkDim dark:text-op-inkDim">Nothing is older than ${data.days} days — no cleanup needed.</div>`;
+        return;
+      }
+      const cutoffLabel = new Date(data.cutoff).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+      const rows = SR_PURGE_ORDER.filter(s => by[s]?.count).map(s => {
+        const { count, cost } = by[s];
+        return `<label class="flex items-center gap-3 py-1.5 cursor-pointer">
+            <input type="checkbox" class="sr-purge-cb w-4 h-4 accent-op-bad" value="${s}" ${s==='ordered'?'checked':''} onchange="srPurgeSel()">
+            <span class="flex-1 text-sm text-gray-800 dark:text-op-ink">${SR_STATUS[s]?.label || s}</span>
+            <span class="text-sm font-semibold tabular-nums text-gray-800 dark:text-op-ink">${count}</span>
+            <span class="w-20 text-right text-xs tabular-nums text-opl-inkDim dark:text-op-inkDim">${cost ? fmtSRMoney(cost) : '—'}</span>
+          </label>`;
+      }).join('');
+
+      p.innerHTML = `
+        <div class="rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.03)] p-4 space-y-3">
+          <div>
+            <div class="text-sm font-semibold text-gray-900 dark:text-op-ink">Delete requests older than ${data.days} days</div>
+            <div class="text-xs text-opl-inkDim dark:text-op-inkDim mt-0.5">Submitted before ${cutoffLabel} · removes their line items and comment history too</div>
+          </div>
+          <div class="border-t border-b border-gray-100 dark:border-op-border/60 py-1">${rows}</div>
+          <div id="sr-purge-warn" class="hidden text-xs text-op-bad leading-relaxed"></div>
+          <div class="flex items-center gap-3">
+            <div id="sr-purge-sum" class="text-xs text-opl-inkDim dark:text-op-inkDim"></div>
+            <button onclick="srPurgeToggle()" class="ml-auto px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-gray-300 transition-colors">Cancel</button>
+            <button id="sr-purge-go" onclick="srPurgeRun()" class="px-3 py-1.5 text-xs font-bold rounded-lg bg-op-bad text-white disabled:opacity-40 disabled:cursor-not-allowed">Delete</button>
+          </div>
+        </div>`;
+      srPurgeSel();
+    }
+
+    function srPurgePicked() {
+      return [...document.querySelectorAll('.sr-purge-cb')].filter(c => c.checked).map(c => c.value);
+    }
+
+    function srPurgeSel() {
+      const picked = srPurgePicked();
+      const by = srPurgeData?.byStatus || {};
+      const count = picked.reduce((a,s) => a + (by[s]?.count || 0), 0);
+      // Only 'ordered' rows feed the Budget/Reports spend figure — that query is
+      // SUM(cost) WHERE status='ordered'. A cost on an open request isn't counted.
+      const orderedCost = picked.includes('ordered') ? (by.ordered?.cost || 0) : 0;
+      const openCount = picked.filter(s => s !== 'ordered').reduce((a,s) => a + (by[s]?.count || 0), 0);
+
+      const sum = el('sr-purge-sum');
+      if (sum) sum.textContent = count ? `${count} request${count===1?'':'s'} selected` : 'Nothing selected';
+
+      const warn = el('sr-purge-warn');
+      if (warn) {
+        const parts = [];
+        if (orderedCost > 0) parts.push(`Removes ${fmtSRMoney(orderedCost)} of recorded spend from the Budget and Reports tabs.`);
+        if (openCount) parts.push(`${openCount} of these ${openCount===1?'is':'are'} still open.`);
+        warn.textContent = parts.join(' ');
+        warn.classList.toggle('hidden', !parts.length);
+      }
+      const go = el('sr-purge-go');
+      if (go) { go.disabled = !count; go.textContent = count ? `Delete ${count}` : 'Delete'; }
+    }
+    window.srPurgeSel = srPurgeSel;
+
+    async function srPurgeRun() {
+      const picked = srPurgePicked();
+      if (!picked.length || !srPurgeData) return;
+      const by = srPurgeData.byStatus || {};
+      const count = picked.reduce((a,s) => a + (by[s]?.count || 0), 0);
+      const orderedCost = picked.includes('ordered') ? (by.ordered?.cost || 0) : 0;
+
+      const lines = SR_PURGE_ORDER.filter(s => picked.includes(s))
+        .map(s => `  • ${SR_STATUS[s]?.label || s}: ${by[s]?.count || 0}`).join('\n');
+      let msg = `Permanently delete ${count} supply request${count===1?'':'s'} older than ${srPurgeData.days} days?\n\n${lines}\n\nTheir line items and comment history go too. This cannot be undone.`;
+      if (orderedCost > 0) msg += `\n\nThis also removes ${fmtSRMoney(orderedCost)} of recorded spend from the Budget and Reports tabs.`;
+
+      if (!await uiConfirm(msg, { title:'Delete old requests', okText:`Delete ${count}`, danger:true })) return;
+
+      const go = el('sr-purge-go');
+      if (go) { go.disabled = true; go.textContent = 'Deleting…'; }
+      try {
+        const resp = await fetch(`${WORKER_BASE}?action=supply-requests-purge`, {
+          method:'DELETE', credentials:'include',
+          headers:{ 'Content-Type':'application/json' },
+          // expectCount is the number the operator just approved — the worker
+          // refuses (409) if the set drifted, rather than deleting a different one.
+          body: JSON.stringify({ days: srPurgeData.days, statuses: picked, expectCount: count }),
+        });
+        const data = await resp.json();
+        if (resp.status === 409) {
+          await uiAlert(`${data.error}\n\n${data.actual} request${data.actual===1?'':'s'} now match. Nothing was deleted.`, { title:'Nothing deleted' });
+          srPurgeLoad();
+          return;
+        }
+        if (!data.ok) throw new Error(data.error || 'Delete failed');
+        srDetailCache = {};
+        srLoadAllRequests();
+        await uiAlert(`Deleted ${data.deleted} request${data.deleted===1?'':'s'}, ${data.items} line item${data.items===1?'':'s'} and ${data.history} history ${data.history===1?'entry':'entries'}.`, { title:'Cleanup complete' });
+      } catch(e) {
+        await uiAlert(`Couldn't delete: ${e.message}`, { title:'Failed' });
+        srPurgeLoad();
+      }
+    }
+    window.srPurgeRun = srPurgeRun;
 
     // ── Budget Management tab ──
 

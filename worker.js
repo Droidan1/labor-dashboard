@@ -5336,6 +5336,25 @@ function canAccessInventory(user) {
   return user && (user.role === 'superuser' || user.role === 'admin');
 }
 
+// ── Supply-request bulk purge helpers ───────────────────────────────────────
+const SUPPLY_STATUSES = ['pending', 'under_review', 'on_hold', 'ordered'];
+
+// 30 days is a FLOOR, not a default the client can talk downward. A smaller
+// window would let a caller delete recent, still-active requests.
+function purgeDays(raw) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 30 ? Math.floor(n) : 30;
+}
+
+// Return the cutoff in the format submitted_at is ACTUALLY stored in: the
+// create endpoint binds new Date().toISOString(), so every row looks like
+// 2026-05-07T00:46:58.680Z. SQLite's datetime('now','-30 days') yields a
+// space-separated string instead, which sorts differently from 'T' within the
+// same day — comparing ISO-to-ISO keeps the boundary exact.
+function purgeCutoff(days) {
+  return new Date(Date.now() - days * 86400000).toISOString();
+}
+
 // Auth check for inventory/supply endpoints: accepts either a valid session
 // with admin+ role, or the X-Snapshot-Secret header (for tooling/scripts).
 function requireInventoryAccess(currentUser, isAdminSecret, corsJson) {
@@ -10336,6 +10355,90 @@ export default {
         if (!existing) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
         await env.DB.prepare('DELETE FROM supply_requests WHERE id = ?').bind(id).run();
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=supply-requests-purge-preview[&days=30]
+    // Superuser only, READ-ONLY. What a purge would remove, broken down by
+    // status with the cost each status carries, so the operator sees the blast
+    // radius before anything is deleted. Deliberately separate from the DELETE:
+    // nothing here can mutate.
+    if (request.method === "GET" && url.searchParams.get("action") === "supply-requests-purge-preview") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const days = purgeDays(url.searchParams.get("days"));
+        const cutoff = purgeCutoff(days);
+        const { results } = await env.DB.prepare(
+          `SELECT status, COUNT(*) AS n, COALESCE(SUM(cost),0) AS cost
+             FROM supply_requests WHERE submitted_at < ? GROUP BY status`
+        ).bind(cutoff).all();
+        const byStatus = {};
+        for (const r of results || []) byStatus[r.status] = { count: r.n, cost: r.cost || 0 };
+        return new Response(JSON.stringify({ ok: true, days, cutoff, byStatus }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // DELETE ?action=supply-requests-purge
+    // Body: { days, statuses: [...], expectCount }  — superuser only.
+    // Bulk sibling of supply-request-delete. Two deliberate safeguards:
+    //  1. Children are deleted EXPLICITLY (items, then history, then parents)
+    //     rather than trusting ON DELETE CASCADE, so this behaves identically
+    //     whether or not D1 has FK enforcement on for the connection.
+    //  2. The count is recomputed server-side and compared against the count the
+    //     client showed the operator. Requests age past the cutoff in real time,
+    //     so without this the set actually deleted could differ from the set
+    //     that was approved.
+    if (request.method === "DELETE" && url.searchParams.get("action") === "supply-requests-purge") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const body = await request.json();
+        const days = purgeDays(body.days);
+        const statuses = Array.isArray(body.statuses)
+          ? body.statuses.filter(s => SUPPLY_STATUSES.includes(s))
+          : [];
+        if (!statuses.length) {
+          return new Response(JSON.stringify({ error: "Select at least one status to purge" }), { status: 400, headers: corsJson });
+        }
+        const cutoff = purgeCutoff(days);
+        const ph = statuses.map(() => '?').join(',');
+
+        const cntRow = await env.DB.prepare(
+          `SELECT COUNT(*) AS n FROM supply_requests WHERE submitted_at < ? AND status IN (${ph})`
+        ).bind(cutoff, ...statuses).first();
+        const actual = cntRow?.n || 0;
+
+        if (body.expectCount != null && Number(body.expectCount) !== actual) {
+          return new Response(JSON.stringify({
+            error: "The set changed since the preview — re-check the counts and confirm again.",
+            actual,
+          }), { status: 409, headers: corsJson });
+        }
+        if (!actual) {
+          return new Response(JSON.stringify({ ok: true, deleted: 0, items: 0, history: 0, cutoff }), { headers: corsJson });
+        }
+
+        const sel = `SELECT id FROM supply_requests WHERE submitted_at < ? AND status IN (${ph})`;
+        const res = await env.DB.batch([
+          env.DB.prepare(`DELETE FROM supply_request_items   WHERE request_id IN (${sel})`).bind(cutoff, ...statuses),
+          env.DB.prepare(`DELETE FROM supply_request_history WHERE request_id IN (${sel})`).bind(cutoff, ...statuses),
+          env.DB.prepare(`DELETE FROM supply_requests WHERE submitted_at < ? AND status IN (${ph})`).bind(cutoff, ...statuses),
+        ]);
+
+        return new Response(JSON.stringify({
+          ok: true,
+          deleted: res?.[2]?.meta?.changes ?? 0,
+          items:   res?.[0]?.meta?.changes ?? 0,
+          history: res?.[1]?.meta?.changes ?? 0,
+          cutoff,
+        }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
