@@ -276,6 +276,26 @@ const SKU_BOOK_TO_L2 = {
   "$1 Food - 50001": "Consumable Food",
 };
 
+// Clover's item↔category link is MANY-TO-MANY, but everything here used to read
+// `categories.elements[0]` and throw the rest away.
+//
+// That mattered because "Sku Book Items" is not a product category at all — it is
+// a POS convenience page. Clover renders one screen per category, so the stores
+// park high-frequency products there for cashiers. An item can therefore legitimately
+// sit in BOTH the sku book and its real category; taking [0] picked whichever
+// Clover happened to return first, so the same item could resolve either way.
+//
+// Prefer a real category whenever one exists. Effect on a single-category item is
+// nil — `find` returns that category, or falls through to the same [0] — so this
+// only changes items that genuinely carry both, which is exactly the case that was
+// broken. Lets an item keep the cashier shortcut AND get a real L3 (and therefore
+// a category cost, which "Sku Book Items" can never have — see SKU_BOOK_TO_L2).
+const SKU_BOOK_CATEGORY = "Sku Book Items";
+function pickPrimaryCategory(elements) {
+  const cats = elements || [];
+  return cats.find(c => c?.name && c.name !== SKU_BOOK_CATEGORY) || cats[0] || null;
+}
+
 const IM_TO_L2 = {
   "10015": "Hardlines",
   "10029": "Softline - Shoes",
@@ -1523,7 +1543,8 @@ async function fetchItemCategoryMap(store, env) {
     if (!data?.elements?.length) break;
 
     for (const item of data.elements) {
-      const catName = item.categories?.elements?.[0]?.name;
+      // Prefer a real category over the sku-book POS page when an item has both.
+      const catName = pickPrimaryCategory(item.categories?.elements)?.name;
       if (catName && item.id) {
         map[item.id] = catName;
       }
@@ -9104,8 +9125,13 @@ export default {
         defaultTaxRates: item.defaultTaxRates || false,
         priceType: item.priceType || "FIXED",
         modifiedTime: item.modifiedTime || 0,
-        category: item.categories?.elements?.[0]?.name || "",
-        categoryId: item.categories?.elements?.[0]?.id || "",
+        // `category` stays the single flattened name callers already expect.
+        // `categories` is additive: Clover's item↔category link is many-to-many,
+        // and collapsing to [0] hid that entirely — there was no way to see
+        // whether an item also sat in a real category alongside the sku book.
+        category: pickPrimaryCategory(item.categories?.elements)?.name || "",
+        categoryId: pickPrimaryCategory(item.categories?.elements)?.id || "",
+        categories: (item.categories?.elements || []).map(c => c.name).filter(Boolean),
       }));
       const total = data.total ?? data.count ?? null;
       const hasMore = elements.length === 1000;
