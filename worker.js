@@ -2667,7 +2667,27 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       } else if (l2Source === "override") {
         l3Key = "[Override] " + l2;
       } else if (l2Source === "name") {
-        l3Key = "[Name match] " + (li.name || "(unnamed)");
+        // A name match means the item's NAME *is* a real L3 category string —
+        // this merchant names one item per price point after its category. So
+        // report it under that category, not a shadow row.
+        //
+        // Splitting them was purely an artefact of keying the display row on
+        // HOW the line resolved rather than WHAT it resolved to, and it was
+        // very visible: BL1 has 28 items named "FG BL CONSUMABLES - FOOD -
+        // SNACKS", of which 20 carry the Clover category and 8 do not, so one
+        // category rendered as two rows. 465 of BL1's 1,051 items have no
+        // Clover category and 362 of those are named like an L3, so most
+        // categories were shadowed this way.
+        //
+        // `l3CostKey` is exactly the matched L3 key (set at the name-match
+        // branch above) and is already what the cost lookup uses — so the two
+        // rows always agreed on cost; only the label differed.
+        //
+        // The diagnostic is NOT lost: `fallbackItems` keys on the item name and
+        // fires for every non-clover-l3 source, so `?action=noncategorized-items`
+        // still reports these with source "name". Falls back to the old label if
+        // a match somehow left no key.
+        l3Key = l3CostKey || ("[Name match] " + (li.name || "(unnamed)"));
       } else if (l2Source === "im") {
         l3Key = "[IM " + (imNum || "?") + "] " + l2;
       } else if (l2Source === "pattern") {
