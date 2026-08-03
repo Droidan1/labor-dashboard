@@ -2586,9 +2586,33 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       // Map L3 → L2
       if (l2) {
         // override already decided
-      } else if (l3 === "Sku Book Items") {
-        l2 = SKU_BOOK_TO_L2[li.name] || "Hardlines";
-        l2Source = "clover-l3";
+      } else if (l3 === SKU_BOOK_CATEGORY) {
+        const skuBookL2 = SKU_BOOK_TO_L2[li.name];
+        if (skuBookL2) {
+          l2 = skuBookL2;
+          l2Source = "clover-l3";
+        } else {
+          // Unmapped sku-book item — do NOT guess.
+          //
+          // This used to fall to `|| "Hardlines"`, which made a mis-bucketed item
+          // look perfectly correct: nothing flagged it, and a swimsuit or a bottle
+          // deposit quietly inflated Hardlines. Every new product a store adds to
+          // the POS convenience page inherited that silence.
+          //
+          // Book it as Custom Sales — the app's existing "we don't know what this
+          // is" bucket — and record the item so ?action=noncategorized-items
+          // surfaces it. Setting l2Source "custom" also makes the L3 row show the
+          // raw item NAME instead of a synthetic label, so the offender is
+          // identifiable straight from the store table.
+          const skuName = li.name || "unknown";
+          const skuBucket = noCategory[skuName] || { qty: 0, net: 0, itemId: itemId || null };
+          skuBucket.qty += qty;
+          skuBucket.net += priceCents / 100;
+          if (!skuBucket.itemId && itemId) skuBucket.itemId = itemId;
+          noCategory[skuName] = skuBucket;
+          l2 = "Custom Sales";
+          l2Source = "custom";
+        }
       } else if (l3 && ov.l3Map && ov.l3Map[l3] && VALID_L2.has(ov.l3Map[l3])) {
         // Admin L3 mapping wins over built-in L3_TO_L2 so overrides can also
         // correct mis-categorized Clover categories, not just add new ones.
@@ -2862,7 +2886,10 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       // Tier 1: Clover L3 → L2
       if (!l2 && itemId && itemCatMap[itemId]) {
         const l3 = itemCatMap[itemId];
-        if (l3 === "Sku Book Items") l2 = SKU_BOOK_TO_L2[li.name] || "Hardlines";
+        // Unmapped sku-book item: leave l2 unset so the name heuristics and
+        // pattern rules below get a chance, ending at "Custom Sales". Forcing
+        // "Hardlines" here made a wrong answer indistinguishable from a right one.
+        if (l3 === SKU_BOOK_CATEGORY) { const m = SKU_BOOK_TO_L2[li.name]; if (m) l2 = m; }
         else if (ov.l3Map && ov.l3Map[l3] && VALID_L2.has(ov.l3Map[l3])) l2 = ov.l3Map[l3];
         else if (L3_TO_L2[l3]) l2 = L3_TO_L2[l3];
       }
