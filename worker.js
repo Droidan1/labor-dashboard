@@ -2321,6 +2321,21 @@ const ITEM_COSTS_KEY = "item-costs:global";
 // fallback when a line item has no item-master (IM#) cost — keyed on the full
 // Clover L3 category string (e.g. "FG BL SEASONAL - CHRISTMAS - GM").
 const CATEGORY_COSTS_KEY = "category-costs:global";
+
+// Floor for `backfill-items-snapshots`: a recomputed day whose netSales falls
+// below this fraction of the SAME day's D1 `daily_sales` total is treated as a
+// partial Clover fetch and refused rather than written over good data.
+//
+// Measured 2026-08-03 over 48 known-good store/date pairs across all six live
+// stores: the ratio is **1.000000 minimum** — a healthy snapshot never comes in
+// under D1, it only ever drifts slightly ABOVE (max 1.0079, from refunds aging
+// out of Clover's window on a previously backfilled day). So the low side has
+// zero natural variance and 0.98 leaves 2% of headroom that real data never
+// uses. The corruption this exists to stop measured 0.6577.
+//
+// Deliberately tight: a false refusal is cheap (the date is skipped and
+// reported with its ratio), a false accept destroys history.
+const BACKFILL_MIN_D1_RATIO = 0.98;
 const EMPTY_ITEM_COSTS = { items: {}, categories: {}, importedAt: null, count: 0, categoriesImportedAt: null, categoriesCount: 0 };
 
 // Loads BOTH cost maps in one shot: per-item (IM#) costs and per-L3-category
@@ -8471,6 +8486,46 @@ export default {
                   date: dateStr,
                   note: "zero-order guard: Clover returned no orders but this day has sales — existing snapshot preserved",
                   d1Total,
+                });
+                continue;
+              }
+            }
+
+            // ── Magnitude guard ────────────────────────────────────────────
+            // The zero-order guard above only fires on a CLEAN empty result.
+            // Clover degrades at its ~90-day retention edge by returning FEWER
+            // orders, not zero: on 2026-08-03 a BL4 backfill received 153 of
+            // 2026-05-05's 241 orders and overwrote a complete snapshot
+            // ($3,229.91 -> $2,124.47), reporting written=1, errors=0. Nothing
+            // caught it because orderCount was 153, so the D1 cross-check
+            // inside the zero branch never ran.
+            //
+            // So compare against D1 on EVERY write, not just the empty case.
+            // `d1Totals` is already loaded for the whole range above, so this
+            // costs nothing. Healthy days match D1 to the cent (measured: ratio
+            // 1.000000 across every known-good store/date pair), which is why
+            // the tolerance can be this tight — and a false refusal is cheap
+            // (a reported skip) while a false accept destroys data.
+            const d1TotalMag = d1Totals[`${store}|${dateStr}`] || 0;
+            const computedNet = itemData?.totals?.netSales ?? 0;
+            if (d1TotalMag > 0 && computedNet < d1TotalMag * BACKFILL_MIN_D1_RATIO) {
+              // Only refuse when the snapshot we ALREADY have is better. If the
+              // stored one is empty or itself short, a partial refresh is still
+              // an improvement and blocking it would preserve the worse copy.
+              const existingMag = env.SALES_SNAPSHOTS
+                ? await env.SALES_SNAPSHOTS.get(key, "json")
+                : null;
+              const existingNet = existingMag?.totals?.netSales ?? 0;
+              if (existingNet >= computedNet) {
+                storeOut.skipped++;
+                storeOut.details.push({
+                  date: dateStr,
+                  note: "magnitude guard: computed net is far below this day's D1 total — looks like a partial Clover fetch; existing snapshot preserved",
+                  computedNet,
+                  d1Total: d1TotalMag,
+                  existingNet,
+                  ratio: Number((computedNet / d1TotalMag).toFixed(4)),
+                  orderCount: itemData.orderCount,
                 });
                 continue;
               }
