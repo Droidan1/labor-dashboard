@@ -9177,7 +9177,11 @@ export default {
       const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       const body = await request.json();
-      const { store, itemId, name, code, priceCents, costCents, taxable, hidden, l3, currentCategoryId } = body;
+      // `l3` ADDS a category (an item may legitimately hold several — see the
+      // category block below). Pass `removeOtherCategories: true` to make it the
+      // item's only one.
+      const { store, itemId, name, code, priceCents, costCents, taxable, hidden, l3,
+              currentCategoryId, removeOtherCategories = false } = body;
       if (!ALL_STORES.includes(store) || !itemId) {
         return new Response(JSON.stringify({ ok: false, error: "Invalid store or itemId" }), { status: 400, headers: corsJson });
       }
@@ -9218,11 +9222,21 @@ export default {
       // item with NO category at all — strictly worse than the wrong one.
       let categoryResult;
       if (l3 !== undefined) {
-        const listUrl = `https://api.clover.com/v3/merchants/${mId}/category_items?filter=item.id%3D${itemId}`;
+        // Read the item's CURRENT categories off the item itself.
+        //
+        // This used to list `category_items?filter=item.id%3D<id>`, which always
+        // came back empty — so the removal loop below never ran and every call
+        // answered `removedOld: 0`. The endpoint has therefore only ever ADDED a
+        // category, never replaced one, whatever the code looked like it did.
+        const curResp = await cloverFetch(
+          `https://api.clover.com/v3/merchants/${mId}/items/${itemId}?expand=categories`,
+          { headers: { "Authorization": `Bearer ${tok}` } }
+        );
         let existingAssocs = [];
-        const catItemsResp = await cloverFetch(listUrl, { headers: { "Authorization": `Bearer ${tok}` } });
-        if (catItemsResp.ok) {
-          existingAssocs = ((await catItemsResp.json()).elements || []);
+        if (curResp.ok) {
+          existingAssocs = ((await curResp.json())?.categories?.elements || [])
+            .filter(c => c?.id)
+            .map(c => ({ id: c.id, name: c.name }));
         }
 
         let keepId = null;
@@ -9244,15 +9258,26 @@ export default {
           categoryResult = { categoryId, created, assigned: l3 };
         }
 
-        // Drop every other association, now that the new one is in place.
+        // Removing the other categories is OPT-IN via `removeOtherCategories`.
+        //
+        // Additive is the right default: an item legitimately belongs in both its
+        // real category and the "Sku Book Items" POS convenience page, and that is
+        // what nearly every caller wants. Ask for exclusivity only when the item is
+        // genuinely in the WRONG category and you mean to move it.
+        //
+        // Deletion uses `DELETE /categories/{catId}/items/{itemId}` — the documented
+        // way to break the link. The old `/category_items/{assocId}` form went with
+        // the list call that never returned anything.
         const removed = [];
-        for (const assoc of existingAssocs) {
-          if (keepId && assoc?.category?.id === keepId) continue;
-          const delResp = await cloverFetch(
-            `https://api.clover.com/v3/merchants/${mId}/category_items/${assoc.id}`,
-            { method: "DELETE", headers: { "Authorization": `Bearer ${tok}` } }
-          );
-          removed.push({ id: assoc.id, category: assoc?.category?.id || null, ok: delResp.ok });
+        if (removeOtherCategories) {
+          for (const assoc of existingAssocs) {
+            if (keepId && assoc.id === keepId) continue;
+            const delResp = await cloverFetch(
+              `https://api.clover.com/v3/merchants/${mId}/categories/${assoc.id}/items/${itemId}`,
+              { method: "DELETE", headers: { "Authorization": `Bearer ${tok}` } }
+            );
+            removed.push({ categoryId: assoc.id, name: assoc.name || null, ok: delResp.ok });
+          }
         }
         const failedRemovals = removed.filter(r => !r.ok);
         if (failedRemovals.length) {
@@ -9260,11 +9285,17 @@ export default {
           // associations. Surface it rather than reporting a clean success.
           return new Response(JSON.stringify({
             ok: false, stage: "remove-old-categories",
-            error: `Assigned ${l3} but could not remove ${failedRemovals.length} old association(s); item now has more than one category`,
+            error: `Assigned ${l3} but could not remove ${failedRemovals.length} other categor(y/ies); the item still holds more than one`,
             category: categoryResult, removed,
           }), { status: 502, headers: corsJson });
         }
-        if (categoryResult) categoryResult.removedOld = removed.length;
+        if (categoryResult) {
+          categoryResult.removedOld = removed.length;
+          categoryResult.exclusive = !!removeOtherCategories;
+          // What the item held BEFORE this call, so a caller can see whether it is
+          // now additive-with-others or genuinely exclusive.
+          categoryResult.previousCategories = existingAssocs.map(a => a.name).filter(Boolean);
+        }
       }
 
       return new Response(JSON.stringify({ ok: true, item: updatedItem, category: categoryResult }), { headers: corsJson });
