@@ -2522,7 +2522,16 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       // Clover catalog category — e.g. name-matched items whose name IS an L3
       // category string. Lets category costs reach those rows too.
       let l3CostKey = null;
-      if (!l2 && itemId && itemCatMap[itemId]) {
+      // Read the Clover L3 even when a Tier-0 override already decided L2.
+      // This used to be guarded by `!l2`, which meant overriding an item's
+      // BUCKET also silently erased its CATEGORY — and with it the only key
+      // the category-cost lookup below has (`costL3 = l3 || l3CostKey`). Those
+      // lines then booked cost 0 / GPM 100%. One redundant override on BL4's
+      // "Ikea Bag" left $109,276 of bin sales uncosted that way.
+      // The override still wins the bucket: the L3→L2 ladder below opens with
+      // `if (l2) { /* override already decided */ }`, and the display key is
+      // chosen from `l2Source`, not from `l3`.
+      if (itemId && itemCatMap[itemId]) {
         l3 = itemCatMap[itemId];
       }
 
