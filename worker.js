@@ -9266,15 +9266,19 @@ export default {
         // genuinely in the WRONG category and you mean to move it.
         //
         // Deletion uses `DELETE /categories/{catId}/items/{itemId}` — the documented
-        // way to break the link. The old `/category_items/{assocId}` form went with
+        // way to break the link (the path form /categories/{id}/items/{id} returns 405).
         // the list call that never returned anything.
         const removed = [];
         if (removeOtherCategories) {
           for (const assoc of existingAssocs) {
             if (keepId && assoc.id === keepId) continue;
+            // Mirror of the assign call: DELETE on the category_items COLLECTION
+            // with the same element body. The path form
+            // /categories/{catId}/items/{itemId} returns 405 DELETE not allowed.
             const delResp = await cloverFetch(
-              `https://api.clover.com/v3/merchants/${mId}/categories/${assoc.id}/items/${itemId}`,
-              { method: "DELETE", headers: { "Authorization": `Bearer ${tok}` } }
+              `https://api.clover.com/v3/merchants/${mId}/category_items`,
+              { method: "DELETE", headers: authHeaders,
+                body: JSON.stringify({ elements: [{ category: { id: assoc.id }, item: { id: itemId } }] }) }
             );
             // Capture what Clover actually said — a bare ok:false gives a caller
             // nothing to act on and sent me guessing at the API once already.
