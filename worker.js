@@ -9276,7 +9276,14 @@ export default {
               `https://api.clover.com/v3/merchants/${mId}/categories/${assoc.id}/items/${itemId}`,
               { method: "DELETE", headers: { "Authorization": `Bearer ${tok}` } }
             );
-            removed.push({ categoryId: assoc.id, name: assoc.name || null, ok: delResp.ok });
+            // Capture what Clover actually said — a bare ok:false gives a caller
+            // nothing to act on and sent me guessing at the API once already.
+            let delDetail = null;
+            if (!delResp.ok) { try { delDetail = (await delResp.text()).slice(0, 300); } catch { delDetail = "(no body)"; } }
+            removed.push({
+              categoryId: assoc.id, name: assoc.name || null,
+              ok: delResp.ok, status: delResp.status ?? null, detail: delDetail,
+            });
           }
         }
         const failedRemovals = removed.filter(r => !r.ok);
