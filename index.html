@@ -15020,6 +15020,9 @@
   // ── L3 Category Costs ──────────────────────────────────────────────
   let ccCatalog = [];   // [{ l3, l2 }] from worker, grouped/sorted by L2
   let ccCosts = {};     // { "<l3>": number } — current edits
+  // Whether ccCosts reflects a real load. The POST is an AUTHORITATIVE REPLACE,
+  // so saving before a successful load would silently wipe every stored cost.
+  let ccLoaded = false;
   let ccSales = {};     // { "<l3>": { qty, net } } — recent sales (last 7d, all stores)
 
   function ccSetStatus(msg, type) {
@@ -15105,6 +15108,7 @@
       ccCatalog = Array.isArray(data.categories) ? data.categories : [];
       ccCosts = (data.costs && typeof data.costs === 'object') ? { ...data.costs } : {};
       ccSales = (data.sales && typeof data.sales === 'object') ? data.sales : {};
+      ccLoaded = true;
       renderCategoryCosts();
       el('cc-status').classList.add('hidden');
       refreshCategoryCostsStatus(data);
@@ -15123,6 +15127,17 @@
 
   async function saveCategoryCosts() {
     const count = Object.keys(ccCosts).length;
+    // The endpoint REPLACES the whole cost map. Saving a set we never loaded
+    // would wipe every stored cost, so refuse outright rather than ask.
+    if (!ccLoaded) {
+      ccSetStatus('Nothing loaded yet — press Reload first. (Saving now would erase every stored cost.)', 'error');
+      return;
+    }
+    // Loaded, but the operator has cleared everything. Legitimate but rare, and
+    // unrecoverable, so make them say so.
+    if (count === 0 && !await uiConfirm(
+      'This will remove EVERY category cost. Nothing is currently set in the editor.\n\nThis cannot be undone.',
+      { title: 'Erase all category costs?', okText: 'Erase all', danger: true })) return;
     ccSetStatus(`Saving ${count} category cost${count===1?'':'s'}…`, 'info');
     try {
       const resp = await fetch(`${WORKER_BASE}?action=category-costs`, {
@@ -15151,7 +15166,13 @@
     const orig = window.navigateToPage;
     window.navigateToPage = function(page) {
       orig(page);
-      if (page === 'settings') { refreshItemCostsStatus(); loadCategoryCosts(); initPrintRangeSelect(); }
+      if (page === 'settings') { refreshItemCostsStatus(); initPrintRangeSelect(); }
+      // The category-cost editor markup lives in #page-admin-settings, NOT
+      // #page-settings — so loading it only on 'settings' meant opening the
+      // panel that actually shows it left ccCosts EMPTY. Save then POSTs
+      // { costs: {} } to an authoritative-replace endpoint and wipes every
+      // stored cost. Load on the page the editor is really on.
+      if (page === 'admin-settings') { loadCategoryCosts(); }
     };
   })();
 

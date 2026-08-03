@@ -8824,8 +8824,29 @@ export default {
       }
 
       // The set of L3 categories the dashboard knows how to bucket, grouped by L2.
-      const catalog = Object.entries(L3_TO_L2)
-        .map(([l3, l2]) => ({ l3, l2 }))
+      //
+      // Admin-added L3 mappings live in `item-overrides:global.l3Map` and are NOT
+      // keys of the built-in L3_TO_L2. The aggregator already costs those rows
+      // correctly — the lookup is `icCats[costL3]` on the RAW Clover category
+      // string — but this editor used to build its catalog and validate saves
+      // from L3_TO_L2 alone, so an l3Map-only category could be neither listed
+      // nor priced, with no UI path to fix it at all. `Indy Products` sat that
+      // way with $16,592 of BL16 bin sales stranded and un-costable.
+      //
+      // Union the two so anything the engine can cost, the editor can price.
+      const { l3Map: ovL3Map } = await fetchItemOverrides(env);
+      const costableL3 = { ...L3_TO_L2 };
+      for (const [l3, l2] of Object.entries(ovL3Map || {})) {
+        if (!Object.prototype.hasOwnProperty.call(costableL3, l3)) costableL3[l3] = l2;
+      }
+      const catalog = Object.entries(costableL3)
+        .map(([l3, l2]) => ({
+          l3, l2,
+          // Flags an entry that exists only because an admin mapped it. Useful in
+          // the UI, and it surfaces data-entry artefacts — e.g. the l3Map key
+          // 'Spring Summer Sale ' carries a trailing space.
+          viaOverride: !Object.prototype.hasOwnProperty.call(L3_TO_L2, l3),
+        }))
         .sort((a, b) => (a.l2 === b.l2 ? a.l3.localeCompare(b.l3) : a.l2.localeCompare(b.l2)));
 
       if (request.method === "GET") {
@@ -8889,7 +8910,10 @@ export default {
         const cleaned = {};
         let rejected = 0;
         for (const [l3, v] of Object.entries(rawCosts)) {
-          if (!Object.prototype.hasOwnProperty.call(L3_TO_L2, l3)) { rejected++; continue; }
+          // Accept anything the engine can cost: built-in L3_TO_L2 OR an
+          // admin-mapped l3Map key. Validating against L3_TO_L2 alone silently
+          // rejected every l3Map-only category (see the catalog note above).
+          if (!Object.prototype.hasOwnProperty.call(costableL3, l3)) { rejected++; continue; }
           const cost = Number(v);
           if (!Number.isFinite(cost) || cost < 0) { rejected++; continue; }
           if (cost === 0) continue; // omit zeros — absence means "no cost set"
