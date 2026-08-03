@@ -9119,33 +9119,70 @@ export default {
       }
       const updatedItem = await patchResp.json();
 
-      // Handle category reassignment if l3 was sent
+      // Handle category reassignment if l3 was sent.
+      //
+      // This silently did NOTHING before 2026-08-03. `resolveCloverCategory`
+      // returns `{ categoryId, created }` — create-clover-item destructures it,
+      // this path did not, so it sent `category: { id: <the whole object> }`.
+      // Clover rejected every such call, and because no response here was ever
+      // checked the endpoint still answered `ok: true`. Recategorising an item
+      // has therefore never worked through this API.
+      //
+      // Order matters: ADD the new association FIRST, then remove the others.
+      // The old code deleted first, so a failure between the two steps left the
+      // item with NO category at all — strictly worse than the wrong one.
+      let categoryResult;
       if (l3 !== undefined) {
-        // Remove existing category associations for this item
-        const itemCatUrl = `https://api.clover.com/v3/merchants/${mId}/category_items?filter=item.id%3D${itemId}`;
-        const catItemsResp = await cloverFetch(itemCatUrl, { headers: { "Authorization": `Bearer ${tok}` } });
+        const listUrl = `https://api.clover.com/v3/merchants/${mId}/category_items?filter=item.id%3D${itemId}`;
+        let existingAssocs = [];
+        const catItemsResp = await cloverFetch(listUrl, { headers: { "Authorization": `Bearer ${tok}` } });
         if (catItemsResp.ok) {
-          const catData = await catItemsResp.json();
-          for (const assoc of (catData.elements || [])) {
-            await cloverFetch(
-              `https://api.clover.com/v3/merchants/${mId}/category_items/${assoc.id}`,
-              { method: "DELETE", headers: { "Authorization": `Bearer ${tok}` } }
-            );
-          }
+          existingAssocs = ((await catItemsResp.json()).elements || []);
         }
-        // Assign new category if l3 is non-empty
+
+        let keepId = null;
         if (l3) {
-          const newCatId = await resolveCloverCategory(store, l3, env);
-          if (newCatId) {
-            await cloverFetch(
-              `https://api.clover.com/v3/merchants/${mId}/category_items`,
-              { method: "POST", headers: authHeaders, body: JSON.stringify({ elements: [{ category: { id: newCatId }, item: { id: itemId } }] }) }
-            );
+          const { categoryId, created } = await resolveCloverCategory(store, l3, env);
+          if (!categoryId) {
+            return new Response(JSON.stringify({ ok: false, error: `Could not resolve category ${l3}`, stage: "resolve-category" }), { status: 502, headers: corsJson });
           }
+          keepId = categoryId;
+          const assignResp = await cloverFetch(
+            `https://api.clover.com/v3/merchants/${mId}/category_items`,
+            { method: "POST", headers: authHeaders, body: JSON.stringify({ elements: [{ category: { id: categoryId }, item: { id: itemId } }] }) }
+          );
+          if (!assignResp.ok) {
+            const txt = await assignResp.text();
+            // Nothing was removed yet, so the item keeps whatever it had.
+            return new Response(JSON.stringify({ ok: false, error: txt, stage: "assign-category", categoryId }), { status: assignResp.status, headers: corsJson });
+          }
+          categoryResult = { categoryId, created, assigned: l3 };
         }
+
+        // Drop every other association, now that the new one is in place.
+        const removed = [];
+        for (const assoc of existingAssocs) {
+          if (keepId && assoc?.category?.id === keepId) continue;
+          const delResp = await cloverFetch(
+            `https://api.clover.com/v3/merchants/${mId}/category_items/${assoc.id}`,
+            { method: "DELETE", headers: { "Authorization": `Bearer ${tok}` } }
+          );
+          removed.push({ id: assoc.id, category: assoc?.category?.id || null, ok: delResp.ok });
+        }
+        const failedRemovals = removed.filter(r => !r.ok);
+        if (failedRemovals.length) {
+          // The item is categorised correctly but ALSO still carries old
+          // associations. Surface it rather than reporting a clean success.
+          return new Response(JSON.stringify({
+            ok: false, stage: "remove-old-categories",
+            error: `Assigned ${l3} but could not remove ${failedRemovals.length} old association(s); item now has more than one category`,
+            category: categoryResult, removed,
+          }), { status: 502, headers: corsJson });
+        }
+        if (categoryResult) categoryResult.removedOld = removed.length;
       }
 
-      return new Response(JSON.stringify({ ok: true, item: updatedItem }), { headers: corsJson });
+      return new Response(JSON.stringify({ ok: true, item: updatedItem, category: categoryResult }), { headers: corsJson });
     }
 
     // ── Admin: Delete Clover Item
