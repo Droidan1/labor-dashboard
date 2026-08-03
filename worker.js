@@ -274,6 +274,12 @@ const SKU_BOOK_TO_L2 = {
   "Adult Apparel $6": "Softline - Apparel",
   "Adult Coat": "Softline - Apparel",
   "$1 Food - 50001": "Consumable Food",
+  // Michigan container deposit (BL8/BL14/BL16). Deliberately mapped by NAME
+  // rather than given a real Clover category: a refundable deposit has no COGS,
+  // and the obvious category (FOOD - BEVERAGES, $0.81/unit) against a $0.10 line
+  // books −710% GPM. Mapping to the L2 alone books the revenue with the
+  // beverages it attaches to and leaves it correctly un-costed.
+  "MI Bottle/Can Deposit": "Consumable Food",
 };
 
 // Clover's item↔category link is MANY-TO-MANY, but everything here used to read
