@@ -2330,12 +2330,18 @@ const CATEGORY_COSTS_KEY = "category-costs:global";
 // stores: the ratio is **1.000000 minimum** — a healthy snapshot never comes in
 // under D1, it only ever drifts slightly ABOVE (max 1.0079, from refunds aging
 // out of Clover's window on a previously backfilled day). So the low side has
-// zero natural variance and 0.98 leaves 2% of headroom that real data never
-// uses. The corruption this exists to stop measured 0.6577.
+// zero natural variance. The corruption this exists to stop measured 0.6577.
+//
+// Tightened 0.98 → 0.99 the same day, on evidence: a BL16 re-snapshot of
+// 2026-07-28 returned 192 of 194 orders — $43.25 short at ratio **0.988** — and
+// slid under the 2% band. Small truncations are real, not just catastrophic
+// ones. Healthy data never uses the headroom, so 1% is ample and 2% was not
+// earning anything.
 //
 // Deliberately tight: a false refusal is cheap (the date is skipped and
-// reported with its ratio), a false accept destroys history.
-const BACKFILL_MIN_D1_RATIO = 0.98;
+// reported with its ratio), a false accept destroys history. If a legitimate
+// day ever trips this, widen it on measurement — not on the first complaint.
+const BACKFILL_MIN_D1_RATIO = 0.99;
 const EMPTY_ITEM_COSTS = { items: {}, categories: {}, importedAt: null, count: 0, categoriesImportedAt: null, categoriesCount: 0 };
 
 // Loads BOTH cost maps in one shot: per-item (IM#) costs and per-L3-category
