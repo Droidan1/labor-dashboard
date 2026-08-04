@@ -16539,9 +16539,16 @@
     window.__bnRoleReady = true;
     try { if (window.__syncBottomNav) window.__syncBottomNav(window.__bnPage || 'dashboard'); } catch (e) {}
 
-    // Restrict visible stores to user's allowed list (null = all stores for superuser/admin)
-    if (user.stores && user.stores.length) {
-      const allowed = user.stores; // e.g. ['BL1']
+    // Restrict visible stores to the user's effective scope, as the server
+    // computes it (null = every store, for superuser/admin).
+    // 🔑 Test Array.isArray, NOT `.length`. An ARRAY is a restriction even when
+    // it is empty: [] means "no stores", not "no restriction". The old
+    // `stores && stores.length` test read [] as falsy and showed EVERY store to
+    // someone scoped to none — the server would then refuse every request.
+    // Unreachable while scope came from users.stores (which is NULL or
+    // non-empty), but a grant's units can legitimately be [].
+    if (Array.isArray(user.stores)) {
+      const allowed = user.stores; // e.g. ['BL1'], or [] for none
       STORES.splice(0, STORES.length,
         ...STORES.filter(s => allowed.includes(s.split('/')[0]))
       );

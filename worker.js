@@ -6277,7 +6277,14 @@ export default {
         authenticated: true,
         email: user.email,
         role: user.role,
-        stores: user.stores,
+        // EFFECTIVE scope, not the raw users.stores column. The server scopes
+        // every endpoint by the grant; reporting the column here let the client
+        // filter by something the server no longer consults. They agree today
+        // only because migration-030 backfilled units from stores — the moment
+        // a grant is edited without the column following, the client would show
+        // a store the server refuses to serve.
+        // null = every store. An ARRAY is a restriction, and [] means none.
+        stores: allowedStores(user),
       }), { headers: corsJson });
     }
 
