@@ -3493,9 +3493,11 @@ function requireAdminSecret(request, env, corsJson) {
 //
 // 403 not 401: 401 means "no session" here and the client bounces to login on it.
 // An authenticated user with the wrong role must see a refusal, not a login page.
-function requireAdminAccess(request, currentUser, isAdminSecret, corsJson) {
+// `superuserOnly` tightens even the READ side to superuser — used by the Repair
+// console, which Brian scoped to superuser regardless of verb.
+function requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly = false } = {}) {
   if (isAdminSecret) return null;
-  const mutating = request.method !== "GET";
+  const mutating = superuserOnly || request.method !== "GET";
   const allowed = mutating
     ? currentUser?.role === "superuser"
     : canAccessInventory(currentUser);
@@ -10587,6 +10589,154 @@ export default {
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
+    }
+
+    // ── Repair console: health check.
+    //    ?action=repair-health&store=all|BL1&start=YYYY-MM-DD&end=YYYY-MM-DD
+    //
+    // READ-ONLY, and deliberately so — it fetches nothing from Clover and writes
+    // nothing. It compares two records we ALREADY hold: the stored item snapshot
+    // (KV `items:<store>:<date>`) against D1 `daily_sales.total`, which is the
+    // independent record of what the day actually sold.
+    //
+    // 🔑 "Short" uses BACKFILL_MIN_D1_RATIO — the SAME threshold the backfill's
+    // magnitude guard uses to decide whether a re-pull is an improvement. So a
+    // date reported short here is precisely a date a repair would accept and
+    // better, and a date reported ok is one the guard would refuse to overwrite.
+    // Any other threshold would let this screen recommend work the repair then
+    // silently declines to do.
+    //
+    // This is the reconciliation that had to be hand-scripted four times in one
+    // day of repairing L3/costing data. `gap` is the headline: the dollars a
+    // repair would actually recover.
+    if (url.searchParams.get("action") === "repair-health") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly: true });
+      if (unauth) return unauth;
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+
+      const storeParam = (url.searchParams.get("store") || "all").toUpperCase();
+      const start = url.searchParams.get("start") || "";
+      const end = url.searchParams.get("end") || start;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || end < start) {
+        return new Response(JSON.stringify({ error: "need start=YYYY-MM-DD and end=YYYY-MM-DD (end >= start)" }),
+          { status: 400, headers: corsJson });
+      }
+      const stores = storeParam === "ALL"
+        ? ALL_STORES
+        : (ALL_STORES.includes(storeParam) ? [storeParam] : []);
+      if (!stores.length) {
+        return new Response(JSON.stringify({ error: `unknown store ${storeParam}` }), { status: 400, headers: corsJson });
+      }
+
+      const dates = [];
+      for (let d = new Date(start + "T12:00:00Z"); ; d.setUTCDate(d.getUTCDate() + 1)) {
+        const s = d.toISOString().slice(0, 10);
+        if (s > end) break;
+        dates.push(s);
+      }
+
+      // Each cell costs one KV read, and a Worker has a finite subrequest budget.
+      // Cap it and SAY SO in the response rather than silently returning a
+      // partial picture that reads as "all clear".
+      const MAX_CELLS = 480;
+      let truncated = null;
+      if (stores.length * dates.length > MAX_CELLS) {
+        const keep = Math.max(1, Math.floor(MAX_CELLS / stores.length));
+        truncated = {
+          requestedDays: dates.length, checkedDays: keep,
+          note: `range trimmed to the most recent ${keep} day(s) per store — ${stores.length} store(s) x ${dates.length} day(s) exceeds the ${MAX_CELLS}-cell read budget. Narrow the range or pick one store to see the rest.`,
+        };
+        dates.splice(0, dates.length - keep);
+      }
+
+      // One D1 query for the whole range (range bounds, not an IN list — D1 caps
+      // bound params at 100).
+      const d1 = {};
+      if (env.DB) {
+        const { results } = await env.DB
+          .prepare("SELECT store, date, total FROM daily_sales WHERE date >= ? AND date <= ?")
+          .bind(dates[0], dates[dates.length - 1]).all().catch(() => ({ results: [] }));
+        for (const r of (results || [])) d1[`${r.store}|${r.date}`] = r.total || 0;
+      }
+
+      const cells = [];
+      const pairs = [];
+      for (const store of stores) for (const date of dates) pairs.push([store, date]);
+
+      const CHUNK = 40;
+      for (let i = 0; i < pairs.length; i += CHUNK) {
+        const batch = pairs.slice(i, i + CHUNK);
+        const snaps = await Promise.all(batch.map(([store, date]) =>
+          env.SALES_SNAPSHOTS.get(`items:${store.toLowerCase()}:${date}`, "json").catch(() => null)));
+        batch.forEach(([store, date], j) => {
+          const snap = snaps[j];
+          const d1Net = d1[`${store}|${date}`] ?? null;
+          const snapNet = snap?.totals?.netSales ?? null;
+          // coverage.none is already stored per snapshot: net sales that resolved
+          // to NO cost at all. No recomputation needed.
+          const uncosted = snap?.totals?.coverage?.none ?? 0;
+
+          let status;
+          if (snapNet === null && (d1Net || 0) > 0) status = "missing";
+          else if (snapNet === null) status = "empty";          // no snapshot, no sales — a closed day
+          else if (d1Net === null || d1Net <= 0) status = "no-d1";
+          else if (snapNet < d1Net * BACKFILL_MIN_D1_RATIO) status = "short";
+          else status = "ok";
+
+          const gap = (status === "short" || status === "missing")
+            ? roundCents((d1Net || 0) - (snapNet || 0))
+            : 0;
+
+          cells.push({
+            store, date, status,
+            d1Net: d1Net === null ? null : roundCents(d1Net),
+            snapNet: snapNet === null ? null : roundCents(snapNet),
+            ratio: (d1Net && snapNet !== null) ? Math.round((snapNet / d1Net) * 1000) / 1000 : null,
+            gap,
+            uncosted: roundCents(uncosted),
+            orderCount: snap?.orderCount ?? null,
+          });
+        });
+      }
+
+      const blank = () => ({ checked: 0, ok: 0, short: 0, missing: 0, noD1: 0, empty: 0, gap: 0, uncosted: 0 });
+      const KEY = { ok: "ok", short: "short", missing: "missing", "no-d1": "noD1", empty: "empty" };
+      const summary = blank();
+      const byStore = {};
+      for (const c of cells) {
+        const b = (byStore[c.store] ||= blank());
+        for (const t of [summary, b]) {
+          t.checked++; t[KEY[c.status]]++;
+          t.gap = roundCents(t.gap + c.gap);
+          t.uncosted = roundCents(t.uncosted + c.uncosted);
+        }
+      }
+
+      // The actionable list: exactly the dates a repair would improve, newest
+      // first. This is what the repair step consumes — never a blind range.
+      const needsRepair = cells
+        .filter(c => c.status === "short" || c.status === "missing")
+        .sort((a, b) => b.gap - a.gap || (a.date < b.date ? 1 : -1));
+
+      return new Response(JSON.stringify({
+        ok: true,
+        range: { start, end, days: dates.length, stores },
+        threshold: BACKFILL_MIN_D1_RATIO,
+        truncated,
+        summary, byStore,
+        needsRepair,
+        cells,
+        legend: {
+          ok: "snapshot matches D1 within the guard threshold — a re-snapshot would be refused as no improvement",
+          short: "snapshot is materially below D1 — a partial fetch; re-snapshotting this date should recover the gap",
+          missing: "D1 recorded sales but there is no item snapshot at all",
+          "no-d1": "a snapshot exists but D1 has no row for that day — cannot judge; check the daily cron",
+          empty: "no snapshot and no sales — a closed day, nothing to do",
+        },
+      }), { headers: corsJson });
     }
 
     // ── Admin: item sales L2 totals from KV for a date range.

@@ -2442,6 +2442,67 @@
           </div>
         </div>
 
+        <!-- Repair console — health check (superuser). Read-only: compares the
+             stored item snapshots against D1's independent record of the day.
+             Nothing is fetched from Clover and nothing is written. -->
+        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
+          <h2 class="text-base font-bold text-opl-ink dark:text-op-ink mb-1">Repair console — Health check</h2>
+          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Compares each day's stored item snapshot against D1's record of what that day actually sold, and reports the dates a re-snapshot would actually improve. <strong>Read-only</strong> — it pulls nothing from Clover and writes nothing, so it is safe to run any time. Uses the same threshold the backfill guard uses, so a date listed here is one the repair will accept.</p>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+            <select id="rh-store" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+              <option value="all">All Stores</option>
+              <option value="BL1">BL1 – Coliseum</option>
+              <option value="BL2">BL2 – South Bend</option>
+              <option value="BL4">BL4 – Dupont</option>
+              <option value="BL8">BL8 – Holland</option>
+              <option value="BL14">BL14 – Battle Creek</option>
+              <option value="BL16">BL16 – Indy East</option>
+            </select>
+            <input id="rh-start" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+            <input id="rh-end" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+            <button id="rh-run" onclick="runRepairHealth()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Run health check</button>
+          </div>
+          <div id="rh-status" class="hidden text-sm rounded-lg px-4 py-3 border mb-3"></div>
+          <div id="rh-results" class="hidden">
+            <div id="rh-summary" class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4"></div>
+            <div id="rh-truncated" class="hidden text-xs rounded-lg px-4 py-3 border border-op-warn/30 text-op-warn bg-op-warn/5 mb-4"></div>
+            <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink mb-2">By store</h3>
+            <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl mb-5">
+              <table class="min-w-full text-sm">
+                <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim uppercase">
+                  <tr>
+                    <th class="px-3 py-2 text-left">Store</th>
+                    <th class="px-3 py-2 text-right">Days</th>
+                    <th class="px-3 py-2 text-right">OK</th>
+                    <th class="px-3 py-2 text-right">Needs repair</th>
+                    <th class="px-3 py-2 text-right">Recoverable</th>
+                    <th class="px-3 py-2 text-right">Uncosted</th>
+                  </tr>
+                </thead>
+                <tbody id="rh-bystore" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
+              </table>
+            </div>
+            <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink mb-2">Dates a repair would improve</h3>
+            <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Biggest recovery first. Everything not listed here is already at or above the threshold — re-snapshotting it would be refused as no improvement, and re-pulling an old date can <strong>lose</strong> refunds that have since dropped out of Clover's window.</p>
+            <div id="rh-needs-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic mb-2">Nothing needs repair in this range.</div>
+            <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
+              <table class="min-w-full text-sm">
+                <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim uppercase">
+                  <tr>
+                    <th class="px-3 py-2 text-left">Store</th>
+                    <th class="px-3 py-2 text-left">Date</th>
+                    <th class="px-3 py-2 text-left">Status</th>
+                    <th class="px-3 py-2 text-right">Snapshot</th>
+                    <th class="px-3 py-2 text-right">D1</th>
+                    <th class="px-3 py-2 text-right">Recoverable</th>
+                  </tr>
+                </thead>
+                <tbody id="rh-needs" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- Admin Tools -->
         <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
           <h2 class="text-base font-bold text-opl-ink dark:text-op-ink mb-1">Admin Tools</h2>
@@ -10925,6 +10986,113 @@
   }
   window.onIsrFileChosen = onIsrFileChosen;
 
+  // ── Repair console: health check ─────────────────────────────────────────
+  // Read-only. Compares stored item snapshots against D1 and lists the dates a
+  // re-snapshot would actually improve. Deliberately does NOT offer to run the
+  // repair — that lands with backup + restore, so a one-click repair can't
+  // exist before the undo does.
+  function _setRhStatus(msg, tone) {
+    const s = el('rh-status');
+    const colors = {
+      info:  'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300',
+      ok:    'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-700 dark:text-green-300',
+      error: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300',
+    };
+    s.className = `text-sm rounded-lg px-4 py-3 border mb-3 ${colors[tone] || colors.info}`;
+    s.classList.remove('hidden');
+    s.innerHTML = msg;
+  }
+
+  const _rhMoney = n => (n || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+
+  function _rhTile(label, value, tone) {
+    const tones = {
+      good: 'text-op-good', bad: 'text-op-bad', warn: 'text-op-warn',
+      plain: 'text-opl-ink dark:text-op-ink',
+    };
+    return `<div class="rounded-lg border border-[rgba(20,16,8,0.08)] dark:border-op-border px-3 py-2.5">
+      <div class="text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-0.5">${label}</div>
+      <div class="text-lg font-bold ${tones[tone] || tones.plain}">${value}</div>
+    </div>`;
+  }
+
+  async function runRepairHealth() {
+    const store = el('rh-store').value;
+    const start = el('rh-start').value;
+    const end = el('rh-end').value;
+    if (!start || !end) { _setRhStatus('Pick a start and end date.', 'error'); return; }
+    if (end < start) { _setRhStatus('End date is before the start date.', 'error'); return; }
+
+    const btn = el('rh-run');
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = 'Checking…';
+    _setRhStatus('Reading stored snapshots and comparing against D1…', 'info');
+    el('rh-results').classList.add('hidden');
+
+    try {
+      const url = `${WORKER_BASE}?action=repair-health&store=${encodeURIComponent(store)}`
+        + `&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+      const resp = await fetch(url, { credentials: 'include' });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+
+      const s = data.summary;
+      const needsCount = s.short + s.missing;
+
+      el('rh-summary').innerHTML = [
+        _rhTile('Days checked', s.checked, 'plain'),
+        _rhTile('Healthy', s.ok, 'good'),
+        _rhTile('Needs repair', needsCount, needsCount ? 'bad' : 'good'),
+        _rhTile('Recoverable', _rhMoney(s.gap), s.gap > 0 ? 'bad' : 'good'),
+      ].join('');
+
+      const tr = el('rh-truncated');
+      if (data.truncated) { tr.textContent = data.truncated.note; tr.classList.remove('hidden'); }
+      else tr.classList.add('hidden');
+
+      el('rh-bystore').innerHTML = Object.entries(data.byStore)
+        .sort((a, b) => (b[1].short + b[1].missing) - (a[1].short + a[1].missing) || b[1].gap - a[1].gap)
+        .map(([store, b]) => {
+          const need = b.short + b.missing;
+          return `<tr>
+            <td class="px-3 py-2 text-left font-semibold text-opl-ink dark:text-op-ink">${store}</td>
+            <td class="px-3 py-2 text-right text-opl-inkDim dark:text-op-inkDim">${b.checked}</td>
+            <td class="px-3 py-2 text-right text-opl-inkDim dark:text-op-inkDim">${b.ok}</td>
+            <td class="px-3 py-2 text-right ${need ? 'text-op-bad font-semibold' : 'text-opl-inkDim dark:text-op-inkDim'}">${need}</td>
+            <td class="px-3 py-2 text-right ${b.gap > 0 ? 'text-op-bad font-semibold' : 'text-opl-inkDim dark:text-op-inkDim'}">${b.gap > 0 ? _rhMoney(b.gap) : '—'}</td>
+            <td class="px-3 py-2 text-right text-opl-inkDim dark:text-op-inkDim">${b.uncosted > 0 ? _rhMoney(b.uncosted) : '—'}</td>
+          </tr>`;
+        }).join('');
+
+      const badge = st => st === 'missing'
+        ? '<span class="text-[11px] font-semibold px-2 py-0.5 rounded border border-op-bad/30 text-op-bad">missing</span>'
+        : '<span class="text-[11px] font-semibold px-2 py-0.5 rounded border border-op-warn/30 text-op-warn">short</span>';
+
+      el('rh-needs').innerHTML = data.needsRepair.map(c => `<tr>
+        <td class="px-3 py-2 text-left font-semibold text-opl-ink dark:text-op-ink">${c.store}</td>
+        <td class="px-3 py-2 text-left text-opl-inkDim dark:text-op-inkDim">${c.date}</td>
+        <td class="px-3 py-2 text-left">${badge(c.status)}</td>
+        <td class="px-3 py-2 text-right text-opl-inkDim dark:text-op-inkDim">${c.snapNet === null ? '—' : _rhMoney(c.snapNet)}</td>
+        <td class="px-3 py-2 text-right text-opl-inkDim dark:text-op-inkDim">${c.d1Net === null ? '—' : _rhMoney(c.d1Net)}</td>
+        <td class="px-3 py-2 text-right text-op-bad font-semibold">${_rhMoney(c.gap)}</td>
+      </tr>`).join('');
+      el('rh-needs-empty').classList.toggle('hidden', data.needsRepair.length > 0);
+
+      el('rh-results').classList.remove('hidden');
+      _setRhStatus(needsCount === 0
+        ? `<strong>All clear.</strong> ${s.checked} day(s) checked, nothing below the ${data.threshold} threshold.`
+        : `<strong>${needsCount} day(s) need repair</strong> across ${s.checked} checked — ${_rhMoney(s.gap)} recoverable.`,
+        needsCount === 0 ? 'ok' : 'info');
+    } catch (err) {
+      _setRhStatus(`Health check failed: ${err.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+  window.runRepairHealth = runRepairHealth;
+
   function _setIsrStatus(msg, tone) {
     const s = el('isr-status');
     const colors = {
@@ -15171,7 +15339,18 @@
       // panel that actually shows it left ccCosts EMPTY. Save then POSTs
       // { costs: {} } to an authoritative-replace endpoint and wipes every
       // stored cost. Load on the page the editor is really on.
-      if (page === 'admin-settings') { loadCategoryCosts(); }
+      if (page === 'admin-settings') {
+        loadCategoryCosts();
+        // Default the health check to the last 30 days. Populate only if blank
+        // so a superuser mid-investigation doesn't lose the range they typed.
+        const rs = el('rh-start'), re = el('rh-end');
+        if (rs && re && !rs.value && !re.value) {
+          const iso = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+          const today = new Date();
+          re.value = iso(today);
+          rs.value = iso(new Date(today.getTime() - 29 * 86400000));
+        }
+      }
     };
   })();
 
