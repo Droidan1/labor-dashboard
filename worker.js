@@ -7229,9 +7229,12 @@ export default {
       }
       try {
         const { email, role, stores } = await request.json();
+        // 'district_manager' was retired by migration-029 and is no longer a
+        // valid value for users.role — the CHECK constraint rejects it. It was
+        // never a distinct capability, only a manager with more stores.
         const validRoles = currentUser.role === 'superuser'
-          ? ['admin', 'district_manager', 'manager']
-          : ['district_manager', 'manager'];
+          ? ['admin', 'manager']
+          : ['manager'];
         if (!validRoles.includes(role)) {
           return new Response(JSON.stringify({ error: "Invalid role" }), { status: 400, headers: corsJson });
         }
