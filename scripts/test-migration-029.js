@@ -152,5 +152,8 @@ try {
 } catch (e) { fkStillEnforced = true; }
 ok('FK into users still enforced after rename', fkStillEnforced);
 
+const leftovers = db.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE name LIKE '_m029_%' OR name='users_new'").get().c;
+ok('no scratch tables left behind', leftovers === 0, `${leftovers} found`);
+
 console.log(fail ? `\n${fail} FAILED` : '\nall assertions passed');
 process.exit(fail ? 1 : 0);

@@ -7,45 +7,58 @@
 --   tasks/multi-business-permissions.md  → adds 'executive', retires 'district_manager'
 --   tasks/projects-tasks-permissions.md  → adds 'staff', adds `title`
 --
--- 🛑 FOUR TABLES CASCADE-DELETE FROM users:
+-- ══════════════════════════════════════════════════════════════════════════
+-- 🛑 WHY THIS FILE LOOKS LIKE THIS — four tables cascade off users:
 --      sessions · push_subscriptions · notification_preferences · supply_requests
---    With foreign keys enforced, `DROP TABLE users` runs an implicit DELETE
---    that FIRES THOSE CASCADES — taking every session, push subscription,
---    notification preference and SUPPLY REQUEST with it, including the `cost`
---    values the Budget tab sums.
+--    all declared ON DELETE CASCADE. `DROP TABLE users` runs an implicit
+--    DELETE that FIRES those cascades, taking every session, push
+--    subscription, notification preference and SUPPLY REQUEST with it —
+--    including the `cost` the Budget tab sums.
 --
---    ⚠️ `PRAGMA defer_foreign_keys` DOES NOT PREVENT THIS. It defers constraint
---    *checking*; ON DELETE CASCADE is an *action* and still fires immediately.
---    Measured, not assumed: with defer_foreign_keys the harness recorded
---    sessions 2→0, push_subscriptions 1→0, notification_preferences 1→0.
+--    Neither PRAGMA escape works on D1. Both were MEASURED, not assumed:
+--      · `PRAGMA foreign_keys = OFF` — D1 rejects the file outright
+--        (`D1_RESET_DO`, "import polling failed"). It is not settable.
+--      · `PRAGMA defer_foreign_keys = true` — accepted, but does NOT stop the
+--        cascade. It defers constraint *checking*; ON DELETE CASCADE is an
+--        *action* and still fires. Proven on staging with a throwaway
+--        parent/child pair: child rows went 1 → 0 either way.
 --
---    The documented SQLite table-rebuild procedure is used instead:
---    `PRAGMA foreign_keys = OFF` OUTSIDE any transaction, rebuild, then ON.
---    Do not wrap the PRAGMAs in the transaction — they are no-ops inside one.
+--    So the child rows are snapshotted before the rebuild and restored after.
+--    `CREATE TABLE ... AS SELECT` produces a plain table with no foreign key,
+--    which is exactly what is needed to hold them across the DROP.
+--
+--    Do NOT add PRAGMA lines to this file, and do NOT add an explicit
+--    BEGIN/COMMIT — D1 runs the file in its own transaction and an explicit
+--    one makes it fail.
+-- ══════════════════════════════════════════════════════════════════════════
 --
 -- ROLE CHANGES
 --   district_manager → manager. They are the same role today: every permission
 --   check that names district_manager also names manager and treats them
---   identically (worker.js validRoles, the allowed-roles list, supply-request
---   nav visibility, store validation). The only difference was how many stores
---   each was given, which is already carried by `stores`. The old distinction
---   is preserved as a job title so nothing is lost from the org chart.
---
+--   identically. The only difference was how many stores each was given, which
+--   `stores` already carries. The distinction is preserved as a job title.
 --   executive — reads everything in scope, changes nothing.
 --   staff     — retail leads/associates: tasks only, never sales or cost.
 --
--- `title` is DISPLAY ONLY and carries no permission. It exists so two job
--- titles can share one capability bundle instead of forcing a new role.
+-- `title` is DISPLAY ONLY and carries no permission.
 
-PRAGMA foreign_keys = OFF;
+-- ── 1. hold the child rows somewhere without a foreign key ────────────────
+DROP TABLE IF EXISTS _m029_sessions;
+DROP TABLE IF EXISTS _m029_push;
+DROP TABLE IF EXISTS _m029_prefs;
+DROP TABLE IF EXISTS _m029_supply;
 
-BEGIN;
+CREATE TABLE _m029_sessions AS SELECT * FROM sessions;
+CREATE TABLE _m029_push     AS SELECT * FROM push_subscriptions;
+CREATE TABLE _m029_prefs    AS SELECT * FROM notification_preferences;
+CREATE TABLE _m029_supply   AS SELECT * FROM supply_requests;
 
+-- ── 2. rebuild users (the cascade empties the four child tables here) ─────
 CREATE TABLE users_new (
   id         TEXT PRIMARY KEY,
   email      TEXT NOT NULL UNIQUE,
   role       TEXT NOT NULL CHECK(role IN ('superuser','admin','executive','manager','staff')),
-  stores     TEXT,        -- JSON array e.g. '["BL1","BL4"]'; NULL = all stores
+  stores     TEXT,        -- JSON array e.g. '["BL1","BL4"]', NULL = all stores
   status     TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended')),
   title      TEXT,        -- display only, e.g. 'Assistant Manager'. NO permission.
   created_at TEXT NOT NULL,
@@ -68,16 +81,22 @@ DROP TABLE users;
 
 ALTER TABLE users_new RENAME TO users;
 
-COMMIT;
+-- ── 3. put the child rows back ────────────────────────────────────────────
+INSERT INTO sessions                 SELECT * FROM _m029_sessions;
+INSERT INTO push_subscriptions       SELECT * FROM _m029_push;
+INSERT INTO notification_preferences SELECT * FROM _m029_prefs;
+INSERT INTO supply_requests          SELECT * FROM _m029_supply;
 
-PRAGMA foreign_keys = ON;
+DROP TABLE _m029_sessions;
+DROP TABLE _m029_push;
+DROP TABLE _m029_prefs;
+DROP TABLE _m029_supply;
 
--- The UNIQUE on email is recreated by the table definition above; the implicit
--- index comes with it. No other index existed on users.
---
--- Verify after applying (all four must be non-zero if they were before):
+-- Verify after applying — every count must match what it was before:
 --   SELECT role, COUNT(*) FROM users GROUP BY role;
---   SELECT COUNT(*) FROM sessions;
---   SELECT COUNT(*) FROM push_subscriptions;
---   SELECT COUNT(*) FROM notification_preferences;
---   SELECT COUNT(*), SUM(cost) FROM supply_requests WHERE status='ordered';
+--   SELECT (SELECT COUNT(*) FROM sessions) sessions,
+--          (SELECT COUNT(*) FROM push_subscriptions) push,
+--          (SELECT COUNT(*) FROM notification_preferences) prefs,
+--          (SELECT COUNT(*) FROM supply_requests) supply,
+--          (SELECT COALESCE(SUM(cost),0) FROM supply_requests WHERE status='ordered') cost;
+--   SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '_m029_%';  -- must be 0
