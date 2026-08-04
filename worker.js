@@ -10692,10 +10692,18 @@ export default {
           // stores' worth of phantom repairs, all dated today.
           const isToday = date === todayET;
 
+          // 🔑 When BOTH records agree the day sold nothing, that is a closed
+          // day, not a data problem. Calling it "no-d1" (cannot judge) put 12
+          // BL8 days on a can't-judge list when the honest answer was simply
+          // "this store took no money that day" — a business fact, not a fault.
+          const snapEmpty = (snapNet ?? 0) <= 0 && !(snap?.orderCount > 0);
+          const d1Empty = (d1Net ?? 0) <= 0;
+
           let status;
           if (snapNet === null && isToday) status = "pending";
           else if (snapNet === null && (d1Net || 0) > 0) status = "missing";
           else if (snapNet === null) status = "empty";          // no snapshot, no sales — a closed day
+          else if (snapEmpty && d1Empty) status = "empty";      // both agree: no sales
           else if (d1Net === null || d1Net <= 0) status = "no-d1";
           else if (isToday && snapNet < d1Net * BACKFILL_MIN_D1_RATIO) status = "pending";
           else if (snapNet < d1Net * BACKFILL_MIN_D1_RATIO) status = "short";
@@ -10749,8 +10757,8 @@ export default {
           ok: "snapshot matches D1 within the guard threshold — a re-snapshot would be refused as no improvement",
           short: "snapshot is materially below D1 — a partial fetch; re-snapshotting this date should recover the gap",
           missing: "D1 recorded sales but there is no item snapshot at all",
-          "no-d1": "a snapshot exists but D1 has no usable total — cannot judge. Check `d1RowPresent`: false means the daily cron never wrote the row, true means it wrote a zero.",
-          empty: "no snapshot and no sales — a closed day, nothing to do",
+          "no-d1": "the snapshot recorded SALES but D1 has no usable total to check them against — cannot judge. Check `d1RowPresent`: false means the daily cron never wrote the row, true means it wrote a zero over a day that did sell.",
+          empty: "no sales — both the snapshot and D1 agree the day took nothing. A closed day, not a fault.",
           pending: "today, still being collected — the nightly cron has not written this snapshot yet. Not damage; wait for tomorrow.",
         },
       }), { headers: corsJson });
