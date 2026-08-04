@@ -2408,27 +2408,27 @@
 
     <!-- ── Admin Settings page ──────────────────────────────────── -->
     <div id="page-admin-settings" class="hidden">
-      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-3xl mx-auto">
           <div>
             <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Admin Settings</h1>
           </div>
         </div>
       </div>
-      <div class="max-w-3xl mx-auto px-6 py-6 space-y-6">
+      <div class="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-6">
 
         <!-- Announcement (superuser) -->
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
-          <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Announcement</h2>
-          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Compose a popup and push it to all users. It shows once per person on next open until they dismiss it. Pushing again re-shows it for everyone.</p>
+        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
+          <h2 class="text-base font-bold text-opl-ink dark:text-op-ink mb-1">Announcement</h2>
+          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Compose a popup and push it to all users. It shows once per person on next open until they dismiss it. Pushing again re-shows it for everyone.</p>
           <div class="space-y-4">
             <div>
-              <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Title</label>
+              <label class="block text-xs font-semibold text-opl-inkDim dark:text-op-inkDim uppercase tracking-wider mb-1">Title</label>
               <input id="ann-title" type="text" maxlength="120" placeholder="Announcement"
                 class="w-full text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
             </div>
             <div>
-              <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Items — one per line</label>
+              <label class="block text-xs font-semibold text-opl-inkDim dark:text-op-inkDim uppercase tracking-wider mb-1">Items — one per line</label>
               <textarea id="ann-items" rows="5" placeholder="Refreshed look across the app :: New header, store cards, and charts.&#10;Pull to refresh&#10;Indy East added; Wyoming closed."
                 class="w-full text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green font-mono"></textarea>
               <p class="text-[11px] text-gray-400 dark:text-op-inkDimmer mt-1">Optional detail after <code>::</code> — e.g. <code>Title :: short description</code></p>
@@ -2443,14 +2443,14 @@
         </div>
 
         <!-- Admin Tools -->
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
-          <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Admin Tools</h2>
-          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Re-build item sales snapshots from Clover for any past day. Set <em>Days back</em> > 1 to backfill a range ending at <em>End Date</em>. Use this after a categorization fix or to fill gaps before running Rebuild Week Summaries.</p>
+        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
+          <h2 class="text-base font-bold text-opl-ink dark:text-op-ink mb-1">Admin Tools</h2>
+          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Re-build item sales snapshots from Clover for any past day. Set <em>Days back</em> > 1 to backfill a range ending at <em>End Date</em>. Use this after a categorization fix or to fill gaps before running Rebuild Week Summaries.</p>
 
           <div class="space-y-4">
             <div class="flex flex-wrap gap-4 items-end">
               <div>
-                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Store</label>
+                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Store</label>
                 <select id="resnapshot-store" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
                   <option value="all">All Stores</option>
                   <option value="BL1">BL1 – Coliseum</option>
@@ -2462,11 +2462,11 @@
                 </select>
               </div>
               <div>
-                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">End Date</label>
+                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">End Date</label>
                 <input id="resnapshot-date" type="date" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
               </div>
               <div>
-                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Days back (incl. end date)</label>
+                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Days back (incl. end date)</label>
                 <input id="resnapshot-days" type="number" min="1" max="30" value="1" class="w-24 text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
               </div>
               <button onclick="runReSnapshot()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
@@ -2476,10 +2476,10 @@
             <div id="resnapshot-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
           </div>
 
-          <div class="border-t border-gray-100 dark:border-gray-700 mt-6 pt-5 space-y-3">
+          <div class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border mt-6 pt-5 space-y-3">
             <div>
-              <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Rebuild Week Summaries</p>
-              <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Re-rolls the trailing 13 weeks of week-summary KV entries. Required to populate the T13 Combined Store Units Sold table. Run this after a re-snapshot backfill.</p>
+              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Rebuild Week Summaries</p>
+              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Re-rolls the trailing 13 weeks of week-summary KV entries. Required to populate the T13 Combined Store Units Sold table. Run this after a re-snapshot backfill.</p>
               <div class="flex items-center gap-3">
                 <button onclick="runRebuildWeekSummaries()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
                   Rebuild Week Summaries
@@ -2489,10 +2489,10 @@
             </div>
           </div>
 
-          <div class="border-t border-gray-100 dark:border-gray-700 mt-6 pt-5 space-y-3">
+          <div class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border mt-6 pt-5 space-y-3">
             <div>
-              <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Backfill Sales (Last 13 Weeks)</p>
-              <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Re-snapshots <em>daily sales totals</em> from Clover for the last 91 days across all stores, applying the latest reconciliation rules (refunds subtracted to match Clover Sales Summary). Loops one date at a time; takes ~1–2 minutes. Auto-rebuilds week summaries when finished.</p>
+              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Backfill Sales (Last 13 Weeks)</p>
+              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Re-snapshots <em>daily sales totals</em> from Clover for the last 91 days across all stores, applying the latest reconciliation rules (refunds subtracted to match Clover Sales Summary). Loops one date at a time; takes ~1–2 minutes. Auto-rebuilds week summaries when finished.</p>
               <div class="flex items-center gap-3">
                 <button onclick="runBackfillSales13w()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
                   Backfill Last 13 Weeks
@@ -2503,14 +2503,14 @@
           </div>
 
           <!-- Manual Sales Override -->
-          <div class="border-t border-gray-100 dark:border-gray-700 mt-6 pt-5 space-y-3">
+          <div class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border mt-6 pt-5 space-y-3">
             <div>
-              <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Manual Sales Override</p>
-              <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Set sales totals for a (store, date) when Clover lost the data. Once saved, the row is locked and the cron snapshot / Sheet backfill will not overwrite it. Auto-rebuilds the affected week summary.</p>
+              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Manual Sales Override</p>
+              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Set sales totals for a (store, date) when Clover lost the data. Once saved, the row is locked and the cron snapshot / Sheet backfill will not overwrite it. Auto-rebuilds the affected week summary.</p>
 
               <!-- Single entry -->
               <div class="grid grid-cols-2 md:grid-cols-6 gap-2 mb-3">
-                <select id="mso-store" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                <select id="mso-store" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
                   <option value="BL1">BL1 – Coliseum</option>
                   <option value="BL2">BL2 – South Bend</option>
                   <option value="BL4">BL4 – Dupont</option>
@@ -2518,11 +2518,11 @@
                   <option value="BL16">BL16 – Indy East</option>
                   <option value="BL14">BL14 – Battle Creek</option>
                 </select>
-                <input id="mso-date" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
-                <input id="mso-total" type="number" step="0.01" placeholder="Total $" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
-                <input id="mso-retail" type="number" step="0.01" placeholder="Retail $" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
-                <input id="mso-bin" type="number" step="0.01" placeholder="Bin $" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
-                <input id="mso-auction" type="number" step="0.01" placeholder="Auction $" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                <input id="mso-date" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <input id="mso-total" type="number" step="0.01" placeholder="Total $" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <input id="mso-retail" type="number" step="0.01" placeholder="Retail $" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <input id="mso-bin" type="number" step="0.01" placeholder="Bin $" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <input id="mso-auction" type="number" step="0.01" placeholder="Auction $" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
               </div>
               <div class="flex items-center gap-3 mb-4">
                 <button onclick="runManualSalesSingle()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
@@ -2531,9 +2531,9 @@
               </div>
 
               <!-- Bulk -->
-              <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Bulk paste (CSV)</p>
-              <p class="text-xs text-gray-400 dark:text-gray-500 mb-2">One row per line: <code>store,date,total,retail,bin,auction</code> — only <code>store</code> and <code>date</code> are required. Header row optional.</p>
-              <textarea id="mso-bulk" rows="6" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2" placeholder="BL1,2026-01-28,7761&#10;BL2,2026-01-28,5400"></textarea>
+              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Bulk paste (CSV)</p>
+              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-2">One row per line: <code>store,date,total,retail,bin,auction</code> — only <code>store</code> and <code>date</code> are required. Header row optional.</p>
+              <textarea id="mso-bulk" rows="6" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green" placeholder="BL1,2026-01-28,7761&#10;BL2,2026-01-28,5400"></textarea>
               <div class="flex items-center gap-3 mt-2">
                 <button onclick="runManualSalesBulk()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
                   Save Bulk Entries
@@ -2544,14 +2544,14 @@
           </div>
 
           <!-- Manual Labor Hours -->
-          <div class="border-t border-gray-100 dark:border-gray-700 mt-6 pt-5 space-y-3">
+          <div class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border mt-6 pt-5 space-y-3">
             <div>
-              <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Manual Labor Hours</p>
-              <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Set labor hours for a (store, date). Marks the row as a manual override — the cron snapshot / Sheet backfill will not change it.</p>
+              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Manual Labor Hours</p>
+              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Set labor hours for a (store, date). Marks the row as a manual override — the cron snapshot / Sheet backfill will not change it.</p>
 
               <!-- Single entry -->
               <div class="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
-                <select id="mlh-store" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                <select id="mlh-store" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
                   <option value="BL1">BL1 – Coliseum</option>
                   <option value="BL2">BL2 – South Bend</option>
                   <option value="BL4">BL4 – Dupont</option>
@@ -2559,8 +2559,8 @@
                   <option value="BL16">BL16 – Indy East</option>
                   <option value="BL14">BL14 – Battle Creek</option>
                 </select>
-                <input id="mlh-date" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
-                <input id="mlh-hours" type="number" step="0.25" placeholder="Hours" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                <input id="mlh-date" type="date" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <input id="mlh-hours" type="number" step="0.25" placeholder="Hours" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
               </div>
               <div class="flex items-center gap-3 mb-4">
                 <button onclick="runManualLaborSingle()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
@@ -2569,9 +2569,9 @@
               </div>
 
               <!-- Bulk -->
-              <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Bulk paste (CSV)</p>
-              <p class="text-xs text-gray-400 dark:text-gray-500 mb-2">One row per line: <code>store,date,hours</code>. Header row optional.</p>
-              <textarea id="mlh-bulk" rows="6" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2" placeholder="BL1,2026-01-28,42.5&#10;BL2,2026-01-28,38"></textarea>
+              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Bulk paste (CSV)</p>
+              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-2">One row per line: <code>store,date,hours</code>. Header row optional.</p>
+              <textarea id="mlh-bulk" rows="6" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green" placeholder="BL1,2026-01-28,42.5&#10;BL2,2026-01-28,38"></textarea>
               <div class="flex items-center gap-3 mt-2">
                 <button onclick="runManualLaborBulk()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
                   Save Bulk Entries
@@ -2582,13 +2582,13 @@
           </div>
 
           <!-- Sales Report Reconciliation -->
-          <div class="border-t border-gray-100 dark:border-gray-700 mt-6 pt-5 space-y-3">
+          <div class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border mt-6 pt-5 space-y-3">
             <div>
-              <p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Sales Report Reconciliation</p>
-              <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Paste a Clover Sales Report CSV (per store) to compare its monthly Net Sales against our daily totals in D1. For any month that's off by &gt;\$50, click <strong>Re-snapshot This Month</strong> to re-pull from Clover. Manual-override rows are preserved and skipped automatically. Use the <em>Manual Sales Override</em> tool above to revert any specific day if needed.</p>
+              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Sales Report Reconciliation</p>
+              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Paste a Clover Sales Report CSV (per store) to compare its monthly Net Sales against our daily totals in D1. For any month that's off by &gt;\$50, click <strong>Re-snapshot This Month</strong> to re-pull from Clover. Manual-override rows are preserved and skipped automatically. Use the <em>Manual Sales Override</em> tool above to revert any specific day if needed.</p>
 
               <div class="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
-                <select id="srr-store" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+                <select id="srr-store" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
                   <option value="BL1">BL1 – Coliseum</option>
                   <option value="BL2">BL2 – South Bend</option>
                   <option value="BL4">BL4 – Dupont</option>
@@ -2596,7 +2596,7 @@
                   <option value="BL16">BL16 – Indy East</option>
                   <option value="BL14">BL14 – Battle Creek</option>
                 </select>
-                <label class="text-xs flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 cursor-pointer hover:border-[#3BB54A] text-gray-600 dark:text-gray-300">
+                <label class="text-xs flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-[rgba(20,16,8,0.16)] dark:border-op-borderHi cursor-pointer hover:border-[#3BB54A] text-opl-inkDim dark:text-op-inkDim">
                   <span>📄 Upload CSV file</span>
                   <input id="srr-file" type="file" accept=".csv,text/csv" class="hidden" onchange="onSrrFileChosen(event)">
                 </label>
@@ -2604,7 +2604,7 @@
                   Parse &amp; Compare
                 </button>
               </div>
-              <textarea id="srr-csv" rows="8" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 mb-2" placeholder="Paste the entire Sales Report CSV here, or upload a file above…"></textarea>
+              <textarea id="srr-csv" rows="8" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 mb-2 focus:outline-none focus:ring-1 focus:ring-accent-green" placeholder="Paste the entire Sales Report CSV here, or upload a file above…"></textarea>
               <div id="srr-status" class="hidden text-sm rounded-lg px-4 py-3 border mb-3"></div>
               <div id="srr-results"></div>
             </div>
@@ -2612,11 +2612,11 @@
         </div>
 
         <!-- Item Sales Reconciliation -->
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
-          <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Item Sales Reconciliation</h2>
-          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Upload a Clover <strong>Revenue Item Sales</strong> report CSV to compare its L2 category totals against our stored item snapshots for the same date range. Flags categories where our data is off by more than $50. Use <strong>Re-snapshot Range</strong> to re-pull item sales from Clover for the full period.</p>
+        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
+          <h2 class="text-base font-bold text-opl-ink dark:text-op-ink mb-1">Item Sales Reconciliation</h2>
+          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Upload a Clover <strong>Revenue Item Sales</strong> report CSV to compare its L2 category totals against our stored item snapshots for the same date range. Flags categories where our data is off by more than $50. Use <strong>Re-snapshot Range</strong> to re-pull item sales from Clover for the full period.</p>
           <div class="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
-            <select id="isr-store" class="text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
+            <select id="isr-store" class="text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
               <option value="BL1">BL1 – Coliseum</option>
               <option value="BL2">BL2 – South Bend</option>
               <option value="BL4">BL4 – Dupont</option>
@@ -2624,7 +2624,7 @@
               <option value="BL16">BL16 – Indy East</option>
               <option value="BL14">BL14 – Battle Creek</option>
             </select>
-            <label class="text-xs flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 cursor-pointer hover:border-[#3BB54A] text-gray-600 dark:text-gray-300">
+            <label class="text-xs flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-[rgba(20,16,8,0.16)] dark:border-op-borderHi cursor-pointer hover:border-[#3BB54A] text-opl-inkDim dark:text-op-inkDim">
               <span>📄 Upload CSV file</span>
               <input id="isr-file" type="file" accept=".csv,text/csv" class="hidden" onchange="onIsrFileChosen(event)">
             </label>
@@ -2632,45 +2632,45 @@
               Parse &amp; Compare
             </button>
           </div>
-          <textarea id="isr-csv" rows="6" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2 mb-2" placeholder="Paste a Clover Revenue Item Sales CSV here, or upload a file above…"></textarea>
+          <textarea id="isr-csv" rows="6" class="w-full font-mono text-xs rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 mb-2 focus:outline-none focus:ring-1 focus:ring-accent-green" placeholder="Paste a Clover Revenue Item Sales CSV here, or upload a file above…"></textarea>
           <div id="isr-status" class="hidden text-sm rounded-lg px-4 py-3 border mb-3"></div>
           <div id="isr-results"></div>
         </div>
 
         <!-- Item Master Costs -->
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
-          <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Item Master Costs</h2>
-          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Upload an Item Master export so the Retail Summary can render CPU, Ext Cost, Gross Profit, and GPM% per L2/L3 category. Accepts <code>.html</code> (Item Master export), <code>.csv</code>, or <code>.json</code>. Re-snapshot historical days after uploading to backfill cost into existing data.</p>
+        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
+          <h2 class="text-base font-bold text-opl-ink dark:text-op-ink mb-1">Item Master Costs</h2>
+          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Upload an Item Master export so the Retail Summary can render CPU, Ext Cost, Gross Profit, and GPM% per L2/L3 category. Accepts <code>.html</code> (Item Master export), <code>.csv</code>, or <code>.json</code>. Re-snapshot historical days after uploading to backfill cost into existing data.</p>
 
           <div class="space-y-4">
             <div class="flex flex-wrap gap-4 items-end">
               <div class="flex-1 min-w-[220px]">
-                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">File</label>
-                <input id="im-file" type="file" accept=".html,.htm,.csv,.json,.txt" class="block w-full text-sm text-gray-700 dark:text-gray-200 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#3BB54A]/10 file:text-[#3BB54A] hover:file:bg-[#3BB54A]/20">
+                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">File</label>
+                <input id="im-file" type="file" accept=".html,.htm,.csv,.json,.txt" class="block w-full text-sm text-opl-ink dark:text-op-ink file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#3BB54A]/10 file:text-[#3BB54A] hover:file:bg-[#3BB54A]/20">
               </div>
               <button onclick="importItemCosts()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Upload</button>
-              <button onclick="refreshItemCostsStatus()" class="px-4 py-2 text-sm font-semibold border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors">Refresh status</button>
+              <button onclick="refreshItemCostsStatus()" class="px-4 py-2 text-sm font-semibold border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-accent-green/50 rounded-lg transition-colors">Refresh status</button>
             </div>
             <div id="im-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
-            <div id="im-summary" class="text-xs text-gray-500 dark:text-gray-400">Status: not loaded yet.</div>
+            <div id="im-summary" class="text-xs text-opl-inkDim dark:text-op-inkDim">Status: not loaded yet.</div>
 
             <!-- Per-item editor (edit/add single costs without re-uploading) -->
-            <details id="im-editor" class="border-t border-gray-100 dark:border-gray-700 pt-4">
-              <summary onclick="ensureItemCostsLoaded()" class="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-200 select-none">Edit individual items</summary>
+            <details id="im-editor" class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border pt-4">
+              <summary onclick="ensureItemCostsLoaded()" class="cursor-pointer text-sm font-medium text-opl-ink dark:text-op-ink select-none">Edit individual items</summary>
               <div class="mt-3 space-y-3">
-                <p class="text-xs text-gray-400 dark:text-gray-500">Fix or add a single item's cost without re-uploading the whole file. Changes merge into the existing master.</p>
-                <input id="ie-search" type="text" placeholder="Search by item # or description…" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
-                <div id="ie-list" class="max-h-[360px] overflow-y-auto border border-gray-100 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700"></div>
+                <p class="text-xs text-opl-inkDim dark:text-op-inkDim">Fix or add a single item's cost without re-uploading the whole file. Changes merge into the existing master.</p>
+                <input id="ie-search" type="text" placeholder="Search by item # or description…" class="w-full text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+                <div id="ie-list" class="max-h-[360px] overflow-y-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-lg divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></div>
                 <div class="flex flex-wrap gap-2 items-end pt-1">
-                  <div><label class="block text-[11px] font-medium text-gray-500 mb-1">New item #</label><input id="ie-new-no" type="text" inputmode="numeric" placeholder="1234" class="w-24 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1"></div>
-                  <div><label class="block text-[11px] font-medium text-gray-500 mb-1">Cost $</label><input id="ie-new-cost" type="number" step="0.01" min="0" placeholder="0.89" class="w-24 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1"></div>
-                  <div class="flex-1 min-w-[140px]"><label class="block text-[11px] font-medium text-gray-500 mb-1">Description (optional)</label><input id="ie-new-desc" type="text" placeholder="" class="w-full text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1"></div>
-                  <button onclick="ieAddItem()" class="px-3 py-1.5 text-sm font-semibold border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg">Add</button>
+                  <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">New item #</label><input id="ie-new-no" type="text" inputmode="numeric" placeholder="1234" class="w-24 text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-2 py-1 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
+                  <div><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Cost $</label><input id="ie-new-cost" type="number" step="0.01" min="0" placeholder="0.89" class="w-24 text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-2 py-1 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
+                  <div class="flex-1 min-w-[140px]"><label class="block text-[11px] font-semibold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim mb-1">Description (optional)</label><input id="ie-new-desc" type="text" placeholder="" class="w-full text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-2 py-1 focus:outline-none focus:ring-1 focus:ring-accent-green"></div>
+                  <button onclick="ieAddItem()" class="px-3 py-1.5 text-sm font-semibold border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-accent-green/50 rounded-lg">Add</button>
                 </div>
                 <div id="ie-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
                 <div class="flex items-center gap-3">
                   <button onclick="saveItemCostEdits()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Save changes</button>
-                  <span id="ie-dirty" class="text-xs text-gray-400">No pending changes.</span>
+                  <span id="ie-dirty" class="text-xs text-opl-inkDim dark:text-op-inkDim">No pending changes.</span>
                 </div>
               </div>
             </details>
@@ -2678,32 +2678,32 @@
         </div>
 
         <!-- L3 Category Costs -->
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
-          <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">L3 Category Costs</h2>
-          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Set a flat cost per unit for each L3 category (e.g. <code>FG BL SEASONAL - CHRISTMAS - GM</code>). Used by the Retail Summary as the cost fallback when an item has no Item Master cost. A specific item (IM#) cost always wins over its category cost. Re-snapshot historical days to backfill.</p>
+        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
+          <h2 class="text-base font-bold text-opl-ink dark:text-op-ink mb-1">L3 Category Costs</h2>
+          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Set a flat cost per unit for each L3 category (e.g. <code>FG BL SEASONAL - CHRISTMAS - GM</code>). Used by the Retail Summary as the cost fallback when an item has no Item Master cost. A specific item (IM#) cost always wins over its category cost. Re-snapshot historical days to backfill.</p>
 
           <div class="space-y-3">
             <div class="flex flex-wrap gap-3 items-center">
-              <input id="cc-search" type="text" placeholder="Filter categories…" class="flex-1 min-w-[200px] text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-3 py-2">
-              <label class="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap cursor-pointer select-none"><input id="cc-sales-only" type="checkbox" onchange="renderCategoryCosts()" class="rounded"> With sales only</label>
+              <input id="cc-search" type="text" placeholder="Filter categories…" class="flex-1 min-w-[200px] text-sm rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+              <label class="flex items-center gap-1.5 text-xs text-opl-inkDim dark:text-op-inkDim whitespace-nowrap cursor-pointer select-none"><input id="cc-sales-only" type="checkbox" onchange="renderCategoryCosts()" class="rounded"> With sales only</label>
               <button onclick="saveCategoryCosts()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Save costs</button>
-              <button onclick="loadCategoryCosts()" class="px-4 py-2 text-sm font-semibold border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors">Reload</button>
+              <button onclick="loadCategoryCosts()" class="px-4 py-2 text-sm font-semibold border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-accent-green/50 rounded-lg transition-colors">Reload</button>
             </div>
             <div id="cc-status" class="hidden text-sm rounded-lg px-4 py-3 border"></div>
-            <div id="cc-summary" class="text-xs text-gray-500 dark:text-gray-400">Status: not loaded yet.</div>
-            <div id="cc-list" class="max-h-[460px] overflow-y-auto border border-gray-100 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700"></div>
+            <div id="cc-summary" class="text-xs text-opl-inkDim dark:text-op-inkDim">Status: not loaded yet.</div>
+            <div id="cc-list" class="max-h-[460px] overflow-y-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-lg divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></div>
           </div>
         </div>
 
         <!-- Custom Sales Categorization -->
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
-          <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Custom Sales Categorization</h2>
-          <p class="text-xs text-gray-400 dark:text-gray-500 mb-5">Assign uncategorized items to an L2 bucket. Overrides apply to every store and take effect on the next snapshot (use <em>Re-snapshot</em> below to update history).</p>
+        <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
+          <h2 class="text-base font-bold text-opl-ink dark:text-op-ink mb-1">Custom Sales Categorization</h2>
+          <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">Assign uncategorized items to an L2 bucket. Overrides apply to every store and take effect on the next snapshot (use <em>Re-snapshot</em> below to update history).</p>
 
           <div class="space-y-4">
             <div class="flex flex-wrap gap-4 items-end">
               <div>
-                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Store</label>
+                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Store</label>
                 <select id="overrides-store" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
                   <option value="BL1">BL1 – Coliseum</option>
                   <option value="BL2">BL2 – South Bend</option>
@@ -2714,11 +2714,11 @@
                 </select>
               </div>
               <div>
-                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Start</label>
+                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Start</label>
                 <input id="overrides-start" type="date" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
               </div>
               <div>
-                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">End</label>
+                <label class="block text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">End</label>
                 <input id="overrides-end" type="date" class="text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green transition-colors">
               </div>
               <button onclick="loadUncategorized()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
@@ -2730,11 +2730,11 @@
 
             <div id="overrides-table-wrap" class="hidden space-y-6">
               <div id="overrides-items-section">
-                <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Custom Sales items</h3>
-                <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Items with no Clover catalog category. Assign each to an L2 and optionally save a prefix rule.</p>
-                <div class="overflow-x-auto">
+                <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink mb-2">Custom Sales items</h3>
+                <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Items with no Clover catalog category. Assign each to an L2 and optionally save a prefix rule.</p>
+                <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
                   <table class="min-w-full text-sm">
-                    <thead class="bg-gray-50 dark:bg-gray-700/50 text-xs text-gray-600 dark:text-gray-300 uppercase">
+                    <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim uppercase">
                       <tr>
                         <th class="px-3 py-2 text-left">Item Name</th>
                         <th class="px-3 py-2 text-right">Qty</th>
@@ -2743,18 +2743,18 @@
                         <th class="px-3 py-2 text-left">Also add rule</th>
                       </tr>
                     </thead>
-                    <tbody id="overrides-tbody" class="divide-y divide-gray-100 dark:divide-gray-700"></tbody>
+                    <tbody id="overrides-tbody" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
                   </table>
                 </div>
-                <p id="overrides-items-empty" class="hidden text-xs text-gray-400 dark:text-gray-500 italic">No Custom Sales items in this range.</p>
+                <p id="overrides-items-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No Custom Sales items in this range.</p>
               </div>
 
               <div id="overrides-l3-section">
-                <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Uncategorized L3 categories</h3>
-                <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">Clover catalog categories that aren't mapped to an L2 yet. One assignment covers every item in that category across all stores.</p>
-                <div class="overflow-x-auto">
+                <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink mb-2">Uncategorized L3 categories</h3>
+                <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Clover catalog categories that aren't mapped to an L2 yet. One assignment covers every item in that category across all stores.</p>
+                <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
                   <table class="min-w-full text-sm">
-                    <thead class="bg-gray-50 dark:bg-gray-700/50 text-xs text-gray-600 dark:text-gray-300 uppercase">
+                    <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim uppercase">
                       <tr>
                         <th class="px-3 py-2 text-left">Clover L3 Category</th>
                         <th class="px-3 py-2 text-right">Qty</th>
@@ -2762,17 +2762,17 @@
                         <th class="px-3 py-2 text-left">Assign L2</th>
                       </tr>
                     </thead>
-                    <tbody id="overrides-l3-tbody" class="divide-y divide-gray-100 dark:divide-gray-700"></tbody>
+                    <tbody id="overrides-l3-tbody" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
                   </table>
                 </div>
-                <p id="overrides-l3-empty" class="hidden text-xs text-gray-400 dark:text-gray-500 italic">No unmapped L3 categories in this range.</p>
+                <p id="overrides-l3-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No unmapped L3 categories in this range.</p>
               </div>
 
               <div class="flex flex-wrap gap-3">
                 <button onclick="saveCategoryOverrides()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
                   Save Overrides
                 </button>
-                <button onclick="resnapshotRecent()" class="px-4 py-2 text-sm font-semibold bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-100 rounded-lg transition-colors">
+                <button onclick="resnapshotRecent()" class="px-4 py-2 text-sm font-semibold border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-accent-green/50 rounded-lg transition-colors">
                   Re-snapshot selected range
                 </button>
               </div>
@@ -9834,7 +9834,7 @@
       try {
         const resp = await fetch(
           `${WORKER_BASE}?action=items-snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(date)}`,
-          { method: 'POST', headers: { 'X-Snapshot-Secret': 'mapcaj-saTxa2-1' } }
+          { method: 'POST', credentials: 'include'}
         );
         const data = await resp.json();
         if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
@@ -10142,7 +10142,7 @@
     try {
       setStatus('Rebuilding trailing 13 weeks…', 'info');
       const resp = await fetch(`${WORKER_BASE}?action=rebuild-week-summaries&year=${year}`, {
-        method: 'POST', headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        method: 'POST', credentials: 'include', 
       });
       const data = await resp.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
@@ -10225,7 +10225,7 @@
       const settled = await Promise.allSettled(batch.map(date =>
         fetchWithRetry(
           `${WORKER_BASE}?action=snapshot&store=all&date=${encodeURIComponent(date)}`,
-          { method: 'POST', headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
+          { method: 'POST', credentials: 'include'}
         ).then(data => ({ date, data }))
       ));
       for (let j = 0; j < settled.length; j++) {
@@ -10246,7 +10246,7 @@
     try {
       const data = await fetchWithRetry(
         `${WORKER_BASE}?action=rebuild-week-summaries`,
-        { method: 'POST', headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } },
+        { method: 'POST', credentials: 'include'},
         3
       );
       const failNote = failed.length
@@ -10285,7 +10285,7 @@
     try {
       const resp = await fetch(`${WORKER_BASE}?action=manual-override`, {
         method: 'POST',
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify({ entries }),
       });
       const data = await resp.json();
@@ -10616,7 +10616,7 @@
     try {
       const resp = await fetch(`${WORKER_BASE}?action=manual-override`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify({ entries, skipIfOverrideExists: true }),
       });
       const data = await resp.json();
@@ -10645,7 +10645,7 @@
     const end = monthly[monthly.length - 1].yearMonth;
     try {
       const resp = await fetch(`${WORKER_BASE}?action=monthly-totals&store=${encodeURIComponent(store)}&start=${start}&end=${end}`,
-        { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } });
+        { credentials: 'include' });
       const data = await resp.json();
       if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
       const map = {};
@@ -10748,7 +10748,7 @@
       const settled = await Promise.allSettled(batch.map(date =>
         fetchWithRetry(
           `${WORKER_BASE}?action=snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(date)}`,
-          { method: 'POST', headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
+          { method: 'POST', credentials: 'include'}
         )
       ));
       settled.forEach((r, j) => {
@@ -10961,7 +10961,7 @@
     try {
       const resp = await fetch(
         `${WORKER_BASE}?action=item-l2-totals&store=${encodeURIComponent(store)}&start=${start}&end=${end}`,
-        { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
+        { credentials: 'include' }
       );
       const data = await resp.json();
       if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
@@ -11076,7 +11076,7 @@
       const batch = dates.slice(i, i + BATCH);
       const settled = await Promise.allSettled(batch.map(date =>
         fetch(`${WORKER_BASE}?action=items-snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(date)}`,
-          { method: 'POST', headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } })
+          { method: 'POST', credentials: 'include'})
           .then(r => r.json())
           .then(d => { if (d.error) throw new Error(d.error); return d; })
       ));
@@ -11087,7 +11087,7 @@
     // Refresh
     const resp = await fetch(
       `${WORKER_BASE}?action=item-l2-totals&store=${encodeURIComponent(store)}&start=${start}&end=${end}`,
-      { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
+      { credentials: 'include' }
     );
     const data = await resp.json();
     if (data.categories) {
@@ -11110,7 +11110,6 @@
     'Consumable Food', 'Consumable HBA', 'Consumable Other',
     'Seasonal', 'Bin Products', 'Gift Cards',
   ];
-  const SNAPSHOT_SECRET = 'mapcaj-saTxa2-1';
 
   // ── Client-side API response cache (5-minute TTL) ────────────────────────────
   // Keyed by full URL string. Only caches successful, non-error responses.
@@ -11168,7 +11167,7 @@
 
     try {
       const url = `${WORKER_BASE}?action=noncategorized-items&store=${encodeURIComponent(store)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
-      const resp = await fetch(url, { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }, credentials: 'include' });
+      const resp = await fetch(url, { credentials: 'include' });
       const data = await resp.json();
       if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
 
@@ -11260,7 +11259,7 @@
     let existing = { items: {}, patterns: [], l3Map: {} };
     try {
       const getResp = await fetch(`${WORKER_BASE}?action=item-overrides`, {
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        
         credentials: 'include',
       });
       if (getResp.ok) existing = await getResp.json();
@@ -11311,7 +11310,7 @@
     try {
       const resp = await fetch(`${WORKER_BASE}?action=item-overrides`, {
         method: 'POST',
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items, patterns, l3Map }),
         credentials: 'include',
       });
@@ -11350,7 +11349,7 @@
       try {
         const resp = await fetch(
           `${WORKER_BASE}?action=items-snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(d)}`,
-          { method: 'POST', headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }, credentials: 'include' }
+          { method: 'POST', credentials: 'include' }
         );
         const data = await resp.json();
         if (!resp.ok || data.error) { errs++; continue; }
@@ -14834,7 +14833,7 @@
     try {
       const resp = await fetch(`${WORKER_BASE}?action=item-costs`, {
         method: 'POST',
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items }),
         credentials: 'include',
       });
@@ -14850,7 +14849,7 @@
   async function refreshItemCostsStatus() {
     try {
       const resp = await fetch(`${WORKER_BASE}?action=item-costs`, {
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        
         credentials: 'include',
       });
       const data = await resp.json();
@@ -14899,7 +14898,7 @@
     ieSetStatus('Loading items…', 'info');
     try {
       const resp = await fetch(`${WORKER_BASE}?action=item-costs`, {
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }, credentials: 'include',
+        credentials: 'include',
       });
       const data = await resp.json();
       if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
@@ -14995,7 +14994,7 @@
     try {
       const resp = await fetch(`${WORKER_BASE}?action=item-costs`, {
         method: 'POST',
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ merge: true, items, delete: del }),
         credentials: 'include',
       });
@@ -15100,7 +15099,7 @@
     ccSetStatus('Loading…', 'info');
     try {
       const resp = await fetch(`${WORKER_BASE}?action=category-costs`, {
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        
         credentials: 'include',
       });
       const data = await resp.json();
@@ -15142,7 +15141,7 @@
     try {
       const resp = await fetch(`${WORKER_BASE}?action=category-costs`, {
         method: 'POST',
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ costs: ccCosts }),
         credentials: 'include',
       });
@@ -15251,7 +15250,7 @@
     dl.innerHTML = '';
     try {
       const resp = await fetch(`${WORKER_BASE}?action=clover-categories&store=${fetchStore}`, {
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        
         credentials: 'include',
       });
       if (!resp.ok) return;
@@ -15306,7 +15305,7 @@
     try {
       const resp = await fetch(`${WORKER_BASE}?action=create-clover-item`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ store: storeVal, name, code, priceCents, costCents, taxable, hidden, l2, l3 }),
         credentials: 'include',
       });
@@ -15455,7 +15454,7 @@
       let offset = 0;
       while (true) {
         const resp = await fetch(`${WORKER_BASE}?action=inventory-items&store=${invViewStore}&offset=${offset}`, {
-          headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+          
           credentials: 'include',
         });
         const data = await resp.json();
@@ -15684,7 +15683,7 @@
     try {
       const resp = await fetch(`${WORKER_BASE}?action=update-clover-item`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         credentials: 'include',
       });
@@ -15729,7 +15728,7 @@
         : { store: invViewStore, itemId: item.id };
       const resp = await fetch(`${WORKER_BASE}?action=delete-clover-item`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         credentials: 'include',
       });
@@ -15939,7 +15938,7 @@
       const results = await Promise.all(stores.map(store =>
         fetch(`${WORKER_BASE}?action=schedule-sale`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ store, items, discount, saleLabel, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() }),
           credentials: 'include',
         }).then(r => r.json())
@@ -15999,7 +15998,7 @@
     list.innerHTML = '';
     try {
       const resp = await fetch(`${WORKER_BASE}?action=list-sale-schedules&store=${store}&filter=${filter}`, {
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        
         credentials: 'include',
       });
       const data = await resp.json();
@@ -16056,7 +16055,7 @@
     try {
       const resp = await fetch(`${WORKER_BASE}?action=cancel-sale-schedule`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scheduleGroup }),
         credentials: 'include',
       });
@@ -16072,7 +16071,7 @@
     try {
       const resp = await fetch(`${WORKER_BASE}?action=delete-sale-schedule`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scheduleGroup }),
         credentials: 'include',
       });

@@ -3465,11 +3465,45 @@ function resolveCors(request) {
 
 // Returns a 401 Response if the request lacks a valid admin secret, else null.
 // Every secret-gated endpoint uses this to avoid drifting auth checks.
+//
+// Use this ONLY for machine callers with no browser session — today that is the
+// Apps Script auction feeder (?action=ingest) and the no-UI diagnostics. Anything
+// reachable from the admin page uses requireAdminAccess below, so the browser can
+// authenticate with its session cookie instead of a secret shipped in page source.
 function requireAdminSecret(request, env, corsJson) {
   if (!env.SNAPSHOT_SECRET || request.headers.get("X-Snapshot-Secret") !== env.SNAPSHOT_SECRET) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
   }
   return null;
+}
+
+// Gate for admin endpoints reachable from the browser. Returns a Response to
+// short-circuit with, or null to proceed.
+//
+// Three ways in, in order of preference:
+//   1. X-Snapshot-Secret — kept for cron and external tooling only. Never sent
+//      by the client any more; it used to be a literal in public page source.
+//   2. A superuser session — required for anything that MUTATES.
+//   3. An admin-or-superuser session — enough to READ.
+//
+// Method-aware because several actions read on GET and write on POST off a single
+// guard (item-costs, category-costs, item-overrides). Gating the whole block at
+// superuser would break the admin page's reads for admins; gating it at admin
+// would leave the writes open to them. So the verb decides.
+//
+// 403 not 401: 401 means "no session" here and the client bounces to login on it.
+// An authenticated user with the wrong role must see a refusal, not a login page.
+function requireAdminAccess(request, currentUser, isAdminSecret, corsJson) {
+  if (isAdminSecret) return null;
+  const mutating = request.method !== "GET";
+  const allowed = mutating
+    ? currentUser?.role === "superuser"
+    : canAccessInventory(currentUser);
+  if (allowed) return null;
+  return new Response(JSON.stringify({
+    error: "Forbidden",
+    code: mutating ? "NEED_SUPERUSER" : "NEED_ADMIN",
+  }), { status: 403, headers: corsJson });
 }
 
 // Round to 2 decimal places (dollar/cents precision).
@@ -7543,7 +7577,7 @@ export default {
     // Deletes the cached KV map and refetches from Clover.
     if (request.method === "POST" && url.searchParams.get("action") === "refresh-item-cats") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
 
       const storeParam = (url.searchParams.get("store") || "").toUpperCase();
@@ -7735,7 +7769,7 @@ export default {
     // store=all snapshots every store. date defaults to today (ET, not UTC).
     if (request.method === "POST" && url.searchParams.get("action") === "snapshot") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
 
       const storeParam = (url.searchParams.get("store") || "").toUpperCase();
@@ -7841,7 +7875,7 @@ export default {
     // ── Backfill endpoint: ?action=backfill (imports Sheets + KV → D1)
     if (request.method === "POST" && url.searchParams.get("action") === "backfill") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.DB) {
         return new Response(JSON.stringify({ error: "D1 not configured" }), {
@@ -7981,7 +8015,7 @@ export default {
     // store=all re-processes every store. Requires X-Snapshot-Secret header.
     if (request.method === "POST" && url.searchParams.get("action") === "items-snapshot") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
 
       const storeParam = (url.searchParams.get("store") || "").toUpperCase();
@@ -8302,7 +8336,7 @@ export default {
     // qty/ASP/L2 data on the Weekly Retail Summary for historical weeks.
     if (request.method === "POST" && url.searchParams.get("action") === "backfill-items-snapshots") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
@@ -8460,7 +8494,7 @@ export default {
     // same X-Snapshot-Secret header as other admin endpoints.
     if (url.searchParams.get("action") === "noncategorized-items") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
@@ -8579,7 +8613,7 @@ export default {
     //       to replace the rule list. Either key can be omitted to preserve it.
     if (url.searchParams.get("action") === "item-overrides") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
@@ -8656,7 +8690,7 @@ export default {
     //       parsed file. Validates each entry before persisting.
     if (url.searchParams.get("action") === "item-costs") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
@@ -8727,7 +8761,7 @@ export default {
     //       L3_TO_L2 map and each cost as a finite, non-negative number.
     if (url.searchParams.get("action") === "category-costs") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
@@ -9595,7 +9629,7 @@ export default {
     // rows are preserved (skipped). Admin-secret gated. WRITES to D1/KV.
     if (request.method === "POST" && url.searchParams.get("action") === "resnapshot-clienttime") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
 
       const storeParam = (url.searchParams.get("store") || "").toUpperCase();
@@ -9634,9 +9668,9 @@ export default {
     // Single-entry: pass one element. Bulk: pass many. At least one numeric
     // field per entry must be provided. Sets is_manual_override=1 so the
     // cron snapshot and Sheet backfill will not overwrite this row.
-    if (url.searchParams.get("action") === "manual-override") {
+    if (request.method === "POST" && url.searchParams.get("action") === "manual-override") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.DB) {
         return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
@@ -10562,7 +10596,7 @@ export default {
     // Used by the Item Sales Reconciliation tool.
     if (url.searchParams.get("action") === "item-l2-totals") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
@@ -10611,7 +10645,7 @@ export default {
     // pasted Clover Sales Report CSV.
     if (url.searchParams.get("action") === "monthly-totals") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.DB) {
         return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
@@ -10649,7 +10683,7 @@ export default {
     // pre-roll for every store. Required before T13 will read from cache.
     if (request.method === "POST" && url.searchParams.get("action") === "rebuild-week-summaries") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.DB || !env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "DB or KV not configured" }), { status: 500, headers: corsJson });
@@ -11000,7 +11034,7 @@ export default {
   //    POST ?action=run-sale-scheduler-now
   if (request.method === "POST" && url.searchParams.get("action") === "run-sale-scheduler-now") {
     const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-    const unauth = requireAdminSecret(request, env, corsJson);
+    const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
     if (unauth) return unauth;
     const result = await processSaleSchedules(env, new Date());
     return new Response(JSON.stringify({ ok: true, ...result }), { headers: corsJson });
