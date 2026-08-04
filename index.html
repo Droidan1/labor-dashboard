@@ -2486,6 +2486,10 @@
             <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink mb-2">Dates a repair would improve</h3>
             <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Biggest recovery first. Everything not listed here is already at or above the threshold — re-snapshotting it would be refused as no improvement, and re-pulling an old date can <strong>lose</strong> refunds that have since dropped out of Clover's window.</p>
             <div id="rh-needs-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic mb-2">Nothing needs repair in this range.</div>
+            <div id="rh-repair-bar" class="hidden flex flex-wrap items-center gap-3 mb-3">
+              <button id="rh-repair" onclick="runRepair()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Repair these dates</button>
+              <span class="text-xs text-opl-inkDim dark:text-op-inkDim">Each date is backed up before it is touched, and the two data-loss guards still apply — a date that would come back worse is left alone.</span>
+            </div>
             <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
               <table class="min-w-full text-sm">
                 <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim uppercase">
@@ -2499,6 +2503,28 @@
                   </tr>
                 </thead>
                 <tbody id="rh-needs" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="border-t border-[rgba(20,16,8,0.08)] dark:border-op-border mt-6 pt-5">
+            <div class="flex items-center justify-between gap-3 mb-2">
+              <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink">Backups</h3>
+              <button onclick="loadRepairBackups()" class="px-3 py-1.5 text-sm font-semibold border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-accent-green/50 rounded-lg transition-colors">Refresh</button>
+            </div>
+            <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Every repair saves what it replaced. Restoring is itself reversible — the state you roll back from is saved too. Backups expire after 90 days.</p>
+            <div id="rh-backups-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No backups yet.</div>
+            <div id="rh-backups-wrap" class="hidden overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
+              <table class="min-w-full text-sm">
+                <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim uppercase">
+                  <tr>
+                    <th class="px-3 py-2 text-left">Taken</th>
+                    <th class="px-3 py-2 text-left">By</th>
+                    <th class="px-3 py-2 text-right">Dates</th>
+                    <th class="px-3 py-2 text-right"></th>
+                  </tr>
+                </thead>
+                <tbody id="rh-backups" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
               </table>
             </div>
           </div>
@@ -11089,6 +11115,11 @@
         <td class="px-3 py-2 text-right text-op-bad font-semibold">${_rhMoney(c.gap)}</td>
       </tr>`).join('');
       el('rh-needs-empty').classList.toggle('hidden', data.needsRepair.length > 0);
+      // Hold the exact list the check produced. The repair sends THIS, so it can
+      // only ever touch dates the check proved would improve.
+      _rhNeeds = data.needsRepair;
+      el('rh-repair-bar').classList.toggle('hidden', data.needsRepair.length === 0);
+      el('rh-repair').textContent = `Repair ${data.needsRepair.length} date${data.needsRepair.length === 1 ? '' : 's'}`;
 
       el('rh-results').classList.remove('hidden');
       _setRhStatus(needsCount === 0
@@ -11103,6 +11134,98 @@
     }
   }
   window.runRepairHealth = runRepairHealth;
+
+  let _rhNeeds = [];
+
+  async function runRepair() {
+    if (!_rhNeeds.length) return;
+    const total = _rhNeeds.reduce((s, c) => s + (c.gap || 0), 0);
+    const byStore = {};
+    _rhNeeds.forEach(c => { byStore[c.store] = (byStore[c.store] || 0) + 1; });
+    const breakdown = Object.entries(byStore).map(([s, n]) => `${s}: ${n}`).join(', ');
+    const goAhead = await uiConfirm(
+      `Re-pull ${_rhNeeds.length} date(s) from Clover and overwrite their stored snapshots.\n\n${breakdown}\nUp to ${_rhMoney(total)} to recover.\n\nEach date is backed up first and you can restore it. Dates that would come back worse are refused automatically.`,
+      { title: 'Run repair?', okText: 'Repair', danger: true });
+    if (!goAhead) return;
+
+    const btn = el('rh-repair');
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = 'Repairing…';
+    _setRhStatus(`Repairing ${_rhNeeds.length} date(s) — backing up, re-pulling from Clover, then re-checking…`, 'info');
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=repair-run`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dates: _rhNeeds.map(c => ({ store: c.store, date: c.date })) }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+
+      const su = data.summary;
+      const bits = [`<strong>Repaired ${su.written} of ${su.requested}</strong>`, `recovered ${_rhMoney(su.recovered)}`];
+      if (su.skipped) bits.push(`${su.skipped} refused by the guards (left as they were)`);
+      if (su.errors) bits.push(`${su.errors} error(s)`);
+      if (su.stillUnhealthy) bits.push(`${su.stillUnhealthy} still below threshold`);
+      _setRhStatus(bits.join(' · ') + (data.backupId ? ` · backup <code>${data.backupId}</code>` : ''),
+        su.errors ? 'error' : 'ok');
+
+      await loadRepairBackups();
+      await runRepairHealth();   // re-verify against the freshly written data
+    } catch (err) {
+      _setRhStatus(`Repair failed: ${err.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+  window.runRepair = runRepair;
+
+  async function loadRepairBackups() {
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=repair-backups`, { credentials: 'include' });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      const list = data.backups || [];
+      el('rh-backups-empty').classList.toggle('hidden', list.length > 0);
+      el('rh-backups-wrap').classList.toggle('hidden', list.length === 0);
+      el('rh-backups').innerHTML = list.map(b => `<tr>
+        <td class="px-3 py-2 text-left text-opl-ink dark:text-op-ink">${new Date(b.createdAt).toLocaleString()}</td>
+        <td class="px-3 py-2 text-left text-opl-inkDim dark:text-op-inkDim">${b.by || '—'}${b.note ? ' <span class="text-[11px] italic">(' + b.note + ')</span>' : ''}</td>
+        <td class="px-3 py-2 text-right text-opl-inkDim dark:text-op-inkDim">${b.dateCount}</td>
+        <td class="px-3 py-2 text-right"><button onclick="restoreRepairBackup('${b.backupId}', ${b.dateCount})" class="px-3 py-1.5 text-sm font-semibold border border-gray-200 dark:border-op-border text-gray-700 dark:text-op-ink hover:border-accent-green/50 rounded-lg transition-colors">Restore</button></td>
+      </tr>`).join('');
+    } catch (err) {
+      _setRhStatus(`Could not load backups: ${err.message}`, 'error');
+    }
+  }
+  window.loadRepairBackups = loadRepairBackups;
+
+  async function restoreRepairBackup(backupId, dateCount) {
+    const goAhead = await uiConfirm(
+      `Roll ${dateCount} date(s) back to the snapshots saved in this backup, discarding what is stored now.\n\nThis is reversible — the current state is saved as a new backup first.`,
+      { title: 'Restore backup?', okText: 'Restore', danger: true });
+    if (!goAhead) return;
+    _setRhStatus('Restoring…', 'info');
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=repair-restore`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backupId }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      _setRhStatus(`<strong>Restored ${data.summary.restored} date(s).</strong>`
+        + (data.summary.errors ? ` ${data.summary.errors} error(s).` : '')
+        + (data.undoId ? ` The state you replaced was saved as <code>${data.undoId}</code>.` : ''),
+        data.summary.errors ? 'error' : 'ok');
+      await loadRepairBackups();
+      await runRepairHealth();
+    } catch (err) {
+      _setRhStatus(`Restore failed: ${err.message}`, 'error');
+    }
+  }
+  window.restoreRepairBackup = restoreRepairBackup;
 
   function _setIsrStatus(msg, tone) {
     const s = el('isr-status');
@@ -15361,6 +15484,7 @@
           re.value = iso(today);
           rs.value = iso(new Date(today.getTime() - 29 * 86400000));
         }
+        if (typeof loadRepairBackups === 'function') loadRepairBackups();
       }
     };
   })();

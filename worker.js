@@ -1972,6 +1972,111 @@ async function saveItemSalesSnapshot(env, store, dateStr, itemData) {
   }
 }
 
+// ─── Item snapshot rebuild — ONE implementation of the guards ───────────────
+//
+// Re-pulls one store/date from Clover and writes it ONLY if that is an
+// improvement. Extracted from the ?action=backfill-items-snapshots loop so the
+// Repair console runs byte-identical protection rather than a second copy that
+// can drift. Both guards below exist because they each caught a real, permanent
+// data loss; a divergent second implementation is how that loss comes back.
+//
+// ctx: { catMap, overrides, itemCosts, d1Total, todayStr, force, backupPrefix }
+// Returns { outcome: "written" | "skipped" | "error", ...detail } and NEVER throws.
+async function rebuildItemSnapshot(env, store, dateStr, ctx) {
+  const key = `items:${store.toLowerCase()}:${dateStr}`;
+  try {
+    if (!ctx.force) {
+      const existing = await env.SALES_SNAPSHOTS.get(key);
+      if (existing) return { outcome: "skipped", date: dateStr, note: "already present (force=0)" };
+    }
+
+    const sinceTs = getStartOfDayET(dateStr);
+    let untilTs = null;
+    if (dateStr !== ctx.todayStr) {
+      const nextDay = new Date(dateStr + 'T12:00:00Z');
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
+    }
+    const [elements, refundElements] = await Promise.all([
+      fetchItemOrders(store, env, sinceTs, untilTs),
+      fetchRefundElements(store, env, sinceTs, untilTs),
+    ]);
+    if (!elements) return { outcome: "error", date: dateStr, error: "no credentials, or Clover fetch failed" };
+
+    const itemData = aggregateItemSales(elements, ctx.catMap, store, dateStr, ctx.overrides, ctx.itemCosts, refundElements);
+    const d1Total = ctx.d1Total || 0;
+
+    // ── Zero-order guard ───────────────────────────────────────────────────
+    // Clover's orders API only reaches back ~90 days; older dates come back as
+    // an EMPTY array, not an error. Writing that blanks a real day permanently
+    // — it destroyed 104 days of BL1 history on 2026-07-28. Two independent
+    // ways to notice the day was not actually empty; either one blocks.
+    if (itemData.orderCount === 0) {
+      const existing = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get(key, "json") : null;
+      if (existing?.categories?.length > 0 || d1Total > 0) {
+        // Key order matches the pre-refactor response exactly so the
+        // differential test can compare byte for byte, not just by content.
+        return {
+          outcome: "skipped", date: dateStr,
+          note: "zero-order guard: Clover returned no orders but this day has sales — existing snapshot preserved",
+          d1Total,
+        };
+      }
+    }
+
+    // ── Magnitude guard ────────────────────────────────────────────────────
+    // The zero-order guard only fires on a CLEAN empty result. Clover degrades
+    // at its retention edge by returning FEWER orders, not zero: a BL4 backfill
+    // received 153 of 2026-05-05's 241 orders and overwrote a complete snapshot
+    // ($3,229.91 -> $2,124.47) reporting written=1, errors=0. So compare
+    // against D1 on EVERY write, not just the empty case.
+    const computedNet = itemData?.totals?.netSales ?? 0;
+    if (d1Total > 0 && computedNet < d1Total * BACKFILL_MIN_D1_RATIO) {
+      // Only refuse when what we ALREADY have is better. If the stored copy is
+      // empty or itself short, a partial refresh still improves it and blocking
+      // would preserve the worse one.
+      const existingMag = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get(key, "json") : null;
+      const existingNet = existingMag?.totals?.netSales ?? 0;
+      if (existingNet >= computedNet) {
+        return {
+          outcome: "skipped", date: dateStr,
+          note: "magnitude guard: computed net is far below this day's D1 total — looks like a partial Clover fetch; existing snapshot preserved",
+          computedNet, d1Total, existingNet,
+          ratio: Number((computedNet / d1Total).toFixed(4)),
+          orderCount: itemData.orderCount,
+        };
+      }
+    }
+
+    // ── Back up whatever is about to be overwritten ────────────────────────
+    // Only the Repair console passes a prefix. It runs BEFORE the put and after
+    // both guards, so a backup is only spent on a write that is actually going
+    // to happen. A backup that fails aborts the write — losing the undo is not
+    // an acceptable price for applying the repair.
+    let backedUp = false;
+    if (ctx.backupPrefix) {
+      const prior = await env.SALES_SNAPSHOTS.get(key);
+      if (prior !== null) {
+        try {
+          await env.SALES_SNAPSHOTS.put(`${ctx.backupPrefix}:${store.toLowerCase()}:${dateStr}`, prior);
+          backedUp = true;
+        } catch (e) {
+          return { outcome: "error", date: dateStr, error: `backup failed, write aborted: ${e.message}` };
+        }
+      }
+    }
+
+    await saveItemSalesSnapshot(env, store, dateStr, itemData);
+    return {
+      outcome: "written", date: dateStr, backedUp,
+      netSales: itemData?.totals?.netSales ?? 0,
+      orderCount: itemData.orderCount, d1Total,
+    };
+  } catch (e) {
+    return { outcome: "error", date: dateStr, error: e.message };
+  }
+}
+
 // ─── Weekly retail helpers ──────────────────────────────────────
 
 // Resolve a (year, week) pair → 7 ISO date strings (Mon–Sun). Best-effort
@@ -8395,93 +8500,19 @@ export default {
           continue;
         }
         for (const dateStr of dates) {
-          const key = `items:${store.toLowerCase()}:${dateStr}`;
-          try {
-            if (!force) {
-              const existing = await env.SALES_SNAPSHOTS.get(key);
-              if (existing) { storeOut.skipped++; continue; }
-            }
-            const sinceTs = getStartOfDayET(dateStr);
-            let untilTs = null;
-            if (dateStr !== todayStr) {
-              const nextDay = new Date(dateStr + 'T12:00:00Z');
-              nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-              untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
-            }
-            const [elements, refundElements] = await Promise.all([
-              fetchItemOrders(store, env, sinceTs, untilTs),
-              fetchRefundElements(store, env, sinceTs, untilTs),
-            ]);
-            if (!elements) { storeOut.errors++; storeOut.details.push({ date: dateStr, error: "no credentials, or Clover fetch failed" }); continue; }
-            const itemData = aggregateItemSales(elements, catMapCache[store], store, dateStr, overrides, itemCosts, refundElements);
-
-            // ── Zero-order guard (mirrors ?action=items-snapshot) ──────────
-            // Clover's orders API only reaches back ~90 days; older dates come
-            // back as an EMPTY array, not an error. Writing that result blanks
-            // a real day's item detail permanently — it destroyed 104 days of
-            // BL1 history on 2026-07-28. Two independent ways to notice the day
-            // was not actually empty; either one blocks the write.
-            if (itemData.orderCount === 0) {
-              const existing = env.SALES_SNAPSHOTS
-                ? await env.SALES_SNAPSHOTS.get(key, "json")
-                : null;
-              const d1Total = d1Totals[`${store}|${dateStr}`] || 0;
-              if (existing?.categories?.length > 0 || d1Total > 0) {
-                storeOut.skipped++;
-                storeOut.details.push({
-                  date: dateStr,
-                  note: "zero-order guard: Clover returned no orders but this day has sales — existing snapshot preserved",
-                  d1Total,
-                });
-                continue;
-              }
-            }
-
-            // ── Magnitude guard ────────────────────────────────────────────
-            // The zero-order guard above only fires on a CLEAN empty result.
-            // Clover degrades at its ~90-day retention edge by returning FEWER
-            // orders, not zero: on 2026-08-03 a BL4 backfill received 153 of
-            // 2026-05-05's 241 orders and overwrote a complete snapshot
-            // ($3,229.91 -> $2,124.47), reporting written=1, errors=0. Nothing
-            // caught it because orderCount was 153, so the D1 cross-check
-            // inside the zero branch never ran.
-            //
-            // So compare against D1 on EVERY write, not just the empty case.
-            // `d1Totals` is already loaded for the whole range above, so this
-            // costs nothing. Healthy days match D1 to the cent (measured: ratio
-            // 1.000000 across every known-good store/date pair), which is why
-            // the tolerance can be this tight — and a false refusal is cheap
-            // (a reported skip) while a false accept destroys data.
-            const d1TotalMag = d1Totals[`${store}|${dateStr}`] || 0;
-            const computedNet = itemData?.totals?.netSales ?? 0;
-            if (d1TotalMag > 0 && computedNet < d1TotalMag * BACKFILL_MIN_D1_RATIO) {
-              // Only refuse when the snapshot we ALREADY have is better. If the
-              // stored one is empty or itself short, a partial refresh is still
-              // an improvement and blocking it would preserve the worse copy.
-              const existingMag = env.SALES_SNAPSHOTS
-                ? await env.SALES_SNAPSHOTS.get(key, "json")
-                : null;
-              const existingNet = existingMag?.totals?.netSales ?? 0;
-              if (existingNet >= computedNet) {
-                storeOut.skipped++;
-                storeOut.details.push({
-                  date: dateStr,
-                  note: "magnitude guard: computed net is far below this day's D1 total — looks like a partial Clover fetch; existing snapshot preserved",
-                  computedNet,
-                  d1Total: d1TotalMag,
-                  existingNet,
-                  ratio: Number((computedNet / d1TotalMag).toFixed(4)),
-                  orderCount: itemData.orderCount,
-                });
-                continue;
-              }
-            }
-
-            await saveItemSalesSnapshot(env, store, dateStr, itemData);
-            storeOut.written++;
-          } catch (e) {
-            storeOut.errors++;
-            storeOut.details.push({ date: dateStr, error: e.message });
+          const r = await rebuildItemSnapshot(env, store, dateStr, {
+            catMap: catMapCache[store],
+            overrides, itemCosts,
+            d1Total: d1Totals[`${store}|${dateStr}`] || 0,
+            todayStr, force,
+          });
+          if (r.outcome === "written") { storeOut.written++; continue; }
+          storeOut[r.outcome === "error" ? "errors" : "skipped"]++;
+          // "already present (force=0)" was historically a silent skip; keep it
+          // silent so this refactor changes no output.
+          if (r.note !== "already present (force=0)") {
+            const { outcome, ...detail } = r;
+            storeOut.details.push(detail);
           }
         }
         summary[store] = storeOut;
@@ -10761,6 +10792,239 @@ export default {
           empty: "no sales — both the snapshot and D1 agree the day took nothing. A closed day, not a fault.",
           pending: "today, still being collected — the nightly cron has not written this snapshot yet. Not damage; wait for tomorrow.",
         },
+      }), { headers: corsJson });
+    }
+
+    // ── Repair console: run a repair on an EXPLICIT list of dates.
+    //    POST ?action=repair-run   body: { dates: [{store, date}, ...] }
+    //
+    // 🛑 This is the destructive half. Everything below exists because backfills
+    // have permanently destroyed real history three separate ways.
+    //
+    // It takes a LIST, never a range. The health check produces that list, so a
+    // repair can only ever touch dates something already proved would improve —
+    // "re-pull 90 days and hope" is not expressible through this endpoint. That
+    // matters beyond tidiness: re-pulling a healthy old date LOSES refunds that
+    // have since aged out of Clover's window, so every unnecessary date in a
+    // range is a small permanent loss.
+    //
+    // Each date is backed up before it is overwritten, and a backup that fails
+    // aborts that date's write — losing the undo is not an acceptable price for
+    // applying the repair.
+    if (request.method === "POST" && url.searchParams.get("action") === "repair-run") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly: true });
+      if (unauth) return unauth;
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+
+      let body = {};
+      try { body = await request.json(); } catch { /* handled below */ }
+      const requested = Array.isArray(body?.dates) ? body.dates : null;
+      if (!requested || !requested.length) {
+        return new Response(JSON.stringify({ error: "need dates: [{store, date}] — run the health check first; this endpoint does not accept a range" }),
+          { status: 400, headers: corsJson });
+      }
+      const MAX_REPAIR = 60;
+      if (requested.length > MAX_REPAIR) {
+        return new Response(JSON.stringify({ error: `too many dates (${requested.length}); cap is ${MAX_REPAIR} per run` }),
+          { status: 400, headers: corsJson });
+      }
+
+      const { dateStr: todayStr } = getETToday();
+      const targets = [];
+      const rejected = [];
+      const seen = new Set();
+      for (const d of requested) {
+        const store = String(d?.store || "").toUpperCase();
+        const date = String(d?.date || "");
+        const k = `${store}|${date}`;
+        if (!ALL_STORES.includes(store)) { rejected.push({ ...d, why: `unknown store ${store}` }); continue; }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { rejected.push({ ...d, why: "bad date" }); continue; }
+        // Today is still being collected — repairing it is meaningless and the
+        // result would be superseded by the nightly cron anyway.
+        if (date === todayStr) { rejected.push({ ...d, why: "today is still collecting; nothing to repair yet" }); continue; }
+        if (date > todayStr) { rejected.push({ ...d, why: "future date" }); continue; }
+        if (seen.has(k)) { rejected.push({ ...d, why: "duplicate" }); continue; }
+        seen.add(k);
+        targets.push({ store, date });
+      }
+      if (!targets.length) {
+        return new Response(JSON.stringify({ error: "no valid dates to repair", rejected }), { status: 400, headers: corsJson });
+      }
+
+      const backupId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
+      const backupPrefix = `repair-backup:${backupId}`;
+
+      const allDates = targets.map(t => t.date).sort();
+      const d1Totals = {};
+      if (env.DB) {
+        const { results } = await env.DB
+          .prepare("SELECT store, date, total FROM daily_sales WHERE date >= ? AND date <= ?")
+          .bind(allDates[0], allDates[allDates.length - 1]).all().catch(() => ({ results: [] }));
+        for (const r of (results || [])) d1Totals[`${r.store}|${r.date}`] = r.total || 0;
+      }
+
+      const [overrides, itemCosts] = await Promise.all([fetchItemOverrides(env), fetchItemCosts(env)]);
+
+      const catMapCache = {};
+      const results = [];
+      for (const { store, date } of targets) {
+        if (!catMapCache[store]) {
+          try { catMapCache[store] = await fetchItemCategoryMap(store, env); }
+          catch (e) { results.push({ store, date, outcome: "error", error: `category map: ${e.message}` }); continue; }
+        }
+        const d1Total = d1Totals[`${store}|${date}`] || 0;
+        const before = await env.SALES_SNAPSHOTS.get(`items:${store.toLowerCase()}:${date}`, "json");
+        const beforeNet = before?.totals?.netSales ?? null;
+
+        // force:true — the caller has already established this date needs work,
+        // so "it already exists" must not skip it. The two data-loss guards
+        // inside rebuildItemSnapshot still apply and are what actually protect
+        // the write.
+        const r = await rebuildItemSnapshot(env, store, date, {
+          catMap: catMapCache[store], overrides, itemCosts, d1Total,
+          todayStr, force: true, backupPrefix,
+        });
+
+        // Re-verify immediately, using the same rule the health check uses.
+        const afterNet = r.outcome === "written" ? (r.netSales ?? 0) : beforeNet;
+        results.push({
+          store, date, ...r,
+          beforeNet, afterNet,
+          recovered: (r.outcome === "written" && beforeNet !== null) ? roundCents(afterNet - beforeNet) : 0,
+          healthyAfter: d1Total > 0 ? (afterNet ?? 0) >= d1Total * BACKFILL_MIN_D1_RATIO : null,
+        });
+      }
+
+      const written = results.filter(r => r.outcome === "written");
+      const meta = {
+        backupId, createdAt: new Date().toISOString(),
+        by: currentUser?.email || (isAdminSecret ? "snapshot-secret" : "unknown"),
+        dates: written.filter(r => r.backedUp).map(r => ({ store: r.store, date: r.date })),
+        totalRequested: targets.length,
+      };
+      // Only keep a backup record if something was actually backed up.
+      if (meta.dates.length) {
+        // 90 days: long enough to notice a bad repair, short enough that these
+        // never accumulate without bound.
+        await env.SALES_SNAPSHOTS.put(`repair-backup-meta:${backupId}`, JSON.stringify(meta),
+          { expirationTtl: 90 * 24 * 3600 });
+      }
+
+      return new Response(JSON.stringify({
+        ok: true,
+        backupId: meta.dates.length ? backupId : null,
+        backedUpCount: meta.dates.length,
+        summary: {
+          requested: targets.length,
+          written: written.length,
+          skipped: results.filter(r => r.outcome === "skipped").length,
+          errors: results.filter(r => r.outcome === "error").length,
+          recovered: roundCents(results.reduce((s, r) => s + (r.recovered || 0), 0)),
+          stillUnhealthy: results.filter(r => r.healthyAfter === false).length,
+        },
+        results, rejected,
+        note: meta.dates.length
+          ? `Every overwritten date was backed up. Restore with ?action=repair-restore and backupId=${backupId}.`
+          : "Nothing was overwritten, so no backup was created.",
+      }), { headers: corsJson });
+    }
+
+    // ── Repair console: list available backups.
+    //    GET ?action=repair-backups
+    if (url.searchParams.get("action") === "repair-backups") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly: true });
+      if (unauth) return unauth;
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+      const listed = await env.SALES_SNAPSHOTS.list({ prefix: "repair-backup-meta:" });
+      const metas = await Promise.all((listed.keys || []).map(k =>
+        env.SALES_SNAPSHOTS.get(k.name, "json").catch(() => null)));
+      const backups = metas.filter(Boolean)
+        .map(m => ({ ...m, dateCount: (m.dates || []).length }))
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+      return new Response(JSON.stringify({ ok: true, backups, retentionDays: 90 }), { headers: corsJson });
+    }
+
+    // ── Repair console: restore a backup.
+    //    POST ?action=repair-restore   body: { backupId, dates?: [{store,date}] }
+    //
+    // Restore is itself a write, so it backs up what it is about to replace —
+    // otherwise undoing a repair would destroy the repaired data with no way
+    // back, and "restore" would be one more way to lose history.
+    if (request.method === "POST" && url.searchParams.get("action") === "repair-restore") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly: true });
+      if (unauth) return unauth;
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+
+      let body = {};
+      try { body = await request.json(); } catch { /* handled below */ }
+      const backupId = String(body?.backupId || "");
+      if (!backupId || /[^A-Za-z0-9:_-]/.test(backupId)) {
+        return new Response(JSON.stringify({ error: "need a valid backupId" }), { status: 400, headers: corsJson });
+      }
+      const meta = await env.SALES_SNAPSHOTS.get(`repair-backup-meta:${backupId}`, "json");
+      if (!meta) {
+        return new Response(JSON.stringify({ error: `no backup ${backupId} (they expire after 90 days)` }), { status: 404, headers: corsJson });
+      }
+
+      // Optionally restore a subset.
+      const want = Array.isArray(body?.dates) && body.dates.length
+        ? new Set(body.dates.map(d => `${String(d.store).toUpperCase()}|${d.date}`))
+        : null;
+      const targets = (meta.dates || []).filter(d => !want || want.has(`${d.store}|${d.date}`));
+      if (!targets.length) {
+        return new Response(JSON.stringify({ error: "nothing in that backup matches the requested dates" }), { status: 400, headers: corsJson });
+      }
+
+      const undoId = `${new Date().toISOString().replace(/[:.]/g, "-")}-undo-${Math.random().toString(36).slice(2, 8)}`;
+      const results = [];
+      const undone = [];
+      for (const { store, date } of targets) {
+        const liveKey = `items:${store.toLowerCase()}:${date}`;
+        try {
+          const backup = await env.SALES_SNAPSHOTS.get(`repair-backup:${backupId}:${store.toLowerCase()}:${date}`);
+          if (backup === null) { results.push({ store, date, outcome: "error", error: "backup entry missing or expired" }); continue; }
+          const current = await env.SALES_SNAPSHOTS.get(liveKey);
+          if (current !== null) {
+            await env.SALES_SNAPSHOTS.put(`repair-backup:${undoId}:${store.toLowerCase()}:${date}`, current,
+              { expirationTtl: 90 * 24 * 3600 });
+            undone.push({ store, date });
+          }
+          await env.SALES_SNAPSHOTS.put(liveKey, backup);
+          let net = null; try { net = JSON.parse(backup)?.totals?.netSales ?? null; } catch {}
+          results.push({ store, date, outcome: "restored", netSales: net });
+        } catch (e) {
+          results.push({ store, date, outcome: "error", error: e.message });
+        }
+      }
+
+      if (undone.length) {
+        await env.SALES_SNAPSHOTS.put(`repair-backup-meta:${undoId}`, JSON.stringify({
+          backupId: undoId, createdAt: new Date().toISOString(),
+          by: currentUser?.email || (isAdminSecret ? "snapshot-secret" : "unknown"),
+          dates: undone, totalRequested: targets.length,
+          note: `pre-restore state, taken while restoring ${backupId}`,
+        }), { expirationTtl: 90 * 24 * 3600 });
+      }
+
+      return new Response(JSON.stringify({
+        ok: true, backupId, undoId: undone.length ? undoId : null,
+        summary: {
+          restored: results.filter(r => r.outcome === "restored").length,
+          errors: results.filter(r => r.outcome === "error").length,
+        },
+        results,
+        note: undone.length
+          ? `The state you just replaced was itself saved as ${undoId}, so this restore is reversible.`
+          : "Nothing needed replacing, so no undo point was created.",
       }), { headers: corsJson });
     }
 
