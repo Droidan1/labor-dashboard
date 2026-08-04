@@ -2874,28 +2874,28 @@
     <!-- ── Users page ────────────────────────────────────────────── -->
     <div id="page-users" class="hidden">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
-        <div class="max-w-3xl mx-auto flex items-center justify-between">
+        <div class="max-w-5xl mx-auto flex items-center justify-between">
           <div>
             <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Users</h1>
           </div>
-          <button onclick="openInviteModal()" class="flex items-center gap-2 bg-[#3BB54A] hover:bg-[#2ea040] text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+          <button onclick="openInviteModal()" class="flex items-center gap-2 bg-accent-green hover:brightness-110 text-[#04140a] text-sm font-semibold px-4 py-2 rounded-full transition-all">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             Invite User
           </button>
         </div>
       </div>
-      <div class="max-w-3xl mx-auto px-6 py-6">
+      <div class="max-w-5xl mx-auto px-6 py-6">
         <div id="users-status" class="hidden mb-4 text-sm px-4 py-3 rounded-lg border"></div>
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
+        <div class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors">
           <div id="users-table-wrap" class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
-                <tr class="border-b border-gray-100 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                  <th class="text-left px-4 py-3 font-medium">Email</th>
-                  <th class="text-left px-4 py-3 font-medium">Role</th>
-                  <th class="text-left px-4 py-3 font-medium">Stores</th>
-                  <th class="text-left px-4 py-3 font-medium">Status</th>
-                  <th class="text-left px-4 py-3 font-medium">Last Login</th>
+                <tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim">
+                  <th class="text-left px-4 py-3 font-semibold">Email</th>
+                  <th class="text-left px-4 py-3 font-semibold">Role</th>
+                  <th class="text-left px-4 py-3 font-semibold">Access</th>
+                  <th class="text-left px-4 py-3 font-semibold">Status</th>
+                  <th class="text-left px-4 py-3 font-semibold">Last login</th>
                   <th class="px-4 py-3"></th>
                 </tr>
               </thead>
@@ -2909,52 +2909,52 @@
 
       <!-- Invite modal -->
       <div id="invite-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md">
-          <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
-            <h2 class="text-base font-semibold text-gray-900 dark:text-white">Invite User</h2>
-            <button onclick="closeInviteModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+        <div class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-borderHi shadow-xl w-full max-w-md">
+          <div class="px-6 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-center justify-between">
+            <h2 class="text-base font-semibold text-opl-ink dark:text-op-ink">Invite User</h2>
+            <button onclick="closeInviteModal()" class="text-opl-inkDim dark:text-op-inkDimmer hover:text-opl-ink dark:hover:text-op-ink transition-colors">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
           <div class="px-6 py-5 space-y-4">
             <div>
-              <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Email address</label>
-              <input id="invite-email" type="email" placeholder="user@example.com" class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Email address</label>
+              <input id="invite-email" type="email" placeholder="user@example.com" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
             </div>
             <div>
-              <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Role</label>
-              <select id="invite-role" onchange="toggleInviteStores()" class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Role</label>
+              <select id="invite-role" onchange="toggleInviteStores()" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
                 <option value="manager">Manager</option>
                 <option value="district_manager">District Manager</option>
                 <option value="admin" id="invite-role-admin">Admin</option>
               </select>
             </div>
             <div id="invite-stores-wrap">
-              <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Stores</label>
-              <div class="grid grid-cols-3 gap-2">
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" value="BL1" class="invite-store-cb accent-[#3BB54A]"> BL1</label>
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" value="BL2" class="invite-store-cb accent-[#3BB54A]"> BL2</label>
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" value="BL4" class="invite-store-cb accent-[#3BB54A]"> BL4</label>
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" value="BL8" class="invite-store-cb accent-[#3BB54A]"> BL8</label>
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" value="BL16" class="invite-store-cb accent-[#3BB54A]"> BL16</label>
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" value="BL14" class="invite-store-cb accent-[#3BB54A]"> BL14</label>
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-2">Stores</label>
+              <div id="invite-store-grid" class="grid grid-cols-2 gap-2">
+                <!-- rendered by renderStorePicker('invite') — do not hardcode; see USER_STORES -->
+
               </div>
+            </div>
+            <div class="rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panelHi dark:bg-[rgba(255,255,255,0.03)] px-4 py-3">
+              <div class="text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">What this person gets</div>
+              <p id="invite-access-summary" class="text-xs leading-relaxed text-opl-inkDim dark:text-op-inkDim"></p>
             </div>
             <div id="invite-status" class="hidden text-sm px-3 py-2 rounded-lg border"></div>
           </div>
           <div class="px-6 pb-5 flex justify-end gap-3">
-            <button onclick="closeInviteModal()" class="text-sm px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
-            <button id="invite-submit-btn" onclick="submitInvite()" class="text-sm px-4 py-2 rounded-lg bg-[#3BB54A] hover:bg-[#2ea040] text-white font-medium">Send Invite</button>
+            <button onclick="closeInviteModal()" class="text-sm px-4 py-2 rounded-full border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+            <button id="invite-submit-btn" onclick="submitInvite()" class="text-sm px-4 py-2 rounded-full bg-accent-green hover:brightness-110 text-[#04140a] font-semibold transition-all">Send Invite</button>
           </div>
         </div>
       </div>
 
       <!-- Edit user modal -->
       <div id="edit-user-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md">
-          <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
-            <h2 class="text-base font-semibold text-gray-900 dark:text-white">Edit User</h2>
-            <button onclick="closeEditUserModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+        <div class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-borderHi shadow-xl w-full max-w-md">
+          <div class="px-6 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-center justify-between">
+            <h2 class="text-base font-semibold text-opl-ink dark:text-op-ink">Edit User</h2>
+            <button onclick="closeEditUserModal()" class="text-opl-inkDim dark:text-op-inkDimmer hover:text-opl-ink dark:hover:text-op-ink transition-colors">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
@@ -2962,8 +2962,8 @@
             <p id="edit-user-email" class="text-sm font-medium text-gray-700 dark:text-gray-300"></p>
             <input type="hidden" id="edit-user-id">
             <div>
-              <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Role</label>
-              <select id="edit-role" onchange="toggleEditStores()" class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Role</label>
+              <select id="edit-role" onchange="toggleEditStores()" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
                 <option value="manager">Manager</option>
                 <option value="district_manager">District Manager</option>
                 <option value="admin" id="edit-role-admin">Admin</option>
@@ -2971,28 +2971,28 @@
               </select>
             </div>
             <div id="edit-stores-wrap">
-              <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Stores</label>
-              <div class="grid grid-cols-3 gap-2">
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" value="BL1" class="edit-store-cb accent-[#3BB54A]"> BL1</label>
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" value="BL2" class="edit-store-cb accent-[#3BB54A]"> BL2</label>
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" value="BL4" class="edit-store-cb accent-[#3BB54A]"> BL4</label>
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" value="BL8" class="edit-store-cb accent-[#3BB54A]"> BL8</label>
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" value="BL16" class="edit-store-cb accent-[#3BB54A]"> BL16</label>
-                <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" value="BL14" class="edit-store-cb accent-[#3BB54A]"> BL14</label>
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-2">Stores</label>
+              <div id="edit-store-grid" class="grid grid-cols-2 gap-2">
+                <!-- rendered by renderStorePicker('edit') — do not hardcode; see USER_STORES -->
+
               </div>
             </div>
             <div>
-              <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Status</label>
-              <select id="edit-status" class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#3BB54A]">
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Status</label>
+              <select id="edit-status" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
                 <option value="active">Active</option>
                 <option value="suspended">Suspended</option>
               </select>
             </div>
+            <div class="rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panelHi dark:bg-[rgba(255,255,255,0.03)] px-4 py-3">
+              <div class="text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">What this person gets</div>
+              <p id="edit-access-summary" class="text-xs leading-relaxed text-opl-inkDim dark:text-op-inkDim"></p>
+            </div>
             <div id="edit-user-status" class="hidden text-sm px-3 py-2 rounded-lg border"></div>
           </div>
           <div class="px-6 pb-5 flex justify-end gap-3">
-            <button onclick="closeEditUserModal()" class="text-sm px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
-            <button id="edit-user-submit-btn" onclick="submitEditUser()" class="text-sm px-4 py-2 rounded-lg bg-[#3BB54A] hover:bg-[#2ea040] text-white font-medium">Save Changes</button>
+            <button onclick="closeEditUserModal()" class="text-sm px-4 py-2 rounded-full border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+            <button id="edit-user-submit-btn" onclick="submitEditUser()" class="text-sm px-4 py-2 rounded-full bg-accent-green hover:brightness-110 text-[#04140a] font-semibold transition-all">Save Changes</button>
           </div>
         </div>
       </div>
@@ -16778,8 +16778,57 @@
   //  USERS PAGE
   // ═══════════════════════════════════════════════════════════════
   const ROLE_LABEL = { superuser: 'Superuser', admin: 'Admin', district_manager: 'District Mgr', manager: 'Manager' };
-  const ALL_STORES = ['BL1','BL2','BL4','BL8','BL12','BL14'];
+  // Colour per role so a row's standing reads before the label does.
+  const ROLE_DOT = { superuser: '#f59e0b', admin: '#22c55e', district_manager: '#8b5cf6', manager: '#8893a7' };
+  // Single source for both modals' store pickers. Was six hardcoded <label>s per
+  // modal (twelve total, codes only) plus a stale ALL_STORES that still listed
+  // retired BL12 and omitted BL16.
+  const USER_STORES = [
+    ['BL1','Coliseum'], ['BL2','South Bend'], ['BL4','Dupont'],
+    ['BL8','Holland'], ['BL14','Battle Creek'], ['BL16','Indy East'],
+  ];
+  const storeName = c => (USER_STORES.find(s => s[0] === c) || [c, c])[1];
   let usersData = [];
+
+  // Roles that carry an explicit store list. Admins and superusers get every store.
+  const roleIsStoreScoped = r => r === 'manager' || r === 'district_manager';
+
+  function renderStorePicker(which) {
+    const grid = el(`${which}-store-grid`);
+    if (!grid) return;
+    grid.innerHTML = USER_STORES.map(([code, name]) => `
+      <label class="flex items-center gap-2.5 rounded-[8px] border border-[rgba(20,16,8,0.10)] dark:border-op-border
+                    bg-opl-panelHi dark:bg-[rgba(255,255,255,0.03)] px-3 py-2.5 cursor-pointer
+                    hover:border-accent-green/40 transition-colors">
+        <input type="checkbox" value="${code}" class="${which}-store-cb" style="accent-color:#22c55e">
+        <span class="text-sm font-medium text-opl-ink dark:text-op-ink">${name}</span>
+        <span class="ml-auto text-[10px] tabular-nums text-opl-inkDim dark:text-op-inkDimmer">${code}</span>
+      </label>`).join('');
+    grid.querySelectorAll(`.${which}-store-cb`)
+        .forEach(cb => cb.addEventListener('change', () => updateAccessSummary(which)));
+  }
+
+  // Plain-English preview of what this person will be able to open. Checkbox
+  // grids are easy to misread and this is the last screen before access is granted.
+  function updateAccessSummary(which) {
+    const box = el(`${which}-access-summary`);
+    if (!box) return;
+    const role = el(`${which}-role`).value;
+    const label = ROLE_LABEL[role] || role;
+    let scope;
+    if (!roleIsStoreScoped(role)) {
+      scope = 'every store';
+    } else {
+      const picked = [...document.querySelectorAll(`.${which}-store-cb:checked`)].map(cb => cb.value);
+      scope = picked.length
+        ? (picked.length === USER_STORES.length ? 'every store' : picked.map(storeName).join(', '))
+        : null;
+    }
+    box.innerHTML = scope === null
+      ? `<span class="text-opl-inkDim dark:text-op-inkDim">No store selected yet — they would sign in and see nothing.</span>`
+      : `Signs in as <span class="font-semibold text-opl-ink dark:text-op-ink">${label}</span>
+         with access to <span class="font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(scope)}</span>.`;
+  }
 
   function usersSetStatus(msg, tone) {
     const s = el('users-status');
@@ -16795,7 +16844,7 @@
   }
 
   async function loadUsers() {
-    el('users-tbody').innerHTML = '<tr><td colspan="6" class="text-center text-gray-400 py-8 text-sm">Loading…</td></tr>';
+    el('users-tbody').innerHTML = '<tr><td colspan="6" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">Loading…</td></tr>';
     try {
       const resp = await fetch(`${WORKER_BASE}?action=list-users`, { credentials: 'include' });
       const data = await resp.json();
@@ -16803,34 +16852,60 @@
       usersData = data.users || [];
       renderUsersTable();
     } catch (e) {
-      el('users-tbody').innerHTML = `<tr><td colspan="6" class="text-center text-red-400 py-8 text-sm">${escapeHtml(e.message)}</td></tr>`;
+      el('users-tbody').innerHTML = `<tr><td colspan="6" class="text-center text-op-bad py-8 text-sm">${escapeHtml(e.message)}</td></tr>`;
     }
   }
 
   function renderUsersTable() {
     const isSuperuser = currentUser && currentUser.role === 'superuser';
     if (!usersData.length) {
-      el('users-tbody').innerHTML = '<tr><td colspan="6" class="text-center text-gray-400 py-8 text-sm">No users yet.</td></tr>';
+      el('users-tbody').innerHTML = '<tr><td colspan="6" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">No users yet.</td></tr>';
       return;
     }
     el('users-tbody').innerHTML = usersData.map(u => {
-      const stores = u.stores ? JSON.parse(u.stores).join(', ') : 'All stores';
+      // Store chips carry the name; the code is the small print. `null` = every store.
+      let parsed = null;
+      try { parsed = u.stores ? JSON.parse(u.stores) : null; } catch (_) { parsed = null; }
+      const stores = (parsed && parsed.length)
+        ? parsed.map(c => `<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-[8px] text-[11px] font-semibold
+              border border-accent-green/25 bg-accent-green/10 text-accent-green whitespace-nowrap">${storeName(c)}
+              <span class="text-[9px] tabular-nums opacity-60">${escapeHtml(c)}</span></span>`).join(' ')
+        : `<span class="inline-flex items-center px-2 py-1 rounded-[8px] text-[11px] font-semibold
+              border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim
+              whitespace-nowrap">All stores</span>`;
+
       const lastLogin = u.last_login ? new Date(u.last_login).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Never';
-      const statusBadge = u.status === 'active'
-        ? '<span class="px-2 py-0.5 text-xs font-semibold rounded bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">Active</span>'
-        : '<span class="px-2 py-0.5 text-xs font-semibold rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400">Suspended</span>';
-      const deleteBtn = isSuperuser && u.id !== currentUser.id
-        ? `<button onclick="deleteUser('${u.id}','${escapeHtml(u.email)}')" class="text-red-400 hover:text-red-600 ml-2" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>`
+
+      // There is no 'invited' status in the schema — an active user who has never
+      // logged in is one who hasn't accepted yet, so derive it rather than invent it.
+      const pill = (color, text) => `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-[0.06em]"
+        style="border:1px solid ${color}66;color:${color}"><span style="width:5px;height:5px;border-radius:9999px;background:${color}"></span>${text}</span>`;
+      const statusBadge = u.status !== 'active'
+        ? pill('#ef4444', 'SUSPENDED')
+        : (u.last_login ? pill('#22c55e', 'ACTIVE') : pill('#f59e0b', 'INVITED'));
+
+      const dot = ROLE_DOT[u.role] || '#8893a7';
+      const isMe = currentUser && u.id === currentUser.id;
+      const roleCell = `<span class="inline-flex items-center gap-2 whitespace-nowrap">
+        <span style="width:7px;height:7px;border-radius:9999px;background:${dot};flex:none"></span>
+        <span class="text-opl-ink dark:text-op-ink">${ROLE_LABEL[u.role] || u.role}</span></span>`;
+      const meBadge = isMe
+        ? ` <span class="ml-1.5 align-[1px] px-1.5 py-0.5 rounded-full text-[9px] font-bold tracking-[0.1em]
+             border border-accent-green/40 text-accent-green">YOU</span>`
         : '';
-      return `<tr class="border-b border-gray-50 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
-        <td class="px-4 py-3 text-gray-900 dark:text-white text-sm">${escapeHtml(u.email)}</td>
-        <td class="px-4 py-3 text-gray-600 dark:text-gray-300 text-sm">${ROLE_LABEL[u.role] || u.role}</td>
-        <td class="px-4 py-3 text-gray-500 dark:text-gray-400 text-sm">${stores}</td>
+      const deleteBtn = isSuperuser && u.id !== currentUser.id
+        ? `<button onclick="deleteUser('${u.id}','${escapeHtml(u.email)}')" class="text-opl-inkDim dark:text-op-inkDimmer hover:text-op-bad ml-2 transition-colors" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>`
+        : '';
+      return `<tr class="border-b border-[rgba(20,16,8,0.06)] dark:border-op-border last:border-b-0
+                         hover:bg-opl-panelHi dark:hover:bg-op-panelHi transition-colors${isMe ? ' bg-accent-green/[0.04]' : ''}">
+        <td class="px-4 py-3 text-sm font-medium text-opl-ink dark:text-op-ink">${escapeHtml(u.email)}${meBadge}</td>
+        <td class="px-4 py-3 text-sm">${roleCell}</td>
+        <td class="px-4 py-3"><div class="flex flex-wrap gap-1.5">${stores}</div></td>
         <td class="px-4 py-3">${statusBadge}</td>
-        <td class="px-4 py-3 text-gray-400 dark:text-gray-500 text-xs">${lastLogin}</td>
+        <td class="px-4 py-3 text-xs tabular-nums text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">${lastLogin}</td>
         <td class="px-4 py-3 text-right whitespace-nowrap">
-          <button onclick="openEditUserModal('${u.id}')" class="text-gray-400 hover:text-[#3BB54A]" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-          <button onclick="resendInvite('${escapeHtml(u.email)}')" class="text-gray-400 hover:text-blue-500 ml-2" title="Resend welcome email"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+          <button onclick="openEditUserModal('${u.id}')" class="text-opl-inkDim dark:text-op-inkDimmer hover:text-accent-green transition-colors" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button onclick="resendInvite('${escapeHtml(u.email)}')" class="text-opl-inkDim dark:text-op-inkDimmer hover:text-accent-blue ml-2 transition-colors" title="Resend welcome email"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
           ${deleteBtn}
         </td>
       </tr>`;
@@ -16840,7 +16915,7 @@
   function openInviteModal() {
     el('invite-email').value = '';
     el('invite-role').value = 'manager';
-    document.querySelectorAll('.invite-store-cb').forEach(cb => cb.checked = false);
+    renderStorePicker('invite');
     el('invite-status').classList.add('hidden');
     el('invite-submit-btn').disabled = false;
     toggleInviteStores();
@@ -16851,7 +16926,8 @@
 
   function toggleInviteStores() {
     const role = el('invite-role').value;
-    el('invite-stores-wrap').classList.toggle('hidden', role === 'admin' || role === 'superuser');
+    el('invite-stores-wrap').classList.toggle('hidden', !roleIsStoreScoped(role));
+    updateAccessSummary('invite');
   }
 
   async function submitInvite() {
@@ -16895,7 +16971,9 @@
     el('edit-user-email').textContent = u.email;
     el('edit-role').value = u.role;
     el('edit-status').value = u.status;
-    const userStores = u.stores ? JSON.parse(u.stores) : [];
+    renderStorePicker('edit');
+    let userStores = [];
+    try { userStores = u.stores ? JSON.parse(u.stores) : []; } catch (_) { userStores = []; }
     document.querySelectorAll('.edit-store-cb').forEach(cb => { cb.checked = userStores.includes(cb.value); });
     const isSuperuser = currentUser && currentUser.role === 'superuser';
     el('edit-role-admin').classList.toggle('hidden', !isSuperuser);
@@ -16909,7 +16987,8 @@
 
   function toggleEditStores() {
     const role = el('edit-role').value;
-    el('edit-stores-wrap').classList.toggle('hidden', role === 'admin' || role === 'superuser');
+    el('edit-stores-wrap').classList.toggle('hidden', !roleIsStoreScoped(role));
+    updateAccessSummary('edit');
   }
 
   async function submitEditUser() {
