@@ -1,6 +1,8 @@
 # Multi-business permissions — plan — 2026-08-03
 
-> **STATUS: PLAN ONLY. Nothing built, nothing shipped, no migration written.**
+> **STATUS (2026-08-04): PARTLY BUILT.** The role half of step 1 is live in
+> production; the grants half is not started. See "Build order" for exactly
+> what shipped. Everything from step 2 onward is still plan only.
 >
 > ⚠️ **This plan is expected to change.** It was written before we know which
 > businesses are actually being added or what the owner wants the Hub to become.
@@ -152,9 +154,17 @@ dashboard** — today and after five businesses exist. (User's call, 2026-08-03.
 Sequenced so the risky part lands while nothing is visible, and the visible part
 lands when it's already true.
 
-- [ ] **1 · Tables + backfill.** Everyone becomes a Bargain Lane grant; district
-      managers fold into managers. **Zero user-visible change** — the app still
-      reads the old columns. Safe to ship and sit on indefinitely.
+- [~] **1 · Tables + backfill.** **HALF DONE.**
+      - [x] `users` rebuilt by `migration-029.sql` — roles widened to
+            `(superuser, admin, executive, manager, staff)`, `title` column added,
+            `district_manager` retired and folded into `manager`. Applied to
+            **staging and production 2026-08-04**; every dependent row preserved.
+            Prod held no district managers, so nobody's role moved.
+      - [ ] `businesses`, `business_units`, `user_grants` — **not created.** The
+            grant model does not exist yet; scoping is still `users.stores`.
+      - 🛑 **Any future rebuild of an existing table must snapshot and restore its
+            children** — see the D1 cascade note below. New tables are unaffected,
+            so the three above can be created normally.
 - [ ] **2 · Worker reads grants.** Resolve grants at session time and gate
       **every endpoint by `business_id`, not just by role.** 🔑 This is the
       security-relevant step: today a `role === 'admin'` check alone would happily
@@ -166,6 +176,31 @@ lands when it's already true.
       sits before BL14 in source order. That block has to be rendered, not typed.
 - [ ] **4 · Landing page.** Earns its place the day someone holds **two** grants.
       Until then the redirect does the job and the picker is dead code. **Build it last.**
+
+### 🛑 D1 cannot suppress ON DELETE CASCADE (measured 2026-08-04)
+
+Rebuilding a table that other tables reference is not a normal migration on D1.
+`DROP TABLE parent` runs an implicit `DELETE` that fires every child's
+`ON DELETE CASCADE`, and **neither PRAGMA escape works**:
+
+| attempted | result on D1 |
+|---|---|
+| `PRAGMA foreign_keys = OFF` | file rejected outright — `D1_RESET_DO`, "import polling failed" |
+| `PRAGMA defer_foreign_keys = true` | accepted, **child rows still deleted** |
+| neither | child rows deleted |
+
+`defer_foreign_keys` defers constraint *checking*; `CASCADE` is an *action* and
+fires regardless. Proven on staging with a throwaway parent/child pair (child
+went 1 → 0 every way) and reproduced against local sqlite.
+
+The working pattern is in `migration-029.sql`: snapshot each child into a plain
+table via `CREATE TABLE … AS SELECT` (no foreign key, so it survives the DROP),
+rebuild, restore, drop the snapshots. Also: **do not put `PRAGMA` or an explicit
+`BEGIN`/`COMMIT` in a D1 migration file** — D1 runs it in its own transaction and
+an explicit one makes the whole file fail.
+
+`scripts/test-migration-029.js` harnesses this against real sqlite with foreign
+keys enforced. Reuse it as the template for the next rebuild.
 
 ### Rule that must survive into the implementation
 

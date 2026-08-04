@@ -1,7 +1,10 @@
 # Projects & Tasks — permissions game plan — 2026-08-04
 
-> **STATUS: PERMISSIONS PLAN ONLY. The feature is not being built.** This covers
-> only how access should work, so the model is settled before any UI exists.
+> **STATUS (2026-08-04): the role and its enforcement are LIVE; the feature is not.**
+> `staff` exists as a role and cannot see money. It is deliberately **not offered
+> in the invite dropdown** — there is nothing for a staff user to do yet, so
+> granting it would strand someone on a "nothing assigned to you" screen.
+> Everything about projects and tasks themselves is still unbuilt.
 >
 > ⚠️ Provisional, like its sibling [`multi-business-permissions.md`](multi-business-permissions.md).
 > Re-read "Open questions" before treating anything here as decided.
@@ -68,6 +71,18 @@ without inventing a role.
 stores.** Every account today sees sales. Scope alone cannot express `staff` —
 it is a narrower feature set, not a narrower store list.
 
+✅ **ENFORCED 2026-08-04** (`main` faf1805, worker `34cbb7e6`). `canSeeFinancials()`
+in both `worker.js` and `index.html`, checked once right after authentication.
+Written as an **allowlist of what a non-financial role may reach** — 85 of 108
+actions are closed to `staff` — because a gap in an allowlist costs a 403 while a
+gap in a denylist leaks revenue. The six money pages are guarded in
+`navigateToPage()`, and a role without financial access lands on a no-access page
+rather than an empty dashboard. `scripts/test-financial-gate.js` covers it.
+
+⚠️ Found while testing: `.sidebar .nav-item` (0,2,0) was beating Tailwind's
+`.hidden` (0,1,0), so **every role-gated nav item had been visible to roles that
+could not open it** — a pre-existing bug, fixed in the same change.
+
 ---
 
 ## Consequence: the landing rule needs a new branch
@@ -113,12 +128,12 @@ from "who created whom".
    store". Today listing users is gated by `canAccessInventory` (admin/superuser
    only). Needs a new, narrower endpoint returning only users whose grant
    intersects the caller's stores — never the whole directory.
-2. **A migration that rebuilds `users`.** `migration-004.sql:6` has
-   `CHECK(role IN ('superuser','admin','district_manager','manager'))`, and
-   SQLite/D1 **cannot alter a CHECK in place** — the table must be recreated and
-   copied. The `executive` role from the sibling plan forces the same rebuild, so
-   **do both in one migration**: drop `district_manager`, add `executive` and
-   `staff`, add `title`.
+2. ~~**A migration that rebuilds `users`.**~~ ✅ **DONE** — `migration-029.sql`,
+   applied to staging and production 2026-08-04. Dropped `district_manager`,
+   added `executive` and `staff`, added `title`. Both plans' needs in one rebuild
+   as intended. 🛑 It also turned up that **D1 cannot suppress `ON DELETE
+   CASCADE`** — see the D1 note in [`multi-business-permissions.md`](multi-business-permissions.md)
+   before rebuilding any other existing table.
 
 ---
 
@@ -138,6 +153,10 @@ existing grant data; no new permission concept.
 
 ## Open questions
 
+0. 🔑 **What surface does `staff` actually get?** This is now the blocking
+   question — the role exists and is safely gated, but until there is something
+   for a staff user to open, granting it strands them. Projects & Tasks is that
+   surface; nothing else is.
 1. **Does an `executive` see the task board?** It is operational, not financial,
    and sits inside a business they are granted. Read-only yes is the obvious
    answer, but it has not been decided.
