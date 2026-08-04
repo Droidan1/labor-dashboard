@@ -5593,6 +5593,20 @@ async function getAuthUser(request, env) {
   if (!results || !results.length) return null;
   const user = results[0];
   const expiresAt = user.expires_at; delete user.expires_at;
+
+  // Resolve grants once per request. A superuser holds none by design, so it
+  // gets the list of active businesses instead — same meaning, no rows.
+  if (user.role === 'superuser') {
+    user.grants = [];
+    try {
+      const { results: biz } = await env.DB.prepare(
+        'SELECT id FROM businesses WHERE active = 1'
+      ).all();
+      user.allBusinessIds = (biz || []).map(b => b.id);
+    } catch (_) { user.allBusinessIds = []; }
+  } else {
+    user.grants = await loadGrants(env, user.id);
+  }
   user.stores = user.stores ? JSON.parse(user.stores) : null;
   // Sliding 7-day expiry, but roll at most ~once/day. Without this throttle every
   // request (incl. every ?action=photo image load) fired a session-row UPDATE, so
@@ -5605,10 +5619,69 @@ async function getAuthUser(request, env) {
   return user;
 }
 
+// ── Grants ──────────────────────────────────────────────────────────────────
+// A grant is: this person, in this business, with this role, over these units.
+// A user may hold several. `superuser` deliberately holds NONE — it is a flag
+// on the user meaning every business, every unit, always, so grant resolution
+// special-cases it rather than backfilling rows for every business added.
+//
+// Loaded once per request in getAuthUser and attached as `user.grants`.
+async function loadGrants(env, userId) {
+  if (!env.DB) return [];
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT g.business_id, g.role, g.units, b.name AS business_name, b.unit_noun
+         FROM user_grants g JOIN businesses b ON b.id = g.business_id
+        WHERE g.user_id = ? AND b.active = 1`
+    ).bind(userId).all();
+    return (results || []).map(g => {
+      let units = null;
+      try { units = g.units ? JSON.parse(g.units) : null; } catch (_) { units = null; }
+      return { ...g, units };
+    });
+  } catch (_) {
+    // Table may not exist yet (pre migration-030). Callers fall back below.
+    return [];
+  }
+}
+
+function grantFor(user, businessId) {
+  return (user && user.grants || []).find(g => g.business_id === businessId) || null;
+}
+
+// Businesses this user may open. Superuser sees every active one; everyone
+// else sees exactly what they hold a grant to.
+function grantedBusinessIds(user) {
+  if (!user) return [];
+  if (user.role === 'superuser') return user.allBusinessIds || [];
+  return (user.grants || []).map(g => g.business_id);
+}
+
+function canAccessBusiness(user, businessId) {
+  if (!user) return false;
+  if (user.role === 'superuser') return true;
+  return !!grantFor(user, businessId);
+}
+
 // Returns null (= all stores) or string[] of allowed store codes.
+//
+// Reads the Bargain Lane grant now, not users.stores. migration-030 backfilled
+// units straight from stores, so this is behaviour-preserving by construction.
+//
+// ⚠️ The users.stores fallback is deliberate and TRANSITIONAL. If the grant is
+// missing — migration not yet applied, a backfill row missed, a user created
+// through a path that does not write grants — falling through to the old column
+// keeps a real manager working instead of locking them out of their own store.
+// It cannot escalate: it yields exactly the scope they have today. Remove it
+// once `grant_fallback` has not been logged for a good while.
 function allowedStores(user) {
   if (!user) return null;
   if (user.role === 'superuser' || user.role === 'admin') return null;
+  const g = grantFor(user, 'bl');
+  if (g) return g.units || [];
+  if (user.grants && user.grants.length === 0 && user.id) {
+    console.log(JSON.stringify({ grant_fallback: 'no-bl-grant', user: user.id, role: user.role }));
+  }
   return user.stores || [];
 }
 
