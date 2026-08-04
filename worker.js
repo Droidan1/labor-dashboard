@@ -5649,6 +5649,30 @@ function grantFor(user, businessId) {
   return (user && user.grants || []).find(g => g.business_id === businessId) || null;
 }
 
+// Write the Bargain Lane grant for a user, mirroring users.role / users.stores.
+//
+// While Bargain Lane is the only business the grant is a mirror, not a second
+// source of truth — the Users page still edits role and stores, and this keeps
+// the grant in step. When a second business arrives the Users page starts
+// writing grants directly and this becomes the single-business special case.
+//
+// Deliberately tolerant: a failure here must NOT fail the invite or the edit.
+// The user row is already written by that point, and allowedStores() falls back
+// to users.stores, so a missed grant degrades to today's behaviour rather than
+// leaving a half-created user.
+async function upsertBargainLaneGrant(env, userId, role, storesJson) {
+  if (!env.DB || role === 'superuser') return;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO user_grants (user_id, business_id, role, units)
+       VALUES (?, 'bl', ?, ?)
+       ON CONFLICT(user_id, business_id) DO UPDATE SET role = excluded.role, units = excluded.units`
+    ).bind(userId, role, storesJson || null).run();
+  } catch (e) {
+    console.log(JSON.stringify({ grant_upsert_failed: String(e && e.message), user: userId }));
+  }
+}
+
 // Businesses this user may open. Superuser sees every active one; everyone
 // else sees exactly what they hold a grant to.
 function grantedBusinessIds(user) {
@@ -7372,6 +7396,10 @@ export default {
         await env.DB.prepare(
           "INSERT INTO users (id, email, role, stores, status, created_at) VALUES (?, ?, ?, ?, 'active', datetime('now'))"
         ).bind(id, normalized, role, storesJson).run();
+        // Mirror into the grant model. Without this a newly invited user holds
+        // no grant and lives permanently on the users.stores fallback.
+        // Superusers are not invitable here, so every invite is grantable.
+        await upsertBargainLaneGrant(env, id, role, storesJson);
         const token = randomHex(32);
         const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
         await env.DB.prepare("INSERT INTO magic_links (token, email, expires_at) VALUES (?, ?, ?)")
@@ -7418,6 +7446,17 @@ export default {
         if (!parts.length) return new Response(JSON.stringify({ error: "Nothing to update" }), { status: 400, headers: corsJson });
         values.push(id);
         await env.DB.prepare(`UPDATE users SET ${parts.join(', ')} WHERE id = ?`).bind(...values).run();
+        // Keep the grant in step with the columns. Re-read rather than trusting
+        // the request body: `role` and `stores` are each optional here, so a
+        // request that changes only one of them must not blank the other.
+        if (role !== undefined || stores !== undefined) {
+          const { results: after } = await env.DB.prepare(
+            'SELECT role, stores FROM users WHERE id = ?'
+          ).bind(id).all();
+          if (after && after.length && after[0].role !== 'superuser') {
+            await upsertBargainLaneGrant(env, id, after[0].role, after[0].stores);
+          }
+        }
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
