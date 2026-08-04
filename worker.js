@@ -10662,6 +10662,8 @@ export default {
         for (const r of (results || [])) d1[`${r.store}|${r.date}`] = r.total || 0;
       }
 
+      const { dateStr: todayET } = getETToday();
+
       const cells = [];
       const pairs = [];
       for (const store of stores) for (const date of dates) pairs.push([store, date]);
@@ -10679,10 +10681,18 @@ export default {
           // to NO cost at all. No recomputation needed.
           const uncosted = snap?.totals?.coverage?.none ?? 0;
 
+          // 🔑 Today is still being collected — the item snapshot is written by
+          // the nightly cron, so a today-shaped hole is expected, not damage.
+          // Calling it "missing" sent the first real run of this check to five
+          // stores' worth of phantom repairs, all dated today.
+          const isToday = date === todayET;
+
           let status;
-          if (snapNet === null && (d1Net || 0) > 0) status = "missing";
+          if (snapNet === null && isToday) status = "pending";
+          else if (snapNet === null && (d1Net || 0) > 0) status = "missing";
           else if (snapNet === null) status = "empty";          // no snapshot, no sales — a closed day
           else if (d1Net === null || d1Net <= 0) status = "no-d1";
+          else if (isToday && snapNet < d1Net * BACKFILL_MIN_D1_RATIO) status = "pending";
           else if (snapNet < d1Net * BACKFILL_MIN_D1_RATIO) status = "short";
           else status = "ok";
 
@@ -10702,8 +10712,8 @@ export default {
         });
       }
 
-      const blank = () => ({ checked: 0, ok: 0, short: 0, missing: 0, noD1: 0, empty: 0, gap: 0, uncosted: 0 });
-      const KEY = { ok: "ok", short: "short", missing: "missing", "no-d1": "noD1", empty: "empty" };
+      const blank = () => ({ checked: 0, ok: 0, short: 0, missing: 0, noD1: 0, empty: 0, pending: 0, gap: 0, uncosted: 0 });
+      const KEY = { ok: "ok", short: "short", missing: "missing", "no-d1": "noD1", empty: "empty", pending: "pending" };
       const summary = blank();
       const byStore = {};
       for (const c of cells) {
@@ -10735,6 +10745,7 @@ export default {
           missing: "D1 recorded sales but there is no item snapshot at all",
           "no-d1": "a snapshot exists but D1 has no row for that day — cannot judge; check the daily cron",
           empty: "no snapshot and no sales — a closed day, nothing to do",
+          pending: "today, still being collected — the nightly cron has not written this snapshot yet. Not damage; wait for tomorrow.",
         },
       }), { headers: corsJson });
     }

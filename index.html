@@ -2466,6 +2466,7 @@
           <div id="rh-results" class="hidden">
             <div id="rh-summary" class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4"></div>
             <div id="rh-truncated" class="hidden text-xs rounded-lg px-4 py-3 border border-op-warn/30 text-op-warn bg-op-warn/5 mb-4"></div>
+            <div id="rh-notes" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim mb-4"></div>
             <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink mb-2">By store</h3>
             <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl mb-5">
               <table class="min-w-full text-sm">
@@ -11046,6 +11047,16 @@
         _rhTile('Needs repair', needsCount, needsCount ? 'bad' : 'good'),
         _rhTile('Recoverable', _rhMoney(s.gap), s.gap > 0 ? 'bad' : 'good'),
       ].join('');
+
+      // Today is still being collected, and days with no D1 row can't be
+      // judged at all. Both are easy to mistake for damage, so name them
+      // rather than letting them vanish into "not healthy".
+      const notes = [];
+      if (s.pending) notes.push(`${s.pending} day(s) still collecting (today) — not damage.`);
+      if (s.noD1) notes.push(`${s.noD1} day(s) have a snapshot but no D1 row, so they cannot be judged here — check the daily cron for those stores.`);
+      const nEl = el('rh-notes');
+      nEl.innerHTML = notes.join(' ');
+      nEl.classList.toggle('hidden', !notes.length);
 
       const tr = el('rh-truncated');
       if (data.truncated) { tr.textContent = data.truncated.note; tr.classList.remove('hidden'); }
