@@ -3568,6 +3568,48 @@ function resolveCors(request) {
   return headers;
 }
 
+// Which configured secret did this request present? "current" | "next" | null.
+//
+// Two slots exist so the secret can be rotated WITHOUT a synchronised flag-day.
+// The old shape — one value, checked in seven places — meant rotating required
+// updating the Cloudflare secret and the Apps Script auction feeder in the same
+// instant, and getting it wrong stops the nightly feed silently. With two slots:
+//
+//   1. set SNAPSHOT_SECRET_NEXT to the new value   → both work
+//   2. move every caller over at your own pace, and watch the log line below to
+//      see whether anything is still on the old one
+//   3. set SNAPSHOT_SECRET to the new value and delete SNAPSHOT_SECRET_NEXT
+//
+// Each step is independently reversible and none has a broken window.
+//
+// 🔑 Both slots are checked for truthiness FIRST. Without that, an unset slot
+// plus an absent header compares undefined === undefined and authenticates
+// everyone. `presented` is also required non-empty for the same reason.
+function snapshotSecretSlot(request, env) {
+  const presented = request.headers.get("X-Snapshot-Secret");
+  if (!presented) return null;
+  if (env.SNAPSHOT_SECRET && presented === env.SNAPSHOT_SECRET) return "current";
+  if (env.SNAPSHOT_SECRET_NEXT && presented === env.SNAPSHOT_SECRET_NEXT) return "next";
+  return null;
+}
+
+// True if the request carries either valid secret. Use this, never a bare
+// comparison — a missed site is a caller that breaks the moment you rotate.
+function hasSnapshotSecret(request, env) {
+  const slot = snapshotSecretSlot(request, env);
+  // During a rotation window, surface anything still presenting the OLD value.
+  // This is the signal that says whether step 3 is safe yet: if nothing logs
+  // for a full day (the auction feeder runs nightly), every caller has moved.
+  if (slot === "current" && env.SNAPSHOT_SECRET_NEXT) {
+    console.log(JSON.stringify({
+      rotation: "legacy-secret-in-use",
+      action: new URL(request.url).searchParams.get("action") || "(none)",
+      ua: request.headers.get("User-Agent") || "(none)",
+    }));
+  }
+  return slot !== null;
+}
+
 // Returns a 401 Response if the request lacks a valid admin secret, else null.
 // Every secret-gated endpoint uses this to avoid drifting auth checks.
 //
@@ -3576,7 +3618,7 @@ function resolveCors(request) {
 // reachable from the admin page uses requireAdminAccess below, so the browser can
 // authenticate with its session cookie instead of a secret shipped in page source.
 function requireAdminSecret(request, env, corsJson) {
-  if (!env.SNAPSHOT_SECRET || request.headers.get("X-Snapshot-Secret") !== env.SNAPSHOT_SECRET) {
+  if (!hasSnapshotSecret(request, env)) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
   }
   return null;
@@ -6315,8 +6357,7 @@ export default {
     // ── Auth gate: all routes below require a valid session ───────
     // Exception: requests carrying X-Snapshot-Secret bypass session auth
     // (admin tooling, cron callbacks, backfill scripts).
-    const isAdminSecret = !!(env.SNAPSHOT_SECRET &&
-      request.headers.get("X-Snapshot-Secret") === env.SNAPSHOT_SECRET);
+    const isAdminSecret = hasSnapshotSecret(request, env);
     let currentUser = null;
     if (!isAdminSecret) {
       currentUser = await getAuthUser(request, env);
@@ -9602,7 +9643,7 @@ export default {
     // Build + cache the brief for a date WITHOUT sending any email/push.
     // Superuser or admin-secret. Used to preview/regenerate the brief.
     if (request.method === "POST" && url.searchParams.get("action") === "generate-brief") {
-      const isAdminReq = request.headers.get('X-Snapshot-Secret') === env.SNAPSHOT_SECRET;
+      const isAdminReq = hasSnapshotSecret(request, env);
       if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
@@ -9619,7 +9660,7 @@ export default {
     }
 
     if (request.method === "POST" && url.searchParams.get("action") === "send-daily-summary") {
-      const isAdminReq = request.headers.get('X-Snapshot-Secret') === env.SNAPSHOT_SECRET;
+      const isAdminReq = hasSnapshotSecret(request, env);
       if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
@@ -9639,7 +9680,7 @@ export default {
     // Renders the daily-summary email HTML WITHOUT sending anything. Read-only,
     // superuser/admin-secret only. Used to eyeball the layout in a browser.
     if (request.method === "GET" && url.searchParams.get("action") === "preview-daily-summary") {
-      const isAdminReq = request.headers.get('X-Snapshot-Secret') === env.SNAPSHOT_SECRET;
+      const isAdminReq = hasSnapshotSecret(request, env);
       if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
@@ -9663,7 +9704,7 @@ export default {
     // POST ?action=send-weekly-digest[&start=YYYY-MM-DD&end=YYYY-MM-DD]
     // Manually trigger the weekly digest (superuser or admin-secret).
     if (request.method === "POST" && url.searchParams.get("action") === "send-weekly-digest") {
-      const isAdminReq = request.headers.get('X-Snapshot-Secret') === env.SNAPSHOT_SECRET;
+      const isAdminReq = hasSnapshotSecret(request, env);
       if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
@@ -10198,6 +10239,37 @@ export default {
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
+    }
+
+    // ── Rotation helper: which secret am I holding?
+    //    GET ?action=secret-check
+    //
+    // Answers "does the value I just configured actually work, and is it the
+    // old one or the new one" WITHOUT performing any action. That is what makes
+    // the rotation steps independently verifiable instead of hopeful.
+    //
+    // It reveals no values, and it is not a brute-force oracle: it sits behind
+    // the normal auth gate, so an invalid secret never reaches it — you get the
+    // same 401 as any other unauthenticated request.
+    if (url.searchParams.get("action") === "secret-check") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly: true });
+      if (unauth) return unauth;
+      const slot = snapshotSecretSlot(request, env);
+      return new Response(JSON.stringify({
+        ok: true,
+        slot,                                          // "current" | "next" | null (session, no secret)
+        currentConfigured: !!env.SNAPSHOT_SECRET,
+        nextConfigured: !!env.SNAPSHOT_SECRET_NEXT,
+        rotationInProgress: !!env.SNAPSHOT_SECRET_NEXT,
+        note: slot === "next"
+          ? "This value is in the NEXT slot. Move every caller onto it, then promote it to SNAPSHOT_SECRET and delete SNAPSHOT_SECRET_NEXT."
+          : slot === "current"
+            ? (env.SNAPSHOT_SECRET_NEXT
+                ? "This is the OLD value and a rotation is in progress — this caller still needs moving."
+                : "This is the only configured secret.")
+            : "Authenticated by session, not by a secret.",
+      }), { headers: corsJson });
     }
 
     // ── Repair console: health check.
