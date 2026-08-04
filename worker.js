@@ -10655,11 +10655,16 @@ export default {
       // One D1 query for the whole range (range bounds, not an IN list — D1 caps
       // bound params at 100).
       const d1 = {};
+      const d1Rows = new Set();
       if (env.DB) {
         const { results } = await env.DB
           .prepare("SELECT store, date, total FROM daily_sales WHERE date >= ? AND date <= ?")
           .bind(dates[0], dates[dates.length - 1]).all().catch(() => ({ results: [] }));
+        // Track row PRESENCE separately from the value. "no row at all" and
+        // "a row whose total is 0/NULL" look identical downstream but point at
+        // different causes — a cron that never ran vs one that wrote a zero.
         for (const r of (results || [])) d1[`${r.store}|${r.date}`] = r.total || 0;
+        for (const r of (results || [])) d1Rows.add(`${r.store}|${r.date}`);
       }
 
       const { dateStr: todayET } = getETToday();
@@ -10708,6 +10713,7 @@ export default {
             gap,
             uncosted: roundCents(uncosted),
             orderCount: snap?.orderCount ?? null,
+            d1RowPresent: d1Rows.has(`${store}|${date}`),
           });
         });
       }
@@ -10743,7 +10749,7 @@ export default {
           ok: "snapshot matches D1 within the guard threshold — a re-snapshot would be refused as no improvement",
           short: "snapshot is materially below D1 — a partial fetch; re-snapshotting this date should recover the gap",
           missing: "D1 recorded sales but there is no item snapshot at all",
-          "no-d1": "a snapshot exists but D1 has no row for that day — cannot judge; check the daily cron",
+          "no-d1": "a snapshot exists but D1 has no usable total — cannot judge. Check `d1RowPresent`: false means the daily cron never wrote the row, true means it wrote a zero.",
           empty: "no snapshot and no sales — a closed day, nothing to do",
           pending: "today, still being collected — the nightly cron has not written this snapshot yet. Not damage; wait for tomorrow.",
         },
