@@ -9655,6 +9655,14 @@ export default {
         new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
       try {
         const result = await computeStoreScores(env, asOf);
+        // Scope to the caller's stores. This endpoint returned every store's
+        // weekly budget, banked total, gap and pace band to ANY logged-in user
+        // — a manager scoped to one store saw the whole chain's numbers.
+        // Verified against staging with a real BL1-only session before the fix.
+        const allow = allowedStores(currentUser);
+        if (allow !== null && Array.isArray(result.stores)) {
+          result.stores = result.stores.filter(s => allow.includes(s.store));
+        }
         return new Response(JSON.stringify(result), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
@@ -9665,7 +9673,7 @@ export default {
     // Last-year daily net sales (retail/bin split) for the store cards'
     // "vs last year" comparison. One-time import from the owner's CSV
     // (migration-028; 'Indy' rows are Wyoming-era data reused for BL16).
-    // Any logged-in user; read-only, range-bounded (no IN lists).
+    // Read-only, range-bounded (no IN lists), SCOPED to the caller's stores.
     if (request.method === "GET" && url.searchParams.get("action") === "ly-sales") {
       const from = url.searchParams.get("from"), to = url.searchParams.get("to");
       if (!/^\d{4}-\d{2}-\d{2}$/.test(from || "") || !/^\d{4}-\d{2}-\d{2}$/.test(to || "")) {
@@ -9675,7 +9683,14 @@ export default {
         const { results } = await env.DB.prepare(
           "SELECT store, date, retail, bin FROM last_year_sales WHERE date >= ? AND date <= ?"
         ).bind(from, to).all();
-        return new Response(JSON.stringify({ rows: results || [] }), { headers: corsJson });
+        // Scope to the caller's stores. The old comment said "any logged-in
+        // user", which predates there being roles that must not see chain
+        // figures — a BL1-only manager was getting every store's last-year
+        // daily net. Filtered in JS rather than an IN list on purpose: D1 caps
+        // bound params at 100 and the range is unbounded.
+        const allow = allowedStores(currentUser);
+        const rows = (results || []).filter(r => allow === null || allow.includes(r.store));
+        return new Response(JSON.stringify({ rows }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
