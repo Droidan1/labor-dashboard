@@ -296,6 +296,14 @@
       color: #6b6453; font-size: 0.875rem; font-weight: 500;
       border-left: 2px solid transparent; padding: 0;
     }
+    /* `.sidebar .nav-item` is (0,2,0) and beats Tailwind's `.hidden` (0,1,0),
+       so role-gated items kept their `display: flex` and stayed on screen even
+       while the JS had correctly added `hidden`. Every gated nav item —
+       Inventory, Users, Admin Settings, Supply Request, Content, Flow Calendar
+       — was therefore visible to roles that cannot open it. The page guards in
+       navigateToPage() still refused the click, so this was a visible-menu
+       leak rather than a data one, but the menu should not be there at all. */
+    .sidebar .nav-item.hidden { display: none; }
     .dark .sidebar .nav-item { color: #8893a7; }
     .sidebar .nav-item:hover { background: rgba(20,16,8,0.035); color: #14110a; }
     .dark .sidebar .nav-item:hover { background: rgba(255,255,255,0.04); color: #e7ecf3; }
@@ -2872,6 +2880,22 @@
     </div><!-- end #page-admin-settings -->
 
     <!-- ── Users page ────────────────────────────────────────────── -->
+    <div id="page-no-access" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-3xl mx-auto">
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">RETJG Hub</h1>
+        </div>
+      </div>
+      <div class="max-w-3xl mx-auto px-6 py-16 text-center">
+        <div class="text-lg font-semibold text-opl-ink dark:text-op-ink">You&rsquo;re signed in, but nothing is assigned to you yet.</div>
+        <p class="mt-3 text-sm text-opl-inkDim dark:text-op-inkDim max-w-md mx-auto">
+          Your account doesn&rsquo;t have access to sales or reporting. Ask an admin to grant you
+          what you need &mdash; you can close this and come back once they have.
+        </p>
+        <p class="mt-6 text-xs text-opl-inkDim dark:text-op-inkDimmer" id="no-access-who"></p>
+      </div>
+    </div>
+
     <div id="page-users" class="hidden">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-5xl mx-auto flex items-center justify-between">
@@ -6849,7 +6873,7 @@
   }
 
   function navigateToDashboard() {
-    navigateToPage('dashboard');
+    navigateToPage(landingPageFor(currentUser));
   }
 
   // ── Deep-link router ─────────────────────────────────────────────
@@ -6888,7 +6912,7 @@
         window.openHourlySnapshot();
       } else if (typeof navigateToPage === 'function') {
         // Phase 3 not yet shipped — land on the dashboard rather than nowhere.
-        navigateToPage('dashboard');
+        navigateToPage(landingPageFor(currentUser));
       }
       return;
     }
@@ -7067,7 +7091,7 @@
     o.innerHTML = '';
     document.body.style.overflow = '';
     clearInterval(hsTimer); clearInterval(hsPoll); hsTimer = hsPoll = null;
-    if (typeof navigateToPage === 'function') navigateToPage('dashboard');
+    if (typeof navigateToPage === 'function') navigateToPage(landingPageFor(currentUser));
   }
   window.closeHourlySnapshot = closeHourlySnapshot;
 
@@ -7098,6 +7122,14 @@
   });
 
   function navigateToPage(page, pushHistory = true) {
+    // Guard pages that show money. The worker refuses the data for these roles
+    // (NO_FINANCIAL_ACCESS) but the shell would still render, so gate here too.
+    // Only fires for a role outside FINANCIAL_ROLES — today `staff` and anything
+    // unrecognised. Every role in production is unaffected.
+    const FINANCIAL_PAGES = ['dashboard', 'weekly-summary', 'store-detail',
+                             'all-stores-detail', 'inventory', 'supply-request'];
+    if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)) return;
+
     // Guard admin-only pages
     const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content'];
     if (adminOnly.includes(page)) {
@@ -7125,7 +7157,7 @@
     // restores it via its own Close button; if it's ever dismissed another way
     // (Android back gesture, etc.) scrolling would stay frozen app-wide.
     if (document.body.style.overflow) document.body.style.overflow = '';
-    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings'];
+    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings', 'no-access'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
       if (pageEl) pageEl.classList.toggle('hidden', p !== page);
@@ -16446,11 +16478,37 @@
     el('login-email').focus();
   }
 
+  // Mirrors FINANCIAL_ROLES in worker.js. The worker is the real gate — this
+  // only stops the UI offering what the API would refuse. Positive allowlist,
+  // so an unrecognised role is denied rather than inheriting full access.
+  const FINANCIAL_ROLES = ['superuser', 'admin', 'executive', 'manager'];
+  function canSeeFinancials(user) {
+    return !!user && FINANCIAL_ROLES.includes(user.role);
+  }
+
+  // Where a user lands at boot. Everyone with financial access gets the
+  // dashboard, as before. A role without it (today `staff`) has no surface yet
+  // — Projects & Tasks is not built — so it must say so rather than render an
+  // empty dashboard shell whose every request 403s.
+  function landingPageFor(user) {
+    return canSeeFinancials(user) ? 'dashboard' : 'no-access';
+  }
+
   function applyRoleUI(user) {
     // Show user badge
     el('user-badge').classList.remove('hidden');
     el('user-email-label').textContent = user.email;
     el('user-role-label').textContent = user.role.replace('_', ' ');
+
+    // Dashboard and Retail Summary are the only nav items with no role gate at
+    // all — they predate there being any role below `manager`. navigateToPage()
+    // refuses them for a role without financial access, so left alone they would
+    // sit in the sidebar doing nothing when clicked. Hide them instead.
+    // The worker's NO_FINANCIAL_ACCESS gate remains the real boundary; this is
+    // only about not offering what the API would refuse.
+    const seesMoney = canSeeFinancials(user);
+    document.querySelectorAll('.nav-item[data-page="dashboard"], .nav-item[data-page="weekly-summary"]')
+      .forEach(n => n.classList.toggle('hidden', !seesMoney));
 
     // Show/hide nav items based on role
     const isAdmin = user.role === 'superuser' || user.role === 'admin';
