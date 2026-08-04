@@ -25,14 +25,41 @@
 #
 # Usage:  bash scripts/migrate-secrets.sh [path/to/wrangler.toml]
 #
+# With no argument it recovers the values from git history, because the working
+# copy of wrangler.toml no longer contains them — stripping it is the point.
+#
 set -euo pipefail
 
-TOML="${1:-wrangler.toml}"
+TOML="${1:-}"
+CLEANUP=""
 
-if [ ! -f "$TOML" ]; then
-  echo "error: $TOML not found. Run from the repo root, or pass the path." >&2
-  exit 1
+if [ -n "$TOML" ]; then
+  [ -f "$TOML" ] || { echo "error: $TOML not found." >&2; exit 1; }
+else
+  # Find the newest commit whose wrangler.toml actually CONTAINS the tokens.
+  # `git log -S` is wrong here: it matches commits where the occurrence count
+  # CHANGED, which includes the commit that removed them — and that one yields
+  # the already-stripped file.
+  SHA=""
+  while read -r c; do
+    if git show "$c:wrangler.toml" 2>/dev/null | grep -q '^BL1_API_TOKEN[[:space:]]*=[[:space:]]*"'; then
+      SHA="$c"; break
+    fi
+  done < <(git log --format=%H -- wrangler.toml)
+  if [ -z "$SHA" ]; then
+    echo "error: could not find a commit where wrangler.toml still held the tokens." >&2
+    echo "       Pass a path explicitly: bash scripts/migrate-secrets.sh <file>" >&2
+    exit 1
+  fi
+  TOML="$(mktemp -t wrangler-preStrip)"
+  CLEANUP="$TOML"
+  git show "$SHA:wrangler.toml" > "$TOML"
+  echo "Recovered the pre-strip values from git ($(git rev-parse --short "$SHA"))."
 fi
+
+# The temp copy holds live credentials — never leave it lying around.
+cleanup() { [ -n "$CLEANUP" ] && rm -f "$CLEANUP"; }
+trap cleanup EXIT INT TERM
 
 # The credentials to move. Merchant IDs are deliberately NOT in this list —
 # they are account identifiers, not secrets (they appear in Clover URLs and on
