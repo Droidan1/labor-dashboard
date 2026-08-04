@@ -9834,7 +9834,7 @@
       try {
         const resp = await fetch(
           `${WORKER_BASE}?action=items-snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(date)}`,
-          { headers: { 'X-Snapshot-Secret': 'mapcaj-saTxa2-1' } }
+          { method: 'POST', headers: { 'X-Snapshot-Secret': 'mapcaj-saTxa2-1' } }
         );
         const data = await resp.json();
         if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
@@ -10142,7 +10142,7 @@
     try {
       setStatus('Rebuilding trailing 13 weeks…', 'info');
       const resp = await fetch(`${WORKER_BASE}?action=rebuild-week-summaries&year=${year}`, {
-        headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
+        method: 'POST', headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET },
       });
       const data = await resp.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
@@ -10225,7 +10225,7 @@
       const settled = await Promise.allSettled(batch.map(date =>
         fetchWithRetry(
           `${WORKER_BASE}?action=snapshot&store=all&date=${encodeURIComponent(date)}`,
-          { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
+          { method: 'POST', headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
         ).then(data => ({ date, data }))
       ));
       for (let j = 0; j < settled.length; j++) {
@@ -10246,7 +10246,7 @@
     try {
       const data = await fetchWithRetry(
         `${WORKER_BASE}?action=rebuild-week-summaries`,
-        { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } },
+        { method: 'POST', headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } },
         3
       );
       const failNote = failed.length
@@ -10748,7 +10748,7 @@
       const settled = await Promise.allSettled(batch.map(date =>
         fetchWithRetry(
           `${WORKER_BASE}?action=snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(date)}`,
-          { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
+          { method: 'POST', headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } }
         )
       ));
       settled.forEach((r, j) => {
@@ -11076,7 +11076,7 @@
       const batch = dates.slice(i, i + BATCH);
       const settled = await Promise.allSettled(batch.map(date =>
         fetch(`${WORKER_BASE}?action=items-snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(date)}`,
-          { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } })
+          { method: 'POST', headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET } })
           .then(r => r.json())
           .then(d => { if (d.error) throw new Error(d.error); return d; })
       ));
@@ -11350,7 +11350,7 @@
       try {
         const resp = await fetch(
           `${WORKER_BASE}?action=items-snapshot&store=${encodeURIComponent(store)}&date=${encodeURIComponent(d)}`,
-          { headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }, credentials: 'include' }
+          { method: 'POST', headers: { 'X-Snapshot-Secret': SNAPSHOT_SECRET }, credentials: 'include' }
         );
         const data = await resp.json();
         if (!resp.ok || data.error) { errs++; continue; }

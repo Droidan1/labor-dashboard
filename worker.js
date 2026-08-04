@@ -6275,102 +6275,6 @@ export default {
       return new Response(JSON.stringify(result), { status: result.error ? 400 : 200, headers: corsJson });
     }
 
-    // ── Meta Page publish test (Slice-0 spike) ───────────────────────
-    // Admin-only. Proves we can publish to a Facebook Page via the Graph API
-    // before building the full pipeline. Defaults to published:false (staged /
-    // unpublished) so NOTHING goes public during testing — the post is only
-    // visible in the Page's Publishing Tools until you explicitly pass
-    // published:true. Token comes from the request body ("token") or the
-    // META_PAGE_TOKEN secret. Works whether the token is a system-user, user,
-    // or page token (it derives the Page token). This endpoint is a temporary
-    // spike and can be removed once the real pipeline lands.
-    // Body: { page_id, message?, image_url?, published?, token?, delete_id? }
-    if (request.method === "POST" && url.searchParams.get("action") === "fb-publish-test") {
-      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
-      if (denied) return denied;
-      const ver = env.META_API_VERSION || META_API_VERSION;
-      let b;
-      try { b = await request.json(); } catch (e) { b = {}; }
-      // Token resolution: explicit body token → per-page stored token
-      // (META_PAGE_TOKENS is a JSON map of page_id → {name, token} or → token)
-      // → single META_PAGE_TOKEN fallback.
-      let token = String(b.token || "").trim();
-      if (!token && env.META_PAGE_TOKENS && b.page_id) {
-        try {
-          const m = JSON.parse(env.META_PAGE_TOKENS);
-          const e = m[String(b.page_id)];
-          token = String((e && (e.token || e)) || "").trim();
-        } catch (_) { /* bad JSON — fall through */ }
-      }
-      if (!token) token = String(env.META_PAGE_TOKEN || "").trim();
-      if (!token) {
-        return new Response(JSON.stringify({ error: 'No token — pass "token" in the body, or set META_PAGE_TOKENS / META_PAGE_TOKEN as a secret' }), { status: 400, headers: corsJson });
-      }
-      const gGet = async (path, params) => {
-        const qs = new URLSearchParams({ ...params, access_token: token }).toString();
-        const r = await fetch(`https://graph.facebook.com/${ver}/${path}?${qs}`);
-        return { ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) };
-      };
-      const gPost = async (path, form) => {
-        const body = new URLSearchParams(form);
-        if (!body.has("access_token")) body.set("access_token", token);
-        const r = await fetch(`https://graph.facebook.com/${ver}/${path}`, { method: "POST", body });
-        return { ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) };
-      };
-
-      try {
-        // Cleanup a prior test post/photo. Needs the Page token when deleting a
-        // Page-owned object, so derive it from page_id when provided.
-        if (b.delete_id) {
-          let delTok = token;
-          if (b.page_id) {
-            const pg = await gGet(String(b.page_id), { fields: "access_token" });
-            if (pg.body && pg.body.access_token) delTok = pg.body.access_token;
-          }
-          const qs = new URLSearchParams({ access_token: delTok }).toString();
-          const r = await fetch(`https://graph.facebook.com/${ver}/${encodeURIComponent(String(b.delete_id))}?${qs}`, { method: "DELETE" });
-          const body = await r.json().catch(() => ({}));
-          return new Response(JSON.stringify({ ok: r.ok, action: "delete", id: b.delete_id, response: body }), { status: r.ok ? 200 : 400, headers: corsJson });
-        }
-
-        const pageId = String(b.page_id || "").trim();
-        if (!pageId) {
-          return new Response(JSON.stringify({ error: "page_id is required" }), { status: 400, headers: corsJson });
-        }
-
-        // Derive the Page access token + confirm which Page we're posting to.
-        const pageInfo = await gGet(pageId, { fields: "name,access_token" });
-        if (!pageInfo.body || pageInfo.body.error) {
-          return new Response(JSON.stringify({ error: "Couldn't read the Page — check page_id and that the token has pages_show_list / pages_read_engagement", detail: pageInfo.body && pageInfo.body.error }), { status: 400, headers: corsJson });
-        }
-        const pageToken = pageInfo.body.access_token || token;
-        const pageName = pageInfo.body.name || null;
-        if (!pageInfo.body.access_token) {
-          // No Page token means the token isn't tied to this Page as a manager.
-          return new Response(JSON.stringify({ error: "Token has no access_token for this Page — assign the system user to the Page with content permission (pages_manage_posts)", page: { id: pageId, name: pageName } }), { status: 400, headers: corsJson });
-        }
-
-        const message = b.message == null ? "" : String(b.message);
-        const published = b.published === true; // default false = staged/unpublished
-        const imageUrl = String(b.image_url || "").trim();
-
-        const result = imageUrl
-          ? await gPost(`${pageId}/photos`, { url: imageUrl, caption: message, published: String(published), access_token: pageToken })
-          : await gPost(`${pageId}/feed`, { message: message || "Bargain Lane publish test", published: String(published), access_token: pageToken });
-
-        const ok = result.ok && !(result.body && result.body.error);
-        return new Response(JSON.stringify({
-          ok,
-          page: { id: pageId, name: pageName },
-          endpoint: imageUrl ? "photos" : "feed",
-          published,
-          note: published ? "PUBLISHED LIVE on the Page" : "staged as unpublished (published=false) — visible in the Page's Publishing Tools, not public",
-          response: result.body,
-        }), { status: ok ? 200 : 400, headers: corsJson });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
-      }
-    }
 
     // ── Marketing intake (Slice 1a): manager photo submission ────────
     // POST multipart/form-data (photo, store, photo_type, note). Any signed-in
@@ -7637,7 +7541,7 @@ export default {
     // ── Admin: force-refresh the item category map cache for a store.
     // ?action=refresh-item-cats&store=BL1   (or store=all)
     // Deletes the cached KV map and refetches from Clover.
-    if (url.searchParams.get("action") === "refresh-item-cats") {
+    if (request.method === "POST" && url.searchParams.get("action") === "refresh-item-cats") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       const unauth = requireAdminSecret(request, env, corsJson);
       if (unauth) return unauth;
@@ -7829,7 +7733,7 @@ export default {
 
     // ── Manual snapshot endpoint: ?action=snapshot&store=BL1[&date=2026-04-26]
     // store=all snapshots every store. date defaults to today (ET, not UTC).
-    if (url.searchParams.get("action") === "snapshot") {
+    if (request.method === "POST" && url.searchParams.get("action") === "snapshot") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       const unauth = requireAdminSecret(request, env, corsJson);
       if (unauth) return unauth;
@@ -7935,7 +7839,7 @@ export default {
     }
 
     // ── Backfill endpoint: ?action=backfill (imports Sheets + KV → D1)
-    if (url.searchParams.get("action") === "backfill") {
+    if (request.method === "POST" && url.searchParams.get("action") === "backfill") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       const unauth = requireAdminSecret(request, env, corsJson);
       if (unauth) return unauth;
@@ -8072,84 +7976,10 @@ export default {
     //    Header: X-Snapshot-Secret. Feeders (Apps Script for Drive drops, worker
     //    crons for APIs) all normalize to this shape and POST here. Idempotent:
     //    UNIQUE(channel, store, date) upserts, so re-sent files never double-count.
-    if (request.method === "POST" && url.searchParams.get("action") === "ingest") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
-      if (unauth) return unauth;
-
-      let body;
-      try { body = await request.json(); }
-      catch { return new Response(JSON.stringify({ error: "Invalid JSON body" }), { status: 400, headers: corsJson }); }
-
-      const channel = (body.channel || "").toString().trim().toLowerCase();
-      const rows = Array.isArray(body.rows) ? body.rows : null;
-      const sourceFile = body.source_file ? body.source_file.toString() : null;
-      if (!channel) return new Response(JSON.stringify({ error: "Missing channel" }), { status: 400, headers: corsJson });
-      if (!rows)    return new Response(JSON.stringify({ error: "Missing rows[]" }), { status: 400, headers: corsJson });
-
-      const ingestedAt = new Date().toISOString();
-      const stmt = env.DB.prepare(
-        `INSERT INTO channel_sales (channel, store, date, total, count, meta, source_file, ingested_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(channel, store, date) DO UPDATE SET
-           total       = excluded.total,
-           count       = excluded.count,
-           meta        = excluded.meta,
-           source_file = excluded.source_file,
-           ingested_at = excluded.ingested_at`
-      );
-
-      const batch = [];
-      const errors = [];
-      for (let i = 0; i < rows.length; i++) {
-        const r = rows[i] || {};
-        const store = (r.store || "").toString().trim().toUpperCase();
-        const date = (r.date || "").toString().trim();
-        if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-          errors.push({ i, store, date, reason: "missing/invalid store or date" });
-          continue;
-        }
-        const total = (r.total == null || r.total === "") ? null : roundCents(Number(r.total));
-        const count = (r.count == null || r.count === "") ? null : Math.trunc(Number(r.count));
-        const meta  = (r.meta == null) ? null : JSON.stringify(r.meta);
-        if (total != null && !Number.isFinite(total)) { errors.push({ i, store, date, reason: "non-numeric total" }); continue; }
-        batch.push(stmt.bind(channel, store, date, total, count, meta, sourceFile, ingestedAt));
-      }
-
-      if (batch.length) await env.DB.batch(batch);
-
-      // Projection: the dashboard reads daily_sales.auction (already folded into
-      // each store's total + the violet "Auction" breakdown). Project the auction
-      // channel's daily $ into that column so the UI lights up with no frontend
-      // change. Feed-authoritative (overwrites), but never touches manual-override
-      // rows. Other channels (eon/labor) get their own projection when added.
-      let projected = 0;
-      if (channel === "auction" && batch.length) {
-        const proj = env.DB.prepare(
-          `INSERT INTO daily_sales (store, date, auction) VALUES (?, ?, ?)
-           ON CONFLICT(store, date) DO UPDATE SET
-             auction = CASE WHEN is_manual_override = 1 THEN auction ELSE excluded.auction END`
-        );
-        const projBatch = [];
-        for (let i = 0; i < rows.length; i++) {
-          const r = rows[i] || {};
-          const store = (r.store || "").toString().trim().toUpperCase();
-          const date = (r.date || "").toString().trim();
-          if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
-          if (r.total == null || r.total === "") continue;
-          const total = roundCents(Number(r.total));
-          if (!Number.isFinite(total)) continue;
-          projBatch.push(proj.bind(store, date, total));
-        }
-        if (projBatch.length) { await env.DB.batch(projBatch); projected = projBatch.length; }
-      }
-
-      return new Response(JSON.stringify({ ok: true, channel, written: batch.length, projected, skipped: errors.length, errors }), { headers: corsJson });
-    }
 
     // ── Admin: re-snapshot item sales for a date: ?action=items-snapshot&store=BL1[&date=2026-04-08]
     // store=all re-processes every store. Requires X-Snapshot-Secret header.
-    if (url.searchParams.get("action") === "items-snapshot") {
+    if (request.method === "POST" && url.searchParams.get("action") === "items-snapshot") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       const unauth = requireAdminSecret(request, env, corsJson);
       if (unauth) return unauth;
@@ -8470,7 +8300,7 @@ export default {
     // Iterates each date in [start,end] and re-runs the items-snapshot logic,
     // skipping dates that already have a KV entry unless force=1. Restores
     // qty/ASP/L2 data on the Weekly Retail Summary for historical weeks.
-    if (url.searchParams.get("action") === "backfill-items-snapshots") {
+    if (request.method === "POST" && url.searchParams.get("action") === "backfill-items-snapshots") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       const unauth = requireAdminSecret(request, env, corsJson);
       if (unauth) return unauth;
@@ -9763,7 +9593,7 @@ export default {
     // the item-sales snapshot) for each day in [start,end] using actual sale
     // time (clientCreatedTime) instead of Clover receipt time. Manual-override
     // rows are preserved (skipped). Admin-secret gated. WRITES to D1/KV.
-    if (url.searchParams.get("action") === "resnapshot-clienttime") {
+    if (request.method === "POST" && url.searchParams.get("action") === "resnapshot-clienttime") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       const unauth = requireAdminSecret(request, env, corsJson);
       if (unauth) return unauth;
@@ -9997,19 +9827,6 @@ export default {
       }
     }
 
-        // GET/POST ?action=test-interval-summary  (admin secret)
-    // Fires dispatchIntervalSummary on demand so the v3 notification format
-    // can be verified without waiting for the top-of-hour cron.
-    if (url.searchParams.get("action") === "test-interval-summary") {
-      const unauth = requireAdminSecret(request, env, corsJson);
-      if (unauth) return unauth;
-      try {
-        const result = await dispatchIntervalSummary(env);
-        return new Response(JSON.stringify({ ok: true, result }, null, 2), { headers: corsJson });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: "dispatch failed", detail: e.message }), { status: 500, headers: corsJson });
-      }
-    }
 
     // POST ?action=push-test
     // Sends a test push notification to all of the current user's subscriptions.
@@ -10830,7 +10647,7 @@ export default {
     //    ?action=rebuild-week-summaries&year=2026
     // Iterates every distinct week in D1 for the given year and writes the
     // pre-roll for every store. Required before T13 will read from cache.
-    if (url.searchParams.get("action") === "rebuild-week-summaries") {
+    if (request.method === "POST" && url.searchParams.get("action") === "rebuild-week-summaries") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
       const unauth = requireAdminSecret(request, env, corsJson);
       if (unauth) return unauth;
