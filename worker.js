@@ -5623,6 +5623,40 @@ function canAccessInventory(user) {
   return user && (user.role === 'superuser' || user.role === 'admin');
 }
 
+// ── Financial visibility ────────────────────────────────────────────────────
+// Roles permitted to see money: sales, budget, pace, margin, item cost,
+// supply spend. Written as a POSITIVE allowlist so an unrecognised role — a
+// future one, or a corrupt row — is denied rather than inheriting everything.
+//
+// Until migration-029 there was no role below `manager`, so nothing in the app
+// distinguished "authenticated" from "allowed to see revenue". `staff` (retail
+// leads) is the first role that must see less, and the dashboard has never had
+// a role guard, so without this an authenticated staff user would land on full
+// store financials.
+const FINANCIAL_ROLES = new Set(['superuser', 'admin', 'executive', 'manager']);
+function canSeeFinancials(user) {
+  return !!user && FINANCIAL_ROLES.has(user.role);
+}
+
+// What a role WITHOUT financial visibility may still reach. An allowlist, not
+// a list of financial endpoints, and deliberately so: there are 100+ actions
+// and most touch money somewhere. If an entry is missing here a staff user
+// gets a 403 on something harmless — annoying and trivially fixed. If an entry
+// were missing from a denylist, revenue would leak. Fail closed.
+const NON_FINANCIAL_ACTIONS = new Set([
+  // session — without these they cannot sign in or out at all
+  'auth-login', 'auth-logout', 'auth-me', 'auth-verify', 'auth-verify-otp',
+  'passkey-auth-begin', 'passkey-auth-finish', 'passkey-list',
+  'passkey-register-begin', 'passkey-register-finish', 'passkey-delete',
+  // personal notification settings
+  'push-subscribe', 'push-unsubscribe', 'push-subscription-status',
+  'push-test', 'vapid-public-key', 'update-notif-prefs',
+  // the announcement banner is shown to everyone
+  'announcement',
+  // photo submission is open to every authenticated user
+  'photo', 'photo-upload', 'thumbnail', 'thumbnails', 'notify-photo-upload',
+]);
+
 // ── Supply-request bulk purge helpers ───────────────────────────────────────
 const SUPPLY_STATUSES = ['pending', 'under_review', 'on_hold', 'ordered'];
 
@@ -6365,6 +6399,23 @@ export default {
         return new Response(JSON.stringify({ error: "Unauthorized", code: "NO_SESSION" }), {
           status: 401, headers: corsJson,
         });
+      }
+    }
+
+    // ── Financial gate ────────────────────────────────────────────────────
+    // Authentication above answers "who are you". This answers "may you see
+    // money". A session alone used to be enough to reach every sales figure in
+    // the app; roles below `manager` did not exist, so nothing enforced it.
+    //
+    // Fires only for a role outside FINANCIAL_ROLES — today that is `staff`
+    // and anything unrecognised. Every role that exists in production
+    // (superuser, admin, manager) is unaffected.
+    if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+      const requestedAction = url.searchParams.get("action") || "";
+      if (!NON_FINANCIAL_ACTIONS.has(requestedAction)) {
+        return new Response(JSON.stringify({
+          error: "Forbidden", code: "NO_FINANCIAL_ACCESS",
+        }), { status: 403, headers: corsJson });
       }
     }
 
