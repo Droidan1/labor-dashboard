@@ -24,6 +24,15 @@ _Deeper per-topic notes are in Claude's auto-memory at `~/.claude/projects/-User
 - **`|| "Hardlines"` default removed** from sku-book resolution. Unmapped items now book as `Custom Sales` and are reported by `noncategorized-items`. That silent default is why two one-character typos mis-booked a soda can and a bath item chain-wide **for months** without anyone noticing.
 - **Category assignment in Clover is additive by default.** An item belongs in both its real category *and* its sku-book page; stripping the latter would pull products off the cashier's screen. Pass `removeOtherCategories: true` for exclusive.
 
+## Credentials
+
+- 🛑 **`wrangler.toml` is tracked in a PUBLIC repo.** Anything written as a `[vars]` entry is world-readable at `raw.githubusercontent.com`. Every Clover API token and `SNAPSHOT_SECRET` sat there in plaintext **2026-04-08 → 2026-08-03**. Credentials belong in `wrangler secret put`, never in `[vars]`. Merchant IDs are fine as vars — they are account identifiers, not credentials.
+- 🔑 **Secrets and vars both land on `env`**, so moving a name from one to the other needs **no code change**. Cloudflare does not document which wins if a name is both; move identical values so the answer cannot matter, and rotate only after the var is gone.
+- 🔑 **`SNAPSHOT_SECRET` has two slots** (`SNAPSHOT_SECRET` + `SNAPSHOT_SECRET_NEXT`) so it can be rotated in three independently reversible steps instead of a synchronised flag-day. Use of the old value logs `legacy-secret-in-use` while a rotation is in progress — that is the signal that says whether the final step is safe. `?action=secret-check` reports which slot a value occupies.
+- ⚠️ **The secret was compared in SEVEN places**, not the obvious two: the global auth gate, `requireAdminSecret`, and four hand-rolled `isAdminReq` checks in the brief/summary/digest endpoints. Any missed site breaks the moment you rotate. Everything now goes through `hasSnapshotSecret()`.
+- 🔑 **Truthiness-check both slots before comparing.** An unset slot plus an absent header compares `undefined === undefined` and authenticates the entire internet.
+- **Six unique Clover merchant accounts back seven store keys** — BL16 reuses BL12's (Indy took over Wyoming's register). Rotate by account, not by store, or you will rotate one twice and think you missed one.
+
 ## Traps that have actually bitten
 
 - 🛑 **Backfills are not lossless.** They have destroyed real history three distinct ways. Two are now guarded (a clean empty Clover result; a *partial* fetch that returns fewer orders rather than zero). **Refund loss on old dates is inherent and cannot be guarded** — it is a property of Clover's retention window. Target only dates that can gain.

@@ -10,9 +10,36 @@ _Direction and progress. Refreshed each session. Durable knowledge lives in [MEM
 
 The admin-tools plan (`tasks/admin-tools-plan.md`) is **complete — all four phases shipped**. The admin API went from 25 secret-only endpoints, six of which fired on a plain GET, to a role-gated surface with a purpose-built repair flow.
 
-### Do these next
+### 🛑 Do this first — live credentials are public
 
-1. 🛑 **Rotate `SNAPSHOT_SECRET`.** The old value sat in public page source for months, so removing it from the client stops future disclosure but does not un-publish it. **Two steps that must land together** — `wrangler secret put SNAPSHOT_SECRET` *and* `CONFIG.SNAPSHOT_SECRET` in `scripts/auction-drive-ingest.gs`. Rotate only the first and the nightly auction feeder stops silently. This is the last open item from Phase 2 and the only outstanding *security* work.
+**`wrangler.toml` is tracked in the PUBLIC repo and carried every store's Clover API token plus `SNAPSHOT_SECRET` in plaintext from 2026-04-08 until 2026-08-03.** Verified world-readable unauthenticated at `raw.githubusercontent.com/Droidan1/labor-dashboard/main/wrangler.toml`. This is why `wrangler secret list` never showed `SNAPSHOT_SECRET` — it was never a secret.
+
+Those tokens bypass this app entirely: they talk straight to `api.clover.com` as the merchant and can read all orders **and create, update, delete catalog items, reassign categories, and change prices**. Mitigating: **0 forks, 0 network, 1 watcher** — nobody cloned it through GitHub, and there are no Wayback captures.
+
+Code is committed (`fb86f6c`) but **nothing is deployed** — shipping the stripped config before the secrets exist would remove all Clover access.
+
+**A — move (no Clover involvement, no service change).** Values stay identical, so it cannot break anything:
+```bash
+bash scripts/migrate-secrets.sh          # sets 8 secrets x 2 envs, then verifies
+npx wrangler deploy && npx wrangler deploy --env staging
+```
+Then confirm Clover still answers — `sales-diag` re-fetches live:
+`?action=sales-diag&store=BL1&date=<a recent date>`
+
+**B — rotate, in Clover.** Six unique merchant accounts back the seven store keys (BL16 reuses BL12's). One account at a time: issue a new token in Clover → `npx wrangler secret put BLn_API_TOKEN` (and `--env staging`) → verify that store with `sales-diag`. Only this step invalidates what's already public.
+
+**C — rotate `SNAPSHOT_SECRET`**, using the dual-accept now deployed in code:
+1. `npx wrangler secret put SNAPSHOT_SECRET_NEXT` — both values now work
+2. Update `CONFIG.SNAPSHOT_SECRET` in `scripts/auction-drive-ingest.gs`. Watch for `legacy-secret-in-use` in `npx wrangler tail` — while that line still appears, something hasn't moved. Silence for a full day means the nightly feeder has migrated.
+3. `npx wrangler secret put SNAPSHOT_SECRET` (new value), then `npx wrangler secret delete SNAPSHOT_SECRET_NEXT`
+
+Verify any step with `?action=secret-check`, which reports `current` / `next` without doing anything.
+
+**Repo visibility:** deliberately left public. Going private would stop new readers but invalidates nothing already copied, and Pages serves `www.retjghub.com` from this repo — on a Free plan that would take the dashboard offline. Rotation closes the exposure completely; visibility doesn't. Revisit afterwards if on a paid plan.
+
+### Then
+
+1. ~~🛑 **Rotate `SNAPSHOT_SECRET`.**~~ — now step C above. The old value sat in public page source for months, so removing it from the client stops future disclosure but does not un-publish it. **Two steps that must land together** — `wrangler secret put SNAPSHOT_SECRET` *and* `CONFIG.SNAPSHOT_SECRET` in `scripts/auction-drive-ingest.gs`. Rotate only the first and the nightly auction feeder stops silently. This is the last open item from Phase 2 and the only outstanding *security* work.
 2. ❓ **BL8 took $0 on 12 of the last 30 days** (2026-07-20 → 08-02, with 07-23/24 trading normally). The item snapshot and `daily_sales` agree, so it is real, not a pipeline fault. Closed? Seasonal? Needs a human answer before anyone "fixes" it.
 3. ❓ **~$21.6k of 30-day net sales resolve to no cost at all** (`coverage.none`), heaviest at BL1 ($6.6k) and BL16 ($6.3k). Broader than the bin-sales gap that drove the July L3 work. Worth a pass once someone decides how much precision is worth.
 
