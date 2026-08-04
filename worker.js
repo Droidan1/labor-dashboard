@@ -5593,6 +5593,20 @@ async function getAuthUser(request, env) {
   if (!results || !results.length) return null;
   const user = results[0];
   const expiresAt = user.expires_at; delete user.expires_at;
+
+  // Resolve grants once per request. A superuser holds none by design, so it
+  // gets the list of active businesses instead — same meaning, no rows.
+  if (user.role === 'superuser') {
+    user.grants = [];
+    try {
+      const { results: biz } = await env.DB.prepare(
+        'SELECT id FROM businesses WHERE active = 1'
+      ).all();
+      user.allBusinessIds = (biz || []).map(b => b.id);
+    } catch (_) { user.allBusinessIds = []; }
+  } else {
+    user.grants = await loadGrants(env, user.id);
+  }
   user.stores = user.stores ? JSON.parse(user.stores) : null;
   // Sliding 7-day expiry, but roll at most ~once/day. Without this throttle every
   // request (incl. every ?action=photo image load) fired a session-row UPDATE, so
@@ -5605,10 +5619,93 @@ async function getAuthUser(request, env) {
   return user;
 }
 
+// ── Grants ──────────────────────────────────────────────────────────────────
+// A grant is: this person, in this business, with this role, over these units.
+// A user may hold several. `superuser` deliberately holds NONE — it is a flag
+// on the user meaning every business, every unit, always, so grant resolution
+// special-cases it rather than backfilling rows for every business added.
+//
+// Loaded once per request in getAuthUser and attached as `user.grants`.
+async function loadGrants(env, userId) {
+  if (!env.DB) return [];
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT g.business_id, g.role, g.units, b.name AS business_name, b.unit_noun
+         FROM user_grants g JOIN businesses b ON b.id = g.business_id
+        WHERE g.user_id = ? AND b.active = 1`
+    ).bind(userId).all();
+    return (results || []).map(g => {
+      let units = null;
+      try { units = g.units ? JSON.parse(g.units) : null; } catch (_) { units = null; }
+      return { ...g, units };
+    });
+  } catch (_) {
+    // Table may not exist yet (pre migration-030). Callers fall back below.
+    return [];
+  }
+}
+
+function grantFor(user, businessId) {
+  return (user && user.grants || []).find(g => g.business_id === businessId) || null;
+}
+
+// Write the Bargain Lane grant for a user, mirroring users.role / users.stores.
+//
+// While Bargain Lane is the only business the grant is a mirror, not a second
+// source of truth — the Users page still edits role and stores, and this keeps
+// the grant in step. When a second business arrives the Users page starts
+// writing grants directly and this becomes the single-business special case.
+//
+// Deliberately tolerant: a failure here must NOT fail the invite or the edit.
+// The user row is already written by that point, and allowedStores() falls back
+// to users.stores, so a missed grant degrades to today's behaviour rather than
+// leaving a half-created user.
+async function upsertBargainLaneGrant(env, userId, role, storesJson) {
+  if (!env.DB || role === 'superuser') return;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO user_grants (user_id, business_id, role, units)
+       VALUES (?, 'bl', ?, ?)
+       ON CONFLICT(user_id, business_id) DO UPDATE SET role = excluded.role, units = excluded.units`
+    ).bind(userId, role, storesJson || null).run();
+  } catch (e) {
+    console.log(JSON.stringify({ grant_upsert_failed: String(e && e.message), user: userId }));
+  }
+}
+
+// Businesses this user may open. Superuser sees every active one; everyone
+// else sees exactly what they hold a grant to.
+function grantedBusinessIds(user) {
+  if (!user) return [];
+  if (user.role === 'superuser') return user.allBusinessIds || [];
+  return (user.grants || []).map(g => g.business_id);
+}
+
+function canAccessBusiness(user, businessId) {
+  if (!user) return false;
+  if (user.role === 'superuser') return true;
+  return !!grantFor(user, businessId);
+}
+
 // Returns null (= all stores) or string[] of allowed store codes.
+//
+// Reads the Bargain Lane grant now, not users.stores. migration-030 backfilled
+// units straight from stores, so this is behaviour-preserving by construction.
+//
+// ⚠️ The users.stores fallback is deliberate and TRANSITIONAL. If the grant is
+// missing — migration not yet applied, a backfill row missed, a user created
+// through a path that does not write grants — falling through to the old column
+// keeps a real manager working instead of locking them out of their own store.
+// It cannot escalate: it yields exactly the scope they have today. Remove it
+// once `grant_fallback` has not been logged for a good while.
 function allowedStores(user) {
   if (!user) return null;
   if (user.role === 'superuser' || user.role === 'admin') return null;
+  const g = grantFor(user, 'bl');
+  if (g) return g.units || [];
+  if (user.grants && user.grants.length === 0 && user.id) {
+    console.log(JSON.stringify({ grant_fallback: 'no-bl-grant', user: user.id, role: user.role }));
+  }
   return user.stores || [];
 }
 
@@ -7299,6 +7396,10 @@ export default {
         await env.DB.prepare(
           "INSERT INTO users (id, email, role, stores, status, created_at) VALUES (?, ?, ?, ?, 'active', datetime('now'))"
         ).bind(id, normalized, role, storesJson).run();
+        // Mirror into the grant model. Without this a newly invited user holds
+        // no grant and lives permanently on the users.stores fallback.
+        // Superusers are not invitable here, so every invite is grantable.
+        await upsertBargainLaneGrant(env, id, role, storesJson);
         const token = randomHex(32);
         const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
         await env.DB.prepare("INSERT INTO magic_links (token, email, expires_at) VALUES (?, ?, ?)")
@@ -7345,6 +7446,17 @@ export default {
         if (!parts.length) return new Response(JSON.stringify({ error: "Nothing to update" }), { status: 400, headers: corsJson });
         values.push(id);
         await env.DB.prepare(`UPDATE users SET ${parts.join(', ')} WHERE id = ?`).bind(...values).run();
+        // Keep the grant in step with the columns. Re-read rather than trusting
+        // the request body: `role` and `stores` are each optional here, so a
+        // request that changes only one of them must not blank the other.
+        if (role !== undefined || stores !== undefined) {
+          const { results: after } = await env.DB.prepare(
+            'SELECT role, stores FROM users WHERE id = ?'
+          ).bind(id).all();
+          if (after && after.length && after[0].role !== 'superuser') {
+            await upsertBargainLaneGrant(env, id, after[0].role, after[0].stores);
+          }
+        }
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
