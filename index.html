@@ -697,6 +697,12 @@
 
       <!-- Bottom Section -->
       <div id="sidebar-dark-toggle" class="px-2 pb-2 space-y-1">
+        <!-- Back to the business picker. Shown only for an account that can
+             reach 2+ businesses; pointless (and hidden) for everyone else. -->
+        <div id="nav-switch-business" class="hidden nav-item" onclick="switchBusiness()">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
+          <span class="nav-label">Switch business</span>
+        </div>
         <!-- Signed-in user + logout -->
         <div id="user-badge" class="hidden flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 mb-1">
           <div class="overflow-hidden">
@@ -2880,6 +2886,27 @@
     </div><!-- end #page-admin-settings -->
 
     <!-- ── Users page ────────────────────────────────────────────── -->
+    <!-- ── Landing: pick a business ────────────────────────────────────
+         Only reachable by an account with 2+ businesses (today: the superuser,
+         who sees every business because the flag means "all"). Everyone else
+         holds one grant and routes straight past this to their dashboard. -->
+    <div id="page-landing" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-5xl mx-auto">
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">RETJG Hub</h1>
+        </div>
+      </div>
+
+      <div class="max-w-5xl mx-auto px-6 py-12">
+        <div class="mb-8">
+          <div class="text-xl font-semibold text-opl-ink dark:text-op-ink">Choose a business</div>
+          <p class="mt-1.5 text-sm text-opl-inkDim dark:text-op-inkDim" id="landing-sub"></p>
+        </div>
+
+        <div id="landing-cards" class="grid gap-gridgap sm:grid-cols-2"></div>
+      </div>
+    </div>
+
     <div id="page-no-access" class="hidden">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-3xl mx-auto">
@@ -7145,6 +7172,12 @@
       if (!currentUser || currentUser.role !== 'superuser') return;
       try { loadAnnouncementForm(); } catch (_) {}
     }
+    // The picker is meaningless with fewer than two businesses — refuse it so a
+    // stale deep link or history entry can't strand someone on an empty page.
+    if (page === 'landing') {
+      if (userBusinesses(currentUser).length < 2) return;
+      try { renderLanding(); } catch (_) {}
+    }
     // Push the outgoing page onto the back stack — but only on forward
     // navigations (taps), not on goBack() restores. Skip when staying on
     // the same page (re-renders) or when there's no prior page yet.
@@ -7156,11 +7189,23 @@
     // restores it via its own Close button; if it's ever dismissed another way
     // (Android back gesture, etc.) scrolling would stay frozen app-wide.
     if (document.body.style.overflow) document.body.style.overflow = '';
-    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings', 'no-access'];
+    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings', 'no-access', 'landing'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
       if (pageEl) pageEl.classList.toggle('hidden', p !== page);
     }
+
+    // Pre-app surfaces: you have not entered a business yet (landing), or you
+    // have nothing to enter (no-access). Either way the business-specific nav
+    // chrome must not be there — the login page is a full-screen overlay for
+    // exactly this reason. Verified there is no competing `display` rule on
+    // .sidebar or .bn-float, so `.hidden` actually wins here (unlike the
+    // .sidebar .nav-item specificity trap fixed at the top of this file).
+    const preApp = (page === 'landing' || page === 'no-access');
+    ['sidebar', 'bottom-nav'].forEach(id => {
+      const n = el(id);
+      if (n) n.classList.toggle('hidden', preApp);
+    });
 
     // Update sidebar active state
     document.querySelectorAll('.nav-item[data-page]').forEach(item => {
@@ -16485,12 +16530,135 @@
     return !!user && FINANCIAL_ROLES.includes(user.role);
   }
 
-  // Where a user lands at boot. Everyone with financial access gets the
-  // dashboard, as before. A role without it (today `staff`) has no surface yet
-  // — Projects & Tasks is not built — so it must say so rather than render an
-  // empty dashboard shell whose every request 403s.
+  // ── Which business the session is currently "inside" ─────────────
+  // Kept in sessionStorage, not memory: landingPageFor() is also called when a
+  // modal closes (closeHourlySnapshot) and on the deep-link fallback path, so
+  // without a sticky selection those would bounce a superuser back to the
+  // picker instead of returning them to the business they were working in.
+  // sessionStorage (not local) so a new tab starts at the picker again.
+  const BIZ_KEY = 'retjg.activeBusiness';
+  function activeBusiness() {
+    try { return sessionStorage.getItem(BIZ_KEY) || null; } catch (_) { return null; }
+  }
+  function setActiveBusiness(id) {
+    try { id ? sessionStorage.setItem(BIZ_KEY, id) : sessionStorage.removeItem(BIZ_KEY); } catch (_) {}
+  }
+
+  // Businesses this account can reach. Server-supplied (auth-me); the client
+  // never derives it, so it cannot disagree with what the API will serve.
+  function userBusinesses(user) {
+    return (user && Array.isArray(user.businesses)) ? user.businesses : [];
+  }
+
+  // Where a user lands at boot.
+  //
+  // Rule, in order:
+  //   no financial access → 'no-access'  (today `staff`; unchanged)
+  //   already inside a business → that business's dashboard  (sticky selection)
+  //   2+ businesses reachable → 'landing' picker
+  //   otherwise → 'dashboard'
+  //
+  // 🔑 The count is of BUSINESSES, not grants. A superuser holds zero grants by
+  // design — counting grants would send the one account meant to see everything
+  // to the no-access screen. The server resolves the flag into a real list.
+  //
+  // With one business seeded and connected, every granted user gets exactly one
+  // entry here and routes straight to the dashboard, exactly as before. Only the
+  // superuser (who sees all businesses, including unconnected E-Commerce) has
+  // 2+ and reaches the picker.
   function landingPageFor(user) {
-    return canSeeFinancials(user) ? 'dashboard' : 'no-access';
+    if (!canSeeFinancials(user)) return 'no-access';
+    const biz = userBusinesses(user);
+    if (biz.length >= 2) {
+      const active = activeBusiness();
+      // Only honour a selection that is still reachable — a revoked grant must
+      // not keep routing someone into a business they have lost.
+      if (active && biz.some(b => b.id === active)) return dashboardPageFor(active);
+      return 'landing';
+    }
+    if (biz.length === 1) setActiveBusiness(biz[0].id);
+    return 'dashboard';
+  }
+
+  // Which page a business opens into. Bargain Lane is the existing dashboard;
+  // nothing else has a surface yet, so anything unconnected stays on the picker
+  // rather than opening a shell whose every request would 404.
+  function dashboardPageFor(businessId) {
+    return businessId === 'bl' ? 'dashboard' : 'landing';
+  }
+
+  // Enter a business from the picker.
+  function enterBusiness(id) {
+    const b = userBusinesses(currentUser).find(x => x.id === id);
+    if (!b || !b.connected) return;          // disabled cards are inert
+    setActiveBusiness(id);
+    navigateToPage(dashboardPageFor(id));
+  }
+  window.enterBusiness = enterBusiness;
+
+  // Back to the picker. Only meaningful for an account with 2+ businesses.
+  function switchBusiness() {
+    setActiveBusiness(null);
+    navigateToPage('landing');
+  }
+  window.switchBusiness = switchBusiness;
+
+  // Render the business cards. Driven entirely by auth-me's `businesses`, so a
+  // new business appears here the moment it is granted — no client-side list to
+  // keep in sync.
+  function renderLanding() {
+    const biz = userBusinesses(currentUser);
+    const sub = el('landing-sub');
+    if (sub) {
+      sub.textContent = currentUser && currentUser.role === 'superuser'
+        ? 'You have access to everything in the Hub.'
+        : `You have access to ${biz.length} businesses.`;
+    }
+    const wrap = el('landing-cards');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+
+    biz.forEach(b => {
+      const card = document.createElement(b.connected ? 'button' : 'div');
+      card.className = [
+        'text-left rounded-card border p-card transition-colors',
+        'bg-opl-panel dark:bg-op-panel',
+        'border-[rgba(20,16,8,0.08)] dark:border-op-border',
+        b.connected
+          ? 'hover:border-accent-green/60 dark:hover:border-accent-green/60 hover:bg-opl-panelHi dark:hover:bg-op-panelHi cursor-pointer'
+          : 'opacity-60 cursor-default',
+      ].join(' ');
+
+      if (b.connected) {
+        card.type = 'button';
+        card.addEventListener('click', () => enterBusiness(b.id));
+      } else {
+        card.setAttribute('aria-disabled', 'true');
+      }
+
+      const name = document.createElement('div');
+      name.className = 'text-lg font-semibold text-opl-ink dark:text-op-ink';
+      name.textContent = b.name;
+
+      const meta = document.createElement('div');
+      meta.className = 'mt-1 text-sm text-opl-inkDim dark:text-op-inkDim';
+      // Pluralise off the business's own unit_noun — 'store' for Bargain Lane,
+      // 'storefront' for E-Commerce. Generic schema, specific wording.
+      meta.textContent = b.connected
+        ? `${b.unitCount} ${b.unitNoun}${b.unitCount === 1 ? '' : 's'}`
+        : 'Not connected yet';
+
+      const status = document.createElement('div');
+      status.className = 'mt-4 text-xs uppercase tracking-wide ' + (b.connected
+        ? 'text-accent-green'
+        : 'text-opl-inkDimmer dark:text-op-inkDimmer');
+      status.textContent = b.connected ? 'Open →' : 'Coming soon';
+
+      card.appendChild(name);
+      card.appendChild(meta);
+      card.appendChild(status);
+      wrap.appendChild(card);
+    });
   }
 
   function applyRoleUI(user) {
@@ -16508,6 +16676,12 @@
     const seesMoney = canSeeFinancials(user);
     document.querySelectorAll('.nav-item[data-page="dashboard"], .nav-item[data-page="weekly-summary"]')
       .forEach(n => n.classList.toggle('hidden', !seesMoney));
+
+    // "Switch business" only means something with somewhere to switch to.
+    // Driven by the business count, not by role — an executive granted two
+    // businesses needs it just as much as the superuser does.
+    const swb = el('nav-switch-business');
+    if (swb) swb.classList.toggle('hidden', userBusinesses(user).length < 2);
 
     // Show/hide nav items based on role
     const isAdmin = user.role === 'superuser' || user.role === 'admin';
@@ -17259,6 +17433,19 @@
     initPasskeyLoginButton();
     checkAuth().then(authed => {
       if (!authed) return;
+      // Route to the correct landing surface. Until now nothing routed at boot —
+      // `page-dashboard` is simply the one page without `hidden`, so it won for
+      // everyone. Two consequences, both fixed here: a role that cannot open the
+      // dashboard (today `staff`) sat on an empty shell whose every request
+      // 403s, and a multi-business account had no way to reach the picker.
+      // pushHistory=false so this initial placement isn't a back-stack entry.
+      const landing = landingPageFor(currentUser);
+      if (landing !== 'dashboard') navigateToPage(landing, false);
+      // The popups and coach-marks below are all about the DASHBOARD — they
+      // point at #hero-more-toggle, store cards, the date chip. Firing them over
+      // the picker or the no-access screen would anchor them to elements that
+      // are not on screen, so treat landing elsewhere the same as a deep link.
+      const onDashboard = (landing === 'dashboard');
       const dlSearch = new URLSearchParams(window.location.search);
       // A deep link is anything the SW may have opened us with: an hourly view,
       // a #hash page, or a photo-upload folder link (cf_store).
@@ -17266,7 +17453,7 @@
       const loaded = loadAll();
       // "What's New" popup — show once data has painted, unless a deep link
       // is taking over the screen. Persists only when the user hits Dismiss.
-      if (!dlDeep) Promise.resolve(loaded).finally(() => {
+      if (!dlDeep && onDashboard) Promise.resolve(loaded).finally(() => {
         setTimeout(maybeShowWhatsNew, 700);
         // First-time pull-to-refresh hint (mobile, unobtrusive top chip).
         setTimeout(maybePtrHint, 1000);

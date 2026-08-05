@@ -5683,6 +5683,46 @@ function grantFor(user, businessId) {
   return (user && user.grants || []).find(g => g.business_id === businessId) || null;
 }
 
+// The businesses a user can reach, for the landing picker.
+//
+// 🔑 superuser is a FLAG, not a grant — it holds no rows in user_grants by
+// design, so filtering by grants would return [] and strand the one account
+// that is supposed to see everything. Branch on the flag first.
+//
+// `connected` is derived from unit count rather than stored, so a business
+// becomes live the moment its units are inserted — no second flag to forget to
+// flip. E-Commerce is seeded by migration-031 with zero units precisely so it
+// renders as a real-but-not-yet-connected card instead of linking nowhere.
+async function businessesFor(env, user) {
+  if (!env.DB || !user) return [];
+  let all = [];
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT b.id, b.name, b.unit_noun, b.source,
+              (SELECT COUNT(*) FROM business_units u
+                WHERE u.business_id = b.id AND u.active = 1) AS unit_count
+         FROM businesses b
+        WHERE b.active = 1
+        ORDER BY b.name`
+    ).all();
+    all = results || [];
+  } catch (_) {
+    // Table may not exist yet (pre migration-030). Fail closed to "no picker",
+    // which routes everyone to the dashboard exactly as before this feature.
+    return [];
+  }
+  const visible = user.role === 'superuser'
+    ? all
+    : all.filter(b => grantFor(user, b.id));
+  return visible.map(b => ({
+    id: b.id,
+    name: b.name,
+    unitNoun: b.unit_noun,
+    unitCount: b.unit_count || 0,
+    connected: (b.unit_count || 0) > 0,
+  }));
+}
+
 // Write the Bargain Lane grant for a user, mirroring users.role / users.stores.
 //
 // While Bargain Lane is the only business the grant is a mirror, not a second
@@ -6319,6 +6359,10 @@ export default {
         // a store the server refuses to serve.
         // null = every store. An ARRAY is a restriction, and [] means none.
         stores: allowedStores(user),
+        // Businesses this account can reach, for the landing picker. The client
+        // decides routing from the LENGTH of this array, so it must be the
+        // effective list — same reasoning as `stores` above.
+        businesses: await businessesFor(env, user),
       }), { headers: corsJson });
     }
 
