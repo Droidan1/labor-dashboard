@@ -157,6 +157,69 @@ const grantsOf = (id) =>
      `admin's save PRESERVES the ecom grant they cannot see, got [${ids}]`);
 }
 
+// ── conferring a BUSINESS is superuser-only ────────────────────────────────
+// An admin may change role/units inside a business the person already holds —
+// that is an admin's job — but may not add them to a business or remove them
+// from one. Without this, the admins who hold an `ecom` grant could pass
+// E-Commerce on to anyone.
+{
+  // u-mgr1 currently holds bl only.
+  const before = grantsOf('u-mgr1').map(g => g.business_id).sort();
+  ok(before.join(',') === 'bl', `precondition: u-mgr1 holds bl only, got [${before}]`);
+
+  // Admin may still edit WITHIN bl.
+  const within = await call('/?action=set-user-grants', 'u-admin', {
+    id: 'u-mgr1', grants: [{ business_id: 'bl', role: 'manager', units: ['BL8'] }],
+  });
+  ok(within.body.ok === true, `admin may re-scope units inside bl, got ${JSON.stringify(within.body)}`);
+  ok(JSON.stringify(grantsOf('u-mgr1')[0].units) === '["BL8"]', 'and the units actually changed');
+
+  // Admin may NOT remove them from bl.
+  const remove = await call('/?action=set-user-grants', 'u-admin', { id: 'u-mgr1', grants: [] });
+  ok(remove.status === 403, `admin cannot remove a business, got ${remove.status}`);
+  ok(grantsOf('u-mgr1').length === 1, 'and the bl grant survives');
+
+  // Superuser adds ecom.
+  await call('/?action=set-user-grants', 'u-su', {
+    id: 'u-mgr1',
+    grants: [{ business_id: 'bl', role: 'manager', units: ['BL8'] },
+             { business_id: 'ecom', role: 'manager', units: null }],
+  });
+  ok(grantsOf('u-mgr1').length === 2, 'superuser CAN add a business');
+
+  // CASE A — the admin CANNOT see ecom (they hold no ecom grant). Omitting it
+  // is legitimate, so the write is allowed and the SCOPED DELETE is what keeps
+  // ecom alive. Treating the omission as a removal would lock this admin out of
+  // editing the user at all.
+  const blind = await call('/?action=set-user-grants', 'u-admin', {
+    id: 'u-mgr1', grants: [{ business_id: 'bl', role: 'manager', units: ['BL8'] }],
+  });
+  ok(blind.body.ok === true, `admin blind to ecom may still save, got ${JSON.stringify(blind.body)}`);
+  ok(grantsOf('u-mgr1').map(g => g.business_id).sort().join(',') === 'bl,ecom',
+     'and the invisible ecom grant survives via the scoped delete');
+
+  // CASE B — PRODUCTION's shape: the admin DOES hold ecom, so it is visible and
+  // dropping it is a real removal attempt. This is the case Brian asked to close.
+  db.prepare("INSERT INTO user_grants (user_id,business_id,role,units) VALUES ('u-admin','ecom','admin',NULL)").run();
+  const strip = await call('/?action=set-user-grants', 'u-admin', {
+    id: 'u-mgr1', grants: [{ business_id: 'bl', role: 'manager', units: ['BL8'] }],
+  });
+  ok(strip.status === 403, `admin holding ecom cannot strip it from someone, got ${strip.status}`);
+
+  // u-staff holds bl only and has not been touched, so this is a real addition.
+  ok(grantsOf('u-staff').map(g => g.business_id).join(',') === 'bl',
+     'precondition: u-staff holds bl only');
+  const add = await call('/?action=set-user-grants', 'u-admin', {
+    id: 'u-staff', grants: [{ business_id: 'bl', role: 'manager', units: ['BL1'] },
+                            { business_id: 'ecom', role: 'manager', units: null }],
+  });
+  ok(add.status === 403, `admin cannot ADD ecom to someone, got ${add.status}`);
+  ok(grantsOf('u-staff').map(g => g.business_id).join(',') === 'bl',
+     'and u-staff still holds bl only');
+  ok(grantsOf('u-mgr1').map(g => g.business_id).sort().join(',') === 'bl,ecom',
+     'both grants still intact after the refused attempts');
+}
+
 // ── reading one user's grants ───────────────────────────────────────────────
 {
   const r = await call('/?action=user-grants&id=u-mgr2', 'u-su');

@@ -17472,13 +17472,18 @@
     wrap.innerHTML = grantOptions.businesses.map(b => {
       const g = held.get(b.id);
       const on = !!g;
+      // Only a superuser may add or remove a business. Everyone else edits what
+      // a person can do INSIDE the businesses they already hold, so the on/off
+      // control is locked rather than absent — the state stays visible.
+      const canMove = currentUser && currentUser.role === 'superuser';
       const allUnits = !g || g.units == null;
       const picked = (g && Array.isArray(g.units)) ? g.units : [];
       return `
       <div class="rounded-[10px] border border-[rgba(20,16,8,0.1)] dark:border-op-border px-3.5 py-3" data-biz="${b.id}">
         <label class="flex items-center gap-2.5 cursor-pointer">
-          <input type="checkbox" class="gr-on accent-accent-green" ${on ? 'checked' : ''}>
+          <input type="checkbox" class="gr-on accent-accent-green" ${on ? 'checked' : ''} ${canMove ? '' : 'disabled'}>
           <span class="text-sm font-semibold text-opl-ink dark:text-op-ink">${b.name}</span>
+          ${canMove ? '' : `<span class="text-[10px] text-opl-inkDimmer dark:text-op-inkDimmer">superuser only</span>`}
           ${b.units.length ? '' : `<span class="text-[10px] text-opl-inkDimmer dark:text-op-inkDimmer">no ${b.unitNoun}s yet</span>`}
         </label>
         <div class="gr-body mt-3 ${on ? '' : 'hidden'}">
