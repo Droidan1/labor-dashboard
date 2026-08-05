@@ -7708,6 +7708,34 @@ export default {
         const opts = await grantOptionsFor(env, currentUser);
         const bizById = new Map(opts.businesses.map(b => [b.id, b]));
 
+        // 🔑 Conferring a BUSINESS is superuser-only. An admin may change what
+        // someone can do inside a business they already hold — role, units,
+        // which is an admin's actual job — but may not add a person to a new
+        // business or remove them from one.
+        //
+        // Without this, the three admins who hold an `ecom` grant could pass
+        // E-Commerce on to anyone, which quietly makes "who is in this
+        // business" an admin-level decision rather than an owner-level one.
+        const currentIds = (await loadGrants(env, id)).map(g => g.business_id);
+        if (currentUser.role !== 'superuser') {
+          // 🔑 Compare only over businesses this caller can SEE. An admin who
+          // cannot see E-Commerce simply omits it from the payload — reading
+          // that as a removal would block them from editing the user at all,
+          // which is worse than the hole being closed. The scoped DELETE below
+          // is what actually protects the invisible grant.
+          const visibleIds = [...bizById.keys()];
+          const currentVisible = currentIds.filter(b => visibleIds.includes(b));
+          const wantedIds = [...new Set(incoming.map(g => String(g && g.business_id || "")))];
+          const added   = wantedIds.filter(b => !currentVisible.includes(b));
+          const removed = currentVisible.filter(b => !wantedIds.includes(b));
+          if (added.length || removed.length) {
+            const what = added.length
+              ? `Only a superuser can add someone to ${added.join(', ')}`
+              : `Only a superuser can remove someone from ${removed.join(', ')}`;
+            return new Response(JSON.stringify({ error: what }), { status: 403, headers: corsJson });
+          }
+        }
+
         const clean = [];
         for (const g of incoming) {
           const bid = String(g && g.business_id || "");
