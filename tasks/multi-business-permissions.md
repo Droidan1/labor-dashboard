@@ -1,6 +1,13 @@
 # Multi-business permissions — plan — 2026-08-03
 
-> **STATUS (2026-08-04, end of day): STEPS 1–3 LARGELY BUILT AND LIVE.**
+> **STATUS (2026-08-05): ALL FOUR STEPS BUILT AND LIVE.** worker `a5a4a26b` ·
+> main `9753de2` · 7 more PRs. The landing picker, the Users-page grant editor,
+> superuser-only business membership, the **fail-closed business gate**, the cron
+> path, and `allowedUnits(user, businessId)` all shipped to production.
+> 🛑 **Nothing structural now blocks E-Commerce — only SellerCloud credentials
+> and data.** See "What shipped 2026-08-05" below.
+>
+> _Previous status (2026-08-04): steps 1–3 largely built._
 > worker `be734899` · main `12b9095` · 10 PRs merged in one day.
 > The grant model is in production and the worker reads it. Step 4 is
 > deliberately untouched. See "Build order" for exactly what is and is not done,
@@ -220,6 +227,38 @@ lands when it's already true.
       🛑 **The blocker is not code.** E-Commerce needs SellerCloud credentials —
       a team endpoint, a read-only integration user, and its password. See
       [`sellercloud-api-brief.md`](sellercloud-api-brief.md) (now tracked on main).
+
+## What shipped 2026-08-05
+
+- **Step 4 — landing page.** Portfolio picker: group hero, per-business cards with
+  live figures, sticky session selection, mobile switcher. Superuser + admins reach
+  it; the 8 managers hold one grant and route straight to the dashboard, unchanged.
+- **Step 2's `business_id` gating — the long-deferred half.** `canAccessBusiness()`
+  went from **zero call sites** to gating **86** actions. Fail-closed: 25 agnostic,
+  86 mapped, anything unclassified **refused**.
+  🔑 Fail-closed is only safe with a completeness test that enumerates routed actions
+  FROM SOURCE — it immediately caught `boost-post`, routed only on `staging`.
+  🛑 Three actions must **NOT** be gated, found by an adversarial pass over all 111:
+  `auth-me` (circular — it is how the client learns its businesses; gating breaks
+  login for everyone), `grant-options` and `user-grants`/`set-user-grants`
+  (self-filtering).
+- **Step 3 — grant editor.** Users page edits grants per business (role + units),
+  rendered from `businesses`/`business_units`.
+- **Conferring a business is superuser-only.** Admins edit role/units inside
+  businesses a person already holds. 🔑 The add/remove check is scoped to businesses
+  the caller can SEE — otherwise an admin blind to E-Commerce omits it, and reading
+  that omission as a removal 403s them out of editing the user entirely.
+- **`allowedUnits(user, businessId)`** replaced the hard-wired `'bl'`; `allowedStores`
+  is a thin wrapper so all 21 call sites are untouched. 🔑 The `users.stores` fallback
+  is Bargain-Lane-ONLY — a generic one would hand a bl-only manager BL's store list
+  when asked about E-Commerce.
+- **Cron.** `chainWideRecipients()` now requires Bargain Lane access. The gate covers
+  requests only; cron needed it written separately — the third time that has bitten.
+
+⚠️ **The admin widening.** Admins were briefly listed as seeing every business so they
+could reach the picker, then closed the same day. The 3 admins now hold explicit,
+revocable `ecom` grants (migration-033) rather than inheriting from a branch. **They
+will see real E-Commerce figures the day SellerCloud connects** — accepted deliberately.
 
 ### What the review found — read before adding an endpoint
 

@@ -7270,6 +7270,9 @@
       if (n) n.classList.toggle('hidden', preApp);
     });
 
+    // Business-aware nav. After the role gates above, never instead of them.
+    try { applyBusinessNav(); } catch (_) {}
+
     // Update sidebar active state
     document.querySelectorAll('.nav-item[data-page]').forEach(item => {
       item.classList.toggle('active', item.dataset.page === page);
@@ -16719,9 +16722,68 @@
     return 'dashboard';
   }
 
+  // ── Which business each nav item belongs to ──────────────────────
+  // Every existing item is Bargain Lane's — that is the honest state today, not
+  // a placeholder. `null` means CROSS-BUSINESS: it belongs to the Hub itself and
+  // shows whichever business you are inside.
+  //
+  // 🔑 An id missing from this map stays VISIBLE. Deliberate, and the opposite of
+  // the worker's fail-closed gate: this is chrome, not access control — the
+  // worker refuses the data regardless — and a nav item silently vanishing is a
+  // far worse failure here than one showing up where it does not belong.
+  // navBusinessAudit() below turns an unmapped id into a test failure instead.
+  const NAV_BUSINESS = {
+    'nav-inventory': 'bl',
+    'nav-supply-request': 'bl',
+    'nav-users': 'bl',
+    'nav-admin-settings': 'bl',
+    'nav-marketing': 'bl',
+    'nav-marketing-group': 'bl',
+    'nav-marketing-ads': 'bl',
+    'nav-marketing-sub': 'bl',
+    'nav-marketing-chev': 'bl',
+    'nav-flow-calendar': 'bl',
+    'nav-content': 'bl',
+    'nav-submit-photos': 'bl',
+    // Hub-level, not owned by any one business.
+    'nav-settings': null,
+    'nav-switch-business': null,
+  };
+
+  // Hide the nav items that belong to a DIFFERENT business than the one you are
+  // in. Runs after applyRoleUI, never instead of it: role decides what you may
+  // open, business decides what is relevant here. Both must agree to show.
+  function applyBusinessNav(businessId) {
+    const biz = businessId || activeBusiness() || 'bl';
+    for (const [id, owner] of Object.entries(NAV_BUSINESS)) {
+      if (owner === null) continue;          // cross-business — leave alone
+      const n = el(id);
+      if (!n) continue;
+      // Only ever ADDS hidden. Removing it is applyRoleUI's job, so this can
+      // never reveal something a role gate hid.
+      if (owner !== biz) n.classList.add('hidden');
+    }
+    // data-page items the dashboard owns directly (Dashboard, Retail Summary).
+    document.querySelectorAll('.nav-item[data-page="dashboard"], .nav-item[data-page="weekly-summary"]')
+      .forEach(n => { if (biz !== 'bl') n.classList.add('hidden'); });
+  }
+
+  // Every nav id in the DOM must be classified. Returns the unmapped ones so a
+  // test can fail on them rather than a user finding a stray item in the wrong
+  // business. Same completeness idea as the worker's business gate.
+  function navBusinessAudit() {
+    const ids = [...document.querySelectorAll('[id^="nav-"]')].map(n => n.id);
+    return ids.filter(id => !(id in NAV_BUSINESS));
+  }
+  window.navBusinessAudit = navBusinessAudit;
+
   // Which page a business opens into. Bargain Lane is the existing dashboard;
   // nothing else has a surface yet, so anything unconnected stays on the picker
   // rather than opening a shell whose every request would 404.
+  // 2a builds the MECHANISM (business-aware nav); 2b gives E-Commerce a surface
+  // to open into. Until then this still returns to the picker rather than
+  // inventing a half-built page — entering a business with nowhere to go is a
+  // worse experience than the card staying inert.
   function dashboardPageFor(businessId) {
     return businessId === 'bl' ? 'dashboard' : 'landing';
   }
@@ -16731,6 +16793,7 @@
     const b = userBusinesses(currentUser).find(x => x.id === id);
     if (!b || !b.connected) return;          // disabled cards are inert
     setActiveBusiness(id);
+    applyBusinessNav(id);
     navigateToPage(dashboardPageFor(id));
   }
   window.enterBusiness = enterBusiness;
