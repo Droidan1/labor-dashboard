@@ -3568,6 +3568,126 @@ function resolveCors(request) {
   return headers;
 }
 
+  // ── Business gate: actions that carry NO single business's data ──
+  // Everything NOT in here must declare a business in ACTION_BUSINESS. An action
+  // in neither list is REFUSED — fail-closed, mirroring NON_FINANCIAL_ACTIONS, so
+  // a future E-Commerce endpoint cannot ship ungated by omission.
+  // scripts/test-business-gate.mjs asserts the two lists cover every routed
+  // action, so a gap is a red test rather than a production 403.
+  //
+  // Six of these DO touch store data and are here deliberately:
+  //   auth-me         gating it is CIRCULAR — the client reads it to learn which
+  //                   businesses it may open, and it exposes only the caller's own.
+  //   grant-options   self-filters to the caller's grants (grantOptionsFor).
+  //   user-grants     self-filters the response (added when this was found leaking).
+  //   set-user-grants validates every element against grantOptionsFor per business.
+  //   push-subscribe / update-notif-prefs
+  //                   these enrol a device in the BL summary, but gating them would
+  //                   lock a future E-Commerce-only user out of push entirely. The
+  //                   real fix is chainWideRecipients() on the CRON path, which
+  //                   still never consults canAccessBusiness.
+const BUSINESS_AGNOSTIC_ACTIONS = new Set([
+  "announcement", "announcement-clear", "announcement-set",
+  "auth-login", "auth-logout", "auth-me", "auth-verify", "auth-verify-otp",
+  "passkey-auth-begin", "passkey-auth-finish", "passkey-delete", "passkey-list",
+  "passkey-register-begin", "passkey-register-finish",
+  "push-subscribe", "push-subscription-status", "push-test", "push-unsubscribe",
+  "update-notif-prefs", "vapid-public-key", "resend-invite",
+  "grant-options", "user-grants", "set-user-grants",
+  "secret-check",
+]);
+
+// Every remaining routed action serves Bargain Lane. Listed explicitly rather
+// than defaulted, so adding an E-Commerce endpoint forces a deliberate choice.
+const ACTION_BUSINESS = new Map([
+  ["backfill", "bl"],
+  ["backfill-items-snapshots", "bl"],
+  ["cancel-sale-schedule", "bl"],
+  ["category-costs", "bl"],
+  ["clientdate-probe", "bl"],
+  ["clover-categories", "bl"],
+  ["content-setting", "bl"],
+  ["create-clover-item", "bl"],
+  ["daily-brief", "bl"],
+  ["delete-clover-item", "bl"],
+  ["delete-sale-schedule", "bl"],
+  ["delete-user", "bl"],
+  ["draft-delete", "bl"],
+  ["draft-generate-caption", "bl"],
+  ["draft-save", "bl"],
+  ["draft-schedule", "bl"],
+  ["draft-unschedule", "bl"],
+  ["drafts", "bl"],
+  ["flow-calendar", "bl"],
+  ["flow-schedule-week", "bl"],
+  ["flow-segment-delete", "bl"],
+  ["flow-segment-upsert", "bl"],
+  ["flow-week-upsert", "bl"],
+  ["generate-brief", "bl"],
+  ["hourly", "bl"],
+  ["ingest", "bl"],
+  ["inventory-items", "bl"],
+  ["invite-user", "bl"],
+  ["item-costs", "bl"],
+  ["item-l2-totals", "bl"],
+  ["item-overrides", "bl"],
+  ["items", "bl"],
+  ["items-hour", "bl"],
+  ["items-snapshot", "bl"],
+  ["list-sale-schedules", "bl"],
+  ["list-users", "bl"],
+  ["ly-sales", "bl"],
+  ["manual-override", "bl"],
+  ["marketing-insights", "bl"],
+  ["marketing-photos", "bl"],
+  ["marketing-refresh", "bl"],
+  ["monthly-totals", "bl"],
+  ["morning-briefing", "bl"],
+  ["noncategorized-items", "bl"],
+  ["notify-photo-upload", "bl"],
+  ["photo", "bl"],
+  ["photo-delete", "bl"],
+  ["photo-upload", "bl"],
+  ["preview-daily-summary", "bl"],
+  ["publish-draft", "bl"],
+  ["rebuild-week-summaries", "bl"],
+  ["refresh-item-cats", "bl"],
+  ["repair-backups", "bl"],
+  ["repair-health", "bl"],
+  ["repair-restore", "bl"],
+  ["repair-run", "bl"],
+  ["resnapshot-clienttime", "bl"],
+  ["run-sale-scheduler-now", "bl"],
+  ["sales-diag", "bl"],
+  ["schedule-sale", "bl"],
+  ["send-daily-summary", "bl"],
+  ["send-weekly-digest", "bl"],
+  ["snapshot", "bl"],
+  ["store-scores", "bl"],
+  ["supply-budget-set", "bl"],
+  ["supply-budgets", "bl"],
+  ["supply-budgets-all", "bl"],
+  ["supply-request", "bl"],
+  ["supply-request-comment", "bl"],
+  ["supply-request-create", "bl"],
+  ["supply-request-delete", "bl"],
+  ["supply-request-fulfillment", "bl"],
+  ["supply-request-status", "bl"],
+  ["supply-requests", "bl"],
+  ["supply-requests-purge", "bl"],
+  ["supply-requests-purge-preview", "bl"],
+  ["thumbnail", "bl"],
+  ["thumbnail-delete", "bl"],
+  ["thumbnail-generate", "bl"],
+  ["thumbnail-upload", "bl"],
+  ["thumbnails", "bl"],
+  ["update-clover-item", "bl"],
+  ["update-user", "bl"],
+  ["weekly-store-detail", "bl"],
+  ["weekly-summary", "bl"],
+  ["weekly-t13", "bl"],
+]);
+
 // Which configured secret did this request present? "current" | "next" | null.
 //
 // Two slots exist so the secret can be rotated WITHOUT a synchronised flag-day.
@@ -6668,6 +6788,27 @@ export default {
         return new Response(JSON.stringify({
           error: "Forbidden", code: "NO_FINANCIAL_ACCESS",
         }), { status: 403, headers: corsJson });
+      }
+    }
+
+    // ── Business access gate ──────────────────────────────────────
+    // Fail-closed: an action in neither list is refused. isAdminSecret bypasses
+    // for machine callers, same as the financial gate above.
+    if (!isAdminSecret && currentUser) {
+      const act = url.searchParams.get("action") || "";
+      if (act && !BUSINESS_AGNOSTIC_ACTIONS.has(act)) {
+        const biz = ACTION_BUSINESS.get(act);
+        if (!biz) {
+          console.log(JSON.stringify({ business_gate: "unclassified-action", action: act }));
+          return new Response(JSON.stringify({
+            error: "Forbidden", code: "UNCLASSIFIED_ACTION",
+          }), { status: 403, headers: corsJson });
+        }
+        if (!canAccessBusiness(currentUser, biz)) {
+          return new Response(JSON.stringify({
+            error: "Forbidden", code: "NO_BUSINESS_ACCESS", business: biz,
+          }), { status: 403, headers: corsJson });
+        }
       }
     }
 
