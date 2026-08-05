@@ -20,6 +20,7 @@ function grab(re, label) {
 }
 const decls = [
   grab(/function grantFor\(user, businessId\) \{[\s\S]*?\n\}/, 'grantFor'),
+  grab(/function allowedUnits\(user, businessId\) \{[\s\S]*?\n\}/, 'allowedUnits') + '\n' +
   grab(/function allowedStores\(user\) \{[\s\S]*?\n\}/, 'allowedStores'),
   grab(/function canAccessStore\(user, store\) \{[\s\S]*?\n\}/, 'canAccessStore'),
   grab(/function canAccessBusiness\(user, businessId\) \{[\s\S]*?\n\}/, 'canAccessBusiness'),
