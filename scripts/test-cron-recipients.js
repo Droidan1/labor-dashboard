@@ -20,6 +20,11 @@ const grab = (re, label) => {
 const mod = new Function(
   grab(/function grantFor\(user, businessId\) \{[\s\S]*?\n\}/, 'grantFor') + '\n' +
   grab(/function allowedStores\(user\) \{[\s\S]*?\n\}/, 'allowedStores') + '\n' +
+  // ⚠️ Each of these is a TRANSITIVE dependency of chainWideRecipients that had
+  // to be added by hand when the business check landed — the exact brittleness
+  // this extraction style is known for. Prefer driving worker.scheduled.
+  grab(/function grantedBusinessIds\(user\) \{[\s\S]*?\n\}/, 'grantedBusinessIds') + '\n' +
+  grab(/function canAccessBusiness\(user, businessId\) \{[\s\S]*?\n\}/, 'canAccessBusiness') + '\n' +
   grab(/async function chainWideRecipients\(env\) \{[\s\S]*?\n\}/, 'chainWideRecipients') +
   '; return { chainWideRecipients, allowedStores };'
 )();
@@ -27,7 +32,9 @@ const mod = new Function(
 const db = new DatabaseSync(':memory:');
 db.exec(`CREATE TABLE users (
   id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE,
-  role TEXT NOT NULL, stores TEXT, status TEXT NOT NULL, created_at TEXT);`);
+  role TEXT NOT NULL, stores TEXT, status TEXT NOT NULL, created_at TEXT);
+CREATE TABLE user_grants (user_id TEXT NOT NULL, business_id TEXT NOT NULL,
+  role TEXT NOT NULL, units TEXT, PRIMARY KEY (user_id, business_id));`);
 
 // exact production shape, verified against prod 2026-08-04
 const USERS = [
@@ -52,6 +59,13 @@ const USERS = [
 const ins = db.prepare('INSERT INTO users (id,email,role,stores,status,created_at) VALUES (?,?,?,?,?,?)');
 USERS.forEach(u => ins.run(...u, '2026-01-01'));
 
+// Grants, mirroring prod: every non-superuser holds bl; admins also hold ecom.
+// u-adm3 is deliberately E-COMMERCE ONLY — the case the fix exists for.
+const ig = db.prepare('INSERT INTO user_grants (user_id,business_id,role,units) VALUES (?,?,?,?)');
+USERS.filter(u => u[2] !== 'superuser' && u[4] === 'active')
+     .forEach(u => ig.run(u[0], 'bl', u[2], u[3]));
+['u-adm1','u-adm2','u-adm3'].forEach(a => ig.run(a, 'ecom', 'admin', null));
+
 const env = { DB: { prepare: sql => ({ all: async () => ({ results: db.prepare(sql).all() }) }) } };
 
 let fail = 0;
@@ -62,6 +76,21 @@ const ok = (n, c, d = '') => { console.log(`  ${c ? 'PASS' : 'FAIL'}  ${n}${d ? 
   const emails = rcpt.map(r => r.email).sort();
   console.log('recipients of the chain-wide daily/weekly broadcast:');
   emails.forEach(e => console.log('   ', e));
+
+  ok('superuser still included', emails.some(e => e.startsWith('bhoward@')),
+     'checked by ROLE — canAccessBusiness reads allBusinessIds, which cron never sets');
+
+  console.log('\nan admin holding NO Bargain Lane grant is excluded:');
+  // Revoke kevin's bl grant, leaving him E-Commerce-only — the future shape this
+  // fix exists for. allowedStores() still returns null for him (global-role
+  // admin), so ONLY the business check can keep him off the list.
+  db.prepare("DELETE FROM user_grants WHERE user_id='u-adm3' AND business_id='bl'").run();
+  const after = (await mod.chainWideRecipients(env)).map(r => r.email);
+  ok('kevin (ecom-only admin) excluded', !after.some(e => e.startsWith('kevin@')),
+     'allowedStores() returns null for ANY global-role admin — needs canAccessBusiness');
+  ok('the other two admins still included',
+     after.some(e => e.startsWith('bgeorges@')) && after.some(e => e.startsWith('james@')));
+  ok('recipients drop 4 -> 3', after.length === 3, `got ${after.length}`);
 
   console.log('\nnobody store-scoped receives chain-wide figures:');
   const scoped = ['aalbert','adara','alyson','csemancik','dupontleads','howardbrian260','jharvey','nmartinez'];
