@@ -27,6 +27,7 @@ const grab = (re, label) => {
 };
 const F = new Function(
   grab(/function grantFor\(user, businessId\) \{[\s\S]*?\n\}/, 'grantFor') + '\n' +
+  grab(/function allowedUnits\(user, businessId\) \{[\s\S]*?\n\}/, 'allowedUnits') + '\n' +
   grab(/function allowedStores\(user\) \{[\s\S]*?\n\}/, 'allowedStores') + '\n' +
   grab(/function canAccessStore\(user, store\) \{[\s\S]*?\n\}/, 'canAccessStore') +
   '; return { canAccessStore };'

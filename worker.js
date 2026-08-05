@@ -6004,15 +6004,31 @@ function canAccessBusiness(user, businessId) {
 // keeps a real manager working instead of locking them out of their own store.
 // It cannot escalate: it yields exactly the scope they have today. Remove it
 // once `grant_fallback` has not been logged for a good while.
-function allowedStores(user) {
+function allowedUnits(user, businessId) {
   if (!user) return null;
+  // Role-based, not business-based, and deliberately unchanged: WHETHER you
+  // reach a business is now the business gate's job (BUSINESS_AGNOSTIC_ACTIONS /
+  // ACTION_BUSINESS). This function only answers WHICH units inside one.
   if (user.role === 'superuser' || user.role === 'admin') return null;
-  const g = grantFor(user, 'bl');
+  const g = grantFor(user, businessId);
   if (g) return g.units || [];
+
+  // 🔑 The users.stores fallback is BARGAIN LANE ONLY — it is a legacy column
+  // from before grants existed and has no meaning for any other business. Any
+  // other business with no grant fails CLOSED rather than inheriting Bargain
+  // Lane's store list, which is what a generic fallback would have done.
+  if (businessId !== 'bl') return [];
   if (user.grants && user.grants.length === 0 && user.id) {
     console.log(JSON.stringify({ grant_fallback: 'no-bl-grant', user: user.id, role: user.role }));
   }
   return user.stores || [];
+}
+
+// Bargain Lane's units are stores. Kept as a named wrapper so the 21 existing
+// call sites stay put and today's behaviour is byte-identical — the business id
+// is now a parameter rather than a literal buried in the body.
+function allowedStores(user) {
+  return allowedUnits(user, 'bl');
 }
 
 function canAccessStore(user, store) {

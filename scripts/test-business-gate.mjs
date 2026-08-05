@@ -64,5 +64,39 @@ const get = async (a, user) => (await worker.fetch(req(`/?action=${a}`, { user }
   ok(await get('weekly-summary', 'u-su') !== 403, 'superuser passes the business gate on the flag alone');
 }
 
+// ── allowedUnits is business-parameterised and fails CLOSED ────────────────
+// The point of splitting allowedStores: a non-bl business must NOT inherit
+// Bargain Lane's store list through the legacy users.stores fallback.
+{
+  const src2 = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const grab = (re) => src2.match(re)[0];
+  const m = new Function(
+    grab(/function grantFor\(user, businessId\) \{[\s\S]*?\n\}/) + '\n' +
+    grab(/function allowedUnits\(user, businessId\) \{[\s\S]*?\n\}/) + '\n' +
+    grab(/function allowedStores\(user\) \{[\s\S]*?\n\}/) +
+    '; return { allowedUnits, allowedStores };')();
+
+  // A manager with a bl grant and a legacy stores column.
+  const mgr = { id: 'm', role: 'manager', stores: ['BL1', 'BL4'],
+                grants: [{ business_id: 'bl', role: 'manager', units: ['BL1'] }] };
+  ok(JSON.stringify(m.allowedStores(mgr)) === '["BL1"]', 'bl reads the grant');
+  ok(JSON.stringify(m.allowedUnits(mgr, 'ecom')) === '[]',
+     `ecom fails CLOSED for a bl-only manager, got ${JSON.stringify(m.allowedUnits(mgr, 'ecom'))}`);
+
+  // No grants at all: bl still falls back to the legacy column (transitional),
+  // but no other business may.
+  const legacy = { id: 'l', role: 'manager', stores: ['BL2'], grants: [] };
+  ok(JSON.stringify(m.allowedStores(legacy)) === '["BL2"]', 'bl keeps the transitional fallback');
+  ok(JSON.stringify(m.allowedUnits(legacy, 'ecom')) === '[]',
+     'a non-bl business NEVER inherits users.stores');
+
+  // An ecom grant resolves on its own terms.
+  const ec = { id: 'e', role: 'manager', stores: ['BL1'],
+               grants: [{ business_id: 'ecom', role: 'manager', units: ['SHOP1'] }] };
+  ok(JSON.stringify(m.allowedUnits(ec, 'ecom')) === '["SHOP1"]', 'ecom units resolve from the ecom grant');
+  ok(JSON.stringify(m.allowedUnits(ec, 'bl')) === '["BL1"]',
+     'and bl still falls back for that same user (transitional, bl-only)');
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 if (fail || pass === 0) process.exit(1);
