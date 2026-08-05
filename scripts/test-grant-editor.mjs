@@ -226,6 +226,21 @@ const grantsOf = (id) =>
   ok(r.status === 200 && Array.isArray(r.body.grants), 'user-grants returns an array');
   const m = await call('/?action=user-grants&id=u-mgr2', 'u-mgr1');
   ok(m.status === 403, `a manager cannot read another user's grants, got ${m.status}`);
+
+  // 🔑 The response is filtered to businesses the CALLER can see. u-mgr2 holds
+  // bl + ecom; u-admin (harness) holds only bl, so ecom must not be disclosed —
+  // `units` are store codes, so an unfiltered dump is a scope roster leak.
+  const held = grantsOf('u-mgr2').map(g => g.business_id).sort();
+  ok(held.join(',') === 'bl,ecom', `precondition: u-mgr2 holds both, got [${held}]`);
+  // An earlier case gave u-admin an ecom grant to model production; drop it so
+  // this checks the BLIND-admin case specifically.
+  db.prepare("DELETE FROM user_grants WHERE user_id='u-admin' AND business_id='ecom'").run();
+  const a = await call('/?action=user-grants&id=u-mgr2', 'u-admin');
+  const seen = (a.body.grants || []).map(g => g.business_id).sort();
+  ok(seen.join(',') === 'bl',
+     `admin blind to ecom sees only the bl grant, got [${seen}]`);
+  const sup = await call('/?action=user-grants&id=u-mgr2', 'u-su');
+  ok((sup.body.grants || []).length === 2, 'superuser still sees both');
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);
