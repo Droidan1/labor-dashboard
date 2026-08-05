@@ -7804,8 +7804,16 @@ export default {
       const id = url.searchParams.get("id") || "";
       if (!id) return new Response(JSON.stringify({ error: "Missing id" }), { status: 400, headers: corsJson });
       const rows = await loadGrants(env, id);
+      // 🔑 Filter to businesses THIS caller can see. loadGrants returns every
+      // grant the target holds, and `units` are store codes — dumping it
+      // verbatim would let an admin who holds only some other business
+      // enumerate exactly which Bargain Lane stores every user is scoped to.
+      // Its sibling grant-options already self-filters; this one did not.
+      const visible = new Set((await grantOptionsFor(env, currentUser)).businesses.map(b => b.id));
       return new Response(JSON.stringify({
-        grants: rows.map(g => ({ business_id: g.business_id, role: g.role, units: g.units })),
+        grants: rows
+          .filter(g => visible.has(g.business_id))
+          .map(g => ({ business_id: g.business_id, role: g.role, units: g.units })),
       }), { headers: corsJson });
     }
 
