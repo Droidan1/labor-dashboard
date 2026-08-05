@@ -3594,6 +3594,9 @@ const BUSINESS_AGNOSTIC_ACTIONS = new Set([
   "push-subscribe", "push-subscription-status", "push-test", "push-unsubscribe",
   "update-notif-prefs", "vapid-public-key", "resend-invite",
   "grant-options", "user-grants", "set-user-grants",
+  // Self-gates on X-Handler-Token ABOVE the auth gate and returns before
+  // reaching this one — listed so the completeness test stays satisfied.
+  "ebay-handler-ingest",
   "secret-check",
 ]);
 
@@ -3687,6 +3690,13 @@ const ACTION_BUSINESS = new Map([
   ["weekly-summary", "bl"],
   ["weekly-t13", "bl"],
 ]);
+
+// Hex SHA-256 of a string. Used as the eBay audit-line dedupe key: hashing the
+// whole raw line covers every field, including `run` lines that carry no caseId.
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 // Which configured secret did this request present? "current" | "next" | null.
 //
@@ -6800,6 +6810,143 @@ export default {
       return new Response(JSON.stringify({ ok: true }), {
         headers: { ...corsJson, "Set-Cookie": sessionCookie("", 0, env) },
       });
+    }
+
+    // ── eBay Case Handler ingest ──────────────────────────────────
+    //    POST /?action=ebay-handler-ingest
+    //    Header: X-Handler-Token: <EBAY_HANDLER_TOKEN>
+    //    Body:   { state: {…handler-state.json…}, audit: [ …new lines… ] }
+    //
+    // 🔑 Deliberately placed ABOVE the auth gate and self-gated on its own
+    // secret. Raj's Handler is an external contractor's app with no session, so
+    // it cannot pass the session gate below. The alternative — letting the token
+    // set `isAdminSecret` — would hand an outside contractor all 24 admin
+    // endpoints. Up here the token's blast radius is exactly this handler.
+    //
+    // 🔑 NOT SNAPSHOT_SECRET. That one is public in the client's git history and
+    // gates the admin surface; this is single-purpose and independently rotatable.
+    if (url.searchParams.get("action") === "ebay-handler-ingest") {
+      if (request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "POST only" }), { status: 405, headers: corsJson });
+      }
+      const tok = request.headers.get("X-Handler-Token") || "";
+      // Truthiness-checked BEFORE comparing: an unset secret plus an absent
+      // header compares "" === undefined-ish and would authenticate the internet.
+      if (!env.EBAY_HANDLER_TOKEN || !tok || tok !== env.EBAY_HANDLER_TOKEN) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      }
+      try {
+        const body = await request.json();
+        const state = (body && body.state) || null;
+        const audit = Array.isArray(body && body.audit) ? body.audit : [];
+        if (!state || typeof state !== "object") {
+          return new Response(JSON.stringify({ error: "Missing state" }), { status: 400, headers: corsJson });
+        }
+        const BIZ = "ecom";
+        const now = new Date().toISOString();
+        const num = (v) => (typeof v === "number" && isFinite(v)) ? v : null;
+        const str = (v) => (v == null ? null : String(v));
+
+        // ── Cases: full snapshot every run, closed included. Upsert on the key.
+        const cases = (state.cases && typeof state.cases === "object") ? state.cases : {};
+        let caseCount = 0;
+        for (const [key, c] of Object.entries(cases)) {
+          if (!c || typeof c !== "object") continue;
+          // account::caseType::caseId — case ids are unique only within the pair.
+          const parts = String(key).split("::");
+          await env.DB.prepare(
+            `INSERT INTO ebay_cases (case_key, business, account, case_type, case_id,
+               ebay_state, is_closed, buyer_can_escalate, respond_by, first_seen, last_seen,
+               decision, decision_reason, tier, title, sku, amount,
+               buyer_username, buyer_comments, raw, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(case_key) DO UPDATE SET
+               ebay_state=excluded.ebay_state, is_closed=excluded.is_closed,
+               buyer_can_escalate=excluded.buyer_can_escalate, respond_by=excluded.respond_by,
+               last_seen=excluded.last_seen, decision=excluded.decision,
+               decision_reason=excluded.decision_reason, tier=excluded.tier,
+               title=excluded.title, sku=excluded.sku, amount=excluded.amount,
+               buyer_username=excluded.buyer_username, buyer_comments=excluded.buyer_comments,
+               raw=excluded.raw, updated_at=excluded.updated_at`
+          ).bind(
+            String(key), BIZ,
+            str(c.account) || parts[0] || null,
+            str(c.caseType) || parts[1] || null,
+            str(c.caseId) || parts[2] || null,
+            str(c.ebayState), c.isClosed ? 1 : 0,
+            c.buyerCanEscalate == null ? null : (c.buyerCanEscalate ? 1 : 0),
+            str(c.respondByDate), str(c.firstSeen), str(c.lastSeen),
+            str(c._decision), str(c._decisionReason), str(c._tier),
+            str(c.title), str(c.sku), num(c.amount),
+            str(c.buyerUsername), str(c.buyerComments),
+            JSON.stringify(c), now
+          ).run();
+          caseCount++;
+        }
+
+        // ── Audit lines: INSERT OR IGNORE on the line hash.
+        // Handler re-sends on any non-200 and re-sends the whole file if it is
+        // rotated or truncated, so duplicates are the normal case, not an error.
+        // Count by row delta rather than the driver's `changes` field — D1's
+        // result shape for INSERT OR IGNORE is not something to depend on, and
+        // this number is reported back to Handler.
+        const beforeRow = await env.DB.prepare(
+          `SELECT COUNT(*) AS n FROM ebay_actions WHERE business = ?`).bind(BIZ).first();
+        const before = (beforeRow && beforeRow.n) || 0;
+        for (const line of audit) {
+          if (!line || typeof line !== "object") continue;
+          const raw = JSON.stringify(line);
+          const hash = await sha256Hex(raw);
+          await env.DB.prepare(
+            `INSERT OR IGNORE INTO ebay_actions (business, line_hash, ts, kind, event,
+               account, case_type, case_id, action, dry_run, ok, http_status, amount, raw, received_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          ).bind(
+            BIZ, hash, str(line.ts), str(line.kind), str(line.event),
+            str(line.account), str(line.caseType), str(line.caseId), str(line.action),
+            line.dryRun == null ? null : (line.dryRun ? 1 : 0),
+            line.ok == null ? null : (line.ok ? 1 : 0),
+            num(line.httpStatus), num(line.amount), raw, now
+          ).run();
+        }
+        const afterRow = await env.DB.prepare(
+          `SELECT COUNT(*) AS n FROM ebay_actions WHERE business = ?`).bind(BIZ).first();
+        const eventCount = ((afterRow && afterRow.n) || 0) - before;
+
+        // ── Handler state. effective_mode folds config + forcedShadow + kill
+        // switch; last_successful_run_at is what staleness reads.
+        const acct = state.accountStatus && typeof state.accountStatus === "object" ? state.accountStatus : {};
+        const modes = Object.values(acct).map(a => a && a.effectiveMode).filter(Boolean);
+        // Worst-case wins: OFF (kill switch) beats SHADOW beats LIVE, so the
+        // badge can never overstate what the bot is actually doing.
+        const effective = modes.includes("OFF") ? "OFF"
+                        : modes.includes("SHADOW") ? "SHADOW"
+                        : (modes[0] || null);
+        await env.DB.prepare(
+          `INSERT INTO ebay_handler_state (business, version, last_run_at, last_successful_run_at,
+             effective_mode, account_status, received_at, cases_in_payload, events_in_payload)
+           VALUES (?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(business) DO UPDATE SET
+             version=excluded.version, last_run_at=excluded.last_run_at,
+             last_successful_run_at=excluded.last_successful_run_at,
+             effective_mode=excluded.effective_mode, account_status=excluded.account_status,
+             received_at=excluded.received_at, cases_in_payload=excluded.cases_in_payload,
+             events_in_payload=excluded.events_in_payload`
+        ).bind(
+          BIZ, str(state.version), str(state.lastRunAt), str(state.lastSuccessfulRunAt),
+          effective, JSON.stringify(acct), now, caseCount, eventCount
+        ).run();
+
+        return new Response(JSON.stringify({ ok: true, cases: caseCount, events: eventCount }),
+          { headers: corsJson });
+      } catch (e) {
+        // Non-200 leaves Handler's cursor untouched, so it re-sends next run.
+        console.log(JSON.stringify({ ebay_ingest_failed: String(e && e.message) }));
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
     }
 
     // ── Auth gate: all routes below require a valid session ───────
