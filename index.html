@@ -2903,13 +2903,31 @@
         </div>
       </div>
 
-      <div class="max-w-5xl mx-auto px-6 py-12">
-        <div class="mb-8">
-          <div class="text-xl font-semibold text-opl-ink dark:text-op-ink">Choose a business</div>
-          <p class="mt-1.5 text-sm text-opl-inkDim dark:text-op-inkDim" id="landing-sub"></p>
+      <div class="max-w-6xl mx-auto px-6 py-8">
+        <!-- Group hero: every business this account can see, rolled up. -->
+        <div class="rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel p-card mb-gridgap transition-colors">
+          <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <div class="text-[11px] font-mono uppercase tracking-widest text-opl-inkDim dark:text-op-inkDim" id="landing-hero-label">All businesses · Today</div>
+              <div class="mt-2 text-4xl sm:text-5xl font-semibold tabular-nums text-opl-ink dark:text-op-ink" id="landing-hero-total">—</div>
+              <div class="mt-1.5 text-sm" id="landing-hero-vs"></div>
+            </div>
+            <div class="text-right flex-shrink-0">
+              <div class="text-[11px] font-mono uppercase tracking-widest text-opl-inkDim dark:text-op-inkDim">Pace</div>
+              <div class="mt-2 text-3xl font-semibold tabular-nums" id="landing-hero-pace">—</div>
+              <div class="mt-1 text-xs text-opl-inkDim dark:text-op-inkDim" id="landing-hero-reporting"></div>
+            </div>
+          </div>
+          <div class="mt-5 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
+            <div class="h-full rounded-full bg-accent-green transition-[width] duration-500" id="landing-hero-bar" style="width:0%"></div>
+          </div>
+          <div class="mt-3 flex items-center justify-between gap-4 text-xs text-opl-inkDim dark:text-op-inkDim">
+            <div id="landing-hero-mtd"></div>
+            <div id="landing-hero-updated"></div>
+          </div>
         </div>
 
-        <div id="landing-cards" class="grid gap-gridgap sm:grid-cols-2"></div>
+        <div id="landing-cards" class="grid gap-gridgap lg:grid-cols-3"></div>
       </div>
     </div>
 
@@ -3650,7 +3668,15 @@
         aBins: isToday ? null : d.bin,
         aTotal: isToday ? null : d.total,
         aLabor: isToday ? null : d.laborPct,
-        aAuction: isToday ? null : d.auction
+        aAuction: isToday ? null : d.auction,
+        // Raw auction, NOT nulled for today. The fields above are deliberately
+        // nulled on today's row so renderCards doesn't double-count against the
+        // live Clover figures — but auction is not a Clover channel (it is the
+        // Drive ingest), so live never supplies it and today's value would
+        // otherwise be unreachable. sumRows only reads `aAuction`, so this extra
+        // field is invisible to every existing caller; the landing page's
+        // channel split is the only consumer.
+        auctionRaw: d.auction
       });
       if (!isToday && (d.orderCount != null || d.avgCart != null)) {
         cloverHistory[dateStr] = {
@@ -3921,6 +3947,9 @@
     })).then(() => {
       liveDataLoading = false;
       if (selIncludesToday()) renderDashboard();
+      // The picker's figures come from this same data, so it has to repaint when
+      // the live numbers land — otherwise it sits on the D1-only figures.
+      if (currentPage === 'landing') { try { renderLanding(); } catch (_) {} }
       if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName, false, { rerender: true });
     }).catch(error => {
       console.error("Clover data load failed:", error);
@@ -16609,60 +16638,233 @@
   }
   window.switchBusiness = switchBusiness;
 
+  // Today's figures for Bargain Lane, from the SAME data the dashboard renders
+  // from (allStoreData + liveCloverData) rather than a second fetch — the picker
+  // disagreeing with the dashboard it links to would be worse than it being slow.
+  //
+  // 🔑 `daily_sales.total` EXCLUDES auction. The dashboard's headline is
+  // `total + auction` (see the All Stores Budget block), so the grand total here
+  // is retail + bin + auction. Reading aTotal alone under-reports by the auction.
+  //
+  // 🔑 Auction is a CHANNEL of Bargain Lane, not a business — it appears as a
+  // bar inside this card and is already inside the total. It must never also be
+  // summed as a sibling, which would double-count it.
+  function bargainLaneFigures() {
+    const todayStr = getETTodayStr();
+    const month = todayStr.slice(0, 7);
+    let retail = 0, bin = 0, auction = 0, orders = 0, budget = 0, reporting = 0;
+    let mtdActual = 0, mtdBudget = 0;
+
+    for (const s of STORES) {
+      const rows = allStoreData[s] || [];
+      const todayRow = rows.find(r => r.date && r.date.toISOString().slice(0, 10) === todayStr);
+      const live = liveCloverData[s];
+
+      // Today: prefer live Clover for retail/BIN (D1's today-row is stale until
+      // the end-of-day rollup). Auction only ever comes from D1 — it is a Drive
+      // ingest, not a Clover channel.
+      if (live && live.total != null) {
+        retail += live.retail || 0;
+        bin    += live.bin    || 0;
+        orders += live.orderCount || 0;
+        reporting++;
+      } else if (todayRow) {
+        retail += todayRow.aRetail || 0;
+        bin    += todayRow.aBins   || 0;
+      }
+      // auctionRaw, not aAuction — the latter is nulled on today's row.
+      auction += todayRow?.auctionRaw || 0;
+      budget  += todayRow?.bTotal     || 0;
+
+      // Month to date, excluding today (added once, live, below).
+      for (const r of rows) {
+        const d = r.date && r.date.toISOString().slice(0, 10);
+        if (!d || d.slice(0, 7) !== month || d >= todayStr) continue;
+        mtdActual += (r.aTotal || 0) + (r.aAuction || 0);
+        mtdBudget += (r.bTotal || 0);
+      }
+    }
+
+    const total = retail + bin + auction;
+    return {
+      total, retail, bin, auction, orders, budget,
+      reporting, storeCount: STORES.length,
+      avgCart: orders > 0 ? total / orders : null,
+      pace: budget > 0 ? (total / budget) * 100 : null,
+      mtdActual: mtdActual + total,
+      mtdBudget: mtdBudget + budget,
+    };
+  }
+
   // Render the business cards. Driven entirely by auth-me's `businesses`, so a
   // new business appears here the moment it is granted — no client-side list to
   // keep in sync.
   function renderLanding() {
     const biz = userBusinesses(currentUser);
-    const sub = el('landing-sub');
-    if (sub) {
-      sub.textContent = currentUser && currentUser.role === 'superuser'
-        ? 'You have access to everything in the Hub.'
-        : `You have access to ${biz.length} businesses.`;
+    const fig = bargainLaneFigures();
+
+    // ── Group hero ──────────────────────────────────────────────────
+    // Only CONNECTED businesses contribute. E-Commerce reports nothing yet, so
+    // it is counted in "N of M reporting" but adds 0 — the denominator is honest
+    // about what is still missing rather than hiding it.
+    const connected = biz.filter(b => b.connected);
+    const groupTotal  = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.total  : 0), 0);
+    const groupBudget = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.budget : 0), 0);
+    const groupMtdA   = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdActual : 0), 0);
+    const groupMtdB   = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdBudget : 0), 0);
+    const groupPace   = groupBudget > 0 ? (groupTotal / groupBudget) * 100 : null;
+
+    const setTxt = (id, t) => { const n = el(id); if (n) n.textContent = t; };
+    setTxt('landing-hero-total', fmtDollar(groupTotal));
+    setTxt('landing-hero-pace', groupPace != null ? fmtPct(groupPace) : '—');
+    const paceEl = el('landing-hero-pace');
+    if (paceEl) paceEl.className = 'mt-2 text-3xl font-semibold tabular-nums ' +
+      (groupPace == null ? 'text-opl-inkDim dark:text-op-inkDim'
+        : groupPace >= 100 ? 'text-accent-green' : 'text-accent-amber');
+    setTxt('landing-hero-reporting', `${connected.length} of ${biz.length} reporting`);
+
+    const vs = el('landing-hero-vs');
+    if (vs) {
+      if (groupBudget > 0) {
+        const d = groupTotal - groupBudget;
+        vs.innerHTML = `<span class="font-semibold ${d >= 0 ? 'text-accent-green' : 'text-accent-amber'}">`
+          + `${d >= 0 ? '+' : '−'}${fmtDollar(Math.abs(d)).slice(1)}</span>`
+          + `<span class="text-opl-inkDim dark:text-op-inkDim"> vs ${fmtDollar(groupBudget)} budget</span>`;
+      } else vs.textContent = '';
     }
+    const bar = el('landing-hero-bar');
+    if (bar) bar.style.width = (groupBudget > 0
+      ? Math.max(0, Math.min(100, (groupTotal / groupBudget) * 100)) : 0) + '%';
+    setTxt('landing-hero-mtd', groupMtdB > 0
+      ? `Month to date · ${fmtDollar(groupMtdA)} vs ${fmtDollar(groupMtdB)}` : '');
+    setTxt('landing-hero-updated', 'Updated ' + new Date().toLocaleTimeString('en-US',
+      { hour: 'numeric', minute: '2-digit' }));
+
+    // ── Business cards ──────────────────────────────────────────────
     const wrap = el('landing-cards');
     if (!wrap) return;
     wrap.innerHTML = '';
 
-    biz.forEach(b => {
-      const card = document.createElement(b.connected ? 'button' : 'div');
-      card.className = [
-        'text-left rounded-card border p-card transition-colors',
-        'bg-opl-panel dark:bg-op-panel',
-        'border-[rgba(20,16,8,0.08)] dark:border-op-border',
-        b.connected
-          ? 'hover:border-accent-green/60 dark:hover:border-accent-green/60 hover:bg-opl-panelHi dark:hover:bg-op-panelHi cursor-pointer'
-          : 'opacity-60 cursor-default',
-      ].join(' ');
+    const CHIP = {
+      bl:   { initials: 'BL', tint: 'bg-accent-green/15 text-accent-green', source: 'Clover POS' },
+      ecom: { initials: 'EC', tint: 'bg-accent-blue/15 text-accent-blue',   source: 'SellerCloud' },
+    };
 
-      if (b.connected) {
-        card.type = 'button';
-        card.addEventListener('click', () => enterBusiness(b.id));
-      } else {
-        card.setAttribute('aria-disabled', 'true');
+    biz.forEach(b => {
+      const chip = CHIP[b.id] || { initials: b.name.slice(0, 2).toUpperCase(), tint: 'bg-accent-violet/15 text-accent-violet', source: '' };
+      const card = document.createElement('div');
+      card.className = 'rounded-card border p-card flex flex-col transition-colors bg-opl-panel dark:bg-op-panel '
+        + (b.connected
+            ? 'border-[rgba(20,16,8,0.08)] dark:border-op-border'
+            : 'border-dashed border-[rgba(20,16,8,0.16)] dark:border-[rgba(255,255,255,0.14)]');
+
+      // Header: chip + name + source line + status pill
+      const head = document.createElement('div');
+      head.className = 'flex items-start justify-between gap-3';
+      head.innerHTML =
+        `<div class="flex items-center gap-3 min-w-0">
+           <div class="w-10 h-10 rounded-xl flex items-center justify-center text-xs font-bold flex-shrink-0 ${chip.tint}">${chip.initials}</div>
+           <div class="min-w-0">
+             <div class="text-lg font-semibold text-opl-ink dark:text-op-ink truncate">${b.name}</div>
+             <div class="text-xs text-opl-inkDim dark:text-op-inkDim truncate">${chip.source}${
+               b.connected ? ` · ${b.unitCount} ${b.unitNoun}${b.unitCount === 1 ? '' : 's'}` : ' · sites pending'}</div>
+           </div>
+         </div>
+         <span class="flex-shrink-0 text-[10px] font-mono uppercase tracking-widest px-2 py-1 rounded-full border ${
+           b.connected ? 'text-accent-green border-accent-green/40' : 'text-accent-amber border-accent-amber/40'}">
+           ${b.connected ? '● Live' : '● Setup'}</span>`;
+      card.appendChild(head);
+
+      if (!b.connected) {
+        const empty = document.createElement('div');
+        empty.className = 'mt-5 flex-1 rounded-xl border border-dashed border-[rgba(20,16,8,0.14)] dark:border-[rgba(255,255,255,0.12)] flex flex-col items-center justify-center text-center px-4 py-8 gap-3';
+        empty.innerHTML =
+          `<div class="text-sm text-opl-inkDim dark:text-op-inkDim">No sales data yet.<br>API credentials not issued yet</div>`;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'text-sm font-semibold px-4 py-2 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi text-opl-ink dark:text-op-ink opacity-60 cursor-not-allowed';
+        btn.textContent = 'Connect ' + chip.source + ' →';
+        btn.disabled = true;
+        // Deliberately inert: connecting SellerCloud is a credentials
+        // conversation, not a button. A live-looking control that does nothing
+        // is worse than one that says it is not ready.
+        btn.title = 'Needs SellerCloud API credentials first';
+        empty.appendChild(btn);
+        card.appendChild(empty);
+        wrap.appendChild(card);
+        return;
       }
 
-      const name = document.createElement('div');
-      name.className = 'text-lg font-semibold text-opl-ink dark:text-op-ink';
-      name.textContent = b.name;
+      // Money line
+      const money = document.createElement('div');
+      money.className = 'mt-5';
+      const d = fig.budget > 0 ? fig.total - fig.budget : null;
+      money.innerHTML =
+        `<div class="text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(fig.total)}</div>`
+        + (d != null
+            ? `<div class="mt-1 text-sm"><span class="font-semibold ${d >= 0 ? 'text-accent-green' : 'text-accent-amber'}">${d >= 0 ? '+' : '−'}${fmtDollar(Math.abs(d)).slice(1)}</span><span class="text-opl-inkDim dark:text-op-inkDim"> vs ${fmtDollar(fig.budget)} budget</span></div>`
+            : '');
+      card.appendChild(money);
 
-      const meta = document.createElement('div');
-      meta.className = 'mt-1 text-sm text-opl-inkDim dark:text-op-inkDim';
-      // Pluralise off the business's own unit_noun — 'store' for Bargain Lane,
-      // 'storefront' for E-Commerce. Generic schema, specific wording.
-      meta.textContent = b.connected
-        ? `${b.unitCount} ${b.unitNoun}${b.unitCount === 1 ? '' : 's'}`
-        : 'Not connected yet';
+      // Pace row + bar
+      const pace = document.createElement('div');
+      pace.className = 'mt-4';
+      pace.innerHTML =
+        `<div class="flex items-center justify-between text-[11px] font-mono uppercase tracking-widest">
+           <span class="text-opl-inkDim dark:text-op-inkDim">Pace · ${fig.reporting} of ${fig.storeCount} reporting</span>
+           <span class="${fig.pace == null ? 'text-opl-inkDim dark:text-op-inkDim' : fig.pace >= 100 ? 'text-accent-green' : 'text-accent-amber'} font-semibold">${fig.pace != null ? fmtPct(fig.pace) : '—'}</span>
+         </div>
+         <div class="mt-2 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
+           <div class="h-full rounded-full ${fig.pace != null && fig.pace >= 100 ? 'bg-accent-green' : 'bg-accent-amber'}" style="width:${fig.pace != null ? Math.max(0, Math.min(100, fig.pace)) : 0}%"></div>
+         </div>`;
+      card.appendChild(pace);
 
-      const status = document.createElement('div');
-      status.className = 'mt-4 text-xs uppercase tracking-wide ' + (b.connected
-        ? 'text-accent-green'
-        : 'text-opl-inkDimmer dark:text-op-inkDimmer');
-      status.textContent = b.connected ? 'Open →' : 'Coming soon';
+      // Channel split — Auction sits here, INSIDE Bargain Lane, because it is a
+      // channel of this business and is already part of the total above.
+      const chMax = Math.max(fig.retail, fig.bin, fig.auction, 1);
+      const channels = [
+        ['Retail',  fig.retail,  'bg-accent-green'],
+        ['BIN',     fig.bin,     'bg-accent-blue'],
+        ['Auction', fig.auction, 'bg-accent-violet'],
+      ];
+      const chWrap = document.createElement('div');
+      chWrap.className = 'mt-5 space-y-2';
+      chWrap.innerHTML = channels.map(([label, val, colour]) =>
+        `<div class="flex items-center gap-3 text-sm">
+           <span class="w-16 flex-shrink-0 text-opl-inkDim dark:text-op-inkDim">${label}</span>
+           <span class="flex-1 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
+             <span class="block h-full rounded-full ${colour}" style="width:${(val / chMax) * 100}%"></span>
+           </span>
+           <span class="tabular-nums text-opl-ink dark:text-op-ink flex-shrink-0">${fmtDollar(val)}</span>
+         </div>`).join('');
+      card.appendChild(chWrap);
 
-      card.appendChild(name);
-      card.appendChild(meta);
-      card.appendChild(status);
+      // Metric tiles
+      const tiles = [
+        ['Orders',   fig.orders != null ? fig.orders.toLocaleString('en-US') : '—'],
+        ['Avg cart', fig.avgCart != null ? fmtDollar(fig.avgCart) : '—'],
+        [b.unitNoun + 's', String(fig.storeCount)],
+      ];
+      const tileWrap = document.createElement('div');
+      tileWrap.className = 'mt-5 grid grid-cols-3 gap-2';
+      tileWrap.innerHTML = tiles.map(([label, val]) =>
+        `<div class="rounded-xl bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.06)] dark:border-op-border px-3 py-2.5 text-center">
+           <div class="text-[10px] font-mono uppercase tracking-widest text-opl-inkDim dark:text-op-inkDim capitalize">${label}</div>
+           <div class="mt-1 text-base font-semibold tabular-nums text-opl-ink dark:text-op-ink">${val}</div>
+         </div>`).join('');
+      card.appendChild(tileWrap);
+
+      // Enter
+      const foot = document.createElement('div');
+      foot.className = 'mt-5 pt-1 flex justify-end';
+      const enter = document.createElement('button');
+      enter.type = 'button';
+      enter.className = 'text-sm font-semibold px-4 py-2 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi text-opl-ink dark:text-op-ink hover:border-accent-green/60 hover:text-accent-green transition-colors';
+      enter.textContent = `Enter ${b.name} →`;
+      enter.addEventListener('click', () => enterBusiness(b.id));
+      foot.appendChild(enter);
+      card.appendChild(foot);
+
       wrap.appendChild(card);
     });
   }
@@ -17457,6 +17659,12 @@
       // a #hash page, or a photo-upload folder link (cf_store).
       const dlDeep = dlSearch.get('view') || dlSearch.get('cf_store') || (window.location.hash ? window.location.hash.slice(1) : '');
       const loaded = loadAll();
+      // The picker paints before any data exists, so repaint it once the D1 rows
+      // land. loadAll's clover promise repaints it a second time when the live
+      // figures arrive — that one is inside loadAll itself.
+      if (landing === 'landing') Promise.resolve(loaded).finally(() => {
+        if (currentPage === 'landing') { try { renderLanding(); } catch (_) {} }
+      });
       // "What's New" popup — show once data has painted, unless a deep link
       // is taking over the screen. Persists only when the user hits Dismiss.
       if (!dlDeep && onDashboard) Promise.resolve(loaded).finally(() => {
