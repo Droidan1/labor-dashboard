@@ -1,10 +1,19 @@
 # Projects & Tasks — permissions game plan — 2026-08-04
 
-> **STATUS (2026-08-04): the role and its enforcement are LIVE; the feature is not.**
+> **STATUS (2026-08-04, end of day): every permission primitive this feature needs
+> is now LIVE; the feature itself is not.**
 > `staff` exists as a role and cannot see money. It is deliberately **not offered
 > in the invite dropdown** — there is nothing for a staff user to do yet, so
 > granting it would strand someone on a "nothing assigned to you" screen.
 > Everything about projects and tasks themselves is still unbuilt.
+>
+> ✅ **What landed today that this plan was waiting on:** `user_grants` exists and
+> the worker reads scope from it (`migration-030`), and the financial gate is live
+> — 85 of 108 routed actions are closed to `staff` by default, fail-closed via an
+> allowlist (`manager` keeps financial access; only `staff` is gated). So the two
+> hard prerequisites — a real grant to derive
+> "who works at my store" from, and a way to let `staff` into the app without
+> showing them money — are both **done**.
 >
 > ⚠️ Provisional, like its sibling [`multi-business-permissions.md`](multi-business-permissions.md).
 > Re-read "Open questions" before treating anything here as decided.
@@ -21,7 +30,7 @@ role lists metastasize:
 
 | Question | Answered by | Mechanism |
 |---|---|---|
-| Can you get into Bargain Lane, and which stores? | **the grant** | already exists (`users.stores`, later `user_grants`) |
+| Can you get into Bargain Lane, and which stores? | **the grant** | ✅ **built** — `user_grants`, read via `allowedStores()` |
 | Can you hand out work, or only do it? | **the role** | one new bundle — see below |
 | Is *this particular task* yours? | **the task row** | ⚠️ **not a permission** — it's `tasks.assignee_id` |
 
@@ -127,7 +136,12 @@ from "who created whom".
 1. **A scoped people list.** To assign a task, a manager needs "who works at my
    store". Today listing users is gated by `canAccessInventory` (admin/superuser
    only). Needs a new, narrower endpoint returning only users whose grant
-   intersects the caller's stores — never the whole directory.
+   intersects the caller's stores — never the whole directory. Now cheap to build:
+   the grant table makes "whose scope overlaps mine" a single join.
+   🛑 **When you add it, add a case to `scripts/test-request-scoping.mjs`** — that
+   is the standing rule for any store-scoped endpoint, and the only harness that
+   would catch a missing scope filter. See the review notes in
+   [`multi-business-permissions.md`](multi-business-permissions.md).
 2. ~~**A migration that rebuilds `users`.**~~ ✅ **DONE** — `migration-029.sql`,
    applied to staging and production 2026-08-04. Dropped `district_manager`,
    added `executive` and `staff`, added `title`. Both plans' needs in one rebuild
@@ -141,7 +155,7 @@ from "who created whom".
 
 | Who | Sees |
 |---|---|
-| `staff` | tasks assigned to them, plus their store's board |
+| `staff` | tasks assigned to them, plus their store's board — **no money, enforced** |
 | `manager` | every task at their granted stores |
 | `admin` / `superuser` | everything in the business |
 | `executive` | ⏸ read-only — **decide** (see open questions) |

@@ -1,8 +1,10 @@
 # Multi-business permissions — plan — 2026-08-03
 
-> **STATUS (2026-08-04): PARTLY BUILT.** The role half of step 1 is live in
-> production; the grants half is not started. See "Build order" for exactly
-> what shipped. Everything from step 2 onward is still plan only.
+> **STATUS (2026-08-04, end of day): STEPS 1–3 LARGELY BUILT AND LIVE.**
+> worker `be734899` · main `12b9095` · 10 PRs merged in one day.
+> The grant model is in production and the worker reads it. Step 4 is
+> deliberately untouched. See "Build order" for exactly what is and is not done,
+> and read "What the review found" before adding any endpoint.
 >
 > ⚠️ **This plan is expected to change.** It was written before we know which
 > businesses are actually being added or what the owner wants the Hub to become.
@@ -91,6 +93,34 @@ E-Commerce, all storefronts" means the right thing before and after first sync.
 "someone who can view other businesses the superuser picks" case — that's an
 Executive with a narrow scope, not a separate role.
 
+### ✅ Financial gating — SHIPPED 2026-08-04
+
+The role table above says *what* each role does; the enforcement is one gate.
+`FINANCIAL_ROLES = {superuser, admin, executive, manager}`. The gate sits in
+`worker.fetch` immediately after the auth gate and returns `403 NO_FINANCIAL_ACCESS`.
+
+⚠️ **Manager KEEPS financial access.** Only `staff` — and any unrecognised role —
+is gated. So this shipped as a **latent** control: it changes nothing for anyone
+who exists in production today, and starts mattering the first time a `staff`
+user is created. That is why it was safe to ship ahead of the feature that needs
+it, and also why nobody would notice if it broke. It has a request-level test
+(`scripts/test-request-scoping.mjs`); keep it that way.
+
+🔑 **It is an allowlist, not a denylist.** `NON_FINANCIAL_ACTIONS` names the 23
+actions that stay open (auth, passkeys, push, photos, announcements); the other
+**85 of the 108 routed actions are closed by default** — counted from the source,
+2026-08-04. A new money-touching endpoint is
+protected the moment it is written — the failure mode of forgetting is a 403, not
+a leak. That direction is the whole point; do not invert it.
+
+Two things it does **not** cover, both found the hard way:
+- 🛑 **Cron.** `scheduled()` never passes through `fetch`, so no scheduled sender
+  is gated by it. Each one must check `canSeeFinancials()` itself.
+- **The client.** `index.html` mirrors this with its own `canSeeFinancials()` and
+  a `FINANCIAL_PAGES` guard in `navigateToPage`, plus `landingPageFor()` so a
+  non-financial user lands somewhere they can actually use. That is UX, not
+  security — the worker gate is the real one.
+
 ---
 
 ## Schema
@@ -154,28 +184,76 @@ dashboard** — today and after five businesses exist. (User's call, 2026-08-03.
 Sequenced so the risky part lands while nothing is visible, and the visible part
 lands when it's already true.
 
-- [~] **1 · Tables + backfill.** **HALF DONE.**
-      - [x] `users` rebuilt by `migration-029.sql` — roles widened to
-            `(superuser, admin, executive, manager, staff)`, `title` column added,
-            `district_manager` retired and folded into `manager`. Applied to
-            **staging and production 2026-08-04**; every dependent row preserved.
-            Prod held no district managers, so nobody's role moved.
-      - [ ] `businesses`, `business_units`, `user_grants` — **not created.** The
-            grant model does not exist yet; scoping is still `users.stores`.
-      - 🛑 **Any future rebuild of an existing table must snapshot and restore its
-            children** — see the D1 cascade note below. New tables are unaffected,
-            so the three above can be created normally.
-- [ ] **2 · Worker reads grants.** Resolve grants at session time and gate
-      **every endpoint by `business_id`, not just by role.** 🔑 This is the
-      security-relevant step: today a `role === 'admin'` check alone would happily
-      serve any business's data to a Bargain-Lane-only admin.
-- [ ] **3 · Users page edits grants.** Stack multiple grants per person; business
-      picker for roles that span businesses, unit picker for roles scoped to units.
-      ⚠️ The store checkboxes are currently **twelve literal `<label>` elements**
-      hardcoded across the two modals (`index.html` ~2445 and ~2486) — and BL16
-      sits before BL14 in source order. That block has to be rendered, not typed.
-- [ ] **4 · Landing page.** Earns its place the day someone holds **two** grants.
-      Until then the redirect does the job and the picker is dead code. **Build it last.**
+- [x] **1 · Tables + backfill — DONE.** `migration-030` created `businesses`,
+      `business_units`, `user_grants` and backfilled every user as one Bargain Lane
+      grant. Applied to **staging and production 2026-08-04**; 11 grants, scope
+      carried over with **zero** role/unit mismatches, idempotency proven by a
+      second run writing 0 rows. Purely additive, so the D1 cascade trap below did
+      not apply — rollback is dropping three tables.
+      ⚠️ `user_grants` is now the **fifth** table cascading off `users`.
+      **Verified in prod 2026-08-05:** 1 business, 12 users, **11 grants** — the
+      12th is the superuser, who correctly holds *no* grant, because superuser is
+      a flag meaning "all businesses" and not a row. 3 admins + 8 managers.
+- [~] **2 · Worker reads grants — HALF DONE.**
+      - [x] Grants resolved once per request in `getAuthUser`; `allowedStores()`
+            reads the `bl` grant. Proven behaviour-preserving before shipping —
+            12 real users, 72 per-store decisions, **zero differences** — and
+            verified live in prod with a grant deliberately disagreeing with the
+            column (the grant won).
+      - [x] A transitional fallback to `users.stores` that logs `grant_fallback`.
+            **Remove once that line has been silent for a while.**
+      - [ ] **Gate every endpoint by `business_id`.** NOT started, and correctly so:
+            `canAccessBusiness()` exists but has **zero call sites**, because with
+            one business there is nothing to disambiguate. This becomes real work
+            the day a second business exists — and it is the security-relevant half.
+- [~] **3 · Users page edits grants — HALF DONE.**
+      - [x] `invite-user` and `update-user` write the grant alongside the columns.
+            🔑 `update-user` re-reads from the DB rather than trusting the request
+            body: `role` and `stores` are independent optional fields, so building
+            the grant from the body would blank whichever the UI did not send.
+      - [x] The store picker renders from one `USER_STORES` list (was twelve
+            hardcoded `<label>`s), so a per-business unit picker is a data change.
+      - [ ] Multiple grants per person, business picker, per-business role. Nothing
+            to build until a second business exists.
+- [ ] **4 · Landing page — NOT STARTED, still correctly last.** Every user holds
+      exactly one grant, so the picker would be dead code for all 12 of them.
+      🛑 **The blocker is not code.** E-Commerce needs SellerCloud credentials —
+      a team endpoint, a read-only integration user, and its password. See
+      [`sellercloud-api-brief.md`](sellercloud-api-brief.md) (now tracked on main).
+
+### What the review found — read before adding an endpoint
+
+An adversarial multi-agent review on 2026-08-04 found **seven** holes, all
+predating the grant work and all live in production. Every one had passed every
+test. They are fixed, but the shapes recur:
+
+| hole | shape |
+|---|---|
+| `store-scores`, `ly-sales` | returned every store's figures — never called `allowedStores()` |
+| fall-through `?store=` | read AND overwrote any store — the final `else` branch of `fetch`, reached by any unrecognised `?action=` too |
+| `update-user` | any admin could assign `role: 'superuser'` and self-promote |
+| daily summary, weekly digest | chain-wide sales emailed to all 8 scoped managers — **cron never passes the request-path gate** |
+| interval push | a third hand-rolled copy of `allowedStores()`, and no financial check |
+| `.sidebar .nav-item` | CSS specificity (0,2,0) beat `.hidden` (0,1,0), so gated nav items stayed visible |
+
+🔑 **Four rules that fall out of those:**
+1. **Every store-parameterised route calls `canAccessStore()`** — including
+   fall-through and non-`?action=` routes. Two of the seven were routes nobody
+   thought of as endpoints.
+2. **Never hand-roll scoping.** There were three copies; there are now **zero** —
+   `allowedStores()` has exactly **one** definition and **21** call sites
+   (verified 2026-08-05). Add a call site; never a copy.
+3. **Anything on a cron re-checks role AND scope itself** — the gate
+   protects *requests*, not the app.
+4. **Any endpoint that writes `role` needs an allowlist**, and `'superuser'`
+   belongs in none of them.
+
+⚠️ **The tests did not catch any of this, and could not.** They extracted pure
+functions with regexes or grepped source, so they tested policy and never wiring.
+Mutation testing measured a ~25% kill rate; deleting the financial gate outright
+left the whole suite green. `scripts/test-request-scoping.mjs` and
+`test-interval-summary.mjs` now drive the real `worker.fetch` / `worker.scheduled`.
+**Adding a store-scoped endpoint means adding a case there.**
 
 ### 🛑 D1 cannot suppress ON DELETE CASCADE (measured 2026-08-04)
 
