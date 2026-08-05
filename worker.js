@@ -3600,6 +3600,12 @@ const BUSINESS_AGNOSTIC_ACTIONS = new Set([
 // Every remaining routed action serves Bargain Lane. Listed explicitly rather
 // than defaulted, so adding an E-Commerce endpoint forces a deliberate choice.
 const ACTION_BUSINESS = new Map([
+  // boost-post exists only on the `staging` branch (the Meta Boost feature).
+  // It boosts a published Bargain Lane bin post, so it is bl-scoped. Added
+  // here by the completeness test, which caught it 403-ing under the
+  // fail-closed gate the moment main was merged in. It must travel WITH the
+  // Boost feature when that goes to main.
+  ["boost-post", "bl"],
   ["backfill", "bl"],
   ["backfill-items-snapshots", "bl"],
   ["cancel-sale-schedule", "bl"],
