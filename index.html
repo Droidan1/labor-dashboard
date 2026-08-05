@@ -304,6 +304,26 @@
        navigateToPage() still refused the click, so this was a visible-menu
        leak rather than a data one, but the menu should not be there at all. */
     .sidebar .nav-item.hidden { display: none; }
+
+    /* Landing page. `lp-` prefix deliberately — `ct-` is Content Studio's and
+       already owns .ct-tile. These mirror the dashboard's own treatments:
+       wide-tracked mono eyebrows, status pills, and green-tinted metric tiles
+       with a watermark icon. */
+    .lp-eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+                  font-family: 'JetBrains Mono', ui-monospace, monospace; color: #6b6453; }
+    .dark .lp-eyebrow { color: #8893a7; }
+    .lp-pill { display: inline-block; font-size: 10px; letter-spacing: 0.14em;
+               text-transform: uppercase; padding: 4px 10px; border-radius: 999px;
+               font-family: 'JetBrains Mono', ui-monospace, monospace; border: 1px solid; }
+    .lp-pill-live  { color: #22c55e; border-color: rgba(34,197,94,0.45); }
+    .lp-pill-setup { color: #f59e0b; border-color: rgba(245,158,11,0.45); }
+    .lp-tile { position: relative; overflow: hidden; text-align: center;
+               border-radius: 12px; padding: 10px 8px;
+               background: rgba(34,197,94,0.07); border: 1px solid rgba(34,197,94,0.22); }
+    .dark .lp-tile { background: rgba(34,197,94,0.09); border-color: rgba(34,197,94,0.28); }
+    .lp-tile-label { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+                     color: #22c55e; font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    .lp-tile-val { font-size: 17px; font-weight: 600; margin-top: 3px; }
     .dark .sidebar .nav-item { color: #8893a7; }
     .sidebar .nav-item:hover { background: rgba(20,16,8,0.035); color: #14110a; }
     .dark .sidebar .nav-item:hover { background: rgba(255,255,255,0.04); color: #e7ecf3; }
@@ -2908,26 +2928,45 @@
         <div class="rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel p-card mb-gridgap transition-colors">
           <div class="flex items-start justify-between gap-4">
             <div class="min-w-0">
-              <div class="text-[11px] font-mono uppercase tracking-widest text-opl-inkDim dark:text-op-inkDim" id="landing-hero-label">All businesses · Today</div>
+              <div class="lp-eyebrow" id="landing-hero-label">Today · All businesses</div>
               <div class="mt-2 text-4xl sm:text-5xl font-semibold tabular-nums text-opl-ink dark:text-op-ink" id="landing-hero-total">—</div>
               <div class="mt-1.5 text-sm" id="landing-hero-vs"></div>
             </div>
             <div class="text-right flex-shrink-0">
-              <div class="text-[11px] font-mono uppercase tracking-widest text-opl-inkDim dark:text-op-inkDim">Pace</div>
-              <div class="mt-2 text-3xl font-semibold tabular-nums" id="landing-hero-pace">—</div>
+              <span class="lp-pill lp-pill-live" id="landing-hero-live">● Live</span>
+              <div class="lp-eyebrow mt-3.5">Pace</div>
+              <div class="mt-1 text-3xl font-semibold tabular-nums" id="landing-hero-pace">—</div>
               <div class="mt-1 text-xs text-opl-inkDim dark:text-op-inkDim" id="landing-hero-reporting"></div>
             </div>
           </div>
-          <div class="mt-5 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
-            <div class="h-full rounded-full bg-accent-green transition-[width] duration-500" id="landing-hero-bar" style="width:0%"></div>
+          <div class="mt-4 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
+            <div class="h-full rounded-full transition-[width] duration-500 bg-accent-green" id="landing-hero-bar" style="width:0%"></div>
           </div>
-          <div class="mt-3 flex items-center justify-between gap-4 text-xs text-opl-inkDim dark:text-op-inkDim">
+          <!-- Budget bar endpoints, mirroring the dashboard hero. -->
+          <div class="mt-1.5 flex items-center justify-between text-xs">
+            <span class="text-opl-inkDim dark:text-op-inkDim">$0</span>
+            <span class="font-semibold text-opl-ink dark:text-op-ink tabular-nums" id="landing-hero-budget"></span>
+          </div>
+
+          <div class="my-5 h-px bg-[rgba(20,16,8,0.08)] dark:bg-op-border"></div>
+
+          <!-- Channel mix: ONE stacked bar + a legend, matching the dashboard.
+               No Matrix tiles here — with one connected business they would just
+               repeat the Bargain Lane card's. -->
+          <div class="flex items-baseline justify-between">
+            <span class="lp-eyebrow">Channel mix</span>
+            <span class="text-xs text-opl-inkDim dark:text-op-inkDim" id="landing-mix-count"></span>
+          </div>
+          <div class="mt-3 flex h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)]" id="landing-mix-bar"></div>
+          <div class="mt-3 grid grid-cols-3 gap-4 text-xs" id="landing-mix-legend"></div>
+
+          <div class="mt-5 flex items-center justify-between gap-4 text-xs text-opl-inkDim dark:text-op-inkDim">
             <div id="landing-hero-mtd"></div>
             <div id="landing-hero-updated"></div>
           </div>
         </div>
 
-        <div id="landing-cards" class="grid gap-gridgap lg:grid-cols-3"></div>
+        <div id="landing-cards" class="grid gap-gridgap lg:grid-cols-2"></div>
       </div>
     </div>
 
@@ -16653,6 +16692,7 @@
     const todayStr = getETTodayStr();
     const month = todayStr.slice(0, 7);
     let retail = 0, bin = 0, auction = 0, orders = 0, budget = 0, reporting = 0;
+    let itemsNum = 0, itemsDen = 0;
     let mtdActual = 0, mtdBudget = 0;
 
     for (const s of STORES) {
@@ -16667,6 +16707,12 @@
         retail += live.retail || 0;
         bin    += live.bin    || 0;
         orders += live.orderCount || 0;
+        // Weight avgItems by each store's order count — a plain mean would let
+        // a tiny store swing the chain figure as hard as Coliseum.
+        if (live.avgItems != null && live.orderCount) {
+          itemsNum += live.avgItems * live.orderCount;
+          itemsDen += live.orderCount;
+        }
         reporting++;
       } else if (todayRow) {
         retail += todayRow.aRetail || 0;
@@ -16690,6 +16736,7 @@
       total, retail, bin, auction, orders, budget,
       reporting, storeCount: STORES.length,
       avgCart: orders > 0 ? total / orders : null,
+      avgItems: itemsDen > 0 ? itemsNum / itemsDen : null,
       pace: budget > 0 ? (total / budget) * 100 : null,
       mtdActual: mtdActual + total,
       mtdBudget: mtdBudget + budget,
@@ -16699,172 +16746,163 @@
   // Render the business cards. Driven entirely by auth-me's `businesses`, so a
   // new business appears here the moment it is granted — no client-side list to
   // keep in sync.
+  // Pace colour thresholds, mirroring the dashboard's store cards: red when
+  // badly behind, amber when behind, green once at or over budget.
+  function lpPaceColour(pct) {
+    if (pct == null) return 'text-opl-inkDim dark:text-op-inkDim';
+    if (pct >= 100) return 'text-accent-green';
+    return pct < 30 ? 'text-op-bad' : 'text-accent-amber';
+  }
+  function lpPaceBar(pct) {
+    if (pct == null) return 'bg-[rgba(20,16,8,0.15)] dark:bg-[rgba(255,255,255,0.15)]';
+    if (pct >= 100) return 'bg-accent-green';
+    return pct < 30 ? 'bg-op-bad' : 'bg-accent-amber';
+  }
+  function lpDelta(actual, budget) {
+    if (!budget) return '';
+    const d = actual - budget;
+    const cls = d >= 0 ? 'text-accent-green' : 'text-op-bad';
+    return `<span class="font-semibold ${cls}">${d >= 0 ? '+' : '−'}${fmtDollar(Math.abs(d)).slice(1)}</span>`
+         + `<span class="text-opl-inkDim dark:text-op-inkDim"> vs ${fmtDollar(budget)}</span>`;
+  }
+  // Reuses the dashboard's own matrixTileWatermark() so the corner icons are
+  // literally the same artwork as the store cards, not a lookalike.
+  function lpTile(label, value, mark) {
+    return `<div class="lp-tile">
+        <div class="lp-tile-label relative">${label}</div>
+        <div class="lp-tile-val text-opl-ink dark:text-op-ink tabular-nums relative">${value}</div>
+        ${matrixTileWatermark(mark)}
+      </div>`;
+  }
+
   function renderLanding() {
     const biz = userBusinesses(currentUser);
     const fig = bargainLaneFigures();
-
-    // ── Group hero ──────────────────────────────────────────────────
-    // Only CONNECTED businesses contribute. E-Commerce reports nothing yet, so
-    // it is counted in "N of M reporting" but adds 0 — the denominator is honest
-    // about what is still missing rather than hiding it.
     const connected = biz.filter(b => b.connected);
-    const groupTotal  = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.total  : 0), 0);
-    const groupBudget = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.budget : 0), 0);
-    const groupMtdA   = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdActual : 0), 0);
-    const groupMtdB   = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdBudget : 0), 0);
-    const groupPace   = groupBudget > 0 ? (groupTotal / groupBudget) * 100 : null;
-
     const setTxt = (id, t) => { const n = el(id); if (n) n.textContent = t; };
-    setTxt('landing-hero-total', fmtDollar(groupTotal));
-    setTxt('landing-hero-pace', groupPace != null ? fmtPct(groupPace) : '—');
-    const paceEl = el('landing-hero-pace');
-    if (paceEl) paceEl.className = 'mt-2 text-3xl font-semibold tabular-nums ' +
-      (groupPace == null ? 'text-opl-inkDim dark:text-op-inkDim'
-        : groupPace >= 100 ? 'text-accent-green' : 'text-accent-amber');
-    setTxt('landing-hero-reporting', `${connected.length} of ${biz.length} reporting`);
+    const setHtml = (id, h) => { const n = el(id); if (n) n.innerHTML = h; };
 
-    const vs = el('landing-hero-vs');
-    if (vs) {
-      if (groupBudget > 0) {
-        const d = groupTotal - groupBudget;
-        vs.innerHTML = `<span class="font-semibold ${d >= 0 ? 'text-accent-green' : 'text-accent-amber'}">`
-          + `${d >= 0 ? '+' : '−'}${fmtDollar(Math.abs(d)).slice(1)}</span>`
-          + `<span class="text-opl-inkDim dark:text-op-inkDim"> vs ${fmtDollar(groupBudget)} budget</span>`;
-      } else vs.textContent = '';
+    // ── Hero ────────────────────────────────────────────────────────
+    const gTotal  = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.total  : 0), 0);
+    const gBudget = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.budget : 0), 0);
+    const gMtdA   = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdActual : 0), 0);
+    const gMtdB   = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdBudget : 0), 0);
+    const gPace   = gBudget > 0 ? (gTotal / gBudget) * 100 : null;
+
+    setTxt('landing-hero-total', fmtDollar(gTotal));
+    setHtml('landing-hero-vs', lpDelta(gTotal, gBudget));
+    setTxt('landing-hero-pace', gPace != null ? fmtPct(gPace, 0) : '—');
+    const pEl = el('landing-hero-pace');
+    if (pEl) pEl.className = 'mt-1 text-3xl font-semibold tabular-nums ' + lpPaceColour(gPace);
+    setTxt('landing-hero-reporting', `${connected.length} of ${biz.length} reporting`);
+    setTxt('landing-hero-budget', gBudget > 0 ? fmtDollar(gBudget) : '');
+    const hb = el('landing-hero-bar');
+    if (hb) {
+      hb.style.width = (gBudget > 0 ? Math.max(0, Math.min(100, gPace)) : 0) + '%';
+      hb.className = 'h-full rounded-full transition-[width] duration-500 ' + lpPaceBar(gPace);
     }
-    const bar = el('landing-hero-bar');
-    if (bar) bar.style.width = (groupBudget > 0
-      ? Math.max(0, Math.min(100, (groupTotal / groupBudget) * 100)) : 0) + '%';
-    setTxt('landing-hero-mtd', groupMtdB > 0
-      ? `Month to date · ${fmtDollar(groupMtdA)} vs ${fmtDollar(groupMtdB)}` : '');
+    const live = el('landing-hero-live');
+    if (live) live.classList.toggle('hidden', connected.length === 0);
+    setTxt('landing-hero-mtd', gMtdB > 0
+      ? `Month to date · ${fmtDollar(gMtdA)} vs ${fmtDollar(gMtdB)}` : '');
     setTxt('landing-hero-updated', 'Updated ' + new Date().toLocaleTimeString('en-US',
       { hour: 'numeric', minute: '2-digit' }));
+
+    // ── Channel mix: one stacked bar + legend ───────────────────────
+    const CH = [
+      { label: 'Retail',  val: fig.retail,  bar: 'bg-accent-green',  dot: 'text-accent-green'  },
+      { label: 'BIN',     val: fig.bin,     bar: 'bg-accent-blue',   dot: 'text-accent-blue'   },
+      { label: 'Auction', val: fig.auction, bar: 'bg-accent-violet', dot: 'text-accent-violet' },
+    ];
+    const chTotal = CH.reduce((n, c) => n + c.val, 0);
+    setTxt('landing-mix-count', `${CH.filter(c => c.val > 0).length} of 3 channels`);
+    setHtml('landing-mix-bar', chTotal > 0
+      ? CH.filter(c => c.val > 0).map(c =>
+          `<div class="${c.bar}" style="width:${(c.val / chTotal) * 100}%"></div>`).join('')
+      : '');
+    setHtml('landing-mix-legend', CH.map(c => {
+      const pct = chTotal > 0 ? Math.round((c.val / chTotal) * 100) : 0;
+      const zero = c.val <= 0;
+      return `<div>
+          <div class="flex items-center gap-1.5">
+            <span class="${zero ? 'text-opl-inkDimmer dark:text-op-inkDimmer' : c.dot}">■</span>
+            <span class="${zero ? 'text-opl-inkDimmer dark:text-op-inkDimmer' : 'text-opl-inkDim dark:text-op-inkDim'}">${c.label} · ${pct}%</span>
+          </div>
+          <div class="mt-1 font-semibold tabular-nums ${zero ? 'text-opl-inkDimmer dark:text-op-inkDimmer' : 'text-opl-ink dark:text-op-ink'}">${fmtDollar(c.val)}</div>
+        </div>`;
+    }).join(''));
 
     // ── Business cards ──────────────────────────────────────────────
     const wrap = el('landing-cards');
     if (!wrap) return;
     wrap.innerHTML = '';
 
-    const CHIP = {
-      bl:   { initials: 'BL', tint: 'bg-accent-green/15 text-accent-green', source: 'Clover POS' },
-      ecom: { initials: 'EC', tint: 'bg-accent-blue/15 text-accent-blue',   source: 'SellerCloud' },
-    };
+    const SOURCE = { bl: 'Clover POS', ecom: 'SellerCloud' };
 
     biz.forEach(b => {
-      const chip = CHIP[b.id] || { initials: b.name.slice(0, 2).toUpperCase(), tint: 'bg-accent-violet/15 text-accent-violet', source: '' };
+      const source = SOURCE[b.id] || '';
       const card = document.createElement('div');
-      card.className = 'rounded-card border p-card flex flex-col transition-colors bg-opl-panel dark:bg-op-panel '
+      card.className = 'rounded-card p-card flex flex-col transition-colors bg-opl-panel dark:bg-op-panel border '
         + (b.connected
             ? 'border-[rgba(20,16,8,0.08)] dark:border-op-border'
-            : 'border-dashed border-[rgba(20,16,8,0.16)] dark:border-[rgba(255,255,255,0.14)]');
+            : 'border-dashed border-[rgba(20,16,8,0.16)] dark:border-[rgba(255,255,255,0.13)]');
 
-      // Header: chip + name + source line + status pill
-      const head = document.createElement('div');
-      head.className = 'flex items-start justify-between gap-3';
-      head.innerHTML =
-        `<div class="flex items-center gap-3 min-w-0">
-           <div class="w-10 h-10 rounded-xl flex items-center justify-center text-xs font-bold flex-shrink-0 ${chip.tint}">${chip.initials}</div>
+      const dimName = b.connected ? '' : ' text-opl-inkDim dark:text-op-inkDim';
+      card.innerHTML =
+        `<div class="flex items-start justify-between gap-3">
            <div class="min-w-0">
-             <div class="text-lg font-semibold text-opl-ink dark:text-op-ink truncate">${b.name}</div>
-             <div class="text-xs text-opl-inkDim dark:text-op-inkDim truncate">${chip.source}${
+             <div class="text-xl font-semibold tracking-tight truncate text-opl-ink dark:text-op-ink${dimName}">${b.name}</div>
+             <div class="mt-0.5 text-xs ${b.connected ? 'text-opl-inkDim dark:text-op-inkDim' : 'text-opl-inkDimmer dark:text-op-inkDimmer'} truncate">${source}${
                b.connected ? ` · ${b.unitCount} ${b.unitNoun}${b.unitCount === 1 ? '' : 's'}` : ' · sites pending'}</div>
            </div>
-         </div>
-         <span class="flex-shrink-0 text-[10px] font-mono uppercase tracking-widest px-2 py-1 rounded-full border ${
-           b.connected ? 'text-accent-green border-accent-green/40' : 'text-accent-amber border-accent-amber/40'}">
-           ${b.connected ? '● Live' : '● Setup'}</span>`;
-      card.appendChild(head);
+           <span class="lp-pill ${b.connected ? 'lp-pill-live' : 'lp-pill-setup'} flex-shrink-0">● ${b.connected ? 'Live' : 'Setup'}</span>
+         </div>`;
 
       if (!b.connected) {
-        const empty = document.createElement('div');
-        empty.className = 'mt-5 flex-1 rounded-xl border border-dashed border-[rgba(20,16,8,0.14)] dark:border-[rgba(255,255,255,0.12)] flex flex-col items-center justify-center text-center px-4 py-8 gap-3';
-        empty.innerHTML =
-          `<div class="text-sm text-opl-inkDim dark:text-op-inkDim">No sales data yet.<br>API credentials not issued yet</div>`;
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'text-sm font-semibold px-4 py-2 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi text-opl-ink dark:text-op-ink opacity-60 cursor-not-allowed';
-        btn.textContent = 'Connect ' + chip.source + ' →';
-        btn.disabled = true;
-        // Deliberately inert: connecting SellerCloud is a credentials
-        // conversation, not a button. A live-looking control that does nothing
-        // is worse than one that says it is not ready.
-        btn.title = 'Needs SellerCloud API credentials first';
-        empty.appendChild(btn);
-        card.appendChild(empty);
+        card.insertAdjacentHTML('beforeend',
+          `<div class="mt-5 flex-1 rounded-xl border border-dashed border-[rgba(20,16,8,0.14)] dark:border-[rgba(255,255,255,0.11)] flex flex-col items-center justify-center text-center px-4 py-10">
+             <div class="text-sm text-opl-inkDim dark:text-op-inkDim leading-relaxed">No sales data yet.<br>API credentials not issued</div>
+             <button type="button" disabled title="Needs SellerCloud API credentials first"
+               class="mt-4 text-xs font-semibold px-3.5 py-2 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi text-opl-inkDimmer dark:text-op-inkDimmer cursor-not-allowed">
+               Connect ${source} →</button>
+           </div>`);
         wrap.appendChild(card);
         return;
       }
 
-      // Money line
-      const money = document.createElement('div');
-      money.className = 'mt-5';
-      const d = fig.budget > 0 ? fig.total - fig.budget : null;
-      money.innerHTML =
-        `<div class="text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(fig.total)}</div>`
-        + (d != null
-            ? `<div class="mt-1 text-sm"><span class="font-semibold ${d >= 0 ? 'text-accent-green' : 'text-accent-amber'}">${d >= 0 ? '+' : '−'}${fmtDollar(Math.abs(d)).slice(1)}</span><span class="text-opl-inkDim dark:text-op-inkDim"> vs ${fmtDollar(fig.budget)} budget</span></div>`
-            : '');
-      card.appendChild(money);
+      card.insertAdjacentHTML('beforeend',
+        `<div class="lp-eyebrow mt-5">Today's net</div>
+         <div class="mt-1 text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(fig.total)}</div>
+         <div class="mt-1 text-sm">${lpDelta(fig.total, fig.budget)}</div>
 
-      // Pace row + bar
-      const pace = document.createElement('div');
-      pace.className = 'mt-4';
-      pace.innerHTML =
-        `<div class="flex items-center justify-between text-[11px] font-mono uppercase tracking-widest">
-           <span class="text-opl-inkDim dark:text-op-inkDim">Pace · ${fig.reporting} of ${fig.storeCount} reporting</span>
-           <span class="${fig.pace == null ? 'text-opl-inkDim dark:text-op-inkDim' : fig.pace >= 100 ? 'text-accent-green' : 'text-accent-amber'} font-semibold">${fig.pace != null ? fmtPct(fig.pace) : '—'}</span>
+         <div class="mt-4 flex items-center justify-between">
+           <span class="lp-eyebrow">Pace · ${fig.reporting} of ${fig.storeCount} reporting</span>
+           <span class="text-sm font-semibold tabular-nums ${lpPaceColour(fig.pace)}">${fig.pace != null ? fmtPct(fig.pace, 0) : '—'}</span>
          </div>
          <div class="mt-2 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
-           <div class="h-full rounded-full ${fig.pace != null && fig.pace >= 100 ? 'bg-accent-green' : 'bg-accent-amber'}" style="width:${fig.pace != null ? Math.max(0, Math.min(100, fig.pace)) : 0}%"></div>
-         </div>`;
-      card.appendChild(pace);
+           <div class="h-full rounded-full ${lpPaceBar(fig.pace)}" style="width:${fig.pace != null ? Math.max(0, Math.min(100, fig.pace)) : 0}%"></div>
+         </div>
 
-      // Channel split — Auction sits here, INSIDE Bargain Lane, because it is a
-      // channel of this business and is already part of the total above.
-      const chMax = Math.max(fig.retail, fig.bin, fig.auction, 1);
-      const channels = [
-        ['Retail',  fig.retail,  'bg-accent-green'],
-        ['BIN',     fig.bin,     'bg-accent-blue'],
-        ['Auction', fig.auction, 'bg-accent-violet'],
-      ];
-      const chWrap = document.createElement('div');
-      chWrap.className = 'mt-5 space-y-2';
-      chWrap.innerHTML = channels.map(([label, val, colour]) =>
-        `<div class="flex items-center gap-3 text-sm">
-           <span class="w-16 flex-shrink-0 text-opl-inkDim dark:text-op-inkDim">${label}</span>
-           <span class="flex-1 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
-             <span class="block h-full rounded-full ${colour}" style="width:${(val / chMax) * 100}%"></span>
-           </span>
-           <span class="tabular-nums text-opl-ink dark:text-op-ink flex-shrink-0">${fmtDollar(val)}</span>
-         </div>`).join('');
-      card.appendChild(chWrap);
+         <div class="mt-4 grid grid-cols-3 gap-2">
+           ${CH.map(c => `<div class="rounded-xl border border-[rgba(20,16,8,0.07)] dark:border-[rgba(255,255,255,0.07)] bg-opl-panelHi dark:bg-[rgba(255,255,255,0.02)] px-3 py-2.5">
+               <div class="lp-eyebrow" style="font-size:10px">${c.label}</div>
+               <div class="mt-1 text-[15px] font-semibold tabular-nums ${c.val > 0 ? 'text-opl-ink dark:text-op-ink' : 'text-opl-inkDimmer dark:text-op-inkDimmer'}">${fmtDollar(c.val)}</div>
+             </div>`).join('')}
+         </div>
 
-      // Metric tiles
-      const tiles = [
-        ['Orders',   fig.orders != null ? fig.orders.toLocaleString('en-US') : '—'],
-        ['Avg cart', fig.avgCart != null ? fmtDollar(fig.avgCart) : '—'],
-        [b.unitNoun + 's', String(fig.storeCount)],
-      ];
-      const tileWrap = document.createElement('div');
-      tileWrap.className = 'mt-5 grid grid-cols-3 gap-2';
-      tileWrap.innerHTML = tiles.map(([label, val]) =>
-        `<div class="rounded-xl bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.06)] dark:border-op-border px-3 py-2.5 text-center">
-           <div class="text-[10px] font-mono uppercase tracking-widest text-opl-inkDim dark:text-op-inkDim capitalize">${label}</div>
-           <div class="mt-1 text-base font-semibold tabular-nums text-opl-ink dark:text-op-ink">${val}</div>
-         </div>`).join('');
-      card.appendChild(tileWrap);
+         <div class="mt-3 grid grid-cols-4 gap-2">
+           ${lpTile('Cart',  fig.avgCart != null ? fmtDollar(fig.avgCart) : '—', 'cart')}
+           ${lpTile('Items', fig.avgItems ? fig.avgItems.toFixed(1) : '—', 'items')}
+           ${lpTile('Orders', fig.orders != null ? fig.orders.toLocaleString('en-US') : '—', 'orders')}
+           ${lpTile(b.unitNoun + 's', String(fig.storeCount), 'asp')}
+         </div>
 
-      // Enter
-      const foot = document.createElement('div');
-      foot.className = 'mt-5 pt-1 flex justify-end';
-      const enter = document.createElement('button');
-      enter.type = 'button';
-      enter.className = 'text-sm font-semibold px-4 py-2 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi text-opl-ink dark:text-op-ink hover:border-accent-green/60 hover:text-accent-green transition-colors';
-      enter.textContent = `Enter ${b.name} →`;
-      enter.addEventListener('click', () => enterBusiness(b.id));
-      foot.appendChild(enter);
-      card.appendChild(foot);
+         <div class="mt-5 text-right">
+           <button type="button" class="lp-enter text-sm font-semibold text-accent-green hover:opacity-80 transition-opacity">Enter ${b.name} →</button>
+         </div>`);
 
+      const enter = card.querySelector('.lp-enter');
+      if (enter) enter.addEventListener('click', () => enterBusiness(b.id));
       wrap.appendChild(card);
     });
   }
