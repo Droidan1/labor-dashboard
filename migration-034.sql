@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS ebay_actions (
   account     TEXT,
   case_type   TEXT,
   case_id     TEXT,
+  -- `actionType` on action lines, `decision` on decision lines. Raj's payload
+  -- has no field literally named `action`.
   action      TEXT,
   -- In SHADOW the line is written with dry_run=1 but the CASE record is NOT
   -- marked actioned. Count these and split on dry_run; never infer from the case.
@@ -88,6 +90,10 @@ CREATE TABLE IF NOT EXISTS ebay_actions (
   ok          INTEGER,
   http_status INTEGER,
   amount      REAL,
+  -- Real action lines carry both; `error` is what makes a failed auto-act
+  -- visible, which the doc calls the loudest thing that must reach the page.
+  reason      TEXT,
+  error       TEXT,
   raw         TEXT,
   received_at TEXT NOT NULL
 );

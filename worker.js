@@ -6902,14 +6902,22 @@ export default {
           const hash = await sha256Hex(raw);
           await env.DB.prepare(
             `INSERT OR IGNORE INTO ebay_actions (business, line_hash, ts, kind, event,
-               account, case_type, case_id, action, dry_run, ok, http_status, amount, raw, received_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+               account, case_type, case_id, action, dry_run, ok, http_status, amount,
+               reason, error, raw, received_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
           ).bind(
             BIZ, hash, str(line.ts), str(line.kind), str(line.event),
-            str(line.account), str(line.caseType), str(line.caseId), str(line.action),
+            str(line.account), str(line.caseType), str(line.caseId),
+            // 🔑 Measured against Raj's real files, not the spec: `action` lines
+            // carry `actionType` (APPROVE_RETURN / ISSUE_REFUND) and `decision`
+            // lines carry `decision` (NEEDS_HUMAN / NOTIFY_OWNER / …). Neither
+            // uses a field called `action`. Binding that name stored NULL on
+            // every audit line — the single most important column, blank.
+            str(line.actionType || line.decision),
             line.dryRun == null ? null : (line.dryRun ? 1 : 0),
             line.ok == null ? null : (line.ok ? 1 : 0),
-            num(line.httpStatus), num(line.amount), raw, now
+            num(line.httpStatus), num(line.amount),
+            str(line.reason), str(line.error), raw, now
           ).run();
         }
         const afterRow = await env.DB.prepare(
@@ -6919,6 +6927,12 @@ export default {
         // ── Handler state. effective_mode folds config + forcedShadow + kill
         // switch; last_successful_run_at is what staleness reads.
         const acct = state.accountStatus && typeof state.accountStatus === "object" ? state.accountStatus : {};
+        // ⚠️ MEASURED 2026-08-05: Raj's real handler-state.json carries NO mode
+        // field at all — accountStatus is {checkedAt, fetched, ok, queueErrors},
+        // and there are zero "mode" keys in the whole file. Mode lives only in
+        // handler.ini. So this resolves to null today and the page must NOT
+        // claim a mode it cannot see. Raised with Raj; the moment he adds
+        // effectiveMode this starts working with no change here.
         const modes = Object.values(acct).map(a => a && a.effectiveMode).filter(Boolean);
         // Worst-case wins: OFF (kill switch) beats SHADOW beats LIVE, so the
         // badge can never overstate what the bot is actually doing.
