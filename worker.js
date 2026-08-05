@@ -4708,10 +4708,46 @@ function buildSummaryEmailHtml(data, brief, categoryData, weeklyData) {
 // scopes correctly per recipient. Giving them a store-scoped daily email is a
 // feature, not this fix.
 async function chainWideRecipients(env) {
+  // Grants are joined in because cron loads users straight from D1 — nothing
+  // calls getAuthUser here, so `user.grants` is otherwise undefined and every
+  // grant-aware check silently answers "no".
   const { results } = await env.DB.prepare(
-    "SELECT id, email, role, stores FROM users WHERE status = 'active'"
+    `SELECT u.id, u.email, u.role, u.stores,
+            g.business_id, g.role AS grant_role, g.units
+       FROM users u
+       LEFT JOIN user_grants g ON g.user_id = u.id
+      WHERE u.status = 'active'`
   ).all();
-  return (results || []).filter(u => allowedStores(u) === null);
+
+  const byId = new Map();
+  for (const r of results || []) {
+    if (!byId.has(r.id)) {
+      byId.set(r.id, { id: r.id, email: r.email, role: r.role, stores: r.stores, grants: [] });
+    }
+    if (r.business_id) {
+      let units = null;
+      try { units = r.units ? JSON.parse(r.units) : null; } catch (_) { units = null; }
+      byId.get(r.id).grants.push({ business_id: r.business_id, role: r.grant_role, units });
+    }
+  }
+
+  // Two conditions, and both are needed:
+  //   allowedStores() === null   entitled to EVERY Bargain Lane store, because
+  //                              the body is one shared chain-wide figure
+  //   Bargain Lane access        allowedStores() returns null for ANY global-role
+  //                              admin, grant or no grant — so without this an
+  //                              admin holding only E-Commerce would be emailed
+  //                              Bargain Lane's revenue. This is the cron half of
+  //                              the business gate; the gate itself only covers
+  //                              the request path.
+  //
+  // 🔑 superuser is checked by ROLE, not through canAccessBusiness(): that
+  // resolves the flag via `user.allBusinessIds`, which getAuthUser populates on
+  // the request path and cron never does. Routing the superuser through it would
+  // drop them from their own daily email.
+  return [...byId.values()].filter(u =>
+    allowedStores(u) === null &&
+    (u.role === 'superuser' || canAccessBusiness(u, 'bl')));
 }
 
 async function dispatchDailySummary(env, date) {
