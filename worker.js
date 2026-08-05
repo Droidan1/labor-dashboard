@@ -4923,9 +4923,11 @@ async function dispatchIntervalSummary(env) {
   // Pull all users with interval_summary != 'off' who have push_enabled
   const { results: users } = await env.DB.prepare(
     `SELECT u.id, u.email, u.role, u.stores, u.status,
-            np.interval_summary, np.push_enabled
+            np.interval_summary, np.push_enabled,
+            g.role AS grant_role, g.units AS grant_units
      FROM users u
      JOIN notification_preferences np ON np.user_id = u.id
+     LEFT JOIN user_grants g ON g.user_id = u.id AND g.business_id = 'bl'
      WHERE u.status = 'active'
        AND np.push_enabled = 1
        AND np.interval_summary != 'off'`
@@ -4939,16 +4941,26 @@ async function dispatchIntervalSummary(env) {
     // 3h users only fire at hours divisible by 3 within the window
     if (user.interval_summary === '3h' && etHour % 3 !== 0) { summary.skipped++; continue; }
 
-    // Determine which stores this user can see
-    const isSuper = user.role === 'superuser' || user.role === 'admin';
-    let userStores;
-    if (isSuper) {
-      userStores = ALL_STORES;
-    } else {
-      let parsed = [];
-      try { parsed = user.stores ? JSON.parse(user.stores) : []; } catch (_) {}
-      userStores = ALL_STORES.filter(s => parsed.includes(s));
-    }
+    // 🛑 This push carries sales and budget figures, and a cron send never
+    // passes through the financial gate — that gate lives in the request path.
+    // So the check has to be made here, or a `staff` user with interval
+    // summaries switched on would be pushed money they are refused everywhere
+    // else. Same shape as the daily/weekly leak fixed alongside this.
+    if (!canSeeFinancials(user)) { summary.skipped++; continue; }
+
+    // Which stores this user may see. Previously a THIRD hand-rolled copy of
+    // allowedStores() that read raw users.stores and ignored grants entirely —
+    // identical today only because migration-030 backfilled one from the other,
+    // and guaranteed to drift the moment a grant is edited on its own.
+    // Attach the joined grant and use the one real helper instead.
+    let gUnits = null;
+    try { gUnits = user.grant_units ? JSON.parse(user.grant_units) : null; } catch (_) { gUnits = null; }
+    user.grants = user.grant_role
+      ? [{ business_id: 'bl', role: user.grant_role, units: gUnits }]
+      : [];
+
+    const allow = allowedStores(user);          // null = every store
+    const userStores = allow === null ? ALL_STORES : ALL_STORES.filter(s => allow.includes(s));
     if (!userStores.length) { summary.skipped++; continue; }
 
     // Build summary lines (notification-preview-v3 format):
