@@ -5711,7 +5711,23 @@ async function businessesFor(env, user) {
     // which routes everyone to the dashboard exactly as before this feature.
     return [];
   }
-  const visible = user.role === 'superuser'
+  // superuser is a FLAG meaning every business, and admin is included here by
+  // an explicit decision (Brian, 2026-08-05) so admins reach the picker too.
+  //
+  // 🛑 Note what that means, because it is a real widening: `admin` is defined
+  // as a PER-BUSINESS role, so listing every business for them hands an admin
+  // of Bargain Lane visibility of businesses they hold no grant for. It is
+  // harmless today — E-Commerce has zero units, so its card is inert and there
+  // is no data behind it, and the hero's totals only ever sum CONNECTED
+  // businesses, which today is Bargain Lane alone, i.e. exactly what an admin
+  // already sees.
+  //
+  // 🛑 It stops being harmless the moment a second business CONNECTS. At that
+  // point either give admins a real grant per business and delete this branch,
+  // or gate entry with canAccessBusiness() — which exists and still has zero
+  // call sites. Do not let a connected business ship while this branch stands.
+  const seesEveryBusiness = user.role === 'superuser' || user.role === 'admin';
+  const visible = seesEveryBusiness
     ? all
     : all.filter(b => grantFor(user, b.id));
   return visible.map(b => ({

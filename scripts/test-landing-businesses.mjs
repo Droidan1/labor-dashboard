@@ -57,18 +57,30 @@ db.exec(fs.readFileSync(path.join(repo, 'migration-031.sql'), 'utf8'));
   ok(ec && ec.unitNoun === 'storefront', 'E-Commerce unit noun is "storefront"');
 }
 
-// ── 3 · Everyone else still routes straight past the picker ─────────────────
-// This is the regression that matters: seeding a second business must NOT
-// change what any granted user sees, or 11 people get an extra click.
-for (const [user, role] of [['u-admin','admin'], ['u-mgr1','manager'],
-                            ['u-mgr2','manager'], ['u-exec','executive']]) {
+// ── 3 · admin ALSO sees every business (deliberate, Brian 2026-08-05) ───────
+// 🛑 This is a widening: `admin` is a per-business role, so this hands an admin
+// visibility of a business they hold no grant for. Harmless only while the
+// second business is unconnected. If this assertion ever has to change back,
+// the branch in businessesFor() is the thing to delete.
+{
+  const r = await authMe(env, 'u-admin');
+  const ids = (r.body.businesses || []).map(b => b.id).sort();
+  ok(ids.join(',') === 'bl,ecom',
+     `admin sees every business (holds only a bl grant), got [${ids}]`);
+}
+
+// ── 4 · Everyone BELOW admin still routes straight past the picker ──────────
+// The regression that matters: seeding a second business must NOT change what
+// a scoped user sees, or they get an extra click for nothing.
+for (const [user, role] of [['u-mgr1','manager'], ['u-mgr2','manager'],
+                            ['u-exec','executive']]) {
   const r = await authMe(env, user);
   const ids = (r.body.businesses || []).map(b => b.id);
   ok(ids.length === 1 && ids[0] === 'bl',
      `${role} (${user}) sees ONLY bl -> no picker, got [${ids}]`);
 }
 
-// ── 4 · An unconnected business a user IS granted still reports honestly ────
+// ── 5 · An unconnected business a user IS granted still reports honestly ────
 // Guards the case where SellerCloud grants land before its units do.
 {
   db.prepare("INSERT INTO user_grants (user_id,business_id,role,units) VALUES ('u-exec','ecom','executive',NULL)").run();
@@ -80,7 +92,7 @@ for (const [user, role] of [['u-admin','admin'], ['u-mgr1','manager'],
      'a granted-but-unconnected business is still connected:false (card stays inert)');
 }
 
-// ── 5 · An inactive business disappears entirely ────────────────────────────
+// ── 6 · An inactive business disappears entirely ────────────────────────────
 {
   db.prepare("UPDATE businesses SET active = 0 WHERE id = 'ecom'").run();
   const r = await authMe(env, 'u-su');
