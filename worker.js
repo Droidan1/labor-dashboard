@@ -5721,23 +5721,18 @@ async function businessesFor(env, user) {
     // which routes everyone to the dashboard exactly as before this feature.
     return [];
   }
-  // superuser is a FLAG meaning every business, and admin is included here by
-  // an explicit decision (Brian, 2026-08-05) so admins reach the picker too.
+  // 🔑 superuser is a FLAG meaning every business — it holds ZERO rows in
+  // user_grants by design, so filtering by grants would strand the one account
+  // meant to see everything. Every OTHER role, admin included, sees exactly the
+  // businesses it holds a grant to.
   //
-  // 🛑 Note what that means, because it is a real widening: `admin` is defined
-  // as a PER-BUSINESS role, so listing every business for them hands an admin
-  // of Bargain Lane visibility of businesses they hold no grant for. It is
-  // harmless today — E-Commerce has zero units, so its card is inert and there
-  // is no data behind it, and the hero's totals only ever sum CONNECTED
-  // businesses, which today is Bargain Lane alone, i.e. exactly what an admin
-  // already sees.
-  //
-  // 🛑 It stops being harmless the moment a second business CONNECTS. At that
-  // point either give admins a real grant per business and delete this branch,
-  // or gate entry with canAccessBusiness() — which exists and still has zero
-  // call sites. Do not let a connected business ship while this branch stands.
-  const seesEveryBusiness = user.role === 'superuser' || user.role === 'admin';
-  const visible = seesEveryBusiness
+  // Admin was briefly listed here alongside superuser (2026-08-05) so admins
+  // could reach the picker. That was a real widening — `admin` is a PER-BUSINESS
+  // role, so it handed an admin of Bargain Lane sight of a business they held no
+  // grant for. Closed the same day, before E-Commerce could connect and make it
+  // load-bearing. Admins that should see a second business now hold an explicit,
+  // revocable grant row (migration-033) instead of inheriting it from a branch.
+  const visible = user.role === 'superuser'
     ? all
     : all.filter(b => grantFor(user, b.id));
   return visible.map(b => ({
@@ -5779,6 +5774,55 @@ function grantedBusinessIds(user) {
   if (!user) return [];
   if (user.role === 'superuser') return user.allBusinessIds || [];
   return (user.grants || []).map(g => g.business_id);
+}
+
+// What this caller may hand out: which businesses, with which units, and which
+// roles. ONE place decides, and both the option list and the write path read it,
+// so the dropdown and the enforcement cannot drift apart.
+//
+// 🔑 "Nobody can grant what they don't hold." A superuser holds the FLAG, so it
+// gets every active business. Everyone else gets exactly the businesses they
+// hold a grant to — an admin of Bargain Lane cannot hand out E-Commerce.
+//
+// Roles reuse update-user's existing allowlist verbatim: only a superuser may
+// create admins/executives, and `superuser` is assignable by NOBODY through any
+// endpoint — it is set in the database by hand, on purpose.
+async function grantOptionsFor(env, caller) {
+  const empty = { businesses: [], roles: [] };
+  if (!env.DB || !caller) return empty;
+  let rows = [];
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT b.id, b.name, b.unit_noun,
+              u.code AS unit_code, u.name AS unit_name
+         FROM businesses b
+    LEFT JOIN business_units u ON u.business_id = b.id AND u.active = 1
+        WHERE b.active = 1
+        ORDER BY b.name, u.code`
+    ).all();
+    rows = results || [];
+  } catch (_) {
+    return empty;
+  }
+
+  const byId = new Map();
+  for (const r of rows) {
+    if (!byId.has(r.id)) {
+      byId.set(r.id, { id: r.id, name: r.name, unitNoun: r.unit_noun, units: [] });
+    }
+    if (r.unit_code) byId.get(r.id).units.push({ code: r.unit_code, name: r.unit_name });
+  }
+
+  const all = [...byId.values()];
+  const businesses = caller.role === 'superuser'
+    ? all
+    : all.filter(b => grantFor(caller, b.id));
+
+  const roles = caller.role === 'superuser'
+    ? ['admin', 'executive', 'manager', 'staff']
+    : ['manager'];
+
+  return { businesses, roles };
 }
 
 function canAccessBusiness(user, businessId) {
@@ -7733,6 +7777,164 @@ export default {
           }
         }
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+    // ── Grants: what the CALLER is allowed to hand out ────────────
+    //    GET ?action=grant-options
+    // The client must never invent the option list. Both the businesses and
+    // the roles are computed from the caller's OWN grants here, so a crafted
+    // request can't offer more than the caller holds — the client copy is
+    // presentation only.
+    if (url.searchParams.get("action") === "grant-options") {
+      if (!canAccessInventory(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      const opts = await grantOptionsFor(env, currentUser);
+      return new Response(JSON.stringify(opts), { headers: corsJson });
+    }
+
+    // ── Grants: read one user's grants ────────────────────────────
+    //    GET ?action=user-grants&id=<userId>
+    if (url.searchParams.get("action") === "user-grants") {
+      if (!canAccessInventory(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      const id = url.searchParams.get("id") || "";
+      if (!id) return new Response(JSON.stringify({ error: "Missing id" }), { status: 400, headers: corsJson });
+      const rows = await loadGrants(env, id);
+      return new Response(JSON.stringify({
+        grants: rows.map(g => ({ business_id: g.business_id, role: g.role, units: g.units })),
+      }), { headers: corsJson });
+    }
+
+    // ── Grants: replace one user's grants ─────────────────────────
+    //    POST ?action=set-user-grants  { id, grants: [{business_id, role, units}] }
+    //
+    // Replaces the whole set, so an omitted business is a REVOKE — that is the
+    // only way the UI can take access away. Every element is re-validated
+    // against the caller's own entitlements; nothing is trusted from the body.
+    if (request.method === "POST" && url.searchParams.get("action") === "set-user-grants") {
+      if (!canAccessInventory(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const body = await request.json();
+        const id = String(body && body.id || "");
+        const incoming = Array.isArray(body && body.grants) ? body.grants : null;
+        if (!id || !incoming) {
+          return new Response(JSON.stringify({ error: "Missing id or grants" }), { status: 400, headers: corsJson });
+        }
+
+        // A non-superuser may never edit a superuser. Same guard update-user
+        // grew after an admin could demote the real superuser.
+        const { results: target } = await env.DB.prepare('SELECT id, role FROM users WHERE id = ?').bind(id).all();
+        if (!target || !target.length) {
+          return new Response(JSON.stringify({ error: "No such user" }), { status: 404, headers: corsJson });
+        }
+        if (currentUser.role !== 'superuser' && target[0].role === 'superuser') {
+          return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+        }
+        // A superuser's access comes from the FLAG, not from rows. Writing
+        // grants for one would imply the flag is not enough and invite someone
+        // to "fix" their access by narrowing it.
+        if (target[0].role === 'superuser') {
+          return new Response(JSON.stringify({ error: "A superuser's access is not granted per business" }),
+            { status: 400, headers: corsJson });
+        }
+
+        const opts = await grantOptionsFor(env, currentUser);
+        const bizById = new Map(opts.businesses.map(b => [b.id, b]));
+
+        // 🔑 Conferring a BUSINESS is superuser-only. An admin may change what
+        // someone can do inside a business they already hold — role, units,
+        // which is an admin's actual job — but may not add a person to a new
+        // business or remove them from one.
+        //
+        // Without this, the three admins who hold an `ecom` grant could pass
+        // E-Commerce on to anyone, which quietly makes "who is in this
+        // business" an admin-level decision rather than an owner-level one.
+        const currentIds = (await loadGrants(env, id)).map(g => g.business_id);
+        if (currentUser.role !== 'superuser') {
+          // 🔑 Compare only over businesses this caller can SEE. An admin who
+          // cannot see E-Commerce simply omits it from the payload — reading
+          // that as a removal would block them from editing the user at all,
+          // which is worse than the hole being closed. The scoped DELETE below
+          // is what actually protects the invisible grant.
+          const visibleIds = [...bizById.keys()];
+          const currentVisible = currentIds.filter(b => visibleIds.includes(b));
+          const wantedIds = [...new Set(incoming.map(g => String(g && g.business_id || "")))];
+          const added   = wantedIds.filter(b => !currentVisible.includes(b));
+          const removed = currentVisible.filter(b => !wantedIds.includes(b));
+          if (added.length || removed.length) {
+            const what = added.length
+              ? `Only a superuser can add someone to ${added.join(', ')}`
+              : `Only a superuser can remove someone from ${removed.join(', ')}`;
+            return new Response(JSON.stringify({ error: what }), { status: 403, headers: corsJson });
+          }
+        }
+
+        const clean = [];
+        for (const g of incoming) {
+          const bid = String(g && g.business_id || "");
+          const role = String(g && g.role || "");
+          const biz = bizById.get(bid);
+          // Business the caller cannot grant → refuse, do not silently drop.
+          if (!biz) {
+            return new Response(JSON.stringify({ error: `You cannot grant access to ${bid || "that business"}` }),
+              { status: 403, headers: corsJson });
+          }
+          if (!opts.roles.includes(role)) {
+            return new Response(JSON.stringify({ error: `You cannot assign the role ${role || "(none)"}` }),
+              { status: 403, headers: corsJson });
+          }
+          // units: null/absent means every unit. An array is a restriction and
+          // every code must exist in THAT business — a code from another
+          // business would otherwise widen scope silently.
+          let units = null;
+          if (Array.isArray(g.units)) {
+            const valid = new Set(biz.units.map(u => u.code));
+            const picked = [...new Set(g.units.map(u => String(u).trim().toUpperCase()))].filter(Boolean);
+            const bad = picked.filter(u => !valid.has(u));
+            if (bad.length) {
+              return new Response(JSON.stringify({ error: `Not ${biz.name} units: ${bad.join(', ')}` }),
+                { status: 400, headers: corsJson });
+            }
+            units = picked;
+          }
+          clean.push({ business_id: bid, role, units });
+        }
+
+        // Replace: delete the businesses the caller is ALLOWED to manage, then
+        // insert what survived validation. Scoping the delete to grantable
+        // businesses means an admin editing a user cannot wipe a grant to a
+        // business they themselves cannot see.
+        const grantable = [...bizById.keys()];
+        if (grantable.length) {
+          const marks = grantable.map(() => '?').join(',');
+          await env.DB.prepare(
+            `DELETE FROM user_grants WHERE user_id = ? AND business_id IN (${marks})`
+          ).bind(id, ...grantable).run();
+        }
+        for (const g of clean) {
+          await env.DB.prepare(
+            `INSERT INTO user_grants (user_id, business_id, role, units) VALUES (?, ?, ?, ?)
+             ON CONFLICT(user_id, business_id) DO UPDATE SET role = excluded.role, units = excluded.units`
+          ).bind(id, g.business_id, g.role, g.units ? JSON.stringify(g.units) : null).run();
+        }
+
+        // Mirror the Bargain Lane grant back into the legacy users columns.
+        // allowedStores() still falls back to users.stores, and the Users list
+        // renders users.role — leaving them stale would make the UI disagree
+        // with what the server actually enforces.
+        const bl = clean.find(g => g.business_id === 'bl');
+        if (bl) {
+          await env.DB.prepare('UPDATE users SET role = ?, stores = ? WHERE id = ?')
+            .bind(bl.role, bl.units && bl.units.length ? JSON.stringify(bl.units) : null, id).run();
+        }
+
+        return new Response(JSON.stringify({ ok: true, grants: clean }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }

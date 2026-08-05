@@ -3075,18 +3075,11 @@
             <p id="edit-user-email" class="text-sm font-medium text-gray-700 dark:text-gray-300"></p>
             <input type="hidden" id="edit-user-id">
             <div>
-              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Role</label>
-              <select id="edit-role" onchange="toggleEditStores()" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
-                <option value="manager">Manager</option>
-                <option value="admin" id="edit-role-admin">Admin</option>
-              </select>
-            </div>
-            <div id="edit-stores-wrap">
-              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-2">Stores</label>
-              <div id="edit-store-grid" class="grid grid-cols-2 gap-2">
-                <!-- rendered by renderStorePicker('edit') — do not hardcode; see USER_STORES -->
-
-              </div>
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-2">Access</label>
+              <!-- One block per business the CURRENT user may grant. Rendered by
+                   renderGrantEditor() from ?action=grant-options — never
+                   hardcoded, so a new business appears here on its own. -->
+              <div id="edit-grants" class="space-y-3"></div>
             </div>
             <div>
               <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Status</label>
@@ -3094,10 +3087,6 @@
                 <option value="active">Active</option>
                 <option value="suspended">Suspended</option>
               </select>
-            </div>
-            <div class="rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panelHi dark:bg-[rgba(255,255,255,0.03)] px-4 py-3">
-              <div class="text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">What this person gets</div>
-              <p id="edit-access-summary" class="text-xs leading-relaxed text-opl-inkDim dark:text-op-inkDim"></p>
             </div>
             <div id="edit-user-status" class="hidden text-sm px-3 py-2 rounded-lg border"></div>
           </div>
@@ -17335,7 +17324,13 @@
   // ═══════════════════════════════════════════════════════════════
   //  USERS PAGE
   // ═══════════════════════════════════════════════════════════════
-  const ROLE_LABEL = { superuser: 'Superuser', admin: 'Admin', district_manager: 'District Mgr', manager: 'Manager' };
+  // `district_manager` was retired by migration-029 and `executive`/`staff` were
+  // added — this map had drifted and rendered the raw slug for both new roles.
+  const ROLE_LABEL = { superuser: 'Superuser', admin: 'Admin', executive: 'Executive',
+                       manager: 'Manager', staff: 'Staff' };
+  // Longer wording, used only in the grant editor's role dropdown.
+  const GRANT_ROLE_LABEL = { admin: 'Admin', executive: 'Executive (read-only)',
+                             manager: 'Manager', staff: 'Staff' };
   // Colour per role so a row's standing reads before the label does.
   const ROLE_DOT = { superuser: '#f59e0b', admin: '#22c55e', district_manager: '#8b5cf6', manager: '#8893a7' };
   // Single source for both modals' store pickers. Was six hardcoded <label>s per
@@ -17402,6 +17397,9 @@
   }
 
   async function loadUsers() {
+    // What this caller may hand out. Fetched with the list so the edit modal
+    // opens instantly; the server re-derives it on every write regardless.
+    loadGrantOptions();
     el('users-tbody').innerHTML = '<tr><td colspan="6" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">Loading…</td></tr>';
     try {
       const resp = await fetch(`${WORKER_BASE}?action=list-users`, { credentials: 'include' });
@@ -17522,51 +17520,145 @@
     s.textContent = msg;
   }
 
-  function openEditUserModal(userId) {
+  // Options the CURRENT user may hand out, fetched once per Users-page load.
+  // The server recomputes all of this on write — this copy only decides what to
+  // draw, so a tampered client gains nothing.
+  let grantOptions = { businesses: [], roles: [] };
+
+  async function loadGrantOptions() {
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=grant-options`, { credentials: 'include' });
+      const d = await r.json();
+      grantOptions = (d && Array.isArray(d.businesses)) ? d : { businesses: [], roles: [] };
+    } catch (_) { grantOptions = { businesses: [], roles: [] }; }
+  }
+
+
+  // One block per grantable business. `units: null` means EVERY unit, which is
+  // why "All …" is its own checkbox rather than "nothing ticked" — those two
+  // states mean opposite things and conflating them silently widens scope.
+  function renderGrantEditor(existing) {
+    const wrap = el('edit-grants');
+    if (!wrap) return;
+    const held = new Map((existing || []).map(g => [g.business_id, g]));
+    if (!grantOptions.businesses.length) {
+      wrap.innerHTML = `<div class="text-xs text-opl-inkDim dark:text-op-inkDim">You cannot grant access to any business.</div>`;
+      return;
+    }
+    wrap.innerHTML = grantOptions.businesses.map(b => {
+      const g = held.get(b.id);
+      const on = !!g;
+      // Only a superuser may add or remove a business. Everyone else edits what
+      // a person can do INSIDE the businesses they already hold, so the on/off
+      // control is locked rather than absent — the state stays visible.
+      const canMove = currentUser && currentUser.role === 'superuser';
+      const allUnits = !g || g.units == null;
+      const picked = (g && Array.isArray(g.units)) ? g.units : [];
+      return `
+      <div class="rounded-[10px] border border-[rgba(20,16,8,0.1)] dark:border-op-border px-3.5 py-3" data-biz="${b.id}">
+        <label class="flex items-center gap-2.5 cursor-pointer">
+          <input type="checkbox" class="gr-on accent-accent-green" ${on ? 'checked' : ''} ${canMove ? '' : 'disabled'}>
+          <span class="text-sm font-semibold text-opl-ink dark:text-op-ink">${b.name}</span>
+          ${canMove ? '' : `<span class="text-[10px] text-opl-inkDimmer dark:text-op-inkDimmer">superuser only</span>`}
+          ${b.units.length ? '' : `<span class="text-[10px] text-opl-inkDimmer dark:text-op-inkDimmer">no ${b.unitNoun}s yet</span>`}
+        </label>
+        <div class="gr-body mt-3 ${on ? '' : 'hidden'}">
+          <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Role in ${b.name}</label>
+          <select class="gr-role w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink">
+            ${grantOptions.roles.map(r => `<option value="${r}" ${g && g.role === r ? 'selected' : ''}>${GRANT_ROLE_LABEL[r] || r}</option>`).join('')}
+          </select>
+          ${b.units.length ? `
+          <label class="mt-3 flex items-center gap-2.5 cursor-pointer">
+            <input type="checkbox" class="gr-all accent-accent-green" ${allUnits ? 'checked' : ''}>
+            <span class="text-xs text-opl-inkDim dark:text-op-inkDim">Every ${b.unitNoun}</span>
+          </label>
+          <div class="gr-units mt-2 grid grid-cols-2 gap-2 ${allUnits ? 'hidden' : ''}">
+            ${b.units.map(u => `
+              <label class="flex items-center gap-2 text-xs cursor-pointer text-opl-ink dark:text-op-ink">
+                <input type="checkbox" class="gr-unit accent-accent-green" value="${u.code}" ${picked.includes(u.code) ? 'checked' : ''}>
+                <span>${u.name}</span>
+              </label>`).join('')}
+          </div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    wrap.querySelectorAll('[data-biz]').forEach(box => {
+      const onCb  = box.querySelector('.gr-on');
+      const body  = box.querySelector('.gr-body');
+      const allCb = box.querySelector('.gr-all');
+      const units = box.querySelector('.gr-units');
+      onCb.addEventListener('change', () => body.classList.toggle('hidden', !onCb.checked));
+      if (allCb && units) allCb.addEventListener('change', () => units.classList.toggle('hidden', allCb.checked));
+    });
+  }
+
+  // Read the editor back into the wire shape. Absent business = revoke.
+  function collectGrants() {
+    const out = [];
+    document.querySelectorAll('#edit-grants [data-biz]').forEach(box => {
+      if (!box.querySelector('.gr-on').checked) return;
+      const allCb = box.querySelector('.gr-all');
+      const units = allCb && !allCb.checked
+        ? [...box.querySelectorAll('.gr-unit:checked')].map(cb => cb.value)
+        : null;
+      out.push({ business_id: box.dataset.biz, role: box.querySelector('.gr-role').value, units });
+    });
+    return out;
+  }
+
+  async function openEditUserModal(userId) {
     const u = usersData.find(x => x.id === userId);
     if (!u) return;
     el('edit-user-id').value = u.id;
     el('edit-user-email').textContent = u.email;
-    el('edit-role').value = u.role;
     el('edit-status').value = u.status;
-    renderStorePicker('edit');
-    let userStores = [];
-    try { userStores = u.stores ? JSON.parse(u.stores) : []; } catch (_) { userStores = []; }
-    document.querySelectorAll('.edit-store-cb').forEach(cb => { cb.checked = userStores.includes(cb.value); });
-    const isSuperuser = currentUser && currentUser.role === 'superuser';
-    el('edit-role-admin').classList.toggle('hidden', !isSuperuser);
-    // The Superuser option was removed outright — hiding it with a CSS class
-    // was never a control, and the server now refuses to assign that role.
-    el('edit-role-superuser')?.classList.toggle('hidden', true);
     el('edit-user-status').classList.add('hidden');
     el('edit-user-submit-btn').disabled = false;
-    toggleEditStores();
+    el('edit-grants').innerHTML = `<div class="text-xs text-opl-inkDim dark:text-op-inkDim">Loading access…</div>`;
     el('edit-user-modal').classList.remove('hidden');
+    // A superuser's access comes from the flag, not from rows — the server
+    // refuses to write grants for one, so don't offer the editor either.
+    if (u.role === 'superuser') {
+      el('edit-grants').innerHTML =
+        `<div class="text-xs text-opl-inkDim dark:text-op-inkDim">Superusers reach every business by default. Their access isn't granted per business.</div>`;
+      return;
+    }
+    let existing = [];
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=user-grants&id=${encodeURIComponent(u.id)}`, { credentials: 'include' });
+      const d = await r.json();
+      existing = Array.isArray(d.grants) ? d.grants : [];
+    } catch (_) { existing = []; }
+    renderGrantEditor(existing);
   }
   function closeEditUserModal() { el('edit-user-modal').classList.add('hidden'); }
 
-  function toggleEditStores() {
-    const role = el('edit-role').value;
-    el('edit-stores-wrap').classList.toggle('hidden', !roleIsStoreScoped(role));
-    updateAccessSummary('edit');
-  }
-
   async function submitEditUser() {
     const id = el('edit-user-id').value;
-    const role = el('edit-role').value;
     const status = el('edit-status').value;
-    const stores = [...document.querySelectorAll('.edit-store-cb:checked')].map(cb => cb.value);
+    const u = usersData.find(x => x.id === id);
+    const isSu = u && u.role === 'superuser';
     el('edit-user-submit-btn').disabled = true;
     showEditUserStatus('Saving…', 'info');
     try {
-      const resp = await fetch(`${WORKER_BASE}?action=update-user`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ id, role, stores: stores.length ? stores : null, status }),
+      // Status still goes through update-user; access goes through the grant
+      // endpoint. Two models, two handlers — deliberately not merged.
+      const r1 = await fetch(`${WORKER_BASE}?action=update-user`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', body: JSON.stringify({ id, status }),
       });
-      const data = await resp.json();
-      if (!data.ok) throw new Error(data.error || 'Failed');
+      const d1 = await r1.json();
+      if (!d1.ok) throw new Error(d1.error || 'Failed');
+
+      if (!isSu) {
+        const r2 = await fetch(`${WORKER_BASE}?action=set-user-grants`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          credentials: 'include', body: JSON.stringify({ id, grants: collectGrants() }),
+        });
+        const d2 = await r2.json();
+        if (!d2.ok) throw new Error(d2.error || 'Failed');
+      }
       closeEditUserModal();
       usersSetStatus('User updated.', 'ok');
       loadUsers();
@@ -17624,7 +17716,6 @@
   window.submitInvite = submitInvite;
   window.openEditUserModal = openEditUserModal;
   window.closeEditUserModal = closeEditUserModal;
-  window.toggleEditStores = toggleEditStores;
   window.submitEditUser = submitEditUser;
   window.resendInvite = resendInvite;
   window.deleteUser = deleteUser;
