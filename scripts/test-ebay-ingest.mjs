@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadWorker, makeEnv, ctx, blockNetwork } from './lib/worker-harness.mjs';
+import { loadWorker, makeEnv, ctx, req, blockNetwork } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -149,6 +149,51 @@ const AUDIT = [
   ok((await post({ audit: AUDIT }, 'test-handler-token')).status === 400, 'missing state is 400');
   const n = db.prepare('SELECT COUNT(*) n FROM ebay_cases').get().n;
   ok(n === 3, `a rejected payload wrote nothing, still ${n} cases`);
+}
+
+// ── the read endpoint, and the business gate's FIRST real use ──────────────
+{
+  const get = async (u, user) => {
+    const r = await worker.fetch(req(u, { user }), env, ctx);
+    return { status: r.status, body: await r.json().catch(() => ({})) };
+  };
+  // Seed one appeal + one actionable via a real ingest (done above).
+  const su = await get('/?action=ebay-cases', 'u-su');
+  ok(su.status === 200, `superuser reads cases, got ${su.status}`);
+  // An earlier block closed 5001, so only the ESCALATED appeal is open here.
+  // The point being asserted is the SPLIT, not the counts.
+  ok(su.body.counts.appeals === 1 && su.body.counts.actionable === 0,
+     `appeal is separated out, got ${JSON.stringify(su.body.counts)}`);
+  ok(su.body.counts.open === su.body.counts.appeals + su.body.counts.actionable,
+     'the two lists partition the open set — no case in both, none dropped');
+  ok(!su.body.appeals.some(c => c.ebay_state !== 'ESCALATED'),
+     'appeals list holds only ESCALATED cases eBay owns');
+  // This fixture supplies effectiveMode; Raj's REAL state file does not carry it
+  // at all, so in production this comes back null and the page must render
+  // "unknown" rather than guessing LIVE. Asserting the pass-through here.
+  ok(su.body.effectiveMode === 'SHADOW',
+     `effectiveMode passes through when present, got ${su.body.effectiveMode}`);
+  // Appeals total ($41.58) must never be inside this figure — one blended
+  // number would overstate what is still recoverable.
+  const appealMoney = su.body.appeals.reduce((n, c) => n + (c.amount || 0), 0);
+  ok(appealMoney > 0 && su.body.actionableAmount !== appealMoney,
+     `appeals money (${appealMoney}) is excluded from actionableAmount (${su.body.actionableAmount})`);
+
+  // 🔑 The business gate: a manager holding only a bl grant must be REFUSED.
+  db.prepare("DELETE FROM user_grants WHERE user_id='u-mgr1'").run();
+  db.prepare("INSERT INTO user_grants (user_id,business_id,role,units) VALUES ('u-mgr1','bl','manager','[\"BL1\"]')").run();
+  const mgr = await get('/?action=ebay-cases', 'u-mgr1');
+  ok(mgr.status === 403, `bl-only manager is refused ecom cases, got ${mgr.status}`);
+
+  // …and granted ecom, allowed.
+  db.prepare("INSERT INTO user_grants (user_id,business_id,role,units) VALUES ('u-mgr1','ecom','manager',NULL)").run();
+  const ok2 = await get('/?action=ebay-cases', 'u-mgr1');
+  ok(ok2.status === 200, `same manager WITH an ecom grant is allowed, got ${ok2.status}`);
+
+  const all  = await get('/?action=ebay-cases', 'u-su');
+  const filt = await get('/?action=ebay-cases&account=nope', 'u-su');
+  ok(filt.body.counts.open === 0 && all.body.counts.open > 0,
+     `account filter narrows (all=${all.body.counts.open}, bogus=${filt.body.counts.open})`);
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

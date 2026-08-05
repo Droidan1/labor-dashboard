@@ -3603,6 +3603,8 @@ const BUSINESS_AGNOSTIC_ACTIONS = new Set([
 // Every remaining routed action serves Bargain Lane. Listed explicitly rather
 // than defaulted, so adding an E-Commerce endpoint forces a deliberate choice.
 const ACTION_BUSINESS = new Map([
+  // First non-bl entry — the business gate's first real use.
+  ["ebay-cases", "ecom"],
   ["backfill", "bl"],
   ["backfill-items-snapshots", "bl"],
   ["cancel-sale-schedule", "bl"],
@@ -7014,6 +7016,74 @@ export default {
         }
       }
     }
+
+    // ── eBay Cases: read for the page ─────────────────────────────
+    //    GET /?action=ebay-cases[&account=…]
+    //
+    // 🔑 Unlike the ingest endpoint above, this is SESSION-based, so it passes
+    // through the business gate for real — the first endpoint that actually
+    // exercises it. Classified `ecom` in ACTION_BUSINESS, so only a holder of an
+    // ecom grant reaches it. The gate does the access decision; this handler
+    // does not re-check it.
+    if (url.searchParams.get("action") === "ebay-cases") {
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      }
+      try {
+        const acct = (url.searchParams.get("account") || "").trim();
+        const binds = ["ecom"];
+        let where = "business = ?";
+        if (acct) { where += " AND account = ?"; binds.push(acct); }
+
+        const { results: open } = await env.DB.prepare(
+          `SELECT case_key, account, case_type, case_id, ebay_state, buyer_can_escalate,
+                  respond_by, decision, decision_reason, tier, title, sku, amount,
+                  buyer_username, buyer_comments, owner, last_notified_at, notified_via
+             FROM ebay_cases WHERE ${where} AND is_closed = 0
+            ORDER BY respond_by ASC`
+        ).bind(...binds).all();
+
+        // 🔑 The two lists the page needs, split HERE so the client cannot get it
+        // wrong. `appeals` are ESCALATED with buyerCanEscalate=false — eBay
+        // already owns the outcome, so they are appeal questions, not work
+        // anyone can action. Mixing them into one urgency-sorted list is what
+        // Raj's own dashboard did, and it sends Meredith at cases that cannot be
+        // saved. 20 vs 23 on the live data.
+        const isAppeal = (c) => c.ebay_state === "ESCALATED" && c.buyer_can_escalate === 0;
+        const rows = open || [];
+        const appeals = rows.filter(isAppeal);
+        const actionable = rows.filter(c => !isAppeal(c));
+
+        const st = await env.DB.prepare(
+          `SELECT version, last_run_at, last_successful_run_at, effective_mode,
+                  account_status, received_at
+             FROM ebay_handler_state WHERE business = ?`).bind("ecom").first();
+
+        const { results: recent } = await env.DB.prepare(
+          `SELECT ts, kind, event, account, case_type, case_id, action, dry_run, ok,
+                  http_status, amount, reason, error
+             FROM ebay_actions WHERE business = ? AND kind = 'action'
+            ORDER BY ts DESC LIMIT 25`).bind("ecom").all();
+
+        return new Response(JSON.stringify({
+          actionable, appeals,
+          counts: { actionable: actionable.length, appeals: appeals.length, open: rows.length },
+          // Sum only the actionable set — the appeals total is not money anyone
+          // can still save, and one blended figure would overstate what is at stake.
+          actionableAmount: actionable.reduce((n, c) => n + (c.amount || 0), 0),
+          accounts: [...new Set(rows.map(c => c.account))].sort(),
+          handler: st || null,
+          // null until Raj adds effectiveMode to accountStatus — it is absent from
+          // the real state file. The page must render "unknown", never guess LIVE.
+          effectiveMode: (st && st.effective_mode) || null,
+          lastSuccessfulRunAt: (st && st.last_successful_run_at) || null,
+          recentActions: recent || [],
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
 
     // ── Marketing (Meta ads) insights: ?action=marketing-insights&window=mtd|last_60d
     // Reads the meta_ad_insights table (populated via MCP backfill in Phase 1,
