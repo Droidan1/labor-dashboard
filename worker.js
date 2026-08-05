@@ -7446,6 +7446,41 @@ export default {
       }
       try {
         const { id, role, stores, status } = await request.json();
+
+        // 🛑 PRIVILEGE ESCALATION GUARD. This endpoint is open to admins
+        // (canAccessInventory above) and wrote `role` straight from the body
+        // with no validation, while the D1 CHECK permits 'superuser'. An admin
+        // could POST {id: <their own id>, role: 'superuser'} and self-promote,
+        // or demote the real superuser. invite-user has always had an
+        // allowlist; this path never did. index.html even ships a hidden
+        // <option value="superuser"> whose only protection was a CSS class.
+        //
+        // 'superuser' is not assignable through this endpoint by ANYONE — it is
+        // the flag the whole grant model special-cases, and it should be set
+        // deliberately, not through the Users screen.
+        if (role !== undefined) {
+          const assignable = currentUser.role === 'superuser'
+            ? ['admin', 'executive', 'manager', 'staff']
+            : ['manager'];
+          if (!assignable.includes(role)) {
+            return new Response(JSON.stringify({ error: "You cannot assign that role" }),
+              { status: 403, headers: corsJson });
+          }
+        }
+
+        // A non-superuser must not be able to edit a superuser at all — not the
+        // role, not the stores, not the status. Otherwise an admin could
+        // suspend the owner out of their own account.
+        if (currentUser.role !== 'superuser') {
+          const { results: target } = await env.DB.prepare(
+            'SELECT role FROM users WHERE id = ?'
+          ).bind(id).all();
+          if (target && target.length && target[0].role === 'superuser') {
+            return new Response(JSON.stringify({ error: "Forbidden" }),
+              { status: 403, headers: corsJson });
+          }
+        }
+
         const parts = [], values = [];
         if (role !== undefined) { parts.push('role = ?'); values.push(role); }
         if (stores !== undefined) { parts.push('stores = ?'); values.push(stores && stores.length ? JSON.stringify(stores) : null); }
@@ -11326,6 +11361,22 @@ export default {
     }
 
     const targetStore = storeKey.toUpperCase();
+
+    // 🛑 This is the FALL-THROUGH route: it is reached whenever no ?action=
+    // branch matched, including for unrecognised actions. It reads `store`
+    // straight from the query string, returns that store's live Clover orders,
+    // and — via saveSnapshot below — WRITES that store's KV snapshot and
+    // daily_sales row. It had no store check at all, so any authenticated user
+    // could read and overwrite any store by asking for it. The sibling
+    // ?history= route (see canAccessStore above) always had this guard; this
+    // one was simply missed.
+    //
+    // canAccessStore(null, …) is true, so the X-Snapshot-Secret path used by
+    // cron and tooling (where currentUser is null) is unaffected.
+    if (!canAccessStore(currentUser, targetStore)) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+    }
+
     const merchantId = env[`${targetStore}_MERCHANT_ID`];
     const apiToken = env[`${targetStore}_API_TOKEN`];
 
