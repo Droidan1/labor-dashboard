@@ -5711,23 +5711,18 @@ async function businessesFor(env, user) {
     // which routes everyone to the dashboard exactly as before this feature.
     return [];
   }
-  // superuser is a FLAG meaning every business, and admin is included here by
-  // an explicit decision (Brian, 2026-08-05) so admins reach the picker too.
+  // 🔑 superuser is a FLAG meaning every business — it holds ZERO rows in
+  // user_grants by design, so filtering by grants would strand the one account
+  // meant to see everything. Every OTHER role, admin included, sees exactly the
+  // businesses it holds a grant to.
   //
-  // 🛑 Note what that means, because it is a real widening: `admin` is defined
-  // as a PER-BUSINESS role, so listing every business for them hands an admin
-  // of Bargain Lane visibility of businesses they hold no grant for. It is
-  // harmless today — E-Commerce has zero units, so its card is inert and there
-  // is no data behind it, and the hero's totals only ever sum CONNECTED
-  // businesses, which today is Bargain Lane alone, i.e. exactly what an admin
-  // already sees.
-  //
-  // 🛑 It stops being harmless the moment a second business CONNECTS. At that
-  // point either give admins a real grant per business and delete this branch,
-  // or gate entry with canAccessBusiness() — which exists and still has zero
-  // call sites. Do not let a connected business ship while this branch stands.
-  const seesEveryBusiness = user.role === 'superuser' || user.role === 'admin';
-  const visible = seesEveryBusiness
+  // Admin was briefly listed here alongside superuser (2026-08-05) so admins
+  // could reach the picker. That was a real widening — `admin` is a PER-BUSINESS
+  // role, so it handed an admin of Bargain Lane sight of a business they held no
+  // grant for. Closed the same day, before E-Commerce could connect and make it
+  // load-bearing. Admins that should see a second business now hold an explicit,
+  // revocable grant row (migration-033) instead of inheriting it from a branch.
+  const visible = user.role === 'superuser'
     ? all
     : all.filter(b => grantFor(user, b.id));
   return visible.map(b => ({
