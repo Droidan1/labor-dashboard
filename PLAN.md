@@ -4,7 +4,31 @@ _Direction and progress. Refreshed each session. Durable knowledge lives in [MEM
 
 ---
 
-## Current State — 2026-08-03
+## Current State — 2026-08-05
+
+**Multi-business permissions are STRUCTURALLY COMPLETE in production.** worker
+`a5a4a26b`, main `9753de2`. All four build-order steps of
+`tasks/multi-business-permissions.md` are built and live: grants, landing picker,
+Users-page grant editor, superuser-only business membership, a **fail-closed
+business gate** (86 actions; unclassified = refused), cron coverage, and
+`allowedUnits(user, businessId)` replacing the hard-wired `'bl'`.
+
+🛑 **Nothing structural blocks E-Commerce now — only SellerCloud credentials and
+data.** See `tasks/sellercloud-api-brief.md`.
+
+### 🛑 Still open, in priority order
+
+1. **Rotate the Clover tokens and `SNAPSHOT_SECRET`** — steps B and C below.
+   Unchanged and still the oldest item. **Only Brian can run it.**
+2. **Convert the regex-extraction test suites to drive `worker.fetch`.** They cost a
+   fix twice on 2026-08-05 (the cron business check, and splitting `allowedStores`
+   broke four suites at once). They cannot see wiring, and the tax compounds.
+3. **Boost's `migration-032` has never run against prod** — it lives on the `staging`
+   branch with the Meta Boost feature and must be applied whenever that ships.
+
+---
+
+## Previous State — 2026-08-03
 
 **Everything below is in production.** `main` @ `ab5ed43`, worker `6ae880b3`, sw `v66`.
 
