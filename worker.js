@@ -1,5 +1,20 @@
 // ─── Constants ───────────────────────────────────────────────────
-const BIN_PATTERNS = [/\bbin\b/i, /\bfill a bag\b/i, /\bglass case\b/i];
+// SINGLE SOURCE OF TRUTH for "is this a bin sale?" — used via isBinItem() by
+// BOTH the Retail-vs-BIN channel split on the store cards AND the Bin Products
+// L2 categorisation in Item Sales. These were three separate copies of the same
+// regex; if they drift, the BIN tile and the Bin Products category silently
+// disagree. Verified against the live Clover catalog (5,596 items / 330 distinct
+// names across all six stores): matches exactly the 17 real bin names
+// ($0.50–$10 Bin incl. the "Indy" variants, Fill A Bag incl. $15/$30 variants,
+// Glass Case / Mystery Box) and correctly excludes flat-price retail that merely
+// looks similar — "$1 Accessories", "$10 Boots", "$2 Clear Snack Bag",
+// "50373 Large Gift Bag". Note \bfill a bag\b rather than \bbag\b is what keeps
+// the gift/snack bags out. Add new bin spellings HERE and nowhere else.
+// "Ikea Bag" ($5, stocked at BL2/BL4/BL8/BL14/BL16) is a bin sale but is
+// unguessable from its name, so it needs an explicit entry. It previously
+// relied on a single per-item override at BL4 only, which meant the other four
+// stores would not have counted it as bin had it sold.
+const BIN_PATTERNS = [/\bbin\b/i, /\bfill a bag\b/i, /\bglass case\b/i, /\bikea bag\b/i];
 const MAX_TXN_DURATION_MS = 30 * 60 * 1000;
 const ALL_STORES = ["BL1", "BL2", "BL4", "BL8", "BL14", "BL16"];
 // The Weekly Retail Summary re-admits the closed Wyoming (BL12) as frozen
@@ -245,11 +260,11 @@ const SKU_BOOK_TO_L2 = {
   "$3 XMAS": "Seasonal",
   "$30 Athletics Shoes": "Softline - Shoes",
   "$4 Home Decor Sale - 10392": "Home",
-  "$4 Bath Sale - 50064": "Home",
+  "$4 Bath Sale - 50054": "Home",
   "$4 Kitchen Sale - 10390": "Home",
   "$4 Open Toe Shoe": "Softline - Shoes",
   "$5 XMAS": "Seasonal",
-  "$50 Pepsi Can": "Consumable Food",
+  ".50 Pepsi Can": "Consumable Food",
   "14281 - Diapers $2.50": "Hardlines",
   ".35 Cosmetics": "Consumable HBA",
   "3x5 - 4x6 Rug": "Home",
@@ -259,7 +274,33 @@ const SKU_BOOK_TO_L2 = {
   "Adult Apparel $6": "Softline - Apparel",
   "Adult Coat": "Softline - Apparel",
   "$1 Food - 50001": "Consumable Food",
+  // Michigan container deposit (BL8/BL14/BL16). Deliberately mapped by NAME
+  // rather than given a real Clover category: a refundable deposit has no COGS,
+  // and the obvious category (FOOD - BEVERAGES, $0.81/unit) against a $0.10 line
+  // books −710% GPM. Mapping to the L2 alone books the revenue with the
+  // beverages it attaches to and leaves it correctly un-costed.
+  "MI Bottle/Can Deposit": "Consumable Food",
 };
+
+// Clover's item↔category link is MANY-TO-MANY, but everything here used to read
+// `categories.elements[0]` and throw the rest away.
+//
+// That mattered because "Sku Book Items" is not a product category at all — it is
+// a POS convenience page. Clover renders one screen per category, so the stores
+// park high-frequency products there for cashiers. An item can therefore legitimately
+// sit in BOTH the sku book and its real category; taking [0] picked whichever
+// Clover happened to return first, so the same item could resolve either way.
+//
+// Prefer a real category whenever one exists. Effect on a single-category item is
+// nil — `find` returns that category, or falls through to the same [0] — so this
+// only changes items that genuinely carry both, which is exactly the case that was
+// broken. Lets an item keep the cashier shortcut AND get a real L3 (and therefore
+// a category cost, which "Sku Book Items" can never have — see SKU_BOOK_TO_L2).
+const SKU_BOOK_CATEGORY = "Sku Book Items";
+function pickPrimaryCategory(elements) {
+  const cats = elements || [];
+  return cats.find(c => c?.name && c.name !== SKU_BOOK_CATEGORY) || cats[0] || null;
+}
 
 const IM_TO_L2 = {
   "10015": "Hardlines",
@@ -1490,17 +1531,26 @@ async function fetchItemCategoryMap(store, env) {
   const map = {};
   let offset = 0;
   const limit = 1000;
+  let complete = true;
 
   while (true) {
     const url = `https://api.clover.com/v3/merchants/${merchantId}/items?expand=categories&limit=${limit}&offset=${offset}`;
-    const resp = await fetch(url, {
+    // cloverFetch (not bare fetch) so a 429 on a later page is retried.
+    const resp = await cloverFetch(url, {
       headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
     });
+    // A failed page is NOT the end of the catalog. This used to fall through
+    // to the `!data?.elements?.length` break below, which silently truncated
+    // the map and then cached the truncated copy for 24h — every item past the
+    // cut fell back to name/heuristic categorization. Only stores with >1000
+    // items ever request a second page, so only BL1 was hit.
+    if (!resp.ok) { complete = false; break; }
     const data = await resp.json();
     if (!data?.elements?.length) break;
 
     for (const item of data.elements) {
-      const catName = item.categories?.elements?.[0]?.name;
+      // Prefer a real category over the sku-book POS page when an item has both.
+      const catName = pickPrimaryCategory(item.categories?.elements)?.name;
       if (catName && item.id) {
         map[item.id] = catName;
       }
@@ -1509,7 +1559,9 @@ async function fetchItemCategoryMap(store, env) {
     offset += limit;
   }
 
-  if (env.SALES_SNAPSHOTS) {
+  // Never cache a partial map — the 24h TTL would freeze the gap in place.
+  // Serve what we have for this request; the next one retries from Clover.
+  if (env.SALES_SNAPSHOTS && complete) {
     await env.SALES_SNAPSHOTS.put(cacheKey, JSON.stringify(map), { expirationTtl: 86400 });
   }
 
@@ -1545,7 +1597,7 @@ async function fetchRefundElements(store, env, sinceTimestamp, untilTimestamp = 
   try {
     while (true) {
       // Phase 2E: /v3/refunds does NOT return lineItem refs even when expanded
-      // (confirmed via debug-refunds endpoint — lineItemKeys is []). It DOES
+      // (empirically confirmed against the live API — lineItemKeys is []). It DOES
       // return orderRef.id and payment.order.id, so refund attribution uses
       // order-ID lookup against the line-item map built during the main loop.
       let url = `https://api.clover.com/v3/merchants/${merchantId}/refunds`
@@ -1615,7 +1667,12 @@ async function fetchManualRefunds(store, env, sinceTimestamp, untilTimestamp = n
 //   Full refund  → order.total === 0 AND payment sum ≈ refund.amount
 //   Partial refund → order has an order-level refund attached (delta between
 //                    payment sum and order.total equals the refund amount)
-async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = null, sameDayOrders = null) {
+// preRefundElements / preManualRefunds: when the caller has ALREADY paged
+// /v3/refunds and /v3/manual_refunds for this exact window (the snapshot handler
+// and the nightly cron both do, to build the category bin/retail override),
+// pass them here instead of letting this function re-fetch the same two
+// endpoints. Both default to null, which is byte-identical to the old behaviour.
+async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = null, sameDayOrders = null, preRefundElements = null, preManualRefunds = null) {
   const merchantId = env[`${store}_MERCHANT_ID`];
   const apiToken = env[`${store}_API_TOKEN`];
   if (!merchantId || !apiToken) return 0;
@@ -1648,6 +1705,28 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
 
   let total = 0;
   let skipped = 0;
+
+  // One refund record → running totals. Shared by both paths below so the
+  // pre-fetched and self-fetched cases can never diverge in their math.
+  const addRefund = (r) => {
+    // refund.amount includes tax; subtract tax to match Clover's pre-tax "Refunds" line.
+    const gross = r.amount || 0;
+    const tax = r.taxAmount || 0;
+    const preTax = gross - tax;
+
+    // Skip if this amount is already reflected in a same-day order.total.
+    if (alreadyReflected.has(preTax) && alreadyReflected.get(preTax) > 0) {
+      alreadyReflected.set(preTax, alreadyReflected.get(preTax) - 1);
+      skipped += preTax;
+      return;
+    }
+    total += preTax;
+  };
+
+  if (preRefundElements) {
+    // Caller already paged /v3/refunds for this exact window — reuse it.
+    for (const r of preRefundElements) addRefund(r);
+  } else {
   let offset = 0;
   const limit = 1000;
   const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
@@ -1659,20 +1738,7 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
       if (untilTimestamp) url += `&filter=createdTime<${untilTimestamp}`;
       const data = await cloverFetchWithRetry(url, headers, `Clover refunds ${store}`);
       if (!data?.elements?.length) break;
-      for (const r of data.elements) {
-        // refund.amount includes tax; subtract tax to match Clover's pre-tax "Refunds" line.
-        const gross = r.amount || 0;
-        const tax = r.taxAmount || 0;
-        const preTax = gross - tax;
-
-        // Skip if this amount is already reflected in a same-day order.total.
-        if (alreadyReflected.has(preTax) && alreadyReflected.get(preTax) > 0) {
-          alreadyReflected.set(preTax, alreadyReflected.get(preTax) - 1);
-          skipped += preTax;
-          continue;
-        }
-        total += preTax;
-      }
+      for (const r of data.elements) addRefund(r);
       if (data.elements.length < limit) break;
       offset += limit;
     }
@@ -1683,6 +1749,7 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
     console.warn(`fetchRefundsTotal(${store}) error:`, e.message);
     return 0;
   }
+  }
   if (skipped > 0) {
     console.log(`fetchRefundsTotal(${store}): skipped ${skipped/100} same-day refunds (already in order.total), deducting ${total/100}`);
   }
@@ -1692,7 +1759,7 @@ async function fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp = nu
   // not linked to a specific order). Without this, totals over-report
   // by the manual-refund total.
   try {
-    const mrElements = await fetchManualRefunds(store, env, sinceTimestamp, untilTimestamp);
+    const mrElements = preManualRefunds || await fetchManualRefunds(store, env, sinceTimestamp, untilTimestamp);
     let manualTotalCents = 0;
     for (const mr of mrElements) {
       const gross = mr.amount || 0;
@@ -1902,6 +1969,111 @@ async function saveItemSalesSnapshot(env, store, dateStr, itemData) {
       ...itemData,
       snapshotTime: new Date().toISOString()
     }));
+  }
+}
+
+// ─── Item snapshot rebuild — ONE implementation of the guards ───────────────
+//
+// Re-pulls one store/date from Clover and writes it ONLY if that is an
+// improvement. Extracted from the ?action=backfill-items-snapshots loop so the
+// Repair console runs byte-identical protection rather than a second copy that
+// can drift. Both guards below exist because they each caught a real, permanent
+// data loss; a divergent second implementation is how that loss comes back.
+//
+// ctx: { catMap, overrides, itemCosts, d1Total, todayStr, force, backupPrefix }
+// Returns { outcome: "written" | "skipped" | "error", ...detail } and NEVER throws.
+async function rebuildItemSnapshot(env, store, dateStr, ctx) {
+  const key = `items:${store.toLowerCase()}:${dateStr}`;
+  try {
+    if (!ctx.force) {
+      const existing = await env.SALES_SNAPSHOTS.get(key);
+      if (existing) return { outcome: "skipped", date: dateStr, note: "already present (force=0)" };
+    }
+
+    const sinceTs = getStartOfDayET(dateStr);
+    let untilTs = null;
+    if (dateStr !== ctx.todayStr) {
+      const nextDay = new Date(dateStr + 'T12:00:00Z');
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
+    }
+    const [elements, refundElements] = await Promise.all([
+      fetchItemOrders(store, env, sinceTs, untilTs),
+      fetchRefundElements(store, env, sinceTs, untilTs),
+    ]);
+    if (!elements) return { outcome: "error", date: dateStr, error: "no credentials, or Clover fetch failed" };
+
+    const itemData = aggregateItemSales(elements, ctx.catMap, store, dateStr, ctx.overrides, ctx.itemCosts, refundElements);
+    const d1Total = ctx.d1Total || 0;
+
+    // ── Zero-order guard ───────────────────────────────────────────────────
+    // Clover's orders API only reaches back ~90 days; older dates come back as
+    // an EMPTY array, not an error. Writing that blanks a real day permanently
+    // — it destroyed 104 days of BL1 history on 2026-07-28. Two independent
+    // ways to notice the day was not actually empty; either one blocks.
+    if (itemData.orderCount === 0) {
+      const existing = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get(key, "json") : null;
+      if (existing?.categories?.length > 0 || d1Total > 0) {
+        // Key order matches the pre-refactor response exactly so the
+        // differential test can compare byte for byte, not just by content.
+        return {
+          outcome: "skipped", date: dateStr,
+          note: "zero-order guard: Clover returned no orders but this day has sales — existing snapshot preserved",
+          d1Total,
+        };
+      }
+    }
+
+    // ── Magnitude guard ────────────────────────────────────────────────────
+    // The zero-order guard only fires on a CLEAN empty result. Clover degrades
+    // at its retention edge by returning FEWER orders, not zero: a BL4 backfill
+    // received 153 of 2026-05-05's 241 orders and overwrote a complete snapshot
+    // ($3,229.91 -> $2,124.47) reporting written=1, errors=0. So compare
+    // against D1 on EVERY write, not just the empty case.
+    const computedNet = itemData?.totals?.netSales ?? 0;
+    if (d1Total > 0 && computedNet < d1Total * BACKFILL_MIN_D1_RATIO) {
+      // Only refuse when what we ALREADY have is better. If the stored copy is
+      // empty or itself short, a partial refresh still improves it and blocking
+      // would preserve the worse one.
+      const existingMag = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get(key, "json") : null;
+      const existingNet = existingMag?.totals?.netSales ?? 0;
+      if (existingNet >= computedNet) {
+        return {
+          outcome: "skipped", date: dateStr,
+          note: "magnitude guard: computed net is far below this day's D1 total — looks like a partial Clover fetch; existing snapshot preserved",
+          computedNet, d1Total, existingNet,
+          ratio: Number((computedNet / d1Total).toFixed(4)),
+          orderCount: itemData.orderCount,
+        };
+      }
+    }
+
+    // ── Back up whatever is about to be overwritten ────────────────────────
+    // Only the Repair console passes a prefix. It runs BEFORE the put and after
+    // both guards, so a backup is only spent on a write that is actually going
+    // to happen. A backup that fails aborts the write — losing the undo is not
+    // an acceptable price for applying the repair.
+    let backedUp = false;
+    if (ctx.backupPrefix) {
+      const prior = await env.SALES_SNAPSHOTS.get(key);
+      if (prior !== null) {
+        try {
+          await env.SALES_SNAPSHOTS.put(`${ctx.backupPrefix}:${store.toLowerCase()}:${dateStr}`, prior);
+          backedUp = true;
+        } catch (e) {
+          return { outcome: "error", date: dateStr, error: `backup failed, write aborted: ${e.message}` };
+        }
+      }
+    }
+
+    await saveItemSalesSnapshot(env, store, dateStr, itemData);
+    return {
+      outcome: "written", date: dateStr, backedUp,
+      netSales: itemData?.totals?.netSales ?? 0,
+      orderCount: itemData.orderCount, d1Total,
+    };
+  } catch (e) {
+    return { outcome: "error", date: dateStr, error: e.message };
   }
 }
 
@@ -2281,6 +2453,27 @@ const ITEM_COSTS_KEY = "item-costs:global";
 // fallback when a line item has no item-master (IM#) cost — keyed on the full
 // Clover L3 category string (e.g. "FG BL SEASONAL - CHRISTMAS - GM").
 const CATEGORY_COSTS_KEY = "category-costs:global";
+
+// Floor for `backfill-items-snapshots`: a recomputed day whose netSales falls
+// below this fraction of the SAME day's D1 `daily_sales` total is treated as a
+// partial Clover fetch and refused rather than written over good data.
+//
+// Measured 2026-08-03 over 48 known-good store/date pairs across all six live
+// stores: the ratio is **1.000000 minimum** — a healthy snapshot never comes in
+// under D1, it only ever drifts slightly ABOVE (max 1.0079, from refunds aging
+// out of Clover's window on a previously backfilled day). So the low side has
+// zero natural variance. The corruption this exists to stop measured 0.6577.
+//
+// Tightened 0.98 → 0.99 the same day, on evidence: a BL16 re-snapshot of
+// 2026-07-28 returned 192 of 194 orders — $43.25 short at ratio **0.988** — and
+// slid under the 2% band. Small truncations are real, not just catastrophic
+// ones. Healthy data never uses the headroom, so 1% is ample and 2% was not
+// earning anything.
+//
+// Deliberately tight: a false refusal is cheap (the date is skipped and
+// reported with its ratio), a false accept destroys history. If a legitimate
+// day ever trips this, widen it on measurement — not on the first complaint.
+const BACKFILL_MIN_D1_RATIO = 0.99;
 const EMPTY_ITEM_COSTS = { items: {}, categories: {}, importedAt: null, count: 0, categoriesImportedAt: null, categoriesCount: 0 };
 
 // Loads BOTH cost maps in one shot: per-item (IM#) costs and per-L3-category
@@ -2343,6 +2536,15 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   const l3Cats = {};      // L2 → L3 → { qty, gross, discounts, refunds, net, cost }
   const unmappedL3 = {};
   const noCategory = {};
+  // Items whose L2 was resolved by a FALLBACK rather than a real Clover L3.
+  // unmappedL3 catches "has a Clover category we don't map" and noCategory
+  // catches "fell through everything", but neither sees the middle — items
+  // matched by override / IM number / name / heuristic / pattern. Those are
+  // exactly the rows that render as "[Name match] …", "[Heuristic] …" etc., and
+  // their item identity was previously discarded at aggregation, so there was
+  // no way to find out which products to fix. Keyed by item name →
+  // { qty, net, itemId, source, l2 }.
+  const fallbackItems = {};
   // Map line-item id → { l2, l3Key } for refund attribution after the main loop.
   // Built during the per-order line-item walk so refunds from /v3/refunds (which
   // reference lineItem.id) can be attributed back to the originating category.
@@ -2473,16 +2675,49 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       // Clover catalog category — e.g. name-matched items whose name IS an L3
       // category string. Lets category costs reach those rows too.
       let l3CostKey = null;
-      if (!l2 && itemId && itemCatMap[itemId]) {
+      // Read the Clover L3 even when a Tier-0 override already decided L2.
+      // This used to be guarded by `!l2`, which meant overriding an item's
+      // BUCKET also silently erased its CATEGORY — and with it the only key
+      // the category-cost lookup below has (`costL3 = l3 || l3CostKey`). Those
+      // lines then booked cost 0 / GPM 100%. One redundant override on BL4's
+      // "Ikea Bag" left $109,276 of bin sales uncosted that way.
+      // The override still wins the bucket: the L3→L2 ladder below opens with
+      // `if (l2) { /* override already decided */ }`, and the display key is
+      // chosen from `l2Source`, not from `l3`.
+      if (itemId && itemCatMap[itemId]) {
         l3 = itemCatMap[itemId];
       }
 
       // Map L3 → L2
       if (l2) {
         // override already decided
-      } else if (l3 === "Sku Book Items") {
-        l2 = SKU_BOOK_TO_L2[li.name] || "Hardlines";
-        l2Source = "clover-l3";
+      } else if (l3 === SKU_BOOK_CATEGORY) {
+        const skuBookL2 = SKU_BOOK_TO_L2[li.name];
+        if (skuBookL2) {
+          l2 = skuBookL2;
+          l2Source = "clover-l3";
+        } else {
+          // Unmapped sku-book item — do NOT guess.
+          //
+          // This used to fall to `|| "Hardlines"`, which made a mis-bucketed item
+          // look perfectly correct: nothing flagged it, and a swimsuit or a bottle
+          // deposit quietly inflated Hardlines. Every new product a store adds to
+          // the POS convenience page inherited that silence.
+          //
+          // Book it as Custom Sales — the app's existing "we don't know what this
+          // is" bucket — and record the item so ?action=noncategorized-items
+          // surfaces it. Setting l2Source "custom" also makes the L3 row show the
+          // raw item NAME instead of a synthetic label, so the offender is
+          // identifiable straight from the store table.
+          const skuName = li.name || "unknown";
+          const skuBucket = noCategory[skuName] || { qty: 0, net: 0, itemId: itemId || null };
+          skuBucket.qty += qty;
+          skuBucket.net += priceCents / 100;
+          if (!skuBucket.itemId && itemId) skuBucket.itemId = itemId;
+          noCategory[skuName] = skuBucket;
+          l2 = "Custom Sales";
+          l2Source = "custom";
+        }
       } else if (l3 && ov.l3Map && ov.l3Map[l3] && VALID_L2.has(ov.l3Map[l3])) {
         // Admin L3 mapping wins over built-in L3_TO_L2 so overrides can also
         // correct mis-categorized Clover categories, not just add new ones.
@@ -2520,7 +2755,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
             if (/\bGIFT\s*CARD\b/i.test(li.name || "")) {
               l2 = "Gift Cards";
               l2Source = "heuristic";
-            } else if (/\bBIN\b|FILL A BAG|GLASS CASE/i.test(li.name || "")) {
+            } else if (isBinItem(li.name || "")) {
               // Matches "Bin", "$3 Bin", "Fill a Bag", etc. — same patterns as
               // the live-tile isBinItem(). Safety net when Clover catalog loses
               // the "Bin Products" category assignment (e.g. after item edit).
@@ -2588,7 +2823,27 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       } else if (l2Source === "override") {
         l3Key = "[Override] " + l2;
       } else if (l2Source === "name") {
-        l3Key = "[Name match] " + (li.name || "(unnamed)");
+        // A name match means the item's NAME *is* a real L3 category string —
+        // this merchant names one item per price point after its category. So
+        // report it under that category, not a shadow row.
+        //
+        // Splitting them was purely an artefact of keying the display row on
+        // HOW the line resolved rather than WHAT it resolved to, and it was
+        // very visible: BL1 has 28 items named "FG BL CONSUMABLES - FOOD -
+        // SNACKS", of which 20 carry the Clover category and 8 do not, so one
+        // category rendered as two rows. 465 of BL1's 1,051 items have no
+        // Clover category and 362 of those are named like an L3, so most
+        // categories were shadowed this way.
+        //
+        // `l3CostKey` is exactly the matched L3 key (set at the name-match
+        // branch above) and is already what the cost lookup uses — so the two
+        // rows always agreed on cost; only the label differed.
+        //
+        // The diagnostic is NOT lost: `fallbackItems` keys on the item name and
+        // fires for every non-clover-l3 source, so `?action=noncategorized-items`
+        // still reports these with source "name". Falls back to the old label if
+        // a match somehow left no key.
+        l3Key = l3CostKey || ("[Name match] " + (li.name || "(unnamed)"));
       } else if (l2Source === "im") {
         l3Key = "[IM " + (imNum || "?") + "] " + l2;
       } else if (l2Source === "pattern") {
@@ -2599,6 +2854,23 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         l3Key = li.name || "(unnamed)";
       } else {
         l3Key = "[Other] " + l2;
+      }
+
+      // Capture the ITEM behind every fallback-resolved row (see fallbackItems
+      // above). "custom" is excluded because those already keep the raw item
+      // name as their L3 and are tracked by noCategory.
+      if (l2Source && l2Source !== "clover-l3" && l2Source !== "custom") {
+        const fbKey = li.name || "(unnamed)";
+        const fb = fallbackItems[fbKey] ||
+          { qty: 0, gross: 0, itemId: itemId || null, source: l2Source, l2 };
+        fb.qty += qty;
+        // GROSS line revenue (signed, so refunds net out). Deliberately not
+        // called "net": discounts/refunds are applied to the L2/L3 rows later,
+        // so this runs ~10% above the netSales shown on the dashboard. It is a
+        // ranking signal for "which product to fix first", not a reported figure.
+        fb.gross += priceCents / 100;
+        if (!fb.itemId && itemId) fb.itemId = itemId;
+        fallbackItems[fbKey] = fb;
       }
 
       const cat = getCat(l2);
@@ -2719,7 +2991,10 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       // Tier 1: Clover L3 → L2
       if (!l2 && itemId && itemCatMap[itemId]) {
         const l3 = itemCatMap[itemId];
-        if (l3 === "Sku Book Items") l2 = SKU_BOOK_TO_L2[li.name] || "Hardlines";
+        // Unmapped sku-book item: leave l2 unset so the name heuristics and
+        // pattern rules below get a chance, ending at "Custom Sales". Forcing
+        // "Hardlines" here made a wrong answer indistinguishable from a right one.
+        if (l3 === SKU_BOOK_CATEGORY) { const m = SKU_BOOK_TO_L2[li.name]; if (m) l2 = m; }
         else if (ov.l3Map && ov.l3Map[l3] && VALID_L2.has(ov.l3Map[l3])) l2 = ov.l3Map[l3];
         else if (L3_TO_L2[l3]) l2 = L3_TO_L2[l3];
       }
@@ -2729,7 +3004,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         const liName = li.name || "";
         const n = liName.toUpperCase();
         if (/\bGIFT\s*CARD\b/i.test(liName)) l2 = "Gift Cards";
-        else if (/\bBIN\b|FILL A BAG|GLASS CASE/i.test(liName)) l2 = "Bin Products";
+        else if (isBinItem(liName)) l2 = "Bin Products";
         else if (/EASTER|VALENTINE|CHRISTMAS|HALLOWEEN|FOURTH OF JULY|4TH OF JULY|ST[.\s]*PATRICK|HOLIDAY|SEASONAL/i.test(n)) l2 = "Seasonal";
         else if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV|RECLINER|LOVESEAT|OTTOMAN|MATTRESS/i.test(n)) l2 = "Furniture";
         else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE/i.test(n)) l2 = "Home";
@@ -2764,7 +3039,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   // Clover's refunds live on a separate endpoint and are NOT subtracted from
   // order.total. Each refund returns orderRef.id (or payment.order.id) but
   // does NOT return lineItem refs — even with expand=lineItem,lineItem.item
-  // it returns nothing. Confirmed via debug-refunds endpoint.
+  // it returns nothing. Empirically confirmed against the live API.
   //
   // Strategy: build orderLineItemMap (orderId → [{l2, l3Key, grossCents}])
   // during the main loop above, then for each refund:
@@ -2941,6 +3216,17 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     },
     _debug: {
       unmappedL3, noCategory,
+      // Top 100 by net keeps the snapshot small (a store-day is ~18 KB today)
+      // while still covering everything worth acting on; fallbackItemsTotal
+      // reports the true count so a truncated list is never mistaken for
+      // complete.
+      fallbackItems: Object.fromEntries(
+        Object.entries(fallbackItems)
+          .sort((a, b) => b[1].gross - a[1].gross)
+          .slice(0, 100)
+          .map(([k, v]) => [k, { ...v, qty: Math.round(v.qty), gross: roundCents(v.gross) }])
+      ),
+      fallbackItemsTotal: Object.keys(fallbackItems).length,
       itemCatMapSize: Object.keys(itemCatMap).length,
       itemCostsCount: Object.keys(icItems).length,
     },
@@ -2964,9 +3250,16 @@ async function fetchItemOrders(store, env, sinceTimestamp, untilTimestamp = null
       + `&expand=payments,lineItems.item,lineItems.discounts,discounts`
       + `&limit=${limit}&offset=${offset}`;
     if (untilTimestamp) cloverUrl += `&filter=createdTime<${untilTimestamp}`;
-    const resp = await fetch(cloverUrl, {
+    // cloverFetch (not bare fetch) so a 429 on a later page is retried.
+    const resp = await cloverFetch(cloverUrl, {
       headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
     });
+    // A failed page is NOT the end of the order list. This used to fall through
+    // to the `!data?.elements?.length` break below and return a SILENTLY
+    // TRUNCATED array that callers could not tell from a genuinely short day.
+    // Return null instead — the same "couldn't fetch" signal this function
+    // already uses for missing credentials, which every caller handles.
+    if (!resp.ok) return null;
     const data = await resp.json();
     if (!data?.elements?.length) break;
     allElements.push(...data.elements);
@@ -3090,7 +3383,7 @@ function applyRefundsToAggregate(data, refundCents) {
 }
 
 // ─── Fetch and aggregate for a store, then snapshot ──────────────
-async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, untilTimestamp = null, binRetailOverride = null, preElements = null) {
+async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, untilTimestamp = null, binRetailOverride = null, preElements = null, preRefundElements = null, preManualRefunds = null) {
   // preElements: when provided (e.g. the clientCreatedTime sweep), skip the
   // createdTime fetch and aggregate this exact set instead. Default (null) is
   // byte-identical to the original behavior.
@@ -3105,7 +3398,7 @@ async function fetchAggregateAndSnapshot(store, env, sinceTimestamp, dateStr, un
   // sameDayOrders so fetchRefundsTotal returns ALL refunds (same-day + cross-day),
   // not just cross-day. Without this, refunded orders contribute their original
   // pre-refund revenue and the refund deduction would be missing.
-  const refundCents = await fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp, null);
+  const refundCents = await fetchRefundsTotal(store, env, sinceTimestamp, untilTimestamp, null, preRefundElements, preManualRefunds);
   applyRefundsToAggregate(data, refundCents);
 
   // Phase 2D: when caller provides category-based bin/retail (computed via
@@ -3275,13 +3568,91 @@ function resolveCors(request) {
   return headers;
 }
 
+// Which configured secret did this request present? "current" | "next" | null.
+//
+// Two slots exist so the secret can be rotated WITHOUT a synchronised flag-day.
+// The old shape — one value, checked in seven places — meant rotating required
+// updating the Cloudflare secret and the Apps Script auction feeder in the same
+// instant, and getting it wrong stops the nightly feed silently. With two slots:
+//
+//   1. set SNAPSHOT_SECRET_NEXT to the new value   → both work
+//   2. move every caller over at your own pace, and watch the log line below to
+//      see whether anything is still on the old one
+//   3. set SNAPSHOT_SECRET to the new value and delete SNAPSHOT_SECRET_NEXT
+//
+// Each step is independently reversible and none has a broken window.
+//
+// 🔑 Both slots are checked for truthiness FIRST. Without that, an unset slot
+// plus an absent header compares undefined === undefined and authenticates
+// everyone. `presented` is also required non-empty for the same reason.
+function snapshotSecretSlot(request, env) {
+  const presented = request.headers.get("X-Snapshot-Secret");
+  if (!presented) return null;
+  if (env.SNAPSHOT_SECRET && presented === env.SNAPSHOT_SECRET) return "current";
+  if (env.SNAPSHOT_SECRET_NEXT && presented === env.SNAPSHOT_SECRET_NEXT) return "next";
+  return null;
+}
+
+// True if the request carries either valid secret. Use this, never a bare
+// comparison — a missed site is a caller that breaks the moment you rotate.
+function hasSnapshotSecret(request, env) {
+  const slot = snapshotSecretSlot(request, env);
+  // During a rotation window, surface anything still presenting the OLD value.
+  // This is the signal that says whether step 3 is safe yet: if nothing logs
+  // for a full day (the auction feeder runs nightly), every caller has moved.
+  if (slot === "current" && env.SNAPSHOT_SECRET_NEXT) {
+    console.log(JSON.stringify({
+      rotation: "legacy-secret-in-use",
+      action: new URL(request.url).searchParams.get("action") || "(none)",
+      ua: request.headers.get("User-Agent") || "(none)",
+    }));
+  }
+  return slot !== null;
+}
+
 // Returns a 401 Response if the request lacks a valid admin secret, else null.
 // Every secret-gated endpoint uses this to avoid drifting auth checks.
+//
+// Use this ONLY for machine callers with no browser session — today that is the
+// Apps Script auction feeder (?action=ingest) and the no-UI diagnostics. Anything
+// reachable from the admin page uses requireAdminAccess below, so the browser can
+// authenticate with its session cookie instead of a secret shipped in page source.
 function requireAdminSecret(request, env, corsJson) {
-  if (!env.SNAPSHOT_SECRET || request.headers.get("X-Snapshot-Secret") !== env.SNAPSHOT_SECRET) {
+  if (!hasSnapshotSecret(request, env)) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
   }
   return null;
+}
+
+// Gate for admin endpoints reachable from the browser. Returns a Response to
+// short-circuit with, or null to proceed.
+//
+// Three ways in, in order of preference:
+//   1. X-Snapshot-Secret — kept for cron and external tooling only. Never sent
+//      by the client any more; it used to be a literal in public page source.
+//   2. A superuser session — required for anything that MUTATES.
+//   3. An admin-or-superuser session — enough to READ.
+//
+// Method-aware because several actions read on GET and write on POST off a single
+// guard (item-costs, category-costs, item-overrides). Gating the whole block at
+// superuser would break the admin page's reads for admins; gating it at admin
+// would leave the writes open to them. So the verb decides.
+//
+// 403 not 401: 401 means "no session" here and the client bounces to login on it.
+// An authenticated user with the wrong role must see a refusal, not a login page.
+// `superuserOnly` tightens even the READ side to superuser — used by the Repair
+// console, which Brian scoped to superuser regardless of verb.
+function requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly = false } = {}) {
+  if (isAdminSecret) return null;
+  const mutating = superuserOnly || request.method !== "GET";
+  const allowed = mutating
+    ? currentUser?.role === "superuser"
+    : canAccessInventory(currentUser);
+  if (allowed) return null;
+  return new Response(JSON.stringify({
+    error: "Forbidden",
+    code: mutating ? "NEED_SUPERUSER" : "NEED_ADMIN",
+  }), { status: 403, headers: corsJson });
 }
 
 // Round to 2 decimal places (dollar/cents precision).
@@ -3884,7 +4255,7 @@ async function buildMorningBriefingData(env) {
   const yesterdayStr = yd.toISOString().slice(0, 10);
 
   const [{ results: yRows }, { results: tRows }] = await Promise.all([
-    env.DB.prepare('SELECT store, total, budget, labor_pct, order_count FROM daily_sales WHERE date = ?').bind(yesterdayStr).all(),
+    env.DB.prepare('SELECT store, total, auction, budget, labor_pct, order_count FROM daily_sales WHERE date = ?').bind(yesterdayStr).all(),
     env.DB.prepare('SELECT store, budget FROM daily_sales WHERE date = ?').bind(todayStr).all(),
   ]);
 
@@ -3906,11 +4277,25 @@ async function buildMorningBriefingData(env) {
     const merged = snaps[i] ? mergeItemSnapshots([snaps[i]]) : null;
     // gpmPct is stored 0–100 (e.g. 43.0); the spec wants a decimal fraction, so /100.
     const t = merged && merged.totals;
+    // CONTRACT: netSales is the store's TOTAL net for the day and is the figure
+    // budgetForSalesDate is set against — netSales === posSales + auctionSales.
+    // It previously carried POS only while the budget assumed auction counted
+    // toward it, which overstated every auction store's miss (chain-wide that
+    // was ~2x the real variance). The two components ship alongside it so a
+    // consumer can still split the channels without re-deriving either.
+    // null means "no data for that day", never 0.
+    const posSales = y.total ?? null;
+    const auctionSales = y.auction ?? null;
+    const netSales = (posSales == null && auctionSales == null)
+      ? null
+      : (posSales ?? 0) + (auctionSales ?? 0);
     return {
       storeId: store,
       name: STORE_LABELS[store] || store,
       salesDate: yesterdayStr,            // the day netSales covers (yesterday, ET)
-      netSales: y.total ?? null,          // yesterday's FINAL net sales (POS; excludes auction)
+      netSales,                           // TOTAL net = posSales + auctionSales
+      posSales,                           // point-of-sale component
+      auctionSales,                       // auction component (null if the store runs no auctions)
       budgetForSalesDate: y.budget ?? null, // budget that applied to yesterday (compare vs netSales)
       todayBudget: tMap[store]?.budget ?? null, // today's forward target
       // Tier 2/3 — from the same daily_sales row. labor_pct is stored in percent
@@ -3923,7 +4308,9 @@ async function buildMorningBriefingData(env) {
       transactions: y.order_count ?? null,
       // Tier 1 — from the item snapshot (KV). gross margin as a fraction; no
       // planned margin or per-category budget exists in our system, so those
-      // spec fields are intentionally absent.
+      // spec fields are intentionally absent. NOTE: grossMargin and every
+      // categories[].netSales below are POS-ONLY (auction has no item detail),
+      // so they sum to posSales, NOT to the top-level netSales.
       grossMargin: t && t.netSales > 0 ? t.gpmPct / 100 : null,
       categories: merged ? merged.categories.map(c => ({
         name: c.category,
@@ -4151,7 +4538,7 @@ function buildSummaryEmailHtml(data, brief, categoryData, weeklyData) {
 
   return `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:32px 24px;background:#fff">
-      <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:44px;margin-bottom:20px">
+      <img src="https://www.retjghub.com/retjg-logo-email.png" alt="RETJG HUB" width="44" height="44" style="display:block;margin-bottom:20px">
       <h2 style="margin:0 0 4px;font-size:20px;color:#194975">Daily Sales Summary</h2>
       <p style="margin:0 0 24px;font-size:14px;color:#666">${displayDate}</p>
       ${briefBox}
@@ -4184,13 +4571,39 @@ function buildSummaryEmailHtml(data, brief, categoryData, weeklyData) {
       ${renderWeeklyBreakdownHtml(weeklyData)}
       <p style="margin-top:28px;font-size:12px;color:#aaa">
         <a href="https://www.retjghub.com" style="color:#3BB54A;text-decoration:none">Open Dashboard</a>
-        &nbsp;·&nbsp; Bargain Lane Notification System
+        &nbsp;·&nbsp; RETJG HUB Notification System
         &nbsp;·&nbsp; To stop receiving these, open Settings → Notifications.
       </p>
     </div>`;
 }
 
 // Fan out push + email daily summary to all opted-in superusers.
+// Recipients for a CHAIN-WIDE broadcast (daily summary, weekly digest).
+//
+// 🛑 These two senders build ONE email body and ONE push payload containing
+// every store's figures, then send that same body to every recipient. So the
+// recipient list IS the access control — there is nothing per-user to scope.
+// Both previously selected every active user with no role or store filter (the
+// leftover variable name `superusers` is from when they genuinely were
+// superuser-only), which meant single-store managers were emailed and pushed
+// the whole chain's sales: data the app itself refuses them.
+//
+// allowedStores() returns null only for someone entitled to every store, so it
+// is exactly the right test, and it fails CLOSED — a role it does not know
+// yields a non-null array and is excluded rather than included. Grants are not
+// loaded here, which is fine: the superuser/admin branch short-circuits before
+// touching them, and anyone else is excluded either way.
+//
+// Managers keep their per-store push via dispatchIntervalSummary, which already
+// scopes correctly per recipient. Giving them a store-scoped daily email is a
+// feature, not this fix.
+async function chainWideRecipients(env) {
+  const { results } = await env.DB.prepare(
+    "SELECT id, email, role, stores FROM users WHERE status = 'active'"
+  ).all();
+  return (results || []).filter(u => allowedStores(u) === null);
+}
+
 async function dispatchDailySummary(env, date) {
   if (!env.DB) return { error: 'DB not configured' };
 
@@ -4222,9 +4635,7 @@ async function dispatchDailySummary(env, date) {
   });
 
   // All active users (notification_preferences controls per-user opt-in)
-  const { results: superusers } = await env.DB.prepare(
-    "SELECT u.id, u.email FROM users u WHERE u.status = 'active'"
-  ).all();
+  const superusers = await chainWideRecipients(env);
   if (!superusers?.length) return { ok: true, skipped: 'no active users' };
 
   const userIds = superusers.map(u => u.id);
@@ -4360,7 +4771,7 @@ function buildWeeklyDigestEmailHtml(data) {
 
   return `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:620px;margin:0 auto;padding:32px 24px;background:#fff">
-      <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:44px;margin-bottom:20px">
+      <img src="https://www.retjghub.com/retjg-logo-email.png" alt="RETJG HUB" width="44" height="44" style="display:block;margin-bottom:20px">
       <h2 style="margin:0 0 4px;font-size:20px;color:#194975">Weekly Sales Digest</h2>
       <p style="margin:0 0 24px;font-size:14px;color:#666">${weekLabel}</p>
       <table style="width:100%;border-collapse:collapse;font-size:14px">
@@ -4386,7 +4797,7 @@ function buildWeeklyDigestEmailHtml(data) {
       </table>
       <p style="margin-top:28px;font-size:12px;color:#aaa">
         <a href="https://www.retjghub.com" style="color:#3BB54A;text-decoration:none">Open Dashboard</a>
-        &nbsp;·&nbsp; Bargain Lane Notification System
+        &nbsp;·&nbsp; RETJG HUB Notification System
         &nbsp;·&nbsp; To stop receiving these, open Settings → Notifications.
       </p>
     </div>`;
@@ -4406,9 +4817,7 @@ async function dispatchWeeklyDigest(env, startDate, endDate) {
     url: '/',
   });
 
-  const { results: superusers } = await env.DB.prepare(
-    "SELECT id, email FROM users WHERE status = 'active'"
-  ).all();
+  const superusers = await chainWideRecipients(env);
   if (!superusers?.length) return { ok: true, skipped: 'no active users' };
 
   const userIds = superusers.map(u => u.id);
@@ -4524,9 +4933,11 @@ async function dispatchIntervalSummary(env) {
   // Pull all users with interval_summary != 'off' who have push_enabled
   const { results: users } = await env.DB.prepare(
     `SELECT u.id, u.email, u.role, u.stores, u.status,
-            np.interval_summary, np.push_enabled
+            np.interval_summary, np.push_enabled,
+            g.role AS grant_role, g.units AS grant_units
      FROM users u
      JOIN notification_preferences np ON np.user_id = u.id
+     LEFT JOIN user_grants g ON g.user_id = u.id AND g.business_id = 'bl'
      WHERE u.status = 'active'
        AND np.push_enabled = 1
        AND np.interval_summary != 'off'`
@@ -4540,16 +4951,26 @@ async function dispatchIntervalSummary(env) {
     // 3h users only fire at hours divisible by 3 within the window
     if (user.interval_summary === '3h' && etHour % 3 !== 0) { summary.skipped++; continue; }
 
-    // Determine which stores this user can see
-    const isSuper = user.role === 'superuser' || user.role === 'admin';
-    let userStores;
-    if (isSuper) {
-      userStores = ALL_STORES;
-    } else {
-      let parsed = [];
-      try { parsed = user.stores ? JSON.parse(user.stores) : []; } catch (_) {}
-      userStores = ALL_STORES.filter(s => parsed.includes(s));
-    }
+    // 🛑 This push carries sales and budget figures, and a cron send never
+    // passes through the financial gate — that gate lives in the request path.
+    // So the check has to be made here, or a `staff` user with interval
+    // summaries switched on would be pushed money they are refused everywhere
+    // else. Same shape as the daily/weekly leak fixed alongside this.
+    if (!canSeeFinancials(user)) { summary.skipped++; continue; }
+
+    // Which stores this user may see. Previously a THIRD hand-rolled copy of
+    // allowedStores() that read raw users.stores and ignored grants entirely —
+    // identical today only because migration-030 backfilled one from the other,
+    // and guaranteed to drift the moment a grant is edited on its own.
+    // Attach the joined grant and use the one real helper instead.
+    let gUnits = null;
+    try { gUnits = user.grant_units ? JSON.parse(user.grant_units) : null; } catch (_) { gUnits = null; }
+    user.grants = user.grant_role
+      ? [{ business_id: 'bl', role: user.grant_role, units: gUnits }]
+      : [];
+
+    const allow = allowedStores(user);          // null = every store
+    const userStores = allow === null ? ALL_STORES : ALL_STORES.filter(s => allow.includes(s));
     if (!userStores.length) { summary.skipped++; continue; }
 
     // Build summary lines (notification-preview-v3 format):
@@ -4657,7 +5078,7 @@ function buildSupplyRequestEmailHtml({ requesterEmail, store, priority, notes, i
     ${notes ? `<div style="background:#0f172a;border-radius:8px;padding:14px 16px;margin-bottom:16px;"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Request Notes</div><div style="font-size:14px;color:#e2e8f0;">${notes}</div></div>` : ''}
   </div>
   <div style="background:#0f172a;border-radius:0 0 12px 12px;padding:16px 28px;text-align:center;">
-    <div style="font-size:12px;color:#475569;">Bargain Lane Dashboard · Supply Requests</div>
+    <div style="font-size:12px;color:#475569;">RETJG HUB · Supply Requests</div>
   </div>
 </div></body></html>`;
 }
@@ -4692,7 +5113,7 @@ function buildStatusUpdateEmailHtml({ store, oldStatus, newStatus, note, request
     ${note ? `<div style="background:#0f172a;border-radius:8px;padding:14px 16px;"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Note from Admin</div><div style="font-size:14px;color:#e2e8f0;">${note}</div></div>` : ''}
   </div>
   <div style="background:#0f172a;border-radius:0 0 12px 12px;padding:16px 28px;text-align:center;">
-    <div style="font-size:12px;color:#475569;">Bargain Lane Dashboard · Supply Requests</div>
+    <div style="font-size:12px;color:#475569;">RETJG HUB · Supply Requests</div>
   </div>
 </div></body></html>`;
 }
@@ -4742,7 +5163,7 @@ async function notifySupplyRequestNew(env, { requestId, requesterId, requesterEm
           method: 'POST',
           headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            from: 'Bargain Lane Dashboard <noreply@retjghub.com>',
+            from: 'RETJG HUB <noreply@retjghub.com>',
             to: u.email,
             subject: `${urgentPrefix}New Supply Request — ${storeLabel}`,
             html,
@@ -4774,6 +5195,49 @@ async function notifySupplyRequestNew(env, { requestId, requesterId, requesterEm
         }
       } catch (e) { console.error('Supply confirm push error:', e.message); }
     }
+  }
+}
+
+// Notify admins/superusers via web push when a store submits new photos.
+// Fired fire-and-forget from ?action=notify-photo-upload after a Submit-Photos
+// batch. Respects each recipient's upload_alerts preference (default on).
+async function notifyPhotoUpload(env, { store, count, photoType, uploaderEmail }) {
+  if (!env.DB) return;
+  const storeLabel = STORE_LABELS[store] || store;
+  const n = Math.max(1, parseInt(count, 10) || 1);
+  const typeLabel = { retail: 'Retail floor', bins: 'Bins', event: 'Event', team: 'Team', other: 'Other' }[photoType] || null;
+  const who = uploaderEmail || 'A store';
+  // Deep-link straight to the Content page's folder for this store/week/type.
+  // cf_date (upload day) lets the client resolve the retail-week folder even
+  // if the notification is tapped later; the client validates before drilling in.
+  const params = new URLSearchParams({ cf_store: store, cf_date: new Date().toISOString().slice(0, 10) });
+  if (photoType) params.set('cf_type', photoType);
+  const payload = JSON.stringify({
+    title: `📸 ${n} new photo${n === 1 ? '' : 's'} — ${storeLabel}`,
+    body: `${who}${typeLabel ? ` · ${typeLabel}` : ''}`,
+    tag: `photo-upload-${store}`,
+    url: `/index.html?${params.toString()}#content`,
+  });
+
+  const { results: admins } = await env.DB.prepare(
+    "SELECT id FROM users WHERE role IN ('superuser', 'admin') AND status = 'active'"
+  ).all();
+  if (!admins?.length) return;
+  const ids = admins.map(u => u.id);
+  const placeholders = ids.map(() => '?').join(',');
+  const { results: subs } = await env.DB.prepare(
+    `SELECT ps.endpoint, ps.p256dh, ps.auth
+     FROM push_subscriptions ps
+     JOIN notification_preferences np ON np.user_id = ps.user_id
+     WHERE ps.user_id IN (${placeholders}) AND np.push_enabled = 1 AND np.upload_alerts != 0`
+  ).bind(...ids).all();
+  for (const sub of (subs || [])) {
+    try {
+      const res = await sendWebPush(env, sub, payload);
+      if (res.expired) {
+        await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+      }
+    } catch (e) { console.error('Photo upload push error:', e.message); }
   }
 }
 
@@ -4814,7 +5278,7 @@ async function notifySupplyStatusChange(env, { requestId, requesterId, requester
       method: 'POST',
       headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from: 'Bargain Lane Dashboard <noreply@retjghub.com>',
+        from: 'RETJG HUB <noreply@retjghub.com>',
         to: requesterEmail,
         subject: `Supply Request Update — ${storeLabel}`,
         html,
@@ -5155,30 +5619,177 @@ function getSessionCookie(request, env) {
 }
 
 // Returns user row or null.
+// Derived R2 key for a photo's small thumbnail (client-generated JPEG). The
+// photo-serve endpoint tries this key for size=thumb and falls back to the
+// original, so no schema/column change is needed.
+function thumbKeyOf(k) { return String(k).replace(/\.[a-z0-9]+$/i, '') + '.thumb.jpg'; }
+
 async function getAuthUser(request, env) {
   if (!env.DB) return null;
   const sessionId = getSessionCookie(request, env);
   if (!sessionId) return null;
   const now = new Date().toISOString();
   const { results } = await env.DB.prepare(
-    `SELECT u.id, u.email, u.role, u.stores, u.status
+    `SELECT u.id, u.email, u.role, u.stores, u.status, s.expires_at
      FROM sessions s JOIN users u ON s.user_id = u.id
      WHERE s.id = ? AND s.expires_at > ? AND u.status = 'active'`
   ).bind(sessionId, now).all();
   if (!results || !results.length) return null;
   const user = results[0];
+  const expiresAt = user.expires_at; delete user.expires_at;
+
+  // Resolve grants once per request. A superuser holds none by design, so it
+  // gets the list of active businesses instead — same meaning, no rows.
+  if (user.role === 'superuser') {
+    user.grants = [];
+    try {
+      const { results: biz } = await env.DB.prepare(
+        'SELECT id FROM businesses WHERE active = 1'
+      ).all();
+      user.allBusinessIds = (biz || []).map(b => b.id);
+    } catch (_) { user.allBusinessIds = []; }
+  } else {
+    user.grants = await loadGrants(env, user.id);
+  }
   user.stores = user.stores ? JSON.parse(user.stores) : null;
-  // Roll expiry 7 more days on each use (sliding window)
-  const newExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?')
-    .bind(newExpiry, sessionId).run().catch(() => {});
+  // Sliding 7-day expiry, but roll at most ~once/day. Without this throttle every
+  // request (incl. every ?action=photo image load) fired a session-row UPDATE, so
+  // a folder of dozens of photos became dozens of D1 writes contending on one row.
+  const rollTo = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  if (!expiresAt || (rollTo - new Date(expiresAt).getTime()) > 24 * 60 * 60 * 1000) {
+    env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?')
+      .bind(new Date(rollTo).toISOString(), sessionId).run().catch(() => {});
+  }
   return user;
 }
 
+// ── Grants ──────────────────────────────────────────────────────────────────
+// A grant is: this person, in this business, with this role, over these units.
+// A user may hold several. `superuser` deliberately holds NONE — it is a flag
+// on the user meaning every business, every unit, always, so grant resolution
+// special-cases it rather than backfilling rows for every business added.
+//
+// Loaded once per request in getAuthUser and attached as `user.grants`.
+async function loadGrants(env, userId) {
+  if (!env.DB) return [];
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT g.business_id, g.role, g.units, b.name AS business_name, b.unit_noun
+         FROM user_grants g JOIN businesses b ON b.id = g.business_id
+        WHERE g.user_id = ? AND b.active = 1`
+    ).bind(userId).all();
+    return (results || []).map(g => {
+      let units = null;
+      try { units = g.units ? JSON.parse(g.units) : null; } catch (_) { units = null; }
+      return { ...g, units };
+    });
+  } catch (_) {
+    // Table may not exist yet (pre migration-030). Callers fall back below.
+    return [];
+  }
+}
+
+function grantFor(user, businessId) {
+  return (user && user.grants || []).find(g => g.business_id === businessId) || null;
+}
+
+// The businesses a user can reach, for the landing picker.
+//
+// 🔑 superuser is a FLAG, not a grant — it holds no rows in user_grants by
+// design, so filtering by grants would return [] and strand the one account
+// that is supposed to see everything. Branch on the flag first.
+//
+// `connected` is derived from unit count rather than stored, so a business
+// becomes live the moment its units are inserted — no second flag to forget to
+// flip. E-Commerce is seeded by migration-031 with zero units precisely so it
+// renders as a real-but-not-yet-connected card instead of linking nowhere.
+async function businessesFor(env, user) {
+  if (!env.DB || !user) return [];
+  let all = [];
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT b.id, b.name, b.unit_noun, b.source,
+              (SELECT COUNT(*) FROM business_units u
+                WHERE u.business_id = b.id AND u.active = 1) AS unit_count
+         FROM businesses b
+        WHERE b.active = 1
+        ORDER BY b.name`
+    ).all();
+    all = results || [];
+  } catch (_) {
+    // Table may not exist yet (pre migration-030). Fail closed to "no picker",
+    // which routes everyone to the dashboard exactly as before this feature.
+    return [];
+  }
+  const visible = user.role === 'superuser'
+    ? all
+    : all.filter(b => grantFor(user, b.id));
+  return visible.map(b => ({
+    id: b.id,
+    name: b.name,
+    unitNoun: b.unit_noun,
+    unitCount: b.unit_count || 0,
+    connected: (b.unit_count || 0) > 0,
+  }));
+}
+
+// Write the Bargain Lane grant for a user, mirroring users.role / users.stores.
+//
+// While Bargain Lane is the only business the grant is a mirror, not a second
+// source of truth — the Users page still edits role and stores, and this keeps
+// the grant in step. When a second business arrives the Users page starts
+// writing grants directly and this becomes the single-business special case.
+//
+// Deliberately tolerant: a failure here must NOT fail the invite or the edit.
+// The user row is already written by that point, and allowedStores() falls back
+// to users.stores, so a missed grant degrades to today's behaviour rather than
+// leaving a half-created user.
+async function upsertBargainLaneGrant(env, userId, role, storesJson) {
+  if (!env.DB || role === 'superuser') return;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO user_grants (user_id, business_id, role, units)
+       VALUES (?, 'bl', ?, ?)
+       ON CONFLICT(user_id, business_id) DO UPDATE SET role = excluded.role, units = excluded.units`
+    ).bind(userId, role, storesJson || null).run();
+  } catch (e) {
+    console.log(JSON.stringify({ grant_upsert_failed: String(e && e.message), user: userId }));
+  }
+}
+
+// Businesses this user may open. Superuser sees every active one; everyone
+// else sees exactly what they hold a grant to.
+function grantedBusinessIds(user) {
+  if (!user) return [];
+  if (user.role === 'superuser') return user.allBusinessIds || [];
+  return (user.grants || []).map(g => g.business_id);
+}
+
+function canAccessBusiness(user, businessId) {
+  if (!user) return false;
+  if (user.role === 'superuser') return true;
+  return !!grantFor(user, businessId);
+}
+
 // Returns null (= all stores) or string[] of allowed store codes.
+//
+// Reads the Bargain Lane grant now, not users.stores. migration-030 backfilled
+// units straight from stores, so this is behaviour-preserving by construction.
+//
+// ⚠️ The users.stores fallback is deliberate and TRANSITIONAL. If the grant is
+// missing — migration not yet applied, a backfill row missed, a user created
+// through a path that does not write grants — falling through to the old column
+// keeps a real manager working instead of locking them out of their own store.
+// It cannot escalate: it yields exactly the scope they have today. Remove it
+// once `grant_fallback` has not been logged for a good while.
 function allowedStores(user) {
   if (!user) return null;
   if (user.role === 'superuser' || user.role === 'admin') return null;
+  const g = grantFor(user, 'bl');
+  if (g) return g.units || [];
+  if (user.grants && user.grants.length === 0 && user.id) {
+    console.log(JSON.stringify({ grant_fallback: 'no-bl-grant', user: user.id, role: user.role }));
+  }
   return user.stores || [];
 }
 
@@ -5191,6 +5802,59 @@ function canAccessStore(user, store) {
 // Roles that can access inventory / supply request pages.
 function canAccessInventory(user) {
   return user && (user.role === 'superuser' || user.role === 'admin');
+}
+
+// ── Financial visibility ────────────────────────────────────────────────────
+// Roles permitted to see money: sales, budget, pace, margin, item cost,
+// supply spend. Written as a POSITIVE allowlist so an unrecognised role — a
+// future one, or a corrupt row — is denied rather than inheriting everything.
+//
+// Until migration-029 there was no role below `manager`, so nothing in the app
+// distinguished "authenticated" from "allowed to see revenue". `staff` (retail
+// leads) is the first role that must see less, and the dashboard has never had
+// a role guard, so without this an authenticated staff user would land on full
+// store financials.
+const FINANCIAL_ROLES = new Set(['superuser', 'admin', 'executive', 'manager']);
+function canSeeFinancials(user) {
+  return !!user && FINANCIAL_ROLES.has(user.role);
+}
+
+// What a role WITHOUT financial visibility may still reach. An allowlist, not
+// a list of financial endpoints, and deliberately so: there are 100+ actions
+// and most touch money somewhere. If an entry is missing here a staff user
+// gets a 403 on something harmless — annoying and trivially fixed. If an entry
+// were missing from a denylist, revenue would leak. Fail closed.
+const NON_FINANCIAL_ACTIONS = new Set([
+  // session — without these they cannot sign in or out at all
+  'auth-login', 'auth-logout', 'auth-me', 'auth-verify', 'auth-verify-otp',
+  'passkey-auth-begin', 'passkey-auth-finish', 'passkey-list',
+  'passkey-register-begin', 'passkey-register-finish', 'passkey-delete',
+  // personal notification settings
+  'push-subscribe', 'push-unsubscribe', 'push-subscription-status',
+  'push-test', 'vapid-public-key', 'update-notif-prefs',
+  // the announcement banner is shown to everyone
+  'announcement',
+  // photo submission is open to every authenticated user
+  'photo', 'photo-upload', 'thumbnail', 'thumbnails', 'notify-photo-upload',
+]);
+
+// ── Supply-request bulk purge helpers ───────────────────────────────────────
+const SUPPLY_STATUSES = ['pending', 'under_review', 'on_hold', 'ordered'];
+
+// 30 days is a FLOOR, not a default the client can talk downward. A smaller
+// window would let a caller delete recent, still-active requests.
+function purgeDays(raw) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 30 ? Math.floor(n) : 30;
+}
+
+// Return the cutoff in the format submitted_at is ACTUALLY stored in: the
+// create endpoint binds new Date().toISOString(), so every row looks like
+// 2026-05-07T00:46:58.680Z. SQLite's datetime('now','-30 days') yields a
+// space-separated string instead, which sorts differently from 'T' within the
+// same day — comparing ISO-to-ISO keeps the boundary exact.
+function purgeCutoff(days) {
+  return new Date(Date.now() - days * 86400000).toISOString();
 }
 
 // Auth check for inventory/supply endpoints: accepts either a valid session
@@ -5218,10 +5882,10 @@ async function sendMagicLinkEmail(email, token, otpCode, env) {
     body: JSON.stringify({
       from: 'noreply@retjghub.com',
       to: email,
-      subject: 'Your Bargain Lane Dashboard login link',
+      subject: 'Your RETJG HUB login link',
       html: `
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
-          <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:48px;margin-bottom:24px">
+          <img src="https://www.retjghub.com/retjg-logo-email.png" alt="RETJG HUB" width="48" height="48" style="display:block;margin-bottom:24px">
           <h2 style="margin:0 0 8px">Sign in to your dashboard</h2>
           <p style="color:#555;margin:0 0 24px">Click the button below to sign in. This link expires in 15 minutes and can only be used once.</p>
           <a href="${link}" style="display:inline-block;background:#3BB54A;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:600">Sign in</a>
@@ -5239,8 +5903,26 @@ async function sendMagicLinkEmail(email, token, otpCode, env) {
   }
 }
 
+// Welcome email for a newly added user. Sent by ?action=create-user and again
+// by ?action=resend-invite.
+//
+// The button deliberately points at the app itself rather than a tokenized
+// magic link. The install instructions below stay useful for months, and a 24h
+// link would be long dead by the time someone digs this email back out of their
+// inbox to set up a second device. Everyone signs in the same way instead —
+// email address, then the 6-digit code — so there is one flow to explain and it
+// works identically on web and in the installed app. `token` is still accepted
+// so the two call sites are unchanged; it is intentionally unused. Don't
+// "fix" that by reintroducing the link.
+//
+// The logo is a PNG, not the SVG used in the app — Gmail, Outlook and Yahoo all
+// block SVG images. Its URL is deliberately prod-absolute even on staging:
+// a mail client fetches it from the public internet long after the send, so it
+// has to be a stable, reachable host. Links, by contrast, follow appOrigin.
 async function sendInviteEmail(email, token, env) {
-  const link = `${apiOrigin(env)}/?action=auth-verify&token=${token}`;
+  const site = appOrigin(env);
+  const siteLabel = site.replace(/^https?:\/\//, '');
+  const green = '#3BB54A';
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -5248,16 +5930,47 @@ async function sendInviteEmail(email, token, env) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: 'noreply@retjghub.com',
+      from: 'RETJG HUB <noreply@retjghub.com>',
       to: email,
-      subject: "You've been invited to Bargain Lane Dashboard",
+      subject: "You're in — welcome to RETJG HUB",
       html: `
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
-          <img src="https://www.retjghub.com/BLlogo.svg" alt="Bargain Lane" style="height:48px;margin-bottom:24px">
-          <h2 style="margin:0 0 8px">You've been invited</h2>
-          <p style="color:#555;margin:0 0 24px">You've been given access to the Bargain Lane Dashboard. Click the button below to sign in and get started. This link expires in 24 hours.</p>
-          <a href="${link}" style="display:inline-block;background:#3BB54A;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:600">Accept Invite</a>
-          <p style="color:#999;font-size:12px;margin-top:24px">If you weren't expecting this, you can ignore this email.</p>
+          <img src="https://www.retjghub.com/retjg-logo-email.png" alt="RETJG HUB" width="48" height="48" style="display:block;margin-bottom:26px">
+          <h2 style="margin:0 0 8px;font-size:22px">You're in</h2>
+          <p style="color:#555;margin:0 0 24px;line-height:1.6">
+            <strong>RETJG HUB</strong> brings the reporting and day-to-day tools for our businesses into one app.
+            You'll see whatever you've been given access to.
+          </p>
+
+          <div style="border-left:3px solid ${green};padding:0 0 0 16px;margin:0 0 18px">
+            <p style="margin:0 0 4px;font-weight:600">1 &middot; Sign in</p>
+            <p style="color:#555;font-size:14px;margin:0 0 12px;line-height:1.6">
+              Open the hub, tap <em>Already have an account?</em>, and enter this email address.
+              We'll send you a <strong>6-digit code</strong> to type in.
+            </p>
+            <a href="${site}" style="display:inline-block;background:${green};color:#fff;text-decoration:none;padding:11px 26px;border-radius:8px;font-weight:600">Open RETJG HUB</a>
+          </div>
+
+          <div style="border-left:3px solid #e5e5e5;padding:0 0 0 16px;margin:0 0 18px">
+            <p style="margin:0 0 4px;font-weight:600">2 &middot; Add it to your phone</p>
+            <p style="color:#555;font-size:14px;margin:0;line-height:1.6">
+              <strong>iPhone:</strong> Safari &rarr; Share &rarr; Add to Home Screen<br>
+              <strong>Android:</strong> Chrome &rarr; &#8942; &rarr; Install app<br>
+              <span style="color:#777">Look for the <strong>RETJG Hub</strong> icon.</span>
+            </p>
+          </div>
+
+          <div style="border-left:3px solid #e5e5e5;padding:0 0 0 16px;margin:0 0 18px">
+            <p style="margin:0 0 4px;font-weight:600">3 &middot; Skip the code next time</p>
+            <p style="color:#555;font-size:14px;margin:0;line-height:1.6">
+              In Settings, turn on <strong>Face Unlock / Biometrics</strong> to sign in without a code.
+            </p>
+          </div>
+
+          <p style="color:#777;font-size:13px;margin:22px 0 0;line-height:1.6">
+            On a computer? Chrome and Edge can install it from the address bar &mdash; or just use
+            <a href="${site}" style="color:${green};text-decoration:none">${siteLabel}</a>.
+          </p>
         </div>`,
     }),
   });
@@ -5349,8 +6062,8 @@ async function publishDraft(env, { draftId, published, token }) {
   if (ok) {
     // Don't silently swallow: a failed UPDATE after a successful post strands the row.
     // Retry once; if it still fails the log row proves success for the Phase 6 reaper.
-    try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=? WHERE id=?").bind(published ? "published" : "approved", now, draftId).run(); }
-    catch (_) { try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=? WHERE id=?").bind(published ? "published" : "approved", now, draftId).run(); } catch (_) {} }
+    try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(published ? "published" : "approved", now, published ? now : null, draftId).run(); }
+    catch (_) { try { await env.DB.prepare("UPDATE marketing_drafts SET status=?, updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(published ? "published" : "approved", now, published ? now : null, draftId).run(); } catch (_) {} }
   }
   if (!ok) return { ok: false, error: "Facebook post failed", detail: fj && fj.error, status: 502 };
   return {
@@ -5434,7 +6147,7 @@ async function processScheduledPosts(env, now) {
   for (const row of (stale.results || [])) {
     const done = await alreadyPosted(row.id);
     if (done && done.post_id) {
-      await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=? WHERE id=? AND status='publishing'").bind(nowIso, row.id).run().catch(() => {});
+      await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=? AND status='publishing'").bind(nowIso, nowIso, row.id).run().catch(() => {});
     } else if ((row.publish_attempts || 0) >= MAX_ATTEMPTS) {
       await failSchedule(env, row.id, 'Gave up after repeated interruptions', nowIso, true);
     } else {
@@ -5462,7 +6175,7 @@ async function processScheduledPosts(env, now) {
     // 5. Reconcile-before-publish — the only guard against an ambiguous-outcome duplicate.
     const prior = await alreadyPosted(row.id);
     if (prior && prior.post_id) {
-      await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=? WHERE id=?").bind(nowIso, row.id).run().catch(() => {});
+      await env.DB.prepare("UPDATE marketing_drafts SET status='published', updated_at=?, published_at=COALESCE(published_at, ?) WHERE id=?").bind(nowIso, nowIso, row.id).run().catch(() => {});
       out.published++; continue;
     }
     // 6. Publish via the shared publisher, honoring publish_live (default 1 = LIVE).
@@ -5648,7 +6361,18 @@ export default {
         authenticated: true,
         email: user.email,
         role: user.role,
-        stores: user.stores,
+        // EFFECTIVE scope, not the raw users.stores column. The server scopes
+        // every endpoint by the grant; reporting the column here let the client
+        // filter by something the server no longer consults. They agree today
+        // only because migration-030 backfilled units from stores — the moment
+        // a grant is edited without the column following, the client would show
+        // a store the server refuses to serve.
+        // null = every store. An ARRAY is a restriction, and [] means none.
+        stores: allowedStores(user),
+        // Businesses this account can reach, for the landing picker. The client
+        // decides routing from the LENGTH of this array, so it must be the
+        // effective list — same reasoning as `stores` above.
+        businesses: await businessesFor(env, user),
       }), { headers: corsJson });
     }
 
@@ -5859,8 +6583,7 @@ export default {
     // ── Auth gate: all routes below require a valid session ───────
     // Exception: requests carrying X-Snapshot-Secret bypass session auth
     // (admin tooling, cron callbacks, backfill scripts).
-    const isAdminSecret = !!(env.SNAPSHOT_SECRET &&
-      request.headers.get("X-Snapshot-Secret") === env.SNAPSHOT_SECRET);
+    const isAdminSecret = hasSnapshotSecret(request, env);
     let currentUser = null;
     if (!isAdminSecret) {
       currentUser = await getAuthUser(request, env);
@@ -5868,6 +6591,23 @@ export default {
         return new Response(JSON.stringify({ error: "Unauthorized", code: "NO_SESSION" }), {
           status: 401, headers: corsJson,
         });
+      }
+    }
+
+    // ── Financial gate ────────────────────────────────────────────────────
+    // Authentication above answers "who are you". This answers "may you see
+    // money". A session alone used to be enough to reach every sales figure in
+    // the app; roles below `manager` did not exist, so nothing enforced it.
+    //
+    // Fires only for a role outside FINANCIAL_ROLES — today that is `staff`
+    // and anything unrecognised. Every role that exists in production
+    // (superuser, admin, manager) is unaffected.
+    if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+      const requestedAction = url.searchParams.get("action") || "";
+      if (!NON_FINANCIAL_ACTIONS.has(requestedAction)) {
+        return new Response(JSON.stringify({
+          error: "Forbidden", code: "NO_FINANCIAL_ACCESS",
+        }), { status: 403, headers: corsJson });
       }
     }
 
@@ -5960,102 +6700,6 @@ export default {
       return new Response(JSON.stringify(result), { status: result.error ? 400 : 200, headers: corsJson });
     }
 
-    // ── Meta Page publish test (Slice-0 spike) ───────────────────────
-    // Admin-only. Proves we can publish to a Facebook Page via the Graph API
-    // before building the full pipeline. Defaults to published:false (staged /
-    // unpublished) so NOTHING goes public during testing — the post is only
-    // visible in the Page's Publishing Tools until you explicitly pass
-    // published:true. Token comes from the request body ("token") or the
-    // META_PAGE_TOKEN secret. Works whether the token is a system-user, user,
-    // or page token (it derives the Page token). This endpoint is a temporary
-    // spike and can be removed once the real pipeline lands.
-    // Body: { page_id, message?, image_url?, published?, token?, delete_id? }
-    if (request.method === "POST" && url.searchParams.get("action") === "fb-publish-test") {
-      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
-      if (denied) return denied;
-      const ver = env.META_API_VERSION || META_API_VERSION;
-      let b;
-      try { b = await request.json(); } catch (e) { b = {}; }
-      // Token resolution: explicit body token → per-page stored token
-      // (META_PAGE_TOKENS is a JSON map of page_id → {name, token} or → token)
-      // → single META_PAGE_TOKEN fallback.
-      let token = String(b.token || "").trim();
-      if (!token && env.META_PAGE_TOKENS && b.page_id) {
-        try {
-          const m = JSON.parse(env.META_PAGE_TOKENS);
-          const e = m[String(b.page_id)];
-          token = String((e && (e.token || e)) || "").trim();
-        } catch (_) { /* bad JSON — fall through */ }
-      }
-      if (!token) token = String(env.META_PAGE_TOKEN || "").trim();
-      if (!token) {
-        return new Response(JSON.stringify({ error: 'No token — pass "token" in the body, or set META_PAGE_TOKENS / META_PAGE_TOKEN as a secret' }), { status: 400, headers: corsJson });
-      }
-      const gGet = async (path, params) => {
-        const qs = new URLSearchParams({ ...params, access_token: token }).toString();
-        const r = await fetch(`https://graph.facebook.com/${ver}/${path}?${qs}`);
-        return { ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) };
-      };
-      const gPost = async (path, form) => {
-        const body = new URLSearchParams(form);
-        if (!body.has("access_token")) body.set("access_token", token);
-        const r = await fetch(`https://graph.facebook.com/${ver}/${path}`, { method: "POST", body });
-        return { ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) };
-      };
-
-      try {
-        // Cleanup a prior test post/photo. Needs the Page token when deleting a
-        // Page-owned object, so derive it from page_id when provided.
-        if (b.delete_id) {
-          let delTok = token;
-          if (b.page_id) {
-            const pg = await gGet(String(b.page_id), { fields: "access_token" });
-            if (pg.body && pg.body.access_token) delTok = pg.body.access_token;
-          }
-          const qs = new URLSearchParams({ access_token: delTok }).toString();
-          const r = await fetch(`https://graph.facebook.com/${ver}/${encodeURIComponent(String(b.delete_id))}?${qs}`, { method: "DELETE" });
-          const body = await r.json().catch(() => ({}));
-          return new Response(JSON.stringify({ ok: r.ok, action: "delete", id: b.delete_id, response: body }), { status: r.ok ? 200 : 400, headers: corsJson });
-        }
-
-        const pageId = String(b.page_id || "").trim();
-        if (!pageId) {
-          return new Response(JSON.stringify({ error: "page_id is required" }), { status: 400, headers: corsJson });
-        }
-
-        // Derive the Page access token + confirm which Page we're posting to.
-        const pageInfo = await gGet(pageId, { fields: "name,access_token" });
-        if (!pageInfo.body || pageInfo.body.error) {
-          return new Response(JSON.stringify({ error: "Couldn't read the Page — check page_id and that the token has pages_show_list / pages_read_engagement", detail: pageInfo.body && pageInfo.body.error }), { status: 400, headers: corsJson });
-        }
-        const pageToken = pageInfo.body.access_token || token;
-        const pageName = pageInfo.body.name || null;
-        if (!pageInfo.body.access_token) {
-          // No Page token means the token isn't tied to this Page as a manager.
-          return new Response(JSON.stringify({ error: "Token has no access_token for this Page — assign the system user to the Page with content permission (pages_manage_posts)", page: { id: pageId, name: pageName } }), { status: 400, headers: corsJson });
-        }
-
-        const message = b.message == null ? "" : String(b.message);
-        const published = b.published === true; // default false = staged/unpublished
-        const imageUrl = String(b.image_url || "").trim();
-
-        const result = imageUrl
-          ? await gPost(`${pageId}/photos`, { url: imageUrl, caption: message, published: String(published), access_token: pageToken })
-          : await gPost(`${pageId}/feed`, { message: message || "Bargain Lane publish test", published: String(published), access_token: pageToken });
-
-        const ok = result.ok && !(result.body && result.body.error);
-        return new Response(JSON.stringify({
-          ok,
-          page: { id: pageId, name: pageName },
-          endpoint: imageUrl ? "photos" : "feed",
-          published,
-          note: published ? "PUBLISHED LIVE on the Page" : "staged as unpublished (published=false) — visible in the Page's Publishing Tools, not public",
-          response: result.body,
-        }), { status: ok ? 200 : 400, headers: corsJson });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
-      }
-    }
 
     // ── Marketing intake (Slice 1a): manager photo submission ────────
     // POST multipart/form-data (photo, store, photo_type, note). Any signed-in
@@ -6086,12 +6730,62 @@ export default {
         const ext = (ct.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "jpg";
         const key = `marketing/${store}/${ptype}/${ym}/${crypto.randomUUID()}.${ext}`;
         await env.MEDIA.put(key, buf, { httpMetadata: { contentType: ct } });
+        // Optional client-generated thumbnail (small JPEG) stored at the derived
+        // key; served for grids/peeks. Best-effort — the original is authoritative.
+        const thumbFile = form.get("thumb");
+        if (thumbFile && typeof thumbFile.arrayBuffer === "function") {
+          try {
+            const tbuf = await thumbFile.arrayBuffer();
+            if (tbuf.byteLength && tbuf.byteLength <= 512 * 1024) {
+              await env.MEDIA.put(thumbKeyOf(key), tbuf, { httpMetadata: { contentType: "image/jpeg" } });
+            }
+          } catch (_) { /* thumb is optional */ }
+        }
         const res = await env.DB.prepare(
           `INSERT INTO marketing_photos (store, photo_type, r2_key, content_type, bytes, uploader, note, status, created_at)
            VALUES (?,?,?,?,?,?,?, 'new', ?)`
         ).bind(store, ptype, key, ct, bytes, (currentUser && currentUser.email) || null, note, now.toISOString()).run();
         const id = res.meta && res.meta.last_row_id;
         return new Response(JSON.stringify({ ok: true, id, store, photo_type: ptype, r2_key: key, bytes, url: `?action=photo&id=${id}` }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // POST ?action=notify-photo-upload { store, count, photo_type } — batched
+    // push to admins/superusers after a Submit-Photos upload. Only notifies
+    // when the caller is a non-admin (manager/DM/store user); the uploader
+    // identity comes from the session, not the request body.
+    if (request.method === "POST" && url.searchParams.get("action") === "notify-photo-upload") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      if (!env.DB) return new Response(JSON.stringify({ ok: true, notified: false }), { headers: corsJson });
+      try {
+        const b = await request.json().catch(() => ({}));
+        const store = String(b.store || "").trim().toUpperCase();
+        if (!ALL_STORES.includes(store)) return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+        // A store user can only trigger alerts for a store they can upload to.
+        const allow = allowedStores(currentUser);
+        if (allow && !allow.includes(store)) return new Response(JSON.stringify({ error: "Forbidden for this store" }), { status: 403, headers: corsJson });
+        // Admins uploading their own photos shouldn't alert the other admins.
+        const isAdminUser = currentUser.role === 'superuser' || currentUser.role === 'admin';
+        if (isAdminUser) return new Response(JSON.stringify({ ok: true, notified: false }), { headers: corsJson });
+        // Tie the alert to REAL rows: count this uploader's photos for this store
+        // in the last 5 min rather than trusting the client-supplied count. No
+        // recent upload → nothing to announce (blocks forged/empty notifications).
+        const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        const row = await env.DB.prepare(
+          "SELECT COUNT(*) AS n FROM marketing_photos WHERE uploader = ? AND store = ? AND created_at >= ?"
+        ).bind(currentUser.email, store, since).first();
+        const realCount = (row && row.n) || 0;
+        if (realCount < 1) return new Response(JSON.stringify({ ok: true, notified: false }), { headers: corsJson });
+        const TYPES = ["retail", "bins", "event", "team", "other"];
+        const pt = String(b.photo_type || "").trim().toLowerCase();
+        ctx.waitUntil(notifyPhotoUpload(env, {
+          store, count: realCount,
+          photoType: TYPES.includes(pt) ? pt : null,
+          uploaderEmail: currentUser.email,
+        }));
+        return new Response(JSON.stringify({ ok: true, notified: true }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
       }
@@ -6107,11 +6801,19 @@ export default {
       if (!row) return new Response("Not found", { status: 404, headers: corsHeaders });
       const allow = currentUser ? allowedStores(currentUser) : null;
       if (allow && !allow.includes(row.store)) return new Response("Forbidden", { status: 403, headers: corsHeaders });
-      const obj = await env.MEDIA.get(row.r2_key);
+      // size=thumb → serve the small derivative if present, else fall back to the
+      // original (older photos have no thumb until backfilled).
+      let obj = null, ctype = row.content_type || "image/jpeg";
+      if (url.searchParams.get("size") === "thumb") {
+        obj = await env.MEDIA.get(thumbKeyOf(row.r2_key));
+        if (obj) ctype = "image/jpeg";
+      }
+      if (!obj) obj = await env.MEDIA.get(row.r2_key);
       if (!obj) return new Response("Gone", { status: 404, headers: corsHeaders });
       const h = new Headers(corsHeaders);
-      h.set("Content-Type", row.content_type || "image/jpeg");
-      h.set("Cache-Control", "private, max-age=3600");
+      h.set("Content-Type", ctype);
+      // A given id+size never changes its bytes → cache hard in the browser.
+      h.set("Cache-Control", "private, max-age=2592000, immutable");
       return new Response(obj.body, { headers: h });
     }
 
@@ -6899,9 +7601,12 @@ export default {
       }
       try {
         const { email, role, stores } = await request.json();
+        // 'district_manager' was retired by migration-029 and is no longer a
+        // valid value for users.role — the CHECK constraint rejects it. It was
+        // never a distinct capability, only a manager with more stores.
         const validRoles = currentUser.role === 'superuser'
-          ? ['admin', 'district_manager', 'manager']
-          : ['district_manager', 'manager'];
+          ? ['admin', 'manager']
+          : ['manager'];
         if (!validRoles.includes(role)) {
           return new Response(JSON.stringify({ error: "Invalid role" }), { status: 400, headers: corsJson });
         }
@@ -6915,6 +7620,10 @@ export default {
         await env.DB.prepare(
           "INSERT INTO users (id, email, role, stores, status, created_at) VALUES (?, ?, ?, ?, 'active', datetime('now'))"
         ).bind(id, normalized, role, storesJson).run();
+        // Mirror into the grant model. Without this a newly invited user holds
+        // no grant and lives permanently on the users.stores fallback.
+        // Superusers are not invitable here, so every invite is grantable.
+        await upsertBargainLaneGrant(env, id, role, storesJson);
         const token = randomHex(32);
         const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
         await env.DB.prepare("INSERT INTO magic_links (token, email, expires_at) VALUES (?, ?, ?)")
@@ -6954,6 +7663,41 @@ export default {
       }
       try {
         const { id, role, stores, status } = await request.json();
+
+        // 🛑 PRIVILEGE ESCALATION GUARD. This endpoint is open to admins
+        // (canAccessInventory above) and wrote `role` straight from the body
+        // with no validation, while the D1 CHECK permits 'superuser'. An admin
+        // could POST {id: <their own id>, role: 'superuser'} and self-promote,
+        // or demote the real superuser. invite-user has always had an
+        // allowlist; this path never did. index.html even ships a hidden
+        // <option value="superuser"> whose only protection was a CSS class.
+        //
+        // 'superuser' is not assignable through this endpoint by ANYONE — it is
+        // the flag the whole grant model special-cases, and it should be set
+        // deliberately, not through the Users screen.
+        if (role !== undefined) {
+          const assignable = currentUser.role === 'superuser'
+            ? ['admin', 'executive', 'manager', 'staff']
+            : ['manager'];
+          if (!assignable.includes(role)) {
+            return new Response(JSON.stringify({ error: "You cannot assign that role" }),
+              { status: 403, headers: corsJson });
+          }
+        }
+
+        // A non-superuser must not be able to edit a superuser at all — not the
+        // role, not the stores, not the status. Otherwise an admin could
+        // suspend the owner out of their own account.
+        if (currentUser.role !== 'superuser') {
+          const { results: target } = await env.DB.prepare(
+            'SELECT role FROM users WHERE id = ?'
+          ).bind(id).all();
+          if (target && target.length && target[0].role === 'superuser') {
+            return new Response(JSON.stringify({ error: "Forbidden" }),
+              { status: 403, headers: corsJson });
+          }
+        }
+
         const parts = [], values = [];
         if (role !== undefined) { parts.push('role = ?'); values.push(role); }
         if (stores !== undefined) { parts.push('stores = ?'); values.push(stores && stores.length ? JSON.stringify(stores) : null); }
@@ -6961,6 +7705,17 @@ export default {
         if (!parts.length) return new Response(JSON.stringify({ error: "Nothing to update" }), { status: 400, headers: corsJson });
         values.push(id);
         await env.DB.prepare(`UPDATE users SET ${parts.join(', ')} WHERE id = ?`).bind(...values).run();
+        // Keep the grant in step with the columns. Re-read rather than trusting
+        // the request body: `role` and `stores` are each optional here, so a
+        // request that changes only one of them must not blank the other.
+        if (role !== undefined || stores !== undefined) {
+          const { results: after } = await env.DB.prepare(
+            'SELECT role, stores FROM users WHERE id = ?'
+          ).bind(id).all();
+          if (after && after.length && after[0].role !== 'superuser') {
+            await upsertBargainLaneGrant(env, id, after[0].role, after[0].stores);
+          }
+        }
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
@@ -7052,345 +7807,12 @@ export default {
       return new Response(JSON.stringify(out), { headers: corsJson });
     }
 
-    // ── Debug endpoint: explain why aggregateOrders.totalNet diverges from
-    // aggregateItemSales.grandTotal. Returns side-by-side totals + per-order
-    // diffs + refund/credit dedup check.
-    // ?action=debug-revenue-mismatch&store=BL2&date=2026-05-13
-    if (url.searchParams.get("action") === "debug-revenue-mismatch") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
-      if (unauth) return unauth;
-
-      const store = (url.searchParams.get("store") || "").toUpperCase();
-      const dateStr = url.searchParams.get("date") || getETToday().dateStr;
-      if (!store) {
-        return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
-      }
-      const startOfDay = getStartOfDayET(dateStr);
-      const nextDay = new Date(dateStr + 'T12:00:00Z');
-      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-      const untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
-
-      // Fetch everything aggregateItemSales would see
-      const [elements, refundElements, manualRefundElements, itemCatMap, overrides, itemCosts] = await Promise.all([
-        fetchItemOrders(store, env, startOfDay, untilTs),
-        fetchRefundElements(store, env, startOfDay, untilTs),
-        fetchManualRefunds(store, env, startOfDay, untilTs),
-        fetchItemCategoryMap(store, env),
-        fetchItemOverrides(env),
-        fetchItemCosts(env),
-      ]);
-      const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
-
-      // ── Path A: aggregateOrders ─────────────────────────
-      const aggOrders = aggregateOrders(elements, startOfDay);
-      const refundsTotalCents = await fetchRefundsTotal(store, env, startOfDay, untilTs, null);
-      const aggOrdersTotalPostRefunds = aggOrders.total - (refundsTotalCents / 100);
-
-      // ── Path B: aggregateItemSales ──────────────────────
-      const aggItems = aggregateItemSales(
-        elements, itemCatMap, store, dateStr, overrides, itemCosts,
-        refundElements, extraOrders, manualRefundElements
-      );
-      const itemGrandTotal = (aggItems.categories || []).reduce((s, c) => s + (c.netSales || 0), 0);
-
-      // ── Per-order diff: payment-based net vs line-item net ──────
-      const perOrderDiffs = [];
-      for (const order of (elements || [])) {
-        if (order.total == null || order.total === 0) continue;
-        if (order.state !== "locked") continue;
-
-        const taxCents = (order.payments?.elements || []).reduce((s, p) => s + (p.taxAmount || 0), 0);
-        const pmtSumCents = (order.payments?.elements || []).reduce((s, p) => s + (p.amount || 0), 0);
-        const grossOrderCents = pmtSumCents > 0 ? pmtSumCents : order.total;
-        const orderNetCents = grossOrderCents - taxCents;
-
-        // Compute line item net the way aggregateItemSales does
-        let liGrossCents = 0, liDiscCents = 0, liRefundCents = 0;
-        const lineItems = order.lineItems?.elements || [];
-        // First pass: line-level discounts + post-line subtotal
-        let subAfterLineDisc = 0;
-        const liDiscCache = new Map();
-        for (const li of lineItems) {
-          const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
-          const grossC = Math.abs((li.price || 0) * qty);
-          let d = 0;
-          for (const dd of (li.discounts?.elements || [])) {
-            if (dd.amount != null && dd.amount !== 0) d += Math.abs(dd.amount);
-            else if (dd.percentage) d += Math.round(grossC * Number(dd.percentage) / 100);
-          }
-          liDiscCache.set(li, d);
-          if ((li.price || 0) >= 0) subAfterLineDisc += (grossC - d);
-        }
-        let orderDiscCents = 0;
-        for (const dd of (order.discounts?.elements || [])) {
-          if (dd.amount != null && dd.amount !== 0) orderDiscCents += Math.abs(dd.amount);
-          else if (dd.percentage && subAfterLineDisc > 0) orderDiscCents += Math.round(subAfterLineDisc * Number(dd.percentage) / 100);
-        }
-        // Second pass: total per-line net contribution
-        for (const li of lineItems) {
-          const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
-          const priceC = (li.price || 0) * qty;
-          const grossC = Math.abs(priceC);
-          let d = liDiscCache.get(li) || 0;
-          if (priceC >= 0 && orderDiscCents > 0 && subAfterLineDisc > 0) {
-            const lineNet = grossC - d;
-            if (lineNet > 0) d += Math.round(orderDiscCents * lineNet / subAfterLineDisc);
-          }
-          if (priceC < 0) liRefundCents += grossC;
-          else { liGrossCents += grossC; liDiscCents += d; }
-        }
-        const itemNetCents = liGrossCents - liDiscCents - liRefundCents;
-        const diffCents = orderNetCents - itemNetCents;
-        if (Math.abs(diffCents) > 1) {
-          perOrderDiffs.push({
-            orderId: order.id,
-            orderTotal: order.total / 100,
-            pmtSum: pmtSumCents / 100,
-            taxCents: taxCents / 100,
-            orderNet: orderNetCents / 100,
-            liGross: liGrossCents / 100,
-            liDisc: liDiscCents / 100,
-            liRefund: liRefundCents / 100,
-            itemNet: itemNetCents / 100,
-            diff: diffCents / 100,
-            lineItemCount: lineItems.length,
-            hasServiceCharge: !!order.serviceCharge,
-            sampleItems: lineItems.slice(0, 3).map(li => ({ name: li.name, price: (li.price || 0) / 100, qty: li.unitQty != null ? li.unitQty / 1000 : 1 })),
-          });
-        }
-      }
-      perOrderDiffs.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
-
-      // ── Dedup check: any refund.id matches a credit.id? Or same amount+createdTime? ──
-      const refundIds = new Set((refundElements || []).map(r => r.id));
-      const creditIds = new Set((manualRefundElements || []).map(r => r.id));
-      const sharedIds = [...refundIds].filter(id => creditIds.has(id));
-      // Amount+time match (within 5min)
-      const refundFingerprints = (refundElements || []).map(r => ({ id: r.id, amount: r.amount, t: r.createdTime }));
-      const creditFingerprints = (manualRefundElements || []).map(r => ({ id: r.id, amount: r.amount, t: r.createdTime }));
-      const possibleDupes = [];
-      for (const r of refundFingerprints) {
-        for (const c of creditFingerprints) {
-          if (r.amount === c.amount && Math.abs(r.t - c.t) < 300000) {
-            possibleDupes.push({ refundId: r.id, creditId: c.id, amount: r.amount, secondsApart: Math.abs(r.t - c.t) / 1000 });
-          }
-        }
-      }
-
-      return new Response(JSON.stringify({
-        store, dateStr,
-        summary: {
-          aggregateOrders_totalNet_preRefund: aggOrders.total,
-          aggregateOrders_totalNet_postRefund: +aggOrdersTotalPostRefunds.toFixed(2),
-          aggregateItemSales_grandTotal: +itemGrandTotal.toFixed(2),
-          refundsCents_subtracted: refundsTotalCents / 100,
-          gap_postRefund: +(aggOrdersTotalPostRefunds - itemGrandTotal).toFixed(2),
-          // Per category breakdown for sanity-check
-          categoryTotals: (aggItems.categories || []).map(c => ({ category: c.category, qty: c.qty, gross: c.gross, discounts: c.discounts, refunds: c.refunds, netSales: c.netSales })),
-        },
-        refundDedupCheck: {
-          refundCount: refundElements?.length || 0,
-          creditCount: manualRefundElements?.length || 0,
-          sharedIdsCount: sharedIds.length,
-          sharedIdsSample: sharedIds.slice(0, 5),
-          possibleDuplicates_amountTimeMatch: possibleDupes,
-        },
-        ordersWithRevenueDiff: {
-          count: perOrderDiffs.length,
-          totalDiff: +(perOrderDiffs.reduce((s, o) => s + o.diff, 0)).toFixed(2),
-          top10: perOrderDiffs.slice(0, 10),
-        },
-      }, null, 2), { headers: corsJson });
-    }
-
-    // ── Debug endpoint: show per-order residuals feeding "Other / Non-Item".
-    // ?action=debug-residuals&store=BL1&date=2026-05-11
-    // For each order: compute orderNet (total - tax) vs sum of line-item nets.
-    // Returns the top N orders by absolute residual + breakdown of why.
-    if (url.searchParams.get("action") === "debug-residuals") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
-      if (unauth) return unauth;
-
-      const store = (url.searchParams.get("store") || "").toUpperCase();
-      const dateStr = url.searchParams.get("date") || getETToday().dateStr;
-      const limit = parseInt(url.searchParams.get("limit") || "15", 10);
-      if (!store) {
-        return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
-      }
-      const startOfDay = getStartOfDayET(dateStr);
-      const nextDay = new Date(dateStr + 'T12:00:00Z');
-      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-      const untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
-
-      const elements = await fetchItemOrders(store, env, startOfDay, untilTs);
-      let totalResidualCents = 0;
-      let positiveResidualCents = 0;
-      let negativeResidualCents = 0;
-      const perOrder = [];
-
-      for (const order of (elements || [])) {
-        if (order.total == null || order.total === 0) continue;
-        if (order.state !== "locked") continue;
-
-        const taxCents = (order.payments?.elements || []).reduce((s, p) => s + (p.taxAmount || 0), 0);
-        const pmtSumCents = (order.payments?.elements || []).reduce((s, p) => s + (p.amount || 0), 0);
-        const grossOrderCents = pmtSumCents > 0 ? pmtSumCents : order.total;
-        const orderNetCents = grossOrderCents - taxCents;
-
-        const lineItems = order.lineItems?.elements || [];
-        let liGrossSum = 0;
-        let liDiscSum = 0;
-        let liRefundSum = 0;
-        let lineDetail = [];
-        for (const li of lineItems) {
-          const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
-          const priceCents = (li.price || 0) * qty;
-          const grossCents = Math.abs(priceCents);
-          let lineDiscCents = 0;
-          for (const d of (li.discounts?.elements || [])) {
-            if (d.amount != null && d.amount !== 0) lineDiscCents += Math.abs(d.amount);
-            else if (d.percentage) lineDiscCents += Math.round(grossCents * Number(d.percentage) / 100);
-          }
-          if (priceCents < 0) {
-            liRefundSum += grossCents;
-          } else {
-            liGrossSum += grossCents;
-            liDiscSum += lineDiscCents;
-          }
-          lineDetail.push({
-            name: li.name, priceCents, qty, lineDiscCents,
-          });
-        }
-        // Order-level discount
-        let orderDiscCents = 0;
-        for (const d of (order.discounts?.elements || [])) {
-          if (d.amount != null && d.amount !== 0) orderDiscCents += Math.abs(d.amount);
-          else if (d.percentage) orderDiscCents += Math.round((liGrossSum - liDiscSum) * Number(d.percentage) / 100);
-        }
-        const liNetSum = liGrossSum - liDiscSum - orderDiscCents - liRefundSum;
-        const residualCents = Math.round(orderNetCents - liNetSum);
-        totalResidualCents += residualCents;
-        if (residualCents > 0) positiveResidualCents += residualCents;
-        else if (residualCents < 0) negativeResidualCents += residualCents;
-
-        if (residualCents !== 0) {
-          perOrder.push({
-            orderId: order.id,
-            orderTotal: order.total / 100,
-            taxCents,
-            orderNet: orderNetCents / 100,
-            lineItemCount: lineItems.length,
-            liGross: liGrossSum / 100,
-            liDisc: liDiscSum / 100,
-            orderDisc: orderDiscCents / 100,
-            liRefund: liRefundSum / 100,
-            liNetSum: liNetSum / 100,
-            residual: residualCents / 100,
-            lineItems: lineDetail.slice(0, 6).map(l => ({
-              name: l.name, price: l.priceCents / 100, qty: l.qty, disc: l.lineDiscCents / 100,
-            })),
-            hasOrderServiceCharge: !!order.serviceCharge,
-            hasCredits: !!(order.credits?.elements?.length),
-            modifiedTime: order.modifiedTime,
-          });
-        }
-      }
-      perOrder.sort((a, b) => Math.abs(b.residual) - Math.abs(a.residual));
-
-      return new Response(JSON.stringify({
-        store, dateStr,
-        ordersFetched: elements?.length || 0,
-        ordersWithResidual: perOrder.length,
-        totalResidual: `$${(totalResidualCents / 100).toFixed(2)}`,
-        positiveResidual: `$${(positiveResidualCents / 100).toFixed(2)}`,
-        negativeResidual: `$${(negativeResidualCents / 100).toFixed(2)}`,
-        top: perOrder.slice(0, limit),
-      }, null, 2), { headers: corsJson });
-    }
-
-    // ── Debug endpoint: show raw response from Clover's manual_refunds endpoint.
-    // Tries multiple URL variants to find the correct path. Use to diagnose
-    // why fetchManualRefunds returns empty when manual refunds clearly exist
-    // on Clover's Sales Summary.
-    // ?action=debug-manual-refunds&store=BL14&date=2026-05-12
-    if (url.searchParams.get("action") === "debug-manual-refunds") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
-      if (unauth) return unauth;
-
-      const store = (url.searchParams.get("store") || "").toUpperCase();
-      const dateStr = url.searchParams.get("date") || getETToday().dateStr;
-      const merchantId = env[`${store}_MERCHANT_ID`];
-      const apiToken = env[`${store}_API_TOKEN`];
-      if (!merchantId || !apiToken) {
-        return new Response(JSON.stringify({ error: "Store keys not found" }), { status: 404, headers: corsJson });
-      }
-      const startOfDay = getStartOfDayET(dateStr);
-      const nextDay = new Date(dateStr + 'T12:00:00Z');
-      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-      const untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
-
-      const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
-      const variants = [
-        // Try the specific manual refund ID in various endpoints
-        `https://api.clover.com/v3/merchants/${merchantId}/refunds/F88E35ZXJYNCP`,
-        `https://api.clover.com/v3/merchants/${merchantId}/credit_refunds/F88E35ZXJYNCP`,
-        `https://api.clover.com/v3/merchants/${merchantId}/credits/F88E35ZXJYNCP`,
-        `https://api.clover.com/v3/merchants/${merchantId}/orders/F88E35ZXJYNCP`,
-        // List endpoints to find manual refund records
-        `https://api.clover.com/v3/merchants/${merchantId}/credit_refunds?limit=10`,
-        `https://api.clover.com/v3/merchants/${merchantId}/credits?limit=10`,
-        // Refunds without date filter to see if manual ones show up at all
-        `https://api.clover.com/v3/merchants/${merchantId}/refunds?limit=20`,
-        // POST to manual_refunds (some Clover endpoints support GET via POST)
-        `https://api.clover.com/v3/merchants/${merchantId}/manual_refunds`,
-      ];
-      const results = [];
-      for (const u of variants) {
-        try {
-          const resp = await fetch(u, { headers });
-          const text = await resp.text();
-          let parsed = null;
-          try { parsed = JSON.parse(text); } catch {}
-
-          // For payments endpoint, find any with negative amounts or refund-like properties
-          let negativePayments = null;
-          let refundPayments = null;
-          if (parsed?.elements && Array.isArray(parsed.elements)) {
-            negativePayments = parsed.elements.filter(e => (e.amount || 0) < 0).slice(0, 3);
-            refundPayments = parsed.elements.filter(e =>
-              e.tender?.label?.toLowerCase().includes('refund') ||
-              e.tender?.labelKey?.toLowerCase().includes('refund') ||
-              e.tender?.label?.toLowerCase().includes('manual')
-            ).slice(0, 3);
-          }
-          results.push({
-            url: u,
-            status: resp.status,
-            ok: resp.ok,
-            totalElements: parsed?.elements?.length ?? null,
-            firstElement: parsed?.elements?.[0] ?? (parsed && !parsed.elements ? parsed : null),
-            negativeAmountCount: negativePayments?.length ?? null,
-            negativeAmountSample: negativePayments,
-            refundLikeCount: refundPayments?.length ?? null,
-            refundLikeSample: refundPayments,
-            errorBody: !resp.ok ? text.slice(0, 500) : null,
-          });
-        } catch (e) {
-          results.push({ url: u, error: e.message });
-        }
-      }
-      return new Response(JSON.stringify({ store, dateStr, results }, null, 2), { headers: corsJson });
-    }
-
     // ── Admin: force-refresh the item category map cache for a store.
     // ?action=refresh-item-cats&store=BL1   (or store=all)
     // Deletes the cached KV map and refetches from Clover.
-    if (url.searchParams.get("action") === "refresh-item-cats") {
+    if (request.method === "POST" && url.searchParams.get("action") === "refresh-item-cats") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
 
       const storeParam = (url.searchParams.get("store") || "").toUpperCase();
@@ -7412,90 +7834,6 @@ export default {
         }
       }
       return new Response(JSON.stringify({ ok: true, results }, null, 2), { headers: corsJson });
-    }
-
-    // ── Debug endpoint: inspect raw refund payload structure from Clover.
-    // Use to diagnose cross-day refund attribution failures — shows whether
-    // expand=lineItem,lineItem.item is actually returning the line-item name
-    // and catalog item.id we need for category resolution.
-    // ?action=debug-refunds&store=BL1&date=2026-05-11
-    if (url.searchParams.get("action") === "debug-refunds") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
-      if (unauth) return unauth;
-
-      const store = (url.searchParams.get("store") || "").toUpperCase();
-      const dateStr = url.searchParams.get("date") || getETToday().dateStr;
-      if (!store) {
-        return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
-      }
-      const startOfDay = getStartOfDayET(dateStr);
-      const nextDay = new Date(dateStr + 'T12:00:00Z');
-      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-      const untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
-
-      const [elements, refundElements] = await Promise.all([
-        fetchItemOrders(store, env, startOfDay, untilTs),
-        fetchRefundElements(store, env, startOfDay, untilTs),
-      ]);
-      const itemCatMap = await fetchItemCategoryMap(store, env);
-
-      // Build the set of orderIds we have line items for (same logic the
-      // main loop uses) so we can tell which refunds will resolve via the
-      // order-ID path vs fall back to cross-day Refund L2.
-      const fetchedOrderIds = new Set();
-      for (const o of (elements || [])) {
-        if (o.id && o.total != null && o.total !== 0 && o.state === "locked") {
-          fetchedOrderIds.add(o.id);
-        }
-      }
-
-      const summary = (refundElements || []).map(r => {
-        const orderId = r.orderRef?.id || r.payment?.order?.id || null;
-        return {
-          id: r.id,
-          amount: r.amount,
-          taxAmount: r.taxAmount,
-          netCents: (r.amount || 0) - (r.taxAmount || 0),
-          orderId,
-          orderInTodaysFetch: orderId ? fetchedOrderIds.has(orderId) : false,
-          willAttribute: orderId && fetchedOrderIds.has(orderId) ? "BY-ORDER (proportional across line items)" : "CROSS-DAY (generic Refund L2)",
-        };
-      });
-
-      const sameDayCount = summary.filter(s => s.orderInTodaysFetch).length;
-      const totalRefundsCents = summary.reduce((s, x) => s + x.netCents, 0);
-      const sameDayCents = summary.filter(s => s.orderInTodaysFetch).reduce((s, x) => s + x.netCents, 0);
-
-      // Phase 2F: also confirm cross-day orders can be fetched + attributed.
-      const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
-      const crossDayFetched = new Set(extraOrders.map(o => o?.id).filter(Boolean));
-      for (const s of summary) {
-        if (!s.orderInTodaysFetch && s.orderId && crossDayFetched.has(s.orderId)) {
-          s.willAttribute = "CROSS-DAY-FETCHED (proportional across original order's line items)";
-          s.crossDayFetched = true;
-        } else if (!s.orderInTodaysFetch) {
-          s.crossDayFetched = false;
-          s.willAttribute = "UNRESOLVABLE (original order not fetchable, falls to generic Refund L2)";
-        }
-      }
-      const crossDayFetchedCount = summary.filter(s => s.crossDayFetched).length;
-      const crossDayFetchedCents = summary.filter(s => s.crossDayFetched).reduce((s, x) => s + x.netCents, 0);
-      const unresolvableCents = totalRefundsCents - sameDayCents - crossDayFetchedCents;
-
-      return new Response(JSON.stringify({
-        store, dateStr,
-        refundCount: refundElements?.length || 0,
-        ordersFetched: elements?.length || 0,
-        itemCatMapSize: Object.keys(itemCatMap || {}).length,
-        crossDayOrdersFetched: extraOrders.length,
-        refundsTotal: `$${(totalRefundsCents / 100).toFixed(2)}`,
-        refundsSameDay: `$${(sameDayCents / 100).toFixed(2)} (${sameDayCount}/${summary.length})`,
-        refundsCrossDayFetched: `$${(crossDayFetchedCents / 100).toFixed(2)} (${crossDayFetchedCount}/${summary.length})`,
-        refundsUnresolvable: `$${(unresolvableCents / 100).toFixed(2)} (${summary.length - sameDayCount - crossDayFetchedCount}/${summary.length})`,
-        sample: summary.slice(0, 20),
-        rawSample: refundElements?.[0] || null,
-      }, null, 2), { headers: corsJson });
     }
 
     // ── Ingest: generic channel-sales sink (auction today; eon, labor next).
@@ -7580,9 +7918,9 @@ export default {
 
     // ── Manual snapshot endpoint: ?action=snapshot&store=BL1[&date=2026-04-26]
     // store=all snapshots every store. date defaults to today (ET, not UTC).
-    if (url.searchParams.get("action") === "snapshot") {
+    if (request.method === "POST" && url.searchParams.get("action") === "snapshot") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
 
       const storeParam = (url.searchParams.get("store") || "").toUpperCase();
@@ -7623,12 +7961,18 @@ export default {
           // the full item-sales snapshot to KV so the Item Sales tab reflects
           // the latest aggregateItemSales output (refund attribution etc.).
           let binRetailOverride = null;
+          // Hoisted so they survive the try and can be handed to
+          // fetchAggregateAndSnapshot below instead of being re-fetched. If the
+          // block throws before assigning, they stay null and it fetches its own
+          // (the original behaviour).
+          let preOrders = null, preRefunds = null, preManual = null;
           try {
             const [elements, refundElements, manualRefundElements] = await Promise.all([
               fetchItemOrders(store, env, startOfDay, untilTs),
               fetchRefundElements(store, env, startOfDay, untilTs),
               fetchManualRefunds(store, env, startOfDay, untilTs),
             ]);
+            preOrders = elements; preRefunds = refundElements; preManual = manualRefundElements;
             if (elements && elements.length > 0) {
               const itemCatMap = await fetchItemCategoryMap(store, env);
               // Phase 2F: fetch original orders for cross-day refunds so they
@@ -7659,7 +8003,7 @@ export default {
           } catch (e) {
             console.warn(`Admin snapshot override prep failed for ${store}: ${e.message}`);
           }
-          return fetchAggregateAndSnapshot(store, env, startOfDay, dateStr, untilTs, binRetailOverride);
+          return fetchAggregateAndSnapshot(store, env, startOfDay, dateStr, untilTs, binRetailOverride, preOrders, preRefunds, preManual);
         })
       );
       const results = {};
@@ -7680,9 +8024,9 @@ export default {
     }
 
     // ── Backfill endpoint: ?action=backfill (imports Sheets + KV → D1)
-    if (url.searchParams.get("action") === "backfill") {
+    if (request.method === "POST" && url.searchParams.get("action") === "backfill") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.DB) {
         return new Response(JSON.stringify({ error: "D1 not configured" }), {
@@ -7817,86 +8161,12 @@ export default {
     //    Header: X-Snapshot-Secret. Feeders (Apps Script for Drive drops, worker
     //    crons for APIs) all normalize to this shape and POST here. Idempotent:
     //    UNIQUE(channel, store, date) upserts, so re-sent files never double-count.
-    if (request.method === "POST" && url.searchParams.get("action") === "ingest") {
-      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
-      if (unauth) return unauth;
-
-      let body;
-      try { body = await request.json(); }
-      catch { return new Response(JSON.stringify({ error: "Invalid JSON body" }), { status: 400, headers: corsJson }); }
-
-      const channel = (body.channel || "").toString().trim().toLowerCase();
-      const rows = Array.isArray(body.rows) ? body.rows : null;
-      const sourceFile = body.source_file ? body.source_file.toString() : null;
-      if (!channel) return new Response(JSON.stringify({ error: "Missing channel" }), { status: 400, headers: corsJson });
-      if (!rows)    return new Response(JSON.stringify({ error: "Missing rows[]" }), { status: 400, headers: corsJson });
-
-      const ingestedAt = new Date().toISOString();
-      const stmt = env.DB.prepare(
-        `INSERT INTO channel_sales (channel, store, date, total, count, meta, source_file, ingested_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(channel, store, date) DO UPDATE SET
-           total       = excluded.total,
-           count       = excluded.count,
-           meta        = excluded.meta,
-           source_file = excluded.source_file,
-           ingested_at = excluded.ingested_at`
-      );
-
-      const batch = [];
-      const errors = [];
-      for (let i = 0; i < rows.length; i++) {
-        const r = rows[i] || {};
-        const store = (r.store || "").toString().trim().toUpperCase();
-        const date = (r.date || "").toString().trim();
-        if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-          errors.push({ i, store, date, reason: "missing/invalid store or date" });
-          continue;
-        }
-        const total = (r.total == null || r.total === "") ? null : roundCents(Number(r.total));
-        const count = (r.count == null || r.count === "") ? null : Math.trunc(Number(r.count));
-        const meta  = (r.meta == null) ? null : JSON.stringify(r.meta);
-        if (total != null && !Number.isFinite(total)) { errors.push({ i, store, date, reason: "non-numeric total" }); continue; }
-        batch.push(stmt.bind(channel, store, date, total, count, meta, sourceFile, ingestedAt));
-      }
-
-      if (batch.length) await env.DB.batch(batch);
-
-      // Projection: the dashboard reads daily_sales.auction (already folded into
-      // each store's total + the violet "Auction" breakdown). Project the auction
-      // channel's daily $ into that column so the UI lights up with no frontend
-      // change. Feed-authoritative (overwrites), but never touches manual-override
-      // rows. Other channels (eon/labor) get their own projection when added.
-      let projected = 0;
-      if (channel === "auction" && batch.length) {
-        const proj = env.DB.prepare(
-          `INSERT INTO daily_sales (store, date, auction) VALUES (?, ?, ?)
-           ON CONFLICT(store, date) DO UPDATE SET
-             auction = CASE WHEN is_manual_override = 1 THEN auction ELSE excluded.auction END`
-        );
-        const projBatch = [];
-        for (let i = 0; i < rows.length; i++) {
-          const r = rows[i] || {};
-          const store = (r.store || "").toString().trim().toUpperCase();
-          const date = (r.date || "").toString().trim();
-          if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
-          if (r.total == null || r.total === "") continue;
-          const total = roundCents(Number(r.total));
-          if (!Number.isFinite(total)) continue;
-          projBatch.push(proj.bind(store, date, total));
-        }
-        if (projBatch.length) { await env.DB.batch(projBatch); projected = projBatch.length; }
-      }
-
-      return new Response(JSON.stringify({ ok: true, channel, written: batch.length, projected, skipped: errors.length, errors }), { headers: corsJson });
-    }
 
     // ── Admin: re-snapshot item sales for a date: ?action=items-snapshot&store=BL1[&date=2026-04-08]
     // store=all re-processes every store. Requires X-Snapshot-Secret header.
-    if (url.searchParams.get("action") === "items-snapshot") {
+    if (request.method === "POST" && url.searchParams.get("action") === "items-snapshot") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
 
       const storeParam = (url.searchParams.get("store") || "").toUpperCase();
@@ -8011,7 +8281,13 @@ export default {
           + `&filter=createdTime<${untilTs}`
           + `&expand=payments,lineItems.item,lineItems.discounts,lineItems.modifications,lineItems.refunds,discounts,credits,refunds,serviceCharge`
           + `&limit=${limit}&offset=${offset}`;
-        const resp = await fetch(url, { headers });
+        // Same failed-page-is-not-end-of-list hazard as fetchItemOrders. This
+        // one is read-only and single-day so it can't truncate in practice,
+        // but a silent partial would make the diagnostic lie about a mismatch.
+        const resp = await cloverFetch(url, { headers });
+        if (!resp.ok) {
+          return new Response(JSON.stringify({ error: `Clover orders fetch failed: HTTP ${resp.status}` }), { status: 502, headers: corsJson });
+        }
         const data = await resp.json();
         if (!data?.elements?.length) break;
         orders.push(...data.elements);
@@ -8209,9 +8485,9 @@ export default {
     // Iterates each date in [start,end] and re-runs the items-snapshot logic,
     // skipping dates that already have a KV entry unless force=1. Restores
     // qty/ASP/L2 data on the Weekly Retail Summary for historical weeks.
-    if (url.searchParams.get("action") === "backfill-items-snapshots") {
+    if (request.method === "POST" && url.searchParams.get("action") === "backfill-items-snapshots") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
@@ -8243,6 +8519,18 @@ export default {
         fetchItemOverrides(env),
         fetchItemCosts(env),
       ]);
+
+      // Independent record of what each store/date actually sold, used below to
+      // refuse writing an empty snapshot over a real day. One query for the
+      // whole range rather than per-date. Keyed `STORE|YYYY-MM-DD`.
+      const d1Totals = {};
+      if (env.DB) {
+        const { results: dRows } = await env.DB
+          .prepare("SELECT store, date, total FROM daily_sales WHERE date >= ? AND date <= ?")
+          .bind(start, end).all().catch(() => ({ results: [] }));
+        for (const r of (dRows || [])) d1Totals[`${r.store}|${r.date}`] = r.total || 0;
+      }
+
       const catMapCache = {};
       const summary = {};
       for (const store of stores) {
@@ -8256,30 +8544,19 @@ export default {
           continue;
         }
         for (const dateStr of dates) {
-          const key = `items:${store.toLowerCase()}:${dateStr}`;
-          try {
-            if (!force) {
-              const existing = await env.SALES_SNAPSHOTS.get(key);
-              if (existing) { storeOut.skipped++; continue; }
-            }
-            const sinceTs = getStartOfDayET(dateStr);
-            let untilTs = null;
-            if (dateStr !== todayStr) {
-              const nextDay = new Date(dateStr + 'T12:00:00Z');
-              nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-              untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
-            }
-            const [elements, refundElements] = await Promise.all([
-              fetchItemOrders(store, env, sinceTs, untilTs),
-              fetchRefundElements(store, env, sinceTs, untilTs),
-            ]);
-            if (!elements) { storeOut.details.push({ date: dateStr, note: "no credentials" }); continue; }
-            const itemData = aggregateItemSales(elements, catMapCache[store], store, dateStr, overrides, itemCosts, refundElements);
-            await saveItemSalesSnapshot(env, store, dateStr, itemData);
-            storeOut.written++;
-          } catch (e) {
-            storeOut.errors++;
-            storeOut.details.push({ date: dateStr, error: e.message });
+          const r = await rebuildItemSnapshot(env, store, dateStr, {
+            catMap: catMapCache[store],
+            overrides, itemCosts,
+            d1Total: d1Totals[`${store}|${dateStr}`] || 0,
+            todayStr, force,
+          });
+          if (r.outcome === "written") { storeOut.written++; continue; }
+          storeOut[r.outcome === "error" ? "errors" : "skipped"]++;
+          // "already present (force=0)" was historically a silent skip; keep it
+          // silent so this refactor changes no output.
+          if (r.note !== "already present (force=0)") {
+            const { outcome, ...detail } = r;
+            storeOut.details.push(detail);
           }
         }
         summary[store] = storeOut;
@@ -8294,7 +8571,7 @@ export default {
     // same X-Snapshot-Secret header as other admin endpoints.
     if (url.searchParams.get("action") === "noncategorized-items") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
@@ -8310,17 +8587,25 @@ export default {
         return new Response(JSON.stringify({ error: "Missing start or end param (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
       }
 
+      // store=all scans every store; otherwise just the one requested.
+      const scanStores = storeParam === "ALL" ? ALL_STORES : [storeParam];
+
       // Union { name → {qty, net, itemId} } and { l3 → {qty, net} } across the range.
       const agg = {};
       const l3Agg = {};
+      // Items resolved by a fallback rather than a real Clover L3 — the products
+      // that land in the "Other" row. Keyed name → {qty, net, itemId, source, l2, stores}.
+      const fbAgg = {};
+      let fbTruncated = false;
       const current = new Date(start + "T00:00:00Z");
       const endDate = new Date(end + "T00:00:00Z");
       const datesScanned = [];
       while (current <= endDate) {
         const dateStr = current.toISOString().slice(0, 10);
         datesScanned.push(dateStr);
+        for (const st of scanStores) {
         const snap = await env.SALES_SNAPSHOTS.get(
-          `items:${storeParam.toLowerCase()}:${dateStr}`, "json"
+          `items:${st.toLowerCase()}:${dateStr}`, "json"
         );
         const noCat = snap?._debug?.noCategory;
         if (noCat && typeof noCat === "object") {
@@ -8357,6 +8642,21 @@ export default {
             l3Agg[l3] = prior;
           }
         }
+        const fbs = snap?._debug?.fallbackItems;
+        if (fbs && typeof fbs === "object") {
+          if (Number(snap._debug.fallbackItemsTotal) > Object.keys(fbs).length) fbTruncated = true;
+          for (const [name, val] of Object.entries(fbs)) {
+            if (!val || typeof val !== "object") continue;
+            const prior = fbAgg[name] ||
+              { name, itemId: null, qty: 0, gross: 0, source: val.source || null, l2: val.l2 || null, stores: [] };
+            prior.qty += Number(val.qty) || 0;
+            prior.gross += Number(val.gross) || 0;
+            if (!prior.itemId && val.itemId) prior.itemId = val.itemId;
+            if (!prior.stores.includes(st)) prior.stores.push(st);
+            fbAgg[name] = prior;
+          }
+        }
+        }
         current.setUTCDate(current.getUTCDate() + 1);
       }
 
@@ -8367,8 +8667,18 @@ export default {
         .map(i => ({ ...i, qty: roundCents(i.qty), net: roundCents(i.net) }))
         .sort((a, b) => b.net - a.net);
 
+      const fallbackItems = Object.values(fbAgg)
+        .map(i => ({ ...i, qty: Math.round(i.qty), gross: roundCents(i.gross) }))
+        .sort((a, b) => b.gross - a.gross);
+      const fallbackGross = roundCents(fallbackItems.reduce((t, i) => t + i.gross, 0));
+
       return new Response(JSON.stringify({
         store: storeParam, start, end, datesScanned, items, l3Categories,
+        // Products landing in the "Other" bucket, biggest revenue first.
+        // `source` says which fallback fired: override | im | name | heuristic | pattern.
+        // NOTE: `gross` is pre-discount line revenue — a ranking signal, not a
+        // reported figure. It runs above the netSales shown on the dashboard.
+        fallbackItems, fallbackGross, fallbackTruncated: fbTruncated,
       }), { headers: corsJson });
     }
 
@@ -8380,7 +8690,7 @@ export default {
     //       to replace the rule list. Either key can be omitted to preserve it.
     if (url.searchParams.get("action") === "item-overrides") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
@@ -8457,7 +8767,7 @@ export default {
     //       parsed file. Validates each entry before persisting.
     if (url.searchParams.get("action") === "item-costs") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
@@ -8528,15 +8838,36 @@ export default {
     //       L3_TO_L2 map and each cost as a finite, non-negative number.
     if (url.searchParams.get("action") === "category-costs") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
       }
 
       // The set of L3 categories the dashboard knows how to bucket, grouped by L2.
-      const catalog = Object.entries(L3_TO_L2)
-        .map(([l3, l2]) => ({ l3, l2 }))
+      //
+      // Admin-added L3 mappings live in `item-overrides:global.l3Map` and are NOT
+      // keys of the built-in L3_TO_L2. The aggregator already costs those rows
+      // correctly — the lookup is `icCats[costL3]` on the RAW Clover category
+      // string — but this editor used to build its catalog and validate saves
+      // from L3_TO_L2 alone, so an l3Map-only category could be neither listed
+      // nor priced, with no UI path to fix it at all. `Indy Products` sat that
+      // way with $16,592 of BL16 bin sales stranded and un-costable.
+      //
+      // Union the two so anything the engine can cost, the editor can price.
+      const { l3Map: ovL3Map } = await fetchItemOverrides(env);
+      const costableL3 = { ...L3_TO_L2 };
+      for (const [l3, l2] of Object.entries(ovL3Map || {})) {
+        if (!Object.prototype.hasOwnProperty.call(costableL3, l3)) costableL3[l3] = l2;
+      }
+      const catalog = Object.entries(costableL3)
+        .map(([l3, l2]) => ({
+          l3, l2,
+          // Flags an entry that exists only because an admin mapped it. Useful in
+          // the UI, and it surfaces data-entry artefacts — e.g. the l3Map key
+          // 'Spring Summer Sale ' carries a trailing space.
+          viaOverride: !Object.prototype.hasOwnProperty.call(L3_TO_L2, l3),
+        }))
         .sort((a, b) => (a.l2 === b.l2 ? a.l3.localeCompare(b.l3) : a.l2.localeCompare(b.l2)));
 
       if (request.method === "GET") {
@@ -8600,7 +8931,10 @@ export default {
         const cleaned = {};
         let rejected = 0;
         for (const [l3, v] of Object.entries(rawCosts)) {
-          if (!Object.prototype.hasOwnProperty.call(L3_TO_L2, l3)) { rejected++; continue; }
+          // Accept anything the engine can cost: built-in L3_TO_L2 OR an
+          // admin-mapped l3Map key. Validating against L3_TO_L2 alone silently
+          // rejected every l3Map-only category (see the catalog note above).
+          if (!Object.prototype.hasOwnProperty.call(costableL3, l3)) { rejected++; continue; }
           const cost = Number(v);
           if (!Number.isFinite(cost) || cost < 0) { rejected++; continue; }
           if (cost === 0) continue; // omit zeros — absence means "no cost set"
@@ -8765,8 +9099,13 @@ export default {
         defaultTaxRates: item.defaultTaxRates || false,
         priceType: item.priceType || "FIXED",
         modifiedTime: item.modifiedTime || 0,
-        category: item.categories?.elements?.[0]?.name || "",
-        categoryId: item.categories?.elements?.[0]?.id || "",
+        // `category` stays the single flattened name callers already expect.
+        // `categories` is additive: Clover's item↔category link is many-to-many,
+        // and collapsing to [0] hid that entirely — there was no way to see
+        // whether an item also sat in a real category alongside the sku book.
+        category: pickPrimaryCategory(item.categories?.elements)?.name || "",
+        categoryId: pickPrimaryCategory(item.categories?.elements)?.id || "",
+        categories: (item.categories?.elements || []).map(c => c.name).filter(Boolean),
       }));
       const total = data.total ?? data.count ?? null;
       const hasMore = elements.length === 1000;
@@ -8779,7 +9118,11 @@ export default {
       const unauth = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       const body = await request.json();
-      const { store, itemId, name, code, priceCents, costCents, taxable, hidden, l3, currentCategoryId } = body;
+      // `l3` ADDS a category (an item may legitimately hold several — see the
+      // category block below). Pass `removeOtherCategories: true` to make it the
+      // item's only one.
+      const { store, itemId, name, code, priceCents, costCents, taxable, hidden, l3,
+              currentCategoryId, removeOtherCategories = false } = body;
       if (!ALL_STORES.includes(store) || !itemId) {
         return new Response(JSON.stringify({ ok: false, error: "Invalid store or itemId" }), { status: 400, headers: corsJson });
       }
@@ -8806,33 +9149,110 @@ export default {
       }
       const updatedItem = await patchResp.json();
 
-      // Handle category reassignment if l3 was sent
+      // Handle category reassignment if l3 was sent.
+      //
+      // This silently did NOTHING before 2026-08-03. `resolveCloverCategory`
+      // returns `{ categoryId, created }` — create-clover-item destructures it,
+      // this path did not, so it sent `category: { id: <the whole object> }`.
+      // Clover rejected every such call, and because no response here was ever
+      // checked the endpoint still answered `ok: true`. Recategorising an item
+      // has therefore never worked through this API.
+      //
+      // Order matters: ADD the new association FIRST, then remove the others.
+      // The old code deleted first, so a failure between the two steps left the
+      // item with NO category at all — strictly worse than the wrong one.
+      let categoryResult;
       if (l3 !== undefined) {
-        // Remove existing category associations for this item
-        const itemCatUrl = `https://api.clover.com/v3/merchants/${mId}/category_items?filter=item.id%3D${itemId}`;
-        const catItemsResp = await cloverFetch(itemCatUrl, { headers: { "Authorization": `Bearer ${tok}` } });
-        if (catItemsResp.ok) {
-          const catData = await catItemsResp.json();
-          for (const assoc of (catData.elements || [])) {
-            await cloverFetch(
-              `https://api.clover.com/v3/merchants/${mId}/category_items/${assoc.id}`,
-              { method: "DELETE", headers: { "Authorization": `Bearer ${tok}` } }
+        // Read the item's CURRENT categories off the item itself.
+        //
+        // This used to list `category_items?filter=item.id%3D<id>`, which always
+        // came back empty — so the removal loop below never ran and every call
+        // answered `removedOld: 0`. The endpoint has therefore only ever ADDED a
+        // category, never replaced one, whatever the code looked like it did.
+        const curResp = await cloverFetch(
+          `https://api.clover.com/v3/merchants/${mId}/items/${itemId}?expand=categories`,
+          { headers: { "Authorization": `Bearer ${tok}` } }
+        );
+        let existingAssocs = [];
+        if (curResp.ok) {
+          existingAssocs = ((await curResp.json())?.categories?.elements || [])
+            .filter(c => c?.id)
+            .map(c => ({ id: c.id, name: c.name }));
+        }
+
+        let keepId = null;
+        if (l3) {
+          const { categoryId, created } = await resolveCloverCategory(store, l3, env);
+          if (!categoryId) {
+            return new Response(JSON.stringify({ ok: false, error: `Could not resolve category ${l3}`, stage: "resolve-category" }), { status: 502, headers: corsJson });
+          }
+          keepId = categoryId;
+          const assignResp = await cloverFetch(
+            `https://api.clover.com/v3/merchants/${mId}/category_items`,
+            { method: "POST", headers: authHeaders, body: JSON.stringify({ elements: [{ category: { id: categoryId }, item: { id: itemId } }] }) }
+          );
+          if (!assignResp.ok) {
+            const txt = await assignResp.text();
+            // Nothing was removed yet, so the item keeps whatever it had.
+            return new Response(JSON.stringify({ ok: false, error: txt, stage: "assign-category", categoryId }), { status: assignResp.status, headers: corsJson });
+          }
+          categoryResult = { categoryId, created, assigned: l3 };
+        }
+
+        // Removing the other categories is OPT-IN via `removeOtherCategories`.
+        //
+        // Additive is the right default: an item legitimately belongs in both its
+        // real category and the "Sku Book Items" POS convenience page, and that is
+        // what nearly every caller wants. Ask for exclusivity only when the item is
+        // genuinely in the WRONG category and you mean to move it.
+        //
+        // Deletion uses `DELETE /categories/{catId}/items/{itemId}` — the documented
+        // way to break the link — a POST with ?delete=true, since both DELETE forms 405.
+        // the list call that never returned anything.
+        const removed = [];
+        if (removeOtherCategories) {
+          for (const assoc of existingAssocs) {
+            if (keepId && assoc.id === keepId) continue;
+            // Clover dissociates with a POST + `?delete=true`, NOT an HTTP DELETE.
+            // Both DELETE forms return 405: the path
+            // /categories/{catId}/items/{itemId} and the category_items
+            // collection. Same element body as the assign call.
+            // https://docs.clover.com/reference/categorycreateordeletecategoryitems
+            const delResp = await cloverFetch(
+              `https://api.clover.com/v3/merchants/${mId}/category_items?delete=true`,
+              { method: "POST", headers: authHeaders,
+                body: JSON.stringify({ elements: [{ category: { id: assoc.id }, item: { id: itemId } }] }) }
             );
+            // Capture what Clover actually said — a bare ok:false gives a caller
+            // nothing to act on and sent me guessing at the API once already.
+            let delDetail = null;
+            if (!delResp.ok) { try { delDetail = (await delResp.text()).slice(0, 300); } catch { delDetail = "(no body)"; } }
+            removed.push({
+              categoryId: assoc.id, name: assoc.name || null,
+              ok: delResp.ok, status: delResp.status ?? null, detail: delDetail,
+            });
           }
         }
-        // Assign new category if l3 is non-empty
-        if (l3) {
-          const newCatId = await resolveCloverCategory(store, l3, env);
-          if (newCatId) {
-            await cloverFetch(
-              `https://api.clover.com/v3/merchants/${mId}/category_items`,
-              { method: "POST", headers: authHeaders, body: JSON.stringify({ elements: [{ category: { id: newCatId }, item: { id: itemId } }] }) }
-            );
-          }
+        const failedRemovals = removed.filter(r => !r.ok);
+        if (failedRemovals.length) {
+          // The item is categorised correctly but ALSO still carries old
+          // associations. Surface it rather than reporting a clean success.
+          return new Response(JSON.stringify({
+            ok: false, stage: "remove-old-categories",
+            error: `Assigned ${l3} but could not remove ${failedRemovals.length} other categor(y/ies); the item still holds more than one`,
+            category: categoryResult, removed,
+          }), { status: 502, headers: corsJson });
+        }
+        if (categoryResult) {
+          categoryResult.removedOld = removed.length;
+          categoryResult.exclusive = !!removeOtherCategories;
+          // What the item held BEFORE this call, so a caller can see whether it is
+          // now additive-with-others or genuinely exclusive.
+          categoryResult.previousCategories = existingAssocs.map(a => a.name).filter(Boolean);
         }
       }
 
-      return new Response(JSON.stringify({ ok: true, item: updatedItem }), { headers: corsJson });
+      return new Response(JSON.stringify({ ok: true, item: updatedItem, category: categoryResult }), { headers: corsJson });
     }
 
     // ── Admin: Delete Clover Item
@@ -9284,9 +9704,9 @@ export default {
     // the item-sales snapshot) for each day in [start,end] using actual sale
     // time (clientCreatedTime) instead of Clover receipt time. Manual-override
     // rows are preserved (skipped). Admin-secret gated. WRITES to D1/KV.
-    if (url.searchParams.get("action") === "resnapshot-clienttime") {
+    if (request.method === "POST" && url.searchParams.get("action") === "resnapshot-clienttime") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
 
       const storeParam = (url.searchParams.get("store") || "").toUpperCase();
@@ -9325,9 +9745,9 @@ export default {
     // Single-entry: pass one element. Bulk: pass many. At least one numeric
     // field per entry must be provided. Sets is_manual_override=1 so the
     // cron snapshot and Sheet backfill will not overwrite this row.
-    if (url.searchParams.get("action") === "manual-override") {
+    if (request.method === "POST" && url.searchParams.get("action") === "manual-override") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.DB) {
         return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
@@ -9504,32 +9924,20 @@ export default {
       try {
         const [subRow, prefRow] = await Promise.all([
           env.DB.prepare("SELECT COUNT(*) AS cnt FROM push_subscriptions WHERE user_id = ?").bind(currentUser.id).first(),
-          env.DB.prepare("SELECT push_enabled, daily_summary, weekly_digest, interval_summary, supply_notifications FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
+          env.DB.prepare("SELECT push_enabled, daily_summary, weekly_digest, interval_summary, supply_notifications, upload_alerts FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
         ]);
         const cnt = subRow?.cnt ?? 0;
         const dailySummary       = prefRow ? !!prefRow.daily_summary       : true;
         const weeklyDigest       = prefRow ? !!prefRow.weekly_digest       : true;
         const intervalSummary    = prefRow?.interval_summary               ?? 'off';
         const supplyNotifications = prefRow ? !!prefRow.supply_notifications : true;
-        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest, intervalSummary, supplyNotifications }), { headers: corsJson });
+        const uploadAlerts       = prefRow ? !!prefRow.upload_alerts       : true;
+        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest, intervalSummary, supplyNotifications, uploadAlerts }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
     }
 
-        // GET/POST ?action=test-interval-summary  (admin secret)
-    // Fires dispatchIntervalSummary on demand so the v3 notification format
-    // can be verified without waiting for the top-of-hour cron.
-    if (url.searchParams.get("action") === "test-interval-summary") {
-      const unauth = requireAdminSecret(request, env, corsJson);
-      if (unauth) return unauth;
-      try {
-        const result = await dispatchIntervalSummary(env);
-        return new Response(JSON.stringify({ ok: true, result }, null, 2), { headers: corsJson });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: "dispatch failed", detail: e.message }), { status: 500, headers: corsJson });
-      }
-    }
 
     // POST ?action=push-test
     // Sends a test push notification to all of the current user's subscriptions.
@@ -9546,7 +9954,7 @@ export default {
           return new Response(JSON.stringify({ ok: false, error: "No subscriptions found for this user" }), { status: 404, headers: corsJson });
         }
         const payload = JSON.stringify({
-          title: 'Bargain Lane Dashboard',
+          title: 'RETJG HUB',
           body: 'Test notification — push is working! ✅',
           tag: 'test',
         });
@@ -9587,13 +9995,21 @@ export default {
         if (typeof body.weekly_digest  === 'boolean') fields.weekly_digest  = body.weekly_digest  ? 1 : 0;
         if (['off', '1h', '3h'].includes(body.interval_summary)) fields.interval_summary = body.interval_summary;
         if (typeof body.supply_notifications === 'boolean') fields.supply_notifications = body.supply_notifications ? 1 : 0;
+        if (typeof body.upload_alerts === 'boolean') fields.upload_alerts = body.upload_alerts ? 1 : 0;
         if (!Object.keys(fields).length) return new Response(JSON.stringify({ error: "Nothing to update" }), { status: 400, headers: corsJson });
         const now = new Date().toISOString();
-        const setClauses = Object.keys(fields).map(k => `${k} = ?`).join(', ');
+        // Persist chosen values even on a first-ever insert: a bare INSERT with
+        // no conflict skips the ON CONFLICT branch, so the toggled columns must
+        // be in the INSERT list too (unspecified prefs fall back to column
+        // DEFAULTs). Column names come from the fixed whitelist above.
+        const cols = Object.keys(fields);
+        const insertCols = ['user_id', ...cols, 'updated_at'];
+        const ph = insertCols.map(() => '?').join(', ');
+        const updateSet = [...cols.map(k => `${k} = excluded.${k}`), 'updated_at = excluded.updated_at'].join(', ');
         await env.DB.prepare(
-          `INSERT INTO notification_preferences (user_id, push_enabled, daily_summary, updated_at) VALUES (?, 1, 1, ?)
-           ON CONFLICT(user_id) DO UPDATE SET ${setClauses}, updated_at = ?`
-        ).bind(currentUser.id, now, ...Object.values(fields), now).run();
+          `INSERT INTO notification_preferences (${insertCols.join(', ')}) VALUES (${ph})
+           ON CONFLICT(user_id) DO UPDATE SET ${updateSet}`
+        ).bind(currentUser.id, ...cols.map(k => fields[k]), now).run();
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
@@ -9610,7 +10026,42 @@ export default {
         new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
       try {
         const result = await computeStoreScores(env, asOf);
+        // Scope to the caller's stores. This endpoint returned every store's
+        // weekly budget, banked total, gap and pace band to ANY logged-in user
+        // — a manager scoped to one store saw the whole chain's numbers.
+        // Verified against staging with a real BL1-only session before the fix.
+        const allow = allowedStores(currentUser);
+        if (allow !== null && Array.isArray(result.stores)) {
+          result.stores = result.stores.filter(s => allow.includes(s.store));
+        }
         return new Response(JSON.stringify(result), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=ly-sales&from=YYYY-MM-DD&to=YYYY-MM-DD
+    // Last-year daily net sales (retail/bin split) for the store cards'
+    // "vs last year" comparison. One-time import from the owner's CSV
+    // (migration-028; 'Indy' rows are Wyoming-era data reused for BL16).
+    // Read-only, range-bounded (no IN lists), SCOPED to the caller's stores.
+    if (request.method === "GET" && url.searchParams.get("action") === "ly-sales") {
+      const from = url.searchParams.get("from"), to = url.searchParams.get("to");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from || "") || !/^\d{4}-\d{2}-\d{2}$/.test(to || "")) {
+        return new Response(JSON.stringify({ error: "from/to required (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+      }
+      try {
+        const { results } = await env.DB.prepare(
+          "SELECT store, date, retail, bin FROM last_year_sales WHERE date >= ? AND date <= ?"
+        ).bind(from, to).all();
+        // Scope to the caller's stores. The old comment said "any logged-in
+        // user", which predates there being roles that must not see chain
+        // figures — a BL1-only manager was getting every store's last-year
+        // daily net. Filtered in JS rather than an IN list on purpose: D1 caps
+        // bound params at 100 and the range is unbounded.
+        const allow = allowedStores(currentUser);
+        const rows = (results || []).filter(r => allow === null || allow.includes(r.store));
+        return new Response(JSON.stringify({ rows }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
@@ -9632,7 +10083,7 @@ export default {
     // Build + cache the brief for a date WITHOUT sending any email/push.
     // Superuser or admin-secret. Used to preview/regenerate the brief.
     if (request.method === "POST" && url.searchParams.get("action") === "generate-brief") {
-      const isAdminReq = request.headers.get('X-Snapshot-Secret') === env.SNAPSHOT_SECRET;
+      const isAdminReq = hasSnapshotSecret(request, env);
       if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
@@ -9649,7 +10100,7 @@ export default {
     }
 
     if (request.method === "POST" && url.searchParams.get("action") === "send-daily-summary") {
-      const isAdminReq = request.headers.get('X-Snapshot-Secret') === env.SNAPSHOT_SECRET;
+      const isAdminReq = hasSnapshotSecret(request, env);
       if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
@@ -9669,7 +10120,7 @@ export default {
     // Renders the daily-summary email HTML WITHOUT sending anything. Read-only,
     // superuser/admin-secret only. Used to eyeball the layout in a browser.
     if (request.method === "GET" && url.searchParams.get("action") === "preview-daily-summary") {
-      const isAdminReq = request.headers.get('X-Snapshot-Secret') === env.SNAPSHOT_SECRET;
+      const isAdminReq = hasSnapshotSecret(request, env);
       if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
@@ -9693,7 +10144,7 @@ export default {
     // POST ?action=send-weekly-digest[&start=YYYY-MM-DD&end=YYYY-MM-DD]
     // Manually trigger the weekly digest (superuser or admin-secret).
     if (request.method === "POST" && url.searchParams.get("action") === "send-weekly-digest") {
-      const isAdminReq = request.headers.get('X-Snapshot-Secret') === env.SNAPSHOT_SECRET;
+      const isAdminReq = hasSnapshotSecret(request, env);
       if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
@@ -10106,6 +10557,90 @@ export default {
       }
     }
 
+    // GET ?action=supply-requests-purge-preview[&days=30]
+    // Superuser only, READ-ONLY. What a purge would remove, broken down by
+    // status with the cost each status carries, so the operator sees the blast
+    // radius before anything is deleted. Deliberately separate from the DELETE:
+    // nothing here can mutate.
+    if (request.method === "GET" && url.searchParams.get("action") === "supply-requests-purge-preview") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const days = purgeDays(url.searchParams.get("days"));
+        const cutoff = purgeCutoff(days);
+        const { results } = await env.DB.prepare(
+          `SELECT status, COUNT(*) AS n, COALESCE(SUM(cost),0) AS cost
+             FROM supply_requests WHERE submitted_at < ? GROUP BY status`
+        ).bind(cutoff).all();
+        const byStatus = {};
+        for (const r of results || []) byStatus[r.status] = { count: r.n, cost: r.cost || 0 };
+        return new Response(JSON.stringify({ ok: true, days, cutoff, byStatus }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // DELETE ?action=supply-requests-purge
+    // Body: { days, statuses: [...], expectCount }  — superuser only.
+    // Bulk sibling of supply-request-delete. Two deliberate safeguards:
+    //  1. Children are deleted EXPLICITLY (items, then history, then parents)
+    //     rather than trusting ON DELETE CASCADE, so this behaves identically
+    //     whether or not D1 has FK enforcement on for the connection.
+    //  2. The count is recomputed server-side and compared against the count the
+    //     client showed the operator. Requests age past the cutoff in real time,
+    //     so without this the set actually deleted could differ from the set
+    //     that was approved.
+    if (request.method === "DELETE" && url.searchParams.get("action") === "supply-requests-purge") {
+      if (!currentUser || currentUser.role !== 'superuser') {
+        return new Response(JSON.stringify({ error: "Superuser required" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const body = await request.json();
+        const days = purgeDays(body.days);
+        const statuses = Array.isArray(body.statuses)
+          ? body.statuses.filter(s => SUPPLY_STATUSES.includes(s))
+          : [];
+        if (!statuses.length) {
+          return new Response(JSON.stringify({ error: "Select at least one status to purge" }), { status: 400, headers: corsJson });
+        }
+        const cutoff = purgeCutoff(days);
+        const ph = statuses.map(() => '?').join(',');
+
+        const cntRow = await env.DB.prepare(
+          `SELECT COUNT(*) AS n FROM supply_requests WHERE submitted_at < ? AND status IN (${ph})`
+        ).bind(cutoff, ...statuses).first();
+        const actual = cntRow?.n || 0;
+
+        if (body.expectCount != null && Number(body.expectCount) !== actual) {
+          return new Response(JSON.stringify({
+            error: "The set changed since the preview — re-check the counts and confirm again.",
+            actual,
+          }), { status: 409, headers: corsJson });
+        }
+        if (!actual) {
+          return new Response(JSON.stringify({ ok: true, deleted: 0, items: 0, history: 0, cutoff }), { headers: corsJson });
+        }
+
+        const sel = `SELECT id FROM supply_requests WHERE submitted_at < ? AND status IN (${ph})`;
+        const res = await env.DB.batch([
+          env.DB.prepare(`DELETE FROM supply_request_items   WHERE request_id IN (${sel})`).bind(cutoff, ...statuses),
+          env.DB.prepare(`DELETE FROM supply_request_history WHERE request_id IN (${sel})`).bind(cutoff, ...statuses),
+          env.DB.prepare(`DELETE FROM supply_requests WHERE submitted_at < ? AND status IN (${ph})`).bind(cutoff, ...statuses),
+        ]);
+
+        return new Response(JSON.stringify({
+          ok: true,
+          deleted: res?.[2]?.meta?.changes ?? 0,
+          items:   res?.[0]?.meta?.changes ?? 0,
+          history: res?.[1]?.meta?.changes ?? 0,
+          cutoff,
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     // POST ?action=supply-request-comment
     // Body: { id, note }  — any authenticated user (superuser or requester's store).
     if (request.method === "POST" && url.searchParams.get("action") === "supply-request-comment") {
@@ -10146,6 +10681,443 @@ export default {
       }
     }
 
+    // ── Rotation helper: which secret am I holding?
+    //    GET ?action=secret-check
+    //
+    // Answers "does the value I just configured actually work, and is it the
+    // old one or the new one" WITHOUT performing any action. That is what makes
+    // the rotation steps independently verifiable instead of hopeful.
+    //
+    // It reveals no values, and it is not a brute-force oracle: it sits behind
+    // the normal auth gate, so an invalid secret never reaches it — you get the
+    // same 401 as any other unauthenticated request.
+    if (url.searchParams.get("action") === "secret-check") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly: true });
+      if (unauth) return unauth;
+      const slot = snapshotSecretSlot(request, env);
+      return new Response(JSON.stringify({
+        ok: true,
+        slot,                                          // "current" | "next" | null (session, no secret)
+        currentConfigured: !!env.SNAPSHOT_SECRET,
+        nextConfigured: !!env.SNAPSHOT_SECRET_NEXT,
+        rotationInProgress: !!env.SNAPSHOT_SECRET_NEXT,
+        note: slot === "next"
+          ? "This value is in the NEXT slot. Move every caller onto it, then promote it to SNAPSHOT_SECRET and delete SNAPSHOT_SECRET_NEXT."
+          : slot === "current"
+            ? (env.SNAPSHOT_SECRET_NEXT
+                ? "This is the OLD value and a rotation is in progress — this caller still needs moving."
+                : "This is the only configured secret.")
+            : "Authenticated by session, not by a secret.",
+      }), { headers: corsJson });
+    }
+
+    // ── Repair console: health check.
+    //    ?action=repair-health&store=all|BL1&start=YYYY-MM-DD&end=YYYY-MM-DD
+    //
+    // READ-ONLY, and deliberately so — it fetches nothing from Clover and writes
+    // nothing. It compares two records we ALREADY hold: the stored item snapshot
+    // (KV `items:<store>:<date>`) against D1 `daily_sales.total`, which is the
+    // independent record of what the day actually sold.
+    //
+    // 🔑 "Short" uses BACKFILL_MIN_D1_RATIO — the SAME threshold the backfill's
+    // magnitude guard uses to decide whether a re-pull is an improvement. So a
+    // date reported short here is precisely a date a repair would accept and
+    // better, and a date reported ok is one the guard would refuse to overwrite.
+    // Any other threshold would let this screen recommend work the repair then
+    // silently declines to do.
+    //
+    // This is the reconciliation that had to be hand-scripted four times in one
+    // day of repairing L3/costing data. `gap` is the headline: the dollars a
+    // repair would actually recover.
+    if (url.searchParams.get("action") === "repair-health") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly: true });
+      if (unauth) return unauth;
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+
+      const storeParam = (url.searchParams.get("store") || "all").toUpperCase();
+      const start = url.searchParams.get("start") || "";
+      const end = url.searchParams.get("end") || start;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || end < start) {
+        return new Response(JSON.stringify({ error: "need start=YYYY-MM-DD and end=YYYY-MM-DD (end >= start)" }),
+          { status: 400, headers: corsJson });
+      }
+      const stores = storeParam === "ALL"
+        ? ALL_STORES
+        : (ALL_STORES.includes(storeParam) ? [storeParam] : []);
+      if (!stores.length) {
+        return new Response(JSON.stringify({ error: `unknown store ${storeParam}` }), { status: 400, headers: corsJson });
+      }
+
+      const dates = [];
+      for (let d = new Date(start + "T12:00:00Z"); ; d.setUTCDate(d.getUTCDate() + 1)) {
+        const s = d.toISOString().slice(0, 10);
+        if (s > end) break;
+        dates.push(s);
+      }
+
+      // Each cell costs one KV read, and a Worker has a finite subrequest budget.
+      // Cap it and SAY SO in the response rather than silently returning a
+      // partial picture that reads as "all clear".
+      const MAX_CELLS = 480;
+      let truncated = null;
+      if (stores.length * dates.length > MAX_CELLS) {
+        const keep = Math.max(1, Math.floor(MAX_CELLS / stores.length));
+        truncated = {
+          requestedDays: dates.length, checkedDays: keep,
+          note: `range trimmed to the most recent ${keep} day(s) per store — ${stores.length} store(s) x ${dates.length} day(s) exceeds the ${MAX_CELLS}-cell read budget. Narrow the range or pick one store to see the rest.`,
+        };
+        dates.splice(0, dates.length - keep);
+      }
+
+      // One D1 query for the whole range (range bounds, not an IN list — D1 caps
+      // bound params at 100).
+      const d1 = {};
+      const d1Rows = new Set();
+      if (env.DB) {
+        const { results } = await env.DB
+          .prepare("SELECT store, date, total FROM daily_sales WHERE date >= ? AND date <= ?")
+          .bind(dates[0], dates[dates.length - 1]).all().catch(() => ({ results: [] }));
+        // Track row PRESENCE separately from the value. "no row at all" and
+        // "a row whose total is 0/NULL" look identical downstream but point at
+        // different causes — a cron that never ran vs one that wrote a zero.
+        for (const r of (results || [])) d1[`${r.store}|${r.date}`] = r.total || 0;
+        for (const r of (results || [])) d1Rows.add(`${r.store}|${r.date}`);
+      }
+
+      const { dateStr: todayET } = getETToday();
+
+      const cells = [];
+      const pairs = [];
+      for (const store of stores) for (const date of dates) pairs.push([store, date]);
+
+      const CHUNK = 40;
+      for (let i = 0; i < pairs.length; i += CHUNK) {
+        const batch = pairs.slice(i, i + CHUNK);
+        const snaps = await Promise.all(batch.map(([store, date]) =>
+          env.SALES_SNAPSHOTS.get(`items:${store.toLowerCase()}:${date}`, "json").catch(() => null)));
+        batch.forEach(([store, date], j) => {
+          const snap = snaps[j];
+          const d1Net = d1[`${store}|${date}`] ?? null;
+          const snapNet = snap?.totals?.netSales ?? null;
+          // coverage.none is already stored per snapshot: net sales that resolved
+          // to NO cost at all. No recomputation needed.
+          const uncosted = snap?.totals?.coverage?.none ?? 0;
+
+          // 🔑 Today is still being collected — the item snapshot is written by
+          // the nightly cron, so a today-shaped hole is expected, not damage.
+          // Calling it "missing" sent the first real run of this check to five
+          // stores' worth of phantom repairs, all dated today.
+          const isToday = date === todayET;
+
+          // 🔑 When BOTH records agree the day sold nothing, that is a closed
+          // day, not a data problem. Calling it "no-d1" (cannot judge) put 12
+          // BL8 days on a can't-judge list when the honest answer was simply
+          // "this store took no money that day" — a business fact, not a fault.
+          const snapEmpty = (snapNet ?? 0) <= 0 && !(snap?.orderCount > 0);
+          const d1Empty = (d1Net ?? 0) <= 0;
+
+          let status;
+          if (snapNet === null && isToday) status = "pending";
+          else if (snapNet === null && (d1Net || 0) > 0) status = "missing";
+          else if (snapNet === null) status = "empty";          // no snapshot, no sales — a closed day
+          else if (snapEmpty && d1Empty) status = "empty";      // both agree: no sales
+          else if (d1Net === null || d1Net <= 0) status = "no-d1";
+          else if (isToday && snapNet < d1Net * BACKFILL_MIN_D1_RATIO) status = "pending";
+          else if (snapNet < d1Net * BACKFILL_MIN_D1_RATIO) status = "short";
+          else status = "ok";
+
+          const gap = (status === "short" || status === "missing")
+            ? roundCents((d1Net || 0) - (snapNet || 0))
+            : 0;
+
+          cells.push({
+            store, date, status,
+            d1Net: d1Net === null ? null : roundCents(d1Net),
+            snapNet: snapNet === null ? null : roundCents(snapNet),
+            ratio: (d1Net && snapNet !== null) ? Math.round((snapNet / d1Net) * 1000) / 1000 : null,
+            gap,
+            uncosted: roundCents(uncosted),
+            orderCount: snap?.orderCount ?? null,
+            d1RowPresent: d1Rows.has(`${store}|${date}`),
+          });
+        });
+      }
+
+      const blank = () => ({ checked: 0, ok: 0, short: 0, missing: 0, noD1: 0, empty: 0, pending: 0, gap: 0, uncosted: 0 });
+      const KEY = { ok: "ok", short: "short", missing: "missing", "no-d1": "noD1", empty: "empty", pending: "pending" };
+      const summary = blank();
+      const byStore = {};
+      for (const c of cells) {
+        const b = (byStore[c.store] ||= blank());
+        for (const t of [summary, b]) {
+          t.checked++; t[KEY[c.status]]++;
+          t.gap = roundCents(t.gap + c.gap);
+          t.uncosted = roundCents(t.uncosted + c.uncosted);
+        }
+      }
+
+      // The actionable list: exactly the dates a repair would improve, newest
+      // first. This is what the repair step consumes — never a blind range.
+      const needsRepair = cells
+        .filter(c => c.status === "short" || c.status === "missing")
+        .sort((a, b) => b.gap - a.gap || (a.date < b.date ? 1 : -1));
+
+      return new Response(JSON.stringify({
+        ok: true,
+        range: { start, end, days: dates.length, stores },
+        threshold: BACKFILL_MIN_D1_RATIO,
+        truncated,
+        summary, byStore,
+        needsRepair,
+        cells,
+        legend: {
+          ok: "snapshot matches D1 within the guard threshold — a re-snapshot would be refused as no improvement",
+          short: "snapshot is materially below D1 — a partial fetch; re-snapshotting this date should recover the gap",
+          missing: "D1 recorded sales but there is no item snapshot at all",
+          "no-d1": "the snapshot recorded SALES but D1 has no usable total to check them against — cannot judge. Check `d1RowPresent`: false means the daily cron never wrote the row, true means it wrote a zero over a day that did sell.",
+          empty: "no sales — both the snapshot and D1 agree the day took nothing. A closed day, not a fault.",
+          pending: "today, still being collected — the nightly cron has not written this snapshot yet. Not damage; wait for tomorrow.",
+        },
+      }), { headers: corsJson });
+    }
+
+    // ── Repair console: run a repair on an EXPLICIT list of dates.
+    //    POST ?action=repair-run   body: { dates: [{store, date}, ...] }
+    //
+    // 🛑 This is the destructive half. Everything below exists because backfills
+    // have permanently destroyed real history three separate ways.
+    //
+    // It takes a LIST, never a range. The health check produces that list, so a
+    // repair can only ever touch dates something already proved would improve —
+    // "re-pull 90 days and hope" is not expressible through this endpoint. That
+    // matters beyond tidiness: re-pulling a healthy old date LOSES refunds that
+    // have since aged out of Clover's window, so every unnecessary date in a
+    // range is a small permanent loss.
+    //
+    // Each date is backed up before it is overwritten, and a backup that fails
+    // aborts that date's write — losing the undo is not an acceptable price for
+    // applying the repair.
+    if (request.method === "POST" && url.searchParams.get("action") === "repair-run") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly: true });
+      if (unauth) return unauth;
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+
+      let body = {};
+      try { body = await request.json(); } catch { /* handled below */ }
+      const requested = Array.isArray(body?.dates) ? body.dates : null;
+      if (!requested || !requested.length) {
+        return new Response(JSON.stringify({ error: "need dates: [{store, date}] — run the health check first; this endpoint does not accept a range" }),
+          { status: 400, headers: corsJson });
+      }
+      const MAX_REPAIR = 60;
+      if (requested.length > MAX_REPAIR) {
+        return new Response(JSON.stringify({ error: `too many dates (${requested.length}); cap is ${MAX_REPAIR} per run` }),
+          { status: 400, headers: corsJson });
+      }
+
+      const { dateStr: todayStr } = getETToday();
+      const targets = [];
+      const rejected = [];
+      const seen = new Set();
+      for (const d of requested) {
+        const store = String(d?.store || "").toUpperCase();
+        const date = String(d?.date || "");
+        const k = `${store}|${date}`;
+        if (!ALL_STORES.includes(store)) { rejected.push({ ...d, why: `unknown store ${store}` }); continue; }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { rejected.push({ ...d, why: "bad date" }); continue; }
+        // Today is still being collected — repairing it is meaningless and the
+        // result would be superseded by the nightly cron anyway.
+        if (date === todayStr) { rejected.push({ ...d, why: "today is still collecting; nothing to repair yet" }); continue; }
+        if (date > todayStr) { rejected.push({ ...d, why: "future date" }); continue; }
+        if (seen.has(k)) { rejected.push({ ...d, why: "duplicate" }); continue; }
+        seen.add(k);
+        targets.push({ store, date });
+      }
+      if (!targets.length) {
+        return new Response(JSON.stringify({ error: "no valid dates to repair", rejected }), { status: 400, headers: corsJson });
+      }
+
+      const backupId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
+      const backupPrefix = `repair-backup:${backupId}`;
+
+      const allDates = targets.map(t => t.date).sort();
+      const d1Totals = {};
+      if (env.DB) {
+        const { results } = await env.DB
+          .prepare("SELECT store, date, total FROM daily_sales WHERE date >= ? AND date <= ?")
+          .bind(allDates[0], allDates[allDates.length - 1]).all().catch(() => ({ results: [] }));
+        for (const r of (results || [])) d1Totals[`${r.store}|${r.date}`] = r.total || 0;
+      }
+
+      const [overrides, itemCosts] = await Promise.all([fetchItemOverrides(env), fetchItemCosts(env)]);
+
+      const catMapCache = {};
+      const results = [];
+      for (const { store, date } of targets) {
+        if (!catMapCache[store]) {
+          try { catMapCache[store] = await fetchItemCategoryMap(store, env); }
+          catch (e) { results.push({ store, date, outcome: "error", error: `category map: ${e.message}` }); continue; }
+        }
+        const d1Total = d1Totals[`${store}|${date}`] || 0;
+        const before = await env.SALES_SNAPSHOTS.get(`items:${store.toLowerCase()}:${date}`, "json");
+        const beforeNet = before?.totals?.netSales ?? null;
+
+        // force:true — the caller has already established this date needs work,
+        // so "it already exists" must not skip it. The two data-loss guards
+        // inside rebuildItemSnapshot still apply and are what actually protect
+        // the write.
+        const r = await rebuildItemSnapshot(env, store, date, {
+          catMap: catMapCache[store], overrides, itemCosts, d1Total,
+          todayStr, force: true, backupPrefix,
+        });
+
+        // Re-verify immediately, using the same rule the health check uses.
+        const afterNet = r.outcome === "written" ? (r.netSales ?? 0) : beforeNet;
+        results.push({
+          store, date, ...r,
+          beforeNet, afterNet,
+          recovered: (r.outcome === "written" && beforeNet !== null) ? roundCents(afterNet - beforeNet) : 0,
+          healthyAfter: d1Total > 0 ? (afterNet ?? 0) >= d1Total * BACKFILL_MIN_D1_RATIO : null,
+        });
+      }
+
+      const written = results.filter(r => r.outcome === "written");
+      const meta = {
+        backupId, createdAt: new Date().toISOString(),
+        by: currentUser?.email || (isAdminSecret ? "snapshot-secret" : "unknown"),
+        dates: written.filter(r => r.backedUp).map(r => ({ store: r.store, date: r.date })),
+        totalRequested: targets.length,
+      };
+      // Only keep a backup record if something was actually backed up.
+      if (meta.dates.length) {
+        // 90 days: long enough to notice a bad repair, short enough that these
+        // never accumulate without bound.
+        await env.SALES_SNAPSHOTS.put(`repair-backup-meta:${backupId}`, JSON.stringify(meta),
+          { expirationTtl: 90 * 24 * 3600 });
+      }
+
+      return new Response(JSON.stringify({
+        ok: true,
+        backupId: meta.dates.length ? backupId : null,
+        backedUpCount: meta.dates.length,
+        summary: {
+          requested: targets.length,
+          written: written.length,
+          skipped: results.filter(r => r.outcome === "skipped").length,
+          errors: results.filter(r => r.outcome === "error").length,
+          recovered: roundCents(results.reduce((s, r) => s + (r.recovered || 0), 0)),
+          stillUnhealthy: results.filter(r => r.healthyAfter === false).length,
+        },
+        results, rejected,
+        note: meta.dates.length
+          ? `Every overwritten date was backed up. Restore with ?action=repair-restore and backupId=${backupId}.`
+          : "Nothing was overwritten, so no backup was created.",
+      }), { headers: corsJson });
+    }
+
+    // ── Repair console: list available backups.
+    //    GET ?action=repair-backups
+    if (url.searchParams.get("action") === "repair-backups") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly: true });
+      if (unauth) return unauth;
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+      const listed = await env.SALES_SNAPSHOTS.list({ prefix: "repair-backup-meta:" });
+      const metas = await Promise.all((listed.keys || []).map(k =>
+        env.SALES_SNAPSHOTS.get(k.name, "json").catch(() => null)));
+      const backups = metas.filter(Boolean)
+        .map(m => ({ ...m, dateCount: (m.dates || []).length }))
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+      return new Response(JSON.stringify({ ok: true, backups, retentionDays: 90 }), { headers: corsJson });
+    }
+
+    // ── Repair console: restore a backup.
+    //    POST ?action=repair-restore   body: { backupId, dates?: [{store,date}] }
+    //
+    // Restore is itself a write, so it backs up what it is about to replace —
+    // otherwise undoing a repair would destroy the repaired data with no way
+    // back, and "restore" would be one more way to lose history.
+    if (request.method === "POST" && url.searchParams.get("action") === "repair-restore") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly: true });
+      if (unauth) return unauth;
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+
+      let body = {};
+      try { body = await request.json(); } catch { /* handled below */ }
+      const backupId = String(body?.backupId || "");
+      if (!backupId || /[^A-Za-z0-9:_-]/.test(backupId)) {
+        return new Response(JSON.stringify({ error: "need a valid backupId" }), { status: 400, headers: corsJson });
+      }
+      const meta = await env.SALES_SNAPSHOTS.get(`repair-backup-meta:${backupId}`, "json");
+      if (!meta) {
+        return new Response(JSON.stringify({ error: `no backup ${backupId} (they expire after 90 days)` }), { status: 404, headers: corsJson });
+      }
+
+      // Optionally restore a subset.
+      const want = Array.isArray(body?.dates) && body.dates.length
+        ? new Set(body.dates.map(d => `${String(d.store).toUpperCase()}|${d.date}`))
+        : null;
+      const targets = (meta.dates || []).filter(d => !want || want.has(`${d.store}|${d.date}`));
+      if (!targets.length) {
+        return new Response(JSON.stringify({ error: "nothing in that backup matches the requested dates" }), { status: 400, headers: corsJson });
+      }
+
+      const undoId = `${new Date().toISOString().replace(/[:.]/g, "-")}-undo-${Math.random().toString(36).slice(2, 8)}`;
+      const results = [];
+      const undone = [];
+      for (const { store, date } of targets) {
+        const liveKey = `items:${store.toLowerCase()}:${date}`;
+        try {
+          const backup = await env.SALES_SNAPSHOTS.get(`repair-backup:${backupId}:${store.toLowerCase()}:${date}`);
+          if (backup === null) { results.push({ store, date, outcome: "error", error: "backup entry missing or expired" }); continue; }
+          const current = await env.SALES_SNAPSHOTS.get(liveKey);
+          if (current !== null) {
+            await env.SALES_SNAPSHOTS.put(`repair-backup:${undoId}:${store.toLowerCase()}:${date}`, current,
+              { expirationTtl: 90 * 24 * 3600 });
+            undone.push({ store, date });
+          }
+          await env.SALES_SNAPSHOTS.put(liveKey, backup);
+          let net = null; try { net = JSON.parse(backup)?.totals?.netSales ?? null; } catch {}
+          results.push({ store, date, outcome: "restored", netSales: net });
+        } catch (e) {
+          results.push({ store, date, outcome: "error", error: e.message });
+        }
+      }
+
+      if (undone.length) {
+        await env.SALES_SNAPSHOTS.put(`repair-backup-meta:${undoId}`, JSON.stringify({
+          backupId: undoId, createdAt: new Date().toISOString(),
+          by: currentUser?.email || (isAdminSecret ? "snapshot-secret" : "unknown"),
+          dates: undone, totalRequested: targets.length,
+          note: `pre-restore state, taken while restoring ${backupId}`,
+        }), { expirationTtl: 90 * 24 * 3600 });
+      }
+
+      return new Response(JSON.stringify({
+        ok: true, backupId, undoId: undone.length ? undoId : null,
+        summary: {
+          restored: results.filter(r => r.outcome === "restored").length,
+          errors: results.filter(r => r.outcome === "error").length,
+        },
+        results,
+        note: undone.length
+          ? `The state you just replaced was itself saved as ${undoId}, so this restore is reversible.`
+          : "Nothing needed replacing, so no undo point was created.",
+      }), { headers: corsJson });
+    }
+
     // ── Admin: item sales L2 totals from KV for a date range.
     //    ?action=item-l2-totals&store=BL1&start=YYYY-MM-DD&end=YYYY-MM-DD
     // Fetches every items:<store>:<date> KV snapshot in [start,end], merges
@@ -10153,7 +11125,7 @@ export default {
     // Used by the Item Sales Reconciliation tool.
     if (url.searchParams.get("action") === "item-l2-totals") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
@@ -10202,7 +11174,7 @@ export default {
     // pasted Clover Sales Report CSV.
     if (url.searchParams.get("action") === "monthly-totals") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.DB) {
         return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
@@ -10238,9 +11210,9 @@ export default {
     //    ?action=rebuild-week-summaries&year=2026
     // Iterates every distinct week in D1 for the given year and writes the
     // pre-roll for every store. Required before T13 will read from cache.
-    if (url.searchParams.get("action") === "rebuild-week-summaries") {
+    if (request.method === "POST" && url.searchParams.get("action") === "rebuild-week-summaries") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminSecret(request, env, corsJson);
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
       if (unauth) return unauth;
       if (!env.DB || !env.SALES_SNAPSHOTS) {
         return new Response(JSON.stringify({ error: "DB or KV not configured" }), { status: 500, headers: corsJson });
@@ -10591,7 +11563,7 @@ export default {
   //    POST ?action=run-sale-scheduler-now
   if (request.method === "POST" && url.searchParams.get("action") === "run-sale-scheduler-now") {
     const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-    const unauth = requireAdminSecret(request, env, corsJson);
+    const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
     if (unauth) return unauth;
     const result = await processSaleSchedules(env, new Date());
     return new Response(JSON.stringify({ ok: true, ...result }), { headers: corsJson });
@@ -10606,6 +11578,22 @@ export default {
     }
 
     const targetStore = storeKey.toUpperCase();
+
+    // 🛑 This is the FALL-THROUGH route: it is reached whenever no ?action=
+    // branch matched, including for unrecognised actions. It reads `store`
+    // straight from the query string, returns that store's live Clover orders,
+    // and — via saveSnapshot below — WRITES that store's KV snapshot and
+    // daily_sales row. It had no store check at all, so any authenticated user
+    // could read and overwrite any store by asking for it. The sibling
+    // ?history= route (see canAccessStore above) always had this guard; this
+    // one was simply missed.
+    //
+    // canAccessStore(null, …) is true, so the X-Snapshot-Secret path used by
+    // cron and tooling (where currentUser is null) is unaffected.
+    if (!canAccessStore(currentUser, targetStore)) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+    }
+
     const merchantId = env[`${targetStore}_MERCHANT_ID`];
     const apiToken = env[`${targetStore}_API_TOKEN`];
 
@@ -10779,12 +11767,18 @@ export default {
         // single source of truth.
         let itemData = null;
         let binRetailOverride = null;
+        // Hoisted so they survive the try and can be handed to
+        // fetchAggregateAndSnapshot below instead of being re-fetched. If the
+        // block throws before assigning, they stay null and it fetches its own
+        // (the original behaviour).
+        let preOrders = null, preRefunds = null, preManual = null;
         try {
           const [elements, refundElements, manualRefundElements] = await Promise.all([
             fetchItemOrders(store, env, startOfDay),
             fetchRefundElements(store, env, startOfDay),
             fetchManualRefunds(store, env, startOfDay),
           ]);
+          preOrders = elements; preRefunds = refundElements; preManual = manualRefundElements;
           if (elements && elements.length > 0) {
             const itemCatMap = await fetchItemCategoryMap(store, env);
             const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
@@ -10809,7 +11803,7 @@ export default {
         }
 
         // Sales snapshot (now with category-based bin/retail if available)
-        const data = await fetchAggregateAndSnapshot(store, env, startOfDay, todayStr, null, binRetailOverride);
+        const data = await fetchAggregateAndSnapshot(store, env, startOfDay, todayStr, null, binRetailOverride, preOrders, preRefunds, preManual);
         results[store] = { sales: data ? "ok" : "skipped" };
 
         // Persist the item snapshot we already computed above.

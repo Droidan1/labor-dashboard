@@ -405,17 +405,29 @@ curl -H "X-Snapshot-Secret: $SECRET" "https://<host>/?action=backfill&store=BL1"
 
 | Endpoint | What |
 |---|---|
-| `?action=backfill-items-snapshots&store=BLx&from=YYYY-MM-DD&to=YYYY-MM-DD` | Re-rolls KV `items:` snapshots over a date range. |
+| `?action=backfill-items-snapshots&store=BLx&start=YYYY-MM-DD&end=YYYY-MM-DD` (POST) | Re-rolls KV `items:` snapshots over a date range. |
 | `?action=rebuild-week-summaries` | Re-rolls the trailing-13-week summary KV entries. Run after a re-snapshot backfill. |
 | `?action=refresh-item-cats` | Forces the worker to refresh its per-store Clover item-category cache. Run if newly-added items aren't being classified. |
 | `?action=items-snapshot&store=BLx&date=YYYY-MM-DD` | One-off item-snapshot write (without touching D1). |
 | `?action=sales-diag&store=BLx&date=YYYY-MM-DD` | Read-only diagnostics — explains how the worker reconciled Clover totals for that day. |
 | `?action=noncategorized-items&store=BLx` | Lists items missing an L2 category — input for the override list. |
 | `?action=item-overrides`, `?action=item-costs` | Read/write the override/cost lookup tables (used by item-snapshot aggregation). |
-| `?action=debug-revenue-mismatch&store=BLx&date=YYYY-MM-DD` | Compares `aggregateOrders` total vs. payment-based total to find drift. |
+| `?action=repair-health&store=all\|BLx&start=&end=` | **Read-only.** Compares each day's stored snapshot against D1 and lists the dates a repair would actually improve. Start here. |
+| `?action=repair-run` (POST, body `{dates:[{store,date}]}`) | Repairs an explicit list of dates — never a range. Backs each one up first. |
+| `?action=repair-backups` / `?action=repair-restore` (POST) | List backups; roll one back. A restore is itself reversible. |
 
-All require `X-Snapshot-Secret`. All are safe to retry; the write
-endpoints are idempotent (UPSERT semantics on D1, overwrite on KV).
+Auth: the repair endpoints require a **superuser session** (or `X-Snapshot-Secret`
+for tooling). Other admin endpoints take a superuser session to write and an
+admin session to read. The client no longer ships the secret.
+
+The write endpoints are idempotent (UPSERT on D1, overwrite on KV), but
+"safe to retry" is not the same as "safe to run": re-pulling a date that is
+already healthy can **lose** refunds that have since aged out of Clover's
+~90-day window. Use `repair-health` to pick dates rather than guessing a range.
+
+Removed 2026-08-03: `debug-revenue-mismatch`, `debug-residuals`,
+`debug-manual-refunds`, `debug-refunds` — one-off diagnostics from May 2026
+with no callers. `sales-diag` covers the same ground; the rest is in git.
 
 ### 8.5 Recovery scenarios
 
