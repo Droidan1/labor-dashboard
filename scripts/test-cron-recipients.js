@@ -19,6 +19,7 @@ const grab = (re, label) => {
 };
 const mod = new Function(
   grab(/function grantFor\(user, businessId\) \{[\s\S]*?\n\}/, 'grantFor') + '\n' +
+  grab(/function allowedUnits\(user, businessId\) \{[\s\S]*?\n\}/, 'allowedUnits') + '\n' +
   grab(/function allowedStores\(user\) \{[\s\S]*?\n\}/, 'allowedStores') + '\n' +
   // ⚠️ Each of these is a TRANSITIVE dependency of chainWideRecipients that had
   // to be added by hand when the business check landed — the exact brittleness
