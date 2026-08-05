@@ -57,16 +57,38 @@ db.exec(fs.readFileSync(path.join(repo, 'migration-031.sql'), 'utf8'));
   ok(ec && ec.unitNoun === 'storefront', 'E-Commerce unit noun is "storefront"');
 }
 
-// ── 3 · admin ALSO sees every business (deliberate, Brian 2026-08-05) ───────
-// 🛑 This is a widening: `admin` is a per-business role, so this hands an admin
-// visibility of a business they hold no grant for. Harmless only while the
-// second business is unconnected. If this assertion ever has to change back,
-// the branch in businessesFor() is the thing to delete.
+// ── 3 · admin does NOT inherit every business ───────────────────────────────
+// 🛑 Guards the widening that briefly existed: `admin` is a PER-BUSINESS role.
+// Holding only a `bl` grant must mean seeing only Bargain Lane, no matter what
+// the role is. If this ever fails, someone re-added admin to the all-businesses
+// branch in businessesFor().
 {
+  const r = await authMe(env, 'u-admin');
+  const ids = (r.body.businesses || []).map(b => b.id);
+  ok(ids.length === 1 && ids[0] === 'bl',
+     `admin with only a bl grant sees ONLY bl, got [${ids}]`);
+}
+
+// ── 3b · …but an admin WITH an ecom grant sees both (migration-033) ─────────
+// Executes the real migration rather than restating its INSERT, so the test
+// fails if the migration stops granting what it claims to.
+{
+  db.exec(fs.readFileSync(path.join(repo, 'migration-033.sql'), 'utf8'));
   const r = await authMe(env, 'u-admin');
   const ids = (r.body.businesses || []).map(b => b.id).sort();
   ok(ids.join(',') === 'bl,ecom',
-     `admin sees every business (holds only a bl grant), got [${ids}]`);
+     `admin granted ecom by migration-033 sees both, got [${ids}]`);
+
+  // Idempotent: a second run must write nothing new.
+  const before = db.prepare("SELECT COUNT(*) c FROM user_grants").get().c;
+  db.exec(fs.readFileSync(path.join(repo, 'migration-033.sql'), 'utf8'));
+  const after = db.prepare("SELECT COUNT(*) c FROM user_grants").get().c;
+  ok(before === after, `migration-033 is idempotent, grants ${before} -> ${after}`);
+
+  // And it must NOT have touched anyone below admin.
+  const mgr = await authMe(env, 'u-mgr1');
+  ok((mgr.body.businesses || []).length === 1,
+     'migration-033 leaves managers on one business');
 }
 
 // ── 4 · Everyone BELOW admin still routes straight past the picker ──────────
