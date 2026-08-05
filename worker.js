@@ -4568,6 +4568,32 @@ function buildSummaryEmailHtml(data, brief, categoryData, weeklyData) {
 }
 
 // Fan out push + email daily summary to all opted-in superusers.
+// Recipients for a CHAIN-WIDE broadcast (daily summary, weekly digest).
+//
+// 🛑 These two senders build ONE email body and ONE push payload containing
+// every store's figures, then send that same body to every recipient. So the
+// recipient list IS the access control — there is nothing per-user to scope.
+// Both previously selected every active user with no role or store filter (the
+// leftover variable name `superusers` is from when they genuinely were
+// superuser-only), which meant single-store managers were emailed and pushed
+// the whole chain's sales: data the app itself refuses them.
+//
+// allowedStores() returns null only for someone entitled to every store, so it
+// is exactly the right test, and it fails CLOSED — a role it does not know
+// yields a non-null array and is excluded rather than included. Grants are not
+// loaded here, which is fine: the superuser/admin branch short-circuits before
+// touching them, and anyone else is excluded either way.
+//
+// Managers keep their per-store push via dispatchIntervalSummary, which already
+// scopes correctly per recipient. Giving them a store-scoped daily email is a
+// feature, not this fix.
+async function chainWideRecipients(env) {
+  const { results } = await env.DB.prepare(
+    "SELECT id, email, role, stores FROM users WHERE status = 'active'"
+  ).all();
+  return (results || []).filter(u => allowedStores(u) === null);
+}
+
 async function dispatchDailySummary(env, date) {
   if (!env.DB) return { error: 'DB not configured' };
 
@@ -4599,9 +4625,7 @@ async function dispatchDailySummary(env, date) {
   });
 
   // All active users (notification_preferences controls per-user opt-in)
-  const { results: superusers } = await env.DB.prepare(
-    "SELECT u.id, u.email FROM users u WHERE u.status = 'active'"
-  ).all();
+  const superusers = await chainWideRecipients(env);
   if (!superusers?.length) return { ok: true, skipped: 'no active users' };
 
   const userIds = superusers.map(u => u.id);
@@ -4783,9 +4807,7 @@ async function dispatchWeeklyDigest(env, startDate, endDate) {
     url: '/',
   });
 
-  const { results: superusers } = await env.DB.prepare(
-    "SELECT id, email FROM users WHERE status = 'active'"
-  ).all();
+  const superusers = await chainWideRecipients(env);
   if (!superusers?.length) return { ok: true, skipped: 'no active users' };
 
   const userIds = superusers.map(u => u.id);
