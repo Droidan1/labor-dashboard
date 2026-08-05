@@ -304,6 +304,26 @@
        navigateToPage() still refused the click, so this was a visible-menu
        leak rather than a data one, but the menu should not be there at all. */
     .sidebar .nav-item.hidden { display: none; }
+
+    /* Landing page. `lp-` prefix deliberately — `ct-` is Content Studio's and
+       already owns .ct-tile. These mirror the dashboard's own treatments:
+       wide-tracked mono eyebrows, status pills, and green-tinted metric tiles
+       with a watermark icon. */
+    .lp-eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+                  font-family: 'JetBrains Mono', ui-monospace, monospace; color: #6b6453; }
+    .dark .lp-eyebrow { color: #8893a7; }
+    .lp-pill { display: inline-block; font-size: 10px; letter-spacing: 0.14em;
+               text-transform: uppercase; padding: 4px 10px; border-radius: 999px;
+               font-family: 'JetBrains Mono', ui-monospace, monospace; border: 1px solid; }
+    .lp-pill-live  { color: #22c55e; border-color: rgba(34,197,94,0.45); }
+    .lp-pill-setup { color: #f59e0b; border-color: rgba(245,158,11,0.45); }
+    .lp-tile { position: relative; overflow: hidden; text-align: center;
+               border-radius: 12px; padding: 10px 8px;
+               background: rgba(34,197,94,0.07); border: 1px solid rgba(34,197,94,0.22); }
+    .dark .lp-tile { background: rgba(34,197,94,0.09); border-color: rgba(34,197,94,0.28); }
+    .lp-tile-label { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+                     color: #22c55e; font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    .lp-tile-val { font-size: 17px; font-weight: 600; margin-top: 3px; }
     .dark .sidebar .nav-item { color: #8893a7; }
     .sidebar .nav-item:hover { background: rgba(20,16,8,0.035); color: #14110a; }
     .dark .sidebar .nav-item:hover { background: rgba(255,255,255,0.04); color: #e7ecf3; }
@@ -697,6 +717,12 @@
 
       <!-- Bottom Section -->
       <div id="sidebar-dark-toggle" class="px-2 pb-2 space-y-1">
+        <!-- Back to the business picker. Shown only for an account that can
+             reach 2+ businesses; pointless (and hidden) for everyone else. -->
+        <div id="nav-switch-business" class="hidden nav-item" onclick="switchBusiness()">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
+          <span class="nav-label">Switch business</span>
+        </div>
         <!-- Signed-in user + logout -->
         <div id="user-badge" class="hidden flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 mb-1">
           <div class="overflow-hidden">
@@ -794,6 +820,12 @@
         </button>
         <button id="more-admin" onclick="navigateToPage('admin-settings');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Admin Settings
+        </button>
+        <!-- Mobile twin of the sidebar's "Switch business". The sidebar is
+             max-lg:hidden, so without this row the picker is unreachable on a
+             phone once you have entered a business. -->
+        <button id="more-switch-business" onclick="closeMoreSheet();switchBusiness()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
+          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Switch business
         </button>
         <button id="more-settings" onclick="navigateToPage('settings');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V15z"/></svg>Settings
@@ -2880,6 +2912,64 @@
     </div><!-- end #page-admin-settings -->
 
     <!-- ── Users page ────────────────────────────────────────────── -->
+    <!-- ── Landing: pick a business ────────────────────────────────────
+         Only reachable by an account with 2+ businesses (today: the superuser,
+         who sees every business because the flag means "all"). Everyone else
+         holds one grant and routes straight past this to their dashboard. -->
+    <div id="page-landing" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-5xl mx-auto">
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">RETJG Hub</h1>
+        </div>
+      </div>
+
+      <div class="max-w-6xl mx-auto px-6 py-8">
+        <!-- Group hero: every business this account can see, rolled up. -->
+        <div class="rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panel dark:bg-op-panel p-card mb-gridgap transition-colors">
+          <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <div class="lp-eyebrow" id="landing-hero-label">Today · All businesses</div>
+              <div class="mt-2 text-4xl sm:text-5xl font-semibold tabular-nums text-opl-ink dark:text-op-ink" id="landing-hero-total">—</div>
+              <div class="mt-1.5 text-sm" id="landing-hero-vs"></div>
+            </div>
+            <div class="text-right flex-shrink-0">
+              <span class="lp-pill lp-pill-live" id="landing-hero-live">● Live</span>
+              <div class="lp-eyebrow mt-3.5">Pace</div>
+              <div class="mt-1 text-3xl font-semibold tabular-nums" id="landing-hero-pace">—</div>
+              <div class="mt-1 text-xs text-opl-inkDim dark:text-op-inkDim" id="landing-hero-reporting"></div>
+            </div>
+          </div>
+          <div class="mt-4 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
+            <div class="h-full rounded-full transition-[width] duration-500 bg-accent-green" id="landing-hero-bar" style="width:0%"></div>
+          </div>
+          <!-- Budget bar endpoints, mirroring the dashboard hero. -->
+          <div class="mt-1.5 flex items-center justify-between text-xs">
+            <span class="text-opl-inkDim dark:text-op-inkDim">$0</span>
+            <span class="font-semibold text-opl-ink dark:text-op-ink tabular-nums" id="landing-hero-budget"></span>
+          </div>
+
+          <div class="my-5 h-px bg-[rgba(20,16,8,0.08)] dark:bg-op-border"></div>
+
+          <!-- Channel mix: ONE stacked bar + a legend, matching the dashboard.
+               No Matrix tiles here — with one connected business they would just
+               repeat the Bargain Lane card's. -->
+          <div class="flex items-baseline justify-between">
+            <span class="lp-eyebrow">Channel mix</span>
+            <span class="text-xs text-opl-inkDim dark:text-op-inkDim" id="landing-mix-count"></span>
+          </div>
+          <div class="mt-3 flex h-1.5 rounded-full overflow-hidden bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)]" id="landing-mix-bar"></div>
+          <div class="mt-3 grid grid-cols-3 gap-4 text-xs" id="landing-mix-legend"></div>
+
+          <div class="mt-5 flex items-center justify-between gap-4 text-xs text-opl-inkDim dark:text-op-inkDim">
+            <div id="landing-hero-mtd"></div>
+            <div id="landing-hero-updated"></div>
+          </div>
+        </div>
+
+        <div id="landing-cards" class="grid gap-gridgap lg:grid-cols-2"></div>
+      </div>
+    </div>
+
     <div id="page-no-access" class="hidden">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-3xl mx-auto">
@@ -3617,7 +3707,15 @@
         aBins: isToday ? null : d.bin,
         aTotal: isToday ? null : d.total,
         aLabor: isToday ? null : d.laborPct,
-        aAuction: isToday ? null : d.auction
+        aAuction: isToday ? null : d.auction,
+        // Raw auction, NOT nulled for today. The fields above are deliberately
+        // nulled on today's row so renderCards doesn't double-count against the
+        // live Clover figures — but auction is not a Clover channel (it is the
+        // Drive ingest), so live never supplies it and today's value would
+        // otherwise be unreachable. sumRows only reads `aAuction`, so this extra
+        // field is invisible to every existing caller; the landing page's
+        // channel split is the only consumer.
+        auctionRaw: d.auction
       });
       if (!isToday && (d.orderCount != null || d.avgCart != null)) {
         cloverHistory[dateStr] = {
@@ -3888,6 +3986,9 @@
     })).then(() => {
       liveDataLoading = false;
       if (selIncludesToday()) renderDashboard();
+      // The picker's figures come from this same data, so it has to repaint when
+      // the live numbers land — otherwise it sits on the D1-only figures.
+      if (currentPage === 'landing') { try { renderLanding(); } catch (_) {} }
       if (currentPage === 'store-detail' && currentStoreName) showStoreDetail(currentStoreName, false, { rerender: true });
     }).catch(error => {
       console.error("Clover data load failed:", error);
@@ -7145,6 +7246,12 @@
       if (!currentUser || currentUser.role !== 'superuser') return;
       try { loadAnnouncementForm(); } catch (_) {}
     }
+    // The picker is meaningless with fewer than two businesses — refuse it so a
+    // stale deep link or history entry can't strand someone on an empty page.
+    if (page === 'landing') {
+      if (userBusinesses(currentUser).length < 2) return;
+      try { renderLanding(); } catch (_) {}
+    }
     // Push the outgoing page onto the back stack — but only on forward
     // navigations (taps), not on goBack() restores. Skip when staying on
     // the same page (re-renders) or when there's no prior page yet.
@@ -7156,11 +7263,23 @@
     // restores it via its own Close button; if it's ever dismissed another way
     // (Android back gesture, etc.) scrolling would stay frozen app-wide.
     if (document.body.style.overflow) document.body.style.overflow = '';
-    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings', 'no-access'];
+    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings', 'no-access', 'landing'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
       if (pageEl) pageEl.classList.toggle('hidden', p !== page);
     }
+
+    // Pre-app surfaces: you have not entered a business yet (landing), or you
+    // have nothing to enter (no-access). Either way the business-specific nav
+    // chrome must not be there — the login page is a full-screen overlay for
+    // exactly this reason. Verified there is no competing `display` rule on
+    // .sidebar or .bn-float, so `.hidden` actually wins here (unlike the
+    // .sidebar .nav-item specificity trap fixed at the top of this file).
+    const preApp = (page === 'landing' || page === 'no-access');
+    ['sidebar', 'bottom-nav'].forEach(id => {
+      const n = el(id);
+      if (n) n.classList.toggle('hidden', preApp);
+    });
 
     // Update sidebar active state
     document.querySelectorAll('.nav-item[data-page]').forEach(item => {
@@ -16485,12 +16604,307 @@
     return !!user && FINANCIAL_ROLES.includes(user.role);
   }
 
-  // Where a user lands at boot. Everyone with financial access gets the
-  // dashboard, as before. A role without it (today `staff`) has no surface yet
-  // — Projects & Tasks is not built — so it must say so rather than render an
-  // empty dashboard shell whose every request 403s.
+  // ── Which business the session is currently "inside" ─────────────
+  // Kept in sessionStorage, not memory: landingPageFor() is also called when a
+  // modal closes (closeHourlySnapshot) and on the deep-link fallback path, so
+  // without a sticky selection those would bounce a superuser back to the
+  // picker instead of returning them to the business they were working in.
+  // sessionStorage (not local) so a new tab starts at the picker again.
+  const BIZ_KEY = 'retjg.activeBusiness';
+  function activeBusiness() {
+    try { return sessionStorage.getItem(BIZ_KEY) || null; } catch (_) { return null; }
+  }
+  function setActiveBusiness(id) {
+    try { id ? sessionStorage.setItem(BIZ_KEY, id) : sessionStorage.removeItem(BIZ_KEY); } catch (_) {}
+  }
+
+  // Businesses this account can reach. Server-supplied (auth-me); the client
+  // never derives it, so it cannot disagree with what the API will serve.
+  function userBusinesses(user) {
+    return (user && Array.isArray(user.businesses)) ? user.businesses : [];
+  }
+
+  // Where a user lands at boot.
+  //
+  // Rule, in order:
+  //   no financial access → 'no-access'  (today `staff`; unchanged)
+  //   already inside a business → that business's dashboard  (sticky selection)
+  //   2+ businesses reachable → 'landing' picker
+  //   otherwise → 'dashboard'
+  //
+  // 🔑 The count is of BUSINESSES, not grants. A superuser holds zero grants by
+  // design — counting grants would send the one account meant to see everything
+  // to the no-access screen. The server resolves the flag into a real list.
+  //
+  // With one business seeded and connected, every granted user gets exactly one
+  // entry here and routes straight to the dashboard, exactly as before. Only the
+  // superuser (who sees all businesses, including unconnected E-Commerce) has
+  // 2+ and reaches the picker.
   function landingPageFor(user) {
-    return canSeeFinancials(user) ? 'dashboard' : 'no-access';
+    if (!canSeeFinancials(user)) return 'no-access';
+    const biz = userBusinesses(user);
+    if (biz.length >= 2) {
+      const active = activeBusiness();
+      // Only honour a selection that is still reachable — a revoked grant must
+      // not keep routing someone into a business they have lost.
+      if (active && biz.some(b => b.id === active)) return dashboardPageFor(active);
+      return 'landing';
+    }
+    if (biz.length === 1) setActiveBusiness(biz[0].id);
+    return 'dashboard';
+  }
+
+  // Which page a business opens into. Bargain Lane is the existing dashboard;
+  // nothing else has a surface yet, so anything unconnected stays on the picker
+  // rather than opening a shell whose every request would 404.
+  function dashboardPageFor(businessId) {
+    return businessId === 'bl' ? 'dashboard' : 'landing';
+  }
+
+  // Enter a business from the picker.
+  function enterBusiness(id) {
+    const b = userBusinesses(currentUser).find(x => x.id === id);
+    if (!b || !b.connected) return;          // disabled cards are inert
+    setActiveBusiness(id);
+    navigateToPage(dashboardPageFor(id));
+  }
+  window.enterBusiness = enterBusiness;
+
+  // Back to the picker. Only meaningful for an account with 2+ businesses.
+  function switchBusiness() {
+    setActiveBusiness(null);
+    navigateToPage('landing');
+  }
+  window.switchBusiness = switchBusiness;
+
+  // Today's figures for Bargain Lane, from the SAME data the dashboard renders
+  // from (allStoreData + liveCloverData) rather than a second fetch — the picker
+  // disagreeing with the dashboard it links to would be worse than it being slow.
+  //
+  // 🔑 `daily_sales.total` EXCLUDES auction. The dashboard's headline is
+  // `total + auction` (see the All Stores Budget block), so the grand total here
+  // is retail + bin + auction. Reading aTotal alone under-reports by the auction.
+  //
+  // 🔑 Auction is a CHANNEL of Bargain Lane, not a business — it appears as a
+  // bar inside this card and is already inside the total. It must never also be
+  // summed as a sibling, which would double-count it.
+  function bargainLaneFigures() {
+    const todayStr = getETTodayStr();
+    const month = todayStr.slice(0, 7);
+    let retail = 0, bin = 0, auction = 0, orders = 0, budget = 0, reporting = 0;
+    let itemsNum = 0, itemsDen = 0;
+    let mtdActual = 0, mtdBudget = 0;
+
+    for (const s of STORES) {
+      const rows = allStoreData[s] || [];
+      const todayRow = rows.find(r => r.date && r.date.toISOString().slice(0, 10) === todayStr);
+      const live = liveCloverData[s];
+
+      // Today: prefer live Clover for retail/BIN (D1's today-row is stale until
+      // the end-of-day rollup). Auction only ever comes from D1 — it is a Drive
+      // ingest, not a Clover channel.
+      if (live && live.total != null) {
+        retail += live.retail || 0;
+        bin    += live.bin    || 0;
+        orders += live.orderCount || 0;
+        // Weight avgItems by each store's order count — a plain mean would let
+        // a tiny store swing the chain figure as hard as Coliseum.
+        if (live.avgItems != null && live.orderCount) {
+          itemsNum += live.avgItems * live.orderCount;
+          itemsDen += live.orderCount;
+        }
+        reporting++;
+      } else if (todayRow) {
+        retail += todayRow.aRetail || 0;
+        bin    += todayRow.aBins   || 0;
+      }
+      // auctionRaw, not aAuction — the latter is nulled on today's row.
+      auction += todayRow?.auctionRaw || 0;
+      budget  += todayRow?.bTotal     || 0;
+
+      // Month to date, excluding today (added once, live, below).
+      for (const r of rows) {
+        const d = r.date && r.date.toISOString().slice(0, 10);
+        if (!d || d.slice(0, 7) !== month || d >= todayStr) continue;
+        mtdActual += (r.aTotal || 0) + (r.aAuction || 0);
+        mtdBudget += (r.bTotal || 0);
+      }
+    }
+
+    const total = retail + bin + auction;
+    return {
+      total, retail, bin, auction, orders, budget,
+      reporting, storeCount: STORES.length,
+      avgCart: orders > 0 ? total / orders : null,
+      avgItems: itemsDen > 0 ? itemsNum / itemsDen : null,
+      pace: budget > 0 ? (total / budget) * 100 : null,
+      mtdActual: mtdActual + total,
+      mtdBudget: mtdBudget + budget,
+    };
+  }
+
+  // Render the business cards. Driven entirely by auth-me's `businesses`, so a
+  // new business appears here the moment it is granted — no client-side list to
+  // keep in sync.
+  // Pace colour thresholds, mirroring the dashboard's store cards: red when
+  // badly behind, amber when behind, green once at or over budget.
+  function lpPaceColour(pct) {
+    if (pct == null) return 'text-opl-inkDim dark:text-op-inkDim';
+    if (pct >= 100) return 'text-accent-green';
+    return pct < 30 ? 'text-op-bad' : 'text-accent-amber';
+  }
+  function lpPaceBar(pct) {
+    if (pct == null) return 'bg-[rgba(20,16,8,0.15)] dark:bg-[rgba(255,255,255,0.15)]';
+    if (pct >= 100) return 'bg-accent-green';
+    return pct < 30 ? 'bg-op-bad' : 'bg-accent-amber';
+  }
+  function lpDelta(actual, budget) {
+    if (!budget) return '';
+    const d = actual - budget;
+    const cls = d >= 0 ? 'text-accent-green' : 'text-op-bad';
+    return `<span class="font-semibold ${cls}">${d >= 0 ? '+' : '−'}${fmtDollar(Math.abs(d)).slice(1)}</span>`
+         + `<span class="text-opl-inkDim dark:text-op-inkDim"> vs ${fmtDollar(budget)}</span>`;
+  }
+  // Reuses the dashboard's own matrixTileWatermark() so the corner icons are
+  // literally the same artwork as the store cards, not a lookalike.
+  function lpTile(label, value, mark) {
+    return `<div class="lp-tile">
+        <div class="lp-tile-label relative">${label}</div>
+        <div class="lp-tile-val text-opl-ink dark:text-op-ink tabular-nums relative">${value}</div>
+        ${matrixTileWatermark(mark)}
+      </div>`;
+  }
+
+  function renderLanding() {
+    const biz = userBusinesses(currentUser);
+    const fig = bargainLaneFigures();
+    const connected = biz.filter(b => b.connected);
+    const setTxt = (id, t) => { const n = el(id); if (n) n.textContent = t; };
+    const setHtml = (id, h) => { const n = el(id); if (n) n.innerHTML = h; };
+
+    // ── Hero ────────────────────────────────────────────────────────
+    const gTotal  = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.total  : 0), 0);
+    const gBudget = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.budget : 0), 0);
+    const gMtdA   = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdActual : 0), 0);
+    const gMtdB   = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdBudget : 0), 0);
+    const gPace   = gBudget > 0 ? (gTotal / gBudget) * 100 : null;
+
+    setTxt('landing-hero-total', fmtDollar(gTotal));
+    setHtml('landing-hero-vs', lpDelta(gTotal, gBudget));
+    setTxt('landing-hero-pace', gPace != null ? fmtPct(gPace, 0) : '—');
+    const pEl = el('landing-hero-pace');
+    if (pEl) pEl.className = 'mt-1 text-3xl font-semibold tabular-nums ' + lpPaceColour(gPace);
+    setTxt('landing-hero-reporting', `${connected.length} of ${biz.length} reporting`);
+    setTxt('landing-hero-budget', gBudget > 0 ? fmtDollar(gBudget) : '');
+    const hb = el('landing-hero-bar');
+    if (hb) {
+      hb.style.width = (gBudget > 0 ? Math.max(0, Math.min(100, gPace)) : 0) + '%';
+      hb.className = 'h-full rounded-full transition-[width] duration-500 ' + lpPaceBar(gPace);
+    }
+    const live = el('landing-hero-live');
+    if (live) live.classList.toggle('hidden', connected.length === 0);
+    setTxt('landing-hero-mtd', gMtdB > 0
+      ? `Month to date · ${fmtDollar(gMtdA)} vs ${fmtDollar(gMtdB)}` : '');
+    setTxt('landing-hero-updated', 'Updated ' + new Date().toLocaleTimeString('en-US',
+      { hour: 'numeric', minute: '2-digit' }));
+
+    // ── Channel mix: one stacked bar + legend ───────────────────────
+    const CH = [
+      { label: 'Retail',  val: fig.retail,  bar: 'bg-accent-green',  dot: 'text-accent-green'  },
+      { label: 'BIN',     val: fig.bin,     bar: 'bg-accent-blue',   dot: 'text-accent-blue'   },
+      { label: 'Auction', val: fig.auction, bar: 'bg-accent-violet', dot: 'text-accent-violet' },
+    ];
+    const chTotal = CH.reduce((n, c) => n + c.val, 0);
+    setTxt('landing-mix-count', `${CH.filter(c => c.val > 0).length} of 3 channels`);
+    setHtml('landing-mix-bar', chTotal > 0
+      ? CH.filter(c => c.val > 0).map(c =>
+          `<div class="${c.bar}" style="width:${(c.val / chTotal) * 100}%"></div>`).join('')
+      : '');
+    setHtml('landing-mix-legend', CH.map(c => {
+      const pct = chTotal > 0 ? Math.round((c.val / chTotal) * 100) : 0;
+      const zero = c.val <= 0;
+      return `<div>
+          <div class="flex items-center gap-1.5">
+            <span class="${zero ? 'text-opl-inkDimmer dark:text-op-inkDimmer' : c.dot}">■</span>
+            <span class="${zero ? 'text-opl-inkDimmer dark:text-op-inkDimmer' : 'text-opl-inkDim dark:text-op-inkDim'}">${c.label} · ${pct}%</span>
+          </div>
+          <div class="mt-1 font-semibold tabular-nums ${zero ? 'text-opl-inkDimmer dark:text-op-inkDimmer' : 'text-opl-ink dark:text-op-ink'}">${fmtDollar(c.val)}</div>
+        </div>`;
+    }).join(''));
+
+    // ── Business cards ──────────────────────────────────────────────
+    const wrap = el('landing-cards');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+
+    const SOURCE = { bl: 'Clover POS', ecom: 'SellerCloud' };
+
+    biz.forEach(b => {
+      const source = SOURCE[b.id] || '';
+      const card = document.createElement('div');
+      card.className = 'rounded-card p-card flex flex-col transition-colors bg-opl-panel dark:bg-op-panel border '
+        + (b.connected
+            ? 'border-[rgba(20,16,8,0.08)] dark:border-op-border'
+            : 'border-dashed border-[rgba(20,16,8,0.16)] dark:border-[rgba(255,255,255,0.13)]');
+
+      const dimName = b.connected ? '' : ' text-opl-inkDim dark:text-op-inkDim';
+      card.innerHTML =
+        `<div class="flex items-start justify-between gap-3">
+           <div class="min-w-0">
+             <div class="text-xl font-semibold tracking-tight truncate text-opl-ink dark:text-op-ink${dimName}">${b.name}</div>
+             <div class="mt-0.5 text-xs ${b.connected ? 'text-opl-inkDim dark:text-op-inkDim' : 'text-opl-inkDimmer dark:text-op-inkDimmer'} truncate">${source}${
+               b.connected ? ` · ${b.unitCount} ${b.unitNoun}${b.unitCount === 1 ? '' : 's'}` : ' · sites pending'}</div>
+           </div>
+           <span class="lp-pill ${b.connected ? 'lp-pill-live' : 'lp-pill-setup'} flex-shrink-0">● ${b.connected ? 'Live' : 'Setup'}</span>
+         </div>`;
+
+      if (!b.connected) {
+        card.insertAdjacentHTML('beforeend',
+          `<div class="mt-5 flex-1 rounded-xl border border-dashed border-[rgba(20,16,8,0.14)] dark:border-[rgba(255,255,255,0.11)] flex flex-col items-center justify-center text-center px-4 py-10">
+             <div class="text-sm text-opl-inkDim dark:text-op-inkDim leading-relaxed">No sales data yet.<br>API credentials not issued</div>
+             <button type="button" disabled title="Needs SellerCloud API credentials first"
+               class="mt-4 text-xs font-semibold px-3.5 py-2 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi text-opl-inkDimmer dark:text-op-inkDimmer cursor-not-allowed">
+               Connect ${source} →</button>
+           </div>`);
+        wrap.appendChild(card);
+        return;
+      }
+
+      card.insertAdjacentHTML('beforeend',
+        `<div class="lp-eyebrow mt-5">Today's net</div>
+         <div class="mt-1 text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(fig.total)}</div>
+         <div class="mt-1 text-sm">${lpDelta(fig.total, fig.budget)}</div>
+
+         <div class="mt-4 flex items-center justify-between">
+           <span class="lp-eyebrow">Pace · ${fig.reporting} of ${fig.storeCount} reporting</span>
+           <span class="text-sm font-semibold tabular-nums ${lpPaceColour(fig.pace)}">${fig.pace != null ? fmtPct(fig.pace, 0) : '—'}</span>
+         </div>
+         <div class="mt-2 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
+           <div class="h-full rounded-full ${lpPaceBar(fig.pace)}" style="width:${fig.pace != null ? Math.max(0, Math.min(100, fig.pace)) : 0}%"></div>
+         </div>
+
+         <div class="mt-4 grid grid-cols-3 gap-2">
+           ${CH.map(c => `<div class="rounded-xl border border-[rgba(20,16,8,0.07)] dark:border-[rgba(255,255,255,0.07)] bg-opl-panelHi dark:bg-[rgba(255,255,255,0.02)] px-3 py-2.5">
+               <div class="lp-eyebrow" style="font-size:10px">${c.label}</div>
+               <div class="mt-1 text-[15px] font-semibold tabular-nums ${c.val > 0 ? 'text-opl-ink dark:text-op-ink' : 'text-opl-inkDimmer dark:text-op-inkDimmer'}">${fmtDollar(c.val)}</div>
+             </div>`).join('')}
+         </div>
+
+         <div class="mt-3 grid grid-cols-4 gap-2">
+           ${lpTile('Cart',  fig.avgCart != null ? fmtDollar(fig.avgCart) : '—', 'cart')}
+           ${lpTile('Items', fig.avgItems ? fig.avgItems.toFixed(1) : '—', 'items')}
+           ${lpTile('Orders', fig.orders != null ? fig.orders.toLocaleString('en-US') : '—', 'orders')}
+           ${lpTile(b.unitNoun + 's', String(fig.storeCount), 'asp')}
+         </div>
+
+         <div class="mt-5 text-right">
+           <button type="button" class="lp-enter text-sm font-semibold text-accent-green hover:opacity-80 transition-opacity">Enter ${b.name} →</button>
+         </div>`);
+
+      const enter = card.querySelector('.lp-enter');
+      if (enter) enter.addEventListener('click', () => enterBusiness(b.id));
+      wrap.appendChild(card);
+    });
   }
 
   function applyRoleUI(user) {
@@ -16508,6 +16922,12 @@
     const seesMoney = canSeeFinancials(user);
     document.querySelectorAll('.nav-item[data-page="dashboard"], .nav-item[data-page="weekly-summary"]')
       .forEach(n => n.classList.toggle('hidden', !seesMoney));
+
+    // "Switch business" only means something with somewhere to switch to.
+    // Driven by the business count, not by role — an executive granted two
+    // businesses needs it just as much as the superuser does.
+    const swb = el('nav-switch-business');
+    if (swb) swb.classList.toggle('hidden', userBusinesses(user).length < 2);
 
     // Show/hide nav items based on role
     const isAdmin = user.role === 'superuser' || user.role === 'admin';
@@ -17259,14 +17679,33 @@
     initPasskeyLoginButton();
     checkAuth().then(authed => {
       if (!authed) return;
+      // Route to the correct landing surface. Until now nothing routed at boot —
+      // `page-dashboard` is simply the one page without `hidden`, so it won for
+      // everyone. Two consequences, both fixed here: a role that cannot open the
+      // dashboard (today `staff`) sat on an empty shell whose every request
+      // 403s, and a multi-business account had no way to reach the picker.
+      // pushHistory=false so this initial placement isn't a back-stack entry.
+      const landing = landingPageFor(currentUser);
+      if (landing !== 'dashboard') navigateToPage(landing, false);
+      // The popups and coach-marks below are all about the DASHBOARD — they
+      // point at #hero-more-toggle, store cards, the date chip. Firing them over
+      // the picker or the no-access screen would anchor them to elements that
+      // are not on screen, so treat landing elsewhere the same as a deep link.
+      const onDashboard = (landing === 'dashboard');
       const dlSearch = new URLSearchParams(window.location.search);
       // A deep link is anything the SW may have opened us with: an hourly view,
       // a #hash page, or a photo-upload folder link (cf_store).
       const dlDeep = dlSearch.get('view') || dlSearch.get('cf_store') || (window.location.hash ? window.location.hash.slice(1) : '');
       const loaded = loadAll();
+      // The picker paints before any data exists, so repaint it once the D1 rows
+      // land. loadAll's clover promise repaints it a second time when the live
+      // figures arrive — that one is inside loadAll itself.
+      if (landing === 'landing') Promise.resolve(loaded).finally(() => {
+        if (currentPage === 'landing') { try { renderLanding(); } catch (_) {} }
+      });
       // "What's New" popup — show once data has painted, unless a deep link
       // is taking over the screen. Persists only when the user hits Dismiss.
-      if (!dlDeep) Promise.resolve(loaded).finally(() => {
+      if (!dlDeep && onDashboard) Promise.resolve(loaded).finally(() => {
         setTimeout(maybeShowWhatsNew, 700);
         // First-time pull-to-refresh hint (mobile, unobtrusive top chip).
         setTimeout(maybePtrHint, 1000);
@@ -17744,6 +18183,7 @@
       gate('more-marketing', vis('nav-marketing-ads'));
       gate('more-users', vis('nav-users'));
       gate('more-admin', vis('nav-admin-settings'));
+      gate('more-switch-business', vis('nav-switch-business')); // mirrors the sidebar item
       gate('more-settings', vis('nav-settings'));
       // active tab
       var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1 };
