@@ -144,3 +144,113 @@ unverified**.
 1. The reachability decision (see top of this file) — one migration + a landing-card fix.
 2. `EBAY_HANDLER_TOKEN` + `migration-034`, or the page renders its empty state forever.
 3. Push alerts, then tell Raj to flip `forcedShadow=0`. Not before.
+
+---
+
+# Reachability fix — DONE, and it is NOT the migration
+
+Mapped with 8 agents (4 readers → 3 independent designs → 1 referee) before writing code.
+**The premise I opened with was wrong, and the map is what caught it.**
+
+## 🔑 Reachability was never gated on units
+
+`enterBusiness()` is blocked by `if (!b || !b.connected) return;` — and `connected` is the
+server's answer to *"does this business's SOURCE SYSTEM have active units"*
+(worker.js:5901), being read as *"does this app have a screen for this business"*. Those are
+different questions and E-Commerce's honest answers differ: no sales feed, real Cases page.
+
+Seeding `business_units` would have forced the first boolean true to get the second — fixing
+today's symptom by widening tomorrow's bug, and dragging in every blocker below. **So there
+is no migration.** The fix splits the overloaded flag:
+
+```js
+function businessHasSurface(id) { return dashboardPageFor(id) !== 'landing'; }
+```
+
+Derived from the page map, so a business becomes enterable exactly when it gains a front
+door — no second flag, no schema change, no deploy-order hazard. Every existing assertion
+(`E-Commerce is NOT connected`, `has 0 units`, `ecom exposes no units yet`) stays green
+**and stays true**.
+
+## 🛑 Two live defects in 98449d0, found by the map and reproduced before fixing
+
+Both were dormant only because `enterBusiness` bailed early — my own Slice 2b work armed them.
+
+1. **`applyBusinessNav` only ever ADDED `hidden`**, and `applyRoleUI` — its only un-hider —
+   runs exactly once, at boot. Measured: entering E-Commerce and returning to Bargain Lane
+   left BL's whole sidebar hidden. Only Settings and Switch business survived. No Dashboard,
+   no Retail Summary, no Users, no Admin Settings, until a hard reload.
+2. **The boot router is `if (landing !== 'dashboard') navigateToPage(landing, false)`**, and
+   `applyBusinessNav` is reachable only from `navigateToPage`/`enterBusiness` — so it never
+   ran at boot for anyone landing on the dashboard. Measured: a superuser sticky on Bargain
+   Lane saw the **eBay Cases item in Bargain Lane's sidebar**.
+
+⚠️ **My earlier sidebar check missed both because it re-ran `applyRoleUI` before each
+switch — it reset the very state it was measuring.** The lesson is in
+`scripts/test-nav-registry.mjs`'s header so the next harness pins it.
+
+Fix keeps the original one-way invariant literally: `bizhid` is stamped ONLY on an item that
+was visible when we hid it, so a ROLE-hidden item is never marked and can never be revealed.
+Verified: `nav-users` hidden by role stays hidden across business round trips.
+
+## Also fixed — each one activated by making entry work
+
+- **`landingPageFor` returned the literal `'dashboard'` for any single-business user**, so
+  the first E-Commerce-only account would have booted onto Bargain Lane's dashboard, a page
+  it holds no grant for. Now `dashboardPageFor(biz[0].id)`. Verified: routes to `ebay-cases`.
+- **The landing card printed Bargain Lane's figures for any connected business** — `fig` is
+  bound once outside the loop and interpolated unconditionally, down to
+  `lpTile(b.unitNoun + 's', String(fig.storeCount))` reading "storefronts / 6". Replaced
+  `connected` with a per-business `FIGURES` registry; the money block now reads `f.*`, and
+  `chOf(f)` gives it its own channel mix. A business with no entry prints no numbers.
+- **The hero said "N of M reporting" counting connected businesses.** Now counts businesses
+  that actually contribute to the total — "1 of 2", which is the honest number.
+- **Mobile had no E-Commerce navigation at all** (every bottom-bar tab is Bargain Lane's).
+  Added the More-sheet row, its sidebar-mirroring gate, and `morePages['ebay-cases']`.
+- **`gate('bn-submit-photos', mgrBar)`** read role without the sidebar mirror every other tab
+  uses, so a non-admin inside E-Commerce got Bargain Lane's centred Submit Photos button.
+- **Swipe-back assumed Bargain Lane's dashboard is everyone's home** — the back rail never
+  appeared inside E-Commerce, and an exhausted back stack threw you across the business
+  boundary. Now `homePage()` derives it from the active business.
+- `sw.js` cache `v66 → v67`, so installed PWAs pick up the new shell.
+
+## Verified
+
+`scripts/test-nav-registry.mjs`, 17 assertions, mutation-checked 5 ways (unclassified nav
+id, typo'd business id, front door missing from the `pages` array, a More-sheet gate
+mirroring a nonexistent nav id, a registry orphan) — all killed. It finally gives
+`navBusinessAudit()`'s rule a caller.
+
+Full journey driven in a real browser through the actual boot path (`checkAuth` → real
+`applyRoleUI` → `landingPageFor` → `renderLanding`), **without re-running `applyRoleUI`
+between switches**:
+
+picker → Enter E-Commerce → eBay Cases, `activeBusiness='ecom'`, sidebar = eBay Cases only,
+More-sheet row visible → Switch business → picker → Enter Bargain Lane → **full BL sidebar
+restored** → repeats stably. E-Commerce's card contains zero dollar figures; Bargain Lane's
+still shows its money. An E-Commerce-only account routes to `ebay-cases`.
+
+Full suite green (14/43/33/47/20/17 + 6 assert-style).
+
+## 🛑 Still NOT reachable in production, by prerequisite
+
+Everything above is client-side. Before the Enter button should ship:
+**migration-034 applied, `EBAY_HANDLER_TOKEN` set, and one real ingest landed.** Otherwise
+`?action=ebay-cases` fails and the page renders its red error banner — an error screen, not
+a feature.
+
+## Deliberately not changed
+
+- **No migration, no `business_units` rows.** See above.
+- **`?action=ebay-cases` does no unit-level scoping** — it filters on `business='ecom'` plus
+  a *caller-supplied* `&account=`. Harmless today (every ecom grant has `units NULL`), but it
+  is why seeding units is not a free action: the Users page would start offering
+  "restrict to one eBay account" while the endpoint ignores it, and those rows carry
+  `buyer_username`/`buyer_comments`. A control that looks enforced and is not is worse than
+  no control. Fix the endpoint **before** any unit seeding.
+- **`set-user-grants` uppercases submitted unit codes** while `ebay_cases.account` is stored
+  verbatim from Handler — so `'shoes'` would be saved as `'SHOES'` and never match. Same
+  prerequisite.
+- **No client DOM test harness.** No `node_modules` and no network here, so jsdom could not
+  be added or tried. All routing above is verified by hand in a browser, not in CI. This is
+  the largest remaining risk and the honest follow-up.

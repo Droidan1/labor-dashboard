@@ -811,6 +811,12 @@
         <div class="flex items-center justify-between px-5 pb-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
           <div class="min-w-0"><div id="more-email" class="text-sm font-semibold text-opl-ink dark:text-op-ink truncate"></div><div id="more-role" class="text-xs text-opl-inkDim dark:text-op-inkDim capitalize"></div></div>
         </div>
+        <!-- E-Commerce's only page. The bottom bar's tabs are all Bargain Lane's,
+             so without this row E-Commerce has no navigation whatsoever on a
+             phone — and this is an installed PWA. -->
+        <button id="more-ebay-cases" onclick="navigateToPage('ebay-cases');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
+          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>eBay Cases
+        </button>
         <button id="more-submit-photos" onclick="navigateToPage('submit-photos');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Submit Photos
         </button>
@@ -17095,7 +17101,17 @@
       if (active && biz.some(b => b.id === active)) return dashboardPageFor(active);
       return 'landing';
     }
-    if (biz.length === 1) setActiveBusiness(biz[0].id);
+    // 🔑 One business does not imply Bargain Lane. This returned the literal
+    // 'dashboard' regardless of WHICH business it was, so the first
+    // E-Commerce-only account would have booted straight onto Bargain Lane's
+    // dashboard — a page it holds no grant for, whose every request 403s.
+    if (biz.length === 1) {
+      setActiveBusiness(biz[0].id);
+      return dashboardPageFor(biz[0].id);
+    }
+    // Zero businesses — a pre-migration-030 schema, or businessesFor() failing
+    // closed to []. The dashboard is the behaviour that predates the picker and
+    // the worker still gates every request; do not tighten this here.
     return 'dashboard';
   }
 
@@ -17136,17 +17152,35 @@
   // open, business decides what is relevant here. Both must agree to show.
   function applyBusinessNav(businessId) {
     const biz = businessId || activeBusiness() || 'bl';
+    // Hides what another business owns, and puts back exactly what THIS function
+    // hid — no more.
+    //
+    // 🔑 It used to only ever ADD `hidden`, on the reasoning that un-hiding was
+    // applyRoleUI's job. But applyRoleUI runs exactly ONCE, at boot, so nothing
+    // ever undid this: entering E-Commerce and switching back left Bargain
+    // Lane's whole sidebar hidden until a hard reload. Demonstrated before the
+    // fix — after one round trip only Settings and Switch business survived.
+    //
+    // The original invariant is preserved literally rather than abandoned:
+    // `bizhid` is stamped ONLY on an item that was VISIBLE at the moment we hid
+    // it, so an item a ROLE gate hid is never marked, and this can still never
+    // reveal something the role gate closed.
+    const set = (n, hide) => {
+      if (!n) return;
+      if (hide) {
+        if (!n.classList.contains('hidden')) { n.dataset.bizhid = '1'; n.classList.add('hidden'); }
+      } else if (n.dataset.bizhid) {
+        delete n.dataset.bizhid;
+        n.classList.remove('hidden');
+      }
+    };
     for (const [id, owner] of Object.entries(NAV_BUSINESS)) {
       if (owner === null) continue;          // cross-business — leave alone
-      const n = el(id);
-      if (!n) continue;
-      // Only ever ADDS hidden. Removing it is applyRoleUI's job, so this can
-      // never reveal something a role gate hid.
-      if (owner !== biz) n.classList.add('hidden');
+      set(el(id), owner !== biz);
     }
     // data-page items the dashboard owns directly (Dashboard, Retail Summary).
     document.querySelectorAll('.nav-item[data-page="dashboard"], .nav-item[data-page="weekly-summary"]')
-      .forEach(n => { if (biz !== 'bl') n.classList.add('hidden'); });
+      .forEach(n => set(n, biz !== 'bl'));
   }
 
   // Every nav id in the DOM must be classified. Returns the unmapped ones so a
@@ -17174,10 +17208,29 @@
     return 'landing';
   }
 
+  // Is there a page to go INTO?
+  //
+  // 🔑 This is NOT the same question as `connected`, and conflating them is what
+  // made the eBay Cases page unreachable. The server derives `connected` from
+  // unit count (worker.js), so it means "this business's SOURCE SYSTEM is wired
+  // up" — SellerCloud, for E-Commerce. Entry asks something else: "does this app
+  // have a screen for this business". E-Commerce's honest answers differ — no
+  // sales feed, but a real Cases page — and one boolean cannot carry both
+  // without lying about one of them.
+  //
+  // Derived from the page map rather than stored, so a business becomes
+  // enterable exactly when it gains a front door, with no second flag to forget.
+  function businessHasSurface(id) {
+    return dashboardPageFor(id) !== 'landing';
+  }
+
   // Enter a business from the picker.
   function enterBusiness(id) {
     const b = userBusinesses(currentUser).find(x => x.id === id);
-    if (!b || !b.connected) return;          // disabled cards are inert
+    // Inert only when there is nowhere to go. Not a widening: `businesses[]` is
+    // already grant-filtered server-side, and the worker's fail-closed business
+    // gate remains the real boundary for every request the page then makes.
+    if (!b || !businessHasSurface(b.id)) return;
     setActiveBusiness(id);
     applyBusinessNav(id);
     navigateToPage(dashboardPageFor(id));
@@ -17292,15 +17345,26 @@
   function renderLanding() {
     const biz = userBusinesses(currentUser);
     const fig = bargainLaneFigures();
-    const connected = biz.filter(b => b.connected);
+    // 🔑 Figures BY BUSINESS. Only Bargain Lane's are computable in this client —
+    // bargainLaneFigures() reads Clover feeds — so an id absent from this map has
+    // no numbers of its own and must never borrow another business's. The card
+    // body used to branch on `connected` and then interpolate `fig.*`
+    // unconditionally, so ANY second connected business would have printed
+    // Bargain Lane's net, pace, channel mix and order count under its own name
+    // (down to "storefronts / 6"). Branching on "have we got figures for THIS
+    // business" makes that impossible rather than merely unlikely.
+    const FIGURES = { bl: bargainLaneFigures };
+    // Businesses that actually contribute money to the group roll-up. NOT the
+    // same as `connected`, and not the same as "enterable" either.
+    const reporting = biz.filter(b => FIGURES[b.id]);
     const setTxt = (id, t) => { const n = el(id); if (n) n.textContent = t; };
     const setHtml = (id, h) => { const n = el(id); if (n) n.innerHTML = h; };
 
     // ── Hero ────────────────────────────────────────────────────────
-    const gTotal  = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.total  : 0), 0);
-    const gBudget = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.budget : 0), 0);
-    const gMtdA   = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdActual : 0), 0);
-    const gMtdB   = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdBudget : 0), 0);
+    const gTotal  = reporting.reduce((n, b) => n + (b.id === 'bl' ? fig.total  : 0), 0);
+    const gBudget = reporting.reduce((n, b) => n + (b.id === 'bl' ? fig.budget : 0), 0);
+    const gMtdA   = reporting.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdActual : 0), 0);
+    const gMtdB   = reporting.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdBudget : 0), 0);
     const gPace   = gBudget > 0 ? (gTotal / gBudget) * 100 : null;
 
     setTxt('landing-hero-total', fmtDollar(gTotal));
@@ -17308,7 +17372,11 @@
     setTxt('landing-hero-pace', gPace != null ? fmtPct(gPace, 0) : '—');
     const pEl = el('landing-hero-pace');
     if (pEl) pEl.className = 'mt-1 text-3xl font-semibold tabular-nums ' + lpPaceColour(gPace);
-    setTxt('landing-hero-reporting', `${connected.length} of ${biz.length} reporting`);
+    // "Reporting" counts businesses that actually contribute to the total above,
+    // not businesses that exist. With E-Commerce live-but-feedless this reads
+    // "1 of 2 reporting" — which is the honest number; counting it would claim
+    // the hero total covers revenue it does not include.
+    setTxt('landing-hero-reporting', `${reporting.length} of ${biz.length} reporting`);
     setTxt('landing-hero-budget', gBudget > 0 ? fmtDollar(gBudget) : '');
     const hb = el('landing-hero-bar');
     if (hb) {
@@ -17316,18 +17384,21 @@
       hb.className = 'h-full rounded-full transition-[width] duration-500 ' + lpPaceBar(gPace);
     }
     const live = el('landing-hero-live');
-    if (live) live.classList.toggle('hidden', connected.length === 0);
+    if (live) live.classList.toggle('hidden', reporting.length === 0);
     setTxt('landing-hero-mtd', gMtdB > 0
       ? `Month to date · ${fmtDollar(gMtdA)} vs ${fmtDollar(gMtdB)}` : '');
     setTxt('landing-hero-updated', 'Updated ' + new Date().toLocaleTimeString('en-US',
       { hour: 'numeric', minute: '2-digit' }));
 
     // ── Channel mix: one stacked bar + legend ───────────────────────
-    const CH = [
-      { label: 'Retail',  val: fig.retail,  bar: 'bg-accent-green',  dot: 'text-accent-green'  },
-      { label: 'BIN',     val: fig.bin,     bar: 'bg-accent-blue',   dot: 'text-accent-blue'   },
-      { label: 'Auction', val: fig.auction, bar: 'bg-accent-violet', dot: 'text-accent-violet' },
+    // Built from a figures object rather than closed over one, so the per-business
+    // card below can pass its OWN figures instead of borrowing the hero's.
+    const chOf = (x) => [
+      { label: 'Retail',  val: x.retail,  bar: 'bg-accent-green',  dot: 'text-accent-green'  },
+      { label: 'BIN',     val: x.bin,     bar: 'bg-accent-blue',   dot: 'text-accent-blue'   },
+      { label: 'Auction', val: x.auction, bar: 'bg-accent-violet', dot: 'text-accent-violet' },
     ];
+    const CH = chOf(fig);
     const chTotal = CH.reduce((n, c) => n + c.val, 0);
     setTxt('landing-mix-count', `${CH.filter(c => c.val > 0).length} of 3 channels`);
     setHtml('landing-mix-bar', chTotal > 0
@@ -17355,6 +17426,7 @@
 
     biz.forEach(b => {
       const source = SOURCE[b.id] || '';
+      const f = FIGURES[b.id] ? FIGURES[b.id]() : null;   // no figures → no numbers to print
       const card = document.createElement('div');
       card.className = 'rounded-card p-card flex flex-col transition-colors bg-opl-panel dark:bg-op-panel border '
         + (b.connected
@@ -17372,43 +17444,55 @@
            <span class="lp-pill ${b.connected ? 'lp-pill-live' : 'lp-pill-setup'} flex-shrink-0">● ${b.connected ? 'Live' : 'Setup'}</span>
          </div>`;
 
-      if (!b.connected) {
+      // No figures for this business — say so, and never fall through to the
+      // money block below, which is written entirely against Bargain Lane's.
+      // A business can be in this branch and still be worth entering:
+      // E-Commerce has no sales feed but does have the eBay Cases page.
+      if (!f) {
+        const canEnter = businessHasSurface(b.id);
         card.insertAdjacentHTML('beforeend',
           `<div class="mt-5 flex-1 rounded-xl border border-dashed border-[rgba(20,16,8,0.14)] dark:border-[rgba(255,255,255,0.11)] flex flex-col items-center justify-center text-center px-4 py-10">
              <div class="text-sm text-opl-inkDim dark:text-op-inkDim leading-relaxed">No sales data yet.<br>API credentials not issued</div>
-             <button type="button" disabled title="Needs SellerCloud API credentials first"
+             <button type="button" disabled title="Needs ${source} API credentials first"
                class="mt-4 text-xs font-semibold px-3.5 py-2 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi text-opl-inkDimmer dark:text-op-inkDimmer cursor-not-allowed">
                Connect ${source} →</button>
-           </div>`);
+           </div>
+           ${canEnter ? `<div class="mt-5 text-right">
+             <button type="button" class="lp-enter text-sm font-semibold text-accent-green hover:opacity-80 transition-opacity">Enter ${b.name} →</button>
+           </div>` : ''}`);
+        if (canEnter) {
+          const e = card.querySelector('.lp-enter');
+          if (e) e.addEventListener('click', () => enterBusiness(b.id));
+        }
         wrap.appendChild(card);
         return;
       }
 
       card.insertAdjacentHTML('beforeend',
         `<div class="lp-eyebrow mt-5">Today's net</div>
-         <div class="mt-1 text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(fig.total)}</div>
-         <div class="mt-1 text-sm">${lpDelta(fig.total, fig.budget)}</div>
+         <div class="mt-1 text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(f.total)}</div>
+         <div class="mt-1 text-sm">${lpDelta(f.total, f.budget)}</div>
 
          <div class="mt-4 flex items-center justify-between">
-           <span class="lp-eyebrow">Pace · ${fig.reporting} of ${fig.storeCount} reporting</span>
-           <span class="text-sm font-semibold tabular-nums ${lpPaceColour(fig.pace)}">${fig.pace != null ? fmtPct(fig.pace, 0) : '—'}</span>
+           <span class="lp-eyebrow">Pace · ${f.reporting} of ${f.storeCount} reporting</span>
+           <span class="text-sm font-semibold tabular-nums ${lpPaceColour(f.pace)}">${f.pace != null ? fmtPct(f.pace, 0) : '—'}</span>
          </div>
          <div class="mt-2 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
-           <div class="h-full rounded-full ${lpPaceBar(fig.pace)}" style="width:${fig.pace != null ? Math.max(0, Math.min(100, fig.pace)) : 0}%"></div>
+           <div class="h-full rounded-full ${lpPaceBar(f.pace)}" style="width:${f.pace != null ? Math.max(0, Math.min(100, f.pace)) : 0}%"></div>
          </div>
 
          <div class="mt-4 grid grid-cols-3 gap-2">
-           ${CH.map(c => `<div class="rounded-xl border border-[rgba(20,16,8,0.07)] dark:border-[rgba(255,255,255,0.07)] bg-opl-panelHi dark:bg-[rgba(255,255,255,0.02)] px-3 py-2.5">
+           ${chOf(f).map(c => `<div class="rounded-xl border border-[rgba(20,16,8,0.07)] dark:border-[rgba(255,255,255,0.07)] bg-opl-panelHi dark:bg-[rgba(255,255,255,0.02)] px-3 py-2.5">
                <div class="lp-eyebrow" style="font-size:10px">${c.label}</div>
                <div class="mt-1 text-[15px] font-semibold tabular-nums ${c.val > 0 ? 'text-opl-ink dark:text-op-ink' : 'text-opl-inkDimmer dark:text-op-inkDimmer'}">${fmtDollar(c.val)}</div>
              </div>`).join('')}
          </div>
 
          <div class="mt-3 grid grid-cols-4 gap-2">
-           ${lpTile('Cart',  fig.avgCart != null ? fmtDollar(fig.avgCart) : '—', 'cart')}
-           ${lpTile('Items', fig.avgItems ? fig.avgItems.toFixed(1) : '—', 'items')}
-           ${lpTile('Orders', fig.orders != null ? fig.orders.toLocaleString('en-US') : '—', 'orders')}
-           ${lpTile(b.unitNoun + 's', String(fig.storeCount), 'asp')}
+           ${lpTile('Cart',  f.avgCart != null ? fmtDollar(f.avgCart) : '—', 'cart')}
+           ${lpTile('Items', f.avgItems ? f.avgItems.toFixed(1) : '—', 'items')}
+           ${lpTile('Orders', f.orders != null ? f.orders.toLocaleString('en-US') : '—', 'orders')}
+           ${lpTile(b.unitNoun + 's', String(f.storeCount), 'asp')}
          </div>
 
          <div class="mt-5 text-right">
@@ -17473,6 +17557,17 @@
     el('nav-settings').classList.remove('hidden');
     const adminOpt = el('invite-role-admin');
     if (adminOpt) adminOpt.classList.toggle('hidden', !isSuperuser);
+
+    // 🔑 Business filtering must run at boot, and until now it did not on the
+    // commonest path. The boot router is `if (landing !== 'dashboard')
+    // navigateToPage(landing, false)`, and applyBusinessNav is only reachable
+    // from navigateToPage and enterBusiness — so anyone whose landing IS the
+    // dashboard never got filtered, and saw every other business's nav items in
+    // Bargain Lane's sidebar. Runs last, after every role toggle above (role
+    // decides what you MAY open; business decides what is relevant here) and
+    // before the __syncBottomNav block below, so the bottom bar syncs against
+    // business-filtered state rather than pre-filter state.
+    try { applyBusinessNav(); } catch (_) {}
 
     // Role is now known — let the bottom nav decide admin vs manager layout
     // and correct any pre-auth boot state immediately (not on next nav).
@@ -18575,12 +18670,21 @@
     // pulse, no words — teaches "this edge is interactive") + one-time
     // "Swipe back" label on the user's first detail-page visit ever.
     // localStorage key `swipeBackHintShown` prevents the label re-appearing.
+    // The page this session treats as "home" — the business you are inside, not
+    // Bargain Lane's dashboard. Hardcoding 'dashboard' meant that inside
+    // E-Commerce the back rail never appeared (eBay Cases IS its home, but the
+    // test said otherwise) and an exhausted back stack threw you across the
+    // business boundary onto a dashboard you may hold no grant for.
+    function homePage() {
+      return dashboardPageFor(activeBusiness() || 'bl');
+    }
+
     function updateSwipeBackHint() {
       const rail = document.getElementById('swipe-rail');
       const label = document.getElementById('swipe-label');
       // currentPage is a top-level `let` — accessible via closure but NOT on
       // window. Using window.currentPage here would always be undefined.
-      const railOn = currentPage && currentPage !== 'dashboard';
+      const railOn = currentPage && currentPage !== homePage();
       if (rail) rail.classList.toggle('hidden', !railOn);
       if (!label) return;
       if (!railOn) { label.classList.add('hidden'); label.classList.remove('show'); return; }
@@ -18618,7 +18722,7 @@
       let activeEl = null;     // the page element being dragged
 
       function activePage() {
-        return currentPage && currentPage !== 'dashboard';
+        return currentPage && currentPage !== homePage();
       }
       function getActivePageEl() {
         return document.getElementById('page-' + currentPage);
@@ -18641,8 +18745,9 @@
       function goBack() {
         const prev = navStack.pop();
         if (!prev) {
-          // No history — fall back to dashboard (no-op if already there).
-          if (currentPage !== 'dashboard') navigateToPage('dashboard', /*pushHistory=*/false);
+          // No history — fall back to this business's home (no-op if already there).
+          const h = homePage();
+          if (currentPage !== h) navigateToPage(h, /*pushHistory=*/false);
           return;
         }
         if (prev.page === 'store-detail' && prev.store) {
@@ -18798,9 +18903,14 @@
       gate('bn-content', vis('nav-content'), 'flex');
       gate('bn-flow', vis('nav-flow-calendar'), 'flex');
       gate('bn-supply', mgrBar && vis('nav-supply-request'), 'flex');
-      gate('bn-submit-photos', mgrBar, 'flex');                     // center Submit: non-admins only
+      // ...and only while you are in the business that owns it. The sidebar
+      // mirror is the source of truth for every other tab; this one alone read
+      // the role without it, so a non-admin inside E-Commerce got a centred
+      // Submit Photos button belonging to Bargain Lane.
+      gate('bn-submit-photos', mgrBar && vis('nav-submit-photos'), 'flex');   // center Submit: non-admins only
       // More-sheet rows
       gate('more-submit-photos', !mgrBar && vis('nav-submit-photos')); // admins reach it via More
+      gate('more-ebay-cases', vis('nav-ebay-cases'));                  // mirrors the sidebar item
       gate('more-inventory', vis('nav-inventory'));                    // admin-only
       gate('more-supply', !mgrBar && vis('nav-supply-request'));       // admins: Supply lives here
       gate('more-marketing', vis('nav-marketing-ads'));
@@ -18809,7 +18919,9 @@
       gate('more-switch-business', vis('nav-switch-business')); // mirrors the sidebar item
       gate('more-settings', vis('nav-settings'));
       // active tab
-      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1 };
+      // 'ebay-cases' has no bar tab of its own, so without it here every tab
+      // sits dim while you are standing on the page.
+      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1 };
       if (!mgrBar) morePages['submit-photos'] = 1; // no center button → page lives under More
       if (isAdminBar) { morePages['inventory'] = 1; morePages['supply-request'] = 1; } // admin: both under More
       else { morePages['flow-calendar'] = 1; morePages['content'] = 1; }               // no bar tab for these
