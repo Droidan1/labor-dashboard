@@ -5838,7 +5838,16 @@ async function loadGrants(env, userId) {
     ).bind(userId).all();
     return (results || []).map(g => {
       let units = null;
-      try { units = g.units ? JSON.parse(g.units) : null; } catch (_) { units = null; }
+      try {
+        units = g.units ? JSON.parse(g.units) : null;
+      } catch (_) {
+        // 🔑 Fail CLOSED on corrupt JSON, not open. `null` is a meaningful value
+        // here — it means "every unit" — so parsing garbage into null would
+        // WIDEN access on exactly the input we understand least. An empty array
+        // is the safe reading: the grant still exists, it just grants no units.
+        console.log(JSON.stringify({ grant_units_unparseable: g.business_id, raw: String(g.units).slice(0, 80) }));
+        units = [];
+      }
       return { ...g, units };
     });
   } catch (_) {
@@ -6007,7 +6016,22 @@ function allowedUnits(user, businessId) {
   // ACTION_BUSINESS). This function only answers WHICH units inside one.
   if (user.role === 'superuser' || user.role === 'admin') return null;
   const g = grantFor(user, businessId);
-  if (g) return g.units || [];
+  if (g) {
+    // 🔑 NULL units means EVERY unit in that business. That is what
+    // set-user-grants writes when no restriction is chosen ("units: null/absent
+    // means every unit") and what migration-030's schema declares.
+    //
+    // ⚠️ Bargain Lane deliberately reads NULL as NO units instead, and keeps
+    // doing so. migration-030 backfilled bl grants straight from users.stores,
+    // where NULL meant "was never scoped", not "chain-wide" — and
+    // test-cron-recipients.js pins that an executive is excluded rather than
+    // assumed chain-wide. The two meanings are indistinguishable from the data,
+    // so the legacy reading stays where the legacy data is and nowhere else.
+    // Widening bl is a decision about who gets emailed chain-wide revenue; it is
+    // not something to change as a side effect of scoping another business.
+    if (businessId === 'bl') return g.units || [];
+    return g.units == null ? null : g.units;
+  }
 
   // 🔑 The users.stores fallback is BARGAIN LANE ONLY — it is a legacy column
   // from before grants existed and has no meaning for any other business. Any
@@ -7030,9 +7054,45 @@ export default {
         return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       }
       try {
+        // 🔑 The business gate above decided WHETHER you reach E-Commerce. This
+        // decides WHICH storefronts inside it, and it is a separate question the
+        // gate cannot answer.
+        //
+        // 🛑 `&account=` is a DISPLAY filter the CALLER supplies. It has never
+        // been a boundary, and must never be mistaken for one — a scoped user
+        // who simply omits it would otherwise receive every account, including
+        // buyer_username and buyer_comments, the two columns migration-034
+        // records as the verified PII scope.
+        //
+        // Grant units are compared verbatim against ebay_cases.account, which is
+        // stored exactly as Handler sends it. That is why set-user-grants must
+        // not normalise case — see the coercion removed there.
+        const allow = allowedUnits(currentUser, "ecom");   // null = every storefront
+        let scopeSql = "", scopeBinds = [];
+        if (Array.isArray(allow)) {
+          // ⚠️ D1 caps bound parameters at 100 per query, so an IN list built
+          // from an unbounded set is a latent 500. Storefront counts are small,
+          // but refuse loudly rather than truncate — a silently shortened list
+          // would hide cases from someone entitled to see them.
+          if (allow.length > 50) {
+            console.log(JSON.stringify({ ebay_cases_scope_too_wide: allow.length }));
+            return new Response(JSON.stringify({ error: "Too many units to scope" }),
+              { status: 500, headers: corsJson });
+          }
+          // An empty grant is a real state — "holds E-Commerce, no storefront
+          // within it" — and must return NOTHING rather than everything.
+          // `IN ()` is a syntax error, so the empty case gets an explicitly
+          // false predicate. Keeping one code path means the response shape
+          // cannot drift from the unscoped one.
+          scopeSql = allow.length
+            ? ` AND account IN (${allow.map(() => "?").join(",")})`
+            : " AND 1 = 0";
+          scopeBinds = allow;
+        }
+
         const acct = (url.searchParams.get("account") || "").trim();
-        const binds = ["ecom"];
-        let where = "business = ?";
+        const binds = ["ecom", ...scopeBinds];
+        let where = "business = ?" + scopeSql;
         if (acct) { where += " AND account = ?"; binds.push(acct); }
 
         const { results: open } = await env.DB.prepare(
@@ -7059,11 +7119,42 @@ export default {
                   account_status, received_at
              FROM ebay_handler_state WHERE business = ?`).bind("ecom").first();
 
+        // 🛑 account_status is a JSON blob KEYED BY ACCOUNT — it carries each
+        // storefront's poll health (checkedAt, fetched, ok, queueErrors). Scoping
+        // only the two row queries left this one whole, so a manager scoped to
+        // 'shoes' still learned that 'fashion' exists, that it had 7 queue errors
+        // and that its last fetch failed.
+        //
+        // ⚠️ This was NOT caught by the scoping test's blanket
+        // "the string 'fashion' appears nowhere" assertion — that test's fixture
+        // sent `accountStatus: {}`, so the field that leaks was never populated.
+        // A probe with the REAL shape found it. The fixture is now populated.
+        //
+        // Kept as a JSON STRING so the response shape is unchanged. Everything
+        // else on this row (version, run timestamps, effective_mode) is
+        // business-level, not per-account, and stays.
+        let handlerOut = st || null;
+        if (handlerOut && Array.isArray(allow)) {
+          let parsed = null;
+          try { parsed = JSON.parse(handlerOut.account_status || "{}"); } catch (_) { parsed = null; }
+          const scoped = {};
+          // Unparseable → {} rather than passthrough: fail closed, same reasoning
+          // as loadGrants.
+          if (parsed && typeof parsed === "object") {
+            for (const k of Object.keys(parsed)) if (allow.includes(k)) scoped[k] = parsed[k];
+          }
+          handlerOut = { ...handlerOut, account_status: JSON.stringify(scoped) };
+        }
+
+        // Same storefront scope as the cases above — these rows carry an
+        // `account` too, and a refund the caller may not see is not made
+        // safe by living in a different table. The display filter is NOT
+        // applied here; the client narrows these by account itself.
         const { results: recent } = await env.DB.prepare(
           `SELECT ts, kind, event, account, case_type, case_id, action, dry_run, ok,
                   http_status, amount, reason, error
-             FROM ebay_actions WHERE business = ? AND kind = 'action'
-            ORDER BY ts DESC LIMIT 25`).bind("ecom").all();
+             FROM ebay_actions WHERE business = ?${scopeSql} AND kind = 'action'
+            ORDER BY ts DESC LIMIT 25`).bind("ecom", ...scopeBinds).all();
 
         return new Response(JSON.stringify({
           actionable, appeals,
@@ -7072,7 +7163,7 @@ export default {
           // can still save, and one blended figure would overstate what is at stake.
           actionableAmount: actionable.reduce((n, c) => n + (c.amount || 0), 0),
           accounts: [...new Set(rows.map(c => c.account))].sort(),
-          handler: st || null,
+          handler: handlerOut,
           // null until Raj adds effectiveMode to accountStatus — it is absent from
           // the real state file. The page must render "unknown", never guess LIVE.
           effectiveMode: (st && st.effective_mode) || null,
@@ -8188,7 +8279,15 @@ export default {
           let units = null;
           if (Array.isArray(g.units)) {
             const valid = new Set(biz.units.map(u => u.code));
-            const picked = [...new Set(g.units.map(u => String(u).trim().toUpperCase()))].filter(Boolean);
+            // 🔑 Do NOT normalise case. Unit codes are opaque identifiers owned
+            // by the source system — Clover store codes happen to be uppercase,
+            // eBay account names are lowercase — and they are compared verbatim
+            // against stored data (ebay_cases.account). Uppercasing was a
+            // Bargain-Lane-shaped assumption, invisible while every code was
+            // already 'BL1'…'BL16'; it would silently turn a grant for 'shoes'
+            // into one for 'SHOES', which matches no case that exists.
+            // Membership is still validated below — that is the real check.
+            const picked = [...new Set(g.units.map(u => String(u).trim()))].filter(Boolean);
             const bad = picked.filter(u => !valid.has(u));
             if (bad.length) {
               return new Response(JSON.stringify({ error: `Not ${biz.name} units: ${bad.join(', ')}` }),

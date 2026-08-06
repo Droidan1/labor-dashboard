@@ -697,6 +697,14 @@
             </div>
           </div>
         </div>
+        <!-- E-Commerce's only nav item today. Hidden by default and shown by
+             applyRoleUI only for an account that actually holds E-Commerce;
+             applyBusinessNav then hides it again while you are inside Bargain
+             Lane. Both must agree, same as every other item here. -->
+        <div id="nav-ebay-cases" class="hidden nav-item" data-page="ebay-cases" onclick="navigateToPage('ebay-cases')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+          <span class="nav-label">eBay Cases</span>
+        </div>
         <div id="nav-inventory" class="hidden nav-item" data-page="inventory" onclick="navigateToPage('inventory')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
           <span class="nav-label">Inventory</span>
@@ -803,6 +811,12 @@
         <div class="flex items-center justify-between px-5 pb-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
           <div class="min-w-0"><div id="more-email" class="text-sm font-semibold text-opl-ink dark:text-op-ink truncate"></div><div id="more-role" class="text-xs text-opl-inkDim dark:text-op-inkDim capitalize"></div></div>
         </div>
+        <!-- E-Commerce's only page. The bottom bar's tabs are all Bargain Lane's,
+             so without this row E-Commerce has no navigation whatsoever on a
+             phone — and this is an installed PWA. -->
+        <button id="more-ebay-cases" onclick="navigateToPage('ebay-cases');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
+          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>eBay Cases
+        </button>
         <button id="more-submit-photos" onclick="navigateToPage('submit-photos');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Submit Photos
         </button>
@@ -2045,6 +2059,103 @@
         </div>
       </div>
     </div><!-- end #page-flow-calendar -->
+
+    <div id="page-ebay-cases" class="hidden">
+      <style>
+        /* Urgency is the only colour that carries meaning on this page, so it is
+           the only thing given a bespoke palette. Everything else uses the
+           standard op-* panel tokens. */
+        .eb-u-over{color:#dc2626}  .dark .eb-u-over{color:#f87171}
+        .eb-u-crit{color:#dc2626}  .dark .eb-u-crit{color:#f87171}
+        .eb-u-warn{color:#d97706}  .dark .eb-u-warn{color:#fbbf24}
+        .eb-u-ok  {color:#16a34a}  .dark .eb-u-ok  {color:#4ade80}
+        .eb-u-none{color:#9ca3af}
+        .eb-pill{display:inline-flex;align-items:center;gap:.35rem;font-size:10px;
+          letter-spacing:.12em;text-transform:uppercase;font-weight:700;
+          padding:.25rem .5rem;border-radius:9999px;border:1px solid}
+        .eb-pill-live   {color:#dc2626;border-color:rgba(220,38,38,.45)}
+        .eb-pill-shadow {color:#d97706;border-color:rgba(217,119,6,.45)}
+        .eb-pill-off    {color:#9ca3af;border-color:rgba(156,163,175,.45)}
+        .eb-pill-unknown{color:#9ca3af;border-color:rgba(156,163,175,.45);border-style:dashed}
+        .eb-chip{font-size:12px;padding:.25rem .625rem;border-radius:9999px;
+          border:1px solid rgba(20,16,8,.1);cursor:pointer;transition:all .15s}
+        .dark .eb-chip{border-color:rgba(255,255,255,.12)}
+        .eb-chip-on{background:#3BB54A;border-color:#3BB54A;color:#04140a;font-weight:600}
+        .eb-banner{border-radius:.75rem;padding:.875rem 1rem;border:1px solid;font-size:14px}
+        .eb-banner-dead{background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.4);color:#b91c1c}
+        .dark .eb-banner-dead{color:#fca5a5}
+        .eb-banner-warn{background:rgba(217,119,6,.08);border-color:rgba(217,119,6,.4);color:#b45309}
+        .dark .eb-banner-warn{color:#fcd34d}
+      </style>
+
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-3 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-6xl mx-auto">
+          <div class="flex items-end justify-between gap-4 flex-wrap mb-3">
+            <div>
+              <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">eBay Cases</h1>
+              <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Shoes &amp; Fashions &middot; returns and item-not-received</p>
+            </div>
+            <div class="flex items-center gap-3 flex-wrap">
+              <span id="eb-mode" class="eb-pill eb-pill-unknown">Mode unknown</span>
+              <span id="eb-updated" class="text-[11px] text-opl-inkDim dark:text-op-inkDim"></span>
+              <button id="eb-refresh" onclick="ebRefresh()" class="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition disabled:opacity-50">
+                <svg id="eb-refresh-icon" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+                Refresh
+              </button>
+            </div>
+          </div>
+          <div class="flex gap-1.5 items-center flex-wrap">
+            <span class="text-[11px] text-opl-inkDim dark:text-op-inkDim w-[58px]">Account</span>
+            <div id="eb-acct-chips" class="flex gap-1.5 flex-wrap"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 pt-4 pb-6 space-y-5">
+        <!-- Alert rail: staleness and failed auto-acts. Empty (and hidden) when
+             everything is healthy, so its presence alone means something. -->
+        <div id="eb-alerts" class="space-y-3"></div>
+
+        <div id="eb-kpis" class="grid grid-cols-2 lg:grid-cols-4 gap-3"></div>
+
+        <!-- 🔑 Two lists, never one. The server does the split; mixing them into a
+             single urgency-sorted list is what Raj's own dashboard did, and it
+             sends whoever works these at cases eBay has already decided. -->
+        <section class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors">
+          <div class="px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-baseline justify-between gap-3 flex-wrap">
+            <h2 class="font-semibold text-opl-ink dark:text-op-ink">Needs action <span id="eb-actionable-count" class="text-xs text-opl-inkDim dark:text-op-inkDim font-normal"></span></h2>
+            <span id="eb-actionable-amount" class="text-sm font-semibold tabular-nums text-opl-ink dark:text-op-ink"></span>
+          </div>
+          <div id="eb-actionable" class="divide-y divide-[rgba(20,16,8,0.06)] dark:divide-[rgba(255,255,255,0.06)]"></div>
+        </section>
+
+        <section class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors">
+          <div class="px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+            <div class="flex items-baseline justify-between gap-3 flex-wrap">
+              <h2 class="font-semibold text-opl-ink dark:text-op-ink">With eBay <span id="eb-appeals-count" class="text-xs text-opl-inkDim dark:text-op-inkDim font-normal"></span></h2>
+              <span id="eb-appeals-amount" class="text-sm tabular-nums text-opl-inkDim dark:text-op-inkDim"></span>
+            </div>
+            <p class="mt-1 text-xs text-opl-inkDim dark:text-op-inkDim">
+              Escalated, and the buyer can no longer escalate further &mdash; eBay owns the outcome.
+              These are appeal questions, not cases anyone can still resolve. Their total is shown
+              separately because it is not money still on the table.
+            </p>
+          </div>
+          <div id="eb-appeals" class="divide-y divide-[rgba(20,16,8,0.06)] dark:divide-[rgba(255,255,255,0.06)]"></div>
+        </section>
+
+        <section class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors">
+          <div class="px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+            <h2 class="font-semibold text-opl-ink dark:text-op-ink">Recent Handler actions <span id="eb-actions-count" class="text-xs text-opl-inkDim dark:text-op-inkDim font-normal"></span></h2>
+            <p class="mt-1 text-xs text-opl-inkDim dark:text-op-inkDim">
+              What the bot did without being asked. Dry-run lines are written in shadow mode and
+              did not reach eBay.
+            </p>
+          </div>
+          <div id="eb-actions" class="overflow-x-auto"></div>
+        </section>
+      </div>
+    </div><!-- end #page-ebay-cases -->
 
     <div id="page-settings" class="hidden">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
@@ -7230,6 +7341,13 @@
       const allowed = ['superuser','admin','district_manager','manager'];
       if (!allowed.includes(role)) return;
     }
+    // eBay Cases belongs to E-Commerce, so the guard is the business you hold,
+    // not your role — mirroring the worker's fail-closed business gate, which is
+    // the real boundary. Without this a stale deep link or history entry would
+    // render the shell for someone the API then 403s.
+    if (page === 'ebay-cases') {
+      if (!userBusinesses(currentUser).some(b => b.id === 'ecom')) return;
+    }
     // Guard superuser-only pages
     if (page === 'admin-settings') {
       if (!currentUser || currentUser.role !== 'superuser') return;
@@ -7252,7 +7370,7 @@
     // restores it via its own Close button; if it's ever dismissed another way
     // (Android back gesture, etc.) scrolling would stay frozen app-wide.
     if (document.body.style.overflow) document.body.style.overflow = '';
-    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings', 'no-access', 'landing'];
+    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings', 'no-access', 'landing', 'ebay-cases'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
       if (pageEl) pageEl.classList.toggle('hidden', p !== page);
@@ -7301,6 +7419,9 @@
     // Keep the Marketing dropdown expanded while on either of its pages.
     if ((page === 'marketing' || page === 'flow-calendar' || page === 'submit-photos' || page === 'content') && typeof toggleMarketingMenu === 'function') {
       toggleMarketingMenu(true);
+    }
+    if (page === 'ebay-cases') {
+      if (typeof initEbayCases === 'function') initEbayCases();
     }
     if (page === 'users') {
       loadUsers();
@@ -16596,6 +16717,344 @@
     return !!user && FINANCIAL_ROLES.includes(user.role);
   }
 
+  // ── eBay Cases (E-Commerce) ──────────────────────────────────────
+  // Draws Handler's data. Handler is Rajat R's external Node app: it polls eBay
+  // every ~30 min, classifies every open case, and can auto-resolve one inside a
+  // narrow window. We own the page, the alerting and the notification ledger.
+  //
+  // 🔑 Five things measured off his REAL files that this page must not get wrong.
+  // Each has a cheaper wrong version, and the wrong versions are why these are
+  // spelled out here rather than left to whoever reads the code next:
+  //
+  //   1. `effectiveMode` is NULL. It is absent from the real state file, so the
+  //      endpoint returns null deliberately. Render "unknown", never guess. Both
+  //      accounts read mode:"live" while forcedShadow holds them in shadow — a
+  //      page that guessed would be wrong in the most dangerous direction.
+  //   2. Staleness is last_successful_run_at, NEVER last_run_at. The latter
+  //      advances even on a run where every account failed to authenticate,
+  //      which is exactly the run that has to go red.
+  //   3. Hours-left is RECOMPUTED from respond_by. Handler's own `_hoursLeft` is
+  //      per-run scratch and drifts between runs.
+  //   4. Actionable and appeals totals stay APART. Appeals are cases eBay has
+  //      already decided; folding them into one figure overstates what is still
+  //      recoverable. The server splits the lists; this file must not re-merge.
+  //   5. buyer_comments is buyer-supplied AND arrives with raw HTML entities.
+  //      Decode then escape — see ebComment().
+  let ebData = null, ebAccount = '', ebLoading = false, ebFetchedAt = null;
+
+  // Handler polls every ~30 min, so one missed run is noise and six in a row is
+  // not. These are display thresholds only; the real dead-man's-switch is the
+  // cron alert, which is a separate slice.
+  const EB_STALE_WARN_MIN = 60;
+  const EB_STALE_DEAD_MIN = 180;
+
+  // Handler forwards eBay's raw HTML entities, so escaping alone renders
+  // "&amp;amp;" and decoding alone is an XSS hole on attacker-controlled text.
+  // Do both: a detached <textarea> parses entities as RCDATA, so markup inside
+  // it is never turned into elements — then escape the plain text for output.
+  function ebComment(s) {
+    if (s == null || s === '') return '';
+    const t = document.createElement('textarea');
+    t.innerHTML = String(s);
+    return escapeHtml(t.value);
+  }
+
+  // 🔑 Never Handler's _hoursLeft. Returns null when there is no usable deadline
+  // rather than 0 — "no deadline" and "due now" must not render the same.
+  function ebHoursLeft(respondBy) {
+    if (!respondBy) return null;
+    const t = Date.parse(respondBy);
+    if (!Number.isFinite(t)) return null;
+    return (t - Date.now()) / 3600000;
+  }
+
+  function ebRelHours(h) {
+    const a = Math.abs(h);
+    if (a < 1)  return Math.max(1, Math.round(a * 60)) + 'm';
+    if (a < 48) return Math.round(a) + 'h';
+    return Math.round(a / 24) + 'd';
+  }
+
+  function ebUrgency(h) {
+    if (h == null) return { cls: 'eb-u-none', label: 'No deadline' };
+    if (h < 0)  return { cls: 'eb-u-over', label: ebRelHours(h) + ' past deadline' };
+    if (h < 6)  return { cls: 'eb-u-crit', label: ebRelHours(h) + ' left' };
+    if (h < 24) return { cls: 'eb-u-warn', label: ebRelHours(h) + ' left' };
+    return { cls: 'eb-u-ok', label: ebRelHours(h) + ' left' };
+  }
+
+  // 🔑 null is its own state, and it is the state production is in today.
+  function ebModeBadge(mode) {
+    if (!mode) {
+      return { txt: 'Mode unknown', cls: 'eb-pill-unknown',
+               title: 'Handler does not report effectiveMode yet, so this page cannot tell whether the bot is acting. It is not a claim that the bot is off.' };
+    }
+    const m = String(mode).toUpperCase();
+    if (m === 'LIVE')   return { txt: 'Live — auto-acting', cls: 'eb-pill-live',   title: 'Handler will act on cases without asking first.' };
+    if (m === 'SHADOW') return { txt: 'Shadow — not acting', cls: 'eb-pill-shadow', title: 'Handler logs what it would do but does not call eBay.' };
+    if (m === 'OFF')    return { txt: 'Off — not polling',   cls: 'eb-pill-off',    title: 'Kill switch. Nothing is being polled.' };
+    return { txt: m, cls: 'eb-pill-unknown', title: '' };
+  }
+
+  function ebStaleness(lastSuccessfulRunAt) {
+    if (!lastSuccessfulRunAt) {
+      return { level: 'dead', mins: null,
+               msg: 'Handler has never reported a successful run. Nothing on this page is current.' };
+    }
+    const t = Date.parse(lastSuccessfulRunAt);
+    if (!Number.isFinite(t)) {
+      return { level: 'dead', mins: null, msg: 'Handler’s last-run timestamp is unreadable.' };
+    }
+    const mins = (Date.now() - t) / 60000;
+    if (mins > EB_STALE_DEAD_MIN) {
+      return { level: 'dead', mins,
+               msg: `No successful Handler run for ${ebRelHours(mins / 60)}. It polls every ~30 minutes, so it has most likely stopped — these cases are not being watched.` };
+    }
+    if (mins > EB_STALE_WARN_MIN) {
+      return { level: 'warn', mins,
+               msg: `Last successful Handler run was ${ebRelHours(mins / 60)} ago — later than its ~30 minute cycle.` };
+    }
+    return { level: 'ok', mins, msg: '' };
+  }
+
+  function ebFmtWhen(iso) {
+    if (!iso) return '—';
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return '—';
+    return new Date(t).toLocaleString('en-US',
+      { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  // Applies the account chip to the server's already-split lists. The triage
+  // decision itself stays server-side — this only narrows within it, so the two
+  // lists can never be re-merged by accident here.
+  function ebView() {
+    if (!ebData) return null;
+    const pick = rows => (ebAccount ? (rows || []).filter(c => c.account === ebAccount) : (rows || []));
+    const actionable = pick(ebData.actionable);
+    const appeals    = pick(ebData.appeals);
+    const sum = rows => rows.reduce((n, c) => n + (Number(c.amount) || 0), 0);
+    return {
+      actionable, appeals,
+      // Recomputed for the filtered view. Unfiltered these equal the server's
+      // own counts/actionableAmount — asserted in test-ebay-cases-page.mjs.
+      actionableAmount: sum(actionable),
+      appealsAmount: sum(appeals),
+    };
+  }
+
+  function ebCaseRow(c, kind) {
+    const h = ebHoursLeft(c.respond_by);
+    const u = ebUrgency(h);
+    // 🔑 title is null on every one of the 193 real cases — it is resolved from
+    // the order and Enrich had not run. Falling back to the case id keeps a row
+    // identifiable instead of blank.
+    const name = c.title || c.sku || `Case ${c.case_id}`;
+    const amt = Number(c.amount) || 0;
+    const comment = ebComment(c.buyer_comments);
+    const decision = c.decision && c.decision !== 'NONE' ? c.decision : '';
+    return `<div class="px-5 py-4">
+      <div class="flex items-start justify-between gap-4 flex-wrap">
+        <div class="min-w-0 flex-1">
+          <div class="font-medium text-opl-ink dark:text-op-ink truncate">${escapeHtml(name)}</div>
+          <div class="mt-0.5 text-xs text-opl-inkDim dark:text-op-inkDim">
+            ${escapeHtml(c.account || '—')} &middot; ${escapeHtml(c.case_type || '—')} &middot; #${escapeHtml(c.case_id || '—')}${
+              c.buyer_username ? ' &middot; ' + escapeHtml(c.buyer_username) : ''}
+          </div>
+        </div>
+        <div class="text-right flex-shrink-0">
+          <div class="font-semibold tabular-nums text-opl-ink dark:text-op-ink">${amt > 0 ? fmtDollar(amt) : '—'}</div>
+          <div class="mt-0.5 text-xs font-semibold ${u.cls}">${escapeHtml(u.label)}</div>
+        </div>
+      </div>
+      <div class="mt-2 flex items-center gap-2 flex-wrap text-[11px] text-opl-inkDim dark:text-op-inkDim">
+        ${decision ? `<span class="px-1.5 py-0.5 rounded border border-[rgba(20,16,8,0.1)] dark:border-op-border font-semibold tracking-wide">${escapeHtml(decision)}</span>` : ''}
+        ${c.decision_reason ? `<span>${escapeHtml(c.decision_reason)}</span>` : ''}
+        <span>Due ${escapeHtml(ebFmtWhen(c.respond_by))}</span>
+        ${kind === 'appeal' && c.ebay_state ? `<span>&middot; ${escapeHtml(c.ebay_state)}</span>` : ''}
+      </div>
+      ${comment ? `<div class="mt-2 text-xs text-opl-inkDim dark:text-op-inkDim border-l-2 border-[rgba(20,16,8,0.12)] dark:border-op-border pl-2.5 italic">${comment}</div>` : ''}
+      ${c.owner || c.last_notified_at ? `<div class="mt-2 text-[11px] text-opl-inkDimmer dark:text-op-inkDimmer">${
+        c.owner ? 'Owner ' + escapeHtml(c.owner) : 'Unassigned'}${
+        c.last_notified_at ? ' &middot; notified ' + escapeHtml(ebFmtWhen(c.last_notified_at)) : ' &middot; never notified'}</div>` : ''}
+    </div>`;
+  }
+
+  function ebEmpty(msg) {
+    return `<div class="px-5 py-10 text-center text-sm text-opl-inkDim dark:text-op-inkDim">${escapeHtml(msg)}</div>`;
+  }
+
+  function ebRender() {
+    const setHtml = (id, h) => { const n = el(id); if (n) n.innerHTML = h; };
+    const setTxt  = (id, t) => { const n = el(id); if (n) n.textContent = t; };
+
+    // ── Mode badge ──────────────────────────────────────────────────
+    const badge = ebModeBadge(ebData && ebData.effectiveMode);
+    const mEl = el('eb-mode');
+    if (mEl) { mEl.className = 'eb-pill ' + badge.cls; mEl.textContent = badge.txt; mEl.title = badge.title || ''; }
+    setTxt('eb-updated', ebFetchedAt ? 'Loaded ' + ebFetchedAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '');
+
+    // ── Account chips ───────────────────────────────────────────────
+    // Built from the UNFILTERED response so narrowing to one account can never
+    // remove the chip you would use to get back.
+    const accts = (ebData && ebData.accounts) || [];
+    setHtml('eb-acct-chips', [
+      `<span class="eb-chip ${ebAccount === '' ? 'eb-chip-on' : ''}" onclick="ebSetAccount('')">All</span>`,
+      ...accts.map(a => `<span class="eb-chip ${ebAccount === a ? 'eb-chip-on' : ''}" onclick="ebSetAccount('${escapeHtml(a)}')">${escapeHtml(a)}</span>`),
+    ].join(''));
+
+    const v = ebView();
+
+    // ── Alert rail ──────────────────────────────────────────────────
+    const alerts = [];
+    // A failed auto-act goes FIRST and stays loudest: it means the last safety
+    // net fired and missed. Handler stubs httpStatus today, so every sample line
+    // is ok:true — this branch is unproven against real failures by construction.
+    const failed = ((ebData && ebData.recentActions) || []).filter(a => a.ok === 0 || a.ok === false);
+    if (failed.length) {
+      alerts.push(`<div class="eb-banner eb-banner-dead">
+        <b>${failed.length} auto-action${failed.length === 1 ? '' : 's'} failed.</b>
+        Handler tried to resolve ${failed.length === 1 ? 'a case' : 'these cases'} and eBay refused. Nothing caught this after it happened — see Recent Handler actions below.
+      </div>`);
+    }
+    const st = ebStaleness(ebData && ebData.lastSuccessfulRunAt);
+    if (st.level !== 'ok') {
+      alerts.push(`<div class="eb-banner eb-banner-${st.level === 'dead' ? 'dead' : 'warn'}">${escapeHtml(st.msg)}</div>`);
+    }
+    const alertsEl = el('eb-alerts');
+    if (alertsEl) { alertsEl.innerHTML = alerts.join(''); alertsEl.classList.toggle('hidden', alerts.length === 0); }
+
+    // ── KPIs ────────────────────────────────────────────────────────
+    // 🔑 Actionable and appeals amounts are separate tiles with separate labels.
+    // One blended "N open, $X" figure overstates what is still recoverable.
+    const tile = (label, val, sub, cls) => `<div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 py-3">
+        <div class="text-[10px] uppercase tracking-[0.14em] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(label)}</div>
+        <div class="mt-1 text-2xl font-semibold tabular-nums ${cls || 'text-opl-ink dark:text-op-ink'}">${val}</div>
+        <div class="mt-0.5 text-[11px] text-opl-inkDim dark:text-op-inkDim">${escapeHtml(sub)}</div>
+      </div>`;
+    if (v) {
+      const overdue = v.actionable.filter(c => { const h = ebHoursLeft(c.respond_by); return h != null && h < 0; }).length;
+      setHtml('eb-kpis', [
+        tile('Needs action', String(v.actionable.length), 'cases you can still resolve'),
+        tile('At stake', fmtDollar(v.actionableAmount), 'actionable only — excludes appeals'),
+        tile('Past deadline', String(overdue), 'still actionable, already late', overdue > 0 ? 'eb-u-over' : ''),
+        tile('With eBay', String(v.appeals.length), fmtDollar(v.appealsAmount) + ' — not recoverable'),
+      ].join(''));
+    } else {
+      setHtml('eb-kpis', '');
+    }
+
+    // ── The two lists ───────────────────────────────────────────────
+    if (!v) {
+      setHtml('eb-actionable', ebEmpty('Loading…'));
+      setHtml('eb-appeals', '');
+      setHtml('eb-actions', '');
+      return;
+    }
+    setTxt('eb-actionable-count', `(${v.actionable.length})`);
+    setTxt('eb-appeals-count', `(${v.appeals.length})`);
+    setTxt('eb-actionable-amount', v.actionable.length ? fmtDollar(v.actionableAmount) + ' at stake' : '');
+    setTxt('eb-appeals-amount', v.appeals.length ? fmtDollar(v.appealsAmount) + ' — eBay decides' : '');
+
+    // Server already sorted by respond_by ASC; re-sorting here would silently
+    // diverge from it. Only the account filter has been applied.
+    setHtml('eb-actionable', v.actionable.length
+      ? v.actionable.map(c => ebCaseRow(c, 'actionable')).join('')
+      : ebEmpty(ebData.counts && ebData.counts.open === 0
+          ? 'No open cases. Handler has not sent any, or there are genuinely none.'
+          : 'Nothing needs action right now.'));
+    setHtml('eb-appeals', v.appeals.length
+      ? v.appeals.map(c => ebCaseRow(c, 'appeal')).join('')
+      : ebEmpty('No cases sitting with eBay.'));
+
+    // ── Recent Handler actions ──────────────────────────────────────
+    // 🔑 Split on dry_run. In shadow the audit line is written with dryRun:true
+    // but the case record is NOT marked actioned, so the case alone cannot tell
+    // you whether money moved.
+    const acts = (ebData.recentActions || []).filter(a => !ebAccount || a.account === ebAccount);
+    setTxt('eb-actions-count', acts.length ? `(${acts.length})` : '');
+    setHtml('eb-actions', acts.length ? `<table class="w-full text-sm">
+        <thead><tr class="text-left text-[11px] uppercase tracking-wider text-opl-inkDim dark:text-op-inkDim border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+          <th class="px-5 py-2 font-semibold">When</th>
+          <th class="px-3 py-2 font-semibold">Account</th>
+          <th class="px-3 py-2 font-semibold">Case</th>
+          <th class="px-3 py-2 font-semibold">Action</th>
+          <th class="px-3 py-2 font-semibold text-right">Amount</th>
+          <th class="px-5 py-2 font-semibold text-right">Result</th>
+        </tr></thead>
+        <tbody>${acts.map(a => {
+          const failedRow = a.ok === 0 || a.ok === false;
+          const dry = a.dry_run === 1 || a.dry_run === true;
+          const result = failedRow
+            ? `<span class="font-semibold eb-u-over">Failed${a.http_status ? ' (' + escapeHtml(String(a.http_status)) + ')' : ''}</span>`
+            : dry ? '<span class="text-opl-inkDim dark:text-op-inkDim">Dry run</span>'
+                  : '<span class="font-semibold eb-u-ok">Sent to eBay</span>';
+          return `<tr class="border-b border-[rgba(20,16,8,0.05)] dark:border-[rgba(255,255,255,0.05)] last:border-0">
+            <td class="px-5 py-2.5 whitespace-nowrap text-opl-inkDim dark:text-op-inkDim">${escapeHtml(ebFmtWhen(a.ts))}</td>
+            <td class="px-3 py-2.5 whitespace-nowrap">${escapeHtml(a.account || '—')}</td>
+            <td class="px-3 py-2.5 whitespace-nowrap text-opl-inkDim dark:text-op-inkDim">${escapeHtml(a.case_type || '')} #${escapeHtml(a.case_id || '—')}</td>
+            <td class="px-3 py-2.5 whitespace-nowrap font-medium">${escapeHtml(a.action || '—')}</td>
+            <td class="px-3 py-2.5 text-right tabular-nums">${Number(a.amount) ? fmtDollar(Number(a.amount)) : '—'}</td>
+            <td class="px-5 py-2.5 text-right whitespace-nowrap">${result}${
+              a.error ? `<div class="text-[11px] eb-u-over">${escapeHtml(a.error)}</div>` : ''}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>` : ebEmpty('Handler has not recorded any actions. In shadow mode it still writes a dry-run line each time it would have acted, so an empty list means it has not reached that point.'));
+  }
+
+  function ebSetAccount(a) {
+    ebAccount = a || '';
+    ebRender();
+  }
+  window.ebSetAccount = ebSetAccount;
+
+  async function ebLoad() {
+    if (ebLoading) return;
+    ebLoading = true;
+    const btn = el('eb-refresh');
+    if (btn) btn.disabled = true;
+    try {
+      // Always fetched UNFILTERED: the account chips are built from this
+      // response, so narrowing server-side would drop the chip you need to get
+      // back to All. The endpoint's &account= param stays available for anything
+      // that wants one account without the others.
+      const r = await fetch(`${WORKER_BASE}?action=ebay-cases`, { credentials: 'include' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      ebData = d;
+      ebFetchedAt = new Date();
+      ebRender();
+    } catch (e) {
+      ebData = null;
+      const alertsEl = el('eb-alerts');
+      if (alertsEl) {
+        alertsEl.classList.remove('hidden');
+        alertsEl.innerHTML = `<div class="eb-banner eb-banner-dead">Could not load cases: ${escapeHtml(e.message || String(e))}</div>`;
+      }
+      const a = el('eb-actionable'); if (a) a.innerHTML = ebEmpty('No data.');
+      const p = el('eb-appeals');    if (p) p.innerHTML = '';
+      const x = el('eb-actions');    if (x) x.innerHTML = '';
+      const k = el('eb-kpis');       if (k) k.innerHTML = '';
+    } finally {
+      ebLoading = false;
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function ebRefresh() { ebLoad(); }
+  window.ebRefresh = ebRefresh;
+
+  // Lazy-init on first navigation, then reuse. Refresh is explicit — these
+  // deadlines move on the hour, not the second, so background polling would
+  // spend requests to change nothing.
+  function initEbayCases() {
+    if (ebData) { ebRender(); return; }
+    ebRender();
+    ebLoad();
+  }
+  window.initEbayCases = initEbayCases;
+
   // ── Which business the session is currently "inside" ─────────────
   // Kept in sessionStorage, not memory: landingPageFor() is also called when a
   // modal closes (closeHourlySnapshot) and on the deep-link fallback path, so
@@ -16642,7 +17101,17 @@
       if (active && biz.some(b => b.id === active)) return dashboardPageFor(active);
       return 'landing';
     }
-    if (biz.length === 1) setActiveBusiness(biz[0].id);
+    // 🔑 One business does not imply Bargain Lane. This returned the literal
+    // 'dashboard' regardless of WHICH business it was, so the first
+    // E-Commerce-only account would have booted straight onto Bargain Lane's
+    // dashboard — a page it holds no grant for, whose every request 403s.
+    if (biz.length === 1) {
+      setActiveBusiness(biz[0].id);
+      return dashboardPageFor(biz[0].id);
+    }
+    // Zero businesses — a pre-migration-030 schema, or businessesFor() failing
+    // closed to []. The dashboard is the behaviour that predates the picker and
+    // the worker still gates every request; do not tighten this here.
     return 'dashboard';
   }
 
@@ -16657,6 +17126,10 @@
   // far worse failure here than one showing up where it does not belong.
   // navBusinessAudit() below turns an unmapped id into a test failure instead.
   const NAV_BUSINESS = {
+    // 🔑 The first non-'bl' entry. Until this, every item was Bargain Lane's and
+    // applyBusinessNav had nothing to keep out of anyone's way in the other
+    // direction — inside E-Commerce the whole sidebar simply emptied.
+    'nav-ebay-cases': 'ecom',
     'nav-inventory': 'bl',
     'nav-supply-request': 'bl',
     'nav-users': 'bl',
@@ -16679,17 +17152,35 @@
   // open, business decides what is relevant here. Both must agree to show.
   function applyBusinessNav(businessId) {
     const biz = businessId || activeBusiness() || 'bl';
+    // Hides what another business owns, and puts back exactly what THIS function
+    // hid — no more.
+    //
+    // 🔑 It used to only ever ADD `hidden`, on the reasoning that un-hiding was
+    // applyRoleUI's job. But applyRoleUI runs exactly ONCE, at boot, so nothing
+    // ever undid this: entering E-Commerce and switching back left Bargain
+    // Lane's whole sidebar hidden until a hard reload. Demonstrated before the
+    // fix — after one round trip only Settings and Switch business survived.
+    //
+    // The original invariant is preserved literally rather than abandoned:
+    // `bizhid` is stamped ONLY on an item that was VISIBLE at the moment we hid
+    // it, so an item a ROLE gate hid is never marked, and this can still never
+    // reveal something the role gate closed.
+    const set = (n, hide) => {
+      if (!n) return;
+      if (hide) {
+        if (!n.classList.contains('hidden')) { n.dataset.bizhid = '1'; n.classList.add('hidden'); }
+      } else if (n.dataset.bizhid) {
+        delete n.dataset.bizhid;
+        n.classList.remove('hidden');
+      }
+    };
     for (const [id, owner] of Object.entries(NAV_BUSINESS)) {
       if (owner === null) continue;          // cross-business — leave alone
-      const n = el(id);
-      if (!n) continue;
-      // Only ever ADDS hidden. Removing it is applyRoleUI's job, so this can
-      // never reveal something a role gate hid.
-      if (owner !== biz) n.classList.add('hidden');
+      set(el(id), owner !== biz);
     }
     // data-page items the dashboard owns directly (Dashboard, Retail Summary).
     document.querySelectorAll('.nav-item[data-page="dashboard"], .nav-item[data-page="weekly-summary"]')
-      .forEach(n => { if (biz !== 'bl') n.classList.add('hidden'); });
+      .forEach(n => set(n, biz !== 'bl'));
   }
 
   // Every nav id in the DOM must be classified. Returns the unmapped ones so a
@@ -16708,14 +17199,38 @@
   // to open into. Until then this still returns to the picker rather than
   // inventing a half-built page — entering a business with nowhere to go is a
   // worse experience than the card staying inert.
+  // Each business's front door. E-Commerce has no sales feed, so its front door
+  // is the Cases page rather than a dashboard — returning 'landing' here used to
+  // bounce you straight back to the picker you just came from.
   function dashboardPageFor(businessId) {
-    return businessId === 'bl' ? 'dashboard' : 'landing';
+    if (businessId === 'bl') return 'dashboard';
+    if (businessId === 'ecom') return 'ebay-cases';
+    return 'landing';
+  }
+
+  // Is there a page to go INTO?
+  //
+  // 🔑 This is NOT the same question as `connected`, and conflating them is what
+  // made the eBay Cases page unreachable. The server derives `connected` from
+  // unit count (worker.js), so it means "this business's SOURCE SYSTEM is wired
+  // up" — SellerCloud, for E-Commerce. Entry asks something else: "does this app
+  // have a screen for this business". E-Commerce's honest answers differ — no
+  // sales feed, but a real Cases page — and one boolean cannot carry both
+  // without lying about one of them.
+  //
+  // Derived from the page map rather than stored, so a business becomes
+  // enterable exactly when it gains a front door, with no second flag to forget.
+  function businessHasSurface(id) {
+    return dashboardPageFor(id) !== 'landing';
   }
 
   // Enter a business from the picker.
   function enterBusiness(id) {
     const b = userBusinesses(currentUser).find(x => x.id === id);
-    if (!b || !b.connected) return;          // disabled cards are inert
+    // Inert only when there is nowhere to go. Not a widening: `businesses[]` is
+    // already grant-filtered server-side, and the worker's fail-closed business
+    // gate remains the real boundary for every request the page then makes.
+    if (!b || !businessHasSurface(b.id)) return;
     setActiveBusiness(id);
     applyBusinessNav(id);
     navigateToPage(dashboardPageFor(id));
@@ -16830,15 +17345,26 @@
   function renderLanding() {
     const biz = userBusinesses(currentUser);
     const fig = bargainLaneFigures();
-    const connected = biz.filter(b => b.connected);
+    // 🔑 Figures BY BUSINESS. Only Bargain Lane's are computable in this client —
+    // bargainLaneFigures() reads Clover feeds — so an id absent from this map has
+    // no numbers of its own and must never borrow another business's. The card
+    // body used to branch on `connected` and then interpolate `fig.*`
+    // unconditionally, so ANY second connected business would have printed
+    // Bargain Lane's net, pace, channel mix and order count under its own name
+    // (down to "storefronts / 6"). Branching on "have we got figures for THIS
+    // business" makes that impossible rather than merely unlikely.
+    const FIGURES = { bl: bargainLaneFigures };
+    // Businesses that actually contribute money to the group roll-up. NOT the
+    // same as `connected`, and not the same as "enterable" either.
+    const reporting = biz.filter(b => FIGURES[b.id]);
     const setTxt = (id, t) => { const n = el(id); if (n) n.textContent = t; };
     const setHtml = (id, h) => { const n = el(id); if (n) n.innerHTML = h; };
 
     // ── Hero ────────────────────────────────────────────────────────
-    const gTotal  = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.total  : 0), 0);
-    const gBudget = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.budget : 0), 0);
-    const gMtdA   = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdActual : 0), 0);
-    const gMtdB   = connected.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdBudget : 0), 0);
+    const gTotal  = reporting.reduce((n, b) => n + (b.id === 'bl' ? fig.total  : 0), 0);
+    const gBudget = reporting.reduce((n, b) => n + (b.id === 'bl' ? fig.budget : 0), 0);
+    const gMtdA   = reporting.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdActual : 0), 0);
+    const gMtdB   = reporting.reduce((n, b) => n + (b.id === 'bl' ? fig.mtdBudget : 0), 0);
     const gPace   = gBudget > 0 ? (gTotal / gBudget) * 100 : null;
 
     setTxt('landing-hero-total', fmtDollar(gTotal));
@@ -16846,7 +17372,11 @@
     setTxt('landing-hero-pace', gPace != null ? fmtPct(gPace, 0) : '—');
     const pEl = el('landing-hero-pace');
     if (pEl) pEl.className = 'mt-1 text-3xl font-semibold tabular-nums ' + lpPaceColour(gPace);
-    setTxt('landing-hero-reporting', `${connected.length} of ${biz.length} reporting`);
+    // "Reporting" counts businesses that actually contribute to the total above,
+    // not businesses that exist. With E-Commerce live-but-feedless this reads
+    // "1 of 2 reporting" — which is the honest number; counting it would claim
+    // the hero total covers revenue it does not include.
+    setTxt('landing-hero-reporting', `${reporting.length} of ${biz.length} reporting`);
     setTxt('landing-hero-budget', gBudget > 0 ? fmtDollar(gBudget) : '');
     const hb = el('landing-hero-bar');
     if (hb) {
@@ -16854,18 +17384,21 @@
       hb.className = 'h-full rounded-full transition-[width] duration-500 ' + lpPaceBar(gPace);
     }
     const live = el('landing-hero-live');
-    if (live) live.classList.toggle('hidden', connected.length === 0);
+    if (live) live.classList.toggle('hidden', reporting.length === 0);
     setTxt('landing-hero-mtd', gMtdB > 0
       ? `Month to date · ${fmtDollar(gMtdA)} vs ${fmtDollar(gMtdB)}` : '');
     setTxt('landing-hero-updated', 'Updated ' + new Date().toLocaleTimeString('en-US',
       { hour: 'numeric', minute: '2-digit' }));
 
     // ── Channel mix: one stacked bar + legend ───────────────────────
-    const CH = [
-      { label: 'Retail',  val: fig.retail,  bar: 'bg-accent-green',  dot: 'text-accent-green'  },
-      { label: 'BIN',     val: fig.bin,     bar: 'bg-accent-blue',   dot: 'text-accent-blue'   },
-      { label: 'Auction', val: fig.auction, bar: 'bg-accent-violet', dot: 'text-accent-violet' },
+    // Built from a figures object rather than closed over one, so the per-business
+    // card below can pass its OWN figures instead of borrowing the hero's.
+    const chOf = (x) => [
+      { label: 'Retail',  val: x.retail,  bar: 'bg-accent-green',  dot: 'text-accent-green'  },
+      { label: 'BIN',     val: x.bin,     bar: 'bg-accent-blue',   dot: 'text-accent-blue'   },
+      { label: 'Auction', val: x.auction, bar: 'bg-accent-violet', dot: 'text-accent-violet' },
     ];
+    const CH = chOf(fig);
     const chTotal = CH.reduce((n, c) => n + c.val, 0);
     setTxt('landing-mix-count', `${CH.filter(c => c.val > 0).length} of 3 channels`);
     setHtml('landing-mix-bar', chTotal > 0
@@ -16893,6 +17426,7 @@
 
     biz.forEach(b => {
       const source = SOURCE[b.id] || '';
+      const f = FIGURES[b.id] ? FIGURES[b.id]() : null;   // no figures → no numbers to print
       const card = document.createElement('div');
       card.className = 'rounded-card p-card flex flex-col transition-colors bg-opl-panel dark:bg-op-panel border '
         + (b.connected
@@ -16910,43 +17444,55 @@
            <span class="lp-pill ${b.connected ? 'lp-pill-live' : 'lp-pill-setup'} flex-shrink-0">● ${b.connected ? 'Live' : 'Setup'}</span>
          </div>`;
 
-      if (!b.connected) {
+      // No figures for this business — say so, and never fall through to the
+      // money block below, which is written entirely against Bargain Lane's.
+      // A business can be in this branch and still be worth entering:
+      // E-Commerce has no sales feed but does have the eBay Cases page.
+      if (!f) {
+        const canEnter = businessHasSurface(b.id);
         card.insertAdjacentHTML('beforeend',
           `<div class="mt-5 flex-1 rounded-xl border border-dashed border-[rgba(20,16,8,0.14)] dark:border-[rgba(255,255,255,0.11)] flex flex-col items-center justify-center text-center px-4 py-10">
              <div class="text-sm text-opl-inkDim dark:text-op-inkDim leading-relaxed">No sales data yet.<br>API credentials not issued</div>
-             <button type="button" disabled title="Needs SellerCloud API credentials first"
+             <button type="button" disabled title="Needs ${source} API credentials first"
                class="mt-4 text-xs font-semibold px-3.5 py-2 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-borderHi text-opl-inkDimmer dark:text-op-inkDimmer cursor-not-allowed">
                Connect ${source} →</button>
-           </div>`);
+           </div>
+           ${canEnter ? `<div class="mt-5 text-right">
+             <button type="button" class="lp-enter text-sm font-semibold text-accent-green hover:opacity-80 transition-opacity">Enter ${b.name} →</button>
+           </div>` : ''}`);
+        if (canEnter) {
+          const e = card.querySelector('.lp-enter');
+          if (e) e.addEventListener('click', () => enterBusiness(b.id));
+        }
         wrap.appendChild(card);
         return;
       }
 
       card.insertAdjacentHTML('beforeend',
         `<div class="lp-eyebrow mt-5">Today's net</div>
-         <div class="mt-1 text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(fig.total)}</div>
-         <div class="mt-1 text-sm">${lpDelta(fig.total, fig.budget)}</div>
+         <div class="mt-1 text-3xl font-semibold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(f.total)}</div>
+         <div class="mt-1 text-sm">${lpDelta(f.total, f.budget)}</div>
 
          <div class="mt-4 flex items-center justify-between">
-           <span class="lp-eyebrow">Pace · ${fig.reporting} of ${fig.storeCount} reporting</span>
-           <span class="text-sm font-semibold tabular-nums ${lpPaceColour(fig.pace)}">${fig.pace != null ? fmtPct(fig.pace, 0) : '—'}</span>
+           <span class="lp-eyebrow">Pace · ${f.reporting} of ${f.storeCount} reporting</span>
+           <span class="text-sm font-semibold tabular-nums ${lpPaceColour(f.pace)}">${f.pace != null ? fmtPct(f.pace, 0) : '—'}</span>
          </div>
          <div class="mt-2 h-1.5 rounded-full bg-[rgba(20,16,8,0.07)] dark:bg-[rgba(255,255,255,0.07)] overflow-hidden">
-           <div class="h-full rounded-full ${lpPaceBar(fig.pace)}" style="width:${fig.pace != null ? Math.max(0, Math.min(100, fig.pace)) : 0}%"></div>
+           <div class="h-full rounded-full ${lpPaceBar(f.pace)}" style="width:${f.pace != null ? Math.max(0, Math.min(100, f.pace)) : 0}%"></div>
          </div>
 
          <div class="mt-4 grid grid-cols-3 gap-2">
-           ${CH.map(c => `<div class="rounded-xl border border-[rgba(20,16,8,0.07)] dark:border-[rgba(255,255,255,0.07)] bg-opl-panelHi dark:bg-[rgba(255,255,255,0.02)] px-3 py-2.5">
+           ${chOf(f).map(c => `<div class="rounded-xl border border-[rgba(20,16,8,0.07)] dark:border-[rgba(255,255,255,0.07)] bg-opl-panelHi dark:bg-[rgba(255,255,255,0.02)] px-3 py-2.5">
                <div class="lp-eyebrow" style="font-size:10px">${c.label}</div>
                <div class="mt-1 text-[15px] font-semibold tabular-nums ${c.val > 0 ? 'text-opl-ink dark:text-op-ink' : 'text-opl-inkDimmer dark:text-op-inkDimmer'}">${fmtDollar(c.val)}</div>
              </div>`).join('')}
          </div>
 
          <div class="mt-3 grid grid-cols-4 gap-2">
-           ${lpTile('Cart',  fig.avgCart != null ? fmtDollar(fig.avgCart) : '—', 'cart')}
-           ${lpTile('Items', fig.avgItems ? fig.avgItems.toFixed(1) : '—', 'items')}
-           ${lpTile('Orders', fig.orders != null ? fig.orders.toLocaleString('en-US') : '—', 'orders')}
-           ${lpTile(b.unitNoun + 's', String(fig.storeCount), 'asp')}
+           ${lpTile('Cart',  f.avgCart != null ? fmtDollar(f.avgCart) : '—', 'cart')}
+           ${lpTile('Items', f.avgItems ? f.avgItems.toFixed(1) : '—', 'items')}
+           ${lpTile('Orders', f.orders != null ? f.orders.toLocaleString('en-US') : '—', 'orders')}
+           ${lpTile(b.unitNoun + 's', String(f.storeCount), 'asp')}
          </div>
 
          <div class="mt-5 text-right">
@@ -16997,6 +17543,13 @@
     const fcEd = el('fc-edit-toggle'); if (fcEd) fcEd.classList.toggle('hidden', !isAdmin);
     // Photo upload alerts toggle (Settings › Notifications): admin/superuser only.
     const uaRow = el('notif-upload-alerts-row'); if (uaRow) uaRow.classList.toggle('hidden', !isAdmin);
+    // eBay Cases is gated on HOLDING E-Commerce, not on a role. The worker's
+    // business gate refuses ?action=ebay-cases to anyone without an ecom grant
+    // regardless of role, so mirroring that is both correct and the only honest
+    // option while "what role does Meredith get" is still unanswered — a role
+    // rule invented here would have to be unpicked once that lands.
+    const ebNav = el('nav-ebay-cases');
+    if (ebNav) ebNav.classList.toggle('hidden', !userBusinesses(user).some(b => b.id === 'ecom'));
     el('nav-inventory').classList.toggle('hidden', !isAdmin);
     el('nav-supply-request').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');
     el('nav-users').classList.toggle('hidden', !isAdmin);
@@ -17004,6 +17557,17 @@
     el('nav-settings').classList.remove('hidden');
     const adminOpt = el('invite-role-admin');
     if (adminOpt) adminOpt.classList.toggle('hidden', !isSuperuser);
+
+    // 🔑 Business filtering must run at boot, and until now it did not on the
+    // commonest path. The boot router is `if (landing !== 'dashboard')
+    // navigateToPage(landing, false)`, and applyBusinessNav is only reachable
+    // from navigateToPage and enterBusiness — so anyone whose landing IS the
+    // dashboard never got filtered, and saw every other business's nav items in
+    // Bargain Lane's sidebar. Runs last, after every role toggle above (role
+    // decides what you MAY open; business decides what is relevant here) and
+    // before the __syncBottomNav block below, so the bottom bar syncs against
+    // business-filtered state rather than pre-filter state.
+    try { applyBusinessNav(); } catch (_) {}
 
     // Role is now known — let the bottom nav decide admin vs manager layout
     // and correct any pre-auth boot state immediately (not on next nav).
@@ -18106,12 +18670,21 @@
     // pulse, no words — teaches "this edge is interactive") + one-time
     // "Swipe back" label on the user's first detail-page visit ever.
     // localStorage key `swipeBackHintShown` prevents the label re-appearing.
+    // The page this session treats as "home" — the business you are inside, not
+    // Bargain Lane's dashboard. Hardcoding 'dashboard' meant that inside
+    // E-Commerce the back rail never appeared (eBay Cases IS its home, but the
+    // test said otherwise) and an exhausted back stack threw you across the
+    // business boundary onto a dashboard you may hold no grant for.
+    function homePage() {
+      return dashboardPageFor(activeBusiness() || 'bl');
+    }
+
     function updateSwipeBackHint() {
       const rail = document.getElementById('swipe-rail');
       const label = document.getElementById('swipe-label');
       // currentPage is a top-level `let` — accessible via closure but NOT on
       // window. Using window.currentPage here would always be undefined.
-      const railOn = currentPage && currentPage !== 'dashboard';
+      const railOn = currentPage && currentPage !== homePage();
       if (rail) rail.classList.toggle('hidden', !railOn);
       if (!label) return;
       if (!railOn) { label.classList.add('hidden'); label.classList.remove('show'); return; }
@@ -18149,7 +18722,7 @@
       let activeEl = null;     // the page element being dragged
 
       function activePage() {
-        return currentPage && currentPage !== 'dashboard';
+        return currentPage && currentPage !== homePage();
       }
       function getActivePageEl() {
         return document.getElementById('page-' + currentPage);
@@ -18172,8 +18745,9 @@
       function goBack() {
         const prev = navStack.pop();
         if (!prev) {
-          // No history — fall back to dashboard (no-op if already there).
-          if (currentPage !== 'dashboard') navigateToPage('dashboard', /*pushHistory=*/false);
+          // No history — fall back to this business's home (no-op if already there).
+          const h = homePage();
+          if (currentPage !== h) navigateToPage(h, /*pushHistory=*/false);
           return;
         }
         if (prev.page === 'store-detail' && prev.store) {
@@ -18329,9 +18903,14 @@
       gate('bn-content', vis('nav-content'), 'flex');
       gate('bn-flow', vis('nav-flow-calendar'), 'flex');
       gate('bn-supply', mgrBar && vis('nav-supply-request'), 'flex');
-      gate('bn-submit-photos', mgrBar, 'flex');                     // center Submit: non-admins only
+      // ...and only while you are in the business that owns it. The sidebar
+      // mirror is the source of truth for every other tab; this one alone read
+      // the role without it, so a non-admin inside E-Commerce got a centred
+      // Submit Photos button belonging to Bargain Lane.
+      gate('bn-submit-photos', mgrBar && vis('nav-submit-photos'), 'flex');   // center Submit: non-admins only
       // More-sheet rows
       gate('more-submit-photos', !mgrBar && vis('nav-submit-photos')); // admins reach it via More
+      gate('more-ebay-cases', vis('nav-ebay-cases'));                  // mirrors the sidebar item
       gate('more-inventory', vis('nav-inventory'));                    // admin-only
       gate('more-supply', !mgrBar && vis('nav-supply-request'));       // admins: Supply lives here
       gate('more-marketing', vis('nav-marketing-ads'));
@@ -18340,7 +18919,9 @@
       gate('more-switch-business', vis('nav-switch-business')); // mirrors the sidebar item
       gate('more-settings', vis('nav-settings'));
       // active tab
-      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1 };
+      // 'ebay-cases' has no bar tab of its own, so without it here every tab
+      // sits dim while you are standing on the page.
+      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1 };
       if (!mgrBar) morePages['submit-photos'] = 1; // no center button → page lives under More
       if (isAdminBar) { morePages['inventory'] = 1; morePages['supply-request'] = 1; } // admin: both under More
       else { morePages['flow-calendar'] = 1; morePages['content'] = 1; }               // no bar tab for these
