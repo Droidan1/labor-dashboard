@@ -1,10 +1,16 @@
 # eBay Case Handler → RETJG HUB (2026-08-05)
 
-**Status: SLICE 1 BUILT, PARKED.** Branch `claude/ebay-cases-ingest` (`fca518f`, off
-`origin/main`) — ingest endpoint, D1 schema, 24 tests. **Not merged, not deployed,
-`migration-034` unapplied, and `EBAY_HANDLER_TOKEN` does not exist yet.**
-Held deliberately until Brian mints the token, so the first live POST can be
-proven against **staging** rather than prod — no real POST has ever landed.
+**Status: SLICES 1 + 2a MERGED to `main`, both INERT.**
+- #142 (`37d23cb`) — ingest endpoint + `migration-034` + 24 tests.
+- #143 (`db8bb48`) — business-aware sidebar (Slice 2a mechanism).
+
+🛑 **Nothing is live.** `EBAY_HANDLER_TOKEN` does not exist and `migration-034` is
+unapplied in both envs, so the endpoint 401s at the token check *before* touching a
+table — missing tables cannot blow up. Staging carries the code (worker `25e0c2b0`);
+prod carries the frontend (the Pages Action auto-deploys `index.html`).
+
+**Everything is blocked on Brian minting the token.** Then: `migration-034` → staging
+→ staging worker → Raj POSTs one real run at `api-staging.retjghub.com` → prod.
 
 Still blocked on the same two decisions from Ryan/Brandon (below). Raj's side
 remains built and waiting on us (`[Push] enabled=0`).
@@ -185,7 +191,30 @@ above `globalMaxActionsPerDay=40` with two accounts, so the global always binds 
 
 ## Build plan
 
-### ✅ Slice 1 — ingest (built 2026-08-05, parked on `claude/ebay-cases-ingest`)
+### ✅ Slice 1 — ingest (MERGED #142) · ✅ Slice 2a — business-aware nav (MERGED #143)
+
+🛑 **Three things the REAL files disproved in this doc.** Replaying Raj's actual
+`handler-state.json` (193 cases) and `audit.jsonl` (311 lines) through the real
+`worker.fetch` caught bugs the synthetic fixture could not:
+
+1. **Audit lines have NO field called `action`.** `action` lines carry `actionType`
+   (APPROVE_RETURN / ISSUE_REFUND); `decision` lines carry `decision`. Binding
+   `line.action` stored NULL on all 317 rows.
+2. **`effectiveMode` is NOT in the state file.** `accountStatus` is
+   `{checkedAt, fetched, ok, queueErrors}` — zero `"mode"` keys in 270 KB. The
+   "Data model" section above is wrong on this. Mode lives only in `handler.ini`,
+   so the page cannot show a LIVE/SHADOW badge until Raj adds the field. Raised.
+3. **All 193 `title`s are null**, against this doc's "title/sku: 0 null of 194".
+   Enrich had not run for that capture, or the doc measured another version. Raised.
+
+Reconciles exactly against the numbers sent to Raj: **193 cases · 43 open ·
+$2,072.79**. Full-file resend → 0 new events. Triage: 20 appeals vs 23 actionable.
+
+⚠️ The dedupe key offered to Raj by email — `(ts, kind, caseId)` — was the stale
+narrow one. Ours hashes the WHOLE raw line so resends are safe regardless, but his
+config line 52 still documents the wrong key.
+
+### Slice 1 detail (2026-08-05)
 
 - [x] `?action=ebay-handler-ingest` — POST-only, token-gated, dedupe + upsert.
 - [x] D1 schema `migration-034.sql`: `ebay_cases`, `ebay_actions`,
@@ -214,8 +243,15 @@ because `tok` already defaults to `""` so `"" !== undefined` still refuses. The
 guard is belt-and-braces; it is not what holds the door.
 
 ### Remaining
-- [ ] **Slice 2 — the Cases page.** ⚠️ Needs the sidebar to become BUSINESS-AWARE
-      first: nav items are hardcoded Bargain Lane and toggled by role, not by
+- [x] **Slice 2a — business-aware sidebar** (#143). `NAV_BUSINESS` maps each nav id
+      to its business; `applyBusinessNav()` is ADD-ONLY so it can never undo a role
+      gate; an unmapped id stays VISIBLE (chrome, not access control) and
+      `navBusinessAudit()` makes that a test failure instead.
+      ⚠️ **Owed:** a two-build before/after diff of Bargain Lane's sidebar vs main.
+      Merged on inspection + the add-only argument only, and it auto-deployed to prod.
+- [ ] **Slice 2b — the Cases page.** Has a nav slot now and 193 real cases to build
+      against. `dashboardPageFor('ecom')` still returns to the picker; 2b fills that.
+      ~~Needs the sidebar to become BUSINESS-AWARE first:~~ nav items are hardcoded Bargain Lane and toggled by role, not by
       business. `enterBusiness('ecom')` currently refuses because
       `dashboardPageFor('ecom')` has nowhere to send it — that stub is where this
       lands. Then: actionable vs appeals as two lists, account toggle,

@@ -16,6 +16,13 @@ business gate** (86 actions; unclassified = refused), cron coverage, and
 🛑 **Nothing structural blocks E-Commerce now — only SellerCloud credentials and
 data.** See `tasks/sellercloud-api-brief.md`.
 
+### eBay Cases (E-Commerce) — Slices 1 + 2a merged, inert
+
+`main` `db8bb48`. Ingest endpoint + `migration-034` (#142) and the business-aware
+sidebar (#143) are merged but **not live**: `EBAY_HANDLER_TOKEN` does not exist and
+`migration-034` is unapplied, so the endpoint 401s before touching a table.
+**Blocked on minting the token.** Plan: `tasks/ebay-case-handler.md`.
+
 ### 🛑 Still open, in priority order
 
 1. **Rotate the Clover tokens and `SNAPSHOT_SECRET`** — steps B and C below.
@@ -23,7 +30,11 @@ data.** See `tasks/sellercloud-api-brief.md`.
 2. **Convert the regex-extraction test suites to drive `worker.fetch`.** They cost a
    fix twice on 2026-08-05 (the cron business check, and splitting `allowedStores`
    broke four suites at once). They cannot see wiring, and the tax compounds.
-3. **Boost's `migration-032` has never run against prod** — it lives on the `staging`
+3. **Mint `EBAY_HANDLER_TOKEN`** and hand it to Raj out of band — the entire eBay
+   integration waits on it. Then migration-034 → staging → one real POST → prod.
+4. **Owed:** two-build before/after diff of Bargain Lane's sidebar vs main (#143
+   merged without it, and it auto-deployed to prod).
+5. **Boost's `migration-032` has never run against prod** — it lives on the `staging`
    branch with the Meta Boost feature and must be applied whenever that ships.
 
 ---
