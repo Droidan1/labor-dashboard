@@ -254,3 +254,84 @@ a feature.
 - **No client DOM test harness.** No `node_modules` and no network here, so jsdom could not
   be added or tried. All routing above is verified by hand in a browser, not in CI. This is
   the largest remaining risk and the honest follow-up.
+
+---
+
+# Unit scoping on `?action=ebay-cases` — DONE
+
+The business gate decides WHETHER you reach E-Commerce. This is the separate question of
+WHICH storefronts inside it, and the answer used to be "all of them".
+
+## What was wrong
+
+`?action=ebay-cases` filtered on `business = 'ecom'` plus a **caller-supplied** `&account=`.
+A scoped user who simply omitted that parameter received every account's rows — including
+`buyer_username` and `buyer_comments`, the two columns migration-034 records as the verified
+PII scope. A query parameter the caller chooses had been standing in for a boundary.
+
+## Changes (worker.js only)
+
+1. **`?action=ebay-cases` scopes to granted storefronts.** `allowedUnits(currentUser,'ecom')`
+   → `scopeSql`/`scopeBinds`, applied to the `ebay_cases` query **and** the `ebay_actions`
+   query. Empty grant → ` AND 1 = 0` (nothing, not everything; `IN ()` is a syntax error and
+   one code path means the response shape cannot drift). >50 units → 500 rather than a
+   truncated list, since D1 caps bound params at 100 and a silently shortened `IN` would hide
+   cases from someone entitled to them.
+2. **`handler.account_status` scoped.** 🛑 Found AFTER the test was green — see below.
+3. **`allowedUnits`: NULL units = every unit, for non-`bl` businesses.** That is what
+   `set-user-grants` writes for "no restriction" and what migration-030's schema declares.
+   ⚠️ **Bargain Lane keeps its legacy NULL-means-nothing reading** — its grants were
+   backfilled from `users.stores`, where NULL meant "never scoped", and
+   `test-cron-recipients.js` pins that an executive is excluded rather than assumed
+   chain-wide. Widening that decides who receives chain-wide revenue by email; not a side
+   effect of scoping another business.
+4. **`loadGrants` fails CLOSED on unparseable units JSON** (`[]`, not `null`). Now that
+   `null` means "every unit", parsing garbage into it would widen access on precisely the
+   input we understand least.
+5. **`set-user-grants` no longer uppercases unit codes.** They are compared verbatim against
+   `ebay_cases.account`, which Handler writes lowercase — `'shoes'` became `'SHOES'` and
+   matched nothing. Membership validation is unchanged and is the real check.
+
+## 🔑 The `account_status` leak, and why the test missed it
+
+`ebay_handler_state.account_status` is a JSON blob **keyed by account**, carrying each
+storefront's poll health. Scoping the two row queries left it whole: a manager scoped to
+`shoes` still learned that `fashion` exists, that it had 7 queue errors, and that its last
+fetch failed.
+
+**The scoping test was green when this was true.** Its blanket assertion
+`!body.includes('fashion')` was **vacuous** — the fixture sent `accountStatus: {}`, so the
+field that leaks was never populated. A throwaway probe using the real payload shape found
+it in about a minute. Fixture is now populated and there is a dedicated assertion on the
+parsed keys.
+
+⚠️ **Lesson: never leave a fixture empty for a field an absence-assertion is watching.**
+A blanket "this string appears nowhere" check is only as strong as the fixture behind it.
+
+## Verified
+
+`scripts/test-ebay-cases-scope.mjs` — 39 assertions through the REAL ingest → read round
+trip. 🔑 Every scoped case uses a **`manager`**: `allowedUnits` short-circuits to "every
+unit" for admin *and* superuser, so a test written with an admin passes vacuously. There is
+an explicit assertion pinning that short-circuit so it cannot change silently.
+
+Mutation-checked 10 ways — cases query unscoped, actions query unscoped, `account_status`
+unscoped, empty units failing open, corrupt JSON failing open, NULL-semantics reversed,
+`toUpperCase` restored, and `allow` forced to null (trusting `&account=` as the boundary).
+All killed. The `account_status` mutation was re-run with checksums after a first attempt
+produced output inconsistent with a one-line change; the clean run differs by exactly 2
+lines and fails exactly 2 assertions.
+
+Also confirmed by hand: `ebay-cases` and the token-gated ingest are the **only** readers of
+these tables, and the `scheduled()` path does not touch them — so the "cron bypasses request
+gates" trap does not apply here.
+
+Full suite green (14/43/39/33/47/20/17 + 6 assert-style), including every test pinning
+Bargain Lane's legacy grant behaviour.
+
+## Still not changed
+
+- **No `business_units` rows for ecom.** Enforcement now exists ahead of the data, which is
+  the right order — the endpoint will honour units the moment any exist.
+- `effectiveMode` is derived across all accounts (worst-case wins) and is still returned
+  whole. It is business-level operational state, not per-account data.
