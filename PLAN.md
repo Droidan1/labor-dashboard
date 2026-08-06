@@ -16,12 +16,15 @@ business gate** (86 actions; unclassified = refused), cron coverage, and
 🛑 **Nothing structural blocks E-Commerce now — only SellerCloud credentials and
 data.** See `tasks/sellercloud-api-brief.md`.
 
-### eBay Cases (E-Commerce) — Slices 1 + 2a merged, inert
+### eBay Cases (E-Commerce) — Slices 1, 2a, 2b-data DEPLOYED, inert
 
-`main` `db8bb48`. Ingest endpoint + `migration-034` (#142) and the business-aware
-sidebar (#143) are merged but **not live**: `EBAY_HANDLER_TOKEN` does not exist and
-`migration-034` is unapplied, so the endpoint 401s before touching a table.
-**Blocked on minting the token.** Plan: `tasks/ebay-case-handler.md`.
+Prod worker `d87ee9a5`. Ingest (#142), business-aware sidebar (#143) and the
+`?action=ebay-cases` read endpoint (#145) are all deployed but **inert**:
+`EBAY_HANDLER_TOKEN` does not exist and `migration-034` is unapplied, so both
+endpoints 401 before touching a table.
+
+**Blocked on minting the token.** Remaining build: the Cases **page**.
+Plan: `tasks/ebay-case-handler.md`.
 
 ### 🛑 Still open, in priority order
 

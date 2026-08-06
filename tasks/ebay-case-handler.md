@@ -1,8 +1,13 @@
 # eBay Case Handler → RETJG HUB (2026-08-05)
 
-**Status: SLICES 1 + 2a MERGED to `main`, both INERT.**
-- #142 (`37d23cb`) — ingest endpoint + `migration-034` + 24 tests.
-- #143 (`db8bb48`) — business-aware sidebar (Slice 2a mechanism).
+**Status: SLICES 1, 2a and 2b-DATA DEPLOYED TO PROD, all INERT.** Worker `d87ee9a5`.
+- #142 — ingest endpoint + `migration-034` + tests.
+- #143 — business-aware sidebar (Slice 2a mechanism).
+- #145 — `?action=ebay-cases` read endpoint; **first non-`bl` business-gate entry**.
+
+**Remaining for a working page: the Cases PAGE itself** — `page-cases` markup, a
+`NAV_BUSINESS` entry as `'ecom'`, `dashboardPageFor('ecom')` pointing at it, and
+rendering against the endpoint above.
 
 🛑 **Nothing is live.** `EBAY_HANDLER_TOKEN` does not exist and `migration-034` is
 unapplied in both envs, so the endpoint 401s at the token check *before* touching a
@@ -192,6 +197,18 @@ above `globalMaxActionsPerDay=40` with two accounts, so the global always binds 
 ## Build plan
 
 ### ✅ Slice 1 — ingest (MERGED #142) · ✅ Slice 2a — business-aware nav (MERGED #143)
+
+🛑 **The read endpoint went in the WRONG PLACE first, and only a test caught it.**
+It was placed beside the ingest endpoint — which sits ABOVE the auth gate — so it
+bypassed authentication AND the business gate, serving buyer usernames and comments
+unauthenticated. The two endpoints look alike and belong on OPPOSITE sides: ingest
+is above the gate *because* it self-gates on its own token; a session-based read
+must be below. A comment in the code says not to tidy them together, and the prod
+deploy guard now asserts the ordering.
+
+⚠️ **`set -e` does NOT abort on a git merge conflict.** A staging sync went on to
+test, build, push and attempt a deploy against a tree with conflict markers. Nothing
+landed, but by luck. Guard with `git diff --name-only --diff-filter=U`.
 
 🛑 **Three things the REAL files disproved in this doc.** Replaying Raj's actual
 `handler-state.json` (193 cases) and `audit.jsonl` (311 lines) through the real
