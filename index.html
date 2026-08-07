@@ -2088,6 +2088,30 @@
         .dark .eb-banner-warn{color:#fcd34d}
 
         /* ── Collapsible case card ─────────────────────────────────────── */
+        /* ── Collapsible SECTION (Needs action / With eBay / Recent actions) ──
+           Open by default: collapsing is a choice the reader makes, not a
+           default that hides 16 overdue cases from someone who just opened the
+           page. State is per-<details>, so it survives a re-render. */
+        .eb-sec > summary{list-style:none;cursor:pointer}
+        .eb-sec > summary::-webkit-details-marker{display:none}
+        .eb-sec > summary:hover{background:rgba(20,16,8,.02)}
+        .dark .eb-sec > summary:hover{background:rgba(255,255,255,.02)}
+        .eb-sec-chev{display:inline-block;color:#9c9484;font-size:10px;margin-right:8px;
+          transition:transform .15s;vertical-align:middle}
+        .eb-sec[open] > summary .eb-sec-chev{transform:rotate(90deg)}
+        /* A collapsed section should not keep the divider that separated it
+           from a body no longer on screen. */
+        .eb-sec:not([open]) > summary{border-bottom-color:transparent}
+
+        /* 🔑 Colour on the CARD ROOT, not per element. The first version set it
+           only on the DIM classes (.eb-acct, .eb-dt, .eb-cmt) and left .eb-nm,
+           .eb-amt and .eb-dd to inherit — which in dark mode meant inheriting
+           light-mode ink, so every case TITLE rendered near-black on near-black.
+           Setting it here means a new child is legible by default; the dim
+           classes still win because a directly-applied rule always beats an
+           inherited one. */
+        .eb-case{color:#14110a}
+        .dark .eb-case{color:#e7ecf3}
         .eb-case > summary{list-style:none;cursor:pointer;padding:12px 20px;
           display:grid;grid-template-columns:14px 1fr auto auto;gap:2px 12px;align-items:center}
         .eb-case > summary::-webkit-details-marker{display:none}
@@ -2158,18 +2182,18 @@
         <!-- 🔑 Two lists, never one. The server does the split; mixing them into a
              single urgency-sorted list is what Raj's own dashboard did, and it
              sends whoever works these at cases eBay has already decided. -->
-        <section class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors">
-          <div class="px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-baseline justify-between gap-3 flex-wrap">
-            <h2 class="font-semibold text-opl-ink dark:text-op-ink">Needs action <span id="eb-actionable-count" class="text-xs text-opl-inkDim dark:text-op-inkDim font-normal"></span></h2>
+        <details class="eb-sec bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors" open>
+          <summary class="eb-sec-sum px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-baseline justify-between gap-3 flex-wrap">
+            <h2 class="font-semibold text-opl-ink dark:text-op-ink"><span class="eb-sec-chev">&#9654;</span>Needs action <span id="eb-actionable-count" class="text-xs text-opl-inkDim dark:text-op-inkDim font-normal"></span></h2>
             <span id="eb-actionable-amount" class="text-sm font-semibold tabular-nums text-opl-ink dark:text-op-ink"></span>
-          </div>
+          </summary>
           <div id="eb-actionable" class="divide-y divide-[rgba(20,16,8,0.06)] dark:divide-[rgba(255,255,255,0.06)]"></div>
-        </section>
+        </details>
 
-        <section class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors">
-          <div class="px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <details class="eb-sec bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors" open>
+          <summary class="eb-sec-sum px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border block">
             <div class="flex items-baseline justify-between gap-3 flex-wrap">
-              <h2 class="font-semibold text-opl-ink dark:text-op-ink">With eBay <span id="eb-appeals-count" class="text-xs text-opl-inkDim dark:text-op-inkDim font-normal"></span></h2>
+              <h2 class="font-semibold text-opl-ink dark:text-op-ink"><span class="eb-sec-chev">&#9654;</span>With eBay <span id="eb-appeals-count" class="text-xs text-opl-inkDim dark:text-op-inkDim font-normal"></span></h2>
               <span id="eb-appeals-amount" class="text-sm tabular-nums text-opl-inkDim dark:text-op-inkDim"></span>
             </div>
             <p class="mt-1 text-xs text-opl-inkDim dark:text-op-inkDim">
@@ -2177,20 +2201,20 @@
               These are appeal questions, not cases anyone can still resolve. Their total is shown
               separately because it is not money still on the table.
             </p>
-          </div>
+          </summary>
           <div id="eb-appeals" class="divide-y divide-[rgba(20,16,8,0.06)] dark:divide-[rgba(255,255,255,0.06)]"></div>
-        </section>
+        </details>
 
-        <section class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors">
-          <div class="px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
-            <h2 class="font-semibold text-opl-ink dark:text-op-ink">Recent Handler actions <span id="eb-actions-count" class="text-xs text-opl-inkDim dark:text-op-inkDim font-normal"></span></h2>
+        <details class="eb-sec bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors" open>
+          <summary class="eb-sec-sum px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border block">
+            <h2 class="font-semibold text-opl-ink dark:text-op-ink"><span class="eb-sec-chev">&#9654;</span>Recent Handler actions <span id="eb-actions-count" class="text-xs text-opl-inkDim dark:text-op-inkDim font-normal"></span></h2>
             <p class="mt-1 text-xs text-opl-inkDim dark:text-op-inkDim">
               What the bot did without being asked. Dry-run lines are written in shadow mode and
               did not reach eBay.
             </p>
-          </div>
+          </summary>
           <div id="eb-actions" class="overflow-x-auto"></div>
-        </section>
+        </details>
       </div>
     </div><!-- end #page-ebay-cases -->
 
