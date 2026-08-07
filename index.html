@@ -2510,6 +2510,16 @@
                     class="w-4 h-4 accent-[#3BB54A] cursor-pointer ml-4">
                 </label>
                 <!-- Photo upload alerts (admin/superuser only — revealed by applyRoleUI) -->
+                <!-- Gated on HOLDING E-Commerce, not on a role — same rule as the
+                     nav item and as the worker's alert recipient query. -->
+                <label id="notif-ebay-alerts-row" class="hidden flex items-center justify-between cursor-pointer pt-1">
+                  <div>
+                    <p class="text-sm font-medium text-gray-800 dark:text-gray-200">eBay case alerts</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Push when a case needs review, when the bot is about to resolve one, or when an auto-action fails</p>
+                  </div>
+                  <input type="checkbox" id="notif-ebay-alerts-toggle" onchange="updateNotifPrefs()"
+                    class="w-4 h-4 accent-[#3BB54A] cursor-pointer ml-4">
+                </label>
                 <label id="notif-upload-alerts-row" class="hidden flex items-center justify-between cursor-pointer pt-1">
                   <div>
                     <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Photo upload alerts</p>
@@ -7536,6 +7546,8 @@
           if (weekly) weekly.checked = d.weeklyDigest !== false;
           if (supply) supply.checked = d.supplyNotifications !== false;
           if (upload) upload.checked = d.uploadAlerts !== false;
+          const ebayA = el('notif-ebay-alerts-toggle');
+          if (ebayA) ebayA.checked = d.ebayAlerts !== false;
           // Interval summary radio
           const interval = d.intervalSummary || 'off';
           const radio = document.querySelector(`input[name="interval-summary"][value="${interval}"]`);
@@ -7655,6 +7667,8 @@
     if (weekly) body.weekly_digest = weekly.checked;
     if (supply) body.supply_notifications = supply.checked;
     if (upload) body.upload_alerts = upload.checked;
+    const ebayA = el('notif-ebay-alerts-toggle');
+    if (ebayA) body.ebay_alerts = ebayA.checked;
     if (intervalRadio) body.interval_summary = intervalRadio.value;
     if (!Object.keys(body).length) return;
     try {
@@ -17543,6 +17557,10 @@
     const fcEd = el('fc-edit-toggle'); if (fcEd) fcEd.classList.toggle('hidden', !isAdmin);
     // Photo upload alerts toggle (Settings › Notifications): admin/superuser only.
     const uaRow = el('notif-upload-alerts-row'); if (uaRow) uaRow.classList.toggle('hidden', !isAdmin);
+    // Same gate as nav-ebay-cases: holding the business, not a role. Showing this
+    // to someone who cannot receive the alerts would be a setting that does nothing.
+    const ebRow = el('notif-ebay-alerts-row');
+    if (ebRow) ebRow.classList.toggle('hidden', !userBusinesses(user).some(b => b.id === 'ecom'));
     // eBay Cases is gated on HOLDING E-Commerce, not on a role. The worker's
     // business gate refuses ?action=ebay-cases to anyone without an ecom grant
     // regardless of role, so mirroring that is both correct and the only honest
