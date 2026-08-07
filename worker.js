@@ -7097,8 +7097,10 @@ export default {
             `INSERT INTO ebay_cases (case_key, business, account, case_type, case_id,
                ebay_state, is_closed, buyer_can_escalate, respond_by, first_seen, last_seen,
                decision, decision_reason, tier, title, sku, amount,
-               buyer_username, buyer_comments, raw, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               buyer_username, buyer_comments,
+               buyer_reason, activity_due, ebay_url, item_id, available_actions,
+               raw, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(case_key) DO UPDATE SET
                ebay_state=excluded.ebay_state, is_closed=excluded.is_closed,
                buyer_can_escalate=excluded.buyer_can_escalate, respond_by=excluded.respond_by,
@@ -7106,6 +7108,9 @@ export default {
                decision_reason=excluded.decision_reason, tier=excluded.tier,
                title=excluded.title, sku=excluded.sku, amount=excluded.amount,
                buyer_username=excluded.buyer_username, buyer_comments=excluded.buyer_comments,
+               buyer_reason=excluded.buyer_reason, activity_due=excluded.activity_due,
+               ebay_url=excluded.ebay_url, item_id=excluded.item_id,
+               available_actions=excluded.available_actions,
                raw=excluded.raw, updated_at=excluded.updated_at`
           ).bind(
             String(key), BIZ,
@@ -7118,6 +7123,12 @@ export default {
             str(c._decision), str(c._decisionReason), str(c._tier),
             str(c.title), str(c.sku), num(c.amount),
             str(c.buyerUsername), str(c.buyerComments),
+            // 🔑 ebayUrl is HANDLER'S, not inferred. His scheme is not uniform —
+            // RETURN goes to /rt/ReturnDetails?returnId=…, CASE and INQUIRY to
+            // /itm/<itemId>. Deriving a pattern from the RETURN rows would have
+            // sent 14 of 37 links to the wrong place.
+            str(c.buyerReason), str(c.activityDue), str(c.ebayUrl), str(c.itemId),
+            Array.isArray(c.availableActions) ? JSON.stringify(c.availableActions) : null,
             JSON.stringify(c), now
           ).run();
           caseCount++;
@@ -7379,7 +7390,8 @@ export default {
         const { results: open } = await env.DB.prepare(
           `SELECT case_key, account, case_type, case_id, ebay_state, buyer_can_escalate,
                   respond_by, decision, decision_reason, tier, title, sku, amount,
-                  buyer_username, buyer_comments, owner, last_notified_at, notified_via
+                  buyer_username, buyer_comments, owner, last_notified_at, notified_via,
+                  buyer_reason, activity_due, ebay_url, item_id, available_actions
              FROM ebay_cases WHERE ${where} AND is_closed = 0
             ORDER BY respond_by ASC`
         ).bind(...binds).all();
