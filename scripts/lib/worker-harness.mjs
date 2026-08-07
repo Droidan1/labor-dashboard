@@ -96,7 +96,16 @@ export const USERS = [
 // repo's own .sql rather than restated here, so a column added by a future
 // migration cannot silently desync the harness from production — that desync
 // would show up as a confusing 500 rather than as a real failure.
-function applyMigrationAlters(db, repo) {
+// 🔑 Exported so a test can re-run this AFTER creating tables the harness does
+// not build itself. makeEnv() calls it once, at which point ebay_cases (and
+// anything else born in a migration) does not exist — and the try/catch below
+// SWALLOWS that failure, so the column is silently missing and the symptom
+// surfaces much later as "no such column" inside an endpoint.
+//
+// That trap has now cost three debugging rounds (migration-035 twice, -036
+// once). Any test that execs a migration creating a table should call
+// applyMigrationAlters(db, repo) again straight afterwards.
+export function applyMigrationAlters(db, repo) {
   const files = fs.readdirSync(repo).filter(f => /^migration-\d+\.sql$/.test(f)).sort();
   const seen = new Set();
   for (const f of files) {

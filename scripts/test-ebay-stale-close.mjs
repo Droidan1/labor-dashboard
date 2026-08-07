@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadWorker, makeEnv, ctx, req, blockNetwork } from './lib/worker-harness.mjs';
+import { loadWorker, makeEnv, ctx, req, blockNetwork, applyMigrationAlters } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -25,6 +25,11 @@ const { db, env } = makeEnv(repo);
 for (const f of ['migration-008.sql', 'migration-031.sql', 'migration-033.sql', 'migration-034.sql']) {
   db.exec(fs.readFileSync(path.join(repo, f), 'utf8'));
 }
+// 🔑 Re-run the harness's ADD COLUMN pass now that the migration-created tables
+// exist. makeEnv() already ran it once, before ebay_cases existed, and it
+// swallows failures — so without this every future ALTER against ebay_cases is
+// silently skipped and surfaces as "no such column" inside an endpoint.
+applyMigrationAlters(db, repo);
 // See test-ebay-alerts.mjs: the harness applies ADD COLUMNs before these CREATEs
 // and swallows failures, so ebay_cases' column must be replayed from the file.
 const m035 = fs.readFileSync(path.join(repo, 'migration-035.sql'), 'utf8')
