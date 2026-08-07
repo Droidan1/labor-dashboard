@@ -17980,6 +17980,10 @@
       ok:    'border-green-200 dark:border-green-700 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400',
       error: 'border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400',
       info:  'border-yellow-200 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400',
+      // Explicit rather than falling through to `info`. A warning must also not
+      // auto-hide — see the 'ok'-only timeout below — because it reports an
+      // account that exists but that nobody has been emailed about.
+      warn:  'border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300',
     };
     s.className = `mb-4 text-sm px-4 py-3 rounded-lg border ${map[tone] || map.info}`;
     s.classList.remove('hidden');
@@ -18121,7 +18125,16 @@
       const data = await resp.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
       closeInviteModal();
-      usersSetStatus(`Welcome email sent to ${email}.`, 'ok');
+      // The account is created either way. Only the email can fail, and saying
+      // "email sent" when it was not would leave someone waiting for a link that
+      // is never coming — with no hint that Resend invite is the way out.
+      if (data.emailed === false) {
+        usersSetStatus(`${email} was created, but the invite email did not send`
+          + (data.emailError ? ` (${data.emailError})` : '')
+          + `. Use Resend invite to try again.`, 'warn');
+      } else {
+        usersSetStatus(`Welcome email sent to ${email}.`, 'ok');
+      }
       loadUsers();
     } catch (e) {
       showInviteStatus(e.message, 'error');

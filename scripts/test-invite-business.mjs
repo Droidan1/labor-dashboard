@@ -34,6 +34,7 @@ globalThis.fetch = async (u, init) => {
 };
 const worker = await loadWorker(repo);
 const { db, env } = makeEnv(repo);
+env.RESEND_API_KEY = 'test-key';   // the stub above answers for it
 for (const f of ['migration-031.sql', 'migration-033.sql']) {
   db.exec(fs.readFileSync(path.join(repo, f), 'utf8'));
 }
@@ -135,6 +136,49 @@ const grantsOf = (email) => {
   const ad = await worker.fetch(req('/?action=grant-options', { user: 'u-admin' }), env, ctx);
   const adIds = (JSON.parse(await ad.text()).businesses || []).map(b => b.id).sort();
   ok(adIds.join() === 'bl', `the ecom-stripped admin is offered only bl, got [${adIds}]`);
+}
+
+// ── 🛑 A failed invite EMAIL must not fail the invite ────────────────────
+// The user row, the grant and the magic link are all written before the mailer
+// runs. Throwing there returned 500 while the account EXISTED — the caller saw
+// "Failed", retried, and hit "already exists" with no way forward.
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    if (String(u).includes('api.resend.com')) throw new Error('resend is down');
+    return realFetch(u, init);
+  };
+  const r = await invite('u-su', { email: 'mailfail@x.com', role: 'manager', stores: ['BL1'] });
+  globalThis.fetch = realFetch;
+
+  ok(r.status === 200, `a mailer failure still returns 200, got ${r.status}`);
+  ok(r.body.ok === true, 'ok:true — the invite itself succeeded');
+  ok(r.body.emailed === false, `emailed:false reports the truth, got ${r.body.emailed}`);
+  ok(/resend is down/.test(r.body.emailError || ''), `the reason is surfaced, got ${r.body.emailError}`);
+
+  // The account is genuinely usable: it exists, holds its grant, and has a live
+  // magic link, so "Resend invite" is a real recovery path rather than a dead end.
+  ok(!!userRow('mailfail@x.com'), 'the user exists');
+  ok(grantsOf('mailfail@x.com').join() === 'bl:manager:["BL1"]',
+     `and holds its grant, got [${grantsOf('mailfail@x.com')}]`);
+  ok(db.prepare("SELECT COUNT(*) n FROM magic_links WHERE email='mailfail@x.com'").get().n === 1,
+     'and has a magic link to resend');
+}
+
+// ── A missing RESEND_API_KEY is reported, not silently swallowed ─────────
+{
+  const saved = env.RESEND_API_KEY; env.RESEND_API_KEY = '';
+  const r = await invite('u-su', { email: 'nokey@x.com', role: 'manager', stores: ['BL1'] });
+  env.RESEND_API_KEY = saved;
+  ok(r.status === 200 && r.body.emailed === false, 'no API key → emailed:false, not a 500');
+  ok(/RESEND_API_KEY/.test(r.body.emailError || ''), `and says why, got ${r.body.emailError}`);
+  ok(!!userRow('nokey@x.com'), 'the account is still created');
+}
+
+// ── ...but a happy send still says so ────────────────────────────────────
+{
+  const r = await invite('u-su', { email: 'happy@x.com', role: 'manager', stores: ['BL1'] });
+  ok(r.body.emailed === true, `a successful send reports emailed:true, got ${r.body.emailed}`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
