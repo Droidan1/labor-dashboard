@@ -5277,6 +5277,199 @@ function buildStatusUpdateEmailHtml({ store, oldStatus, newStatus, note, request
 }
 
 // Notify all superusers (push + email) when a new supply request is submitted.
+// ── eBay case alerts ────────────────────────────────────────────────────────
+// The notification ledger the HUB owns. Raj turned Handler's own email off and
+// left owner/escalateTo empty on the agreement that we do this; until now we did
+// not, and 26 failed auto-refunds went unreported.
+//
+// 🔑 RECIPIENTS ARE CHOSEN BY BUSINESS, NOT BY ROLE — deliberately unlike every
+// other notifier in this file, which selects `WHERE role = 'superuser'`. These
+// payloads name a storefront and a case, and this repo's own lesson is that a
+// cron/ingest path bypasses the request gates entirely, so THE RECIPIENT LIST IS
+// THE ACCESS CONTROL. Selecting on role would push E-Commerce case data to
+// Bargain Lane admins holding no ecom grant. This mirrors canAccessBusiness():
+// superuser, or an explicit grant.
+async function ebayAlertRecipients(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT DISTINCT u.id, u.email
+       FROM users u
+       LEFT JOIN user_grants g ON g.user_id = u.id AND g.business_id = 'ecom'
+      WHERE u.status = 'active'
+        AND (u.role = 'superuser' OR g.user_id IS NOT NULL)`
+  ).all();
+  return results || [];
+}
+
+// One push per TRIGGER, never one per case.
+//
+// 🔑 Handler POSTs the FULL state every ~30 minutes, so "alert on what we see"
+// would be ~48 runs x 20 NEEDS_HUMAN cases = ~960 pushes a day. Two things stop
+// that: the caller only passes cases whose tier CHANGED (see notified_tier), and
+// this batches whatever is left into a single notification carrying a count.
+// Raj reached the same conclusion for his digest — "never one email per case. A
+// mailbox with one message per case is a mailbox nobody reads."
+async function sendEbayAlert(env, { tag, title, body }) {
+  const users = await ebayAlertRecipients(env);
+  if (!users.length) return { sent: 0, recipients: 0 };
+  const ids = users.map(u => u.id);
+  // D1 caps bound params at 100/query — recipients are few, but build the list
+  // from a bounded set rather than assuming.
+  if (ids.length > 90) ids.length = 90;
+  const marks = ids.map(() => "?").join(",");
+  const { results: subs } = await env.DB.prepare(
+    `SELECT ps.endpoint, ps.p256dh, ps.auth, ps.user_id
+       FROM push_subscriptions ps
+       JOIN notification_preferences np ON np.user_id = ps.user_id
+      WHERE ps.user_id IN (${marks}) AND np.push_enabled = 1 AND np.ebay_alerts != 0`
+  ).bind(...ids).all();
+
+  const payload = JSON.stringify({ title, body, tag, url: "/index.html#ebay-cases" });
+  let sent = 0;
+  for (const sub of (subs || [])) {
+    try {
+      const res = await sendWebPush(env, sub, payload);
+      if (res && res.expired) {
+        await env.DB.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?")
+          .bind(sub.endpoint).run().catch(() => {});
+      } else { sent++; }
+      await env.DB.prepare(
+        `INSERT INTO notification_log (id, user_id, type, event_type, status)
+         VALUES (?,?,?,?,?)`
+      ).bind(crypto.randomUUID(), sub.user_id, "push", tag, "sent").run().catch(() => {});
+    } catch (e) {
+      console.log(JSON.stringify({ ebay_alert_push_failed: String(e && e.message) }));
+      await env.DB.prepare(
+        `INSERT INTO notification_log (id, user_id, type, event_type, status, error)
+         VALUES (?,?,?,?,?,?)`
+      ).bind(crypto.randomUUID(), sub.user_id, "push", tag, "failed", String(e && e.message).slice(0, 200))
+        .run().catch(() => {});
+    }
+  }
+  return { sent, recipients: users.length };
+}
+
+// Decide what to alert on after an ingest, send at most three pushes, and record
+// what was alerted so the next run does not repeat it.
+//
+// 🔑 Tiers are RANKED, not just remembered. A case must be able to alert again
+// when it escalates (needs-human -> the bot is about to act on it) but never
+// twice at the same tier. Comparing `notified_tier` to the tier it qualifies for
+// now is what gives both.
+//
+// ⚠️ Never throws. Handler treats a non-200 as "resend everything next run", so
+// a push failure must not turn into an ingest failure — that would loop the
+// whole audit file forever over a notification problem.
+const EBAY_TIER_RANK = { "needs-human": 1, "auto-act": 2 };
+
+async function runEbayAlerts(env, { sinceActionId, accountStatus }) {
+  const out = { failed: 0, autoAct: 0, needsHuman: 0, pushes: 0 };
+  try {
+    const nowMs = Date.now();
+    const hoursLeft = (iso) => {
+      if (!iso) return null;
+      const t = Date.parse(iso);
+      return Number.isFinite(t) ? (t - nowMs) / 3600000 : null;
+    };
+    // Handler now ships its own thresholds so our tiers cannot drift from his.
+    // Default only if he stops sending them.
+    const autoActAt = (acctName) => {
+      const a = accountStatus && accountStatus[acctName];
+      const v = a && a.thresholds && a.thresholds.autoActAtHours;
+      return typeof v === "number" && isFinite(v) ? v : 6;
+    };
+
+    // ── 1 · Failed auto-acts. Only rows INSERTED by this run, so the dedupe is
+    // the audit table's own line_hash uniqueness — a resent line is not new.
+    const { results: failed } = await env.DB.prepare(
+      `SELECT account, case_type, case_id, amount, http_status
+         FROM ebay_actions
+        WHERE business = 'ecom' AND id > ? AND kind = 'action' AND ok = 0`
+    ).bind(sinceActionId || 0).all();
+    out.failed = (failed || []).length;
+
+    // ── 2 & 3 · Case tiers. Open cases only; closed ones cannot need anyone.
+    const { results: open } = await env.DB.prepare(
+      `SELECT case_key, account, case_type, case_id, respond_by, decision,
+              ebay_state, buyer_can_escalate, amount, notified_tier
+         FROM ebay_cases WHERE business = 'ecom' AND is_closed = 0`
+    ).all();
+
+    // Appeals are excluded from BOTH case triggers: eBay already owns the
+    // outcome, so buzzing a phone about one asks someone to act on a case that
+    // cannot be acted on. Same reasoning as the page's two lists.
+    const actionable = (open || []).filter(
+      c => !(c.ebay_state === "ESCALATED" && c.buyer_can_escalate === 0)
+    );
+
+    const toAlert = [];
+    for (const c of actionable) {
+      const h = hoursLeft(c.respond_by);
+      let tier = null;
+      if (h != null && h > 0 && h <= autoActAt(c.account)) tier = "auto-act";
+      else if (c.decision === "NEEDS_HUMAN") tier = "needs-human";
+      if (!tier) continue;
+      const prev = EBAY_TIER_RANK[c.notified_tier] || 0;
+      if (EBAY_TIER_RANK[tier] > prev) toAlert.push({ ...c, tier });
+    }
+    out.autoAct = toAlert.filter(c => c.tier === "auto-act").length;
+    out.needsHuman = toAlert.filter(c => c.tier === "needs-human").length;
+
+    const money = (n) => `$${(Number(n) || 0).toFixed(2)}`;
+    const one = (xs) => xs.length === 1;
+
+    // ── Send. Loudest first: a failed auto-act means the last safety net fired
+    // and missed, which the plan doc calls the loudest thing on the page.
+    if (out.failed) {
+      const f = failed[0];
+      await sendEbayAlert(env, {
+        tag: "ebay-auto-act-failed",
+        title: one(failed) ? "🚨 eBay auto-action FAILED" : `🚨 ${out.failed} eBay auto-actions FAILED`,
+        body: one(failed)
+          ? `${f.account} · ${f.case_type} #${f.case_id} · ${money(f.amount)}${f.http_status ? ` · HTTP ${f.http_status}` : ""}`
+          : `The bot tried to resolve ${out.failed} cases and eBay refused.`,
+      });
+      out.pushes++;
+    }
+    const aa = toAlert.filter(c => c.tier === "auto-act");
+    if (aa.length) {
+      const c = aa[0];
+      await sendEbayAlert(env, {
+        tag: "ebay-auto-act-window",
+        title: one(aa) ? "⚠️ Bot will resolve a case soon" : `⚠️ Bot will resolve ${aa.length} cases soon`,
+        body: one(aa)
+          ? `${c.account} · ${c.case_type} #${c.case_id} · ${money(c.amount)}`
+          : `${aa.length} cases are inside the auto-act window (${money(aa.reduce((n, x) => n + (x.amount || 0), 0))}).`,
+      });
+      out.pushes++;
+    }
+    const nh = toAlert.filter(c => c.tier === "needs-human");
+    if (nh.length) {
+      const c = nh[0];
+      await sendEbayAlert(env, {
+        tag: "ebay-needs-human",
+        title: one(nh) ? "New eBay case needs review" : `${nh.length} new eBay cases need review`,
+        body: one(nh)
+          ? `${c.account} · ${c.case_type} #${c.case_id} · ${money(c.amount)}`
+          : `${money(nh.reduce((n, x) => n + (x.amount || 0), 0))} across ${nh.length} cases.`,
+      });
+      out.pushes++;
+    }
+
+    // ── Record the ledger LAST, and only for what we actually tried to send.
+    // Marking before sending would lose the alert entirely on a push failure.
+    const stamp = new Date().toISOString();
+    for (const c of toAlert) {
+      await env.DB.prepare(
+        `UPDATE ebay_cases SET notified_tier = ?, last_notified_at = ?, notified_via = 'push'
+          WHERE case_key = ?`
+      ).bind(c.tier, stamp, c.case_key).run().catch(() => {});
+    }
+  } catch (e) {
+    console.log(JSON.stringify({ ebay_alerts_failed: String(e && e.message) }));
+  }
+  return out;
+}
+
 async function notifySupplyRequestNew(env, { requestId, requesterId, requesterEmail, store, priority, notes, items }) {
   if (!env.DB) return;
   const storeLabel = STORE_LABELS[store] || store;
@@ -6922,6 +7115,14 @@ export default {
         const beforeRow = await env.DB.prepare(
           `SELECT COUNT(*) AS n FROM ebay_actions WHERE business = ?`).bind(BIZ).first();
         const before = (beforeRow && beforeRow.n) || 0;
+        // 🔑 The id boundary is what makes a failed auto-act alert ONCE rather
+        // than every 30 minutes forever. Handler re-sends the whole audit file
+        // whenever a push fails or the log rotates, and INSERT OR IGNORE on
+        // line_hash means a resent line never gets a new id — so "id > this"
+        // is exactly the set that is genuinely new. Captured BEFORE the inserts.
+        const maxIdRow = await env.DB.prepare(
+          `SELECT COALESCE(MAX(id), 0) AS m FROM ebay_actions WHERE business = ?`).bind(BIZ).first();
+        const sinceActionId = (maxIdRow && maxIdRow.m) || 0;
         for (const line of audit) {
           if (!line || typeof line !== "object") continue;
           const raw = JSON.stringify(line);
@@ -6980,7 +7181,17 @@ export default {
           effective, JSON.stringify(acct), now, caseCount, eventCount
         ).run();
 
-        return new Response(JSON.stringify({ ok: true, cases: caseCount, events: eventCount }),
+        // ── Alerts. Runs AFTER everything is stored, so a case is always
+        // readable in the HUB by the time a phone buzzes about it.
+        //
+        // ⚠️ Deliberately not awaited into the response contract: runEbayAlerts
+        // never throws, but even so its result must not decide the status code.
+        // Handler treats a non-200 as "resend the whole audit file next run", so
+        // letting a push problem fail the ingest would loop the entire log
+        // forever over a notification.
+        const alerts = await runEbayAlerts(env, { sinceActionId, accountStatus: acct });
+
+        return new Response(JSON.stringify({ ok: true, cases: caseCount, events: eventCount, alerts }),
           { headers: corsJson });
       } catch (e) {
         // Non-200 leaves Handler's cursor untouched, so it re-sends next run.
@@ -10534,7 +10745,7 @@ export default {
       try {
         const [subRow, prefRow] = await Promise.all([
           env.DB.prepare("SELECT COUNT(*) AS cnt FROM push_subscriptions WHERE user_id = ?").bind(currentUser.id).first(),
-          env.DB.prepare("SELECT push_enabled, daily_summary, weekly_digest, interval_summary, supply_notifications, upload_alerts FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
+          env.DB.prepare("SELECT push_enabled, daily_summary, weekly_digest, interval_summary, supply_notifications, upload_alerts, ebay_alerts FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
         ]);
         const cnt = subRow?.cnt ?? 0;
         const dailySummary       = prefRow ? !!prefRow.daily_summary       : true;
@@ -10542,7 +10753,10 @@ export default {
         const intervalSummary    = prefRow?.interval_summary               ?? 'off';
         const supplyNotifications = prefRow ? !!prefRow.supply_notifications : true;
         const uploadAlerts       = prefRow ? !!prefRow.upload_alerts       : true;
-        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest, intervalSummary, supplyNotifications, uploadAlerts }), { headers: corsJson });
+        // Default ON, matching the column default — a user who has never opened
+        // Settings must still be told when the bot fails an auto-action.
+        const ebayAlerts         = prefRow ? !!prefRow.ebay_alerts         : true;
+        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest, intervalSummary, supplyNotifications, uploadAlerts, ebayAlerts }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
@@ -10606,6 +10820,7 @@ export default {
         if (['off', '1h', '3h'].includes(body.interval_summary)) fields.interval_summary = body.interval_summary;
         if (typeof body.supply_notifications === 'boolean') fields.supply_notifications = body.supply_notifications ? 1 : 0;
         if (typeof body.upload_alerts === 'boolean') fields.upload_alerts = body.upload_alerts ? 1 : 0;
+        if (typeof body.ebay_alerts === 'boolean') fields.ebay_alerts = body.ebay_alerts ? 1 : 0;
         if (!Object.keys(fields).length) return new Response(JSON.stringify({ error: "Nothing to update" }), { status: 400, headers: corsJson });
         const now = new Date().toISOString();
         // Persist chosen values even on a first-ever insert: a bare INSERT with
