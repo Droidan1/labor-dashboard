@@ -2,3 +2,17 @@ node_modules/
 .DS_Store
 dist/
 _preview/
+
+# Git worktrees live inside the repo, so the primary checkout sees every one of
+# them as untracked files — an entire second copy of the tree per worktree. One
+# `git add -A` from the main checkout would commit them all. Ignore the
+# container, not individual worktrees, so a new one is covered automatically.
+.claude/worktrees/
+
+# Wrangler local state: dev-server cache and the local D1/KV simulation. Machine
+# local and regenerated on demand; .wrangler/state can also hold real data
+# pulled down for local testing, which has no business in a public repo.
+.wrangler/
+
+# Playwright CLI scratch.
+.playwright-cli/
