@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadWorker, makeEnv, ctx, req, blockNetwork } from './lib/worker-harness.mjs';
+import { loadWorker, makeEnv, ctx, req, blockNetwork, applyMigrationAlters } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -30,34 +30,19 @@ for (const f of ['migration-008.sql', 'migration-031.sql', 'migration-033.sql', 
   db.exec(fs.readFileSync(path.join(repo, f), 'utf8'));
 }
 
-// ⚠️ migration-035 needs care, and the reason is a real harness trap.
-// makeEnv()'s applyMigrationAlters() scans every migration-*.sql and applies each
-// `ALTER TABLE ... ADD COLUMN` — but it runs BEFORE the lines above, and it
-// swallows failures. So `notification_preferences.ebay_alerts` lands (that table
-// is in the harness schema) while `ebay_cases.notified_tier` is SILENTLY SKIPPED,
-// because ebay_cases does not exist yet at that moment.
-//
-// Replaying the ALTERs from the REAL file here, tolerating only the specific
-// duplicate-column error, covers both cases without restating the schema — a
-// restatement would let the migration and the test drift apart.
-// Strip `--` comment lines BEFORE matching: the file's own header prose says
-// "two ALTER TABLE ADD COLUMN", which a naive match happily picks up as a third
-// statement.
-const m035 = fs.readFileSync(path.join(repo, 'migration-035.sql'), 'utf8')
-  .split('\n').filter(l => !l.trim().startsWith('--')).join('\n');
-const alters = m035.match(/ALTER TABLE[^;]+;/gi) || [];
-if (alters.length !== 2) throw new Error(`expected 2 ALTERs in migration-035, found ${alters.length}`);
-for (const stmt of alters) {
-  try { db.exec(stmt); }
-  catch (e) { if (!/duplicate column/i.test(e.message)) throw e; }
-}
+// 🔑 Re-run the harness's ADD COLUMN pass now that the migration-created tables
+// exist. makeEnv() already ran it once, before ebay_cases existed, and it
+// swallows failures — so without this every ALTER against ebay_cases is silently
+// skipped and surfaces as "no such column" inside an endpoint. This replaced a
+// hand-rolled replay of migration-035 that then missed migration-036.
+applyMigrationAlters(db, repo);
 {
   const cols = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
-  ok(cols('ebay_cases').includes('notified_tier'),
-     'migration-035 gave ebay_cases.notified_tier (from the real file)');
-  ok(cols('notification_preferences').includes('ebay_alerts'),
-     'migration-035 gave notification_preferences.ebay_alerts');
+  ok(cols('ebay_cases').includes('notified_tier'), 'migration-035 gave ebay_cases.notified_tier');
+  ok(cols('notification_preferences').includes('ebay_alerts'), 'migration-035 gave notification_preferences.ebay_alerts');
+  ok(cols('ebay_cases').includes('buyer_reason'), 'migration-036 columns are present too');
 }
+
 env.EBAY_HANDLER_TOKEN = 'tok';
 env.VAPID_PUBLIC_KEY = 'test-pub';
 env.VAPID_PRIVATE_KEY = 'test-priv';

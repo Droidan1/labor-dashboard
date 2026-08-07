@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadWorker, makeEnv, ctx, req, blockNetwork } from './lib/worker-harness.mjs';
+import { loadWorker, makeEnv, ctx, req, blockNetwork, applyMigrationAlters } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -24,6 +24,11 @@ const { db, env } = makeEnv(repo);
 for (const f of ['migration-031.sql', 'migration-033.sql', 'migration-034.sql']) {
   db.exec(fs.readFileSync(path.join(repo, f), 'utf8'));
 }
+// 🔑 Re-run the harness's ADD COLUMN pass now that the migration-created tables
+// exist. makeEnv() already ran it once, before ebay_cases existed, and it
+// swallows failures — so without this every future ALTER against ebay_cases is
+// silently skipped and surfaces as "no such column" inside an endpoint.
+applyMigrationAlters(db, repo);
 env.EBAY_HANDLER_TOKEN = 'test-handler-token';
 
 const ingest = (body) => worker.fetch(new Request(
@@ -223,8 +228,12 @@ const { body: d } = await read('u-admin');
   ok(c5004.buyer_comments === '<img src=x onerror=alert(1)>',
      'hostile buyer markup reaches the client verbatim — escaping is the page’s job');
 
-  ok(c5001.owner === null && c5001.last_notified_at === null,
-     'owner/last_notified_at are null — nobody is being notified about these today');
+  // ⚠️ This used to assert last_notified_at was null too, on the grounds that
+  // "nobody is being notified about these today". That stopped being true when
+  // the alert ledger shipped — runEbayAlerts stamps last_notified_at on any case
+  // it alerts about, which is the whole point of it. `owner` is still nobody's,
+  // because assignment is not built.
+  ok(c5001.owner === null, 'owner is still null — case assignment is not built');
 }
 
 // ── Recent actions: only kind='action', and the failure is visible ─────────
@@ -252,6 +261,7 @@ const { body: d } = await read('u-admin');
   for (const f of ['migration-031.sql', 'migration-033.sql', 'migration-034.sql']) {
     db2.exec(fs.readFileSync(path.join(repo, f), 'utf8'));
   }
+  applyMigrationAlters(db2, repo);   // same reason as the first env, above
   const r = await worker.fetch(req('/?action=ebay-cases', { user: 'u-admin' }), env2, ctx);
   const b = JSON.parse(await r.text());
   ok(r.status === 200, `an empty table still returns 200, got ${r.status}`);
