@@ -7065,7 +7065,24 @@ export default {
           return new Response(JSON.stringify({ error: "Missing state" }), { status: 400, headers: corsJson });
         }
         const BIZ = "ecom";
-        const now = new Date().toISOString();
+        // 🔑 Not just a timestamp — the stale-case sweep below uses this to tell
+        // "touched by THIS run" from "touched by a previous one"
+        // (updated_at < now). ISO strings are millisecond-precision, so two
+        // ingests landing inside the same millisecond share a stamp and the
+        // sweep silently finds nothing to close. Measured before this fix:
+        // 1 failure in 25 test runs.
+        //
+        // Handler polls every ~30 minutes so a collision is rare in production,
+        // but a resend storm or a manual re-POST makes it reachable — and a
+        // correctness rule that holds "almost always" is one nobody can reason
+        // about later. Force the stamp strictly past anything already stored.
+        let now = new Date().toISOString();
+        {
+          const prevRow = await env.DB.prepare(
+            `SELECT MAX(updated_at) AS m FROM ebay_cases WHERE business = ?`).bind(BIZ).first();
+          const prev = prevRow && prevRow.m;
+          if (prev && now <= prev) now = new Date(Date.parse(prev) + 1).toISOString();
+        }
         const num = (v) => (typeof v === "number" && isFinite(v)) ? v : null;
         const str = (v) => (v == null ? null : String(v));
 
@@ -7104,6 +7121,56 @@ export default {
             JSON.stringify(c), now
           ).run();
           caseCount++;
+        }
+
+        // ── Close cases that have vanished from the snapshot ──────────────
+        //
+        // 🔑 Handler sends a FULL SNAPSHOT of what eBay currently returns. A case
+        // that ages out of eBay's queues simply STOPS APPEARING — it never
+        // arrives marked closed. Upserting alone therefore leaves it at
+        // is_closed = 0 forever, so the page's open count and `actionableAmount`
+        // drift upward without limit. Measured on the first real push: Handler
+        // reported open=33, D1 held 36, and the 3 extra were exactly the cases
+        // missing from the payload.
+        //
+        // ⚠️ The hazard is closing cases because the payload was PARTIAL rather
+        // than because they are resolved — the same shape as this repo's Clover
+        // lesson: degradation returns LESS, it does not error. So the sweep is
+        // scoped to accounts Handler says it actually fetched cleanly, and an
+        // account that errored or hit queue errors keeps every case it has.
+        let closedStale = 0;
+        const acctStatus = state.accountStatus && typeof state.accountStatus === "object"
+          ? state.accountStatus : null;
+        if (caseCount > 0 && acctStatus) {
+          for (const [acctName, st] of Object.entries(acctStatus)) {
+            // Fail closed on anything less than an unambiguously clean fetch.
+            // A missing `ok` (an older Handler) is NOT good enough to delete on.
+            if (!st || st.ok !== true) continue;
+            if (Number(st.queueErrors) > 0) continue;
+            // `updated_at` was stamped with `now` for every case in this payload,
+            // so "older than now" is exactly the set this run did not mention.
+            // Comparing timestamps avoids a NOT IN (...) list — 178 keys would
+            // blow past D1's 100 bound-parameter cap.
+            // Count first, then update. D1's result shape for a write is not
+            // something to depend on — the audit-line counter a few lines below
+            // reaches the same conclusion and counts by row delta for the same
+            // reason. `meta.changes` read as 0 here while the UPDATE was in fact
+            // closing rows, which would have made the sweep silently invisible.
+            const pending = await env.DB.prepare(
+              `SELECT COUNT(*) AS n FROM ebay_cases
+                WHERE business = ? AND account = ? AND is_closed = 0 AND updated_at < ?`
+            ).bind(BIZ, acctName, now).first();
+            const n = (pending && pending.n) || 0;
+            if (!n) continue;
+            await env.DB.prepare(
+              `UPDATE ebay_cases SET is_closed = 1, updated_at = ?
+                WHERE business = ? AND account = ? AND is_closed = 0 AND updated_at < ?`
+            ).bind(now, BIZ, acctName, now).run();
+            closedStale += n;
+          }
+          if (closedStale) {
+            console.log(JSON.stringify({ ebay_closed_stale: closedStale }));
+          }
         }
 
         // ── Audit lines: INSERT OR IGNORE on the line hash.
@@ -7191,7 +7258,10 @@ export default {
         // forever over a notification.
         const alerts = await runEbayAlerts(env, { sinceActionId, accountStatus: acct });
 
-        return new Response(JSON.stringify({ ok: true, cases: caseCount, events: eventCount, alerts }),
+        // closedStale is reported back so the sweep is visible in Handler's own
+        // console output — a silent bulk close is exactly the thing you want to
+        // notice on the run it first happens.
+        return new Response(JSON.stringify({ ok: true, cases: caseCount, events: eventCount, closedStale, alerts }),
           { headers: corsJson });
       } catch (e) {
         // Non-200 leaves Handler's cursor untouched, so it re-sends next run.
