@@ -3156,6 +3156,13 @@
               <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Email address</label>
               <input id="invite-email" type="email" placeholder="user@example.com" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
             </div>
+            <!-- Shown only when the inviter can grant more than one business.
+                 With a single option there is nothing to choose, and an inert
+                 dropdown reads as a decision someone forgot to make. -->
+            <div id="invite-business-wrap" class="hidden">
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Business</label>
+              <select id="invite-business" onchange="toggleInviteStores()" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50"></select>
+            </div>
             <div>
               <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Role</label>
               <select id="invite-role" onchange="toggleInviteStores()" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
@@ -17937,6 +17944,21 @@
     if (!box) return;
     const role = el(`${which}-role`).value;
     const label = ROLE_LABEL[role] || role;
+
+    // 🔑 This whole summary is BARGAIN LANE-shaped: "scope" means stores, and an
+    // empty selection means "sees nothing". For another business that is simply
+    // false — E-Commerce has no store picker and no units yet, and the invitee
+    // does see something (the Cases page). Saying "they would sign in and see
+    // nothing" to whoever is inviting that person is worse than saying less.
+    if (which === 'invite' && typeof inviteBusinessId === 'function' && inviteBusinessId() !== 'bl') {
+      const sel = el('invite-business');
+      const bizName = (sel && sel.selectedOptions[0] && sel.selectedOptions[0].textContent) || 'that business';
+      box.innerHTML = `Signs in as <span class="font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(label)}</span>
+         with access to <span class="font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(bizName)}</span>
+         only &mdash; not Bargain Lane.`;
+      return;
+    }
+
     let scope;
     if (!roleIsStoreScoped(role)) {
       scope = 'every store';
@@ -18037,8 +18059,19 @@
     }).join('');
   }
 
-  function openInviteModal() {
+  async function openInviteModal() {
     el('invite-email').value = '';
+    // Populated from ?action=grant-options — the SAME list the server validates
+    // an invite against, so the modal can never offer a business the POST would
+    // then refuse.
+    if (!grantOptions.businesses.length) { try { await loadGrantOptions(); } catch (_) {} }
+    const bizSel = el('invite-business');
+    if (bizSel) {
+      bizSel.innerHTML = grantOptions.businesses
+        .map(b => `<option value="${b.id}">${b.name}</option>`).join('');
+      if ([...bizSel.options].some(o => o.value === 'bl')) bizSel.value = 'bl';
+      el('invite-business-wrap').classList.toggle('hidden', grantOptions.businesses.length < 2);
+    }
     el('invite-role').value = 'manager';
     renderStorePicker('invite');
     el('invite-status').classList.add('hidden');
@@ -18049,9 +18082,20 @@
   }
   function closeInviteModal() { el('invite-modal').classList.add('hidden'); }
 
+  // Single source of truth for the chosen business, defaulting to Bargain Lane
+  // so a hidden selector (one grantable business) behaves exactly as before.
+  function inviteBusinessId() {
+    const sel = el('invite-business');
+    return (sel && sel.value) || 'bl';
+  }
+
   function toggleInviteStores() {
     const role = el('invite-role').value;
-    el('invite-stores-wrap').classList.toggle('hidden', !roleIsStoreScoped(role));
+    // The store picker is BARGAIN LANE's. Another business has its own units
+    // (E-Commerce has none yet), so offering BL store codes there would invite
+    // someone to scope a grant with codes that mean nothing inside it.
+    const showStores = inviteBusinessId() === 'bl' && roleIsStoreScoped(role);
+    el('invite-stores-wrap').classList.toggle('hidden', !showStores);
     updateAccessSummary('invite');
   }
 
@@ -18060,7 +18104,10 @@
     const role = el('invite-role').value;
     const stores = [...document.querySelectorAll('.invite-store-cb:checked')].map(cb => cb.value);
     if (!email || !email.includes('@')) { showInviteStatus('Enter a valid email address.', 'error'); return; }
-    if ((role === 'manager' || role === 'district_manager') && !stores.length) { showInviteStatus('Select at least one store.', 'error'); return; }
+    // Only Bargain Lane has stores to demand.
+    if (inviteBusinessId() === 'bl' && (role === 'manager' || role === 'district_manager') && !stores.length) {
+      showInviteStatus('Select at least one store.', 'error'); return;
+    }
     el('invite-submit-btn').disabled = true;
     showInviteStatus('Sending invite…', 'info');
     try {
@@ -18068,7 +18115,8 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ email, role, stores: stores.length ? stores : null }),
+        body: JSON.stringify({ email, role, stores: stores.length ? stores : null,
+                               business_id: inviteBusinessId() }),
       });
       const data = await resp.json();
       if (!data.ok) throw new Error(data.error || 'Failed');

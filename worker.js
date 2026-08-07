@@ -8317,7 +8317,14 @@ export default {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
       try {
-        const { email, role, stores } = await request.json();
+        const { email, role, stores, business_id } = await request.json();
+        // 🔑 Which business this invite grants. Defaults to Bargain Lane — which
+        // is what every invite silently did before, because this endpoint called
+        // upsertBargainLaneGrant() unconditionally. An E-Commerce-only person
+        // still came out holding Bargain Lane's dashboard, inventory and sales
+        // until someone remembered to untick it. That failed OPEN, the wrong
+        // direction for a permissions default.
+        const bizId = (business_id || 'bl').trim();
         // 'district_manager' was retired by migration-029 and is no longer a
         // valid value for users.role — the CHECK constraint rejects it. It was
         // never a distinct capability, only a manager with more stores.
@@ -8327,20 +8334,42 @@ export default {
         if (!validRoles.includes(role)) {
           return new Response(JSON.stringify({ error: "Invalid role" }), { status: 400, headers: corsJson });
         }
+        // 🔑 "Nobody can grant what they don't hold" — the same rule
+        // set-user-grants enforces, resolved from the CALLER's own entitlements
+        // and never from what the client sent.
+        const inviteOpts = await grantOptionsFor(env, currentUser);
+        if (!inviteOpts.businesses.some(b => b.id === bizId)) {
+          return new Response(JSON.stringify({ error: "You cannot grant access to that business" }),
+            { status: 403, headers: corsJson });
+        }
         const normalized = email.trim().toLowerCase();
         const existing = await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(normalized).first();
         if (existing) {
           return new Response(JSON.stringify({ error: "A user with that email already exists" }), { status: 409, headers: corsJson });
         }
         const id = 'usr_' + randomHex(8);
-        const storesJson = stores && stores.length ? JSON.stringify(stores) : null;
+        // users.stores is BARGAIN LANE's legacy scope column — allowedUnits()
+        // only consults it for 'bl'. Store codes there would be meaningless for
+        // another business; left NULL it fails closed.
+        const storesJson = (bizId === 'bl' && stores && stores.length)
+          ? JSON.stringify(stores) : null;
         await env.DB.prepare(
           "INSERT INTO users (id, email, role, stores, status, created_at) VALUES (?, ?, ?, ?, 'active', datetime('now'))"
         ).bind(id, normalized, role, storesJson).run();
         // Mirror into the grant model. Without this a newly invited user holds
         // no grant and lives permanently on the users.stores fallback.
         // Superusers are not invitable here, so every invite is grantable.
-        await upsertBargainLaneGrant(env, id, role, storesJson);
+        if (bizId === 'bl') {
+          await upsertBargainLaneGrant(env, id, role, storesJson);
+        } else {
+          // units NULL = every unit in that business, matching what the grant
+          // editor's "every unit" state writes. E-Commerce has no business_units
+          // rows yet, so there is nothing narrower to pick.
+          await env.DB.prepare(
+            `INSERT INTO user_grants (user_id, business_id, role, units) VALUES (?, ?, ?, NULL)
+             ON CONFLICT(user_id, business_id) DO UPDATE SET role = excluded.role, units = excluded.units`
+          ).bind(id, bizId, role).run();
+        }
         const token = randomHex(32);
         const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
         await env.DB.prepare("INSERT INTO magic_links (token, email, expires_at) VALUES (?, ?, ?)")
