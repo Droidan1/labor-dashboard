@@ -5293,6 +5293,199 @@ function buildStatusUpdateEmailHtml({ store, oldStatus, newStatus, note, request
 }
 
 // Notify all superusers (push + email) when a new supply request is submitted.
+// ── eBay case alerts ────────────────────────────────────────────────────────
+// The notification ledger the HUB owns. Raj turned Handler's own email off and
+// left owner/escalateTo empty on the agreement that we do this; until now we did
+// not, and 26 failed auto-refunds went unreported.
+//
+// 🔑 RECIPIENTS ARE CHOSEN BY BUSINESS, NOT BY ROLE — deliberately unlike every
+// other notifier in this file, which selects `WHERE role = 'superuser'`. These
+// payloads name a storefront and a case, and this repo's own lesson is that a
+// cron/ingest path bypasses the request gates entirely, so THE RECIPIENT LIST IS
+// THE ACCESS CONTROL. Selecting on role would push E-Commerce case data to
+// Bargain Lane admins holding no ecom grant. This mirrors canAccessBusiness():
+// superuser, or an explicit grant.
+async function ebayAlertRecipients(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT DISTINCT u.id, u.email
+       FROM users u
+       LEFT JOIN user_grants g ON g.user_id = u.id AND g.business_id = 'ecom'
+      WHERE u.status = 'active'
+        AND (u.role = 'superuser' OR g.user_id IS NOT NULL)`
+  ).all();
+  return results || [];
+}
+
+// One push per TRIGGER, never one per case.
+//
+// 🔑 Handler POSTs the FULL state every ~30 minutes, so "alert on what we see"
+// would be ~48 runs x 20 NEEDS_HUMAN cases = ~960 pushes a day. Two things stop
+// that: the caller only passes cases whose tier CHANGED (see notified_tier), and
+// this batches whatever is left into a single notification carrying a count.
+// Raj reached the same conclusion for his digest — "never one email per case. A
+// mailbox with one message per case is a mailbox nobody reads."
+async function sendEbayAlert(env, { tag, title, body }) {
+  const users = await ebayAlertRecipients(env);
+  if (!users.length) return { sent: 0, recipients: 0 };
+  const ids = users.map(u => u.id);
+  // D1 caps bound params at 100/query — recipients are few, but build the list
+  // from a bounded set rather than assuming.
+  if (ids.length > 90) ids.length = 90;
+  const marks = ids.map(() => "?").join(",");
+  const { results: subs } = await env.DB.prepare(
+    `SELECT ps.endpoint, ps.p256dh, ps.auth, ps.user_id
+       FROM push_subscriptions ps
+       JOIN notification_preferences np ON np.user_id = ps.user_id
+      WHERE ps.user_id IN (${marks}) AND np.push_enabled = 1 AND np.ebay_alerts != 0`
+  ).bind(...ids).all();
+
+  const payload = JSON.stringify({ title, body, tag, url: "/index.html#ebay-cases" });
+  let sent = 0;
+  for (const sub of (subs || [])) {
+    try {
+      const res = await sendWebPush(env, sub, payload);
+      if (res && res.expired) {
+        await env.DB.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?")
+          .bind(sub.endpoint).run().catch(() => {});
+      } else { sent++; }
+      await env.DB.prepare(
+        `INSERT INTO notification_log (id, user_id, type, event_type, status)
+         VALUES (?,?,?,?,?)`
+      ).bind(crypto.randomUUID(), sub.user_id, "push", tag, "sent").run().catch(() => {});
+    } catch (e) {
+      console.log(JSON.stringify({ ebay_alert_push_failed: String(e && e.message) }));
+      await env.DB.prepare(
+        `INSERT INTO notification_log (id, user_id, type, event_type, status, error)
+         VALUES (?,?,?,?,?,?)`
+      ).bind(crypto.randomUUID(), sub.user_id, "push", tag, "failed", String(e && e.message).slice(0, 200))
+        .run().catch(() => {});
+    }
+  }
+  return { sent, recipients: users.length };
+}
+
+// Decide what to alert on after an ingest, send at most three pushes, and record
+// what was alerted so the next run does not repeat it.
+//
+// 🔑 Tiers are RANKED, not just remembered. A case must be able to alert again
+// when it escalates (needs-human -> the bot is about to act on it) but never
+// twice at the same tier. Comparing `notified_tier` to the tier it qualifies for
+// now is what gives both.
+//
+// ⚠️ Never throws. Handler treats a non-200 as "resend everything next run", so
+// a push failure must not turn into an ingest failure — that would loop the
+// whole audit file forever over a notification problem.
+const EBAY_TIER_RANK = { "needs-human": 1, "auto-act": 2 };
+
+async function runEbayAlerts(env, { sinceActionId, accountStatus }) {
+  const out = { failed: 0, autoAct: 0, needsHuman: 0, pushes: 0 };
+  try {
+    const nowMs = Date.now();
+    const hoursLeft = (iso) => {
+      if (!iso) return null;
+      const t = Date.parse(iso);
+      return Number.isFinite(t) ? (t - nowMs) / 3600000 : null;
+    };
+    // Handler now ships its own thresholds so our tiers cannot drift from his.
+    // Default only if he stops sending them.
+    const autoActAt = (acctName) => {
+      const a = accountStatus && accountStatus[acctName];
+      const v = a && a.thresholds && a.thresholds.autoActAtHours;
+      return typeof v === "number" && isFinite(v) ? v : 6;
+    };
+
+    // ── 1 · Failed auto-acts. Only rows INSERTED by this run, so the dedupe is
+    // the audit table's own line_hash uniqueness — a resent line is not new.
+    const { results: failed } = await env.DB.prepare(
+      `SELECT account, case_type, case_id, amount, http_status
+         FROM ebay_actions
+        WHERE business = 'ecom' AND id > ? AND kind = 'action' AND ok = 0`
+    ).bind(sinceActionId || 0).all();
+    out.failed = (failed || []).length;
+
+    // ── 2 & 3 · Case tiers. Open cases only; closed ones cannot need anyone.
+    const { results: open } = await env.DB.prepare(
+      `SELECT case_key, account, case_type, case_id, respond_by, decision,
+              ebay_state, buyer_can_escalate, amount, notified_tier
+         FROM ebay_cases WHERE business = 'ecom' AND is_closed = 0`
+    ).all();
+
+    // Appeals are excluded from BOTH case triggers: eBay already owns the
+    // outcome, so buzzing a phone about one asks someone to act on a case that
+    // cannot be acted on. Same reasoning as the page's two lists.
+    const actionable = (open || []).filter(
+      c => !(c.ebay_state === "ESCALATED" && c.buyer_can_escalate === 0)
+    );
+
+    const toAlert = [];
+    for (const c of actionable) {
+      const h = hoursLeft(c.respond_by);
+      let tier = null;
+      if (h != null && h > 0 && h <= autoActAt(c.account)) tier = "auto-act";
+      else if (c.decision === "NEEDS_HUMAN") tier = "needs-human";
+      if (!tier) continue;
+      const prev = EBAY_TIER_RANK[c.notified_tier] || 0;
+      if (EBAY_TIER_RANK[tier] > prev) toAlert.push({ ...c, tier });
+    }
+    out.autoAct = toAlert.filter(c => c.tier === "auto-act").length;
+    out.needsHuman = toAlert.filter(c => c.tier === "needs-human").length;
+
+    const money = (n) => `$${(Number(n) || 0).toFixed(2)}`;
+    const one = (xs) => xs.length === 1;
+
+    // ── Send. Loudest first: a failed auto-act means the last safety net fired
+    // and missed, which the plan doc calls the loudest thing on the page.
+    if (out.failed) {
+      const f = failed[0];
+      await sendEbayAlert(env, {
+        tag: "ebay-auto-act-failed",
+        title: one(failed) ? "🚨 eBay auto-action FAILED" : `🚨 ${out.failed} eBay auto-actions FAILED`,
+        body: one(failed)
+          ? `${f.account} · ${f.case_type} #${f.case_id} · ${money(f.amount)}${f.http_status ? ` · HTTP ${f.http_status}` : ""}`
+          : `The bot tried to resolve ${out.failed} cases and eBay refused.`,
+      });
+      out.pushes++;
+    }
+    const aa = toAlert.filter(c => c.tier === "auto-act");
+    if (aa.length) {
+      const c = aa[0];
+      await sendEbayAlert(env, {
+        tag: "ebay-auto-act-window",
+        title: one(aa) ? "⚠️ Bot will resolve a case soon" : `⚠️ Bot will resolve ${aa.length} cases soon`,
+        body: one(aa)
+          ? `${c.account} · ${c.case_type} #${c.case_id} · ${money(c.amount)}`
+          : `${aa.length} cases are inside the auto-act window (${money(aa.reduce((n, x) => n + (x.amount || 0), 0))}).`,
+      });
+      out.pushes++;
+    }
+    const nh = toAlert.filter(c => c.tier === "needs-human");
+    if (nh.length) {
+      const c = nh[0];
+      await sendEbayAlert(env, {
+        tag: "ebay-needs-human",
+        title: one(nh) ? "New eBay case needs review" : `${nh.length} new eBay cases need review`,
+        body: one(nh)
+          ? `${c.account} · ${c.case_type} #${c.case_id} · ${money(c.amount)}`
+          : `${money(nh.reduce((n, x) => n + (x.amount || 0), 0))} across ${nh.length} cases.`,
+      });
+      out.pushes++;
+    }
+
+    // ── Record the ledger LAST, and only for what we actually tried to send.
+    // Marking before sending would lose the alert entirely on a push failure.
+    const stamp = new Date().toISOString();
+    for (const c of toAlert) {
+      await env.DB.prepare(
+        `UPDATE ebay_cases SET notified_tier = ?, last_notified_at = ?, notified_via = 'push'
+          WHERE case_key = ?`
+      ).bind(c.tier, stamp, c.case_key).run().catch(() => {});
+    }
+  } catch (e) {
+    console.log(JSON.stringify({ ebay_alerts_failed: String(e && e.message) }));
+  }
+  return out;
+}
+
 async function notifySupplyRequestNew(env, { requestId, requesterId, requesterEmail, store, priority, notes, items }) {
   if (!env.DB) return;
   const storeLabel = STORE_LABELS[store] || store;
@@ -5854,7 +6047,16 @@ async function loadGrants(env, userId) {
     ).bind(userId).all();
     return (results || []).map(g => {
       let units = null;
-      try { units = g.units ? JSON.parse(g.units) : null; } catch (_) { units = null; }
+      try {
+        units = g.units ? JSON.parse(g.units) : null;
+      } catch (_) {
+        // 🔑 Fail CLOSED on corrupt JSON, not open. `null` is a meaningful value
+        // here — it means "every unit" — so parsing garbage into null would
+        // WIDEN access on exactly the input we understand least. An empty array
+        // is the safe reading: the grant still exists, it just grants no units.
+        console.log(JSON.stringify({ grant_units_unparseable: g.business_id, raw: String(g.units).slice(0, 80) }));
+        units = [];
+      }
       return { ...g, units };
     });
   } catch (_) {
@@ -6023,7 +6225,22 @@ function allowedUnits(user, businessId) {
   // ACTION_BUSINESS). This function only answers WHICH units inside one.
   if (user.role === 'superuser' || user.role === 'admin') return null;
   const g = grantFor(user, businessId);
-  if (g) return g.units || [];
+  if (g) {
+    // 🔑 NULL units means EVERY unit in that business. That is what
+    // set-user-grants writes when no restriction is chosen ("units: null/absent
+    // means every unit") and what migration-030's schema declares.
+    //
+    // ⚠️ Bargain Lane deliberately reads NULL as NO units instead, and keeps
+    // doing so. migration-030 backfilled bl grants straight from users.stores,
+    // where NULL meant "was never scoped", not "chain-wide" — and
+    // test-cron-recipients.js pins that an executive is excluded rather than
+    // assumed chain-wide. The two meanings are indistinguishable from the data,
+    // so the legacy reading stays where the legacy data is and nowhere else.
+    // Widening bl is a decision about who gets emailed chain-wide revenue; it is
+    // not something to change as a side effect of scoping another business.
+    if (businessId === 'bl') return g.units || [];
+    return g.units == null ? null : g.units;
+  }
 
   // 🔑 The users.stores fallback is BARGAIN LANE ONLY — it is a legacy column
   // from before grants existed and has no meaning for any other business. Any
@@ -6864,7 +7081,24 @@ export default {
           return new Response(JSON.stringify({ error: "Missing state" }), { status: 400, headers: corsJson });
         }
         const BIZ = "ecom";
-        const now = new Date().toISOString();
+        // 🔑 Not just a timestamp — the stale-case sweep below uses this to tell
+        // "touched by THIS run" from "touched by a previous one"
+        // (updated_at < now). ISO strings are millisecond-precision, so two
+        // ingests landing inside the same millisecond share a stamp and the
+        // sweep silently finds nothing to close. Measured before this fix:
+        // 1 failure in 25 test runs.
+        //
+        // Handler polls every ~30 minutes so a collision is rare in production,
+        // but a resend storm or a manual re-POST makes it reachable — and a
+        // correctness rule that holds "almost always" is one nobody can reason
+        // about later. Force the stamp strictly past anything already stored.
+        let now = new Date().toISOString();
+        {
+          const prevRow = await env.DB.prepare(
+            `SELECT MAX(updated_at) AS m FROM ebay_cases WHERE business = ?`).bind(BIZ).first();
+          const prev = prevRow && prevRow.m;
+          if (prev && now <= prev) now = new Date(Date.parse(prev) + 1).toISOString();
+        }
         const num = (v) => (typeof v === "number" && isFinite(v)) ? v : null;
         const str = (v) => (v == null ? null : String(v));
 
@@ -6905,6 +7139,56 @@ export default {
           caseCount++;
         }
 
+        // ── Close cases that have vanished from the snapshot ──────────────
+        //
+        // 🔑 Handler sends a FULL SNAPSHOT of what eBay currently returns. A case
+        // that ages out of eBay's queues simply STOPS APPEARING — it never
+        // arrives marked closed. Upserting alone therefore leaves it at
+        // is_closed = 0 forever, so the page's open count and `actionableAmount`
+        // drift upward without limit. Measured on the first real push: Handler
+        // reported open=33, D1 held 36, and the 3 extra were exactly the cases
+        // missing from the payload.
+        //
+        // ⚠️ The hazard is closing cases because the payload was PARTIAL rather
+        // than because they are resolved — the same shape as this repo's Clover
+        // lesson: degradation returns LESS, it does not error. So the sweep is
+        // scoped to accounts Handler says it actually fetched cleanly, and an
+        // account that errored or hit queue errors keeps every case it has.
+        let closedStale = 0;
+        const acctStatus = state.accountStatus && typeof state.accountStatus === "object"
+          ? state.accountStatus : null;
+        if (caseCount > 0 && acctStatus) {
+          for (const [acctName, st] of Object.entries(acctStatus)) {
+            // Fail closed on anything less than an unambiguously clean fetch.
+            // A missing `ok` (an older Handler) is NOT good enough to delete on.
+            if (!st || st.ok !== true) continue;
+            if (Number(st.queueErrors) > 0) continue;
+            // `updated_at` was stamped with `now` for every case in this payload,
+            // so "older than now" is exactly the set this run did not mention.
+            // Comparing timestamps avoids a NOT IN (...) list — 178 keys would
+            // blow past D1's 100 bound-parameter cap.
+            // Count first, then update. D1's result shape for a write is not
+            // something to depend on — the audit-line counter a few lines below
+            // reaches the same conclusion and counts by row delta for the same
+            // reason. `meta.changes` read as 0 here while the UPDATE was in fact
+            // closing rows, which would have made the sweep silently invisible.
+            const pending = await env.DB.prepare(
+              `SELECT COUNT(*) AS n FROM ebay_cases
+                WHERE business = ? AND account = ? AND is_closed = 0 AND updated_at < ?`
+            ).bind(BIZ, acctName, now).first();
+            const n = (pending && pending.n) || 0;
+            if (!n) continue;
+            await env.DB.prepare(
+              `UPDATE ebay_cases SET is_closed = 1, updated_at = ?
+                WHERE business = ? AND account = ? AND is_closed = 0 AND updated_at < ?`
+            ).bind(now, BIZ, acctName, now).run();
+            closedStale += n;
+          }
+          if (closedStale) {
+            console.log(JSON.stringify({ ebay_closed_stale: closedStale }));
+          }
+        }
+
         // ── Audit lines: INSERT OR IGNORE on the line hash.
         // Handler re-sends on any non-200 and re-sends the whole file if it is
         // rotated or truncated, so duplicates are the normal case, not an error.
@@ -6914,6 +7198,14 @@ export default {
         const beforeRow = await env.DB.prepare(
           `SELECT COUNT(*) AS n FROM ebay_actions WHERE business = ?`).bind(BIZ).first();
         const before = (beforeRow && beforeRow.n) || 0;
+        // 🔑 The id boundary is what makes a failed auto-act alert ONCE rather
+        // than every 30 minutes forever. Handler re-sends the whole audit file
+        // whenever a push fails or the log rotates, and INSERT OR IGNORE on
+        // line_hash means a resent line never gets a new id — so "id > this"
+        // is exactly the set that is genuinely new. Captured BEFORE the inserts.
+        const maxIdRow = await env.DB.prepare(
+          `SELECT COALESCE(MAX(id), 0) AS m FROM ebay_actions WHERE business = ?`).bind(BIZ).first();
+        const sinceActionId = (maxIdRow && maxIdRow.m) || 0;
         for (const line of audit) {
           if (!line || typeof line !== "object") continue;
           const raw = JSON.stringify(line);
@@ -6972,7 +7264,20 @@ export default {
           effective, JSON.stringify(acct), now, caseCount, eventCount
         ).run();
 
-        return new Response(JSON.stringify({ ok: true, cases: caseCount, events: eventCount }),
+        // ── Alerts. Runs AFTER everything is stored, so a case is always
+        // readable in the HUB by the time a phone buzzes about it.
+        //
+        // ⚠️ Deliberately not awaited into the response contract: runEbayAlerts
+        // never throws, but even so its result must not decide the status code.
+        // Handler treats a non-200 as "resend the whole audit file next run", so
+        // letting a push problem fail the ingest would loop the entire log
+        // forever over a notification.
+        const alerts = await runEbayAlerts(env, { sinceActionId, accountStatus: acct });
+
+        // closedStale is reported back so the sweep is visible in Handler's own
+        // console output — a silent bulk close is exactly the thing you want to
+        // notice on the run it first happens.
+        return new Response(JSON.stringify({ ok: true, cases: caseCount, events: eventCount, closedStale, alerts }),
           { headers: corsJson });
       } catch (e) {
         // Non-200 leaves Handler's cursor untouched, so it re-sends next run.
@@ -7046,9 +7351,45 @@ export default {
         return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       }
       try {
+        // 🔑 The business gate above decided WHETHER you reach E-Commerce. This
+        // decides WHICH storefronts inside it, and it is a separate question the
+        // gate cannot answer.
+        //
+        // 🛑 `&account=` is a DISPLAY filter the CALLER supplies. It has never
+        // been a boundary, and must never be mistaken for one — a scoped user
+        // who simply omits it would otherwise receive every account, including
+        // buyer_username and buyer_comments, the two columns migration-034
+        // records as the verified PII scope.
+        //
+        // Grant units are compared verbatim against ebay_cases.account, which is
+        // stored exactly as Handler sends it. That is why set-user-grants must
+        // not normalise case — see the coercion removed there.
+        const allow = allowedUnits(currentUser, "ecom");   // null = every storefront
+        let scopeSql = "", scopeBinds = [];
+        if (Array.isArray(allow)) {
+          // ⚠️ D1 caps bound parameters at 100 per query, so an IN list built
+          // from an unbounded set is a latent 500. Storefront counts are small,
+          // but refuse loudly rather than truncate — a silently shortened list
+          // would hide cases from someone entitled to see them.
+          if (allow.length > 50) {
+            console.log(JSON.stringify({ ebay_cases_scope_too_wide: allow.length }));
+            return new Response(JSON.stringify({ error: "Too many units to scope" }),
+              { status: 500, headers: corsJson });
+          }
+          // An empty grant is a real state — "holds E-Commerce, no storefront
+          // within it" — and must return NOTHING rather than everything.
+          // `IN ()` is a syntax error, so the empty case gets an explicitly
+          // false predicate. Keeping one code path means the response shape
+          // cannot drift from the unscoped one.
+          scopeSql = allow.length
+            ? ` AND account IN (${allow.map(() => "?").join(",")})`
+            : " AND 1 = 0";
+          scopeBinds = allow;
+        }
+
         const acct = (url.searchParams.get("account") || "").trim();
-        const binds = ["ecom"];
-        let where = "business = ?";
+        const binds = ["ecom", ...scopeBinds];
+        let where = "business = ?" + scopeSql;
         if (acct) { where += " AND account = ?"; binds.push(acct); }
 
         const { results: open } = await env.DB.prepare(
@@ -7075,11 +7416,42 @@ export default {
                   account_status, received_at
              FROM ebay_handler_state WHERE business = ?`).bind("ecom").first();
 
+        // 🛑 account_status is a JSON blob KEYED BY ACCOUNT — it carries each
+        // storefront's poll health (checkedAt, fetched, ok, queueErrors). Scoping
+        // only the two row queries left this one whole, so a manager scoped to
+        // 'shoes' still learned that 'fashion' exists, that it had 7 queue errors
+        // and that its last fetch failed.
+        //
+        // ⚠️ This was NOT caught by the scoping test's blanket
+        // "the string 'fashion' appears nowhere" assertion — that test's fixture
+        // sent `accountStatus: {}`, so the field that leaks was never populated.
+        // A probe with the REAL shape found it. The fixture is now populated.
+        //
+        // Kept as a JSON STRING so the response shape is unchanged. Everything
+        // else on this row (version, run timestamps, effective_mode) is
+        // business-level, not per-account, and stays.
+        let handlerOut = st || null;
+        if (handlerOut && Array.isArray(allow)) {
+          let parsed = null;
+          try { parsed = JSON.parse(handlerOut.account_status || "{}"); } catch (_) { parsed = null; }
+          const scoped = {};
+          // Unparseable → {} rather than passthrough: fail closed, same reasoning
+          // as loadGrants.
+          if (parsed && typeof parsed === "object") {
+            for (const k of Object.keys(parsed)) if (allow.includes(k)) scoped[k] = parsed[k];
+          }
+          handlerOut = { ...handlerOut, account_status: JSON.stringify(scoped) };
+        }
+
+        // Same storefront scope as the cases above — these rows carry an
+        // `account` too, and a refund the caller may not see is not made
+        // safe by living in a different table. The display filter is NOT
+        // applied here; the client narrows these by account itself.
         const { results: recent } = await env.DB.prepare(
           `SELECT ts, kind, event, account, case_type, case_id, action, dry_run, ok,
                   http_status, amount, reason, error
-             FROM ebay_actions WHERE business = ? AND kind = 'action'
-            ORDER BY ts DESC LIMIT 25`).bind("ecom").all();
+             FROM ebay_actions WHERE business = ?${scopeSql} AND kind = 'action'
+            ORDER BY ts DESC LIMIT 25`).bind("ecom", ...scopeBinds).all();
 
         return new Response(JSON.stringify({
           actionable, appeals,
@@ -7088,7 +7460,7 @@ export default {
           // can still save, and one blended figure would overstate what is at stake.
           actionableAmount: actionable.reduce((n, c) => n + (c.amount || 0), 0),
           accounts: [...new Set(rows.map(c => c.account))].sort(),
-          handler: st || null,
+          handler: handlerOut,
           // null until Raj adds effectiveMode to accountStatus — it is absent from
           // the real state file. The page must render "unknown", never guess LIVE.
           effectiveMode: (st && st.effective_mode) || null,
@@ -8333,7 +8705,15 @@ export default {
           let units = null;
           if (Array.isArray(g.units)) {
             const valid = new Set(biz.units.map(u => u.code));
-            const picked = [...new Set(g.units.map(u => String(u).trim().toUpperCase()))].filter(Boolean);
+            // 🔑 Do NOT normalise case. Unit codes are opaque identifiers owned
+            // by the source system — Clover store codes happen to be uppercase,
+            // eBay account names are lowercase — and they are compared verbatim
+            // against stored data (ebay_cases.account). Uppercasing was a
+            // Bargain-Lane-shaped assumption, invisible while every code was
+            // already 'BL1'…'BL16'; it would silently turn a grant for 'shoes'
+            // into one for 'SHOES', which matches no case that exists.
+            // Membership is still validated below — that is the real check.
+            const picked = [...new Set(g.units.map(u => String(u).trim()))].filter(Boolean);
             const bad = picked.filter(u => !valid.has(u));
             if (bad.length) {
               return new Response(JSON.stringify({ error: `Not ${biz.name} units: ${bad.join(', ')}` }),
@@ -10580,7 +10960,7 @@ export default {
       try {
         const [subRow, prefRow] = await Promise.all([
           env.DB.prepare("SELECT COUNT(*) AS cnt FROM push_subscriptions WHERE user_id = ?").bind(currentUser.id).first(),
-          env.DB.prepare("SELECT push_enabled, daily_summary, weekly_digest, interval_summary, supply_notifications, upload_alerts FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
+          env.DB.prepare("SELECT push_enabled, daily_summary, weekly_digest, interval_summary, supply_notifications, upload_alerts, ebay_alerts FROM notification_preferences WHERE user_id = ?").bind(currentUser.id).first(),
         ]);
         const cnt = subRow?.cnt ?? 0;
         const dailySummary       = prefRow ? !!prefRow.daily_summary       : true;
@@ -10588,7 +10968,10 @@ export default {
         const intervalSummary    = prefRow?.interval_summary               ?? 'off';
         const supplyNotifications = prefRow ? !!prefRow.supply_notifications : true;
         const uploadAlerts       = prefRow ? !!prefRow.upload_alerts       : true;
-        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest, intervalSummary, supplyNotifications, uploadAlerts }), { headers: corsJson });
+        // Default ON, matching the column default — a user who has never opened
+        // Settings must still be told when the bot fails an auto-action.
+        const ebayAlerts         = prefRow ? !!prefRow.ebay_alerts         : true;
+        return new Response(JSON.stringify({ ok: true, deviceCount: cnt, maxDevices: 5, dailySummary, weeklyDigest, intervalSummary, supplyNotifications, uploadAlerts, ebayAlerts }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
@@ -10652,6 +11035,7 @@ export default {
         if (['off', '1h', '3h'].includes(body.interval_summary)) fields.interval_summary = body.interval_summary;
         if (typeof body.supply_notifications === 'boolean') fields.supply_notifications = body.supply_notifications ? 1 : 0;
         if (typeof body.upload_alerts === 'boolean') fields.upload_alerts = body.upload_alerts ? 1 : 0;
+        if (typeof body.ebay_alerts === 'boolean') fields.ebay_alerts = body.ebay_alerts ? 1 : 0;
         if (!Object.keys(fields).length) return new Response(JSON.stringify({ error: "Nothing to update" }), { status: 400, headers: corsJson });
         const now = new Date().toISOString();
         // Persist chosen values even on a first-ever insert: a bare INSERT with
