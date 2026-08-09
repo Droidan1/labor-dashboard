@@ -307,14 +307,21 @@
 
     /* Landing page. `lp-` prefix deliberately — `ct-` is Content Studio's and
        already owns .ct-tile. These mirror the dashboard's own treatments:
-       wide-tracked mono eyebrows, status pills, and green-tinted metric tiles
-       with a watermark icon. */
+       wide-tracked eyebrows, status pills, and green-tinted metric tiles with a
+       watermark icon.
+
+       These deliberately do NOT set a font-family. They used to force JetBrains
+       Mono, which made the landing page the only screen in the app not rendering
+       in Geist -- every equivalent label elsewhere (the eBay KPI tile captions,
+       the hourly peak/slow labels) is plain Tailwind inheriting the body font.
+       The uppercase + wide tracking is what carries the eyebrow look; the mono
+       face was just inconsistency. */
     .lp-eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
-                  font-family: 'JetBrains Mono', ui-monospace, monospace; color: #6b6453; }
+                  color: #6b6453; }
     .dark .lp-eyebrow { color: #8893a7; }
     .lp-pill { display: inline-block; font-size: 10px; letter-spacing: 0.14em;
                text-transform: uppercase; padding: 4px 10px; border-radius: 999px;
-               font-family: 'JetBrains Mono', ui-monospace, monospace; border: 1px solid; }
+               font-weight: 600; border: 1px solid; }
     .lp-pill-live  { color: #22c55e; border-color: rgba(34,197,94,0.45); }
     .lp-pill-setup { color: #f59e0b; border-color: rgba(245,158,11,0.45); }
     .lp-tile { position: relative; overflow: hidden; text-align: center;
@@ -322,7 +329,7 @@
                background: rgba(34,197,94,0.07); border: 1px solid rgba(34,197,94,0.22); }
     .dark .lp-tile { background: rgba(34,197,94,0.09); border-color: rgba(34,197,94,0.28); }
     .lp-tile-label { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
-                     color: #22c55e; font-family: 'JetBrains Mono', ui-monospace, monospace; }
+                     color: #22c55e; font-weight: 600; }
     .lp-tile-val { font-size: 17px; font-weight: 600; margin-top: 3px; }
     .dark .sidebar .nav-item { color: #8893a7; }
     .sidebar .nav-item:hover { background: rgba(20,16,8,0.035); color: #14110a; }
