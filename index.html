@@ -2070,18 +2070,32 @@
         .eb-u-warn{color:#d97706}  .dark .eb-u-warn{color:#fbbf24}
         .eb-u-ok  {color:#16a34a}  .dark .eb-u-ok  {color:#4ade80}
         .eb-u-none{color:#9ca3af}
-        .eb-pill{display:inline-flex;align-items:center;gap:.35rem;font-size:10px;
+        /* Base colour so a future .eb-pill-* variant that forgets one is still
+           legible; every current variant overrides it. Same for .eb-banner. */
+        .eb-pill{color:#6b6453;display:inline-flex;align-items:center;gap:.35rem;font-size:10px;
           letter-spacing:.12em;text-transform:uppercase;font-weight:700;
           padding:.25rem .5rem;border-radius:9999px;border:1px solid}
         .eb-pill-live   {color:#dc2626;border-color:rgba(220,38,38,.45)}
         .eb-pill-shadow {color:#d97706;border-color:rgba(217,119,6,.45)}
         .eb-pill-off    {color:#9ca3af;border-color:rgba(156,163,175,.45)}
         .eb-pill-unknown{color:#9ca3af;border-color:rgba(156,163,175,.45);border-style:dashed}
+        /* 🔑 An UNSELECTED chip needs its own colour. Only .eb-chip-on set one,
+           so in dark mode the inactive account chips inherited light-mode ink and
+           rendered near-black on near-black — the same defect as the case titles,
+           in the one place that sits OUTSIDE .eb-case and so was not covered by
+           fixing the card root. */
         .eb-chip{font-size:12px;padding:.25rem .625rem;border-radius:9999px;
-          border:1px solid rgba(20,16,8,.1);cursor:pointer;transition:all .15s}
-        .dark .eb-chip{border-color:rgba(255,255,255,.12)}
+          border:1px solid rgba(20,16,8,.1);cursor:pointer;transition:all .15s;
+          color:#14110a}
+        .dark .eb-chip{border-color:rgba(255,255,255,.12);color:#e7ecf3}
         .eb-chip-on{background:#3BB54A;border-color:#3BB54A;color:#04140a;font-weight:600}
-        .eb-banner{border-radius:.75rem;padding:.875rem 1rem;border:1px solid;font-size:14px}
+        /* ⚠️ Must match `.dark .eb-chip`'s specificity (0,2,0) or it loses to it and
+           the SELECTED chip turns white on green. The dark text is deliberate —
+           it is the readable pairing against #3BB54A in either theme. */
+        .dark .eb-chip-on{color:#04140a}
+        .eb-banner{border-radius:.75rem;padding:.875rem 1rem;border:1px solid;font-size:14px;color:#14110a}
+        .dark .eb-pill{color:#8893a7}
+        .dark .eb-banner{color:#e7ecf3}
         .eb-banner-dead{background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.4);color:#b91c1c}
         .dark .eb-banner-dead{color:#fca5a5}
         .eb-banner-warn{background:rgba(217,119,6,.08);border-color:rgba(217,119,6,.4);color:#b45309}
@@ -2089,9 +2103,10 @@
 
         /* ── Collapsible case card ─────────────────────────────────────── */
         /* ── Collapsible SECTION (Needs action / With eBay / Recent actions) ──
-           Open by default: collapsing is a choice the reader makes, not a
-           default that hides 16 overdue cases from someone who just opened the
-           page. State is per-<details>, so it survives a re-render. */
+           Collapsed by default, at Brian's request: the counts and totals are
+           already on the KPI tiles above, so the headers alone answer "how much
+           is there" and you open the one you intend to work. State is
+           per-<details>, so it survives a re-render. */
         .eb-sec > summary{list-style:none;cursor:pointer}
         .eb-sec > summary::-webkit-details-marker{display:none}
         .eb-sec > summary:hover{background:rgba(20,16,8,.02)}
@@ -2182,7 +2197,7 @@
         <!-- 🔑 Two lists, never one. The server does the split; mixing them into a
              single urgency-sorted list is what Raj's own dashboard did, and it
              sends whoever works these at cases eBay has already decided. -->
-        <details class="eb-sec bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors" open>
+        <details class="eb-sec bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors">
           <summary class="eb-sec-sum px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-baseline justify-between gap-3 flex-wrap">
             <h2 class="font-semibold text-opl-ink dark:text-op-ink"><span class="eb-sec-chev">&#9654;</span>Needs action <span id="eb-actionable-count" class="text-xs text-opl-inkDim dark:text-op-inkDim font-normal"></span></h2>
             <span id="eb-actionable-amount" class="text-sm font-semibold tabular-nums text-opl-ink dark:text-op-ink"></span>
@@ -2190,7 +2205,7 @@
           <div id="eb-actionable" class="divide-y divide-[rgba(20,16,8,0.06)] dark:divide-[rgba(255,255,255,0.06)]"></div>
         </details>
 
-        <details class="eb-sec bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors" open>
+        <details class="eb-sec bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors">
           <summary class="eb-sec-sum px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border block">
             <div class="flex items-baseline justify-between gap-3 flex-wrap">
               <h2 class="font-semibold text-opl-ink dark:text-op-ink"><span class="eb-sec-chev">&#9654;</span>With eBay <span id="eb-appeals-count" class="text-xs text-opl-inkDim dark:text-op-inkDim font-normal"></span></h2>
@@ -2205,7 +2220,7 @@
           <div id="eb-appeals" class="divide-y divide-[rgba(20,16,8,0.06)] dark:divide-[rgba(255,255,255,0.06)]"></div>
         </details>
 
-        <details class="eb-sec bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors" open>
+        <details class="eb-sec bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors">
           <summary class="eb-sec-sum px-5 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border block">
             <h2 class="font-semibold text-opl-ink dark:text-op-ink"><span class="eb-sec-chev">&#9654;</span>Recent Handler actions <span id="eb-actions-count" class="text-xs text-opl-inkDim dark:text-op-inkDim font-normal"></span></h2>
             <p class="mt-1 text-xs text-opl-inkDim dark:text-op-inkDim">
