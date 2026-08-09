@@ -6,7 +6,7 @@ const { DatabaseSync } = require('node:sqlite');
 const fs = require('fs');
 const path = require('path');
 
-const REPO = process.argv[2];
+const REPO = process.argv[2] || '.';
 const read = f => fs.readFileSync(path.join(REPO, f), 'utf8');
 
 // Pull the real CREATE TABLE statements out of the real migration files.
@@ -98,6 +98,11 @@ const ok = (name, cond, detail = '') => {
 };
 
 console.log('\nassertions:');
+// A skipped seed silently deletes the three cascade assertions below, and the
+// suite still prints "all assertions passed". Proving the cascade did not fire
+// IS this suite's purpose, so a missing seed is a failure, not a skip.
+ok('all three cascade-target tables were seeded', extras.push && extras.prefs && extras.supply,
+   JSON.stringify(extras));
 ok('no row lost from users', after.users === before.users, `${before.users} → ${after.users}`);
 ok('sessions survived (cascade did NOT fire)', after.sessions === before.sessions, `${before.sessions} → ${after.sessions}`);
 if (extras.push)   ok('push_subscriptions survived', after.push === before.push, `${before.push} → ${after.push}`);

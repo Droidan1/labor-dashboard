@@ -335,3 +335,63 @@ Bargain Lane's legacy grant behaviour.
   the right order — the endpoint will honour units the moment any exist.
 - `effectiveMode` is derived across all accounts (worst-case wins) and is still returned
   whole. It is business-level operational state, not per-account data.
+
+---
+
+# Test infrastructure: the suite that never ran
+
+## The bug
+
+`scripts/test-migration-029.js` had `const REPO = process.argv[2];` with no `|| '.'`
+fallback — the one file out of 21 missing it. Run with no argument (which is how the suite
+is run), `REPO` was `undefined` and the first `path.join` threw before a single assertion.
+The suite had been contributing **zero** coverage while appearing in the suite list. Not a
+regression; it fails identically on a clean checkout of main.
+
+Migrations live in the **repo root**, not `./migrations/`. Fixed by matching the sibling
+convention exactly: `process.argv[2] || '.'` — used by all 8 other argv-taking suites.
+
+## The assertions pass — migration-029 is sound
+
+18/18, and load-bearing, not vacuous. Mutation-checked: deleting the four restore
+`INSERT`s from `migration-029.sql` (leaving the snapshots, so `DROP TABLE users` fires the
+cascade and nothing puts the rows back) fails exactly the four cascade assertions —
+`sessions 2 → 0`, `push 1 → 0`, `prefs 1 → 0`, `supply 1 → 0` — and exits 1. The migration
+file was restored and verified byte-clean against git.
+
+## One latent vacuous pass, inside 029 itself
+
+Lines 103–105 were `if (extras.push) ok(...)` — a seed failure silently **deleted** three
+of the suite's assertions and it still printed "all assertions passed" and exited 0. Those
+three are the whole point of the file. Added one assertion pinning that all three
+cascade-target tables actually seeded, so a skip is now a failure. No assertion weakened.
+
+## Audit of the other 20 suites
+
+None crash and none pass vacuously. Every collection-derived assertion count already has
+an emptiness guard: `test-business-gate.mjs` asserts `routed.length > 100`,
+`test-nav-registry.mjs` asserts `!!navBizBlock` and `registry >= 10`, and
+`test-financial-gate.js`'s ratio check fails loudly at zero rather than skipping. Every
+`grab()` source-extraction helper `process.exit(1)`s on a missed match. All files the
+suites read exist.
+
+⚠️ **Lesson: a defensive `if` around an assertion is a silent assertion-deleter.**
+Guard the precondition with its own assertion instead — a skipped check must be as loud as
+a failed one.
+
+## `npm test` now exists — and the old loop was worse than it looked
+
+`scripts/test.sh`, wired to `npm test`. The ad-hoc
+`for f in scripts/test-*; do node "$f"; done` exits with the **last** suite's status, so a
+failure in any earlier suite was swallowed entirely — measured: a hard-failing first suite
+followed by a passing last suite exits **0**.
+
+The runner fails on a non-zero exit *and* on a suite that exits 0 having asserted nothing —
+the exact shape 029 had. Both paths verified with synthetic suites: a crasher reproducing
+the `REPO` bug is caught with its stack trace, and a suite looping over an empty array
+while printing "all assertions passed" is caught as EMPTY. Both drive the exit code to 1.
+
+## Verified
+
+512 assertions across 21 suites, all green. Test-infrastructure only — no worker, client,
+migration or schema change, and nothing deployed.
