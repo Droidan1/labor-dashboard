@@ -219,7 +219,33 @@ fix landed on one side only. Have the live endpoint return the finished
 aggregate and render it. Removes the whole class of bug rather than this
 instance of it.
 
-### Phase 2 — make the metric tiles honest
+### Phase 2 — make the metric tiles honest — BUILT 2026-08-10
+
+Brian's spec: **no selection → combined retail + bin; tap Retail → retail only;
+tap BIN → bin only.** One population at a time, default is the honest combined
+figure. All four tiles now come from the channel pipeline in every state, so
+they always share a denominator.
+
+- `_ch.mixed` counts orders holding BOTH retail and bin items. They sit in each
+  channel's order total, so combined orders = `retail.orders + bin.orders −
+  mixed`. Without it the divisor is too big and cart/items read low.
+- The live `?store=` endpoint now returns `channels` — `aggregateItemSales`
+  already computed it there, so **today costs no extra request**. Past ranges
+  cost one `channel-range` per store.
+- `mixed` added to the `items` snapshot payload and to `channel-range`.
+
+⚠️ **Past days read slightly high until snapshots are rewritten.** Existing KV
+snapshots have no `mixed` key; it is treated as 0, so combined ORDERS for
+historical days overstates by the mixed count (~2–8%, measured +10 on BL1 and
++17 on BL4 for one day). Today and anything snapshotted from now on is correct.
+Fixing the back catalogue means rewriting item snapshots — **not** to be done
+blindly; that is what destroyed 81 BL1 days once already.
+
+🛑 **Coverage gap, measured:** deleting the `_ch.mixed++` increment leaves the
+whole suite green — every fixture supplies `mixed` pre-computed and nothing runs
+`aggregateItemSales`. Covered instead by the real-data check below.
+
+### Phase 2 — original options (superseded by the spec above)
 
 Requires **a business decision** (below), then it is a small change confined to
 the tile group. Two coherent options; today's card is neither.

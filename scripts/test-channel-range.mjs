@@ -27,12 +27,17 @@ const { db, env } = makeEnv(repo);
 //   day 2: retail net  100 / units  50 / orders 90   → cart   1.11, asp  2.00
 // summed: net 1100 / units 150 / orders 100          → cart  11.00, asp  7.33
 // unweighted mean of the two day-averages would be    cart  50.56  — wrong.
-const snap = (r, b) => ({ channels: { retail: r, bin: b } });
+// `mixed` = orders holding both retail and bin items, counted once in EACH
+// channel's order total. Combined orders must subtract it.
+const snap = (r, b, mixed) => ({ channels: { retail: r, bin: b, ...(mixed === undefined ? {} : { mixed }) } });
 await env.SALES_SNAPSHOTS.put('items:bl1:2026-08-01',
-  snap({ net: 1000, units: 100, orders: 10 }, { net: 200, units: 40, orders: 8 }));
+  snap({ net: 1000, units: 100, orders: 10 }, { net: 200, units: 40, orders: 8 }, 3));
 await env.SALES_SNAPSHOTS.put('items:bl1:2026-08-02',
-  snap({ net: 100, units: 50, orders: 90 }, { net: 300, units: 60, orders: 12 }));
+  snap({ net: 100, units: 50, orders: 90 }, { net: 300, units: 60, orders: 12 }, 5));
 // 2026-08-03 deliberately absent — a closed day, not an error.
+// A snapshot written BEFORE mixed was tracked: no `mixed` key at all.
+await env.SALES_SNAPSHOTS.put('items:bl1:2026-07-20',
+  snap({ net: 500, units: 25, orders: 5 }, { net: 0, units: 0, orders: 0 }));
 
 const call = async (qs, user = 'u-su') =>
   worker.fetch(req(`/?action=channel-range&${qs}`, { user }), env, ctx);
@@ -58,6 +63,67 @@ const json = async (r) => JSON.parse(await r.text());
      'derived avg cart is NOT the unweighted mean of the per-day averages (50.56)');
   const asp = b.retail.net / b.retail.units;
   ok(Math.abs(asp - 7.3333) < 0.005, `derived ASP is unit-weighted (7.33), got ${asp.toFixed(4)}`);
+  ok(b.mixed === 8, `mixed-basket orders sum across the range (3 + 5 = 8), got ${b.mixed}`);
+}
+
+// ── a snapshot predating `mixed` contributes 0, not NaN ────────────────────
+{
+  const b = await json(await call('store=BL1&from=2026-07-20&to=2026-07-20'));
+  ok(b.mixed === 0, `a snapshot with no mixed key reads 0, got ${b.mixed}`);
+  ok(b.retail.net === 500 && b.retail.orders === 5, 'the rest of that old snapshot still reads correctly');
+}
+
+// 🛑 KNOWN GAP — the worker's `mixed` COUNTER is not covered here.
+// Measured 2026-08-10: deleting `if (_ordCh.retail.units > 0 && _ordCh.bin.units
+// > 0) _ch.mixed++` from worker.js leaves this whole file green, because every
+// fixture below hands `mixed` in pre-computed and nothing here runs
+// aggregateItemSales. Reaching it needs a Clover-shaped orders payload driven
+// through worker.fetch; the harness blocks outbound fetch, and regex-extracting
+// aggregateItemSales would drag in getCat/getL3/the category maps — the
+// extraction tax this repo already paid for twice.
+// Covered instead by a real-data check against production, recorded in
+// tasks/channel-reconciliation.md: for a live store,
+//   retail.orders + bin.orders - mixed == orders holding ≥1 classifiable item,
+// computed independently from the same response's `elements`.
+// If that check is ever removed, this counter has NO coverage.
+
+// ── the COMBINED view: retail + bin as one population ──────────────────────
+// Source-extracted (no DOM harness) — this pins the arithmetic that decides
+// what the unfiltered Cart / Items / Orders / ASP tiles show.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const m = html.match(/const chCombined = \(t\) => \(\{[\s\S]*?\n  \}\);/);
+  ok(!!m, 'chCombined exists in index.html');
+  if (m) {
+    const chCombined = new Function('return ' + m[0].replace(/^const chCombined = /, '').replace(/;$/, ''))();
+    const t = {
+      retail: { net: 1100, units: 150, orders: 100 },
+      bin:    { net: 500,  units: 100, orders: 20 },
+      mixed: 8,
+    };
+    const c = chCombined(t);
+    ok(c.net === 1600, `combined net sums both channels, got ${c.net}`);
+    ok(c.units === 250, `combined units sum both channels, got ${c.units}`);
+    ok(c.orders === 112,
+       `combined orders subtract the double-counted mixed baskets (100 + 20 - 8 = 112), got ${c.orders}`);
+    ok(c.orders !== 120, 'combined orders is NOT the naive sum of the two channel counts');
+
+    // A day where every order was mixed: both channels report the same orders,
+    // and the real transaction count is that number, not double it.
+    const allMixed = chCombined({
+      retail: { net: 60, units: 6, orders: 40 }, bin: { net: 40, units: 4, orders: 40 }, mixed: 40,
+    });
+    ok(allMixed.orders === 40, `an all-mixed day counts each order once, got ${allMixed.orders}`);
+
+    // Never negative, even on nonsense input.
+    const bad = chCombined({ retail: { net: 0, units: 0, orders: 1 }, bin: { net: 0, units: 0, orders: 1 }, mixed: 99 });
+    ok(bad.orders === 0, `a mixed count larger than the totals floors at 0, got ${bad.orders}`);
+
+    // Missing mixed (old data) must not produce NaN.
+    const noMixed = chCombined({ retail: { net: 10, units: 2, orders: 3 }, bin: { net: 5, units: 1, orders: 2 } });
+    ok(noMixed.orders === 5 && Number.isFinite(noMixed.net),
+       `absent mixed is treated as 0, got orders ${noMixed.orders}`);
+  }
 }
 
 // ── a range with no snapshots at all is zeroes, never NaN ──────────────────

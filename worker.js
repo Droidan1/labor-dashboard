@@ -2558,7 +2558,13 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   // filter. Bin = L2 "Bin Products"; everything else = retail. Positive lines
   // only (gross of refunds) — drives the channel-filtered matrix tiles, not
   // the books. An order is counted toward a channel if it has ≥1 of its items.
-  const _ch = { retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 } };
+  //
+  // 🔑 `mixed` = orders holding BOTH retail and bin items, so they land in both
+  // counters above. Without it retail.orders + bin.orders overstates the real
+  // transaction count — measured +10 on BL1 and +17 on BL4 for 2026-08-09 —
+  // and the combined view (the unfiltered tiles) would divide by too many
+  // orders. Combined orders = retail.orders + bin.orders − mixed.
+  const _ch = { retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 }, mixed: 0 };
   // covItem/covCat/covNone = net $ whose cost came from an IM# item-master cost
   // (known), an L3 category flat cost (estimate), or no cost source (uncovered).
   // Feeds the Cost Coverage report so admins can see what's known vs. estimated.
@@ -2959,6 +2965,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       const cat = getCat("Other / Non-Item");
       cat.net += residualCents / 100;
     }
+    if (_ordCh.retail.units > 0 && _ordCh.bin.units > 0) _ch.mixed++;
     for (const k of ['retail', 'bin']) {
       if (_ordCh[k].units > 0) { _ch[k].orders++; _ch[k].net += _ordCh[k].net; _ch[k].units += _ordCh[k].units; }
     }
@@ -3213,6 +3220,9 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         avgItems: _ch.bin.orders > 0 ? Math.round(_ch.bin.units / _ch.bin.orders * 10) / 10 : 0,
         asp: _ch.bin.units > 0 ? roundCents(_ch.bin.net / _ch.bin.units) : 0,
       },
+      // Orders counted in BOTH channels above. Subtract to get the real
+      // transaction count for the combined (unfiltered) view.
+      mixed: _ch.mixed,
     },
     _debug: {
       unmappedL3, noCategory,
@@ -12382,7 +12392,7 @@ export default {
       // A date with no snapshot contributes nothing. It is NOT an error: stores
       // open at different times and a closed day has no orders to split.
       const sum = { retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 } };
-      let daysWithData = 0;
+      let daysWithData = 0, mixed = 0;
       for (const snap of snaps) {
         const ch = snap && snap.channels;
         if (!ch) continue;
@@ -12392,6 +12402,10 @@ export default {
           sum[k].units += Number(ch[k]?.units) || 0;
           sum[k].orders += Number(ch[k]?.orders) || 0;
         }
+        // Absent on snapshots written before mixed was tracked. Treating those
+        // as 0 leaves the combined order count slightly HIGH for old days —
+        // the pre-existing behaviour — rather than failing the whole range.
+        mixed += Number(ch.mixed) || 0;
       }
       return new Response(JSON.stringify({
         ok: true, store, from, to,
@@ -12399,6 +12413,7 @@ export default {
         daysWithData,
         retail: { net: roundCents(sum.retail.net), units: Math.round(sum.retail.units), orders: sum.retail.orders },
         bin:    { net: roundCents(sum.bin.net),    units: Math.round(sum.bin.units),    orders: sum.bin.orders },
+        mixed,
       }), { headers: corsJson });
     }
 
@@ -12677,6 +12692,10 @@ export default {
       // categories[] keyed by L2; pull "Bin Products" netSales and treat the
       // remainder of revenue-bearing categories as retail.
       let binNet = 0, retailNet = 0;
+      // Per-channel orders/units for today's matrix tiles. aggregateItemSales
+      // already computes this — returning it costs nothing and saves the client
+      // a second round-trip per store just to fill the same four tiles.
+      let channels = null;
       if (elements && elements.length > 0) {
         const itemAgg = aggregateItemSales(
           elements, itemCatMap, targetStore, et.dateStr, overrides, itemCosts, refundElements
@@ -12685,6 +12704,7 @@ export default {
           if (c.category === "Bin Products") binNet += c.netSales;
           else retailNet += c.netSales;
         }
+        channels = itemAgg.channels || null;
       }
 
       const result = JSON.stringify({
@@ -12692,6 +12712,7 @@ export default {
         refundCents: refundCents || 0,
         binNet,
         retailNet,
+        channels,
       });
       const response = new Response(result, {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

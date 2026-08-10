@@ -4072,7 +4072,11 @@
       const avgItems = orderCount > 0 ? totalItemCount / orderCount : 0;
       const avgTxnSec = txnTimeCount > 0 ? Math.round(totalTxnTimeMs / txnTimeCount / 1000) : null;
       const avgASP = retailItemCount > 0 ? retailNet / retailItemCount / 100 : null;
-      return { total: totalDollars, retail: retailDollars, bin: binDollars, avgCart, avgItems, orderCount, avgTxnSec, avgASP };
+      // channels: today's per-channel orders/units/net, computed by the worker
+      // in this same response. Feeds the matrix tiles (combined / retail / bin)
+      // without a second round-trip per store.
+      return { total: totalDollars, retail: retailDollars, bin: binDollars, avgCart, avgItems, orderCount, avgTxnSec, avgASP,
+               channels: data?.channels || null };
     } catch (error) {
       console.warn(`Clover API error for ${storeKey}:`, error.message);
       return null;
@@ -5397,7 +5401,19 @@
     asp:      x.units  > 0 ? x.net / x.units  : 0,
   });
 
-  const chZero = () => ({ retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 } });
+  const chZero = () => ({ retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 }, mixed: 0 });
+
+  // The unfiltered view: retail + bin as one population.
+  // 🔑 `mixed` orders hold BOTH retail and bin items, so they were counted in
+  // each channel's order total. Subtract them or the divisor is too big and
+  // cart/items read low — measured +10 orders on BL1, +17 on BL4 for one day.
+  const chCombined = (t) => ({
+    net:    t.retail.net   + t.bin.net,
+    units:  t.retail.units + t.bin.units,
+    orders: Math.max(0, t.retail.orders + t.bin.orders - (t.mixed || 0)),
+  });
+
+  const storeNameForCode = (code) => STORES.find(s => s.split('/')[0] === code);
 
   // Summed channel totals for one store across the selected range.
   async function fetchStoreChannels(storeKey) {
@@ -5409,6 +5425,7 @@
         out[k].units  += src[k]?.units  || 0;
         out[k].orders += src[k]?.orders || 0;
       }
+      out.mixed += src.mixed || 0;
     };
     const live = selIncludesToday();
     // Mirror the card's own accumulation: when live covers today, the stored
@@ -5421,7 +5438,13 @@
         { credentials: 'include' }).then(add).catch(() => {}));
     }
     if (live) {
-      jobs.push(cachedFetch(`${WORKER_BASE}?action=items&store=${storeKey}`,
+      // Today's split rides along on the live sales fetch the card already
+      // made — the worker computes it there anyway, so this costs no request.
+      // Only fall back to a dedicated call if live hasn't landed yet.
+      const nm = storeNameForCode(storeKey);
+      const fromLive = nm ? liveCloverData[nm]?.channels : null;
+      if (fromLive) add(fromLive);
+      else jobs.push(cachedFetch(`${WORKER_BASE}?action=items&store=${storeKey}`,
         { credentials: 'include' }).then(d => add(d && d.channels)).catch(() => {}));
     }
     await Promise.all(jobs);
@@ -5441,7 +5464,6 @@
   // into a fetch per render.
   function ensureDashChannel() {
     const key = chRangeKey();
-    if (!dashChannel) { applyDashChannel(); return; }
     if (dashChannelData && dashChannelData.key === key) { applyDashChannel(); return; }
     if (dashChannelLoadKey === key) { applyDashChannel(); return; }   // already in flight
     loadDashChannel();
@@ -5470,15 +5492,23 @@
       if (el('mx-orders')) el('mx-orders').textContent = orders;
       if (el('mx-asp')) el('mx-asp').textContent = asp;
     };
-    if (!dashChannel) {
-      if (lbl) lbl.textContent = 'Matrix · ' + period;
-      if (_dashMxBlended) set4(_dashMxBlended.cart, _dashMxBlended.items, _dashMxBlended.orders, _dashMxBlended.asp);
+    if (lbl) lbl.textContent = 'Matrix · ' + period +
+      (dashChannel ? ' · ' + (dashChannel === 'retail' ? 'Retail' : 'BIN') : '');
+    // No selection → combined (retail + bin), which is what the four tiles
+    // describe by default now.
+    const d = (dashChannelData && dashChannelData.key === chRangeKey())
+      ? (dashChannel ? dashChannelData[dashChannel] : dashChannelData.combined)
+      : null;
+    if (!d) {
+      // Pre-load: keep the figures the dashboard was rendered with rather than
+      // blanking. daily_sales-derived and retail-weighted, so slightly high
+      // against the combined values that replace them. Transient only.
+      if (!dashChannel && _dashMxBlended) {
+        set4(_dashMxBlended.cart, _dashMxBlended.items, _dashMxBlended.orders, _dashMxBlended.asp);
+      } else if (dashChannelLoading) { set4('…', '…', '…', '…'); }
+      else { set4('—', '—', '—', '—'); }
       return;
     }
-    if (lbl) lbl.textContent = 'Matrix · ' + period + ' · ' + (dashChannel === 'retail' ? 'Retail' : 'BIN');
-    if (dashChannelLoading) { set4('…', '…', '…', '…'); return; }
-    const d = (dashChannelData && dashChannelData.key === chRangeKey()) ? dashChannelData[dashChannel] : null;
-    if (!d) { set4('—', '—', '—', '—'); return; }
     set4(
       d.orders > 0 ? fmtDollar(d.avgCart) : '—',
       d.orders > 0 ? Number(d.avgItems).toFixed(1) : '—',
@@ -5501,10 +5531,15 @@
       // covers exactly the stores whose dollars are in the strip above it.
       const per = await Promise.all(STORES.map(s => fetchStoreChannels(s.split('/')[0])));
       const sum = chZero();
-      for (const p of per) for (const k of ['retail', 'bin']) {
-        sum[k].net += p[k].net; sum[k].units += p[k].units; sum[k].orders += p[k].orders;
+      for (const p of per) {
+        for (const k of ['retail', 'bin']) {
+          sum[k].net += p[k].net; sum[k].units += p[k].units; sum[k].orders += p[k].orders;
+        }
+        sum.mixed += p.mixed || 0;
       }
-      if (current()) dashChannelData = { key, retail: chDerive(sum.retail), bin: chDerive(sum.bin) };
+      if (current()) dashChannelData = {
+        key, retail: chDerive(sum.retail), bin: chDerive(sum.bin), combined: chDerive(chCombined(sum)),
+      };
     } catch (_) { if (current()) dashChannelData = null; }
     finally {
       if (current()) { dashChannelLoadKey = null; dashChannelLoading = false; applyDashChannel(); }
@@ -5520,11 +5555,11 @@
   window.setCardChannel = setCardChannel;
 
   // Load when this card's cached split is for a different range, else repaint.
-  // Called on tap AND after every card rebuild, so an active filter survives a
-  // range change by reloading rather than showing the previous range's split.
+  // Called on tap AND after every card rebuild.
+  // 🔑 No longer conditional on a channel being selected: the UNFILTERED tiles
+  // are now the combined retail+bin figures, which come from this same data.
   function ensureCardChannel(code) {
     const key = chRangeKey();
-    if (!dashCardCh[code]) { applyCardChannel(code); return; }
     if (dashCardChData[code] && dashCardChData[code].key === key) { applyCardChannel(code); return; }
     if (dashCardChLoadKey[code] === key) { applyCardChannel(code); return; }   // already in flight
     loadCardChannel(code);
@@ -5542,15 +5577,20 @@
       t.classList.toggle('ring-accent-blue', on && c === 'bin');
     });
     const set = (k, v) => { const e = card.querySelector(`[data-mx="${k}"]`); if (e) e.textContent = v; };
-    if (!ch) {
-      const b = dashCardBlended[code];
+    const data = dashCardChData[code];
+    // ch null → combined (retail + bin), the default view.
+    const d = (data && data.key === chRangeKey()) ? (ch ? data[ch] : data.combined) : null;
+    if (!d) {
+      // Until the split arrives, keep showing the figures the card was built
+      // with rather than blanking. Those come from daily_sales and are
+      // retail-weighted, so they read slightly high against the combined
+      // values that replace them — a transient, not a second source of truth.
+      const b = !ch && dashCardBlended[code];
       if (b) { set('cart', b.cart); set('items', b.items); set('orders', b.orders); set('asp', b.asp); }
+      else if (dashCardChLoading[code]) { set('cart', '…'); set('items', '…'); set('orders', '…'); set('asp', '…'); }
+      else { set('cart', '—'); set('items', '—'); set('orders', '—'); set('asp', '—'); }
       return;
     }
-    if (dashCardChLoading[code]) { set('cart', '…'); set('items', '…'); set('orders', '…'); set('asp', '…'); return; }
-    const data = dashCardChData[code];
-    const d = (data && data.key === chRangeKey()) ? data[ch] : null;
-    if (!d) { set('cart', '—'); set('items', '—'); set('orders', '—'); set('asp', '—'); return; }
     set('cart', d.orders > 0 ? '$' + Number(d.avgCart).toFixed(2) : '—');
     set('items', d.orders > 0 ? Number(d.avgItems).toFixed(1) : '—');
     set('orders', (d.orders || 0).toLocaleString('en-US'));
@@ -5566,7 +5606,9 @@
     const current = () => dashCardChLoadKey[code] === key;
     try {
       const t = await fetchStoreChannels(code);
-      if (current()) dashCardChData[code] = { key, retail: chDerive(t.retail), bin: chDerive(t.bin) };
+      if (current()) dashCardChData[code] = {
+        key, retail: chDerive(t.retail), bin: chDerive(t.bin), combined: chDerive(chCombined(t)),
+      };
     } catch (_) { if (current()) dashCardChData[code] = { key }; }
     finally {
       if (current()) { dashCardChLoadKey[code] = null; dashCardChLoading[code] = false; applyCardChannel(code); }
@@ -6024,10 +6066,10 @@
         orders: v1Orders != null ? Number(v1Orders).toLocaleString('en-US') : '—',
         asp: v1Asp != null ? '$' + Number(v1Asp).toFixed(2) : '—',
       };
-      // The card was just rebuilt blended; re-apply any active filter. A range
-      // change lands here too, and ensureCardChannel reloads rather than
-      // repainting the previous range's split.
-      if (dashCardCh[cardCode]) ensureCardChannel(cardCode);
+      // Always: the four matrix tiles are driven by the channel data now, even
+      // unfiltered (combined = retail + bin). A range change lands here too,
+      // and ensureCardChannel reloads rather than repainting a stale split.
+      ensureCardChannel(cardCode);
       loadStoreHourlySpark(v1SparkKey, v1SparkDate, v1SparkColor, v1SparkId);
     }
     loadLYComparison();   // fill the "vs last year" pill + tile slots async
