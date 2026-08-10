@@ -12707,26 +12707,45 @@ export default {
         channels = itemAgg.channels || null;
       }
 
+      // 🔑 Aggregate ONCE, here. The browser used to re-run this entire loop
+      // over the raw elements, and that second implementation is why the
+      // payment.amount fix reached only one side: Clover REDUCES order.total on
+      // a same-day refund but leaves payments intact, so the client — still
+      // reading order.total, then subtracting refundCents again — put Net below
+      // retail + bin on every live card. One aggregator, one answer.
+      let aggregate = null;
+      if (elements && elements.length > 0) {
+        aggregate = aggregateOrders(elements, startOfToday);
+        applyRefundsToAggregate(aggregate, refundCents);
+        // The item pipeline is the source of truth for the money split, and the
+        // total is derived FROM that split so the three can never disagree.
+        // Guarded on a non-zero split: a failed item aggregation would otherwise
+        // overwrite a good name-based split with zeroes.
+        if ((binNet + retailNet) > 0) {
+          aggregate.bin    = +binNet.toFixed(2);
+          aggregate.retail = +retailNet.toFixed(2);
+          aggregate.total  = +(binNet + retailNet).toFixed(2);
+        }
+      }
+
       const result = JSON.stringify({
         elements: elements || [],
         refundCents: refundCents || 0,
         binNet,
         retailNet,
         channels,
+        aggregate,
       });
       const response = new Response(result, {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
 
-      // Snapshot-on-fetch: save today's aggregated data to KV in background
-      if (env.SALES_SNAPSHOTS && elements && elements.length > 0) {
-        const aggregated = aggregateOrders(elements, startOfToday);
-        applyRefundsToAggregate(aggregated, refundCents);
-        // Override the regex-based bin/retail with the category-based figures
-        // computed above so daily_sales matches the Item Sales view.
-        aggregated.bin = +binNet.toFixed(2);
-        aggregated.retail = +retailNet.toFixed(2);
-        ctx.waitUntil(saveSnapshot(env, targetStore, et.dateStr, aggregated));
+      // Snapshot-on-fetch: save today's aggregated data to KV in background.
+      // Same object the client renders, so the stored snapshot and the screen
+      // cannot drift — previously this recomputed and stored a total that did
+      // not equal its own retail + bin.
+      if (env.SALES_SNAPSHOTS && aggregate) {
+        ctx.waitUntil(saveSnapshot(env, targetStore, et.dateStr, aggregate));
       }
 
       return response;

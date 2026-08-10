@@ -211,13 +211,42 @@ Full suite: 23 suites green. `sw.js` v69 → v70.
 Not verified yet: the live card in a browser. Needs the frontend deployed, and
 a live trading day to show a non-zero gap.
 
-### Phase 1 — delete the duplicate aggregator
+### Phase 1 — delete the duplicate aggregator — DONE 2026-08-10
 
-The browser re-implements the worker's aggregation (~100 lines in
-`fetchLiveCloverSales`) — that duplication is *why* the Phase 2G `payment.amount`
-fix landed on one side only. Have the live endpoint return the finished
-aggregate and render it. Removes the whole class of bug rather than this
-instance of it.
+**−108 lines from `index.html`.** The worker now aggregates once and returns a
+finished `aggregate`; `fetchLiveCloverSales` renders it and computes nothing.
+
+- Worker: `aggregateOrders` + `applyRefundsToAggregate` hoisted out of the
+  snapshot-only block and returned. The item-pipeline split still wins on
+  bin/retail, and `total` is derived from it (Phase 0), so the three can never
+  disagree — now guarded on a non-zero split, since a failed item aggregation
+  previously overwrote a good name-based split with zeroes.
+- The **same object** is what gets snapshotted, so the stored `sales:` snapshot
+  and the screen cannot drift. Previously the snapshot recomputed and stored a
+  total that did not equal its own retail + bin.
+- Client: `data.elements` and `refundCents` are no longer read by anything.
+- 🔑 **The client's bin classifier is gone.** `BIN_PATTERNS` / `isBinItem` and
+  `MAX_TXN_DURATION_MS` became unreachable and were removed — verified
+  definition-only before deleting. That is the "one bin classifier" goal from
+  Phase 3, achieved for the browser as a by-product. The worker still keeps its
+  primary + fallback pair, correctly (see Phase 3).
+
+`scripts/test-live-sales-reconcile.mjs` rewritten — **24 assertions**. The
+reconciliation invariant moved to where the arithmetic now lives: driven through
+`worker.fetch` with Clover stubbed. The client half asserts it stays a
+pass-through — no order loop, no bin classification, no refund handling, no
+`data.elements` — so a re-introduced aggregator fails the build.
+
+Mutation-checked: drop the total derivation (3 failures, reproducing the
+original defect exactly — *total 100 vs retail 54 + bin 36*), stop returning
+`aggregate` (5 failures), let the client fabricate zeroes when `aggregate` is
+absent (1 failure).
+
+⚠️ **`elements` is still returned but nothing reads it.** Dropping it would cut
+this response substantially — it carries every order of the day, with line
+items, per store, on every dashboard load. Left in because the `?store=` route
+may have consumers outside this repo; removing it is a deliberate follow-up, not
+a silent one.
 
 ### Phase 2 — make the metric tiles honest — BUILT 2026-08-10
 

@@ -3434,7 +3434,8 @@
   // Parallel to STORES by index (metrics map uses COLORS[i]); Holland's amber
   // moved to the end alongside it so every store keeps its accent color.
   const COLORS = ["#3BB54A","#194975","#00B8FF","#ef4444","#ec4899","#f59e0b"];
-  const MAX_TXN_DURATION_MS = 30 * 60 * 1000; // 30 min – filter out tabs/holds
+  // (MAX_TXN_DURATION_MS removed with the client-side aggregation — the
+  // transaction-time filter now lives only in the worker.)
   const C = {
     MONTH:1, WEEK:2, DATE:3,         // A–C: date identifiers
     B_TOTAL:8, B_LABOR:10,           // I,K: budgeted total & labor %
@@ -3933,155 +3934,49 @@
     return { rows, cloverHistory };
   }
 
-  const BIN_PATTERNS = [/\bbin\b/i, /\bfill a bag\b/i, /\bglass case\b/i];
-  function isBinItem(name) { return BIN_PATTERNS.some(p => p.test(name)); }
+  // BIN_PATTERNS / isBinItem lived here to classify line items for the client's
+  // own sales aggregation. That aggregation is gone (the worker returns the
+  // finished figures), and with it the browser's copy of "what counts as a bin
+  // sale" — one fewer place for that definition to drift.
 
+  // Thin client by design: the worker returns the finished aggregate and this
+  // just renders it. There is deliberately NO second implementation here.
+  //
+  // 🔑 There used to be one — ~100 lines re-aggregating data.elements in the
+  // browser — and it is why the payment.amount fix reached only one side.
+  // Clover REDUCES order.total on a same-day refund but leaves payments at the
+  // original amount; the worker was fixed to read payment.amount, the client
+  // was not, so it took the already-reduced figure and subtracted refundCents
+  // a second time. Net then sat BELOW retail + bin on every live card, all day,
+  // and healed overnight when the nightly job rewrote all three from one
+  // pipeline. A manager caught it, not a test. See tasks/channel-reconciliation.md.
   async function fetchLiveCloverSales(storeKey) {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const workerUrl = `${WORKER_BASE}?store=${storeKey}&since=${startOfToday}`;
     try {
       const data = await cachedFetch(workerUrl, { credentials: 'include' });
-      let totalNet = 0, binNet = 0, retailNet = 0, orderCount = 0, totalItemCount = 0, retailItemCount = 0, totalTxnTimeMs = 0, txnTimeCount = 0;
-      let cartNet = 0, cartCount = 0; // avg cart excludes bin-only orders
-
-      if (data && data.elements) {
-        for (const order of data.elements) {
-          if (order.total == null || order.total === 0) continue;
-          if (order.state !== "locked") continue;
-          if (order.createdTime < startOfToday) continue;
-
-          const totalCents = order.total;
-
-          // Subtract tax from payment records when available
-          let taxCents = 0;
-          if (order.payments?.elements) {
-            for (const pmt of order.payments.elements) {
-              taxCents += (pmt.taxAmount || 0);
-            }
-          }
-          const orderNet = totalCents - taxCents;
-          totalNet += orderNet;
-          if (orderNet > 0) orderCount++;
-
-          // Transaction time: order created → last payment
-          if (orderNet > 0 && order.createdTime && order.payments?.elements?.length) {
-            let lastPaymentTime = 0;
-            for (const pmt of order.payments.elements) {
-              if (pmt.createdTime > lastPaymentTime) lastPaymentTime = pmt.createdTime;
-            }
-            if (lastPaymentTime > order.createdTime) {
-              const duration = lastPaymentTime - order.createdTime;
-              if (duration < MAX_TXN_DURATION_MS) {
-                totalTxnTimeMs += duration;
-                txnTimeCount++;
-              }
-            }
-          }
-
-          // Count line items and classify as bin vs retail
-          let binItemTotal = 0, retailItemTotal = 0, orderItemCount = 0;
-          if (order.lineItems?.elements) {
-            for (const item of order.lineItems.elements) {
-              const qty = item.unitQty != null ? item.unitQty / 1000 : 1;
-              const price = (item.price || 0) * qty;
-              orderItemCount += qty;
-              if (isBinItem(item.name || '')) {
-                binItemTotal += price;
-              } else {
-                retailItemTotal += price;
-                if (orderNet > 0) retailItemCount += qty;
-              }
-            }
-          }
-          if (orderNet > 0) totalItemCount += orderItemCount;
-
-          // Distribute order's net sales proportionally between bin and retail
-          const itemGross = binItemTotal + retailItemTotal;
-          if (itemGross > 0) {
-            binNet += orderNet * (binItemTotal / itemGross);
-            retailNet += orderNet * (retailItemTotal / itemGross);
-          } else {
-            // No line items (manual refund/adjustment) — attribute to retail
-            retailNet += orderNet;
-          }
-
-          // Avg cart: count only orders with retail items; use retail portion only
-          if (orderNet > 0) {
-            if (itemGross === 0) {
-              cartNet += orderNet;
-              cartCount++;
-            } else if (retailItemTotal > 0) {
-              cartNet += orderNet * (retailItemTotal / itemGross);
-              cartCount++;
-            }
-          }
-        }
-      }
-      // Subtract refunds (pre-tax) from totalNet so the live dashboard matches
-      // Clover's Sales Summary and the hourly notification (which reads
-      // daily_sales.total, already refund-adjusted).
-      const refundCents = data?.refundCents || 0;
-      if (refundCents > 0) totalNet -= refundCents;
-
-      // Bin/retail split: prefer the worker's category-based figures (in
-      // dollars). The legacy regex-on-name client-side classification missed
-      // items in Clover's "Bin Products" L3 category whose names don't
-      // contain "bin"/"fill a bag"/"glass case", causing a sizable undercount
-      // (e.g. dashboard $27.93 vs actual $121.15). Fall back to the in-loop
-      // numbers when the worker doesn't return them.
-      let binDollars, retailDollars, totalDollars;
-      if (typeof data?.binNet === 'number' && typeof data?.retailNet === 'number'
-          && (data.binNet + data.retailNet) > 0) {
-        binDollars = data.binNet;
-        retailDollars = data.retailNet;
-        // 🔑 Net comes from the SAME source as the split — not from the loop
-        // above. That loop re-aggregates the raw orders client-side off
-        // `order.total`, but Clover REDUCES order.total for a same-day refund
-        // while leaving payment.amount intact. The worker was fixed for that
-        // (it reads payment.amount); the client never was, so the loop then
-        // subtracted `refundCents` a SECOND time and landed below retail + bin.
-        // Live 2026-08-09 21:55: channels $10,450.35 vs Net $10,442.34 on BL1,
-        // and $4,664.60 vs $4,642.13 on BL4 — visible to every manager all day,
-        // then silently corrected overnight because the nightly job takes all
-        // three figures from this same pipeline.
-        // binNet + retailNet is every category's netSales (retail = everything
-        // that is not "Bin Products", residual bucket included), which is
-        // exactly what gets stored as daily_sales.total — so this also stops
-        // the number moving between evening and morning. Verified equal on 7
-        // real store-days; see tasks/channel-reconciliation.md.
-        totalDollars = +(binDollars + retailDollars).toFixed(2);
-      } else {
-        // Fallback path: keep the proportional refund subtraction the old
-        // code did, just to keep totals consistent if binNet/retailNet absent.
-        if (refundCents > 0 && (retailNet + binNet) > 0) {
-          const totBeforeRef = retailNet + binNet;
-          const retailShare = retailNet / totBeforeRef;
-          const binShare    = binNet    / totBeforeRef;
-          retailNet -= refundCents * retailShare;
-          binNet    -= refundCents * binShare;
-        }
-        retailDollars = Math.round(retailNet) / 100;
-        binDollars    = Math.round(binNet)    / 100;
-        // Unchanged from before: this branch already reconciles its own split
-        // against this total via the proportional subtraction above.
-        totalDollars  = totalNet / 100;
-      }
-
-      const avgCart = cartCount > 0 ? (cartNet / cartCount) / 100 : 0;
-      const avgItems = orderCount > 0 ? totalItemCount / orderCount : 0;
-      const avgTxnSec = txnTimeCount > 0 ? Math.round(totalTxnTimeMs / txnTimeCount / 1000) : null;
-      const avgASP = retailItemCount > 0 ? retailNet / retailItemCount / 100 : null;
-      // channels: today's per-channel orders/units/net, computed by the worker
-      // in this same response. Feeds the matrix tiles (combined / retail / bin)
-      // without a second round-trip per store.
-      return { total: totalDollars, retail: retailDollars, bin: binDollars, avgCart, avgItems, orderCount, avgTxnSec, avgASP,
-               channels: data?.channels || null };
+      // An older worker has no `aggregate` key at all. Return null rather than
+      // zeroes so a mid-rollout response reads as "no live data" instead of a
+      // confident $0 — the card falls back to its stored figures.
+      if (!data || !('aggregate' in data)) return null;
+      const a = data.aggregate || {
+        total: 0, retail: 0, bin: 0, avgCart: 0, avgItems: 0,
+        orderCount: 0, avgTxnSec: null, avgASP: null,
+      };
+      return {
+        total: a.total, retail: a.retail, bin: a.bin,
+        avgCart: a.avgCart, avgItems: a.avgItems, orderCount: a.orderCount,
+        avgTxnSec: a.avgTxnSec, avgASP: a.avgASP,
+        // Per-channel orders/units for the matrix tiles (combined / retail / bin).
+        channels: data.channels || null,
+      };
     } catch (error) {
       console.warn(`Clover API error for ${storeKey}:`, error.message);
       return null;
     }
   }
+
 
   async function fetchHistoricalCloverData(storeKey, fromDate, toDate) {
     const workerUrl = `${WORKER_BASE}?history=true&store=${storeKey}&from=${fromDate}&to=${toDate}`;
