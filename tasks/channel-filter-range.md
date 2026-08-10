@@ -168,10 +168,36 @@ both return the identical `401 NO_SESSION`, because the auth gate fires before
 routing. This is the masked-probe trap from [[admin-endpoint-hardening]]; the
 bundle inspection is what actually establishes the deploy.
 
+## Frontend SHIPPED 2026-08-10 — divergence closed
+
+`main` fast-forwarded `6ff5d8f` → `1a03f79` and pushed. Worker-then-frontend
+order held: the worker went out ~2.5h before the frontend, so no client ever
+called an action the deployed worker lacked.
+
+Partial-tree trap checked before pushing: new tree **114 files vs 111** at the
+base — exactly the 3 added — and `deploy-pages.yml` **present** in the tree (a
+missing workflow means zero runs and a silently un-deployed site).
+
+Pages Action: **exactly 1 run** for the full 40-char sha
+`1a03f7907188d3557edaa3970adb843edceac879`, completed **success**. (A short sha
+returns `total_count: 0` and reads as a missing run — always pass the full sha.)
+
+Live `www.retjghub.com/index.html`, two consecutive clean passes:
+`action=channel-range` ×2, `fetchStoreChannels` ×4, `isTodayOnly` **×0**, and
+the control `setCardChannel` ×3 — the control matters, since an error page or a
+redirect body would also report the "gone" marker as absent. `sw.js` serving
+`dashboard-cache-v69`.
+
+`git diff 285f941 HEAD -- worker.js` is empty: **main now matches the deployed
+worker exactly**, so a later main-based deploy cannot revert it. Full suite
+re-run on merged main: 22/22 green.
+
 ### Still owed
 
-- **Authenticated round-trip + the click path.** Blocked: needs a logged-in
-  session, and the frontend is deliberately not deployed yet.
-- ⚠️ **Prod worker is now AHEAD of `main`.** Per [[deploy-from-main-not-cwd]] the
-  divergence is itself the hazard — a later `main`-based deploy silently reverts
-  this. Merge the same session.
+- **The click itself, in a logged-in browser.** Everything above is server-side,
+  artifact-level and static verification — real, but not the same as tapping the
+  tile. Three attempts to attach to a signed-in Chrome went unanswered.
+  Manual check: open the dashboard, set the range to **Yesterday**, tap **BIN**
+  on a store card — the four tiles should switch to that store's BIN-only
+  figures for *yesterday*, and the hero label should read "Matrix · Yesterday".
+- Branch `claude/channel-filter-range` is merged but not deleted.
