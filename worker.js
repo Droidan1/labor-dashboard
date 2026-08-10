@@ -3190,6 +3190,43 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     }
   }
 
+  // ── Channel NET comes from the category totals, not from _ch ─────────────
+  // _ch sums line items at (gross − discount). Two things never reach it:
+  // refunds (applied to categories later, by the refund loop) and the
+  // "Other / Non-Item" residual (custom-amount sales, service charges,
+  // line-item modifications). So channels.retail + channels.bin fell short of
+  // netSales — measured exactly as
+  //     channels.retail + channels.bin + Other/Non-Item + refunds == netSales
+  // on every store-day, with the sign flipping by day (BL1 $40 under, BL2 $125
+  // over). That was the last reason CART × ORDERS missed Net.
+  //
+  // 🔑 The category table ALREADY attributes refunds per line item and already
+  // holds the residual, and "Bin Products vs everything else" is the SAME split
+  // the dollar tiles use (binNet/retailNet in the ?store= handler). Sourcing the
+  // net here collapses two definitions of the channel split into one, instead of
+  // re-implementing refund attribution a second time.
+  //
+  // Retail is derived by SUBTRACTION so the two always sum to netSales exactly;
+  // rounding each independently can leave them a cent apart.
+  //
+  // Units and orders still come from _ch — the line-item pass is the only thing
+  // that knows which orders, and how many items, touched each channel.
+  //
+  // ⚠️ A refund that cannot be tied to a line item (cross-day, or a manual
+  // refund with no order) lands in a generic "Refund" category, which is not
+  // "Bin Products" and so reduces RETAIL even if the original sale was a bin
+  // item. That is already how the dollar tiles behave; this change makes the
+  // metric tiles agree with them rather than introducing it.
+  const _chNetSales = roundCents(totalNet);
+  const _chBinNet = roundCents(cats["Bin Products"] ? cats["Bin Products"].net : 0);
+  const _chRetailNet = roundCents(_chNetSales - _chBinNet);
+  const _chAvg = (net, units, orders) => ({
+    net, units: Math.round(units), orders,
+    avgCart: orders > 0 ? roundCents(net / orders) : 0,
+    avgItems: orders > 0 ? Math.round(units / orders * 10) / 10 : 0,
+    asp: units > 0 ? roundCents(net / units) : 0,
+  });
+
   const totalGp = totalNet - totalCost;
   return {
     store, date: dateStr,
@@ -3208,18 +3245,8 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     },
     orderCount: allElements.length,
     channels: {
-      retail: {
-        net: roundCents(_ch.retail.net), units: Math.round(_ch.retail.units), orders: _ch.retail.orders,
-        avgCart: _ch.retail.orders > 0 ? roundCents(_ch.retail.net / _ch.retail.orders) : 0,
-        avgItems: _ch.retail.orders > 0 ? Math.round(_ch.retail.units / _ch.retail.orders * 10) / 10 : 0,
-        asp: _ch.retail.units > 0 ? roundCents(_ch.retail.net / _ch.retail.units) : 0,
-      },
-      bin: {
-        net: roundCents(_ch.bin.net), units: Math.round(_ch.bin.units), orders: _ch.bin.orders,
-        avgCart: _ch.bin.orders > 0 ? roundCents(_ch.bin.net / _ch.bin.orders) : 0,
-        avgItems: _ch.bin.orders > 0 ? Math.round(_ch.bin.units / _ch.bin.orders * 10) / 10 : 0,
-        asp: _ch.bin.units > 0 ? roundCents(_ch.bin.net / _ch.bin.units) : 0,
-      },
+      retail: _chAvg(_chRetailNet, _ch.retail.units, _ch.retail.orders),
+      bin:    _chAvg(_chBinNet,    _ch.bin.units,    _ch.bin.orders),
       // Orders counted in BOTH channels above. Subtract to get the real
       // transaction count for the combined (unfiltered) view.
       mixed: _ch.mixed,

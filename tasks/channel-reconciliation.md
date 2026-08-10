@@ -363,16 +363,43 @@ equivalent. **Proposed instead:** extend that drift warning to bin/retail.
 
 `mixed` in the payload: delivered in Phase 2.
 
-## Still open
+### Refunds + residual — DONE 2026-08-10
 
-- **Route refunds and the `Other / Non-Item` residual into `_ch`**, so
-  `channels.retail + channels.bin == netSales` exactly. This is the remaining
-  cause of CART × ORDERS missing Net by $12.28 on BL1 and $21.26 on BL14. The
-  attribution points are known: the refund loop already resolves each line
-  item's `l2`, and the residual is computed per order so it can be split by
-  that order's retail/bin gross share. Unattributable refunds (cross-day, or
-  manual with no line items) need a deliberate rule — that is the open
-  question, not the plumbing.
+`channels.retail + channels.bin == netSales` **exactly**, closing the last gap
+(CART × ORDERS was missing Net by $12.28 on BL1, $21.26 on BL14).
+
+🔑 **Not by re-implementing refund attribution.** The category table already
+attributes refunds per line item and already holds the residual, and
+"Bin Products vs everything else" is the *same* split the dollar tiles use. So
+the channel **net** is now sourced from the category totals; only units and
+orders still come from `_ch`, which is the only thing that knows which orders
+and how many items touched each channel. Two definitions of the split collapse
+into one rather than becoming three.
+
+Retail is derived by **subtraction** (`netSales − bin`) so the pair always sums
+exactly; rounding each independently can leave them a cent apart.
+
+⚠️ **A refund that cannot be tied to a line item** (cross-day, or a manual
+refund with no order) lands in a generic `Refund` category, which is not
+`Bin Products`, so it reduces **retail** even if the original sale was a bin
+item. That is already how the dollar tiles behave — this change makes the metric
+tiles agree with them rather than introducing it. Fixing it properly means
+tracking the original order's channel across days.
+
+🛑 **The subtraction hides a wrong bin.** Mutating bin to the old `_ch` value
+while retail stayed derived kept the sum balanced and **survived** the first
+mutation round — retail silently absorbed the error. Caught only after adding a
+**refund against a bin item** so the two sources diverge (category 32.00 vs
+line-item 35.00). A fixture that refunds one channel only cannot test the other.
+
+25 assertions. Mutations: both nets from `_ch` (6 failures), bin from `_ch`
+alone (4). Worker-only — the payload shape is unchanged, so no client change.
+
+⚠️ Historical KV snapshots keep their old line-item-only channel nets until
+rewritten; today and everything snapshotted from now on carries the corrected
+figures. Same shape as the `mixed` rollout.
+
+## Still open
 - **Phase 1** — delete the browser's duplicate aggregator (~100 lines in
   `fetchLiveCloverSales`). That duplication is why the `payment.amount` fix
   landed on one side only.

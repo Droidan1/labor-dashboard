@@ -74,7 +74,14 @@ const ORDERS = [
   order('o4', [li('l5', 'Fill A Bag', 1500), li('l6', 'Recliner', 8000)]), // MIXED
   order('o5', [li('l7', 'Sweater', 3000)], { extraCents: 250 }),          // residual $2.50
 ];
-const REFUNDS = [{ id: 'r1', amount: 500, taxAmount: 0, orderRef: { id: 'o1' } }];
+// TWO refunds, deliberately one per channel. A retail-only refund lets a wrong
+// implementation source bin from _ch and still satisfy the sum, because retail
+// is derived by subtraction and silently absorbs the error — measured: that
+// mutation survived until the bin refund was added.
+const REFUNDS = [
+  { id: 'r1', amount: 500, taxAmount: 0, orderRef: { id: 'o1' } },  // retail (Sweater)
+  { id: 'r2', amount: 300, taxAmount: 0, orderRef: { id: 'o2' } },  // BIN
+];
 
 const call = async () => {
   const r = await worker.fetch(req('/?action=items&store=BL1', { user: 'u-su' }), env, ctx);
@@ -114,23 +121,47 @@ const call = async () => {
   // the residual nowhere leaves the identity green. This pins the real number
   // the fixture constructs, so revenue cannot quietly leave through both doors.
   //   o1 20.00 + o2 15.00 + o3 15.00 + o4 95.00 + o5 32.50 = 177.50, less the
-  //   5.00 refund on o1 = 172.50.
-  ok(Math.abs(body.totals.netSales - 172.50) < 0.005,
-     `netSales equals the constructed total (172.50), got ${body.totals.netSales}`);
+  //   5.00 retail refund and the 3.00 bin refund = 169.50.
+  ok(Math.abs(body.totals.netSales - 169.50) < 0.005,
+     `netSales equals the constructed total (169.50), got ${body.totals.netSales}`);
 
-  // The known, measured gap: the channel accumulator sees line items only, so
-  // the residual and refunds sit outside it. Pinned as an EQUALITY so that if
-  // anyone routes them into _ch, this test tightens rather than silently
-  // tolerating a new discrepancy.
+  // 🔑 THE STRICT IDENTITY. The channel net is sourced from the category
+  // totals, which already carry refunds (attributed per line item) and the
+  // "Other / Non-Item" residual — so nothing falls out of the split at all.
+  // This used to be `channels + residual + refunds == netSales`, a weaker
+  // statement that tolerated the gap; the gap is now closed.
+  ok(Math.abs((ch.retail.net + ch.bin.net) - body.totals.netSales) < 0.005,
+     `channels.retail + channels.bin == netSales exactly: ` +
+     `${(ch.retail.net + ch.bin.net).toFixed(2)} vs ${body.totals.netSales.toFixed(2)}`);
+
+  // The residual and the refund are genuinely present — without these the
+  // identity above could hold trivially on a day where neither existed.
   const residualNet = body.categories
     .filter(c => c.category === 'Other / Non-Item')
     .reduce((s, c) => s + c.netSales, 0);
-  const refundNet = body.totals.refunds || 0;
-  const decomposed = ch.retail.net + ch.bin.net + residualNet + refundNet;
-  ok(Math.abs(decomposed - body.totals.netSales) < 0.005,
-     `channels + residual + refunds == netSales: ${decomposed.toFixed(2)} vs ${body.totals.netSales.toFixed(2)}`);
   ok(Math.abs(residualNet - 2.50) < 0.005,
      `the $2.50 service charge landed in Other / Non-Item, got ${residualNet.toFixed(2)}`);
+  ok(Math.abs((body.totals.refunds || 0) - -8) < 0.005,
+     `both refunds are in the totals (-8.00), got ${body.totals.refunds}`);
+  ok(Math.abs(ch.retail.net - (body.totals.netSales - ch.bin.net)) < 0.005,
+     'retail is netSales minus bin — derived by subtraction, so they cannot drift apart');
+
+  // 🔑 Pin BIN to its own category total. Retail is derived by subtraction, so
+  // it absorbs any error in bin and the sum still balances — the identity above
+  // cannot see a wrong bin on its own. Bin gross is 35.00 (o2 15 + o3 5 + o4
+  // 15); the 3.00 refund on the bin-only order o2 attributes entirely to Bin
+  // Products, so the category net is 32.00 while the line-item-only figure
+  // would still read 35.00.
+  const binCat = body.categories
+    .filter(c => c.category === 'Bin Products')
+    .reduce((s, c) => s + c.netSales, 0);
+  ok(Math.abs(binCat - 32.00) < 0.005, `Bin Products category net is 32.00, got ${binCat.toFixed(2)}`);
+  ok(Math.abs(ch.bin.net - binCat) < 0.005,
+     `channels.bin.net tracks the category total (refund included): ${ch.bin.net} vs ${binCat.toFixed(2)}`);
+  ok(Math.abs(ch.bin.net - 35.00) > 0.005,
+     'channels.bin.net is NOT the line-item-only 35.00 — the bin refund reached it');
+  ok(Math.abs(ch.retail.net - 137.50) < 0.005,
+     `retail carries its own refund and the residual (140 - 5 + 2.50), got ${ch.retail.net}`);
 }
 
 // ── INVARIANT 2: mixed is the real overlap (covers the counter directly) ──
