@@ -213,6 +213,7 @@ const L3_TO_L2 = {
   "APPLIANCES - BL STORES": "Hardlines",
   "Bakers Secret - Kitchen Cooking": "Home",
   "FG BL HAMILTON BEACH": "Home",
+  "Hamilton Beach": "Home",
   "FG BL HOME - BATH": "Home",
   "FG BL HOME - BEDDING & PILLOWS": "Home",
   "FG BL HOME - HOME DECOR": "Home",
@@ -235,7 +236,6 @@ const L3_TO_L2 = {
   "FG COSTUMES": "Seasonal",
   "FG BL SOFTLINES - ACCESSORIES": "Softline - Accessories",
   "Accesories": "Softline - Accessories",
-  "Hamilton Beach": "Hardlines",
   "FG BL SOFTLINES - APPAREL": "Softline - Apparel",
   "FG BL SOFTLINES - SHOES": "Softline - Shoes",
   "Custom Sales": "Custom Sales",
@@ -2773,7 +2773,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
             } else if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV|RECLINER|LOVESEAT|OTTOMAN|MATTRESS/i.test(n)) {
               l2 = "Furniture";
               l2Source = "heuristic";
-            } else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE/i.test(n)) {
+            } else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE|HAMILTON BEACH/i.test(n)) {
               l2 = "Home";
               l2Source = "heuristic";
             } else if (/SHOE|BOOT|SANDAL|SLIPPER|SNEAKER/i.test(n)) {
@@ -2791,7 +2791,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
             } else if (/FOOD|SNACK|CANDY|BEVERAGE|DRINK/i.test(n)) {
               l2 = "Consumable Food";
               l2Source = "heuristic";
-            } else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY|HAMILTON BEACH|FIRE PIT/i.test(n)) {
+            } else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY|FIRE PIT/i.test(n)) {
               l2 = "Hardlines";
               l2Source = "heuristic";
             } else {
@@ -3014,13 +3014,13 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         else if (isBinItem(liName)) l2 = "Bin Products";
         else if (/EASTER|VALENTINE|CHRISTMAS|HALLOWEEN|FOURTH OF JULY|4TH OF JULY|ST[.\s]*PATRICK|HOLIDAY|SEASONAL/i.test(n)) l2 = "Seasonal";
         else if (/FURNITURE|DRESSER|SOFA|COUCH|TABLE|CHAIR|DESK|BOOKCASE|SHELV|RECLINER|LOVESEAT|OTTOMAN|MATTRESS/i.test(n)) l2 = "Furniture";
-        else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE/i.test(n)) l2 = "Home";
+        else if (/BEDDING|PILLOW|CURTAIN|TOWEL|RUG|DECOR|LAMP|FRAME|VASE|CANDLE|HAMILTON BEACH/i.test(n)) l2 = "Home";
         else if (/SHOE|BOOT|SANDAL|SLIPPER|SNEAKER/i.test(n)) l2 = "Softline - Shoes";
         else if (/APPAREL|SHIRT|PANT|DRESS|JACKET|COAT|BLOUSE|SWEATER/i.test(n)) l2 = "Softline - Apparel";
         else if (/CHEMICAL|CLEANING|DETERGENT/i.test(n)) l2 = "Consumable Other";
         else if (/MASK|HEMP|OIL|LOTION|CREAM|SOAP|SHAMPOO|BODY|NAIL POLISH|COSMETIC/i.test(n)) l2 = "Consumable HBA";
         else if (/FOOD|SNACK|CANDY|BEVERAGE|DRINK/i.test(n)) l2 = "Consumable Food";
-        else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY|HAMILTON BEACH|FIRE PIT/i.test(n)) l2 = "Hardlines";
+        else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY|FIRE PIT/i.test(n)) l2 = "Hardlines";
       }
 
       // Tier 3: admin pattern rules

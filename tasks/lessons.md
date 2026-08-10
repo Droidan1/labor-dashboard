@@ -531,3 +531,47 @@ was tracked, meaning it existed and had content.
    named plan docs already there — and leave `todo.md` to whoever is using it.
 3. **`git status` at session start already tells you what is tracked.** A file
    absent from the untracked list is a file with committed content.
+
+---
+
+# One domain fact, three encodings, two answers — Hamilton Beach
+
+**2026-08-10, Retail Summary L2 mapping.** Brian: "hamilton beach mapping is
+[supposed] to be under Home L2." It was — in one of the three places the repo
+encodes that fact:
+
+| Site | Answer |
+|---|---|
+| `L3_TO_L2["FG BL HAMILTON BEACH"]` | Home ✅ |
+| `L3_TO_L2["Hamilton Beach"]` | **Hardlines** ❌ |
+| `HAMILTON BEACH` token inside the Hardlines name heuristic (×2 loops) | **Hardlines** ❌ |
+
+So the same physical product booked to a different L2 depending only on which
+Clover category string the store attached, and an item with no category at all
+got a third answer. Nothing errored — the money just landed in the wrong bucket.
+This is the same shape as the `|| "Hardlines"` silent default and the two
+`SKU_BOOK_TO_L2` typo keys: **a categorization mistake is invisible by
+construction, because every branch produces a plausible category.**
+
+The wrong entry was also physically parked between the two Softlines lines,
+nowhere near its sibling in the Home block — which is how it survived every
+prior read of that table.
+
+**Rules:**
+1. **When told a mapping is wrong, grep the VALUE and the KEY case-insensitively
+   across the whole repo before editing.** `grep "Hamilton Beach"` found one
+   site; `grep -i hamilton` found four. The heuristic regexes hold the same
+   domain facts as the lookup tables and are never where you look first.
+2. **`aggregateItemSales` encodes each fact twice** — the main line-item loop and
+   the cross-day refund-attribution mirror (~line 3010) are copy-pasted
+   ladders. A fix applied to one and not the other makes refunds book to a
+   different L2 than the sale they reverse.
+3. **Keep the key next to its siblings.** A `"Hamilton Beach": "Home"` sitting in
+   the Softlines block is a future bug; grouping is the only structure that table has.
+4. **Mutation-test a mapping fix, one site at a time.** Reverting the table entry
+   killed 2 assertions and reverting the regexes killed 3 *different* ones —
+   that separation is the proof each site is independently covered. A single
+   combined revert would not have shown it.
+5. **`L3_TO_L2` is mirrored client-side as `ISR_L3_TO_L2` (index.html).** It
+   drifts — it was 17 keys behind. Any change to one needs the other, and the
+   diff is worth running as a check, not a read.
