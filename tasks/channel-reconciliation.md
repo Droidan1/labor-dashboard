@@ -265,20 +265,63 @@ the tile group. Two coherent options; today's card is neither.
 - Then `channels.retail + channels.bin == totals.netSales` exactly, and the
   filter ties to the tiles above it.
 
-### Phase 3 — stop it recurring
+### Phase 3 — stop it recurring — DONE 2026-08-10 (with one premise corrected)
 
-- **One bin classifier**, used by both pipelines. Delete the second.
-- Add `mixed` to the channel payload so the UI can say "229 orders contained
-  retail items" rather than implying the counts are additive.
-- 🔑 **A reconciliation test over real snapshots**, asserting per store/day:
-  `retail + bin + auction == total` and
-  `channels.retail + channels.bin == totals.netSales`.
-  Every defect above is an invariant that was never asserted. Unit tests cannot
-  catch these — the arithmetic in each pipeline is internally correct; it is the
-  agreement *between* pipelines that fails.
+**`scripts/test-channel-invariants.mjs` — 19 assertions.** Drives
+`worker.fetch` on `?action=items` with **Clover's HTTP responses stubbed** —
+the platform, not the code — so it reaches the real `aggregateItemSales`.
+Fixture covers every shape that has broken this: retail-only, bin-only, two
+mixed baskets, a service-charge residual with no line item, and a refund.
 
-## The decision I need
+🔑 **This closes the gap `test-channel-range.mjs` could not reach.** Deleting
+`_ch.mixed++` leaves that suite green; here it fails 4 assertions. Mutation-
+checked three ways:
 
-Phase 1 is blocked on what **CART / ITEMS / ASP** should mean: blended across
-all channels, or retail-only. That is a business call about the metric, not a
-code question — and it decides whether ORDERS changes or the other three do.
+| Mutation | Result |
+|---|---|
+| delete the `mixed` counter | 4 failures |
+| `&&` → `\|\|` in the mixed condition | 4 failures |
+| residual routed nowhere | 2 failures |
+
+⚠️ **The identity `channels + residual + refunds == netSales` alone did NOT
+catch the residual mutation** — both sides derive from the same accumulation,
+so dropping revenue from each together keeps it satisfied. Fixed by adding an
+**absolute anchor**: netSales must equal the exact total the fixture
+constructs (172.50). A consistency check needs an absolute companion, or
+revenue can leave through both doors at once.
+
+🛑 **"One bin classifier — delete the second" was WRONG, and I checked before
+acting on it.** `isBinItem()` and `l2 === 'Bin Products'` are not duplicates:
+
+1. `aggregateOrders`'s name-based split is a **live fallback**, not dead code.
+   `binRetailOverride` initialises to `null` at all three call sites and is set
+   only inside a conditional — one site comments the fall-through explicitly
+   ("fall through with binRetailOverride = null"). It runs whenever the item
+   aggregation fails or returns nothing.
+2. `isBinItem` is also a **Tier-2 name heuristic inside the category
+   classifier** (worker.js ~2764, ~3014), assigning `Bin Products` when
+   Clover's catalog does not know the item — a documented safety net.
+
+Deleting either removes a safety net. The real exposure is silent *divergence*,
+and the answer is detection, not deletion — there is already an
+`[aggregator-drift]` warning for totals over $1; the channel split has no
+equivalent. **Proposed instead:** extend that drift warning to bin/retail.
+
+`mixed` in the payload: delivered in Phase 2.
+
+## Still open
+
+- **Route refunds and the `Other / Non-Item` residual into `_ch`**, so
+  `channels.retail + channels.bin == netSales` exactly. This is the remaining
+  cause of CART × ORDERS missing Net by $12.28 on BL1 and $21.26 on BL14. The
+  attribution points are known: the refund loop already resolves each line
+  item's `l2`, and the residual is computed per order so it can be split by
+  that order's retail/bin gross share. Unattributable refunds (cross-day, or
+  manual with no line items) need a deliberate rule — that is the open
+  question, not the plumbing.
+- **Phase 1** — delete the browser's duplicate aggregator (~100 lines in
+  `fetchLiveCloverSales`). That duplication is why the `payment.amount` fix
+  landed on one side only.
+- **Backfill `mixed` into historical snapshots** so past days' combined ORDERS
+  stop reading ~2–8% high. Requires rewriting item snapshots — through the
+  Repair console with a health check, never blind.
