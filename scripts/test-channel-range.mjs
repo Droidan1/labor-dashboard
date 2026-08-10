@@ -29,7 +29,10 @@ const { db, env } = makeEnv(repo);
 // unweighted mean of the two day-averages would be    cart  50.56  — wrong.
 // `mixed` = orders holding both retail and bin items, counted once in EACH
 // channel's order total. Combined orders must subtract it.
-const snap = (r, b, mixed) => ({ channels: { retail: r, bin: b, ...(mixed === undefined ? {} : { mixed }) } });
+const snap = (r, b, mixed, orderCount) => ({
+  channels: { retail: r, bin: b, ...(mixed === undefined ? {} : { mixed }) },
+  ...(orderCount === undefined ? {} : { orderCount }),
+});
 await env.SALES_SNAPSHOTS.put('items:bl1:2026-08-01',
   snap({ net: 1000, units: 100, orders: 10 }, { net: 200, units: 40, orders: 8 }, 3));
 await env.SALES_SNAPSHOTS.put('items:bl1:2026-08-02',
@@ -38,6 +41,19 @@ await env.SALES_SNAPSHOTS.put('items:bl1:2026-08-02',
 // A snapshot written BEFORE mixed was tracked: no `mixed` key at all.
 await env.SALES_SNAPSHOTS.put('items:bl1:2026-07-20',
   snap({ net: 500, units: 25, orders: 5 }, { net: 0, units: 0, orders: 0 }));
+
+// Pre-`mixed` snapshots that DO carry orderCount — the estimate path.
+//  · 07-21: orderCount 90 sits inside [max 60, sum 100] -> use 90.
+//  · 07-22: orderCount 101 EXCEEDS the sum (an order with no classifiable line
+//    item counts there but in neither channel). Real shape, measured on BL2
+//    2026-08-09: 302 vs 301. Must clamp DOWN to the sum, never above it.
+//  · 07-23: orderCount absurdly small -> clamp UP to the larger channel count.
+await env.SALES_SNAPSHOTS.put('items:bl1:2026-07-21',
+  snap({ net: 600, units: 60, orders: 60 }, { net: 400, units: 40, orders: 40 }, undefined, 90));
+await env.SALES_SNAPSHOTS.put('items:bl1:2026-07-22',
+  snap({ net: 600, units: 60, orders: 50 }, { net: 400, units: 40, orders: 50 }, undefined, 101));
+await env.SALES_SNAPSHOTS.put('items:bl1:2026-07-23',
+  snap({ net: 600, units: 60, orders: 70 }, { net: 400, units: 40, orders: 30 }, undefined, 2));
 
 const call = async (qs, user = 'u-su') =>
   worker.fetch(req(`/?action=channel-range&${qs}`, { user }), env, ctx);
@@ -73,6 +89,46 @@ const json = async (r) => JSON.parse(await r.text());
   ok(b.retail.net === 500 && b.retail.orders === 5, 'the rest of that old snapshot still reads correctly');
 }
 
+// ── combinedOrders: exact where recorded, clamped estimate where not ───────
+{
+  const exact = await json(await call('store=BL1&from=2026-08-01&to=2026-08-02'));
+  ok(exact.combinedOrders === 112,
+     `with mixed recorded it is exact (10+8-3) + (90+12-5) = 112, got ${exact.combinedOrders}`);
+  ok(exact.daysEstimated === 0, `neither day was estimated, got ${exact.daysEstimated}`);
+
+  // orderCount inside the valid range -> used as-is.
+  const inRange = await json(await call('store=BL1&from=2026-07-21&to=2026-07-21'));
+  ok(inRange.combinedOrders === 90,
+     `orderCount 90 lies in [60,100] so it is used, got ${inRange.combinedOrders}`);
+  ok(inRange.daysEstimated === 1, 'that day is reported as estimated');
+
+  // 🔑 orderCount ABOVE the two channel counts must clamp down. Without this
+  // the estimate would inflate the divisor beyond what the channels can
+  // possibly contain — the real BL2 shape.
+  const over = await json(await call('store=BL1&from=2026-07-22&to=2026-07-22'));
+  ok(over.combinedOrders === 100,
+     `orderCount 101 clamps down to the sum 100, got ${over.combinedOrders}`);
+
+  // orderCount below the larger channel count must clamp up — combined can
+  // never be fewer orders than one channel alone touched.
+  const under = await json(await call('store=BL1&from=2026-07-23&to=2026-07-23'));
+  ok(under.combinedOrders === 70,
+     `orderCount 2 clamps up to the larger channel count 70, got ${under.combinedOrders}`);
+
+  // No orderCount at all -> the old behaviour, the naive sum.
+  const none = await json(await call('store=BL1&from=2026-07-20&to=2026-07-20'));
+  ok(none.combinedOrders === 5, `no orderCount falls back to the sum, got ${none.combinedOrders}`);
+
+  // 🔑 A range spanning BOTH generations resolves each day on its own terms.
+  // One blended subtraction at the end would undercount the pre-mixed days.
+  const spanning = await json(await call('store=BL1&from=2026-07-20&to=2026-08-02'));
+  ok(spanning.combinedOrders === 5 + 90 + 100 + 70 + 112,
+     `mixed range sums per-day results (5+90+100+70+112 = 377), got ${spanning.combinedOrders}`);
+  ok(spanning.daysEstimated === 4, `four of those days were estimated, got ${spanning.daysEstimated}`);
+  ok(spanning.combinedOrders <= spanning.retail.orders + spanning.bin.orders,
+     'combined never exceeds the two channel counts summed');
+}
+
 // 🛑 KNOWN GAP — the worker's `mixed` COUNTER is not covered here.
 // Measured 2026-08-10: deleting `if (_ordCh.retail.units > 0 && _ordCh.bin.units
 // > 0) _ch.mixed++` from worker.js leaves this whole file green, because every
@@ -96,33 +152,39 @@ const json = async (r) => JSON.parse(await r.text());
   ok(!!m, 'chCombined exists in index.html');
   if (m) {
     const chCombined = new Function('return ' + m[0].replace(/^const chCombined = /, '').replace(/;$/, ''))();
-    const t = {
+    const c = chCombined({
       retail: { net: 1100, units: 150, orders: 100 },
       bin:    { net: 500,  units: 100, orders: 20 },
-      mixed: 8,
-    };
-    const c = chCombined(t);
+      mixed: 8, combinedOrders: 112,
+    });
     ok(c.net === 1600, `combined net sums both channels, got ${c.net}`);
     ok(c.units === 250, `combined units sum both channels, got ${c.units}`);
-    ok(c.orders === 112,
-       `combined orders subtract the double-counted mixed baskets (100 + 20 - 8 = 112), got ${c.orders}`);
+    ok(c.orders === 112, `combined orders use the resolved count, got ${c.orders}`);
     ok(c.orders !== 120, 'combined orders is NOT the naive sum of the two channel counts');
 
-    // A day where every order was mixed: both channels report the same orders,
-    // and the real transaction count is that number, not double it.
-    const allMixed = chCombined({
-      retail: { net: 60, units: 6, orders: 40 }, bin: { net: 40, units: 4, orders: 40 }, mixed: 40,
-    });
-    ok(allMixed.orders === 40, `an all-mixed day counts each order once, got ${allMixed.orders}`);
-
-    // Never negative, even on nonsense input.
-    const bad = chCombined({ retail: { net: 0, units: 0, orders: 1 }, bin: { net: 0, units: 0, orders: 1 }, mixed: 99 });
-    ok(bad.orders === 0, `a mixed count larger than the totals floors at 0, got ${bad.orders}`);
-
-    // Missing mixed (old data) must not produce NaN.
-    const noMixed = chCombined({ retail: { net: 10, units: 2, orders: 3 }, bin: { net: 5, units: 1, orders: 2 } });
-    ok(noMixed.orders === 5 && Number.isFinite(noMixed.net),
-       `absent mixed is treated as 0, got orders ${noMixed.orders}`);
+    // The per-payload resolution rule, which decides what combinedOrders holds.
+    const om = html.match(/const chOrdersOf = \(src\) => [\s\S]*?;\n/);
+    ok(!!om, 'chOrdersOf exists in index.html');
+    if (om) {
+      const chOrdersOf = new Function('return ' + om[0].replace(/^const chOrdersOf = /, '').replace(/;\n$/, ''))();
+      // channel-range already resolved it per day — trust it verbatim.
+      ok(chOrdersOf({ combinedOrders: 377, retail: { orders: 1 }, bin: { orders: 1 } }) === 377,
+         'a resolved combinedOrders is used as-is');
+      ok(chOrdersOf({ combinedOrders: 0, retail: { orders: 9 }, bin: { orders: 9 } }) === 0,
+         'a resolved ZERO is honoured, not treated as missing');
+      // Live payload: single day, mixed is exact.
+      ok(chOrdersOf({ retail: { orders: 100 }, bin: { orders: 20 }, mixed: 8 }) === 112,
+         'a live payload subtracts its own mixed');
+      // Every order mixed -> counted once.
+      ok(chOrdersOf({ retail: { orders: 40 }, bin: { orders: 40 }, mixed: 40 }) === 40,
+         'an all-mixed day counts each order once');
+      // Never negative on nonsense input.
+      ok(chOrdersOf({ retail: { orders: 1 }, bin: { orders: 1 }, mixed: 99 }) === 0,
+         'a mixed count larger than the totals floors at 0');
+      // Absent mixed must not produce NaN.
+      ok(chOrdersOf({ retail: { orders: 3 }, bin: { orders: 2 } }) === 5,
+         'absent mixed is treated as 0');
+    }
   }
 }
 

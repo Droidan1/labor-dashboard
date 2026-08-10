@@ -5296,17 +5296,31 @@
     asp:      x.units  > 0 ? x.net / x.units  : 0,
   });
 
-  const chZero = () => ({ retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 }, mixed: 0 });
+  const chZero = () => ({
+    retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 },
+    mixed: 0, combinedOrders: 0,
+  });
 
   // The unfiltered view: retail + bin as one population.
-  // 🔑 `mixed` orders hold BOTH retail and bin items, so they were counted in
-  // each channel's order total. Subtract them or the divisor is too big and
-  // cart/items read low — measured +10 orders on BL1, +17 on BL4 for one day.
+  // 🔑 An order holding BOTH retail and bin items sits in each channel's order
+  // total, so the two counts are NOT additive — measured +10 on BL1 and +17 on
+  // BL4 in a single day. `combinedOrders` is resolved per day at the source
+  // (exactly from `mixed` where recorded, otherwise clamped from that day's
+  // orderCount) and summed, so a range spanning both kinds of snapshot is right.
   const chCombined = (t) => ({
     net:    t.retail.net   + t.bin.net,
     units:  t.retail.units + t.bin.units,
-    orders: Math.max(0, t.retail.orders + t.bin.orders - (t.mixed || 0)),
+    orders: t.combinedOrders,
   });
+
+  // Combined order count contributed by ONE payload. Two shapes reach this:
+  // ?action=channel-range already resolved it per day (spanning snapshots
+  // written before and after `mixed` existed) and sends `combinedOrders`; the
+  // live payload describes a single day and always carries `mixed`, where the
+  // subtraction is exact.
+  const chOrdersOf = (src) => (typeof src.combinedOrders === 'number')
+    ? src.combinedOrders
+    : Math.max(0, (src.retail?.orders || 0) + (src.bin?.orders || 0) - (src.mixed || 0));
 
   const storeNameForCode = (code) => STORES.find(s => s.split('/')[0] === code);
 
@@ -5321,6 +5335,7 @@
         out[k].orders += src[k]?.orders || 0;
       }
       out.mixed += src.mixed || 0;
+      out.combinedOrders += chOrdersOf(src);
     };
     const live = selIncludesToday();
     // Mirror the card's own accumulation: when live covers today, the stored
@@ -5431,6 +5446,7 @@
           sum[k].net += p[k].net; sum[k].units += p[k].units; sum[k].orders += p[k].orders;
         }
         sum.mixed += p.mixed || 0;
+        sum.combinedOrders += p.combinedOrders || 0;
       }
       if (current()) dashChannelData = {
         key, retail: chDerive(sum.retail), bin: chDerive(sum.bin), combined: chDerive(chCombined(sum)),

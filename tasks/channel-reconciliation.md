@@ -263,12 +263,37 @@ they always share a denominator.
   cost one `channel-range` per store.
 - `mixed` added to the `items` snapshot payload and to `channel-range`.
 
-⚠️ **Past days read slightly high until snapshots are rewritten.** Existing KV
-snapshots have no `mixed` key; it is treated as 0, so combined ORDERS for
-historical days overstates by the mixed count (~2–8%, measured +10 on BL1 and
-+17 on BL4 for one day). Today and anything snapshotted from now on is correct.
-Fixing the back catalogue means rewriting item snapshots — **not** to be done
-blindly; that is what destroyed 81 BL1 days once already.
+⚠️ ~~Past days read slightly high until snapshots are rewritten.~~ **FIXED
+2026-08-10 without a backfill** — see below.
+
+#### Historical days: `combinedOrders`, resolved per day at the source
+
+Seen live on the Yesterday view: BL1 read **442** combined orders against a true
+**432**, dragging CART to $23.53 instead of $24.08. Cause: that snapshot
+predates `mixed`, so it read 0 and combined became the naive sum.
+
+The snapshots already carry `orderCount`, so no rewrite of stored history is
+needed. `channel-range` now resolves the count **per day** and returns
+`combinedOrders`:
+
+- `mixed` recorded → `retail.orders + bin.orders − mixed` (exact).
+- otherwise → that day's `orderCount`, **clamped** into
+  `[max(retail, bin), retail + bin]`.
+- neither → the naive sum, as before.
+
+🔑 **Per day, not per range.** A range can span both snapshot generations; one
+blended subtraction at the end would undercount the older days.
+
+🔑 **The clamp is load-bearing, and measurement is why.** `orderCount` counts
+*every* order, including ones with no classifiable line item — so it can
+**exceed** both channel counts summed. Measured on BL2 2026-08-09: orderCount
+302 vs retail+bin 301. Used raw it would inflate the divisor past what the
+channels can contain. Verified against 7 real store-days; the clamp reproduces
+the independently-measured overlaps (+10 BL1, +17 BL4).
+
+`daysEstimated` is returned alongside, so it is visible how much of a range is
+still on the estimate. It shrinks to 0 as snapshots are rewritten by the nightly
+job. A deliberate backfill remains optional, not required.
 
 🛑 **Coverage gap, measured:** deleting the `_ch.mixed++` increment leaves the
 whole suite green — every fixture supplies `mixed` pre-computed and nothing runs

@@ -12392,7 +12392,7 @@ export default {
       // A date with no snapshot contributes nothing. It is NOT an error: stores
       // open at different times and a closed day has no orders to split.
       const sum = { retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 } };
-      let daysWithData = 0, mixed = 0;
+      let daysWithData = 0, mixed = 0, combinedOrders = 0, daysEstimated = 0;
       for (const snap of snaps) {
         const ch = snap && snap.channels;
         if (!ch) continue;
@@ -12402,10 +12402,29 @@ export default {
           sum[k].units += Number(ch[k]?.units) || 0;
           sum[k].orders += Number(ch[k]?.orders) || 0;
         }
-        // Absent on snapshots written before mixed was tracked. Treating those
-        // as 0 leaves the combined order count slightly HIGH for old days —
-        // the pre-existing behaviour — rather than failing the whole range.
         mixed += Number(ch.mixed) || 0;
+
+        // Combined order count, resolved PER DAY then summed — a range can span
+        // snapshots written before and after `mixed` existed, so one blended
+        // subtraction at the end would undercount the old days.
+        const r = Number(ch.retail?.orders) || 0;
+        const b = Number(ch.bin?.orders) || 0;
+        const both = r + b;
+        if (typeof ch.mixed === "number") {
+          combinedOrders += Math.max(0, both - ch.mixed);          // exact
+        } else {
+          // Snapshot predates `mixed`. The day's own orderCount is the best
+          // available stand-in, but it counts EVERY order — including ones with
+          // no classifiable line item, which is why it can exceed both channel
+          // counts put together (measured: BL2 2026-08-09, 302 vs 301). So clamp
+          // it into the only range a combined count can legitimately occupy:
+          // never more than the two counts summed, never fewer than the larger.
+          const oc = Number(snap.orderCount);
+          combinedOrders += (Number.isFinite(oc) && oc > 0)
+            ? Math.min(both, Math.max(oc, Math.max(r, b)))
+            : both;
+          daysEstimated++;
+        }
       }
       return new Response(JSON.stringify({
         ok: true, store, from, to,
@@ -12414,6 +12433,11 @@ export default {
         retail: { net: roundCents(sum.retail.net), units: Math.round(sum.retail.units), orders: sum.retail.orders },
         bin:    { net: roundCents(sum.bin.net),    units: Math.round(sum.bin.units),    orders: sum.bin.orders },
         mixed,
+        combinedOrders,
+        // How many days fell back to the orderCount estimate above. Non-zero
+        // means part of this range predates `mixed`; it shrinks to 0 as
+        // snapshots are rewritten.
+        daysEstimated,
       }), { headers: corsJson });
     }
 
