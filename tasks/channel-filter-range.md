@@ -139,3 +139,39 @@ with zeroes unless seeded.
 🔑 **Worker first, then frontend.** The new frontend calls an action the old
 worker does not have; the old frontend never calls it. Derived from which side
 stops being backward-compatible, not from last time.
+
+## Deploy record — worker SHIPPED 2026-08-10
+
+Branch `claude/channel-filter-range`, commit `285f941` (branched off `main`
+`6ff5d8f`, which equalled `origin/main` exactly).
+
+Pre-flight, run in the SAME shell as the deploy: cwd asserted, branch asserted,
+`worker.js`/`wrangler.toml` clean, and the diff vs `origin/main` asserted at
+**exactly +68/−0** — a non-zero deletion count would mean a revert. Five recent
+feature symbols confirmed present (`fallbackItems`, `rebuildItemSnapshot`,
+`canAccessBusiness`, `requireAdminAccess`, `chainWideRecipients`).
+`wrangler.toml` byte-identical to `origin/main`.
+
+**Version `2c63c7ee-e4ba-4f7d-b3c3-0993de7a2bd8`, at 100% rollout.** Printed
+bindings eyeballed per the wrangler.toml trap: prod KV `8f6062a7…`,
+`labor-dashboard-db`, `bl-marketing-media`, `BL16_MERCHANT_ID`, and all six
+crons (`55 3`, `* * * * *`, `0 12`, `0 11 * * 1`, `0 * * * *`, `30 10`).
+
+**Deployed-artifact check** — pulled the live bundle back from Cloudflare:
+`["channel-range","bl"]` present in `ACTION_BUSINESS`, the route present, both
+input guards present. Control: `fallbackItems` ×12 in the same bundle, proving
+it is a real current build and not a stale or partial artifact.
+
+🛑 **An unauthenticated probe proves NOTHING here** and was not counted as
+evidence: `?action=channel-range` and `?action=definitely-not-a-real-action-xyz`
+both return the identical `401 NO_SESSION`, because the auth gate fires before
+routing. This is the masked-probe trap from [[admin-endpoint-hardening]]; the
+bundle inspection is what actually establishes the deploy.
+
+### Still owed
+
+- **Authenticated round-trip + the click path.** Blocked: needs a logged-in
+  session, and the frontend is deliberately not deployed yet.
+- ⚠️ **Prod worker is now AHEAD of `main`.** Per [[deploy-from-main-not-cwd]] the
+  divergence is itself the hazard — a later `main`-based deploy silently reverts
+  this. Merge the same session.
