@@ -4030,12 +4030,27 @@
       // contain "bin"/"fill a bag"/"glass case", causing a sizable undercount
       // (e.g. dashboard $27.93 vs actual $121.15). Fall back to the in-loop
       // numbers when the worker doesn't return them.
-      const totalDollars = totalNet / 100;
-      let binDollars, retailDollars;
+      let binDollars, retailDollars, totalDollars;
       if (typeof data?.binNet === 'number' && typeof data?.retailNet === 'number'
           && (data.binNet + data.retailNet) > 0) {
         binDollars = data.binNet;
         retailDollars = data.retailNet;
+        // 🔑 Net comes from the SAME source as the split — not from the loop
+        // above. That loop re-aggregates the raw orders client-side off
+        // `order.total`, but Clover REDUCES order.total for a same-day refund
+        // while leaving payment.amount intact. The worker was fixed for that
+        // (it reads payment.amount); the client never was, so the loop then
+        // subtracted `refundCents` a SECOND time and landed below retail + bin.
+        // Live 2026-08-09 21:55: channels $10,450.35 vs Net $10,442.34 on BL1,
+        // and $4,664.60 vs $4,642.13 on BL4 — visible to every manager all day,
+        // then silently corrected overnight because the nightly job takes all
+        // three figures from this same pipeline.
+        // binNet + retailNet is every category's netSales (retail = everything
+        // that is not "Bin Products", residual bucket included), which is
+        // exactly what gets stored as daily_sales.total — so this also stops
+        // the number moving between evening and morning. Verified equal on 7
+        // real store-days; see tasks/channel-reconciliation.md.
+        totalDollars = +(binDollars + retailDollars).toFixed(2);
       } else {
         // Fallback path: keep the proportional refund subtraction the old
         // code did, just to keep totals consistent if binNet/retailNet absent.
@@ -4048,6 +4063,9 @@
         }
         retailDollars = Math.round(retailNet) / 100;
         binDollars    = Math.round(binNet)    / 100;
+        // Unchanged from before: this branch already reconciles its own split
+        // against this total via the proportional subtraction above.
+        totalDollars  = totalNet / 100;
       }
 
       const avgCart = cartCount > 0 ? (cartNet / cartCount) / 100 : 0;
