@@ -3609,6 +3609,7 @@ const ACTION_BUSINESS = new Map([
   ["backfill-items-snapshots", "bl"],
   ["cancel-sale-schedule", "bl"],
   ["category-costs", "bl"],
+  ["channel-range", "bl"],
   ["clientdate-probe", "bl"],
   ["clover-categories", "bl"],
   ["content-setting", "bl"],
@@ -12332,6 +12333,73 @@ export default {
           status: 500, headers: corsJson,
         });
       }
+    }
+
+    // ── Channel split (Retail vs BIN) summed over a date range ─────
+    //    ?action=channel-range&store=BL1&from=YYYY-MM-DD&to=YYYY-MM-DD
+    //
+    // Powers the "tap Retail / BIN" filter on the dashboard, which follows the
+    // selected range. One request instead of one-per-day from the browser: a
+    // 12-month range is 366 KV reads here, but 366 round-trips there.
+    //
+    // Returns RAW SUMS, not averages. The caller re-derives avgCart = net/orders
+    // etc. from the totals, because averaging per-day averages weights a quiet
+    // Tuesday the same as a busy Saturday and gives a different — wrong —
+    // number. Same reason the store cards weight by orderCount when blending.
+    //
+    // Reads only. Today is deliberately absent: its snapshot is not written
+    // until the nightly cron, so the client adds today live from ?action=items.
+    if (url.searchParams.get("action") === "channel-range") {
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      if (!store || !/^\d{4}-\d{2}-\d{2}$/.test(from || "") || !/^\d{4}-\d{2}-\d{2}$/.test(to || "")) {
+        return new Response(JSON.stringify({ error: "Missing or invalid store/from/to (use YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+      }
+      if (from > to) {
+        return new Response(JSON.stringify({ error: "from must not be after to" }), { status: 400, headers: corsJson });
+      }
+      if (!canAccessStore(currentUser, store)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+      const dates = [];
+      const cur = new Date(from + "T12:00:00Z");
+      const last = new Date(to + "T12:00:00Z");
+      while (cur <= last) {
+        dates.push(cur.toISOString().slice(0, 10));
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+      if (dates.length > 366) {
+        return new Response(JSON.stringify({ error: "Date range too large (max 366 days)" }), { status: 400, headers: corsJson });
+      }
+      const lc = store.toLowerCase();
+      const snaps = await Promise.all(
+        dates.map(d => env.SALES_SNAPSHOTS.get(`items:${lc}:${d}`, "json").catch(() => null))
+      );
+      // A date with no snapshot contributes nothing. It is NOT an error: stores
+      // open at different times and a closed day has no orders to split.
+      const sum = { retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 } };
+      let daysWithData = 0;
+      for (const snap of snaps) {
+        const ch = snap && snap.channels;
+        if (!ch) continue;
+        daysWithData++;
+        for (const k of ["retail", "bin"]) {
+          sum[k].net   += Number(ch[k]?.net)   || 0;
+          sum[k].units += Number(ch[k]?.units) || 0;
+          sum[k].orders += Number(ch[k]?.orders) || 0;
+        }
+      }
+      return new Response(JSON.stringify({
+        ok: true, store, from, to,
+        daysRequested: dates.length,
+        daysWithData,
+        retail: { net: roundCents(sum.retail.net), units: Math.round(sum.retail.units), orders: sum.retail.orders },
+        bin:    { net: roundCents(sum.bin.net),    units: Math.round(sum.bin.units),    orders: sum.bin.orders },
+      }), { headers: corsJson });
     }
 
     // ── Item sales by L2 category: ?action=items&store=BL1[&date=2026-04-08]

@@ -36,7 +36,7 @@ const today = new Date().toISOString().slice(0, 10);
 // Deleting the gate from worker.fetch left the entire old suite green. This is
 // the assertion that makes that impossible.
 console.log('financial gate is WIRED IN (not just implemented):');
-for (const a of ['weekly-summary', 'store-scores', 'ly-sales', 'items', 'monthly-totals']) {
+for (const a of ['weekly-summary', 'store-scores', 'ly-sales', 'items', 'monthly-totals', 'channel-range']) {
   const r = await call(`/?action=${a}&from=2025-07-01&to=2025-07-07&date=${today}`, { user: 'u-staff' });
   ok(`staff gets 403 on ${a}`, r.status === 403, `${r.status} ${r.text.slice(0, 60)}`);
 }
@@ -101,6 +101,14 @@ for (const s of ['BL2', 'BL8']) {
 {
   const r = await call('/?action=hourly&store=BL1', { user: 'u-mgr1' });
   ok('hourly?store=BL1 NOT refused', r.status !== 403, String(r.status));
+}
+for (const s of ['BL2', 'BL8']) {
+  const r = await call(`/?action=channel-range&store=${s}&from=2026-08-01&to=2026-08-02`, { user: 'u-mgr1' });
+  ok(`channel-range?store=${s} refused for a BL1 manager`, r.status === 403, String(r.status));
+}
+{
+  const r = await call('/?action=channel-range&store=BL1&from=2026-08-01&to=2026-08-02', { user: 'u-mgr1' });
+  ok('channel-range?store=BL1 NOT refused', r.status !== 403, String(r.status));
 }
 
 // ── 5 · privilege escalation through update-user ────────────────────────────

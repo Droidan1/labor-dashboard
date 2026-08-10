@@ -3467,13 +3467,18 @@
   // Dashboard Matrix channel filter: null = all stores blended; 'retail' | 'bin'
   // shows that channel's per-order metrics (from item-level L2 data).
   let dashChannel = null;
-  let dashChannelData = null;        // { date, retail:{net,units,orders,avgCart,avgItems,asp}, bin:{...} }
+  // Keyed by RANGE, not by date — the split follows the selected range, and a
+  // key mismatch is what makes a range change refetch instead of showing the
+  // previous range's numbers.
+  let dashChannelData = null;        // { key, retail:{net,units,orders,avgCart,avgItems,asp}, bin:{...} }
   let dashChannelLoading = false;
+  let dashChannelLoadKey = null;     // range key currently in flight, or null
   let _dashMxBlended = null;         // saved "All" matrix tile strings, to restore
   // Per-store-card channel filter (same idea, keyed by store code).
   let dashCardCh = {};               // code → 'retail' | 'bin' | null
-  let dashCardChData = {};           // code → { date, retail:{...}, bin:{...} }
+  let dashCardChData = {};           // code → { key, retail:{...}, bin:{...} }
   let dashCardChLoading = {};        // code → bool
+  let dashCardChLoadKey = {};        // code → range key in flight, or null
   let dashCardBlended = {};          // code → { cart, items, orders, asp }
   function etTodayStr() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); }
   let allWeeks       = [];
@@ -5238,7 +5243,10 @@
     // Save the blended values so toggling the channel filter off can restore
     // them, then re-apply any active channel filter.
     _dashMxBlended = { cart: el('mx-cart').textContent, items: el('mx-items').textContent, orders: el('mx-orders').textContent, asp: el('mx-asp').textContent };
-    applyDashChannel();
+    // ensure, not apply: a range change with a filter still active needs the
+    // new range's split FETCHED. Painting alone would leave the tiles on "—"
+    // for good, because nothing else triggers a reload.
+    ensureDashChannel();
 
     // Always show Weekly (week-to-date, live-boosted) — even when a
     // specific day is selected. The day selector affects per-store cards
@@ -5337,17 +5345,89 @@
     try { renderNotifications(); } catch (e) { /* never let notifs break dashboard */ }
   }
 
-  // ── Dashboard Matrix channel filter ─────────────────────────────
-  // Tap Retail / BIN in Channel Mix → the four Matrix tiles show that
-  // channel's per-order metrics. Per-channel data is derived from item-level
-  // L2 categories (Bin Products vs the rest), summed across all stores for
-  // today. Tap the active channel again → back to all-channels (blended).
+  // ── Channel filter (Retail / BIN) ───────────────────────────────
+  // Tap Retail / BIN — in the hero Channel Mix or on a store card — and the
+  // four Matrix tiles show that channel's per-order metrics instead of the
+  // blended ones. Per-channel data is derived from item-level L2 categories
+  // (Bin Products vs the rest). Tap the active channel again → back to blended.
+  //
+  // 🔑 The split FOLLOWS THE SELECTED RANGE. It used to be hardcoded to today
+  // while the dollars beside it followed the range, so on a Yesterday view the
+  // hero showed TODAY's cart/items/ASP next to yesterday's sales — no error,
+  // just quietly the wrong period. The store cards were frozen instead of
+  // fixed (rendered inert off-today). Both now share the loader below, so
+  // there is one answer to "which period is this split for".
+  //
+  // Past days come from the nightly `items:` KV snapshots in ONE request
+  // (?action=channel-range); today, when the range includes it, comes from the
+  // live ?action=items call — mirroring exactly how the cards already blend
+  // stored + live dollars.
+
+  // Cache key. The live flag belongs in it: the same dates with and without
+  // today's live contribution are genuinely different answers.
+  function chRangeKey() {
+    return `${dateRange.from}..${dateRange.to}${selIncludesToday() ? '+live' : ''}`;
+  }
+
+  // 🔑 Averages are re-derived from SUMMED totals. Averaging the per-day
+  // averages would weight a quiet Tuesday like a busy Saturday and give a
+  // different, wrong number — the same reason the cards weight by orderCount.
+  const chDerive = (x) => ({
+    net: x.net, units: x.units, orders: x.orders,
+    avgCart:  x.orders > 0 ? x.net / x.orders : 0,
+    avgItems: x.orders > 0 ? x.units / x.orders : 0,
+    asp:      x.units  > 0 ? x.net / x.units  : 0,
+  });
+
+  const chZero = () => ({ retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 } });
+
+  // Summed channel totals for one store across the selected range.
+  async function fetchStoreChannels(storeKey) {
+    const out = chZero();
+    const add = (src) => {
+      if (!src) return;
+      for (const k of ['retail', 'bin']) {
+        out[k].net    += src[k]?.net    || 0;
+        out[k].units  += src[k]?.units  || 0;
+        out[k].orders += src[k]?.orders || 0;
+      }
+    };
+    const live = selIncludesToday();
+    // Mirror the card's own accumulation: when live covers today, the stored
+    // range must stop at yesterday or today gets counted twice.
+    const pastTo = live ? ymdShift(etTodayStr(), -1) : dateRange.to;
+    const jobs = [];
+    if (dateRange.from <= pastTo) {
+      jobs.push(cachedFetch(
+        `${WORKER_BASE}?action=channel-range&store=${storeKey}&from=${dateRange.from}&to=${pastTo}`,
+        { credentials: 'include' }).then(add).catch(() => {}));
+    }
+    if (live) {
+      jobs.push(cachedFetch(`${WORKER_BASE}?action=items&store=${storeKey}`,
+        { credentials: 'include' }).then(d => add(d && d.channels)).catch(() => {}));
+    }
+    await Promise.all(jobs);
+    return out;
+  }
+
   function setDashChannel(ch) {
     dashChannel = (dashChannel === ch) ? null : ch;
-    if (dashChannel && !(dashChannelData && dashChannelData.date === etTodayStr())) loadDashChannel();
-    else applyDashChannel();
+    ensureDashChannel();
   }
   window.setDashChannel = setDashChannel;
+
+  // Load when the cached split is for a different range, else repaint. Called
+  // on tap AND on every dashboard render, so an active filter survives a range
+  // change by refetching instead of sitting on the previous range's numbers.
+  // Renders are frequent, so the in-flight key is what stops one tap turning
+  // into a fetch per render.
+  function ensureDashChannel() {
+    const key = chRangeKey();
+    if (!dashChannel) { applyDashChannel(); return; }
+    if (dashChannelData && dashChannelData.key === key) { applyDashChannel(); return; }
+    if (dashChannelLoadKey === key) { applyDashChannel(); return; }   // already in flight
+    loadDashChannel();
+  }
 
   function applyDashChannel() {
     // Selection highlight on the chosen channel column. ring-inset draws the
@@ -5363,6 +5443,9 @@
       cb.classList.toggle('ring-accent-blue', binOn); cb.classList.toggle('bg-accent-blue/10', binOn);
     }
     const lbl = el('dash-matrix-label');
+    // The label tracks the range too — it read "Matrix · Today" on every view,
+    // including the ones it was not describing.
+    const period = dateRange.label || 'Today';
     const set4 = (cart, items, orders, asp) => {
       if (el('mx-cart')) el('mx-cart').textContent = cart;
       if (el('mx-items')) el('mx-items').textContent = items;
@@ -5370,13 +5453,13 @@
       if (el('mx-asp')) el('mx-asp').textContent = asp;
     };
     if (!dashChannel) {
-      if (lbl) lbl.textContent = 'Matrix · Today';
+      if (lbl) lbl.textContent = 'Matrix · ' + period;
       if (_dashMxBlended) set4(_dashMxBlended.cart, _dashMxBlended.items, _dashMxBlended.orders, _dashMxBlended.asp);
       return;
     }
-    if (lbl) lbl.textContent = 'Matrix · Today · ' + (dashChannel === 'retail' ? 'Retail' : 'BIN');
+    if (lbl) lbl.textContent = 'Matrix · ' + period + ' · ' + (dashChannel === 'retail' ? 'Retail' : 'BIN');
     if (dashChannelLoading) { set4('…', '…', '…', '…'); return; }
-    const d = (dashChannelData && dashChannelData.date === etTodayStr()) ? dashChannelData[dashChannel] : null;
+    const d = (dashChannelData && dashChannelData.key === chRangeKey()) ? dashChannelData[dashChannel] : null;
     if (!d) { set4('—', '—', '—', '—'); return; }
     set4(
       d.orders > 0 ? fmtDollar(d.avgCart) : '—',
@@ -5388,37 +5471,46 @@
   window.applyDashChannel = applyDashChannel;
 
   async function loadDashChannel() {
-    const date = etTodayStr();
-    if (dashChannelData && dashChannelData.date === date) { applyDashChannel(); return; }
+    const key = chRangeKey();
+    if (dashChannelData && dashChannelData.key === key) { applyDashChannel(); return; }
+    dashChannelLoadKey = key;
     dashChannelLoading = true; applyDashChannel();
-    const sum = { retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 } };
+    // Every commit below is guarded on the range not having moved on. Without
+    // it a slow load for the old range lands last and clobbers the new one.
+    const current = () => dashChannelLoadKey === key;
     try {
-      await Promise.all(STORES.map(async s => {
-        const storeKey = s.split('/')[0];
-        try {
-          const data = await cachedFetch(`${WORKER_BASE}?action=items&store=${storeKey}`, { credentials: 'include' });
-          const ch = data && data.channels;
-          if (ch) for (const k of ['retail', 'bin']) {
-            sum[k].net += ch[k]?.net || 0; sum[k].units += ch[k]?.units || 0; sum[k].orders += ch[k]?.orders || 0;
-          }
-        } catch (_) {}
-      }));
-      const derive = (x) => ({ net: x.net, units: x.units, orders: x.orders,
-        avgCart: x.orders > 0 ? x.net / x.orders : 0, avgItems: x.orders > 0 ? x.units / x.orders : 0, asp: x.units > 0 ? x.net / x.units : 0 });
-      dashChannelData = { date, retail: derive(sum.retail), bin: derive(sum.bin) };
-    } catch (_) { dashChannelData = null; }
-    finally { dashChannelLoading = false; applyDashChannel(); }
+      // STORES is already scoped to what this user may see, so the hero total
+      // covers exactly the stores whose dollars are in the strip above it.
+      const per = await Promise.all(STORES.map(s => fetchStoreChannels(s.split('/')[0])));
+      const sum = chZero();
+      for (const p of per) for (const k of ['retail', 'bin']) {
+        sum[k].net += p[k].net; sum[k].units += p[k].units; sum[k].orders += p[k].orders;
+      }
+      if (current()) dashChannelData = { key, retail: chDerive(sum.retail), bin: chDerive(sum.bin) };
+    } catch (_) { if (current()) dashChannelData = null; }
+    finally {
+      if (current()) { dashChannelLoadKey = null; dashChannelLoading = false; applyDashChannel(); }
+    }
   }
 
   // Per-store-card channel filter — same behavior as the hero, scoped to one
   // card via [data-store-code] and that store's item channel data.
   function setCardChannel(code, ch) {
     dashCardCh[code] = (dashCardCh[code] === ch) ? null : ch;
-    const date = etTodayStr();
-    if (dashCardCh[code] && !(dashCardChData[code] && dashCardChData[code].date === date)) loadCardChannel(code);
-    else applyCardChannel(code);
+    ensureCardChannel(code);
   }
   window.setCardChannel = setCardChannel;
+
+  // Load when this card's cached split is for a different range, else repaint.
+  // Called on tap AND after every card rebuild, so an active filter survives a
+  // range change by reloading rather than showing the previous range's split.
+  function ensureCardChannel(code) {
+    const key = chRangeKey();
+    if (!dashCardCh[code]) { applyCardChannel(code); return; }
+    if (dashCardChData[code] && dashCardChData[code].key === key) { applyCardChannel(code); return; }
+    if (dashCardChLoadKey[code] === key) { applyCardChannel(code); return; }   // already in flight
+    loadCardChannel(code);
+  }
 
   function applyCardChannel(code) {
     const card = document.querySelector(`#store-cards [data-store-code="${code}"]`);
@@ -5439,7 +5531,7 @@
     }
     if (dashCardChLoading[code]) { set('cart', '…'); set('items', '…'); set('orders', '…'); set('asp', '…'); return; }
     const data = dashCardChData[code];
-    const d = (data && data.date === etTodayStr()) ? data[ch] : null;
+    const d = (data && data.key === chRangeKey()) ? data[ch] : null;
     if (!d) { set('cart', '—'); set('items', '—'); set('orders', '—'); set('asp', '—'); return; }
     set('cart', d.orders > 0 ? '$' + Number(d.avgCart).toFixed(2) : '—');
     set('items', d.orders > 0 ? Number(d.avgItems).toFixed(1) : '—');
@@ -5449,15 +5541,18 @@
   window.applyCardChannel = applyCardChannel;
 
   async function loadCardChannel(code) {
-    const date = etTodayStr();
-    if (dashCardChData[code] && dashCardChData[code].date === date) { applyCardChannel(code); return; }
+    const key = chRangeKey();
+    if (dashCardChData[code] && dashCardChData[code].key === key) { applyCardChannel(code); return; }
+    dashCardChLoadKey[code] = key;
     dashCardChLoading[code] = true; applyCardChannel(code);
+    const current = () => dashCardChLoadKey[code] === key;
     try {
-      const data = await cachedFetch(`${WORKER_BASE}?action=items&store=${code}`, { credentials: 'include' });
-      const ch = data && data.channels;
-      dashCardChData[code] = ch ? { date, retail: ch.retail, bin: ch.bin } : { date };
-    } catch (_) { dashCardChData[code] = { date }; }
-    finally { dashCardChLoading[code] = false; applyCardChannel(code); }
+      const t = await fetchStoreChannels(code);
+      if (current()) dashCardChData[code] = { key, retail: chDerive(t.retail), bin: chDerive(t.bin) };
+    } catch (_) { if (current()) dashCardChData[code] = { key }; }
+    finally {
+      if (current()) { dashCardChLoadKey[code] = null; dashCardChLoading[code] = false; applyCardChannel(code); }
+    }
   }
 
   // ── "vs last year" (YoY) comparison ─────────────────────────────────────
@@ -5807,14 +5902,13 @@
       const v1SparkColor = v1Ahead ? V1G : V1B;
       // Bar caps at 100% (target met = full). Matches the hero bar's logic.
       const v1BarW = v1Pct != null ? Math.min(100, Math.max(0, v1Pct)) : 0;
-      const isTodayOnly = dateRange.presetId === 'today';
-      const v1NetLabel = isTodayOnly
+      const v1NetLabel = dateRange.presetId === 'today'
         ? "Today's Net"
         : `${periodLabel} Net`;
-      // The channel filter (tap Retail/BIN → per-channel matrix) only makes
-      // sense when the card is showing exactly today, because the channel data
-      // is today-live only. For any other period the tiles render plain so the
-      // numbers can't mismatch the displayed blended figures.
+      // The channel filter (tap Retail/BIN → per-channel matrix) works on every
+      // range: fetchStoreChannels sums the same days this card is showing. It
+      // was previously today-only because the loader was hardcoded to today and
+      // would have mismatched the displayed figures.
       // Sparkline = a single day's hourly net sales (today for whole-week/multi
       // views, otherwise the one selected day), fetched per store after the card
       // mounts (?action=hourly).
@@ -5880,7 +5974,7 @@
         </div>
 
         <div class="mt-4 grid grid-cols-3 gap-2">
-          ${isTodayOnly ? chTile('Retail', fmtDollar(v1Retail), 'retail', 'ly-retail-' + cardCode) : tile('Retail', fmtDollar(v1Retail), 'ly-retail-' + cardCode)}${isTodayOnly ? chTile('BIN', fmtDollar(v1Bin), 'bin', 'ly-bin-' + cardCode) : tile('BIN', fmtDollar(v1Bin), 'ly-bin-' + cardCode)}${tile('Auction', fmtDollar(v1Auction))}
+          ${chTile('Retail', fmtDollar(v1Retail), 'retail', 'ly-retail-' + cardCode)}${chTile('BIN', fmtDollar(v1Bin), 'bin', 'ly-bin-' + cardCode)}${tile('Auction', fmtDollar(v1Auction))}
         </div>
 
         <div class="mt-2 grid grid-cols-4 gap-2">
@@ -5912,8 +6006,10 @@
         orders: v1Orders != null ? Number(v1Orders).toLocaleString('en-US') : '—',
         asp: v1Asp != null ? '$' + Number(v1Asp).toFixed(2) : '—',
       };
-      if (!isTodayOnly) dashCardCh[cardCode] = null;   // filter invalid off-today
-      if (isTodayOnly && dashCardCh[cardCode]) applyCardChannel(cardCode);
+      // The card was just rebuilt blended; re-apply any active filter. A range
+      // change lands here too, and ensureCardChannel reloads rather than
+      // repainting the previous range's split.
+      if (dashCardCh[cardCode]) ensureCardChannel(cardCode);
       loadStoreHourlySpark(v1SparkKey, v1SparkDate, v1SparkColor, v1SparkId);
     }
     loadLYComparison();   // fill the "vs last year" pill + tile slots async
