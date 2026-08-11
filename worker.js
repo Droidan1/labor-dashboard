@@ -3642,6 +3642,7 @@ const BUSINESS_AGNOSTIC_ACTIONS = new Set([
 const ACTION_BUSINESS = new Map([
   // First non-bl entry — the business gate's first real use.
   ["ebay-cases", "ecom"],
+  ["afternoon-briefing", "bl"],
   ["backfill", "bl"],
   ["backfill-items-snapshots", "bl"],
   ["cancel-sale-schedule", "bl"],
@@ -4780,6 +4781,110 @@ function periodTotals(rows, store, includeDay) {
   return daysReported === 0
     ? { sales: null, budget: null, daysReported: 0 }
     : { sales: roundCents(sales), budget: roundCents(budget), daysReported };
+}
+
+// ─── Afternoon Briefing API ──────────────────────────────────────────────
+// ?action=afternoon-briefing — where each store stands RIGHT NOW against
+// today's target. The midday check previously had nothing to say but
+// yesterday's numbers, because no intraday figure existed anywhere.
+//
+// This is the only endpoint in the reporting family that cannot be answered
+// from D1: today's rows are not written until the 03:55 cron. So it goes live
+// to Clover, and the 3 s budget is a real constraint rather than a formality.
+// It deliberately runs the CHEAP half of the live path — orders + refunds, and
+// none of the item categorisation (`fetchItemCategoryMap`, `aggregateItemSales`)
+// that the dashboard's `?store=` handler needs for its bin/retail split. §4.7
+// asks for no category or margin data, so that half is pure cost. Budget: ~3
+// subrequests per store, six stores in parallel.
+//
+// Refunds ARE subtracted, at the cost of two of those three subrequests.
+// aggregateOrders reads payment.amount (the original, pre-refund figure) rather
+// than order.total, so without the deduction a refunded sale contributes its
+// full value. Skipping it would make salesSoFarToday drift above the daily
+// netSales the consumer later compares it to.
+//
+// 🔑 salesSoFarToday IS POS-ONLY. Auction revenue arrives on a next-morning
+// Drive feed, so there is no intraday auction figure to include — while
+// todayBudget is a whole-revenue target that DOES assume auction. For the two
+// or three stores that run auctions this understates pace by roughly their
+// auction share (~2-4% chain-wide). Stated rather than silently corrected;
+// morning-briefing returns posSales and auctionSales separately, so the
+// consumer can size the gap per store.
+//
+// `expectedByNow` is deliberately NOT emitted. It needs an intraday curve, and
+// this system has none — the only honest alternative is a flat pro-rata, which
+// the work order itself says overstates misses in the morning and understates
+// them late. A curve is derivable from ?action=hourly over a few weeks; that is
+// its own piece of work, not a guess bolted on here.
+async function buildAfternoonBriefingData(env) {
+  const { dateStr: todayStr, startOfDay } = getETToday();
+
+  const { results: bRows } = await env.DB.prepare(
+    'SELECT store, budget FROM daily_sales WHERE date = ?'
+  ).bind(todayStr).all();
+  const bMap = {};
+  for (const r of (bRows || [])) bMap[r.store] = r.budget;
+
+  // allSettled, not all: one store's expired token must not take the whole
+  // briefing down with it. A rejection becomes that store's no_data, which is
+  // exactly the distinction §4.1 exists to draw.
+  const settled = await Promise.allSettled(ALL_STORES.map(async (store) => {
+    const elements = await fetchCloverOrders(store, env, startOfDay);
+    // null = no credentials configured. An HTTP failure throws instead, and
+    // lands in the rejected branch below. Neither is a zero.
+    if (!elements) return null;
+    const data = aggregateOrders(elements, startOfDay);
+    const refundCents = await fetchRefundsTotal(store, env, startOfDay, null, null);
+    applyRefundsToAggregate(data, refundCents);
+    return data;
+  }));
+
+  // asOf is stamped HERE, after every fetch has returned — it is the data
+  // cut-off, not the moment the request arrived. The spec calls that out
+  // specifically, and the two differ by however long Clover took.
+  const asOf = etIsoWithOffset(new Date());
+
+  const stores = ALL_STORES.map((store, i) => {
+    const r = settled[i];
+    const data = r.status === 'fulfilled' ? r.value : null;
+    const closedFrom = STORE_CLOSED_FROM[store];
+    const reportingStatus = (closedFrom && todayStr >= closedFrom) ? 'closed'
+      : data == null ? 'no_data'
+      : 'reported';
+    return {
+      storeId: store,
+      name: STORE_LABELS[store] || store,
+      // A store that has not opened yet returns a real 0: Clover answered, and
+      // the answer was "no orders". That is a true zero, not missing data —
+      // which is the whole reason this endpoint reports status at all.
+      salesSoFarToday: reportingStatus === 'closed' ? 0
+        : data ? roundCents(data.total) : null,
+      todayBudget: bMap[store] ?? null,
+      transactions: reportingStatus === 'closed' ? 0
+        : data ? (data.orderCount ?? null) : null,
+      reportingStatus,
+    };
+  });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    salesDate: todayStr,        // TODAY — unlike morning-briefing
+    asOf,
+    currency: 'USD',
+    stores,
+  };
+}
+
+// ISO-8601 carrying a REAL offset, which the spec requires of asOf. A bare
+// toISOString() would say "Z" and quietly relabel a noon-ET cut-off as 16:00.
+function etIsoWithOffset(d) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', timeZoneName: 'short',
+  }).formatToParts(d);
+  const isDST = parts.find(p => p.type === 'timeZoneName')?.value === 'EDT';
+  const offsetHours = isDST ? 4 : 5;
+  const shifted = new Date(d.getTime() - offsetHours * 3600000);
+  return shifted.toISOString().slice(0, 19) + (isDST ? '-04:00' : '-05:00');
 }
 
 // ─── Store history API ───────────────────────────────────────────────────
@@ -7099,7 +7204,7 @@ export default {
     // ended up serving buyer PII unauthenticated; the fix is to make the gate
     // impossible to get subtly wrong the second time. Returns a Response to
     // send, or null to proceed.
-    const REPORTING_ACTIONS = new Set(["morning-briefing", "store-history"]);
+    const REPORTING_ACTIONS = new Set(["morning-briefing", "store-history", "afternoon-briefing"]);
     const reportingAction = url.searchParams.get("action");
     if (REPORTING_ACTIONS.has(reportingAction)) {
       const denied = (() => {
@@ -7126,6 +7231,14 @@ export default {
           const data = await buildMorningBriefingData(env);
           return new Response(JSON.stringify(data), {
             headers: { ...corsJson, "Cache-Control": "public, max-age=300" },
+          });
+        }
+        if (reportingAction === "afternoon-briefing") {
+          const data = await buildAfternoonBriefingData(env);
+          // Shorter than the others on purpose: this one moves all day, and a
+          // 5-minute cache would hand a midday caller a stale pace figure.
+          return new Response(JSON.stringify(data), {
+            headers: { ...corsJson, "Cache-Control": "public, max-age=60" },
           });
         }
         // ?action=store-history&days=30[&storeId=BL1]

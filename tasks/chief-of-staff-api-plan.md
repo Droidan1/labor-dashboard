@@ -15,13 +15,13 @@ Plan written: 2026-08-11. All data claims below were measured against **producti
 | 4.2 | `store-history` | **Build now** — 1 session | Pure D1 read; `history_d1` handler is the pattern. |
 | 4.3 | WTD / MTD / LY | **Build now** — 1 session | `week` column + `last_year_sales` both exist. |
 | 4.6 | `stores` master | **Build after Brian supplies a roster** | Manager/sqft/opened-date exist **nowhere** in the system. |
-| 4.7 | `afternoon-briefing` | **Build now** — 1 session, latency risk | Live Clover path exists; 6 stores × live fetch vs a 3 s budget. |
+| 4.7 | `afternoon-briefing` | **BUILT** — p95 still unmeasured against prod | Runs the cheap half of the live path: ~3 subrequests/store, six in parallel. |
 | 4.5 | Real gross margin | **BUILT** — actual gated on coverage; `grossMarginPlan` null | Cost cascade + coverage counters already existed. No planned-margin source exists (all 62 sheet columns checked). |
 | 4.4 | Category budgets | **Blocked — no source** | Budget in the Sheet is a single store-level daily number. No category plan exists anywhere. |
 | 4.8 | Labour | **BUILT** — needs migration-037 + a backfill re-run | Sheet cols 9/10/21 now imported. Two prod steps still owed, see 2.G. |
 | 4.9 | Inventory | **Blocked — no source** | No merchandise-inventory feed exists at all. ("Inventory" in this repo = supply requests.) |
 
-Shipped to the branch: **4.1, 4.2, 4.3, 4.5, 4.8.** Still buildable: **4.7**.
+Shipped to the branch: **4.1, 4.2, 4.3, 4.5, 4.7, 4.8** — every item that had a data source.
 Blocked on a data source Brian must provide: **4.4, 4.6, 4.9.**
 
 ---
@@ -272,6 +272,18 @@ like a sales collapse.
 Do **not** derive manager from `user_grants` (see 1.4).
 
 ### Slice E — §4.7 `GET ?action=afternoon-briefing`
+
+> **BUILT 2026-08-11.** `scripts/test-afternoon-briefing.mjs` (48 assertions, 6 mutations proven to
+> fail it). Full suite 1037/32. Built as described below: the light path (orders + refunds, no item
+> categorisation), `allSettled` per store, 60 s cache, `expectedByNow` omitted.
+> 🛑 **The one thing still unproven: real p95.** The suite guards the *cause* of latency — a
+> subrequest count of ≤ 3 per store, which is what an added `fetchItemCategoryMap` would blow — but
+> wall-clock against live Clover cannot be measured from here. **Time the first prod call.**
+> ⚠️ `salesSoFarToday` is POS-ONLY while `todayBudget` assumes auction, so auction stores read
+> ~2-4% light on pace. Stated, not silently corrected.
+> Sample: `tasks/sample-afternoon-briefing.json` — **shape-accurate with SYNTHETIC sales** (the
+> budgets are real prod values). Unlike the other two samples this one cannot be replayed from D1,
+> because the endpoint's data only exists live in Clover.
 
 The live intraday path already exists: `?store=<code>&since=<ts>` (`worker.js:12694`) live-fetches
 Clover orders, refunds, and the item-category map for one store. **Six of those in one request is the
