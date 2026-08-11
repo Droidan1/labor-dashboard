@@ -167,6 +167,36 @@ const rowsFor = (db, store = 'BL1') =>
   eq(Object.keys(rowsFor(db)).length, 1, 'and writes no new rows');
 }
 
+// ══ 4b. Indy East's labour ACTUALS are excluded; its plan still imports ═══
+// BL16's tab fills col 21 for dates that have not happened — 57.5 hours on a
+// future day with no sales — so those are SCHEDULED hours, and importing them
+// labels a schedule as an actual. Col 22 is never computed there either.
+// Confirmed with Brian 2026-08-11: exclude the actuals until the tab matches
+// the others. The plan columns are still a coherent target and stay.
+//
+// The exclusion must be STORE-SCOPED: the same sheet fixture is served for
+// every tab here, so a leak shows up immediately as BL1 losing its actuals.
+{
+  const { db, env } = makeEnv(repo);
+  db.exec('DELETE FROM daily_sales');
+  stubNetwork();
+  await worker.scheduled({ cron: '55 3 * * *' }, env, ctx);
+
+  const bl16 = rowsFor(db, 'BL16')[back(1)];
+  const bl1 = rowsFor(db, 'BL1')[back(1)];
+
+  eq(bl16.labor_hours, null, 'BL16 actual hours are NOT imported');
+  eq(bl16.labor_pct, null, 'BL16 actual labour % is NOT imported');
+  eq(bl16.budget_labor_hours, 91, 'BL16 scheduled hours ARE imported — the plan is still wanted');
+  eq(bl16.budget_labor_pct, 0.101, 'BL16 target % is still imported');
+
+  // Same fixture, a non-excluded store: everything comes through.
+  eq(bl1.labor_hours, 101, 'BL1 actual hours are unaffected by the exclusion');
+  eq(bl1.labor_pct, 0.201, 'BL1 actual labour % is unaffected');
+  ok(bl1.labor_hours !== null && bl16.labor_hours === null,
+     'the exclusion is store-scoped, not a global switch-off');
+}
+
 // ══ 5. Only the NIGHTLY cron runs it ══════════════════════════════════════
 // The every-minute trigger firing a sheet import would be 1,440 imports a day.
 {

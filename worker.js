@@ -7222,6 +7222,28 @@ const SHEET_COL = {
   A_RETAIL:17, A_BINS:18, A_AUCTION:19, A_TOTAL:20, A_HOURS:21, A_LABOR:22,
 };
 
+// 🛑 Stores whose sheet tab does not follow the standard layout for ACTUAL
+// labour, and whose columns 21/22 must therefore not be imported.
+//
+// BL16 / Indy East, measured 2026-08-11 and confirmed by Brian:
+//   • col 21 ("actual hours") is filled for dates that HAVE NOT HAPPENED —
+//     57.5 hours on 08-12, 70 on 08-13, neither with any sales. Those are
+//     SCHEDULED hours, so importing them labels a schedule as an actual.
+//   • col 22 ("actual labour %") is never computed — 0 or blank throughout.
+// The other five tabs do neither. Whoever maintains Indy East's tab keeps it
+// differently; it was still being updated three days after HR went on leave.
+//
+// The PLAN columns (9/10) are still imported: they are a coherent target, just
+// a computed one. ⚠️ Note for whoever revisits this — BL16's plan is derived as
+// `budget_labor_hours x $14.40 / budget`, matching to six decimals on every
+// row, while the chain moved to $15.00/hr in March 2026. So Indy East's target
+// is ~4% understated relative to how its actuals would be computed. Left as-is
+// deliberately: correcting a rate in the API would hide a spreadsheet problem
+// rather than fix it.
+//
+// Remove a store from this set only once its tab matches the others.
+const LABOUR_ACTUALS_EXCLUDED = new Set(["BL16"]);
+
 // Trailing window the nightly cron imports. Wide enough to absorb a couple of
 // weeks of retrospective labour entry, and it INCLUDES today, so today's budget
 // is refreshed before the day starts. Cost: 21 days x 6 stores x 2 subrequests
@@ -7293,7 +7315,9 @@ async function importSheetToD1(env, { filterStore = null, fromDate = null, toDat
         const aBins = sheetParseNum(c[COL.A_BINS]);
         const aAuction = sheetParseNum(c[COL.A_AUCTION]);
         const aTotal = sheetParseNum(c[COL.A_TOTAL]);
-        const aLabor = sheetParseNum(c[COL.A_LABOR]);
+        // aLabor is nulled for excluded stores too — see the note below. The
+        // flag is computed there because it sits with the other labour reads.
+        const aLabor = LABOUR_ACTUALS_EXCLUDED.has(storeCode) ? null : sheetParseNum(c[COL.A_LABOR]);
         // Labour plan + actual hours. Each is bound with `|| null` below,
         // exactly as aLabor already was: the sheet writes a literal 0 into
         // every cell nobody has filled in (actual hours stop on 2026-08-04
@@ -7302,7 +7326,13 @@ async function importSheetToD1(env, { filterStore = null, fromDate = null, toDat
         // nothing real.
         const bHours = sheetParseNum(c[COL.B_HOURS]);
         const bLabor = sheetParseNum(c[COL.B_LABOR]);
-        const aHours = sheetParseNum(c[COL.A_HOURS]);
+        // Actuals are dropped entirely for a store whose tab does not follow
+        // the standard layout — see LABOUR_ACTUALS_EXCLUDED. Nulled HERE rather
+        // than filtered at the API, so the wrong figure never enters D1 at all:
+        // anything stored will eventually be read by something that has not
+        // heard of the exclusion.
+        const excludeActuals = LABOUR_ACTUALS_EXCLUDED.has(storeCode);
+        const aHours = excludeActuals ? null : sheetParseNum(c[COL.A_HOURS]);
 
         // Also read KV snapshot for this date (Clover metrics)
         let kvData = null;
