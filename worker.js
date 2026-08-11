@@ -7182,6 +7182,194 @@ async function processScheduledPosts(env, now) {
   return out;
 }
 
+// ─── Google Sheet → D1 import ────────────────────────────────────────────
+// Extracted from ?action=backfill on 2026-08-11 so the nightly cron can run the
+// same import. ONE copy of the body, deliberately: every column's conflict rule
+// below is a data-safety decision, and a second transcription of them is how
+// two paths come to disagree about which side wins.
+//
+// WHY THE CRON NEEDS IT. The sheet is hand-entered by HR, and this importer is
+// the only thing that moves it into D1 — as a MANUAL admin POST. Labour sat in
+// the sheet since 2025-12-28 and never reached the API for exactly that reason:
+// the data was there, nothing was pulling it. HR is currently off, and when she
+// returns and enters the missing weeks the same thing happens again unless
+// something re-runs this on its own.
+//
+// 🔑 WHAT CAN AND CANNOT BE OVERWRITTEN — the reason this is safe to automate:
+//   week, budget, labour       Sheet wins. It is the only source for these.
+//   auction                    existing wins (owned by the Drive feed).
+//   total/retail/bin/counts    EXISTING WINS. The sheet can never clobber
+//                              Clover-derived sales, at any window size.
+//   is_manual_override rows    untouched, every column.
+// An empty or unreachable sheet writes nothing at all: the row loop simply does
+// not execute, so a renamed tab degrades to a no-op rather than to damage.
+//
+// fromDate/toDate are inclusive YYYY-MM-DD bounds; null means unbounded, which
+// is byte-identical to the pre-extraction behaviour.
+const SHEET_ID = "17byTs8k0CjH5gPOuBncq3RS3rL4PJR0PamdnbkKPss8";
+const STORE_TABS = {
+  "BL1/BL6 Coliseum": "BL1", "BL2/BL7 South Bend": "BL2",
+  "BL4/BL5 Dupont": "BL4", "BL8/BL9 Holland": "BL8",
+  "BL14/B15 Battle Creek": "BL14", "BL16/BL17 Indy East": "BL16"
+};
+// 8 of the sheet's 62 columns. B_HOURS/B_LABOR/A_HOURS were added 2026-08-11:
+// the labour plan and actual hours have been sitting in the sheet the whole
+// time — B_LABOR populated for every day including forward-dated rows — and the
+// API reported laborActualPct as null and had no source at all for
+// laborTargetPct because nothing read them.
+const SHEET_COL = {
+  WEEK:2, DATE:3, B_TOTAL:8, B_HOURS:9, B_LABOR:10,
+  A_RETAIL:17, A_BINS:18, A_AUCTION:19, A_TOTAL:20, A_HOURS:21, A_LABOR:22,
+};
+
+// Trailing window the nightly cron imports. Wide enough to absorb a couple of
+// weeks of retrospective labour entry, and it INCLUDES today, so today's budget
+// is refreshed before the day starts. Cost: 21 days x 6 stores x 2 subrequests
+// (a KV read and a D1 write per row) + 6 sheet fetches = ~258, on top of the
+// snapshot pass's ~180 — comfortably inside Cloudflare's 1,000 per invocation.
+// Raising this materially is what would breach it; the full sheet is 418 rows
+// per store, which is why ?action=backfill has always been per-store.
+const SHEET_IMPORT_TRAILING_DAYS = 21;
+
+function sheetParseNum(cell) {
+  if (!cell || cell.v == null || cell.v === "") return null;
+  if (typeof cell.v === "number") return cell.v;
+  const cleaned = String(cell.v).replace(/[,$%\s]/g, "");
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? null : n;
+}
+
+function sheetParseDate(cell) {
+  if (!cell || cell.v == null) return null;
+  const dv = cell.v;
+  if (typeof dv === "string") {
+    const dm = dv.match(/Date\((\d+),(\d+),(\d+)\)/);
+    if (dm) return new Date(+dm[1], +dm[2], +dm[3]);
+    const d = new Date(dv);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof dv === "number") {
+    const d = new Date(Math.round((dv - 25569) * 86400000));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+async function importSheetToD1(env, { filterStore = null, fromDate = null, toDate = null } = {}) {
+  const COL = SHEET_COL;
+  const storeEntries = Object.entries(STORE_TABS).filter(([, code]) => !filterStore || code === filterStore);
+
+  const summary = {};
+  for (const [tabName, storeCode] of storeEntries) {
+    let imported = 0, skipped = 0, errors = 0;
+    try {
+      // Fetch Google Sheets data via GViz API
+      const gvizUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?headers=0&sheet=${encodeURIComponent(tabName)}&tqx=out:json`;
+      const resp = await fetch(gvizUrl);
+      const text = await resp.text();
+      // Strip JSONP wrapper: google.visualization.Query.setResponse({...})
+      const jsonStart = text.indexOf("{");
+      const jsonEnd = text.lastIndexOf("}");
+      if (jsonStart === -1 || jsonEnd === -1) { summary[storeCode] = { error: "Failed to parse GViz response" }; continue; }
+      const gviz = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+      if (gviz.status !== "ok") { summary[storeCode] = { error: "Sheet returned error" }; continue; }
+
+      const rows = gviz.table.rows || [];
+      for (const row of rows) {
+        const c = row.c || [];
+        const date = sheetParseDate(c[COL.DATE]);
+        if (!date) { skipped++; continue; }
+
+        const dateStr = date.toISOString().slice(0, 10);
+        // Window filter. Skipped rows are counted, never written — the cron
+        // relies on this to stay inside its subrequest budget, so the check
+        // must come BEFORE the KV read below, not after.
+        if (fromDate && dateStr < fromDate) { skipped++; continue; }
+        if (toDate && dateStr > toDate) { skipped++; continue; }
+
+        const week = c[COL.WEEK]?.v != null ? String(c[COL.WEEK].v) : null;
+        const bTotal = sheetParseNum(c[COL.B_TOTAL]);
+        const aRetail = sheetParseNum(c[COL.A_RETAIL]);
+        const aBins = sheetParseNum(c[COL.A_BINS]);
+        const aAuction = sheetParseNum(c[COL.A_AUCTION]);
+        const aTotal = sheetParseNum(c[COL.A_TOTAL]);
+        const aLabor = sheetParseNum(c[COL.A_LABOR]);
+        // Labour plan + actual hours. Each is bound with `|| null` below,
+        // exactly as aLabor already was: the sheet writes a literal 0 into
+        // every cell nobody has filled in (actual hours stop on 2026-08-04
+        // and read 0 after), and 0 must not reach the API as a real figure.
+        // No store plans 0 hours or a 0% labour rate, so the coercion loses
+        // nothing real.
+        const bHours = sheetParseNum(c[COL.B_HOURS]);
+        const bLabor = sheetParseNum(c[COL.B_LABOR]);
+        const aHours = sheetParseNum(c[COL.A_HOURS]);
+
+        // Also read KV snapshot for this date (Clover metrics)
+        let kvData = null;
+        if (env.SALES_SNAPSHOTS) {
+          kvData = await env.SALES_SNAPSHOTS.get(`sales:${storeCode.toLowerCase()}:${dateStr}`, "json");
+        }
+
+        try {
+          await env.DB.prepare(
+            `INSERT INTO daily_sales (store, date, week, budget, total, retail, bin, auction, labor_pct,
+              labor_hours, budget_labor_pct, budget_labor_hours,
+              order_count, avg_cart, avg_items, avg_txn_sec, avg_asp, snapshot_time)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(store, date) DO UPDATE SET
+               -- Manual-override rows are immutable: keep all existing values.
+               -- The CASE wrappers below short-circuit when is_manual_override=1.
+               -- Sheet-authoritative columns: Sheet always wins (humans enter these)
+               week=CASE WHEN is_manual_override=1 THEN week ELSE excluded.week END,
+               budget=CASE WHEN is_manual_override=1 THEN budget ELSE excluded.budget END,
+               -- auction is now owned by the Drive auction feed (?action=ingest):
+               -- existing wins, so the Sheet only seeds it when the feed hasn't yet.
+               auction=CASE WHEN is_manual_override=1 THEN auction ELSE COALESCE(auction, excluded.auction) END,
+               labor_pct=CASE WHEN is_manual_override=1 THEN labor_pct ELSE COALESCE(excluded.labor_pct, labor_pct) END,
+               -- Labour is Sheet-authoritative like labor_pct above: the
+               -- Sheet is the ONLY source, so a fresh value always wins and
+               -- a null (nobody entered it) leaves the stored one alone.
+               -- This ordering matters — COALESCE(excluded, existing), not
+               -- the reverse. Every row already holds labor_pct = 0 from
+               -- runs made before the Sheet was filled in, and existing-wins
+               -- would pin all of them at 0 forever.
+               labor_hours=CASE WHEN is_manual_override=1 THEN labor_hours ELSE COALESCE(excluded.labor_hours, labor_hours) END,
+               budget_labor_pct=CASE WHEN is_manual_override=1 THEN budget_labor_pct ELSE COALESCE(excluded.budget_labor_pct, budget_labor_pct) END,
+               budget_labor_hours=CASE WHEN is_manual_override=1 THEN budget_labor_hours ELSE COALESCE(excluded.budget_labor_hours, budget_labor_hours) END,
+               -- Phase 2C: Cron-authoritative columns. Existing wins; Sheet only fills NULLs.
+               total=CASE WHEN is_manual_override=1 THEN total ELSE COALESCE(total, excluded.total) END,
+               retail=CASE WHEN is_manual_override=1 THEN retail ELSE COALESCE(retail, excluded.retail) END,
+               bin=CASE WHEN is_manual_override=1 THEN bin ELSE COALESCE(bin, excluded.bin) END,
+               order_count=CASE WHEN is_manual_override=1 THEN order_count ELSE COALESCE(order_count, excluded.order_count) END,
+               avg_cart=CASE WHEN is_manual_override=1 THEN avg_cart ELSE COALESCE(avg_cart, excluded.avg_cart) END,
+               avg_items=CASE WHEN is_manual_override=1 THEN avg_items ELSE COALESCE(avg_items, excluded.avg_items) END,
+               avg_txn_sec=CASE WHEN is_manual_override=1 THEN avg_txn_sec ELSE COALESCE(avg_txn_sec, excluded.avg_txn_sec) END,
+               avg_asp=CASE WHEN is_manual_override=1 THEN avg_asp ELSE COALESCE(avg_asp, excluded.avg_asp) END,
+               snapshot_time=CASE WHEN is_manual_override=1 THEN snapshot_time ELSE COALESCE(snapshot_time, excluded.snapshot_time) END`
+          ).bind(
+            storeCode, dateStr, week, bTotal,
+            kvData?.total || aTotal || null, kvData?.retail || aRetail || null, kvData?.bin || aBins || null,
+            aAuction || null, aLabor || null,
+            aHours || null, bLabor || null, bHours || null,
+            kvData?.orderCount ?? null, kvData?.avgCart ?? null, kvData?.avgItems ?? null,
+            kvData?.avgTxnSec != null ? Math.round(kvData.avgTxnSec) : null,
+            kvData?.avgASP != null ? Math.round(kvData.avgASP * 100) / 100 : null,
+            kvData?.snapshotTime ?? null
+          ).run();
+          imported++;
+        } catch (e) {
+          errors++;
+          console.error(`Backfill D1 error ${storeCode} ${dateStr}:`, e.message);
+        }
+      }
+      summary[storeCode] = { imported, skipped, errors };
+    } catch (e) {
+      summary[storeCode] = { error: e.message };
+    }
+  }
+  return summary;
+}
+
 export default {
   // ── HTTP request handler ──────────────────────────────────────
   async fetch(request, env, ctx) {
@@ -9551,152 +9739,21 @@ export default {
         });
       }
 
-      const SHEET_ID = "17byTs8k0CjH5gPOuBncq3RS3rL4PJR0PamdnbkKPss8";
-      const STORE_TABS = {
-        "BL1/BL6 Coliseum": "BL1", "BL2/BL7 South Bend": "BL2",
-        "BL4/BL5 Dupont": "BL4", "BL8/BL9 Holland": "BL8",
-        "BL14/B15 Battle Creek": "BL14", "BL16/BL17 Indy East": "BL16"
-      };
-      // 8 of the sheet's 62 columns. B_HOURS/B_LABOR/A_HOURS were added
-      // 2026-08-11: the labour plan and actual hours have been sitting in the
-      // sheet the whole time — B_LABOR populated for every day including
-      // forward-dated rows — and the API reported laborActualPct as null and
-      // had no source at all for laborTargetPct because nothing read them.
-      const COL = {
-        WEEK:2, DATE:3, B_TOTAL:8, B_HOURS:9, B_LABOR:10,
-        A_RETAIL:17, A_BINS:18, A_AUCTION:19, A_TOTAL:20, A_HOURS:21, A_LABOR:22,
-      };
-
-      function parseNum(cell) {
-        if (!cell || cell.v == null || cell.v === "") return null;
-        if (typeof cell.v === "number") return cell.v;
-        const cleaned = String(cell.v).replace(/[,$%\s]/g, "");
-        const n = parseFloat(cleaned);
-        return isNaN(n) ? null : n;
+      // Optional window. Default (no params) imports every row, byte-identical
+      // to the pre-extraction behaviour. `days=N` gives the same trailing window
+      // the nightly cron uses, for a fast targeted re-import.
+      const daysParam = parseInt(url.searchParams.get("days"), 10);
+      let fromDate = null;
+      if (Number.isFinite(daysParam) && daysParam > 0) {
+        const { dateStr: todayStr } = getETToday();
+        const d = new Date(todayStr + 'T12:00:00Z');
+        d.setUTCDate(d.getUTCDate() - (daysParam - 1));
+        fromDate = d.toISOString().slice(0, 10);
       }
-
-      function parseDate(cell) {
-        if (!cell || cell.v == null) return null;
-        const dv = cell.v;
-        if (typeof dv === "string") {
-          const dm = dv.match(/Date\((\d+),(\d+),(\d+)\)/);
-          if (dm) return new Date(+dm[1], +dm[2], +dm[3]);
-          const d = new Date(dv);
-          return isNaN(d.getTime()) ? null : d;
-        }
-        if (typeof dv === "number") {
-          const d = new Date(Math.round((dv - 25569) * 86400000));
-          return isNaN(d.getTime()) ? null : d;
-        }
-        return null;
-      }
-
-      // Optional: filter to a single store to avoid subrequest limits
-      const filterStore = url.searchParams.get("store")?.toUpperCase();
-      const storeEntries = Object.entries(STORE_TABS).filter(([, code]) => !filterStore || code === filterStore);
-
-      const summary = {};
-      for (const [tabName, storeCode] of storeEntries) {
-        let imported = 0, skipped = 0, errors = 0;
-        try {
-          // Fetch Google Sheets data via GViz API
-          const gvizUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?headers=0&sheet=${encodeURIComponent(tabName)}&tqx=out:json`;
-          const resp = await fetch(gvizUrl);
-          const text = await resp.text();
-          // Strip JSONP wrapper: google.visualization.Query.setResponse({...})
-          const jsonStart = text.indexOf("{");
-          const jsonEnd = text.lastIndexOf("}");
-          if (jsonStart === -1 || jsonEnd === -1) { summary[storeCode] = { error: "Failed to parse GViz response" }; continue; }
-          const gviz = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
-          if (gviz.status !== "ok") { summary[storeCode] = { error: "Sheet returned error" }; continue; }
-
-          const rows = gviz.table.rows || [];
-          for (const row of rows) {
-            const c = row.c || [];
-            const date = parseDate(c[COL.DATE]);
-            if (!date) { skipped++; continue; }
-
-            const dateStr = date.toISOString().slice(0, 10);
-            const week = c[COL.WEEK]?.v != null ? String(c[COL.WEEK].v) : null;
-            const bTotal = parseNum(c[COL.B_TOTAL]);
-            const aRetail = parseNum(c[COL.A_RETAIL]);
-            const aBins = parseNum(c[COL.A_BINS]);
-            const aAuction = parseNum(c[COL.A_AUCTION]);
-            const aTotal = parseNum(c[COL.A_TOTAL]);
-            const aLabor = parseNum(c[COL.A_LABOR]);
-            // Labour plan + actual hours. Each is bound with `|| null` below,
-            // exactly as aLabor already was: the sheet writes a literal 0 into
-            // every cell nobody has filled in (actual hours stop on 2026-08-04
-            // and read 0 after), and 0 must not reach the API as a real figure.
-            // No store plans 0 hours or a 0% labour rate, so the coercion loses
-            // nothing real.
-            const bHours = parseNum(c[COL.B_HOURS]);
-            const bLabor = parseNum(c[COL.B_LABOR]);
-            const aHours = parseNum(c[COL.A_HOURS]);
-
-            // Also read KV snapshot for this date (Clover metrics)
-            let kvData = null;
-            if (env.SALES_SNAPSHOTS) {
-              kvData = await env.SALES_SNAPSHOTS.get(`sales:${storeCode.toLowerCase()}:${dateStr}`, "json");
-            }
-
-            try {
-              await env.DB.prepare(
-                `INSERT INTO daily_sales (store, date, week, budget, total, retail, bin, auction, labor_pct,
-                  labor_hours, budget_labor_pct, budget_labor_hours,
-                  order_count, avg_cart, avg_items, avg_txn_sec, avg_asp, snapshot_time)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(store, date) DO UPDATE SET
-                   -- Manual-override rows are immutable: keep all existing values.
-                   -- The CASE wrappers below short-circuit when is_manual_override=1.
-                   -- Sheet-authoritative columns: Sheet always wins (humans enter these)
-                   week=CASE WHEN is_manual_override=1 THEN week ELSE excluded.week END,
-                   budget=CASE WHEN is_manual_override=1 THEN budget ELSE excluded.budget END,
-                   -- auction is now owned by the Drive auction feed (?action=ingest):
-                   -- existing wins, so the Sheet only seeds it when the feed hasn't yet.
-                   auction=CASE WHEN is_manual_override=1 THEN auction ELSE COALESCE(auction, excluded.auction) END,
-                   labor_pct=CASE WHEN is_manual_override=1 THEN labor_pct ELSE COALESCE(excluded.labor_pct, labor_pct) END,
-                   -- Labour is Sheet-authoritative like labor_pct above: the
-                   -- Sheet is the ONLY source, so a fresh value always wins and
-                   -- a null (nobody entered it) leaves the stored one alone.
-                   -- This ordering matters — COALESCE(excluded, existing), not
-                   -- the reverse. Every row already holds labor_pct = 0 from
-                   -- runs made before the Sheet was filled in, and existing-wins
-                   -- would pin all of them at 0 forever.
-                   labor_hours=CASE WHEN is_manual_override=1 THEN labor_hours ELSE COALESCE(excluded.labor_hours, labor_hours) END,
-                   budget_labor_pct=CASE WHEN is_manual_override=1 THEN budget_labor_pct ELSE COALESCE(excluded.budget_labor_pct, budget_labor_pct) END,
-                   budget_labor_hours=CASE WHEN is_manual_override=1 THEN budget_labor_hours ELSE COALESCE(excluded.budget_labor_hours, budget_labor_hours) END,
-                   -- Phase 2C: Cron-authoritative columns. Existing wins; Sheet only fills NULLs.
-                   total=CASE WHEN is_manual_override=1 THEN total ELSE COALESCE(total, excluded.total) END,
-                   retail=CASE WHEN is_manual_override=1 THEN retail ELSE COALESCE(retail, excluded.retail) END,
-                   bin=CASE WHEN is_manual_override=1 THEN bin ELSE COALESCE(bin, excluded.bin) END,
-                   order_count=CASE WHEN is_manual_override=1 THEN order_count ELSE COALESCE(order_count, excluded.order_count) END,
-                   avg_cart=CASE WHEN is_manual_override=1 THEN avg_cart ELSE COALESCE(avg_cart, excluded.avg_cart) END,
-                   avg_items=CASE WHEN is_manual_override=1 THEN avg_items ELSE COALESCE(avg_items, excluded.avg_items) END,
-                   avg_txn_sec=CASE WHEN is_manual_override=1 THEN avg_txn_sec ELSE COALESCE(avg_txn_sec, excluded.avg_txn_sec) END,
-                   avg_asp=CASE WHEN is_manual_override=1 THEN avg_asp ELSE COALESCE(avg_asp, excluded.avg_asp) END,
-                   snapshot_time=CASE WHEN is_manual_override=1 THEN snapshot_time ELSE COALESCE(snapshot_time, excluded.snapshot_time) END`
-              ).bind(
-                storeCode, dateStr, week, bTotal,
-                kvData?.total || aTotal || null, kvData?.retail || aRetail || null, kvData?.bin || aBins || null,
-                aAuction || null, aLabor || null,
-                aHours || null, bLabor || null, bHours || null,
-                kvData?.orderCount ?? null, kvData?.avgCart ?? null, kvData?.avgItems ?? null,
-                kvData?.avgTxnSec != null ? Math.round(kvData.avgTxnSec) : null,
-                kvData?.avgASP != null ? Math.round(kvData.avgASP * 100) / 100 : null,
-                kvData?.snapshotTime ?? null
-              ).run();
-              imported++;
-            } catch (e) {
-              errors++;
-              console.error(`Backfill D1 error ${storeCode} ${dateStr}:`, e.message);
-            }
-          }
-          summary[storeCode] = { imported, skipped, errors };
-        } catch (e) {
-          summary[storeCode] = { error: e.message };
-        }
-      }
+      const summary = await importSheetToD1(env, {
+        filterStore: url.searchParams.get("store")?.toUpperCase() || null,
+        fromDate,
+      });
       return new Response(JSON.stringify({ ok: true, summary }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -13530,6 +13587,35 @@ export default {
       await rollupWeekSummariesIfReady(env, todayStr);
     } catch (err) {
       console.error("Week summary rollup failed:", err.message);
+    }
+
+    // ── Trailing-window Google Sheet import ──────────────────────────────
+    // The sheet is hand-entered by HR and ?action=backfill — a MANUAL admin
+    // POST — was the only thing that moved it into D1. That is why labour sat
+    // in the sheet from 2025-12-28 and never reached the API: the data existed,
+    // nothing pulled it. Running it here makes the pipeline self-healing, so a
+    // week of catch-up entry after someone's leave lands on its own.
+    //
+    // 🔑 ORDER IS LOAD-BEARING: this runs AFTER the per-store snapshot pass
+    // above. The importer resolves total/retail/bin/order_count existing-wins,
+    // so with Clover's figures already written for today, the sheet can only
+    // fill genuine holes. Moving this earlier would let the sheet's own (often
+    // blank or zero) sales cells seed the row first.
+    //
+    // Best-effort by construction: a failure here must not cost us the snapshot
+    // pass that already succeeded, and an unreachable sheet writes nothing at
+    // all rather than writing blanks.
+    try {
+      const to = todayStr;
+      const fromD = new Date(todayStr + 'T12:00:00Z');
+      fromD.setUTCDate(fromD.getUTCDate() - (SHEET_IMPORT_TRAILING_DAYS - 1));
+      const sheetSummary = await importSheetToD1(env, {
+        fromDate: fromD.toISOString().slice(0, 10),
+        toDate: to,
+      });
+      console.log("Sheet import (trailing window):", JSON.stringify(sheetSummary));
+    } catch (err) {
+      console.error("Sheet import failed:", err.message);
     }
 
     console.log("Daily snapshot results:", JSON.stringify(results));
