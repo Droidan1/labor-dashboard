@@ -4501,14 +4501,39 @@ async function buildMorningBriefingData(env) {
   yd.setUTCDate(yd.getUTCDate() - 1);
   const yesterdayStr = yd.toISOString().slice(0, 10);
 
-  const [{ results: yRows }, { results: tRows }] = await Promise.all([
+  // Window for the period-to-date sums: far enough back to cover both the
+  // month-to-date span and the fiscal week containing salesDate. A Sunday→
+  // Saturday week starts at most 6 days before any day in it, so
+  // min(firstOfMonth, salesDate−6) always contains both — and the week
+  // genuinely straddles the month boundary (week 31 of 2026 ran Jul 26 →
+  // Aug 1), which is why this is a min rather than just the first of the month.
+  const monthStart = yesterdayStr.slice(0, 8) + '01';
+  const weekStartFallback = sundayOf(yesterdayStr);
+  const windowStart = monthStart < weekStartFallback ? monthStart : weekStartFallback;
+  const lyDate = lyDateFor(yesterdayStr);
+
+  const [{ results: yRows }, { results: tRows }, { results: winRows }, { results: lyRows }] = await Promise.all([
     env.DB.prepare('SELECT store, total, auction, budget, labor_pct, order_count, snapshot_time, is_manual_override FROM daily_sales WHERE date = ?').bind(yesterdayStr).all(),
     env.DB.prepare('SELECT store, budget FROM daily_sales WHERE date = ?').bind(todayStr).all(),
+    env.DB.prepare(
+      `SELECT store, date, week, total, auction, budget, order_count, snapshot_time, is_manual_override
+       FROM daily_sales WHERE date >= ? AND date <= ?`
+    ).bind(windowStart, yesterdayStr).all(),
+    // last_year_sales carries retail + bin only — the prior-year import has no
+    // auction channel at all. See the lySalesForDate comment below.
+    env.DB.prepare('SELECT store, retail, bin FROM last_year_sales WHERE date = ?').bind(lyDate).all(),
   ]);
 
-  const yMap = {}, tMap = {};
+  const yMap = {}, tMap = {}, lyMap = {}, winByStore = {};
   for (const r of (yRows || [])) yMap[r.store] = r;
   for (const r of (tRows || [])) tMap[r.store] = r;
+  for (const r of (lyRows || [])) lyMap[r.store] = (Number(r.retail) || 0) + (Number(r.bin) || 0);
+  for (const r of (winRows || [])) (winByStore[r.store] || (winByStore[r.store] = [])).push(r);
+
+  // Weeks are stored globally — the same label covers the same dates for every
+  // store — so any row on salesDate answers "which fiscal week is this".
+  const weekRow = (winRows || []).find(r => r.date === yesterdayStr && r.week != null);
+  const weekLabel = weekRow == null ? null : String(weekRow.week);
 
   // Per-store item snapshots (KV) for yesterday → Tier-1 gross margin + category
   // breakdown. Degrades gracefully: when a snapshot is missing, grossMargin is
@@ -4539,6 +4564,13 @@ async function buildMorningBriefingData(env) {
     const { reportingStatus, posSales, auctionSales, netSales, transactions } =
       reportedFigures(yMap[store], store, yesterdayStr);
     const unreported = reportingStatus === 'no_data';
+
+    // Both periods are INCLUSIVE of salesDate. The week comes from the stored
+    // label when there is one, and from Sunday arithmetic when there is not.
+    const winRowsForStore = winByStore[store] || [];
+    const wtd = periodTotals(winRowsForStore, store,
+      r => (weekLabel != null ? String(r.week) === weekLabel : r.date >= weekStartFallback));
+    const mtd = periodTotals(winRowsForStore, store, r => r.date >= monthStart);
     return {
       storeId: store,
       name: STORE_LABELS[store] || store,
@@ -4551,6 +4583,25 @@ async function buildMorningBriefingData(env) {
       auctionSales,                       // auction component (null if the store runs no auctions)
       budgetForSalesDate: y.budget ?? null, // budget that applied to yesterday (compare vs netSales)
       todayBudget: tMap[store]?.budget ?? null, // today's forward target
+      // ── Period to date (inclusive of salesDate) ──────────────────────────
+      // Fiscal week starts SUNDAY. Sales and budget cover exactly the same
+      // days — the ones whose figures are vouched for — so the ratio is
+      // like-for-like; daysReported says how many that was. null, never 0,
+      // when the period has no usable day (which is Holland's situation today).
+      wtdSales: wtd.sales,
+      wtdBudget: wtd.budget,
+      wtdDaysReported: wtd.daysReported,
+      mtdSales: mtd.sales,
+      mtdBudget: mtd.budget,
+      mtdDaysReported: mtd.daysReported,
+      // 🔑 Prior year for the SAME WEEKDAY (salesDate − 364), and it is
+      // retail + bin ONLY — the last-year import has no auction channel.
+      // Compare it against `posSales`, NOT `netSales`: netSales includes
+      // auction, and putting it against an auction-less prior year overstated
+      // growth by ~4% chain-wide when the dashboard first did exactly that.
+      // (daily_sales.total === retail + bin exactly, so posSales is the
+      // like-for-like side.) null for a store with no prior-year history.
+      lySalesForDate: lyMap[store] ?? null,
       // Tier 2/3 — from the same daily_sales row. labor_pct is stored in percent
       // units (e.g. 11.5); spec wants a fraction, so /100. The <5 guard mirrors
       // the dashboard's normalizeLaborPct in case a row was stored as a fraction.
@@ -4581,6 +4632,62 @@ async function buildMorningBriefingData(env) {
     currency: 'USD',
     stores,
   };
+}
+
+// ─── Period-to-date and prior year ───────────────────────────────────────
+// "Down 21% today" means very different things in a month that is up 8% versus
+// one that is down 12%, so the briefing carries week- and month-to-date
+// alongside the single day.
+//
+// FISCAL WEEK IS SUNDAY→SATURDAY. Verified against prod, not assumed: weeks 30
+// to 33 of 2026 run 07-19, 07-26, 08-02, 08-09 — every one a Sunday, every one
+// exactly 7 days, and the same dates for all 7 stores. The stored `week` label
+// is treated as authoritative anyway, with the Sunday arithmetic only as a
+// fallback: the two agree today, and if the business ever moves to a 4-5-4
+// retail calendar the label should win rather than silently diverge. (The 192
+// NULL `week` rows are all historical — 2025-05 to 2026-04 — so the current
+// week always has a label.)
+//
+// MONTH IS THE CALENDAR MONTH, matching ?action=monthly-totals, which already
+// groups on substr(date,1,7). Not a fiscal 4-5-4 month.
+function lyDateFor(dateStr) {
+  // date − 364 = the same weekday, 52 weeks back. This is the convention the
+  // dashboard's LY pill already uses (index.html lyDateOf); matching by
+  // calendar date instead would compare a Monday against a Saturday.
+  const d = new Date(dateStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() - 364);
+  return d.toISOString().slice(0, 10);
+}
+
+function sundayOf(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+  return d.toISOString().slice(0, 10);
+}
+
+// Sum one period for one store.
+//
+// 🔑 SALES AND BUDGET COVER THE SAME DAYS. The point of these figures is the
+// ratio, and a ratio needs like-for-like sides: summing every day's budget
+// while summing only the days whose sales we can vouch for would have shown
+// Holland — dark since 2026-07-24 — as a 100% miss against a full week's plan.
+// A no_data day contributes NEITHER side, and `daysReported` ships so the
+// consumer can see the window is partial. Zero usable days returns null, not 0.
+//
+// `closed` days DO count: their sales figure is a trustworthy 0.
+function periodTotals(rows, store, includeDay) {
+  let sales = 0, budget = 0, daysReported = 0;
+  for (const r of rows) {
+    if (!includeDay(r)) continue;
+    const f = reportedFigures(r, store, r.date);
+    if (f.reportingStatus === 'no_data') continue;
+    sales += f.netSales ?? 0;
+    budget += Number(r.budget) || 0;
+    daysReported++;
+  }
+  return daysReported === 0
+    ? { sales: null, budget: null, daysReported: 0 }
+    : { sales: roundCents(sales), budget: roundCents(budget), daysReported };
 }
 
 // ─── Store history API ───────────────────────────────────────────────────

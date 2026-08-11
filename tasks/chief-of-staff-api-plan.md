@@ -214,6 +214,19 @@ key-gated, enveloped, and multi-store.
 
 ### Slice C — §4.3 WTD / MTD / LY on `morning-briefing`
 
+> **BUILT 2026-08-11, not yet deployed.** `scripts/test-briefing-period-to-date.mjs` (81 assertions,
+> 6 mutations proven to fail it). Full suite 846/29. Differential: 78 field values unchanged,
+> 42 changed — all 42 are the 7 new fields × 6 stores. Nothing existing moved.
+> Fiscal week **verified**, not assumed: prod weeks 30–33 of 2026 begin 07-19, 07-26, 08-02, 08-09 —
+> every one a Sunday, exactly 7 days, identical dates for all 7 stores.
+> Ships **7** fields, not the work order's 5: `wtdDaysReported` / `mtdDaysReported` were added
+> because sales and budget cover only the days that can be vouched for, and the consumer has to be
+> able to see the window is partial.
+> 🔑 **`lySalesForDate` compares to `posSales`, NOT `netSales`** — it is retail + bin, and the
+> prior-year import has no auction channel. Sample: `tasks/sample-morning-briefing.json`.
+> The suite **freezes the clock**, because every case here is a calendar position; against the real
+> clock the month-boundary straddle would be exercised on roughly one run in four.
+
 Three additions per store, one extra D1 query each (or one combined query with `GROUP BY store`):
 
 - `wtdSales` / `wtdBudget` — `GROUP BY week` using the stored `week` column, clamped to
@@ -307,8 +320,10 @@ The work order asks for these five. Four can be answered now:
 
 | Question | Answer |
 |---|---|
-| Fiscal week start | **Sunday** (Sun–Sat), from `daily_sales.week` |
-| Year-over-year matching | **Day-of-week** — `salesDate − 364 days`. `retail + bin` only, auction excluded on both sides (LY source has no auction channel) |
+| Fiscal week start | **Sunday** (Sun–Sat). Verified against prod: 2026 weeks 30–33 begin 07-19, 07-26, 08-02, 08-09, each exactly 7 days, identical for all stores. The stored `daily_sales.week` label is authoritative; Sunday arithmetic is only the fallback |
+| Year-over-year matching | **Day-of-week** — `salesDate − 364 days`. `retail + bin` only. **Compare `lySalesForDate` against `posSales`, not `netSales`** — the prior-year import has no auction channel, and putting an auction-inclusive figure against it overstates growth by ~4% chain-wide |
+| Month-to-date basis | **Calendar month**, matching `?action=monthly-totals`. Not a fiscal 4-5-4 month |
+| WTD/MTD day coverage | Sales and budget cover **exactly the days whose figures are vouched for**; a `no_data` day contributes to neither side. `wtdDaysReported` / `mtdDaysReported` report how many that was. Zero usable days → `null`, never `0` |
 | Labour scheduled or actual | **Neither — no labour data exists.** Field stays `null` |
 | Aged-inventory threshold | **N/A — no inventory source** |
 | §5 auction / budget | **Budget INCLUDES auction; `netSales` now does too.** Already fixed in code; the work order's baseline sample is stale (see 1.1) |
