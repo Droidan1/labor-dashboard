@@ -2,7 +2,7 @@
 
 **Answers:** `API_WORK_ORDER.md` (Brian Howard, 11 Aug 2026), §6
 **System:** `api.retjghub.com` — Cloudflare Worker `clover-sales-api`
-**As of:** 2026-08-11 · main `67272a7` · worker version `fcc3053a`
+**As of:** 2026-08-11 · main `70caa18` · worker version `5c8cc36b`
 **Auth:** unchanged — `x-api-key: <token>` header, `GET` only
 
 Everything below was measured against production, not inferred from the spec.
@@ -94,11 +94,27 @@ bin margin is arithmetically correct and economically meaningless in isolation.
 - **Do not compare `grossMargin` between stores unless they are on the same day.**
 - **Do not trend `grossMargin` day over day.** You will be reading the bin calendar.
 - **Do not alert on a negative category margin.** Late-week bins are supposed to look like that.
-- Margin is only interpretable **blended over a full bin week**. The API does not currently emit a
-  weekly margin — see §5.
+- Margin is only interpretable **blended over a full bin week**. **Use `wtdGrossMargin`.**
 
 For the avoidance of doubt: the flat bin cost is approximately **right**, not broken. Blended across
 the week bins run **+33.6%**, which is a sane liquidation-bin margin.
+
+**`wtdGrossMargin` / `wtdCostCoverage`** blend across the fiscal week to date and are the figures to
+compare and trend. Live, on a Monday (so only two days into the week):
+
+```
+store   DAILY gm    cov      WEEKLY gm    cov
+BL1            —  0.886          0.461  0.955   ← weekly RECOVERS a store the daily gate withheld
+BL4        0.229  0.998          0.375  0.994   ← 14.6 points apart on the same day
+BL14       0.274  0.947          0.351  0.975
+BL2        0.376  0.998          0.408  0.998
+BL16       0.537  0.931          0.535  0.941
+```
+
+⚠️ **Early in the fiscal week the weekly figure is still thin** — on a Sunday it is one day and
+identical to the daily one. `wtdDaysReported` tells you how many days are behind it; the blend only
+becomes fully meaningful once the week has covered both the high- and low-price ends of the bin
+cycle.
 
 ### 2.4 `laborActualPct` is a model, not payroll
 
@@ -157,6 +173,7 @@ Yesterday, per store. Cached 300 s. Live response, one store, unedited:
   "laborHoursActual": null, "laborHoursScheduled": 50,
   "transactions": 238,
   "grossMargin": 0.376, "costCoverage": 0.998, "grossMarginPlan": null,
+  "wtdGrossMargin": 0.408, "wtdCostCoverage": 0.998,
   "categories": [ { "name": "Bin Products", "netSales": 1282,
                     "grossMargin": -0.09, "costCoverage": 1, "units": 641 } ]
 }
@@ -205,7 +222,7 @@ hourly data if it becomes worth building.
 | `laborActualPct`, `laborHoursActual` | `null` after **2026-08-04** | HR returns and enters hours — the importer now runs nightly, so no manual step |
 | `laborTargetPct`, `laborHoursScheduled` | **populated through 2026-12-26** | — |
 | `grossMarginPlan` | `null`, always | no planned-margin source exists anywhere (all 62 sheet columns checked) |
-| `grossMargin` (BL1) | `null` | when uncategorised items push coverage above 0.90 |
+| `grossMargin` (BL1) | `null` | when uncategorised items push coverage above 0.90 — note its **weekly** figure already reports, at 0.955 coverage |
 | `grossMargin` (store-history) | `null`, by design | not planned; use `morning-briefing` |
 | Holland, most fields | `no_data` | when its register starts recording sales again |
 
@@ -219,10 +236,7 @@ hourly data if it becomes worth building.
 | **4.6** `?action=stores` | Manager names, emails, square footage and opening dates exist **nowhere** in the system. Needs a curated roster. User grants cannot substitute — one store has four manager grants, another has none. |
 | **4.9** inventory | No merchandise-inventory feed of any kind. |
 
-**Recommended addition — a weekly blended margin.** Per §2.3 the daily figure cannot be compared or
-trended, which leaves margin close to unusable for the consumer today. A `wtdGrossMargin` /
-`wtdCostCoverage` pair, blended across the fiscal week to date, would make it meaningful. It is
-affordable: 7 days x 6 stores of stored reads, against an endpoint currently answering in 0.35 s.
+*(The weekly blended margin recommended here was built and shipped the same day — see §2.3.)*
 
 ---
 
@@ -254,7 +268,7 @@ value to a truthful one. But two will look different on the day they land:
    `auctionSales` to `netSales` yourself, stop — you are double-counting.
 
 Field-level: `reportingStatus`, `wtd*`, `mtd*`, `lySalesForDate`, `costCoverage`, `grossMarginPlan`,
-`laborTargetPct`, `laborHoursActual`, `laborHoursScheduled` are new. `grossMargin` changed from a
+`laborTargetPct`, `laborHoursActual`, `laborHoursScheduled`, `wtdGrossMargin`, `wtdCostCoverage` are new. `grossMargin` changed from a
 placeholder `0.999` to either a real margin or `null`.
 
 ---
