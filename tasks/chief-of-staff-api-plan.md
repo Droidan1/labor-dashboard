@@ -183,6 +183,20 @@ Applies to `morning-briefing` **and every endpoint built after it** — build it
 
 ### Slice B — §4.2 `GET ?action=store-history`
 
+> **BUILT 2026-08-11, not yet deployed.** `scripts/test-store-history.mjs` (69 assertions, 5 mutations
+> proven to fail it, incl. the KV-read guard). Full suite 765/28.
+> Built as specified below, plus three things the build forced:
+> **(a)** the key gate was extracted into one shared block for the whole reporting family — a second
+> hand-rolled copy is how an eBay read endpoint once served PII unauthenticated;
+> **(b)** `reportedFigures()` now derives status + net/pos/auction/transactions in ONE place, so the
+> two endpoints cannot drift on what a `no_data` day looks like;
+> **(c)** that surfaced a live bug — `netSales` was shipping `5112.4400000000005` for BL14, because
+> pos + auction is a float sum that was never rounded. Now `roundCents`-ed. Differential vs Slice A:
+> 77 field values byte-identical, 1 changed (that number).
+> `grossMargin` ships **present and null** — see the KV-ceiling reasoning below.
+> Sample: `tasks/sample-store-history.json`. The `closed` branch that Slice A could not reach is
+> tested here via `&storeId=BL12`.
+
 Single D1 query over a clamped range, grouped in JS. Model on `history_d1` (`worker.js:8768`) but
 key-gated, enveloped, and multi-store.
 

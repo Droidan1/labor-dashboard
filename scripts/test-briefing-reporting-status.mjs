@@ -60,8 +60,10 @@ ins.run('BL2', yesterdayET, 0, null, 4556, null, null, 0);
 ins.run('BL4', yesterdayET, 3314.19, null, 3291, null, null, 0);
 // BL8  auction revenue only — real money, no POS snapshot.
 ins.run('BL8', yesterdayET, 0, 430.25, 4174, null, null, 0);
-// BL14 admin typed the numbers in because Clover lost them.
-ins.run('BL14', yesterdayET, 4981.8, null, 3939, 279, null, 1);
+// BL14 admin typed the numbers in because Clover lost them. The pos/auction
+// pair is BL14's real 2026-08-10 figures, kept because 4981.8 + 130.64 is the
+// exact sum that floated to 5112.4400000000005 and shipped that way live.
+ins.run('BL14', yesterdayET, 4981.8, 130.64, 3939, 279, null, 1);
 // BL16 no row at all for the date — deliberately not inserted.
 
 const res = await worker.fetch(
@@ -93,7 +95,8 @@ eq(by.BL8.reportingStatus, 'reported', 'auction revenue with no POS snapshot →
 eq(by.BL8.netSales, 430.25, 'auction-only day reports its auction revenue');
 
 eq(by.BL14.reportingStatus, 'reported', 'is_manual_override → reported');
-eq(by.BL14.netSales, 4981.8, 'manual-override figures survive classification');
+eq(by.BL14.netSales, 5112.44, 'netSales is rounded to cents, not 5112.4400000000005');
+ok(String(by.BL14.netSales).length <= 7, 'no float noise reaches the wire');
 
 // ── no_data: the regression that started all of this ──────────────────────
 // This is the exact BL8/Holland shape. If any of these four come back as 0 or

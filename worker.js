@@ -3706,6 +3706,7 @@ const ACTION_BUSINESS = new Map([
   ["send-daily-summary", "bl"],
   ["send-weekly-digest", "bl"],
   ["snapshot", "bl"],
+  ["store-history", "bl"],
   ["store-scores", "bl"],
   ["supply-budget-set", "bl"],
   ["supply-budgets", "bl"],
@@ -4457,6 +4458,36 @@ function classifyReportingStatus(row, store, dateStr) {
   return 'no_data';
 }
 
+// The figures whose value depends on the classification, derived in ONE place.
+// morning-briefing and store-history both answer "what did this store do on
+// this day", and if they disagree about what a no_data day looks like — one
+// nulling the net, the other passing a stored 0 — the consumer sees the same
+// day two ways depending on which endpoint it asked. Two copies of this
+// four-line derivation is exactly how that happens.
+//
+// netSales is rounded to cents because it is a SUM: 4981.80 + 130.64 came out
+// as 5112.4400000000005 and shipped that way (verified in the live response
+// before this helper existed). posSales/auctionSales are passed through
+// unrounded — they are stored values, not sums.
+function reportedFigures(row, store, dateStr) {
+  const reportingStatus = classifyReportingStatus(row, store, dateStr);
+  const unreported = reportingStatus === 'no_data';
+  const posSales = unreported ? null : (row?.total ?? null);
+  const auctionSales = unreported ? null : (row?.auction ?? null);
+  // On a `closed` day 0 is the correct, meaningful answer — the store was not
+  // trading — so it is a real 0 even when no row exists to read.
+  const netSales = (reportingStatus === 'closed' || posSales != null || auctionSales != null)
+    ? roundCents((posSales ?? 0) + (auctionSales ?? 0))
+    : null;
+  return {
+    reportingStatus,
+    posSales,
+    auctionSales,
+    netSales,
+    transactions: unreported ? null : (row?.order_count ?? null),
+  };
+}
+
 // ─── Morning Briefing API ────────────────────────────────────────────────
 // Read-only, key-gated JSON snapshot for an external "Morning Briefing"
 // dashboard. Per store: yesterday's FINAL net sales, the budget that applied
@@ -4493,9 +4524,6 @@ async function buildMorningBriefingData(env) {
     const merged = snaps[i] ? mergeItemSnapshots([snaps[i]]) : null;
     // gpmPct is stored 0–100 (e.g. 43.0); the spec wants a decimal fraction, so /100.
     const t = merged && merged.totals;
-    // Is this day's figure vouched for? See classifyReportingStatus.
-    const reportingStatus = classifyReportingStatus(yMap[store], store, yesterdayStr);
-    const unreported = reportingStatus === 'no_data';
     // CONTRACT: netSales is the store's TOTAL net for the day and is the figure
     // budgetForSalesDate is set against — netSales === posSales + auctionSales.
     // It previously carried POS only while the budget assumed auction counted
@@ -4503,20 +4531,14 @@ async function buildMorningBriefingData(env) {
     // was ~2x the real variance). The two components ship alongside it so a
     // consumer can still split the channels without re-deriving either.
     //
-    // null means "no data for that day", never 0. A no_data day is nulled here
-    // rather than passing the stored 0 through: the Sheet writes a literal 0
-    // into every row it has no actuals for (including all of BL8's dark days
-    // and every future date through December), and `y.total ?? null` let that
-    // 0 out of the door as though it were a measured figure.
-    const posSales = unreported ? null : (y.total ?? null);
-    const auctionSales = unreported ? null : (y.auction ?? null);
-    // On a `closed` day 0 is the correct, meaningful answer — the store was not
-    // trading — so it is emitted as a real 0 even when no row exists to read.
-    const netSales = reportingStatus === 'closed'
-      ? (posSales ?? 0) + (auctionSales ?? 0)
-      : (posSales == null && auctionSales == null)
-        ? null
-        : (posSales ?? 0) + (auctionSales ?? 0);
+    // null means "no data for that day", never 0. A no_data day is nulled in
+    // reportedFigures rather than passing the stored 0 through: the Sheet
+    // writes a literal 0 into every row it has no actuals for (including all of
+    // BL8's dark days and every future date through December), and
+    // `y.total ?? null` let that 0 out of the door as a measured figure.
+    const { reportingStatus, posSales, auctionSales, netSales, transactions } =
+      reportedFigures(yMap[store], store, yesterdayStr);
+    const unreported = reportingStatus === 'no_data';
     return {
       storeId: store,
       name: STORE_LABELS[store] || store,
@@ -4536,7 +4558,7 @@ async function buildMorningBriefingData(env) {
       // null rather than a real 0% per the spec's "don't send 0 for unknown".
       laborActualPct: !y.labor_pct ? null
         : (Number(y.labor_pct) < 5 ? Number(y.labor_pct) : Number(y.labor_pct) / 100),
-      transactions: unreported ? null : (y.order_count ?? null),
+      transactions,
       // Tier 1 — from the item snapshot (KV). gross margin as a fraction; no
       // planned margin or per-category budget exists in our system, so those
       // spec fields are intentionally absent. NOTE: grossMargin and every
@@ -4558,6 +4580,102 @@ async function buildMorningBriefingData(env) {
     todayDate: todayStr,
     currency: 'USD',
     stores,
+  };
+}
+
+// ─── Store history API ───────────────────────────────────────────────────
+// ?action=store-history&days=30[&storeId=BL1] — a trailing daily series per
+// store, so a consumer can tell a bad Sunday from a five-day slide. Pure D1;
+// no KV and no Clover, which is what keeps it inside the 3 s budget even at
+// the 400-day cap (one indexed range query, ~5 ms measured on 2,800 rows).
+//
+// 🔑 THE RANGE ENDS YESTERDAY, ALWAYS. D1 holds budget rows for every store
+// through 2026-12-26, and the Sheet writes a literal `total = 0` into every one
+// of them. An unclamped range therefore blends real sales with several months
+// of phantom zeros — the same stored 0 that made a dark store look like a $0
+// day. Today is excluded too: it is still being collected, so its figure is
+// partial by construction rather than wrong.
+//
+// Gaps are FILLED, not skipped. The spec is explicit that a missing day must
+// appear with reportingStatus "no_data" — a skipped day is invisible, and an
+// invisible day reads as "nothing to see" rather than "we don't know".
+const STORE_HISTORY_MAX_DAYS = 400;
+
+async function buildStoreHistoryData(env, { days, storeId } = {}) {
+  // `days` above the cap returns the cap, not an error (spec). A missing or
+  // unparseable value is the documented default rather than a 400 — this is a
+  // scheduled consumer, and failing its whole poll over a typo'd param helps
+  // nobody.
+  const parsed = parseInt(days, 10);
+  const dayCount = Math.min(
+    STORE_HISTORY_MAX_DAYS,
+    Math.max(1, Number.isFinite(parsed) ? parsed : 30)
+  );
+
+  // Known = the trading roster, plus any store recorded as closed. A closed
+  // store stays addressable on purpose: history for it is still interpretable,
+  // and ?action=stores will list it. It is NOT in the default set, so this
+  // endpoint's store list matches morning-briefing's.
+  const requested = (storeId || "").trim().toUpperCase();
+  const known = new Set([...ALL_STORES, ...Object.keys(STORE_CLOSED_FROM)]);
+  if (requested && !known.has(requested)) return { notFound: true };
+  const stores = requested ? [requested] : ALL_STORES;
+
+  const { dateStr: todayStr } = getETToday();
+  // Walk back from yesterday ET. Anchored at noon UTC so a DST boundary can't
+  // slip a day — the same guard buildMorningBriefingData uses.
+  const dates = [];
+  const cur = new Date(todayStr + 'T12:00:00Z');
+  cur.setUTCDate(cur.getUTCDate() - 1);
+  for (let i = 0; i < dayCount; i++) {
+    dates.push(cur.toISOString().slice(0, 10));
+    cur.setUTCDate(cur.getUTCDate() - 1);
+  }
+  const to = dates[0];                    // yesterday
+  const from = dates[dates.length - 1];   // oldest day in the window
+
+  // Bounded range, not `date IN (...)`: D1 caps bound parameters at 100 per
+  // query and dayCount reaches 400. Store filtering is done in JS for the same
+  // reason it is elsewhere in this file — an IN list of stores plus dates would
+  // blow the same cap.
+  const { results } = await env.DB.prepare(
+    `SELECT store, date, total, auction, budget, order_count, snapshot_time, is_manual_override
+     FROM daily_sales WHERE date >= ? AND date <= ?`
+  ).bind(from, to).all();
+
+  const byStore = {};
+  for (const r of (results || [])) {
+    (byStore[r.store] || (byStore[r.store] = {}))[r.date] = r;
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    currency: 'USD',
+    from, to, days: dayCount,
+    stores: stores.map(store => ({
+      storeId: store,
+      name: STORE_LABELS[store] || store,
+      // Newest first (spec). `dates` is built that way, so no re-sort.
+      days: dates.map(date => {
+        const row = byStore[store]?.[date];
+        const { reportingStatus, netSales, transactions } = reportedFigures(row, store, date);
+        return {
+          date,
+          netSales,                               // pos + auction, matching morning-briefing
+          budget: row?.budget ?? null,            // the plan is known even when the actual is not
+          // Deliberately null for now, and deliberately PRESENT: per-day margin
+          // lives in the KV item snapshots, and fetching one per store-day is
+          // 2,400 KV reads at the 400-day cap — past Cloudflare's 1,000
+          // subrequest ceiling, so it would 500 exactly when a consumer asked
+          // for the most history. A field that works at days=30 and dies at
+          // days=400 is worse than an honest null. Real margin arrives with the
+          // cost-coverage gate (§4.5), where the day count is 1.
+          grossMargin: null,
+          transactions,
+          reportingStatus,
+        };
+      }),
+    })),
   };
 }
 
@@ -6771,27 +6889,54 @@ export default {
     const url = new URL(request.url);
     const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
 
-    // ── Morning Briefing API (external, static-key auth) ──────────
-    // GET ?action=morning-briefing   key via X-API-Key header or ?key=
-    // Read-only per-store JSON for the boss's Morning Briefing dashboard.
-    // Gated BEFORE the session check so external callers don't need a cookie.
-    if (url.searchParams.get("action") === "morning-briefing") {
-      if (request.method !== "GET") {
-        return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
-      }
-      const expected = env.MORNING_BRIEFING_KEY;
-      const provided = request.headers.get("X-API-Key") || url.searchParams.get("key") || "";
-      if (!expected) {
-        return new Response(JSON.stringify({ error: "Endpoint not configured" }), { status: 503, headers: corsJson });
-      }
-      if (!timingSafeEqualStr(provided, expected)) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
-      }
-      if (!env.DB) {
-        return new Response(JSON.stringify({ error: "Database unavailable" }), { status: 503, headers: corsJson });
-      }
+    // ── Reporting API (external, static-key auth) ─────────────────
+    // A small family of read-only endpoints for the external Chief of Staff
+    // tool: morning-briefing, store-history. Key via X-API-Key header or ?key=.
+    // Gated BEFORE the session check so external callers don't need a cookie —
+    // safe only because each one self-gates on MORNING_BRIEFING_KEY below.
+    //
+    // 🔑 ONE copy of the gate, not one per endpoint. An eBay read endpoint was
+    // once placed above the session check with its own hand-rolled check and
+    // ended up serving buyer PII unauthenticated; the fix is to make the gate
+    // impossible to get subtly wrong the second time. Returns a Response to
+    // send, or null to proceed.
+    const REPORTING_ACTIONS = new Set(["morning-briefing", "store-history"]);
+    const reportingAction = url.searchParams.get("action");
+    if (REPORTING_ACTIONS.has(reportingAction)) {
+      const denied = (() => {
+        if (request.method !== "GET") {
+          return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsJson });
+        }
+        const expected = env.MORNING_BRIEFING_KEY;
+        const provided = request.headers.get("X-API-Key") || url.searchParams.get("key") || "";
+        if (!expected) {
+          return new Response(JSON.stringify({ error: "Endpoint not configured" }), { status: 503, headers: corsJson });
+        }
+        if (!timingSafeEqualStr(provided, expected)) {
+          return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+        }
+        if (!env.DB) {
+          return new Response(JSON.stringify({ error: "Database unavailable" }), { status: 503, headers: corsJson });
+        }
+        return null;
+      })();
+      if (denied) return denied;
+
       try {
-        const data = await buildMorningBriefingData(env);
+        if (reportingAction === "morning-briefing") {
+          const data = await buildMorningBriefingData(env);
+          return new Response(JSON.stringify(data), {
+            headers: { ...corsJson, "Cache-Control": "public, max-age=300" },
+          });
+        }
+        // ?action=store-history&days=30[&storeId=BL1]
+        const data = await buildStoreHistoryData(env, {
+          days: url.searchParams.get("days"),
+          storeId: url.searchParams.get("storeId"),
+        });
+        if (data.notFound) {
+          return new Response(JSON.stringify({ error: "Unknown storeId" }), { status: 404, headers: corsJson });
+        }
         return new Response(JSON.stringify(data), {
           headers: { ...corsJson, "Cache-Control": "public, max-age=300" },
         });

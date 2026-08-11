@@ -1,0 +1,381 @@
+{
+  "generatedAt": "2026-08-11T19:08:06.303Z",
+  "currency": "USD",
+  "from": "2026-08-04",
+  "to": "2026-08-10",
+  "days": 7,
+  "stores": [
+    {
+      "storeId": "BL1",
+      "name": "Coliseum",
+      "days": [
+        {
+          "date": "2026-08-10",
+          "netSales": 6001.28,
+          "budget": 8605,
+          "grossMargin": null,
+          "transactions": 322,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-09",
+          "netSales": 10593.86,
+          "budget": 11971,
+          "grossMargin": null,
+          "transactions": 429,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-08",
+          "netSales": 10752.03,
+          "budget": 13773,
+          "grossMargin": null,
+          "transactions": 410,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-07",
+          "netSales": 10987.75,
+          "budget": 14497,
+          "grossMargin": null,
+          "transactions": 419,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-06",
+          "netSales": 5707.84,
+          "budget": 6314,
+          "grossMargin": null,
+          "transactions": 188,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-05",
+          "netSales": 6445.84,
+          "budget": 8826,
+          "grossMargin": null,
+          "transactions": 375,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-04",
+          "netSales": null,
+          "budget": null,
+          "grossMargin": null,
+          "transactions": null,
+          "reportingStatus": "no_data"
+        }
+      ]
+    },
+    {
+      "storeId": "BL2",
+      "name": "South Bend",
+      "days": [
+        {
+          "date": "2026-08-10",
+          "netSales": 4364.39,
+          "budget": 4556,
+          "grossMargin": null,
+          "transactions": 238,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-09",
+          "netSales": 6144.88,
+          "budget": 6649,
+          "grossMargin": null,
+          "transactions": 301,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-08",
+          "netSales": 5907.34,
+          "budget": 7194,
+          "grossMargin": null,
+          "transactions": 251,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-07",
+          "netSales": 7527.7,
+          "budget": 7985,
+          "grossMargin": null,
+          "transactions": 271,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-06",
+          "netSales": 3436.2,
+          "budget": 2803,
+          "grossMargin": null,
+          "transactions": 116,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-05",
+          "netSales": 3446.11,
+          "budget": 4259,
+          "grossMargin": null,
+          "transactions": 242,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-04",
+          "netSales": null,
+          "budget": null,
+          "grossMargin": null,
+          "transactions": null,
+          "reportingStatus": "no_data"
+        }
+      ]
+    },
+    {
+      "storeId": "BL4",
+      "name": "Dupont",
+      "days": [
+        {
+          "date": "2026-08-10",
+          "netSales": 3314.19,
+          "budget": 3291,
+          "grossMargin": null,
+          "transactions": 205,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-09",
+          "netSales": 4643.6,
+          "budget": 4690,
+          "grossMargin": null,
+          "transactions": 201,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-08",
+          "netSales": 4929.55,
+          "budget": 5234,
+          "grossMargin": null,
+          "transactions": 194,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-07",
+          "netSales": 5814.51,
+          "budget": 5656,
+          "grossMargin": null,
+          "transactions": 241,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-06",
+          "netSales": 2270.67,
+          "budget": 2222,
+          "grossMargin": null,
+          "transactions": 93,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-05",
+          "netSales": 1853.02,
+          "budget": 3228,
+          "grossMargin": null,
+          "transactions": 174,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-04",
+          "netSales": null,
+          "budget": null,
+          "grossMargin": null,
+          "transactions": null,
+          "reportingStatus": "no_data"
+        }
+      ]
+    },
+    {
+      "storeId": "BL8",
+      "name": "Holland",
+      "days": [
+        {
+          "date": "2026-08-10",
+          "netSales": null,
+          "budget": 4174,
+          "grossMargin": null,
+          "transactions": null,
+          "reportingStatus": "no_data"
+        },
+        {
+          "date": "2026-08-09",
+          "netSales": null,
+          "budget": 6139,
+          "grossMargin": null,
+          "transactions": null,
+          "reportingStatus": "no_data"
+        },
+        {
+          "date": "2026-08-08",
+          "netSales": null,
+          "budget": 6577,
+          "grossMargin": null,
+          "transactions": null,
+          "reportingStatus": "no_data"
+        },
+        {
+          "date": "2026-08-07",
+          "netSales": null,
+          "budget": 7363,
+          "grossMargin": null,
+          "transactions": null,
+          "reportingStatus": "no_data"
+        },
+        {
+          "date": "2026-08-06",
+          "netSales": null,
+          "budget": 2487,
+          "grossMargin": null,
+          "transactions": null,
+          "reportingStatus": "no_data"
+        },
+        {
+          "date": "2026-08-05",
+          "netSales": null,
+          "budget": 3840,
+          "grossMargin": null,
+          "transactions": null,
+          "reportingStatus": "no_data"
+        },
+        {
+          "date": "2026-08-04",
+          "netSales": null,
+          "budget": null,
+          "grossMargin": null,
+          "transactions": null,
+          "reportingStatus": "no_data"
+        }
+      ]
+    },
+    {
+      "storeId": "BL14",
+      "name": "Battle Creek",
+      "days": [
+        {
+          "date": "2026-08-10",
+          "netSales": 5112.44,
+          "budget": 3939,
+          "grossMargin": null,
+          "transactions": 279,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-09",
+          "netSales": 6687.6,
+          "budget": 5748,
+          "grossMargin": null,
+          "transactions": 259,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-08",
+          "netSales": 6656.06,
+          "budget": 6225,
+          "grossMargin": null,
+          "transactions": 259,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-07",
+          "netSales": 7946.62,
+          "budget": 6905,
+          "grossMargin": null,
+          "transactions": 315,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-06",
+          "netSales": 3119.11,
+          "budget": 2431,
+          "grossMargin": null,
+          "transactions": 117,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-05",
+          "netSales": 3074.63,
+          "budget": 3689,
+          "grossMargin": null,
+          "transactions": 245,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-04",
+          "netSales": null,
+          "budget": null,
+          "grossMargin": null,
+          "transactions": null,
+          "reportingStatus": "no_data"
+        }
+      ]
+    },
+    {
+      "storeId": "BL16",
+      "name": "Indy East",
+      "days": [
+        {
+          "date": "2026-08-10",
+          "netSales": 4601.63,
+          "budget": 3905,
+          "grossMargin": null,
+          "transactions": 135,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-09",
+          "netSales": 4220.09,
+          "budget": 5658,
+          "grossMargin": null,
+          "transactions": 154,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-08",
+          "netSales": 4711.33,
+          "budget": 6174,
+          "grossMargin": null,
+          "transactions": 191,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-07",
+          "netSales": 7648.9,
+          "budget": 6800,
+          "grossMargin": null,
+          "transactions": 235,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-06",
+          "netSales": 2785.22,
+          "budget": 2471,
+          "grossMargin": null,
+          "transactions": 94,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-05",
+          "netSales": 2951.67,
+          "budget": 3702,
+          "grossMargin": null,
+          "transactions": 140,
+          "reportingStatus": "reported"
+        },
+        {
+          "date": "2026-08-04",
+          "netSales": null,
+          "budget": null,
+          "grossMargin": null,
+          "transactions": null,
+          "reportingStatus": "no_data"
+        }
+      ]
+    }
+  ]
+}
