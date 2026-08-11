@@ -23,7 +23,7 @@ One extra the spec didn't ask for but needs stating: **month-to-date is the cale
 
 ---
 
-## 2. Six things that will silently corrupt your numbers
+## 2. Seven things that will silently corrupt your numbers
 
 These are the ones where the API looks like it is answering your question but isn't.
 
@@ -63,14 +63,51 @@ BL1  grossMargin null   costCoverage 0.886   ← withheld, 1.4 points short
 BL1's shortfall is a genuine known gap (uncategorised Clover items, ~97% concentrated in BL1), not
 an API fault.
 
-### 2.3 `laborActualPct` is a model, not payroll
+### 2.3 🛑 A DAILY gross margin is not a meaningful number for this business
+
+This is the most important line in this document.
+
+Bin merchandise is priced on a **declining scale through the week**, while its cost is a flat
+per-unit figure. So the bin margin — and, because bins are 8–61% of a day's revenue, the whole
+store's margin — is dominated by *which day of the price cycle you are looking at*, not by
+performance.
+
+South Bend, one ordinary week, from stored data:
+
+```
+          bin ASP    bin margin      STORE margin   bin share of revenue
+Fri        $9.15         +76.2%           67.0%            61%
+Sat        $5.89         +63.0%           60.4%            36%
+Sun        $3.00         +27.3%           43.1%            41%
+Mon        $2.00          −9.0%           37.6%            29%
+Tue        $1.01        −116.6%           30.6%            17%
+Wed        $0.52        −317.2%           26.8%             8%
+─────────────────────────────────────────────────────────────────
+WEEK BLENDED     bin +33.6%        STORE +48.3%
+```
+
+The store swings **26.8% → 67.0%** across one week while performing identically. A negative daily
+bin margin is arithmetically correct and economically meaningless in isolation.
+
+**Therefore:**
+
+- **Do not compare `grossMargin` between stores unless they are on the same day.**
+- **Do not trend `grossMargin` day over day.** You will be reading the bin calendar.
+- **Do not alert on a negative category margin.** Late-week bins are supposed to look like that.
+- Margin is only interpretable **blended over a full bin week**. The API does not currently emit a
+  weekly margin — see §5.
+
+For the avoidance of doubt: the flat bin cost is approximately **right**, not broken. Blended across
+the week bins run **+33.6%**, which is a sane liquidation-bin margin.
+
+### 2.4 `laborActualPct` is a model, not payroll
 
 The source spreadsheet computes it as **actual worked hours × a flat blended rate ÷ net sales**. The
 rate is recoverable from the sheet's own arithmetic: **$14.40/hr through Feb 2026, $15.00/hr from
 March**. So it is close to, but not the same as, real payroll cost. `laborHoursScheduled` is the
 **budgeted** hours from the plan, not a scheduling system's output.
 
-### 2.4 WTD/MTD budgets cover only the days that reported
+### 2.5 WTD/MTD budgets cover only the days that reported
 
 Sales and budget are summed over **exactly the same days** — the ones whose figures can be vouched
 for. A `no_data` day contributes to neither side. `wtdDaysReported` / `mtdDaysReported` tell you how
@@ -80,7 +117,7 @@ This matters because the alternative is worse: summing a full week's budget agai
 would have shown Holland — dark since 24 July — as a 100% miss. **Always read the `daysReported`
 count before acting on a period figure.** Zero usable days returns `null`, never `0`.
 
-### 2.5 `no_data` means *unverified*, not *definitely broken*
+### 2.6 `no_data` means *unverified*, not *definitely broken*
 
 A genuine zero-sales day and a feed failure are **not distinguishable** in the stored data: when
 Clover returns zero orders the nightly job skips the write entirely, leaving nothing behind either
@@ -89,7 +126,7 @@ way. Both report `no_data`. Treat it as "we cannot vouch for this figure", not a
 `closed` is only ever produced from a curated closure list, so a holiday closure reports `no_data`
 rather than being guessed at.
 
-### 2.6 `salesSoFarToday` is POS-only; `todayBudget` is not
+### 2.7 `salesSoFarToday` is POS-only; `todayBudget` is not
 
 Auction revenue arrives on a next-morning feed, so there is no intraday auction figure — while
 `todayBudget` is a whole-revenue target that assumes auction. Auction stores therefore read roughly
@@ -182,22 +219,16 @@ hourly data if it becomes worth building.
 | **4.6** `?action=stores` | Manager names, emails, square footage and opening dates exist **nowhere** in the system. Needs a curated roster. User grants cannot substitute — one store has four manager grants, another has none. |
 | **4.9** inventory | No merchandise-inventory feed of any kind. |
 
+**Recommended addition — a weekly blended margin.** Per §2.3 the daily figure cannot be compared or
+trended, which leaves margin close to unusable for the consumer today. A `wtdGrossMargin` /
+`wtdCostCoverage` pair, blended across the fiscal week to date, would make it meaningful. It is
+affordable: 7 days x 6 stores of stored reads, against an endpoint currently answering in 0.35 s.
+
 ---
 
 ## 6. Known data problems this API is reporting faithfully
 
 The API is correct in each case; the underlying data is not.
-
-**Bin Products carries a NEGATIVE margin at every store**, at 100% cost coverage:
-
-```
-BL4 −0.108   BL1 −0.093   BL2 −0.090   BL14 −0.083   BL16 −0.080
-```
-
-A high margin here is normal and expected; a *negative* one is this project's own documented signal
-of a mis-set category cost. Bins are costed at a flat per-unit figure, which will book below cost
-whenever bin prices fall through the week. **This drags down every store-level `grossMargin`** and
-should be reviewed before margin is reported to anyone.
 
 **Holland (BL8) has recorded no sales since 2026-07-24.** Its credentials are fine — the POS answers
 normally and returns zero orders — so this is a register or store problem, not an integration one.
