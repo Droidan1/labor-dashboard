@@ -389,7 +389,12 @@ Raise rather than build, as §7 instructs:
 
 ---
 
-## 3. Handover note — answers known today
+## 3. Handover note — DELIVERED
+
+**Written 2026-08-11 to `docs/API_HANDOVER.md`.** That document is the deliverable §6 asks for and
+is the one to keep current; the table below is the working note it was built from.
+
+### Answers
 
 The work order asks for these five. Four can be answered now:
 
