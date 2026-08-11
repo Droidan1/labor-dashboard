@@ -2,7 +2,7 @@
 
 **Answers:** `API_WORK_ORDER.md` (Brian Howard, 11 Aug 2026), §6
 **System:** `api.retjghub.com` — Cloudflare Worker `clover-sales-api`
-**As of:** 2026-08-11 · main `70caa18` · worker version `5c8cc36b`
+**As of:** 2026-08-11 · main `37b812d` · worker version `61bfca13`
 **Auth:** unchanged — `x-api-key: <token>` header, `GET` only
 
 Everything below was measured against production, not inferred from the spec.
@@ -139,8 +139,12 @@ A genuine zero-sales day and a feed failure are **not distinguishable** in the s
 Clover returns zero orders the nightly job skips the write entirely, leaving nothing behind either
 way. Both report `no_data`. Treat it as "we cannot vouch for this figure", not as an outage alarm.
 
-`closed` is only ever produced from a curated closure list, so a holiday closure reports `no_data`
-rather than being guessed at.
+`closed` is only ever produced from a curated closure list — currently Holland (BL8, from
+2026-07-25) and Wyoming (BL12). A holiday closure is not in that list and reports `no_data` rather
+than being guessed at.
+
+**`closed` and `no_data` must not be collapsed.** A closed store has a trustworthy `0` and counts
+toward period totals; a `no_data` store has `null` and counts toward neither side.
 
 ### 2.7 `salesSoFarToday` is POS-only; `todayBudget` is not
 
@@ -224,7 +228,7 @@ hourly data if it becomes worth building.
 | `grossMarginPlan` | `null`, always | no planned-margin source exists anywhere (all 62 sheet columns checked) |
 | `grossMargin` (BL1) | `null` | when uncategorised items push coverage above 0.90 — note its **weekly** figure already reports, at 0.955 coverage |
 | `grossMargin` (store-history) | `null`, by design | not planned; use `morning-briefing` |
-| Holland, most fields | `no_data` | when its register starts recording sales again |
+| Holland, most fields | `closed` with a real `0` | never — permanently closed 2026-07-25 |
 
 ---
 
@@ -244,9 +248,16 @@ hourly data if it becomes worth building.
 
 The API is correct in each case; the underlying data is not.
 
-**Holland (BL8) has recorded no sales since 2026-07-24.** Its credentials are fine — the POS answers
-normally and returns zero orders — so this is a register or store problem, not an integration one.
-Its labour entry stopped the same day.
+**Holland (BL8) is PERMANENTLY CLOSED as of 2026-07-25** (confirmed 2026-08-11). Nothing was ever
+broken: its credentials still work and the POS answers normally with zero orders. Its last trading
+day was 07-24 — one order for $240, against a normal day of $4–6k — and labour entry stops the same
+day. It reports `reportingStatus: "closed"` with a real `0`, not `null`.
+
+🔑 **Its budget is deliberately still loaded** — $813,563 across the 155 days to 2026-12-26. The
+company plan was never revised for the closure, so that shortfall is a genuine miss and the chain
+carries it. **Holland therefore reads −100% vs plan every day, on purpose.** Count it in chain
+totals; do NOT raise a daily alert on it — there is no action attached, and it would bury the real
+alerts between now and December.
 
 **Indy East (BL16)'s source tab is not laid out like the other five.** Its "actual hours" column is
 filled forward with the *schedule*, and its actual-percentage column is never computed, so its
