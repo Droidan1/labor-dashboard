@@ -16,13 +16,13 @@ Plan written: 2026-08-11. All data claims below were measured against **producti
 | 4.3 | WTD / MTD / LY | **Build now** — 1 session | `week` column + `last_year_sales` both exist. |
 | 4.6 | `stores` master | **Build after Brian supplies a roster** | Manager/sqft/opened-date exist **nowhere** in the system. |
 | 4.7 | `afternoon-briefing` | **Build now** — 1 session, latency risk | Live Clover path exists; 6 stores × live fetch vs a 3 s budget. |
-| 4.5 | Real gross margin | **Partial** — actual yes, `grossMarginPlan` no | Cost cascade + coverage counters exist; there is no planned-margin source. Spec says both-or-neither, so it stays `null` until Brian supplies plan margins. |
+| 4.5 | Real gross margin | **BUILT** — actual gated on coverage; `grossMarginPlan` null | Cost cascade + coverage counters already existed. No planned-margin source exists (all 62 sheet columns checked). |
 | 4.4 | Category budgets | **Blocked — no source** | Budget in the Sheet is a single store-level daily number. No category plan exists anywhere. |
-| 4.8 | Labour | **Blocked — no source** | `labor_pct` is `0.0` in 1,434 rows and `NULL` in 556. It has never been populated. |
+| 4.8 | Labour | **Unblocked — see 1.3 (corrected)** | The sheet HAS budgeted labour % for every day and actuals through 2026-08-04. The importer never reads those columns. |
 | 4.9 | Inventory | **Blocked — no source** | No merchandise-inventory feed exists at all. ("Inventory" in this repo = supply requests.) |
 
-Buildable now: **4.1, 4.2, 4.3, 4.7, and the actual-margin half of 4.5.**
-Blocked on a data source Brian must provide: **4.4, 4.6, 4.8, 4.9.**
+Shipped to the branch: **4.1, 4.2, 4.3, 4.5.** Still buildable: **4.7**, and **4.8** now that 1.3 is
+corrected. Blocked on a data source Brian must provide: **4.4, 4.6, 4.9.**
 
 ---
 
@@ -63,20 +63,37 @@ Every `morning-briefing` response since 25 July has carried `"netSales": 0` for 
 worth building for this reason alone, but **the outage itself needs fixing separately** — the field
 will correctly say `no_data`, which does not put Holland's sales back.
 
-### 1.3 Labour has no data — the field is not merely unwired, the column is empty
+### 1.3 Labour — CORRECTED 2026-08-11. The data exists; it is the importer that is behind
 
-Across the whole `daily_sales` table: `labor_pct = 0.0` in **1,434** rows, `NULL` in **556**, a real
-value in **6**. The morning-briefing already reads the column (`worker.js:4466`) and correctly maps a
-falsy value to `null`. There is nothing to unwire.
+**This supersedes the original reading of this section, which said no labour data existed anywhere.**
+That was inferred from D1 alone (`labor_pct = 0.0` in 1,434 rows, `NULL` in 556, a real value in 6).
+Reading the source sheet directly — the same GViz URL `?action=backfill` fetches — shows otherwise:
 
-There *is* a cheap partial path. The Google Sheet feeding `?action=backfill` has columns the importer
-never reads — `worker.js:9032` uses `COL = { …, A_LABOR:22 }` but the Sheet layout in `index.html:3441`
-also defines `B_LABOR:10` (budgeted labour %) and `A_HOURS:21` (actual hours). `daily_sales.labor_hours`
-already exists (migration-007) and is `NULL` everywhere.
+| Sheet column | Field | State on 2026-08-11 |
+|---|---|---|
+| 10 (`B_LABOR`) | budgeted labour % | **populated for every day, including forward dates** — 0.098, 0.092, 0.141, 0.174 … |
+| 9 | budgeted hours | populated for every day |
+| 21 (`A_HOURS`) | actual hours | populated **through 2026-08-04**, blank after |
+| 22 (`A_LABOR`) | actual labour % | populated **through 2026-08-04**, `0` after |
 
-**Before writing any code, verify the Sheet cells are actually populated.** If they are, §4.8 becomes a
-3-line change to `COL` + the INSERT. If they are blank — which the all-zero `labor_pct` strongly
-suggests — §4.8 needs a payroll feed and is out of reach.
+So `laborTargetPct` has a complete source right now, and `laborActualPct` / `laborHoursActual` have one
+for every day up to 4 Aug. Brian's "I don't have labour numbers yet" is accurate about the **current
+week** — hours entry stopped on the 4th — not about the history.
+
+Two separate reasons the field is still null in the API:
+
+1. **The importer never reads columns 9, 10 or 21 at all.** `worker.js:9032` is
+   `COL = { WEEK:2, DATE:3, B_TOTAL:8, A_RETAIL:17, A_BINS:18, A_AUCTION:19, A_TOTAL:20, A_LABOR:22 }`.
+   Budgeted labour %, budgeted hours and actual hours are simply not in the map, and
+   `daily_sales.labor_hours` (migration-007) is `NULL` everywhere as a result.
+2. **`?action=backfill` has not been re-run over the dates the sheet has since been filled in.** BL1
+   for 2026-07-26 reads 0.0794 in the sheet and `0` in D1. It is a manual admin POST, so nothing
+   re-runs it on its own.
+
+**Revised verdict for §4.8:** not blocked on a payroll feed. `laborTargetPct` is deliverable now;
+`laborActualPct` and `laborHoursActual` are deliverable for history and will resume as soon as hours
+entry does. The work is: add the three columns to `COL`, write them, re-run the backfill, and keep
+returning `null` (never `0`) for days nobody has entered.
 
 ### 1.4 Store master data does not exist anywhere
 
@@ -279,6 +296,17 @@ hourly KV snapshot and label `asOf` accordingly.
 
 ### Slice F — §4.5 real gross margin
 
+> **BUILT 2026-08-11, not yet deployed.** `scripts/test-briefing-margin.mjs` (64 assertions, 5
+> mutations proven to fail it). Full suite 910/30. Differential: 120 field values unchanged, 12
+> changed — all 12 are the added `costCoverage` / `grossMarginPlan`.
+> 🛑 **The work order's own margin heuristic is wrong for this business, and the suite pins that.**
+> §4.5 says to treat anything ≥ 0.95 as unloaded cost data and ignore it. Bargain Lane buys by the
+> lot, so a fully-costed category genuinely lands at 99% (Baby goods at a $1.17 unit cost). A
+> mutation that adopts the ≥ 0.95 rule fails the suite on purpose. **The Chief of Staff app should
+> gate on `costCoverage`, not on the margin's size.**
+> `grossMarginPlan` ships present-and-null: no planned margin exists in any source system, confirmed
+> by reading all 62 columns of the budget sheet.
+
 The machinery is already there and is better than the work order assumes. `aggregateItemSales` runs a
 cost cascade (item-master cost → L3 category cost → none) and **stores a per-category and total
 `coverage: { item, category, none }` in dollars** in every KV snapshot.
@@ -324,8 +352,9 @@ The work order asks for these five. Four can be answered now:
 | Year-over-year matching | **Day-of-week** — `salesDate − 364 days`. `retail + bin` only. **Compare `lySalesForDate` against `posSales`, not `netSales`** — the prior-year import has no auction channel, and putting an auction-inclusive figure against it overstates growth by ~4% chain-wide |
 | Month-to-date basis | **Calendar month**, matching `?action=monthly-totals`. Not a fiscal 4-5-4 month |
 | WTD/MTD day coverage | Sales and budget cover **exactly the days whose figures are vouched for**; a `no_data` day contributes to neither side. `wtdDaysReported` / `mtdDaysReported` report how many that was. Zero usable days → `null`, never `0` |
-| Labour scheduled or actual | **Neither — no labour data exists.** Field stays `null` |
+| Labour scheduled or actual | Sheet column 22 is labour cost ÷ net sales against **actual worked hours** (column 21), not scheduled. Column 10 is the **budgeted** labour %. Actuals stop on 2026-08-04; target runs forward. Field stays `null` until the importer is extended — see 1.3 |
 | Aged-inventory threshold | **N/A — no inventory source** |
+| Gross margin | Reported only when **≥ 90% of net sales resolved to a real cost**; `costCoverage` ships alongside so a null is diagnosable. 🛑 Do NOT discard a margin for being ≥ 0.95 — this is a liquidation retailer and high margins are frequently genuine. Gate on `costCoverage` instead. `grossMarginPlan` is null: no source exists. Margin is POS-only and sums to `posSales`, not `netSales` |
 | §5 auction / budget | **Budget INCLUDES auction; `netSales` now does too.** Already fixed in code; the work order's baseline sample is stale (see 1.1) |
 
 Also worth stating in the handover: `grossMargin` and `categories[]` are POS-only and sum to

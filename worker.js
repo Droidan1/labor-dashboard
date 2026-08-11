@@ -4547,8 +4547,7 @@ async function buildMorningBriefingData(env) {
   const stores = ALL_STORES.map((store, i) => {
     const y = yMap[store] || {};
     const merged = snaps[i] ? mergeItemSnapshots([snaps[i]]) : null;
-    // gpmPct is stored 0–100 (e.g. 43.0); the spec wants a decimal fraction, so /100.
-    const t = merged && merged.totals;
+    const margin = marginFor(merged && merged.totals);
     // CONTRACT: netSales is the store's TOTAL net for the day and is the figure
     // budgetForSalesDate is set against — netSales === posSales + auctionSales.
     // It previously carried POS only while the budget assumed auction counted
@@ -4610,18 +4609,33 @@ async function buildMorningBriefingData(env) {
       laborActualPct: !y.labor_pct ? null
         : (Number(y.labor_pct) < 5 ? Number(y.labor_pct) : Number(y.labor_pct) / 100),
       transactions,
-      // Tier 1 — from the item snapshot (KV). gross margin as a fraction; no
-      // planned margin or per-category budget exists in our system, so those
-      // spec fields are intentionally absent. NOTE: grossMargin and every
+      // Tier 1 — from the item snapshot (KV). NOTE: grossMargin and every
       // categories[].netSales below are POS-ONLY (auction has no item detail),
       // so they sum to posSales, NOT to the top-level netSales.
-      grossMargin: t && t.netSales > 0 ? t.gpmPct / 100 : null,
-      categories: merged ? merged.categories.map(c => ({
-        name: c.category,
-        netSales: c.netSales,
-        grossMargin: c.netSales > 0 ? c.gpmPct / 100 : null,
-        units: c.qty,
-      })) : [],
+      //
+      // grossMargin is null unless enough of the revenue actually resolved to a
+      // cost — see marginFor. costCoverage says how much did, so a null is
+      // diagnosable rather than mysterious.
+      grossMargin: margin.grossMargin,
+      costCoverage: margin.costCoverage,
+      // No planned/budgeted margin exists anywhere in the source systems —
+      // confirmed by reading all 62 columns of the budget sheet, which carries
+      // sales, hours and labour plans but no gross-margin plan. Ships null
+      // rather than absent so the field name is stable for when one arrives.
+      grossMarginPlan: null,
+      categories: merged ? merged.categories.map(c => {
+        // Same treatment per category, per the spec — each carries its own
+        // coverage, so a well-costed category still reports while a poorly
+        // costed one next to it does not.
+        const cm = marginFor(c);
+        return {
+          name: c.category,
+          netSales: c.netSales,
+          grossMargin: cm.grossMargin,
+          costCoverage: cm.costCoverage,
+          units: c.qty,
+        };
+      }) : [],
     };
   });
 
@@ -4631,6 +4645,52 @@ async function buildMorningBriefingData(env) {
     todayDate: todayStr,
     currency: 'USD',
     stores,
+  };
+}
+
+// ─── Gross margin, gated on cost coverage ────────────────────────────────
+// The briefing shipped a flat 0.999 because revenue whose cost never resolved
+// books at ZERO cost, and zero cost is a 100% margin. So the number was not
+// "margin we haven't wired up" — it was a real average dragged toward 1 by the
+// uncosted share. Reporting that as a margin is worse than reporting nothing.
+//
+// Every item snapshot already stores the answer: aggregateItemSales runs a cost
+// cascade (item-master cost → L3 category cost → nothing) and records
+// `coverage: { item, category, none }` as DOLLARS of net sales resolved each
+// way, per category and in the totals. costCoverage is simply the share that
+// resolved to a real cost.
+//
+// 🔑 A HIGH MARGIN IS NOT EVIDENCE OF MISSING COST DATA HERE. The work order
+// says to treat anything ≥ 0.95 as unloaded cost and ignore it. That heuristic
+// is wrong for this business: Bargain Lane is a LIQUIDATION retailer buying by
+// the lot, so a category landing at 99% can be entirely genuine (Baby goods at
+// a $1.17 unit cost is a real, verified example). Gating on `costCoverage`
+// answers the question that heuristic is reaching for — "did we actually price
+// the cost of this revenue?" — without throwing away true margins for being
+// large. costCoverage ships alongside so the consumer can gate on it directly.
+//
+// The threshold is deliberately strict: at 90% coverage the blended figure can
+// still be overstated by up to ~10 points, which is the most distortion worth
+// tolerating in a number someone will act on.
+const MIN_COST_COVERAGE = 0.90;
+
+// node is a snapshot `totals` or one `categories[]` entry.
+function marginFor(node) {
+  const none = Number(node?.coverage?.none) || 0;
+  const item = Number(node?.coverage?.item) || 0;
+  const cat = Number(node?.coverage?.category) || 0;
+  const attributed = item + cat + none;
+  // Legacy snapshots carry no coverage at all, and refunds can drive a
+  // category's attributed total to zero or below. Either way the share is not
+  // computable, and an uncomputable share must not read as full coverage.
+  if (!(node?.netSales > 0) || attributed <= 0) return { grossMargin: null, costCoverage: null };
+  const costCoverage = Math.min(1, Math.max(0, Math.round(((item + cat) / attributed) * 1000) / 1000));
+  return {
+    // gpmPct is stored 0-100; the spec wants a decimal fraction.
+    grossMargin: costCoverage >= MIN_COST_COVERAGE
+      ? Math.round((Number(node.gpmPct) || 0) * 10) / 1000
+      : null,
+    costCoverage,
   };
 }
 

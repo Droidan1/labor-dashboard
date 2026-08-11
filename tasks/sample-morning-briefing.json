@@ -24,6 +24,8 @@
       "laborActualPct": null,
       "transactions": 322,
       "grossMargin": null,
+      "costCoverage": null,
+      "grossMarginPlan": null,
       "categories": []
     },
     {
@@ -46,6 +48,8 @@
       "laborActualPct": null,
       "transactions": 238,
       "grossMargin": null,
+      "costCoverage": null,
+      "grossMarginPlan": null,
       "categories": []
     },
     {
@@ -68,6 +72,8 @@
       "laborActualPct": null,
       "transactions": 205,
       "grossMargin": null,
+      "costCoverage": null,
+      "grossMarginPlan": null,
       "categories": []
     },
     {
@@ -90,6 +96,8 @@
       "laborActualPct": null,
       "transactions": null,
       "grossMargin": null,
+      "costCoverage": null,
+      "grossMarginPlan": null,
       "categories": []
     },
     {
@@ -112,6 +120,8 @@
       "laborActualPct": null,
       "transactions": 279,
       "grossMargin": null,
+      "costCoverage": null,
+      "grossMarginPlan": null,
       "categories": []
     },
     {
@@ -134,6 +144,8 @@
       "laborActualPct": null,
       "transactions": 135,
       "grossMargin": null,
+      "costCoverage": null,
+      "grossMarginPlan": null,
       "categories": []
     }
   ]
