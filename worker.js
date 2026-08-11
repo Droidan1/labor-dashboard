@@ -4401,6 +4401,62 @@ async function computeStoreScores(env, asOfStr) {
   return { asOf: asOfStr, weekStart: weekStartStr, weekEnd: weekEndStr, stores };
 }
 
+// ─── Reporting status ────────────────────────────────────────────────────
+// Three-way classification of a store-day so a consumer can tell "the store
+// sold nothing" from "the till never synced". Those two were indistinguishable
+// — both arrived as netSales: 0 — and a data outage was therefore reported to
+// management every morning as a store emergency.
+//
+// Not hypothetical. Measured against prod on 2026-08-11: BL8/Holland's last
+// successful snapshot was 2026-07-24, and it has carried total=0 with
+// snapshot_time NULL every day since. The API reported that as a real $0.
+//
+// EVIDENCE, not absence, decides. A day is `reported` when something in the row
+// vouches for the figure; `no_data` when the only thing present is a zero
+// nobody can vouch for. Each clause below is load-bearing and was counted:
+//
+//   snapshot_time      the Clover fetch demonstrably ran and wrote this row.
+//                      fetchAggregateAndSnapshot returns early on a failed or
+//                      empty fetch, so the column is written ONLY on success.
+//   is_manual_override an admin typed real numbers in because Clover lost them
+//                      (272 rows). Trustworthy by definition.
+//   total > 0          Sheet-sourced actuals that predate the Clover cron
+//                      (137 rows, mostly Jan 2026). Real figures with no
+//                      snapshot_time — calling these no_data would erase them.
+//   auction > 0        real revenue from the Drive auction feed with no POS
+//                      snapshot (22 rows). Flagging real money as an outage is
+//                      the same failure in the other direction.
+//
+// 🔑 LIMITATION, stated rather than papered over: a genuine zero-sales day is
+// NOT distinguishable from a feed failure in the stored data. When Clover
+// returns 0 orders, fetchAggregateAndSnapshot's noRealOrders guard SKIPS the
+// write entirely (worker.js ~3494), so no snapshot_time is left behind. Both
+// cases report `no_data`. That is the spec's own preference — a false
+// `reported` is worse than an honest unknown — but it means `no_data` reads as
+// "unverified", not as "definitely broken".
+//
+// `closed` is reserved for days a store was legitimately not trading. There is
+// no holiday calendar in this system, so it is only ever produced from the
+// curated map below; a holiday closure reports `no_data` rather than being
+// guessed at.
+const STORE_CLOSED_FROM = {
+  // Wyoming — the register was relocated to Indy East (BL16), which now runs on
+  // this Clover account. Last successful snapshot 2026-06-14.
+  BL12: '2026-06-15',
+};
+
+// row may be undefined (no daily_sales row at all for that store-day).
+function classifyReportingStatus(row, store, dateStr) {
+  const closedFrom = STORE_CLOSED_FROM[store];
+  if (closedFrom && dateStr >= closedFrom) return 'closed';
+  if (!row) return 'no_data';
+  if (row.snapshot_time) return 'reported';
+  if (row.is_manual_override) return 'reported';
+  if (Number(row.total) > 0) return 'reported';
+  if (Number(row.auction) > 0) return 'reported';
+  return 'no_data';
+}
+
 // ─── Morning Briefing API ────────────────────────────────────────────────
 // Read-only, key-gated JSON snapshot for an external "Morning Briefing"
 // dashboard. Per store: yesterday's FINAL net sales, the budget that applied
@@ -4415,7 +4471,7 @@ async function buildMorningBriefingData(env) {
   const yesterdayStr = yd.toISOString().slice(0, 10);
 
   const [{ results: yRows }, { results: tRows }] = await Promise.all([
-    env.DB.prepare('SELECT store, total, auction, budget, labor_pct, order_count FROM daily_sales WHERE date = ?').bind(yesterdayStr).all(),
+    env.DB.prepare('SELECT store, total, auction, budget, labor_pct, order_count, snapshot_time, is_manual_override FROM daily_sales WHERE date = ?').bind(yesterdayStr).all(),
     env.DB.prepare('SELECT store, budget FROM daily_sales WHERE date = ?').bind(todayStr).all(),
   ]);
 
@@ -4437,22 +4493,37 @@ async function buildMorningBriefingData(env) {
     const merged = snaps[i] ? mergeItemSnapshots([snaps[i]]) : null;
     // gpmPct is stored 0–100 (e.g. 43.0); the spec wants a decimal fraction, so /100.
     const t = merged && merged.totals;
+    // Is this day's figure vouched for? See classifyReportingStatus.
+    const reportingStatus = classifyReportingStatus(yMap[store], store, yesterdayStr);
+    const unreported = reportingStatus === 'no_data';
     // CONTRACT: netSales is the store's TOTAL net for the day and is the figure
     // budgetForSalesDate is set against — netSales === posSales + auctionSales.
     // It previously carried POS only while the budget assumed auction counted
     // toward it, which overstated every auction store's miss (chain-wide that
     // was ~2x the real variance). The two components ship alongside it so a
     // consumer can still split the channels without re-deriving either.
-    // null means "no data for that day", never 0.
-    const posSales = y.total ?? null;
-    const auctionSales = y.auction ?? null;
-    const netSales = (posSales == null && auctionSales == null)
-      ? null
-      : (posSales ?? 0) + (auctionSales ?? 0);
+    //
+    // null means "no data for that day", never 0. A no_data day is nulled here
+    // rather than passing the stored 0 through: the Sheet writes a literal 0
+    // into every row it has no actuals for (including all of BL8's dark days
+    // and every future date through December), and `y.total ?? null` let that
+    // 0 out of the door as though it were a measured figure.
+    const posSales = unreported ? null : (y.total ?? null);
+    const auctionSales = unreported ? null : (y.auction ?? null);
+    // On a `closed` day 0 is the correct, meaningful answer — the store was not
+    // trading — so it is emitted as a real 0 even when no row exists to read.
+    const netSales = reportingStatus === 'closed'
+      ? (posSales ?? 0) + (auctionSales ?? 0)
+      : (posSales == null && auctionSales == null)
+        ? null
+        : (posSales ?? 0) + (auctionSales ?? 0);
     return {
       storeId: store,
       name: STORE_LABELS[store] || store,
       salesDate: yesterdayStr,            // the day netSales covers (yesterday, ET)
+      // 'reported' | 'no_data' | 'closed' — never null. On no_data the figures
+      // below are null, not 0; on closed they are a true 0.
+      reportingStatus,
       netSales,                           // TOTAL net = posSales + auctionSales
       posSales,                           // point-of-sale component
       auctionSales,                       // auction component (null if the store runs no auctions)
@@ -4465,7 +4536,7 @@ async function buildMorningBriefingData(env) {
       // null rather than a real 0% per the spec's "don't send 0 for unknown".
       laborActualPct: !y.labor_pct ? null
         : (Number(y.labor_pct) < 5 ? Number(y.labor_pct) : Number(y.labor_pct) / 100),
-      transactions: y.order_count ?? null,
+      transactions: unreported ? null : (y.order_count ?? null),
       // Tier 1 — from the item snapshot (KV). gross margin as a fraction; no
       // planned margin or per-category budget exists in our system, so those
       // spec fields are intentionally absent. NOTE: grossMargin and every
