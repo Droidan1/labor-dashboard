@@ -18,11 +18,11 @@ Plan written: 2026-08-11. All data claims below were measured against **producti
 | 4.7 | `afternoon-briefing` | **Build now** — 1 session, latency risk | Live Clover path exists; 6 stores × live fetch vs a 3 s budget. |
 | 4.5 | Real gross margin | **BUILT** — actual gated on coverage; `grossMarginPlan` null | Cost cascade + coverage counters already existed. No planned-margin source exists (all 62 sheet columns checked). |
 | 4.4 | Category budgets | **Blocked — no source** | Budget in the Sheet is a single store-level daily number. No category plan exists anywhere. |
-| 4.8 | Labour | **Unblocked — see 1.3 (corrected)** | The sheet HAS budgeted labour % for every day and actuals through 2026-08-04. The importer never reads those columns. |
+| 4.8 | Labour | **BUILT** — needs migration-037 + a backfill re-run | Sheet cols 9/10/21 now imported. Two prod steps still owed, see 2.G. |
 | 4.9 | Inventory | **Blocked — no source** | No merchandise-inventory feed exists at all. ("Inventory" in this repo = supply requests.) |
 
-Shipped to the branch: **4.1, 4.2, 4.3, 4.5.** Still buildable: **4.7**, and **4.8** now that 1.3 is
-corrected. Blocked on a data source Brian must provide: **4.4, 4.6, 4.9.**
+Shipped to the branch: **4.1, 4.2, 4.3, 4.5, 4.8.** Still buildable: **4.7**.
+Blocked on a data source Brian must provide: **4.4, 4.6, 4.9.**
 
 ---
 
@@ -330,14 +330,49 @@ stays `null` until Brian supplies planned margins. Recommend shipping the covera
 Note: `grossMargin` and every `categories[].netSales` are **POS-only** — auction has no item detail —
 so they sum to `posSales`, not to `netSales`. Say this in the handover; it is already true today.
 
-### Blocked — §4.4, §4.8, §4.9
+### Slice G — §4.8 labour
+
+> **BUILT 2026-08-11.** `scripts/test-labour.mjs` (79 assertions, 5 mutations proven to fail it).
+> Full suite 989/31. Differential: 132 field values unchanged, 18 changed — all 18 the new fields.
+> Ships `laborActualPct`, `laborTargetPct`, `laborHoursActual`, `laborHoursScheduled`.
+
+Three parts, only one of which is code that is already merged:
+
+1. **`migration-037.sql`** — adds `budget_labor_pct` and `budget_labor_hours`. Purely additive.
+2. **The importer now reads sheet columns 9, 10 and 21.** Each binds with `|| null`, because the
+   sheet writes a literal `0` into every cell nobody filled in — which is currently *every* actual
+   since 2026-08-04.
+3. 🛑 **Two production steps still owed, and step 3 is a database mutation needing Brian's explicit
+   go-ahead:**
+
+```bash
+npx wrangler d1 execute labor-dashboard-db --file=migration-037.sql --remote
+```
+
+then, **once per store** (`store=all` would issue ~5,000 subrequests against Cloudflare's 1,000 cap —
+the handler's `store` param exists for exactly this):
+
+```bash
+for s in BL1 BL2 BL4 BL8 BL14 BL16; do curl -X POST "https://api.retjghub.com/?action=backfill&store=$s" -H "X-Snapshot-Secret: $SECRET"; done
+```
+
+**What that re-run changes, and nothing else:** `labor_pct` (~1,434 rows currently `0` → the sheet's
+real fractions where it has them), and the three previously-`NULL` labour columns. `week` and
+`budget` are rewritten from the sheet but should be identical. **Sales figures are untouched** —
+`total`, `retail`, `bin`, `auction` and `order_count` all resolve existing-wins, and
+`is_manual_override` rows are immutable throughout. Verified by the suite, not by reading.
+
+🔑 The upsert must stay `COALESCE(excluded.labor_pct, labor_pct)` — *excluded first*. Every row
+already holds `labor_pct = 0`, so the reverse ordering would pin all of them at zero forever and
+make this whole slice inert. A mutation flipping it fails the suite.
+
+### Blocked — §4.4, §4.9
 
 Raise rather than build, as §7 instructs:
 
 - **§4.4 category budgets** — the Sheet carries one store-level daily budget. A category plan would
   need a new column set per L2 category, per store, per day. Ask Brian whether category plans exist
   in any form.
-- **§4.8 labour** — verify the Sheet's cols K and V first (1.3). If blank, this needs a payroll feed.
 - **§4.9 inventory** — no source of any kind. Needs a Clover stock export or a new feed.
 
 ---
@@ -352,7 +387,7 @@ The work order asks for these five. Four can be answered now:
 | Year-over-year matching | **Day-of-week** — `salesDate − 364 days`. `retail + bin` only. **Compare `lySalesForDate` against `posSales`, not `netSales`** — the prior-year import has no auction channel, and putting an auction-inclusive figure against it overstates growth by ~4% chain-wide |
 | Month-to-date basis | **Calendar month**, matching `?action=monthly-totals`. Not a fiscal 4-5-4 month |
 | WTD/MTD day coverage | Sales and budget cover **exactly the days whose figures are vouched for**; a `no_data` day contributes to neither side. `wtdDaysReported` / `mtdDaysReported` report how many that was. Zero usable days → `null`, never `0` |
-| Labour scheduled or actual | Sheet column 22 is labour cost ÷ net sales against **actual worked hours** (column 21), not scheduled. Column 10 is the **budgeted** labour %. Actuals stop on 2026-08-04; target runs forward. Field stays `null` until the importer is extended — see 1.3 |
+| Labour scheduled or actual | **ACTUAL WORKED hours**, not scheduled — and it is not payroll. The sheet computes worked hours × a flat blended rate ÷ net sales; the rate is recoverable from the sheet itself (**$14.40/hr through Feb 2026, $15.00/hr from March**), so treat it as a labour MODEL close to but not identical to payroll cost. `laborHoursScheduled` is the **budgeted** hours from the plan (col 9), not a scheduling-system figure. Actuals stop 2026-08-04; the target runs forward through December |
 | Aged-inventory threshold | **N/A — no inventory source** |
 | Gross margin | Reported only when **≥ 90% of net sales resolved to a real cost**; `costCoverage` ships alongside so a null is diagnosable. 🛑 Do NOT discard a margin for being ≥ 0.95 — this is a liquidation retailer and high margins are frequently genuine. Gate on `costCoverage` instead. `grossMarginPlan` is null: no source exists. Margin is POS-only and sums to `posSales`, not `netSales` |
 | §5 auction / budget | **Budget INCLUDES auction; `netSales` now does too.** Already fixed in code; the work order's baseline sample is stale (see 1.1) |

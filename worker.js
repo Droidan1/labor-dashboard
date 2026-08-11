@@ -4513,7 +4513,11 @@ async function buildMorningBriefingData(env) {
   const lyDate = lyDateFor(yesterdayStr);
 
   const [{ results: yRows }, { results: tRows }, { results: winRows }, { results: lyRows }] = await Promise.all([
-    env.DB.prepare('SELECT store, total, auction, budget, labor_pct, order_count, snapshot_time, is_manual_override FROM daily_sales WHERE date = ?').bind(yesterdayStr).all(),
+    env.DB.prepare(
+      `SELECT store, total, auction, budget, labor_pct, labor_hours, budget_labor_pct, budget_labor_hours,
+              order_count, snapshot_time, is_manual_override
+       FROM daily_sales WHERE date = ?`
+    ).bind(yesterdayStr).all(),
     env.DB.prepare('SELECT store, budget FROM daily_sales WHERE date = ?').bind(todayStr).all(),
     env.DB.prepare(
       `SELECT store, date, week, total, auction, budget, order_count, snapshot_time, is_manual_override
@@ -4601,13 +4605,24 @@ async function buildMorningBriefingData(env) {
       // (daily_sales.total === retail + bin exactly, so posSales is the
       // like-for-like side.) null for a store with no prior-year history.
       lySalesForDate: lyMap[store] ?? null,
-      // Tier 2/3 — from the same daily_sales row. labor_pct is stored in percent
-      // units (e.g. 11.5); spec wants a fraction, so /100. The <5 guard mirrors
-      // the dashboard's normalizeLaborPct in case a row was stored as a fraction.
-      // A stored 0 means "not entered" (no store runs 0% labor), so report it as
-      // null rather than a real 0% per the spec's "don't send 0 for unknown".
-      laborActualPct: !y.labor_pct ? null
-        : (Number(y.labor_pct) < 5 ? Number(y.labor_pct) : Number(y.labor_pct) / 100),
+      // ── Labour ───────────────────────────────────────────────────────────
+      // 🔑 laborActualPct is against ACTUAL WORKED HOURS, not scheduled, and it
+      // is not payroll: the sheet computes it as worked hours × a flat blended
+      // rate ÷ net sales. That rate is verifiable from the sheet itself —
+      // $14.40/hr through Feb 2026, $15.00/hr from March — so this is a labour
+      // MODEL, close to but not identical to cost from the payroll system.
+      //
+      // Independent of reportingStatus on purpose. These come from the budget
+      // sheet, not from Clover, and the ratio uses the sheet's own sales
+      // figure — so a store whose till never synced can still have honest
+      // labour numbers, and a dark store still has a plan to report.
+      //
+      // Every one is null rather than 0 when unentered. Right now that means
+      // the target populates chain-wide while the actuals stop on 2026-08-04.
+      laborActualPct: normalizeLaborPct(y.labor_pct),
+      laborTargetPct: normalizeLaborPct(y.budget_labor_pct),
+      laborHoursActual: y.labor_hours || null,
+      laborHoursScheduled: y.budget_labor_hours || null,
       transactions,
       // Tier 1 — from the item snapshot (KV). NOTE: grossMargin and every
       // categories[].netSales below are POS-ONLY (auction has no item detail),
@@ -4646,6 +4661,23 @@ async function buildMorningBriefingData(env) {
     currency: 'USD',
     stores,
   };
+}
+
+// ─── Labour ──────────────────────────────────────────────────────────────
+// A stored 0 means "nobody entered it" — no store runs a 0% labour rate or
+// plans 0 hours — so 0 maps to null, per the contract's "never send 0 to mean
+// unknown". Actual-hours entry stopped chain-wide on 2026-08-04, so this is the
+// common case right now, not an edge one.
+//
+// The sheet holds these as FRACTIONS (0.098 = 9.8%), which is already what the
+// API wants. The <5 test survives from when some rows were stored in percent
+// units: a real labour rate is never 500%, so anything at or above 5 is a
+// percent-unit value that needs /100. Shared between actual and target so the
+// two cannot normalise differently.
+function normalizeLaborPct(v) {
+  const n = Number(v);
+  if (!n || !Number.isFinite(n)) return null;
+  return n < 5 ? n : n / 100;
 }
 
 // ─── Gross margin, gated on cost coverage ────────────────────────────────
@@ -9412,7 +9444,15 @@ export default {
         "BL4/BL5 Dupont": "BL4", "BL8/BL9 Holland": "BL8",
         "BL14/B15 Battle Creek": "BL14", "BL16/BL17 Indy East": "BL16"
       };
-      const COL = { WEEK:2, DATE:3, B_TOTAL:8, A_RETAIL:17, A_BINS:18, A_AUCTION:19, A_TOTAL:20, A_LABOR:22 };
+      // 8 of the sheet's 62 columns. B_HOURS/B_LABOR/A_HOURS were added
+      // 2026-08-11: the labour plan and actual hours have been sitting in the
+      // sheet the whole time — B_LABOR populated for every day including
+      // forward-dated rows — and the API reported laborActualPct as null and
+      // had no source at all for laborTargetPct because nothing read them.
+      const COL = {
+        WEEK:2, DATE:3, B_TOTAL:8, B_HOURS:9, B_LABOR:10,
+        A_RETAIL:17, A_BINS:18, A_AUCTION:19, A_TOTAL:20, A_HOURS:21, A_LABOR:22,
+      };
 
       function parseNum(cell) {
         if (!cell || cell.v == null || cell.v === "") return null;
@@ -9471,6 +9511,15 @@ export default {
             const aAuction = parseNum(c[COL.A_AUCTION]);
             const aTotal = parseNum(c[COL.A_TOTAL]);
             const aLabor = parseNum(c[COL.A_LABOR]);
+            // Labour plan + actual hours. Each is bound with `|| null` below,
+            // exactly as aLabor already was: the sheet writes a literal 0 into
+            // every cell nobody has filled in (actual hours stop on 2026-08-04
+            // and read 0 after), and 0 must not reach the API as a real figure.
+            // No store plans 0 hours or a 0% labour rate, so the coercion loses
+            // nothing real.
+            const bHours = parseNum(c[COL.B_HOURS]);
+            const bLabor = parseNum(c[COL.B_LABOR]);
+            const aHours = parseNum(c[COL.A_HOURS]);
 
             // Also read KV snapshot for this date (Clover metrics)
             let kvData = null;
@@ -9481,8 +9530,9 @@ export default {
             try {
               await env.DB.prepare(
                 `INSERT INTO daily_sales (store, date, week, budget, total, retail, bin, auction, labor_pct,
+                  labor_hours, budget_labor_pct, budget_labor_hours,
                   order_count, avg_cart, avg_items, avg_txn_sec, avg_asp, snapshot_time)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(store, date) DO UPDATE SET
                    -- Manual-override rows are immutable: keep all existing values.
                    -- The CASE wrappers below short-circuit when is_manual_override=1.
@@ -9493,6 +9543,16 @@ export default {
                    -- existing wins, so the Sheet only seeds it when the feed hasn't yet.
                    auction=CASE WHEN is_manual_override=1 THEN auction ELSE COALESCE(auction, excluded.auction) END,
                    labor_pct=CASE WHEN is_manual_override=1 THEN labor_pct ELSE COALESCE(excluded.labor_pct, labor_pct) END,
+                   -- Labour is Sheet-authoritative like labor_pct above: the
+                   -- Sheet is the ONLY source, so a fresh value always wins and
+                   -- a null (nobody entered it) leaves the stored one alone.
+                   -- This ordering matters — COALESCE(excluded, existing), not
+                   -- the reverse. Every row already holds labor_pct = 0 from
+                   -- runs made before the Sheet was filled in, and existing-wins
+                   -- would pin all of them at 0 forever.
+                   labor_hours=CASE WHEN is_manual_override=1 THEN labor_hours ELSE COALESCE(excluded.labor_hours, labor_hours) END,
+                   budget_labor_pct=CASE WHEN is_manual_override=1 THEN budget_labor_pct ELSE COALESCE(excluded.budget_labor_pct, budget_labor_pct) END,
+                   budget_labor_hours=CASE WHEN is_manual_override=1 THEN budget_labor_hours ELSE COALESCE(excluded.budget_labor_hours, budget_labor_hours) END,
                    -- Phase 2C: Cron-authoritative columns. Existing wins; Sheet only fills NULLs.
                    total=CASE WHEN is_manual_override=1 THEN total ELSE COALESCE(total, excluded.total) END,
                    retail=CASE WHEN is_manual_override=1 THEN retail ELSE COALESCE(retail, excluded.retail) END,
@@ -9507,6 +9567,7 @@ export default {
                 storeCode, dateStr, week, bTotal,
                 kvData?.total || aTotal || null, kvData?.retail || aRetail || null, kvData?.bin || aBins || null,
                 aAuction || null, aLabor || null,
+                aHours || null, bLabor || null, bHours || null,
                 kvData?.orderCount ?? null, kvData?.avgCart ?? null, kvData?.avgItems ?? null,
                 kvData?.avgTxnSec != null ? Math.round(kvData.avgTxnSec) : null,
                 kvData?.avgASP != null ? Math.round(kvData.avgASP * 100) / 100 : null,
