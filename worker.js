@@ -4622,8 +4622,8 @@ async function buildMorningBriefingData(env) {
       // the target populates chain-wide while the actuals stop on 2026-08-04.
       laborActualPct: normalizeLaborPct(y.labor_pct),
       laborTargetPct: normalizeLaborPct(y.budget_labor_pct),
-      laborHoursActual: y.labor_hours || null,
-      laborHoursScheduled: y.budget_labor_hours || null,
+      laborHoursActual: normalizeLaborHours(y.labor_hours),
+      laborHoursScheduled: normalizeLaborHours(y.budget_labor_hours),
       transactions,
       // Tier 1 — from the item snapshot (KV). NOTE: grossMargin and every
       // categories[].netSales below are POS-ONLY (auction has no item detail),
@@ -4678,7 +4678,20 @@ async function buildMorningBriefingData(env) {
 function normalizeLaborPct(v) {
   const n = Number(v);
   if (!n || !Number.isFinite(n)) return null;
-  return n < 5 ? n : n / 100;
+  // Rounded because not every store's cell is hand-entered. Five tabs hold a
+  // clean 0.141; Indy East's is a formula output and shipped as
+  // 0.13342366402048655 — seventeen significant figures of float noise for a
+  // number nobody reads past the second decimal. 4dp keeps 0.01% resolution.
+  const frac = n < 5 ? n : n / 100;
+  return Math.round(frac * 10000) / 10000;
+}
+
+// Hours, same reasoning: 36.18190333333333 from a sheet formula. Cents-level
+// precision is more than enough for a figure measured in whole shifts.
+function normalizeLaborHours(v) {
+  const n = Number(v);
+  if (!n || !Number.isFinite(n)) return null;
+  return Math.round(n * 100) / 100;
 }
 
 // ─── Gross margin, gated on cost coverage ────────────────────────────────
@@ -4829,12 +4842,22 @@ async function buildAfternoonBriefingData(env) {
   // briefing down with it. A rejection becomes that store's no_data, which is
   // exactly the distinction §4.1 exists to draw.
   const settled = await Promise.allSettled(ALL_STORES.map(async (store) => {
-    const elements = await fetchCloverOrders(store, env, startOfDay);
+    // 🔑 CONCURRENT, not sequential. These were awaited one after the other
+    // and the endpoint measured 3.5-4.8 s against live Clover — over the 3 s
+    // budget on every call. The refunds fetch does not depend on the orders
+    // fetch (sameDayOrders is null, so it returns ALL refunds regardless), so
+    // there was never a reason to wait. Two round trips per store became one,
+    // and the six stores were already parallel.
+    const [elements, refundCents] = await Promise.all([
+      fetchCloverOrders(store, env, startOfDay),
+      // Returns 0 immediately when a store has no credentials, so pairing it
+      // with the null-check below costs nothing.
+      fetchRefundsTotal(store, env, startOfDay, null, null),
+    ]);
     // null = no credentials configured. An HTTP failure throws instead, and
     // lands in the rejected branch below. Neither is a zero.
     if (!elements) return null;
     const data = aggregateOrders(elements, startOfDay);
-    const refundCents = await fetchRefundsTotal(store, env, startOfDay, null, null);
     applyRefundsToAggregate(data, refundCents);
     return data;
   }));

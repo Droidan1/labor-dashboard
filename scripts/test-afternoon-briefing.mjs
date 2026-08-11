@@ -61,17 +61,28 @@ const PLAN = {
 // rather than the request time, and with instant stubs those two are the same
 // millisecond — the assertion would pass against a wrong implementation.
 //
-// ⚠️ The delay must exceed ONE SECOND of accumulated fetch time, not merely be
-// non-zero. asOf is serialised to second precision, so a correct stamp can
-// round backwards by up to 999 ms; at 120 ms this assertion passed or failed on
-// the luck of the millisecond, which a mutation run caught. Each store makes
-// ~3 sequential calls, so 500 ms puts the cut-off ~1.5 s past t0 and the two
-// candidate stamps can no longer overlap.
-const CLOVER_DELAY_MS = 500;
+// ⚠️ The delay must exceed ONE SECOND on a SINGLE call, not across a chain of
+// them. asOf is serialised to second precision, so a correct stamp can round
+// backwards by up to 999 ms. This has now broken twice:
+//   at 120 ms it passed or failed on the luck of the millisecond;
+//   at 500 ms it depended on the handler making ~3 SEQUENTIAL calls, so
+//   parallelising orders and refunds — a change made for latency, in this same
+//   commit — dropped the chain below a second and the assertion failed.
+// 🔑 A timing assertion must not be calibrated against the implementation's
+// call DEPTH, because the implementation is free to change it. At 1500 ms per
+// call the cut-off clears the truncation window whether the handler issues one
+// round trip or three.
+const CLOVER_DELAY_MS = 1500;
 let cloverCalls = 0;
+// Peak concurrency, which is how the orders/refunds parallelism is asserted
+// below WITHOUT timing anything. Wall-clock here would only measure this
+// file's own stub delay.
+let inFlight = 0, peakInFlight = 0;
 globalThis.fetch = async (url) => {
   const u = String(url);
   cloverCalls++;
+  inFlight++; peakInFlight = Math.max(peakInFlight, inFlight);
+  try {
   await new Promise(r => setTimeout(r, CLOVER_DELAY_MS));
   const m = u.match(/merchants\/([^/]+)\//);
   const plan = PLAN[m && m[1]];
@@ -82,6 +93,7 @@ globalThis.fetch = async (url) => {
   if (u.includes('/refunds')) return json({ elements: plan.refunds });
   if (u.includes('/credits')) return json({ elements: [] });
   return json({ elements: [] });
+  } finally { inFlight--; }
 };
 
 db.exec('DELETE FROM daily_sales');
@@ -120,7 +132,9 @@ ok(Math.abs(new Date(body.asOf).getTime() - new Date(body.generatedAt).getTime()
 // The spec's actual requirement: asOf is the DATA CUT-OFF, not the moment the
 // request arrived. Clover is stubbed slow above, so a request-time stamp lands
 // measurably before the fetches finish and this fails.
-ok(new Date(body.asOf).getTime() >= t0 + 400,
+// Threshold is CLOVER_DELAY_MS minus the 999 ms truncation window, so it holds
+// for a one-deep call chain and comfortably for a deeper one.
+ok(new Date(body.asOf).getTime() >= t0 + 500,
    `asOf is stamped after the Clover fetches, not at request time (asOf lands ${new Date(body.asOf).getTime() - t0} ms after t0; a request-time stamp cannot exceed 0)`);
 
 // ── Day shape ─────────────────────────────────────────────────────────────
@@ -176,6 +190,15 @@ ok(by.BL1.salesSoFarToday === 175 && by.BL14.salesSoFarToday === 280,
 // latency, and is what an added fetchItemCategoryMap would blow.
 ok(cloverCalls <= 24, `stayed within ~3 subrequests per store (made ${cloverCalls} calls for 6 stores)`);
 ok(cloverCalls >= 6, `the stub was actually reached (${cloverCalls} calls) — a zero here would make every assertion above vacuous`);
+
+// ── Orders and refunds must be fetched CONCURRENTLY, not one then the other ─
+// Measured against live Clover at 3.5-4.8 s when they were sequential, over the
+// 3 s budget on every call. Asserted structurally via peak in-flight requests:
+// with 6 stores in parallel, sequential-per-store tops out at 6 concurrent
+// requests, whereas issuing both per store reaches ~12. Timing would only
+// measure this file's own stub delay.
+ok(peakInFlight > 6,
+   `orders and refunds are issued concurrently per store (peak ${peakInFlight} in flight; sequential would cap at 6)`);
 
 // ── Auth and method, the shared gate ──────────────────────────────────────
 let r2 = await worker.fetch(new Request('https://api.retjghub.com/?action=afternoon-briefing'), env, ctx);

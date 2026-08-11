@@ -179,9 +179,11 @@ const bl1 = (db) => db.prepare('SELECT * FROM daily_sales WHERE store = ?').all(
     }
   }
 
-  eq(by.BL1.laborActualPct, 0.21099, 'laborActualPct is a decimal fraction, passed through');
+  // Rounded at the API: 4dp for percentages, 2dp for hours. The stored values
+  // are 0.21099 / 118.1833.
+  eq(by.BL1.laborActualPct, 0.211, 'laborActualPct is a decimal fraction, rounded to 4dp');
   eq(by.BL1.laborTargetPct, 0.141, 'laborTargetPct now has a source');
-  eq(by.BL1.laborHoursActual, 118.1833, 'laborHoursActual reports');
+  eq(by.BL1.laborHoursActual, 118.18, 'laborHoursActual reports, rounded to cents');
   eq(by.BL1.laborHoursScheduled, 96, 'laborHoursScheduled reports');
   ok(by.BL1.laborActualPct > by.BL1.laborTargetPct, 'over target is expressible — the whole point');
 
@@ -208,6 +210,20 @@ const bl1 = (db) => db.prepare('SELECT * FROM daily_sales WHERE store = ?').all(
   // Percent-unit legacy rows normalise, and both fields do it the same way.
   eq(by.BL4.laborActualPct, 0.115, 'a percent-unit actual normalises to a fraction');
   eq(by.BL4.laborTargetPct, 0.125, 'and so does the target — one shared normaliser');
+
+  // Float noise from a sheet FORMULA never reaches the wire. Five tabs hold a
+  // clean hand-entered 0.141; Indy East's cells are computed, and shipped as
+  // 0.13342366402048655 / 36.18190333333333 — the real values from prod.
+  db.exec('DELETE FROM daily_sales');
+  ins.run('BL1', yET, 8402, 9000, 300, 0.21099, 118.1833,
+          0.13342366402048655, 36.18190333333333, '2026-08-11T03:55:00Z');
+  const r2 = await worker.fetch(
+    new Request('https://api.retjghub.com/?action=morning-briefing', { headers: { 'X-API-Key': KEY } }), env, ctx);
+  const b1 = (await r2.json()).stores.find(s => s.storeId === 'BL1');
+  eq(b1.laborTargetPct, 0.1334, 'a formula-derived target is rounded to 4dp, not 17 significant figures');
+  eq(b1.laborHoursScheduled, 36.18, 'and scheduled hours to cents');
+  eq(b1.laborHoursActual, 118.18, 'actual hours are rounded the same way');
+  ok(String(b1.laborTargetPct).length <= 7, 'no float noise reaches the wire');
 
   // Stores with no row at all.
   eq(by.BL14.laborActualPct, null, 'a store with no row reports null actual');
