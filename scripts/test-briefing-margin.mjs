@@ -130,6 +130,105 @@ for (const code of ['BL1', 'BL8']) {
   eq(by[code].grossMarginPlan, null, `${code} grossMarginPlan is null — no source exists`);
 }
 
+// ══ Weekly blended margin ═════════════════════════════════════════════════
+// The reason this field exists: bin merchandise is priced on a declining scale
+// through the week against a flat per-unit cost, so a DAY's margin is dominated
+// by where it falls in that cycle. Measured on BL2 — bins +76% Friday at a
+// $9.15 ASP, −317% Wednesday at $0.52, dragging the store 67.0% → 26.8% while
+// it performed identically. Only the weekly blend is comparable or trendable.
+//
+// So the assertion that matters is that wtdGrossMargin DIFFERS from
+// grossMargin, and equals the blend rather than any single day.
+{
+  const { db, env } = makeEnv(repo);
+  env.MORNING_BRIEFING_KEY = KEY;
+  db.exec('DELETE FROM daily_sales');
+  const ins2 = db.prepare(
+    `INSERT INTO daily_sales (store, date, week, total, budget, order_count, snapshot_time, is_manual_override)
+     VALUES (?, ?, '33', ?, ?, ?, '2026-08-11T03:55:00Z', 0)`
+  );
+  const back = (n) => {
+    const d = new Date(todayET + 'T12:00:00Z');
+    d.setUTCDate(d.getUTCDate() - n);
+    return d.toISOString().slice(0, 10);
+  };
+  // Three days of the same fiscal week, ending yesterday.
+  for (const n of [1, 2, 3]) ins2.run('BL1', back(n), 1000, 1100, 100);
+  for (const n of [1, 2, 3]) ins2.run('BL2', back(n), 1000, 1100, 100);
+
+  const day = (net, cost, coveredByItem) => ({
+    categories: [{ category: 'Bin Products', qty: 100, netSales: net, cost,
+                   coverage: { item: coveredByItem, category: 0, none: net - coveredByItem } }],
+    orderCount: 100,
+  });
+  // BL1 — the bin cycle in miniature. Yesterday is the WORST day of the three.
+  await env.SALES_SNAPSHOTS.put(`items:bl1:${back(1)}`, JSON.stringify(day(1000, 900, 1000)));  // 10%
+  await env.SALES_SNAPSHOTS.put(`items:bl1:${back(2)}`, JSON.stringify(day(1000, 200, 1000)));  // 80%
+  await env.SALES_SNAPSHOTS.put(`items:bl1:${back(3)}`, JSON.stringify(day(1000, 500, 1000)));  // 50%
+  // BL2 — one day only, so the week and the day must agree exactly.
+  await env.SALES_SNAPSHOTS.put(`items:bl2:${back(1)}`, JSON.stringify(day(1000, 600, 1000)));  // 40%
+
+  const r = await worker.fetch(
+    new Request('https://api.retjghub.com/?action=morning-briefing', { headers: { 'X-API-Key': KEY } }), env, ctx);
+  const w = Object.fromEntries((await r.json()).stores.map(s => [s.storeId, s]));
+
+  for (const code of ['BL1', 'BL2', 'BL8']) {
+    for (const k of ['wtdGrossMargin', 'wtdCostCoverage']) ok(k in w[code], `${code} carries "${k}"`);
+  }
+
+  // Daily is yesterday alone; weekly is 3000 net against 1600 cost.
+  eq(w.BL1.grossMargin, 0.1, "daily margin is yesterday's alone");
+  eq(w.BL1.wtdGrossMargin, 0.467, 'weekly margin blends all three days (1400/3000)');
+  ok(w.BL1.wtdGrossMargin !== w.BL1.grossMargin,
+     'THE POINT: the weekly figure differs from the daily one — a bad bin day does not define the week');
+  ok(w.BL1.wtdGrossMargin > w.BL1.grossMargin, 'and here it is far better than yesterday looked');
+  eq(w.BL1.wtdCostCoverage, 1, 'coverage blends across the week too');
+
+  // A single-day week is the degenerate case and must agree.
+  eq(w.BL2.grossMargin, 0.4, 'BL2 daily margin');
+  eq(w.BL2.wtdGrossMargin, 0.4, 'with one day of data, weekly == daily');
+
+  // No snapshots at all → null, never 0.
+  eq(w.BL8.wtdGrossMargin, null, 'a store with no snapshots reports null weekly margin');
+  eq(w.BL8.wtdCostCoverage, null, 'and null weekly coverage');
+}
+
+// ══ The coverage gate applies to the weekly figure independently ═══════════
+// A week can blend under the threshold even when yesterday alone was fine —
+// and must then be withheld on its own merits.
+{
+  const { db, env } = makeEnv(repo);
+  env.MORNING_BRIEFING_KEY = KEY;
+  db.exec('DELETE FROM daily_sales');
+  const back = (n) => {
+    const d = new Date(todayET + 'T12:00:00Z');
+    d.setUTCDate(d.getUTCDate() - n);
+    return d.toISOString().slice(0, 10);
+  };
+  const ins3 = db.prepare(
+    `INSERT INTO daily_sales (store, date, week, total, budget, snapshot_time, is_manual_override)
+     VALUES (?, ?, '33', 1000, 1100, '2026-08-11T03:55:00Z', 0)`
+  );
+  for (const n of [1, 2]) ins3.run('BL1', back(n));
+  const day = (net, cost, item, none) => ({
+    categories: [{ category: 'X', qty: 100, netSales: net, cost,
+                   coverage: { item, category: 0, none } }],
+    orderCount: 100,
+  });
+  // Yesterday fully costed; the day before almost entirely uncosted.
+  await env.SALES_SNAPSHOTS.put(`items:bl1:${back(1)}`, JSON.stringify(day(1000, 600, 1000, 0)));
+  await env.SALES_SNAPSHOTS.put(`items:bl1:${back(2)}`, JSON.stringify(day(4000, 100, 100, 3900)));
+
+  const r = await worker.fetch(
+    new Request('https://api.retjghub.com/?action=morning-briefing', { headers: { 'X-API-Key': KEY } }), env, ctx);
+  const b = (await r.json()).stores.find(s => s.storeId === 'BL1');
+
+  eq(b.grossMargin, 0.4, 'yesterday alone is fully costed and reports');
+  eq(b.costCoverage, 1, 'with full daily coverage');
+  eq(b.wtdGrossMargin, null, 'but the WEEK is under-covered and is withheld on its own merits');
+  eq(b.wtdCostCoverage, 0.22, 'and reports its blended coverage so the null is diagnosable');
+}
+
 // ── The rest of the contract is untouched ─────────────────────────────────
 for (const k of ['storeId', 'name', 'salesDate', 'reportingStatus', 'netSales', 'posSales',
                  'auctionSales', 'budgetForSalesDate', 'todayBudget', 'wtdSales', 'mtdSales',

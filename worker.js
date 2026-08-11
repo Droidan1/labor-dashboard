@@ -4540,19 +4540,53 @@ async function buildMorningBriefingData(env) {
   const weekRow = (winRows || []).find(r => r.date === yesterdayStr && r.week != null);
   const weekLabel = weekRow == null ? null : String(weekRow.week);
 
-  // Per-store item snapshots (KV) for yesterday → Tier-1 gross margin + category
-  // breakdown. Degrades gracefully: when a snapshot is missing, grossMargin is
-  // null and categories is [] so the consumer simply drops those lines.
-  const snaps = await Promise.all(ALL_STORES.map(store =>
-    env.SALES_SNAPSHOTS
-      ? env.SALES_SNAPSHOTS.get(`items:${store.toLowerCase()}:${yesterdayStr}`, "json")
-      : Promise.resolve(null)
+  // Every date in the fiscal week up to and including salesDate. Weeks are
+  // stored globally, so any store's rows answer for all of them. salesDate is
+  // forced in so the daily figures below still work when D1 has no row at all
+  // for the week (a fresh database, or a store-day nobody has written yet).
+  const weekDates = [...new Set([
+    ...(winRows || [])
+      .filter(r => (weekLabel != null ? String(r.week) === weekLabel : r.date >= weekStartFallback))
+      .map(r => r.date),
+    yesterdayStr,
+  ])].sort();
+
+  // Per-store item snapshots (KV) for the whole fiscal week to date. Yesterday's
+  // gives the daily margin + category breakdown; the week together gives the
+  // only margin figure that actually means anything (see below). Degrades
+  // gracefully: a missing snapshot contributes nothing, so grossMargin is null
+  // and categories is [] and the consumer drops those lines.
+  //
+  // Cost: 7 days x 6 stores = 42 reads, all issued concurrently, against an
+  // endpoint answering in ~0.35 s. Bounded by the fiscal week, so unlike
+  // store-history this cannot grow with a caller-supplied range.
+  const weekSnaps = await Promise.all(ALL_STORES.map(store =>
+    Promise.all(weekDates.map(d =>
+      env.SALES_SNAPSHOTS
+        ? env.SALES_SNAPSHOTS.get(`items:${store.toLowerCase()}:${d}`, "json")
+        : Promise.resolve(null)
+    ))
   ));
+  const ydIdx = weekDates.indexOf(yesterdayStr);
 
   const stores = ALL_STORES.map((store, i) => {
     const y = yMap[store] || {};
-    const merged = snaps[i] ? mergeItemSnapshots([snaps[i]]) : null;
+    const snapsForStore = weekSnaps[i];
+    const merged = snapsForStore[ydIdx] ? mergeItemSnapshots([snapsForStore[ydIdx]]) : null;
     const margin = marginFor(merged && merged.totals);
+
+    // 🔑 THE ONLY MARGIN FIGURE THAT IS SAFE TO COMPARE OR TREND.
+    // Bin merchandise is priced on a declining scale through the week against a
+    // flat per-unit cost, so a DAY's margin is dominated by where it falls in
+    // that cycle rather than by performance. Measured on BL2, one ordinary
+    // week: bins ran +76% on Friday at a $9.15 ASP and −317% on Wednesday at
+    // $0.52, dragging the STORE from 67.0% to 26.8% while it performed
+    // identically. Blended over the week: bins +33.6%, store +48.3%.
+    //
+    // mergeItemSnapshots sums the days' categories and coverage and recomputes
+    // the blended gpmPct, so the same coverage gate applies unchanged.
+    const weekMerged = mergeItemSnapshots(snapsForStore.filter(Boolean));
+    const wtdMargin = marginFor(weekMerged.totals);
     // CONTRACT: netSales is the store's TOTAL net for the day and is the figure
     // budgetForSalesDate is set against — netSales === posSales + auctionSales.
     // It previously carried POS only while the budget assumed auction counted
@@ -4595,6 +4629,11 @@ async function buildMorningBriefingData(env) {
       wtdSales: wtd.sales,
       wtdBudget: wtd.budget,
       wtdDaysReported: wtd.daysReported,
+      // Blended across the fiscal week to date. THIS is the margin to compare
+      // between stores and to trend — the daily one below cannot be either, for
+      // the reason recorded at wtdMargin above.
+      wtdGrossMargin: wtdMargin.grossMargin,
+      wtdCostCoverage: wtdMargin.costCoverage,
       mtdSales: mtd.sales,
       mtdBudget: mtd.budget,
       mtdDaysReported: mtd.daysReported,
