@@ -15,7 +15,7 @@ Everything below was measured against production, not inferred from the spec.
 |---|---|
 | **Fiscal week start** | **Sunday** (Sun–Sat). Verified: 2026 weeks 30–33 begin 07-19, 07-26, 08-02, 08-09 — each a Sunday, each exactly 7 days, identical across all stores. The stored week label is authoritative; Sunday arithmetic is only a fallback. |
 | **Year-over-year matching** | **Day-of-week** — `salesDate − 364 days` (52 weeks, same weekday). Not calendar-date matched. |
-| **Labour: scheduled or actual?** | **Actual worked hours** — but it is *not payroll*. See §2.3. |
+| **Labour: scheduled or actual?** | **Actual worked hours** — but it is *not payroll*. See §2.4. |
 | **Aged-inventory threshold** | **N/A** — no inventory source exists. §4.9 not built. |
 | **§5 — does budget include auction?** | **Yes.** `budgetForSalesDate` includes auction revenue, and `netSales` now does too (`netSales === posSales + auctionSales`). The work order's §2 baseline sample, which said `netSales` excludes auction, was already out of date when it was written. |
 
