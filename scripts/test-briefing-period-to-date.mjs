@@ -81,9 +81,16 @@ async function briefing(env) {
     // AFTER salesDate — the Sheet fills these with a budget and a literal 0.
     ['BL1', '2026-08-12', '33',    0, null,  4444, null, false],
     ['BL1', '2026-08-15', '33',    0, null,  5555, null, false],
-    // Holland: dark all month.
+    // A store dark all month. Deliberately NOT BL8 — Holland is permanently
+    // closed from 2026-07-25, so it classifies as `closed` and its days COUNT
+    // (a closed day's 0 is trustworthy), which is the opposite of what this
+    // case tests.
     ...['2026-08-01','2026-08-08','2026-08-09','2026-08-10','2026-08-11']
-       .map(d => ['BL8', d, d < '2026-08-02' ? '31' : d < '2026-08-09' ? '32' : '33', 0, null, 4174, null, false]),
+       .map(d => ['BL4', d, d < '2026-08-02' ? '31' : d < '2026-08-09' ? '32' : '33', 0, null, 4174, null, false]),
+    // Holland: closed. Its budget is deliberately still loaded (Brian's call
+    // 2026-08-11 — the company plan was never revised), so the period totals
+    // must COUNT it: 0 sales against a real budget.
+    ...['2026-08-09','2026-08-10'].map(d => ['BL8', d, '33', 0, null, 5000, null, false]),
   ]);
   db.prepare('INSERT INTO last_year_sales (store,date,retail,bin) VALUES (?,?,?,?)').run('BL1', '2025-08-12', 1500, 700);
 
@@ -129,12 +136,22 @@ async function briefing(env) {
   eq(by.BL1.lySalesForDate, 2200, 'lySalesForDate is retail + bin at salesDate - 364 (2025-08-12)');
   eq(by.BL2.lySalesForDate, null, 'no prior-year row → null, never 0');
 
-  // Holland: no usable day in either period.
-  eq(by.BL8.wtdDaysReported, 0, 'a dark store reports zero usable days');
-  eq(by.BL8.wtdSales, null, 'a dark store reports null WTD sales, NOT 0');
-  eq(by.BL8.wtdBudget, null, 'and null WTD budget — a full budget against no sales is a fake 100% miss');
-  eq(by.BL8.mtdSales, null, 'same for MTD sales');
-  eq(by.BL8.mtdBudget, null, 'same for MTD budget');
+  // A dark store has no usable day in either period.
+  eq(by.BL4.wtdDaysReported, 0, 'a dark store reports zero usable days');
+  eq(by.BL4.wtdSales, null, 'a dark store reports null WTD sales, NOT 0');
+  eq(by.BL4.wtdBudget, null, 'and null WTD budget — a full budget against no sales is a fake 100% miss');
+  eq(by.BL4.mtdSales, null, 'same for MTD sales');
+  eq(by.BL4.mtdBudget, null, 'same for MTD budget');
+
+  // 🔑 A CLOSED store is the opposite case and must NOT be nulled. Its 0 is a
+  // real figure, and Brian's decision of 2026-08-11 is that the budget stays,
+  // so the shortfall lands in the chain as a genuine miss.
+  eq(by.BL8.reportingStatus, 'closed', 'Holland is closed, not dark');
+  eq(by.BL8.wtdDaysReported, 2, 'a closed day COUNTS toward the period');
+  eq(by.BL8.wtdSales, 0, 'contributing a real 0 in sales');
+  eq(by.BL8.wtdBudget, 10000, 'against its full budget — the miss is deliberate, not a bug');
+  ok(by.BL8.wtdBudget > 0 && by.BL8.wtdSales === 0,
+     'closed stores carry their plan into the period totals (see STORE_CLOSED_FROM)');
 
   // A store with no rows at all still answers.
   eq(by.BL2.wtdDaysReported, 0, 'a store with no rows reports zero days');

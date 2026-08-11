@@ -59,11 +59,13 @@ ins.run('BL1', back(1), 5844.78, 156.5, 8605, 322, '2026-08-11T03:55:44Z', 0);
 ins.run('BL1', back(2), 4981.8, 130.64, 8100, 300, '2026-08-10T03:55:44Z', 0);
 ins.run('BL1', back(4), 5100.00, null, 8200, 310, '2026-08-08T03:55:44Z', 0);
 ins.run('BL1', back(5), 4700.00, null, 8000, 295, '2026-08-07T03:55:44Z', 0);
-// BL8: the Holland outage shape on every day of the window.
-for (let n = 1; n <= 5; n++) ins.run('BL8', back(n), 0, null, 4174, null, null, 0);
+// BL2: the outage shape on every day of the window. Deliberately NOT BL8 —
+// Holland is permanently closed as of 2026-07-25, so it now classifies as
+// `closed` and can no longer stand in for a non-reporting store.
+for (let n = 1; n <= 5; n++) ins.run('BL2', back(n), 0, null, 4174, null, null, 0);
 // TODAY and a FUTURE date, both with the Sheet's literal 0 and a real budget.
 // Neither may appear in any response — this is the phantom-zero trap.
-for (const s of ['BL1', 'BL8']) {
+for (const s of ['BL1', 'BL2']) {
   ins.run(s, todayET, 0, null, 9999, null, null, 0);
   ins.run(s, back(-30), 0, null, 8888, null, null, 0);
 }
@@ -128,10 +130,31 @@ eq(d1[back(3)].netSales, null, 'filled gap has a null net, NOT 0');
 eq(d1[back(3)].budget, null, 'filled gap has no budget to report');
 eq(d1[back(10)].reportingStatus, 'no_data', 'a date entirely outside the seeded data is still emitted');
 
-const bl8 = body.stores.find(s => s.storeId === 'BL8');
-ok(bl8.days.slice(0, 5).every(d => d.reportingStatus === 'no_data'), 'the Holland outage reads no_data on every day');
-ok(bl8.days.slice(0, 5).every(d => d.netSales === null), 'the Holland outage never reports a 0 net');
-ok(bl8.days.slice(0, 5).every(d => d.budget === 4174), 'a no_data day still carries its budget');
+const dark = body.stores.find(s => s.storeId === 'BL2');
+ok(dark.days.slice(0, 5).every(d => d.reportingStatus === 'no_data'), 'a non-reporting store reads no_data on every day');
+ok(dark.days.slice(0, 5).every(d => d.netSales === null), 'and never reports a 0 net');
+ok(dark.days.slice(0, 5).every(d => d.budget === 4174), 'a no_data day still carries its budget');
+
+// Holland: permanently closed on 2026-07-25. The default 30-day window spans
+// that date, so this is a BOUNDARY test — days on or after it are `closed` with
+// a real 0, days before it have no row and are `no_data` with a null. Getting
+// the comparison off by one would show up here as a whole day on the wrong side.
+const hol = body.stores.find(s => s.storeId === 'BL8');
+const CLOSED_FROM = '2026-07-25';
+const after = hol.days.filter(d => d.date >= CLOSED_FROM);
+const before = hol.days.filter(d => d.date < CLOSED_FROM);
+ok(after.length > 0, 'the window includes days after the closure date');
+ok(after.every(d => d.reportingStatus === 'closed'), 'every day on/after the closure date reads closed');
+ok(after.every(d => d.netSales === 0), 'a closed day reports a true 0, never null');
+ok(after.every(d => d.transactions === 0), 'and zero transactions, not null');
+if (before.length) {
+  ok(before.every(d => d.reportingStatus === 'no_data'),
+     'days BEFORE the closure date are not retroactively closed');
+  ok(before.every(d => d.netSales === null), 'and still report null rather than 0');
+}
+// The whole point of the three-way enum: these must not collapse into each other.
+ok(dark.days[0].netSales === null && after[0].netSales === 0,
+   'closed (0) and no_data (null) are distinguishable in the same response');
 
 // ── The `closed` branch — unreachable from morning-briefing, tested here ──
 res = await call('&storeId=BL12&days=3');

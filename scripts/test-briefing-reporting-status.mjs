@@ -58,8 +58,10 @@ ins.run('BL1', yesterdayET, 5844.78, 156.5, 8605, 322, '2026-08-11T03:55:00Z', 0
 ins.run('BL2', yesterdayET, 0, null, 4556, null, null, 0);
 // BL4  Sheet-sourced actuals from before the Clover cron covered the day.
 ins.run('BL4', yesterdayET, 3314.19, null, 3291, null, null, 0);
-// BL8  auction revenue only — real money, no POS snapshot.
-ins.run('BL8', yesterdayET, 0, 430.25, 4174, null, null, 0);
+// BL8  Holland — PERMANENTLY CLOSED 2026-07-25. It can no longer stand in for
+//      any other state, which is why the auction-only clause moved to its own
+//      block at the end of this file.
+ins.run('BL8', yesterdayET, 0, null, 4174, null, null, 0);
 // BL14 admin typed the numbers in because Clover lost them. The pos/auction
 // pair is BL14's real 2026-08-10 figures, kept because 4981.8 + 130.64 is the
 // exact sum that floated to 5112.4400000000005 and shipped that way live.
@@ -91,8 +93,11 @@ eq(by.BL1.transactions, 322, 'reported store keeps its transaction count');
 eq(by.BL4.reportingStatus, 'reported', 'Sheet-sourced total > 0 with no snapshot → reported, not no_data');
 eq(by.BL4.netSales, 3314.19, 'Sheet-sourced actuals survive classification');
 
-eq(by.BL8.reportingStatus, 'reported', 'auction revenue with no POS snapshot → reported');
-eq(by.BL8.netSales, 430.25, 'auction-only day reports its auction revenue');
+// Holland: closed, so a real 0 — NOT the null a dark store gets.
+eq(by.BL8.reportingStatus, 'closed', 'a permanently closed store reads closed');
+eq(by.BL8.netSales, 0, 'a closed day reports a true 0, per the spec');
+eq(by.BL8.transactions, 0, 'and zero transactions, not null');
+eq(by.BL8.budgetForSalesDate, 4174, 'while still carrying its budget — the miss is deliberate');
 
 eq(by.BL14.reportingStatus, 'reported', 'is_manual_override → reported');
 eq(by.BL14.netSales, 5112.44, 'netSales is rounded to cents, not 5112.4400000000005');
@@ -111,9 +116,10 @@ eq(by.BL16.reportingStatus, 'no_data', 'missing row → no_data');
 eq(by.BL16.netSales, null, 'missing row netSales is null');
 ok(by.BL16.storeId === 'BL16', 'missing-row store is still returned, not omitted');
 
-// No live store may be marked closed — the closure map covers BL12 only, and a
-// store wrongly marked closed would have its zero read as correct.
-ok(body.stores.every(s => s.reportingStatus !== 'closed'), 'no trading store is classified closed');
+// Only stores in the closure map may read closed — a trading store wrongly
+// marked closed would have its zero read as correct.
+ok(body.stores.filter(s => s.storeId !== 'BL8').every(s => s.reportingStatus !== 'closed'),
+   'no TRADING store is classified closed');
 
 // ── Baseline: the existing contract is unchanged ──────────────────────────
 // §2 of the work order — existing consumers must not need a code change.
@@ -139,6 +145,25 @@ const badKey = await worker.fetch(
   env, ctx
 );
 eq(badKey.status, 401, 'wrong key → 401');
+
+// ══ The auction-only clause, in its own fixture ═══════════════════════════
+// `auction > 0` with no POS snapshot is real money from the Drive feed — 22
+// such rows in prod — and must classify as `reported`. This used to ride on
+// BL8, which is now permanently closed and short-circuits before any evidence
+// is examined, so it needs a store that is not in the closure map.
+{
+  const { db: db2, env: env2 } = makeEnv(repo);
+  env2.MORNING_BRIEFING_KEY = KEY;
+  db2.exec('DELETE FROM daily_sales');
+  db2.prepare(`INSERT INTO daily_sales (store, date, total, auction, budget, order_count, snapshot_time, is_manual_override)
+               VALUES ('BL2', ?, 0, 430.25, 4174, null, null, 0)`).run(yesterdayET);
+  const r2 = await worker.fetch(
+    new Request('https://api.retjghub.com/?action=morning-briefing', { headers: { 'X-API-Key': KEY } }), env2, ctx);
+  const b2 = (await r2.json()).stores.find(s => s.storeId === 'BL2');
+  eq(b2.reportingStatus, 'reported', 'auction revenue with no POS snapshot → reported');
+  eq(b2.netSales, 430.25, 'auction-only day reports its auction revenue');
+  eq(b2.posSales, 0, 'with a 0 POS component');
+}
 
 // NOTE for Slice B: the `closed` branch cannot be exercised through this
 // endpoint — it iterates ALL_STORES, which excludes closed BL12. store-history

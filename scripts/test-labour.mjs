@@ -163,8 +163,14 @@ const bl1 = (db) => db.prepare('SELECT * FROM daily_sales WHERE store = ?').all(
   ins.run('BL1', yET, 8402, 9000, 300, 0.21099, 118.1833, 0.141, 96, '2026-08-11T03:55:00Z');
   // BL2 — TODAY's shape: plan entered, nobody has entered the actuals.
   ins.run('BL2', yET, 5000, 6000, 200, 0, null, 0.092, 30, '2026-08-11T03:55:00Z');
-  // BL8 — dark AND unentered. The plan must still report.
-  ins.run('BL8', yET, 0, 4174, null, 0, null, 0.141, 46, null);
+  // BL2 already covers "plan entered, actuals not". A store that is dark in
+  // BOTH systems must still report its plan — deliberately NOT BL8, which is
+  // permanently closed and now classifies as `closed` rather than `no_data`.
+  ins.run('BL14', yET, 0, 4174, null, 0, null, 0.141, 46, null);
+  // BL8 — Holland, permanently closed 2026-07-25. Labour is independent of
+  // reportingStatus, so its PLAN must still come through even though the store
+  // no longer trades.
+  ins.run('BL8', yET, 0, 4174, null, 0, null, 0.133, 40, null);
   // BL4 — a legacy row stored in PERCENT units rather than a fraction.
   ins.run('BL4', yET, 5000, 6000, 200, 11.5, 80, 12.5, 85, '2026-08-11T03:55:00Z');
 
@@ -201,11 +207,19 @@ const bl1 = (db) => db.prepare('SELECT * FROM daily_sales WHERE store = ?').all(
 
   // Labour is independent of reportingStatus — it comes from the sheet, and the
   // ratio uses the sheet's own sales figure, not netSales.
-  eq(by.BL8.reportingStatus, 'no_data', 'precondition: Holland is dark');
-  eq(by.BL8.laborTargetPct, 0.141, 'a dark store still reports its labour PLAN');
-  eq(by.BL8.laborHoursScheduled, 46, 'and its scheduled hours');
+  eq(by.BL14.reportingStatus, 'no_data', 'precondition: BL14 is dark');
+  eq(by.BL14.laborTargetPct, 0.141, 'a dark store still reports its labour PLAN');
+  eq(by.BL14.laborHoursScheduled, 46, 'and its scheduled hours');
+  eq(by.BL14.laborActualPct, null, 'with no actual');
+  eq(by.BL14.netSales, null, 'sales are still nulled by reportingStatus');
+
+  // Holland: closed, not dark. Sales are a real 0 rather than null, and the
+  // labour plan is unaffected — labour comes from the sheet, not the till.
+  eq(by.BL8.reportingStatus, 'closed', 'Holland is closed, not no_data');
+  eq(by.BL8.netSales, 0, 'a closed store reports a true 0, not null');
+  eq(by.BL8.laborTargetPct, 0.133, 'and still reports its labour plan');
+  eq(by.BL8.laborHoursScheduled, 40, 'and its scheduled hours');
   eq(by.BL8.laborActualPct, null, 'with no actual');
-  eq(by.BL8.netSales, null, 'sales are still nulled by reportingStatus');
 
   // Percent-unit legacy rows normalise, and both fields do it the same way.
   eq(by.BL4.laborActualPct, 0.115, 'a percent-unit actual normalises to a fraction');
@@ -226,8 +240,8 @@ const bl1 = (db) => db.prepare('SELECT * FROM daily_sales WHERE store = ?').all(
   ok(String(b1.laborTargetPct).length <= 7, 'no float noise reaches the wire');
 
   // Stores with no row at all.
-  eq(by.BL14.laborActualPct, null, 'a store with no row reports null actual');
-  eq(by.BL14.laborTargetPct, null, 'and null target');
+  eq(by.BL16.laborActualPct, null, 'a store with no row reports null actual');
+  eq(by.BL16.laborTargetPct, null, 'and null target');
 
   // The rest of the contract is untouched.
   for (const k of ['reportingStatus', 'netSales', 'wtdSales', 'lySalesForDate', 'grossMargin',

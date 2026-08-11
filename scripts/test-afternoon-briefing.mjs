@@ -50,11 +50,14 @@ const order = (cents, taxCents = 0) => ({
 
 // Per-merchant Clover behaviour.
 const PLAN = {
-  'M-BL1':  { orders: [order(10000), order(5000), order(2500)], refunds: [] },   // $175.00
+  // $100 + $50 + ($25 gross − $5 tax) = $170. Tax rides on BL1 because BL14 is
+  // now needed for the Clover-failure case.
+  'M-BL1':  { orders: [order(10000), order(5000), order(2500, 500)], refunds: [] },
   'M-BL2':  { orders: [], refunds: [] },                                          // open, no sales yet
   'M-BL4':  { orders: [order(20000)], refunds: [{ amount: 5000, taxAmount: 0 }] },// $200 - $50 = $150
-  'M-BL8':  { fail: true },                                                       // expired token
-  'M-BL14': { orders: [order(30000, 2000)], refunds: [] },                        // $300 gross - $20 tax
+  'M-BL14': { fail: true },                                                       // expired token
+  // BL8 is Holland — permanently closed, so it never reaches Clover at all.
+  'M-BL8':  { orders: [], refunds: [] },
 };
 
 // Clover is made deliberately SLOW. §4.7 requires asOf to be the data cut-off
@@ -149,7 +152,7 @@ ok(!('expectedByNow' in by.BL1), 'expectedByNow is omitted rather than faked fro
 
 // ── A trading store ───────────────────────────────────────────────────────
 eq(by.BL1.reportingStatus, 'reported', 'a store with sales is reported');
-eq(by.BL1.salesSoFarToday, 175, 'sales so far = 100 + 50 + 25');
+eq(by.BL1.salesSoFarToday, 170, 'sales so far = 100 + 50 + (25 - 5 tax); tax is excluded');
 eq(by.BL1.transactions, 3, 'transaction count comes through');
 eq(by.BL1.todayBudget, 9332, "today's budget comes from D1");
 eq(by.BL1.name, 'Coliseum', 'store label present');
@@ -160,24 +163,31 @@ eq(by.BL1.name, 'Coliseum', 'store label present');
 eq(by.BL4.salesSoFarToday, 150, 'refunds are subtracted: 200 - 50');
 ok(by.BL4.salesSoFarToday !== 200, 'the pre-refund figure is not what ships');
 
-// Tax is excluded, matching every other net figure in the API.
-eq(by.BL14.salesSoFarToday, 280, 'tax is excluded: 300 gross - 20 tax');
+
 
 // ── THE distinction: a true zero vs a failure ─────────────────────────────
 eq(by.BL2.reportingStatus, 'reported', 'a store that has not opened yet is REPORTED');
 eq(by.BL2.salesSoFarToday, 0, 'and reports a true 0 — Clover answered, the answer was none');
 eq(by.BL2.transactions, 0, 'with zero transactions');
 
-eq(by.BL8.reportingStatus, 'no_data', 'a store whose Clover call FAILED is no_data');
-eq(by.BL8.salesSoFarToday, null, 'and reports null, NOT 0 — this is the whole point');
-eq(by.BL8.transactions, null, 'and null transactions');
-eq(by.BL8.todayBudget, 4421, 'while still carrying its budget');
+eq(by.BL14.reportingStatus, 'no_data', 'a store whose Clover call FAILED is no_data');
+eq(by.BL14.salesSoFarToday, null, 'and reports null, NOT 0 — this is the whole point');
+eq(by.BL14.transactions, null, 'and null transactions');
+eq(by.BL14.todayBudget, 4188, 'while still carrying its budget');
+
+// Holland: permanently closed, so `closed` short-circuits before any Clover
+// result is consulted — a real 0, never the null a failure produces.
+eq(by.BL8.reportingStatus, 'closed', 'a permanently closed store reads closed, not no_data');
+eq(by.BL8.salesSoFarToday, 0, 'reporting a true 0');
+eq(by.BL8.transactions, 0, 'with zero transactions');
+ok(by.BL8.salesSoFarToday === 0 && by.BL14.salesSoFarToday === null,
+   'closed (0) and a failed fetch (null) stay distinguishable');
 
 eq(by.BL16.reportingStatus, 'no_data', 'a store with no credentials is no_data');
 eq(by.BL16.salesSoFarToday, null, 'and null, not 0');
 
 // One store's failure must not take the briefing down with it.
-ok(by.BL1.salesSoFarToday === 175 && by.BL14.salesSoFarToday === 280,
+ok(by.BL1.salesSoFarToday === 170 && by.BL4.salesSoFarToday === 150,
    'a failing store does not poison the healthy ones — allSettled, not all');
 
 // ── Cost: the item-categorisation half of the live path must stay out ─────

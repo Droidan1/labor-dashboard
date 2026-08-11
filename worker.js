@@ -4445,6 +4445,22 @@ const STORE_CLOSED_FROM = {
   // Wyoming — the register was relocated to Indy East (BL16), which now runs on
   // this Clover account. Last successful snapshot 2026-06-14.
   BL12: '2026-06-15',
+  // Holland — PERMANENTLY CLOSED, confirmed by Brian 2026-08-11. Its last
+  // trading day was 07-24: one order for $240, against a normal day of $4-6k,
+  // with 07-23 taking two orders for $410. Labour hours were entered right
+  // through the 24th (35 hours — a full crew packing up) and stop dead after.
+  //
+  // Until this entry existed the store read `no_data`, which was true but
+  // unhelpful — "we cannot vouch for this figure" when the actual answer is
+  // "there is nothing to vouch for". It now reports `closed` with a real 0.
+  //
+  // 🔑 ITS BUDGET IS DELIBERATELY LEFT IN PLACE — $813,563 across the 155 days
+  // from 07-25 to 2026-12-26. Brian's call 2026-08-11: the company plan was
+  // never revised for the closure, so that shortfall is a genuine miss and the
+  // chain should carry it. Holland therefore reports 0 against a real budget
+  // and reads −100% every day, ON PURPOSE. Do not "fix" it by nulling the
+  // budget without asking — that decision has already been made once.
+  BL8: '2026-07-25',
 };
 
 // row may be undefined (no daily_sales row at all for that store-day).
@@ -4473,11 +4489,14 @@ function classifyReportingStatus(row, store, dateStr) {
 function reportedFigures(row, store, dateStr) {
   const reportingStatus = classifyReportingStatus(row, store, dateStr);
   const unreported = reportingStatus === 'no_data';
-  const posSales = unreported ? null : (row?.total ?? null);
-  const auctionSales = unreported ? null : (row?.auction ?? null);
   // On a `closed` day 0 is the correct, meaningful answer — the store was not
-  // trading — so it is a real 0 even when no row exists to read.
-  const netSales = (reportingStatus === 'closed' || posSales != null || auctionSales != null)
+  // trading — so every count is a real 0, even when no row exists to read.
+  // `order_count` is NULL for a closed store (nothing wrote one), and passing
+  // that through as null would say "unknown" about the one thing we DO know.
+  const closed = reportingStatus === 'closed';
+  const posSales = unreported ? null : (closed ? (row?.total ?? 0) : (row?.total ?? null));
+  const auctionSales = unreported ? null : (row?.auction ?? null);
+  const netSales = (closed || posSales != null || auctionSales != null)
     ? roundCents((posSales ?? 0) + (auctionSales ?? 0))
     : null;
   return {
@@ -4485,7 +4504,7 @@ function reportedFigures(row, store, dateStr) {
     posSales,
     auctionSales,
     netSales,
-    transactions: unreported ? null : (row?.order_count ?? null),
+    transactions: closed ? (row?.order_count ?? 0) : (unreported ? null : (row?.order_count ?? null)),
   };
 }
 
