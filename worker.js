@@ -2419,6 +2419,41 @@ const VALID_L2 = new Set([
   "Sku Book Items", "Custom Sales", "Refund",
 ]);
 
+// ─── The ONE rule for turning a Clover L3 category into an L2 bucket ────────
+// Admin l3Map wins over the built-in L3_TO_L2, so an override can correct a
+// mis-categorized Clover category and not merely add a new one.
+//
+// This exists as a function because the rule used to be written out at each
+// call site with TWO DIFFERENT ANSWERS: the aggregator and its refund mirror let
+// the override win, while the category-cost editor's catalog let the built-in
+// win. So the editor DISPLAYED a category under one L2 while the engine BOOKED
+// it to another, and an admin auditing the editor saw nothing wrong. That is
+// what hid `FG BL SOFTLINES - APPAREL` -> `Softline - Accessories` for 53 days
+// and $14,959.51 (2026-06-19 .. 2026-08-10, all six stores).
+//
+// Every consumer must call this. Do not re-implement the precedence inline.
+// Returns null when neither map knows the category — callers treat that as
+// "Uncategorized" and record it for the admin UI.
+function resolveL3ToL2(l3, ovL3Map) {
+  if (!l3) return null;
+  const ov = ovL3Map && ovL3Map[l3];
+  if (ov && VALID_L2.has(ov)) return ov;
+  return L3_TO_L2[l3] || null;
+}
+
+// Every l3Map entry that CONTRADICTS the built-in map. An override is allowed to
+// win, but a silent disagreement is how a whole category quietly changes bucket
+// at all six stores at once, so the write paths refuse to create one without
+// `force` and `?action=item-overrides` GET reports any that exist.
+function l3MapConflicts(ovL3Map) {
+  const out = [];
+  for (const [l3, l2] of Object.entries(ovL3Map || {})) {
+    const builtIn = L3_TO_L2[l3];
+    if (builtIn && builtIn !== l2) out.push({ l3, builtIn, override: l2 });
+  }
+  return out;
+}
+
 // Normalize an item name for lookup: trim, lowercase, collapse whitespace,
 // normalize en/em dashes. Matches what we'd write into `overrides.items` as a key.
 function normalizeItemName(s) {
@@ -2724,22 +2759,22 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
           l2 = "Custom Sales";
           l2Source = "custom";
         }
-      } else if (l3 && ov.l3Map && ov.l3Map[l3] && VALID_L2.has(ov.l3Map[l3])) {
-        // Admin L3 mapping wins over built-in L3_TO_L2 so overrides can also
-        // correct mis-categorized Clover categories, not just add new ones.
-        l2 = ov.l3Map[l3];
-        l2Source = "clover-l3";
-      } else if (l3 && L3_TO_L2[l3]) {
-        l2 = L3_TO_L2[l3];
-        l2Source = "clover-l3";
       } else if (l3) {
-        // Enriched tracking: {qty, net} so the Settings UI can rank L3s by
-        // revenue impact and admins fix the biggest offenders first.
-        const bucket = unmappedL3[l3] || { qty: 0, net: 0 };
-        bucket.qty += qty;
-        bucket.net += priceCents / 100;
-        unmappedL3[l3] = bucket;
-        l2 = "Uncategorized";
+        // Single precedence rule — see resolveL3ToL2. Previously this was two
+        // sibling branches (override, then built-in) that other call sites
+        // reproduced in the opposite order.
+        const mapped = resolveL3ToL2(l3, ov.l3Map);
+        if (mapped) {
+          l2 = mapped;
+        } else {
+          // Enriched tracking: {qty, net} so the Settings UI can rank L3s by
+          // revenue impact and admins fix the biggest offenders first.
+          const bucket = unmappedL3[l3] || { qty: 0, net: 0 };
+          bucket.qty += qty;
+          bucket.net += priceCents / 100;
+          unmappedL3[l3] = bucket;
+          l2 = "Uncategorized";
+        }
         l2Source = "clover-l3";
       } else if (li.name === "Refund" || priceCents < 0) {
         l2 = "Refund";
@@ -3002,8 +3037,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         // pattern rules below get a chance, ending at "Custom Sales". Forcing
         // "Hardlines" here made a wrong answer indistinguishable from a right one.
         if (l3 === SKU_BOOK_CATEGORY) { const m = SKU_BOOK_TO_L2[li.name]; if (m) l2 = m; }
-        else if (ov.l3Map && ov.l3Map[l3] && VALID_L2.has(ov.l3Map[l3])) l2 = ov.l3Map[l3];
-        else if (L3_TO_L2[l3]) l2 = L3_TO_L2[l3];
+        else { const m = resolveL3ToL2(l3, ov.l3Map); if (m) l2 = m; }
       }
 
       // Tier 2: name heuristics (same patterns as main loop)
@@ -10412,7 +10446,12 @@ export default {
 
       if (request.method === "GET") {
         const current = await fetchItemOverrides(env);
-        return new Response(JSON.stringify(current), { headers: corsJson });
+        // `conflicts` makes l3Map entries that contradict the built-in map
+        // visible instead of silent. Empty is the healthy state.
+        return new Response(JSON.stringify({
+          ...current,
+          conflicts: l3MapConflicts(current.l3Map),
+        }), { headers: corsJson });
       }
 
       if (request.method === "POST") {
@@ -10463,6 +10502,32 @@ export default {
                 error: `Invalid L2 "${v}" for L3 "${k}". Allowed: ${[...VALID_L2].join(", ")}`
               }), { status: 400, headers: corsJson });
             }
+          }
+          // Refuse to CREATE a mapping that contradicts the built-in map.
+          //
+          // Membership in VALID_L2 was the only check here, and it cannot catch
+          // this: "Softline - Accessories" is a perfectly valid L2, just the
+          // wrong one for FG BL SOFTLINES - APPAREL. That one wrong-but-valid
+          // value re-bucketed a whole category at all six stores for 53 days.
+          //
+          // Only NEW or CHANGED conflicts are rejected. The editor re-sends the
+          // entire merged map on every save, so failing on pre-existing entries
+          // would make an unrelated item assignment impossible to save and would
+          // report a stale entry as if the admin had just typed it.
+          const conflicts = [];
+          for (const [k, v] of Object.entries(body.l3Map)) {
+            const builtIn = L3_TO_L2[k];
+            if (builtIn && builtIn !== v && existing.l3Map[k] !== v) {
+              conflicts.push({ l3: k, builtIn, attempted: v });
+            }
+          }
+          if (conflicts.length && !body.force) {
+            return new Response(JSON.stringify({
+              error: "This would override a built-in category mapping with a different L2. "
+                   + "Re-send with force:true only if the built-in is genuinely wrong — "
+                   + "otherwise fix L3_TO_L2 in worker.js instead, so there is one answer.",
+              conflicts,
+            }), { status: 409, headers: corsJson });
           }
           next.l3Map = body.l3Map;
         }
@@ -10569,10 +10634,16 @@ export default {
       // way with $16,592 of BL16 bin sales stranded and un-costable.
       //
       // Union the two so anything the engine can cost, the editor can price.
+      //
+      // The union is resolved through resolveL3ToL2 — the SAME rule the
+      // aggregator books by. This block used to let the built-in win where the
+      // aggregator lets the override win, so for a contradicting entry the
+      // editor showed one L2 and the engine used another.
       const { l3Map: ovL3Map } = await fetchItemOverrides(env);
-      const costableL3 = { ...L3_TO_L2 };
-      for (const [l3, l2] of Object.entries(ovL3Map || {})) {
-        if (!Object.prototype.hasOwnProperty.call(costableL3, l3)) costableL3[l3] = l2;
+      const costableL3 = {};
+      for (const l3 of new Set([...Object.keys(L3_TO_L2), ...Object.keys(ovL3Map || {})])) {
+        const l2 = resolveL3ToL2(l3, ovL3Map);
+        if (l2) costableL3[l3] = l2;
       }
       const catalog = Object.entries(costableL3)
         .map(([l3, l2]) => ({
@@ -10771,16 +10842,29 @@ export default {
         costUpdated = true;
       }
 
-      // L3→L2 mapping merge (only if not already mapped)
-      let l3Mapped = false;
+      // L3→L2 mapping merge — ADDITIVE ONLY, never a shadow.
+      //
+      // This endpoint writes a GLOBAL, all-store category mapping as a side
+      // effect of creating ONE item. When it was also allowed to shadow a
+      // built-in, a single wrong pick in the new-item form silently re-bucketed
+      // an entire category chain-wide, and the response said nothing beyond
+      // `l3Mapped: true`. A category the built-in map already knows now needs a
+      // deliberate `?action=item-overrides` POST with force, not a side effect.
+      let l3Mapped = false, l3MapSkipped = null;
       const overrides = await fetchItemOverrides(env);
-      if (!overrides.l3Map[l3]) {
+      if (L3_TO_L2[l3]) {
+        if (L3_TO_L2[l3] !== l2) {
+          l3MapSkipped = `"${l3}" is a built-in category mapped to "${L3_TO_L2[l3]}"; `
+                       + `the item was created but NOT re-mapped to "${l2}". `
+                       + `Sales for it will book to "${L3_TO_L2[l3]}".`;
+        }
+      } else if (!overrides.l3Map[l3]) {
         overrides.l3Map[l3] = l2;
         await env.SALES_SNAPSHOTS.put(ITEM_OVERRIDES_KEY, JSON.stringify(overrides));
         l3Mapped = true;
       }
 
-      return new Response(JSON.stringify({ results, costUpdated, l3Mapped }), { headers: corsJson });
+      return new Response(JSON.stringify({ results, costUpdated, l3Mapped, l3MapSkipped }), { headers: corsJson });
     }
 
     // ── Admin: Inventory Items (paginated)

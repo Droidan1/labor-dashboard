@@ -16112,6 +16112,17 @@
           }).join('')}
         </tbody></table>`;
       }
+      // The L2 dropdown on this form used to double as a GLOBAL, all-store
+      // category re-mapping — pick the wrong one once and an entire category
+      // moved bucket at every store, silently. The worker now refuses to shadow
+      // a built-in mapping; say so, rather than letting the admin believe the
+      // L2 they chose is the one that will be used.
+      if (data.l3MapSkipped) {
+        rb.innerHTML = `<div class="mb-3 text-sm text-yellow-700 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded px-3 py-2">
+          <span class="font-semibold">Category mapping unchanged</span> — ${escapeHtml(data.l3MapSkipped)}
+        </div>` + rb.innerHTML;
+      }
+
       el('inv-results').classList.remove('hidden');
 
       if (anyOk) {
