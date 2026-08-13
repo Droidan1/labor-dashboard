@@ -15211,13 +15211,47 @@
     });
     const fmtMoney = v => v ? '$' + Math.round(v).toLocaleString() : '—';
     const fmtUnits = v => v ? v.toLocaleString() : '—';
+    // ASP needs cents and a real "no units sold" state — $0.00 would read as a
+    // free item rather than an empty cell.
+    const fmtAsp = v => (v == null || !isFinite(v)) ? '—'
+      : (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2);
 
     const renderL2Card = (title, perWeek, fmt, opts = {}) => {
       // `opts.l3` is the matching { L2: { L3: v } } series. Absent → this card
       // renders exactly as it did before L3 existed.
       const l3Series = opts.l3 || [];
       const kind = opts.kind || '';
-      const l3Of = (cat, i, nm) => (((l3Series[i] || {})[cat]) || {})[nm] || 0;
+      const at3 = (series, cat, i, nm) => (((series[i] || {})[cat]) || {})[nm] || 0;
+      const l3Of = (cat, i, nm) => at3(l3Series, cat, i, nm);
+
+      // ── ratio mode ────────────────────────────────────────────────────────
+      // 🔑 ASP is net ÷ units — a RATIO, and ratios do not add up. Every
+      // aggregate on this card must divide sums, never sum quotients:
+      // averaging the weekly ASPs would weight a dead week the same as a peak
+      // one, and averaging per-category ASPs would weight Gift Cards the same
+      // as Bin Products. Same trap ?action=channel-range exists to avoid.
+      // `opts.ratio = { num, den, numL3, denL3 }` supplies both series.
+      const R = opts.ratio || null;
+      const ratio = (n, d) => (d > 0 ? n / d : null);
+      const sum = a => a.reduce((x, y) => x + y, 0);
+      const l2At = (series, cat, i) => (series[i] || {})[cat] || 0;
+      // one L2 cell
+      const cellAt = (cat, i) => R
+        ? ratio(l2At(R.num, cat, i), l2At(R.den, cat, i))
+        : l2At(perWeek, cat, i);
+      // one L2 row's Total column
+      const rowTotalOf = (cat, vals) => R
+        ? ratio(sum(weeks.map((_, i) => l2At(R.num, cat, i))),
+                sum(weeks.map((_, i) => l2At(R.den, cat, i))))
+        : sum(vals);
+      // one L3 cell / that L3 row's Total
+      const l3CellAt = (cat, i, nm) => R
+        ? ratio(at3(R.numL3, cat, i, nm), at3(R.denL3, cat, i, nm))
+        : l3Of(cat, i, nm);
+      const l3TotalOf = (cat, nm, lv) => R
+        ? ratio(sum(weeks.map((_, i) => at3(R.numL3, cat, i, nm))),
+                sum(weeks.map((_, i) => at3(R.denL3, cat, i, nm))))
+        : sum(lv);
       // Optional heat shading: alpha by cell value relative to the max cell.
       // L2 and L3 get SEPARATE scales — every L3 cell is a fraction of its
       // parent, so sharing the L2 scale washes expanded detail out to a flat
@@ -15255,8 +15289,8 @@
           </tr></thead>
           <tbody>`;
       for (const cat of T13_L2_CATS) {
-        const vals = perWeek.map(wk => (wk && wk[cat]) || 0);
-        const rowTotal = vals.reduce((a, b) => a + b, 0);
+        const vals = weeks.map((_, i) => cellAt(cat, i));
+        const rowTotal = rowTotalOf(cat, vals);
         const kids = l3RowsFor(cat);
         const expanded = kids.length > 0 && t13ExpandedL2.has(kind + ':' + cat);
         const chevron = kids.length
@@ -15272,8 +15306,8 @@
         </tr>`;
         if (expanded) {
           for (const nm of kids) {
-            const lv = weeks.map((_, i) => l3Of(cat, i, nm));
-            const lTot = lv.reduce((a, b) => a + b, 0);
+            const lv = weeks.map((_, i) => l3CellAt(cat, i, nm));
+            const lTot = l3TotalOf(cat, nm, lv);
             const isOther = nm === L3_OTHER;
             html += `<tr class="border-b border-[rgba(20,16,8,0.04)] dark:border-op-border/30 bg-opl-panelHi dark:bg-op-panelHi">
               <td class="px-2.5 py-1.5 pl-7 text-[11px] ${isOther ? 'italic ' : ''}text-opl-inkDim dark:text-op-inkDim whitespace-nowrap ${stickyL3}" title="${escapeHtml(nm)}">${escapeHtml(nm)}</td>
@@ -15283,10 +15317,17 @@
           }
         }
       }
-      const grandVals = weeks.map((_, i) =>
-        T13_L2_CATS.reduce((s, cat) => s + ((perWeek[i] || {})[cat] || 0), 0)
+      const grandVals = weeks.map((_, i) => R
+        ? ratio(T13_L2_CATS.reduce((s, c) => s + l2At(R.num, c, i), 0),
+                T13_L2_CATS.reduce((s, c) => s + l2At(R.den, c, i), 0))
+        : T13_L2_CATS.reduce((s, cat) => s + ((perWeek[i] || {})[cat] || 0), 0)
       );
-      const grandTotal = grandVals.reduce((a, b) => a + b, 0);
+      // For a ratio this is NOT the sum of grandVals — it is the ratio of the
+      // 13-week totals, so a heavy week counts for what it actually sold.
+      const grandTotal = R
+        ? ratio(sum(weeks.map((_, i) => T13_L2_CATS.reduce((s, c) => s + l2At(R.num, c, i), 0))),
+                sum(weeks.map((_, i) => T13_L2_CATS.reduce((s, c) => s + l2At(R.den, c, i), 0))))
+        : grandVals.reduce((a, b) => a + b, 0);
       html += `<tr class="bg-opl-panelHi dark:bg-op-panelHi border-t-2 border-[rgba(20,16,8,0.12)] dark:border-op-borderHi">
         <td class="${tdTotCls} text-left ${stickyLtot}">All Categories</td>
         ${grandVals.map(v => `<td class="${tdTotCls}">${fmt(v)}</td>`).join('')}
@@ -15314,8 +15355,19 @@
       (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} Units Sold` : `Combined Units Sold (${filteredStoreKeys.length} stores)`);
     const netTitle = allOn ? 'Combined Stores Category Net Sales' :
       (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} Category Net Sales` : `Combined Category Net Sales (${filteredStoreKeys.length} stores)`);
+    const aspTitle = allOn ? 'Combined Store ASP' :
+      (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} ASP` : `Combined ASP (${filteredStoreKeys.length} stores)`);
     const unitsHtml = renderL2Card(unitsTitle, l2Units, fmtUnits, { kind: 'units', l3: l3Units });
     const netHtml = renderL2Card(netTitle, l2Net, fmtMoney, { kind: 'net', l3: l3Net, heat: true, budget: weeklyBudget });
+    // ASP is derived, not fetched — net ÷ units from the two series already on
+    // hand, so no extra round-trip and nothing new to store. No heat shading:
+    // a high ASP is not "good" the way high net sales are, and tinting
+    // Furniture dark green next to Bin Products would imply otherwise.
+    const aspHtml = renderL2Card(aspTitle, l2Net, fmtAsp, {
+      kind: 'asp',
+      l3: l3Net,
+      ratio: { num: l2Net, den: l2Units, numL3: l3Net, denL3: l3Units },
+    });
 
     // Empty state if user deselected everything
     if (filteredStoreKeys.length === 0) {
@@ -15327,7 +15379,8 @@
     el('wrs-pane-t13').innerHTML = filterHtml +
       '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mb-3 px-0.5">Weekly net sales</h3>' + topHtml +
       '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Units sold by category × week</h3>' + unitsHtml +
-      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Net sales by category × week</h3>' + netHtml;
+      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Net sales by category × week</h3>' + netHtml +
+      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Average selling price by category × week</h3>' + aspHtml;
   }
 
   // ═══════════════════════════════════════════════════════════════
