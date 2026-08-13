@@ -298,6 +298,41 @@ The invite also gained a `reply_to` that reaches a person; it was going out from
 no-reply address, which is a poor choice for the one email whose recipient most needs to
 say "this didn't work".
 
+### Resent 2026-08-13 14:20:25Z — accepted on the first attempt
+
+```
+2026-08-13T14:20:25.766Z  invite-resend  email  sent  (no error)
+```
+
+First honest row in that table. **No error, no retries** → Resend accepted it immediately.
+That rules out API rejection, invalid address syntax, rate limiting, network failure and a
+missing key. It does **not** prove delivery.
+
+Remaining possibilities, in order of likelihood: a **suppression-list hit** (an earlier
+hard bounce would blocklist the address, after which every send "succeeds" into nothing —
+fits all 19 messages), **spam** (DMARC `p=quarantine`, no `List-Unsubscribe`), or he
+simply has not signed in.
+
+🔑 **Kevin does not need the invite email at all.** His account is active with a `bl`
+grant. Any channel that reaches him works: open `www.retjghub.com` → *Already have an
+account? Sign in* → enter the address → a 6-digit code arrives. The welcome email is only
+instructions; the sign-in is self-service.
+
+### Message ids — migration-038 (worker `3cd0b60a`)
+
+`notification_log.provider_message_id` now stores Resend's id for every email, so a future
+"did this land?" is a direct dashboard lookup rather than scrolling their log by timestamp
+guessing which of twelve 12:00 UTC sends belonged to whom. Indexed for the reverse lookup
+(Resend reports a bounce for id X — who was that?).
+
+🛑 **Migration before worker.** `logEmailAttempt`'s INSERT is `.catch(() => {})`'d so a
+failed audit write never fails the send it describes — which means a missing column would
+have silently discarded *every* row instead of erroring. Applied staging → prod → deploy.
+
+The four hand-rolled email INSERTs (invite, scoped daily, chain-wide daily, weekly)
+collapsed into `logEmailAttempt()`. They had already drifted into three spellings of the
+same status ladder, one of which was the hardcoded `'sent'`.
+
 ### The remaining step needs a human
 
 I cannot call `resend-invite` — it requires a superuser session and has no
