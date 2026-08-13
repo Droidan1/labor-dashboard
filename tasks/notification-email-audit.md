@@ -193,7 +193,25 @@ Gaps:
 
 ---
 
-## What shipped (2026-08-13) — built and tested, **not yet deployed**
+## What shipped (2026-08-13) — ✅ **DEPLOYED TO PROD**
+
+main `14fdfcf` · worker version `c4d4787d-590b-44e1-9011-4e3b25e11032` (100%) ·
+Pages run `31702116068` · sw **v76**
+
+Verified live, not assumed:
+- Deployed worker source fetched back from Cloudflare and grepped: both headings render
+  as `${_esc(scopeLabel)}`, and **zero** hardcoded `· All Stores` headings survive.
+  `dispatchScopedDailySummaries`, `storeScopedRecipients`, `daily-summary-scoped` and the
+  preview `stores` param are all present; `fallbackItems` / `wtdGrossMargin` /
+  `chainWideRecipients` still present, so this is not an old tree.
+- `wrangler deployments list` shows `c4d4787d` at **100%** — rollout complete.
+- Deploy output carried all 6 crons and the MEDIA + BL16 bindings.
+- Live `www.retjghub.com`: `dashboard-cache-v76`, `notif-weekly-digest-row` present, new
+  copy present, old "5 AM recap of all-store sales" **gone**.
+
+⏳ **The first scoped send is 2026-08-14 12:00 UTC (8 AM ET).** Today's 12:00 UTC run had
+already fired on the old code (`notification_log`: 4 rows for 2026-08-13). Expect the next
+run to write **4 × `daily-summary` + 8 × `daily-summary-scoped`**.
 
 **worker.js**
 
