@@ -184,10 +184,40 @@ bare count. `scripts/test-t13-l3.mjs` seeds all three hazards — a low week tha
 text, plus future weeks that sort high as text *and* as integers — and fails if the old query
 returns.
 
-⚠️ **Still unexplained: why the click produced no write at all.** The wrong-week theory does
-not cover it — that would have written the *wrong* keys, and those are untouched too. The
-decisive evidence is the status text under the button (`Done — N summaries written…` vs
-`Error: …`), which only the operator sees.
+⚠️ **Never explained: why that first click produced no write at all.** The wrong-week theory
+does not cover it — that would have written the *wrong* keys, and those were untouched too.
+Worth remembering if a future rebuild reports success and changes nothing: check
+`snapshotTime` on the keys, not just the response.
+
+## 2026-08-13 23:02 — the re-roll landed, and matched the prediction exactly
+
+Second click, on worker `0154e2a7`: **"Done — 91 summaries written across 13 weeks."** 91 is
+7 stores × 13 weeks, which is itself the proof that the `WRS_STORES` fix is live — it would
+have been 78 before.
+
+Verified against KV rather than the response:
+
+| Check | Result |
+|---|---|
+| Entries present | **91 of 91** (was 84 — the 7 gated store-weeks now exist) |
+| Freshly stamped | all at `2026-08-13T23:02:1x–2x` |
+| Carrying `l3Qty` | 80 |
+| The other 11 | 8 × Wyoming post-cutover (zeroed on read) + 3 × Holland (feed dark since 07-24). **Zero unexplained** |
+| **L3 sums to L2 in stored data** | **948 (entry, L2) groups, worst drift `0`** |
+| Distinct L3 names stored | 142, **none still bracketed**, `Other / unmapped` present |
+
+**The L2 shift matched the prediction to the cent — 26 of 26 entries**, chain net
+`$2,667,519.71 → $2,675,563.57`, change **+$8,043.86 (+0.302%)**, exactly as forecast. The
+one outlier landed where predicted: Wk 21 Coliseum +$6,265.80. Nothing moved that was not
+predicted, and nothing predicted failed to move.
+
+Read path re-driven against the now-stored summaries: `liveBuilds 0` (every week served from
+KV), 153 (week, L2) combined groups with `$0.0000` drift, 65 distinct L3 rows on the card,
+none bracketed. Rendered through the real page: 12 chevrons, Expand-all present, Seasonal
+opens to 11 rows, **`FG BL SEASONAL - SPRING/SUMMER` reads $45,745** — the number that read
+$2,611 before normalization — and `Other / unmapped` is $7,097.
+
+✅ **Feature complete and live.**
 
 ## Rollout order
 
