@@ -142,6 +142,53 @@ children are populated in the newest column and zero everywhere else, not summin
 parent. Running the re-roll before then avoids that window entirely; running it afterwards
 fixes it just the same.
 
+## 2026-08-13 22:4x — first rebuild click wrote nothing, and why
+
+Brian clicked **Rebuild Week Summaries**. Five KV reads over ~5 minutes — far past the
+~60 s read-after-write window — all returned the same thing: 84 of 91 entries present,
+**0 carrying `l3Qty`**, newest `snapshotTime` still `2026-08-13T03:57:49` (that morning's
+cron). Checked the weeks the old query would actually have selected too: also untouched,
+newest stamp there `2026-07-27`. So nothing was written anywhere.
+
+**Nothing destructive ran.** `daily_sales` shows no historical re-snapshot — only 5 rows
+for today at 22:58 UTC, which is normal live updating. No Clover re-pull was triggered.
+
+Investigating turned up a real, pre-existing defect that would have made the click useless
+even if it had reached the write path:
+
+```sql
+SELECT DISTINCT week FROM daily_sales WHERE date LIKE ? ORDER BY week DESC LIMIT 13
+```
+
+Wrong twice over:
+
+1. **`week` is TEXT**, so `DESC` sorts lexicographically — `'9'` above `'52'` above `'33'`.
+2. **`daily_sales` holds FUTURE rows**, because budget and labour land ahead of sales. On
+   2026-08-13 it already contained every week out to **52 (2026-12-26)**, 49 rows each.
+
+Run against production, that query returns
+
+```
+['9','8','7','6','52','51','50','5','49','48','47','46','45']
+```
+
+— not one of the 13 weeks T13 charts. The button says "re-rolls the trailing 13 weeks" and
+would have reported success having rebuilt weeks nobody looks at. Casting to INTEGER would
+not have helped either: that just picks 52…40, all future.
+
+**Fixed** in worker `0154e2a7-ddc7-4c2e-a715-1d0a68d9f39b`: anchor on `MIN(date)` the way
+`?action=weekly-t13` already does, cap at today (or an explicit `&end=`), and give each week
+its own year from its start date so the KV key matches what `weekly-t13` reads back. The
+response now returns `weekLabels` so a caller can see what was rebuilt instead of trusting a
+bare count. `scripts/test-t13-l3.mjs` seeds all three hazards — a low week that sorts high as
+text, plus future weeks that sort high as text *and* as integers — and fails if the old query
+returns.
+
+⚠️ **Still unexplained: why the click produced no write at all.** The wrong-week theory does
+not cover it — that would have written the *wrong* keys, and those are untouched too. The
+decisive evidence is the status text under the button (`Done — N summaries written…` vs
+`Error: …`), which only the operator sees.
+
 ## Rollout order
 
 1. Deploy the worker from `main`. Verify by content (`grep -q normalizeL3Key worker.js`)
