@@ -14387,6 +14387,7 @@
       if (data.error) throw new Error(data.error);
       wrsData = data;
       wrsExpandedL2.clear();
+      t13ExpandedL2.clear();
       el('wrs-subtitle').textContent = wrsRange.label + ' · ' + fmtRangeShort(wrsRange.from, wrsRange.to);
     } catch(e) {
       wrsShowError('Failed to load weekly data: ' + e.message);
@@ -15024,6 +15025,16 @@
   // ═══════════════════════════════════════════════════════════════
   //  WEEKLY RETAIL SUMMARY — T13 tab renderer
   // ═══════════════════════════════════════════════════════════════
+  // The L2 rows the T13 cards show, in display order. Deliberately not every L2
+  // the feed carries: Custom Sales / Refund / Manual Refund / Other · Non-Item
+  // are diagnostics, not merchandise categories.
+  const T13_L2_CATS = [
+    'Consumable Food', 'Consumable HBA', 'Consumable Other',
+    'Furniture', 'Hardlines', 'Home', 'Seasonal',
+    'Softline - Accessories', 'Softline - Apparel', 'Softline - Shoes',
+    'Bin Products', 'Gift Cards',
+  ];
+
   // T13 store filter — user picks which stores to include in the
   // combined cards. Defaults to "all selected" on first render.
   let t13StoreFilter = null; // Set<string> of store keys, null = uninitialized
@@ -15045,6 +15056,23 @@
     renderT13();
   };
 
+  // Which L2 rows have their L3 detail open. Keyed "<card>:<L2>" so the Units
+  // and Net cards expand independently — they are read side by side and forcing
+  // them to move together is worse, not tidier.
+  let t13ExpandedL2 = new Set();
+  window.toggleT13L2 = (kind, l2) => {
+    const key = kind + ':' + l2;
+    t13ExpandedL2.has(key) ? t13ExpandedL2.delete(key) : t13ExpandedL2.add(key);
+    renderT13();
+  };
+  window.toggleT13AllL2 = (kind) => {
+    const cats = T13_L2_CATS.filter(c => t13ExpandedL2.has(kind + ':' + c));
+    const allOpen = cats.length === T13_L2_CATS.length;
+    for (const c of T13_L2_CATS) t13ExpandedL2.delete(kind + ':' + c);
+    if (!allOpen) for (const c of T13_L2_CATS) t13ExpandedL2.add(kind + ':' + c);
+    renderT13();
+  };
+
   function renderT13() {
     if (!wrsT13Data) return;
     const d = wrsT13Data;
@@ -15054,11 +15082,17 @@
     const stores = d.stores || {};
     const perStoreL2Units = d.perStoreL2Units || [];
     const perStoreL2Net = d.perStoreL2Net || [];
+    // Absent when the worker predates L3, or when the week-summary KV entries
+    // have not been re-rolled yet — the cards then render exactly as before.
+    const perStoreL3Units = d.perStoreL3Units || [];
+    const perStoreL3Net = d.perStoreL3Net || [];
     const thCls = 'px-2.5 py-2 text-[10px] font-semibold text-opl-inkDim dark:text-op-inkDim uppercase tracking-wider whitespace-nowrap';
     const tdCls = 'px-2.5 py-2 text-xs text-right text-opl-ink dark:text-op-ink whitespace-nowrap tabular-nums';
     const tdTotCls = 'px-2.5 py-2 text-xs text-right font-bold text-opl-ink dark:text-op-ink whitespace-nowrap tabular-nums';
+    const tdL3Cls = 'px-2.5 py-1.5 text-[11px] text-right text-opl-inkDim dark:text-op-inkDim whitespace-nowrap tabular-nums';
     const stickyL = 'sticky left-0 bg-opl-panel dark:bg-op-panel z-[1]';
     const stickyLtot = 'sticky left-0 bg-opl-panelHi dark:bg-op-panelHi z-[1]';
+    const stickyL3 = 'sticky left-0 bg-opl-panelHi dark:bg-op-panelHi z-[1]';
 
     // Initialize filter if needed
     if (!t13StoreFilter) t13StoreFilter = new Set(WRS_STORE_KEYS);
@@ -15122,12 +15156,6 @@
     topHtml += `</tbody></table></div></div>`;
 
     // ── Combined Store Units Sold + Net Sales by L2 category ────
-    const T13_L2_CATS = [
-      'Consumable Food', 'Consumable HBA', 'Consumable Other',
-      'Furniture', 'Hardlines', 'Home', 'Seasonal',
-      'Softline - Accessories', 'Softline - Apparel', 'Softline - Shoes',
-      'Bin Products', 'Gift Cards',
-    ];
     // Recompute combined L2 arrays based on selected stores. If all stores
     // are selected we can use the precomputed d.l2Units/d.l2Net (saves work);
     // otherwise sum perStoreL2 arrays across just the selected stores.
@@ -15144,6 +15172,39 @@
     });
     const l2Units = allOn ? (d.l2Units || []) : sumPerStoreL2(perStoreL2Units);
     const l2Net = allOn ? (d.l2Net || []) : sumPerStoreL2(perStoreL2Net);
+    // Same fold one level deeper: { store: { L2: { L3: v } } } → [{ L2: { L3: v } }].
+    // No all-stores shortcut here — the feed ships only the per-store maps, so
+    // this is the single path for both the filtered and unfiltered case.
+    const sumPerStoreL3 = (perStoreArr) => weeks.map((_, i) => {
+      const wkObj = perStoreArr[i] || {};
+      const out = {};
+      for (const s of filteredStoreKeys) {
+        for (const [cat, rows] of Object.entries(wkObj[s] || {})) {
+          const bucket = out[cat] || (out[cat] = {});
+          for (const [l3, v] of Object.entries(rows)) bucket[l3] = (bucket[l3] || 0) + v;
+        }
+      }
+      return out;
+    });
+    const l3Units = sumPerStoreL3(perStoreL3Units);
+    const l3Net = sumPerStoreL3(perStoreL3Net);
+
+    // L3 row order per L2: biggest 13-week net first, "Other / unmapped" pinned
+    // last however big it is — it is a remainder, not a category, and reading it
+    // at the top of Seasonal would imply otherwise.
+    const L3_OTHER = 'Other / unmapped';
+    const l3RowsFor = (cat) => {
+      const names = new Set();
+      for (const wk of l3Net) for (const k of Object.keys((wk && wk[cat]) || {})) names.add(k);
+      for (const wk of l3Units) for (const k of Object.keys((wk && wk[cat]) || {})) names.add(k);
+      const net = (nm) => l3Net.reduce((s, wk) => s + (((wk && wk[cat]) || {})[nm] || 0), 0);
+      return [...names].sort((a, b) => {
+        if (a === L3_OTHER) return 1;
+        if (b === L3_OTHER) return -1;
+        return net(b) - net(a);
+      });
+    };
+
     const wkLabels = weeks.map((wk, i) => {
       const dObj = dates[i] || {};
       return dObj.start ? dObj.start.slice(5) : `Wk ${wk}`;
@@ -15152,18 +15213,39 @@
     const fmtUnits = v => v ? v.toLocaleString() : '—';
 
     const renderL2Card = (title, perWeek, fmt, opts = {}) => {
+      // `opts.l3` is the matching { L2: { L3: v } } series. Absent → this card
+      // renders exactly as it did before L3 existed.
+      const l3Series = opts.l3 || [];
+      const kind = opts.kind || '';
+      const l3Of = (cat, i, nm) => (((l3Series[i] || {})[cat]) || {})[nm] || 0;
       // Optional heat shading: alpha by cell value relative to the max cell.
-      let maxCell = 0;
-      if (opts.heat) for (const cat of T13_L2_CATS) for (const wk of perWeek) maxCell = Math.max(maxCell, (wk && wk[cat]) || 0);
-      const cellHtml = (v) => {
+      // L2 and L3 get SEPARATE scales — every L3 cell is a fraction of its
+      // parent, so sharing the L2 scale washes expanded detail out to a flat
+      // near-invisible tint, which is the opposite of why the shading is there.
+      let maxCell = 0, maxL3Cell = 0;
+      if (opts.heat) {
+        for (const cat of T13_L2_CATS) {
+          for (const wk of perWeek) maxCell = Math.max(maxCell, (wk && wk[cat]) || 0);
+          for (let i = 0; i < l3Series.length; i++) {
+            for (const v of Object.values(((l3Series[i] || {})[cat]) || {})) maxL3Cell = Math.max(maxL3Cell, v);
+          }
+        }
+      }
+      const cellHtml = (v, mx) => {
         if (!opts.heat) return fmt(v);
         if (!v) return '<span class="text-opl-inkDimmer dark:text-op-inkDimmer">—</span>';
-        const a = (0.04 + (v / maxCell) * 0.30).toFixed(2);
+        const a = (0.04 + (v / (mx || 1)) * 0.30).toFixed(2);
         return `<span class="inline-block px-1.5 py-0.5 rounded" style="background:rgba(34,197,94,${a})">${fmt(v)}</span>`;
       };
+      const anyL3 = T13_L2_CATS.some(c => l3RowsFor(c).length);
+      const allOpen = anyL3 && T13_L2_CATS.every(c => !l3RowsFor(c).length || t13ExpandedL2.has(kind + ':' + c));
+      const expandBtn = anyL3
+        ? `<button onclick="toggleT13AllL2('${kind}')" class="px-2.5 py-1 text-[11px] font-semibold rounded-full border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">${allOpen ? 'Collapse all' : 'Expand all'}</button>`
+        : '';
       let html = `<div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl overflow-hidden">
-        <div class="px-4 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <div class="px-4 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-center justify-between gap-3">
           <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(title)}</h3>
+          ${expandBtn}
         </div>
         <div class="overflow-x-auto"><table class="w-full text-sm">
           <thead><tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
@@ -15175,11 +15257,31 @@
       for (const cat of T13_L2_CATS) {
         const vals = perWeek.map(wk => (wk && wk[cat]) || 0);
         const rowTotal = vals.reduce((a, b) => a + b, 0);
-        html += `<tr class="border-b border-[rgba(20,16,8,0.05)] dark:border-op-border/50">
-          <td class="px-2.5 py-2 text-xs font-medium text-opl-ink dark:text-op-ink whitespace-nowrap ${stickyL}">${escapeHtml(cat)}</td>
-          ${vals.map(v => `<td class="${tdCls}">${cellHtml(v)}</td>`).join('')}
+        const kids = l3RowsFor(cat);
+        const expanded = kids.length > 0 && t13ExpandedL2.has(kind + ':' + cat);
+        const chevron = kids.length
+          ? `<span class="text-opl-inkDim dark:text-op-inkDim mr-0.5">${expanded ? '▾' : '▸'}</span>`
+          : '<span class="inline-block w-3 mr-0.5"></span>';
+        const tap = kids.length
+          ? ` role="button" tabindex="0" class="cursor-pointer hover:bg-[rgba(20,16,8,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)]" onclick="toggleT13L2('${kind}','${escapeHtml(cat).replace(/'/g, "\\'")}')"`
+          : '';
+        html += `<tr${tap} class="border-b border-[rgba(20,16,8,0.05)] dark:border-op-border/50">
+          <td class="px-2.5 py-2 text-xs font-medium text-opl-ink dark:text-op-ink whitespace-nowrap ${stickyL}">${chevron}${escapeHtml(cat)}${kids.length ? `<span class="ml-1.5 text-[10px] text-opl-inkDimmer dark:text-op-inkDimmer">${kids.length}</span>` : ''}</td>
+          ${vals.map(v => `<td class="${tdCls}">${cellHtml(v, maxCell)}</td>`).join('')}
           <td class="${tdTotCls}">${fmt(rowTotal)}</td>
         </tr>`;
+        if (expanded) {
+          for (const nm of kids) {
+            const lv = weeks.map((_, i) => l3Of(cat, i, nm));
+            const lTot = lv.reduce((a, b) => a + b, 0);
+            const isOther = nm === L3_OTHER;
+            html += `<tr class="border-b border-[rgba(20,16,8,0.04)] dark:border-op-border/30 bg-opl-panelHi dark:bg-op-panelHi">
+              <td class="px-2.5 py-1.5 pl-7 text-[11px] ${isOther ? 'italic ' : ''}text-opl-inkDim dark:text-op-inkDim whitespace-nowrap ${stickyL3}" title="${escapeHtml(nm)}">${escapeHtml(nm)}</td>
+              ${lv.map(v => `<td class="${tdL3Cls}">${cellHtml(v, maxL3Cell)}</td>`).join('')}
+              <td class="${tdL3Cls} font-semibold text-opl-ink dark:text-op-ink">${fmt(lTot)}</td>
+            </tr>`;
+          }
+        }
       }
       const grandVals = weeks.map((_, i) =>
         T13_L2_CATS.reduce((s, cat) => s + ((perWeek[i] || {})[cat] || 0), 0)
@@ -15212,8 +15314,8 @@
       (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} Units Sold` : `Combined Units Sold (${filteredStoreKeys.length} stores)`);
     const netTitle = allOn ? 'Combined Stores Category Net Sales' :
       (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} Category Net Sales` : `Combined Category Net Sales (${filteredStoreKeys.length} stores)`);
-    const unitsHtml = renderL2Card(unitsTitle, l2Units, fmtUnits);
-    const netHtml = renderL2Card(netTitle, l2Net, fmtMoney, { heat: true, budget: weeklyBudget });
+    const unitsHtml = renderL2Card(unitsTitle, l2Units, fmtUnits, { kind: 'units', l3: l3Units });
+    const netHtml = renderL2Card(netTitle, l2Net, fmtMoney, { kind: 'net', l3: l3Net, heat: true, budget: weeklyBudget });
 
     // Empty state if user deselected everything
     if (filteredStoreKeys.length === 0) {

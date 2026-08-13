@@ -2123,6 +2123,32 @@ async function resolveWeekDates(env, week, year) {
   return [];
 }
 
+// Collapse an l3Rows key down to something a REPORT can show.
+//
+// `l3Key` resolution (see the big block ~line 2900) emits two different kinds of
+// row: real Clover L3 category names, and bracketed buckets recording *how* a
+// line resolved — "[Override] X", "[IM 10385] X", "[Pattern] X", "[Heuristic] X",
+// "[Other] X", "[Cross-day refund source] X" and the legacy "[Name match] <item>".
+// The brackets are a costing diagnostic; the per-store tab wants them, a
+// trailing-13-week trend does not.
+//
+// 🔑 "[Name match] X" is NOT a separate category — X *is* the real L3, matched by
+// item name (that branch now resolves straight to `l3CostKey`, so it only appears
+// in snapshots taken before that fix). Measured 2026-08-13 over 13 weeks: 35 of
+// the 65 real categories were split across a real row AND a name-match twin, and
+// the split is often inverted — Seasonal → SPRING/SUMMER read $2,611 on the real
+// row while $43,135 of the same category sat on the twin. Folding them back is
+// the same thing `?action=category-costs` already does (search "[Name match] ").
+//
+// Everything still bracketed after that folds into ONE bucket, so the money stays
+// on the table: L3 must sum to its L2 exactly, and it does, to the cent.
+const L3_OTHER = "Other / unmapped";   // NB: distinct from the "Other / Non-Item" L2
+function normalizeL3Key(l3) {
+  const s = String(l3 || "");
+  const unwrapped = s.startsWith("[Name match] ") ? s.slice(13) : s;
+  return unwrapped.startsWith("[") || !unwrapped ? L3_OTHER : unwrapped;
+}
+
 // Merge an array of per-day item-sales snapshots into a single weekly object
 // with the same { categories, totals } shape, including nested l3Rows.
 // Tolerant of legacy snapshots that lack `l3Rows` or cost — those days just
@@ -2353,6 +2379,52 @@ async function buildStoreWeekly(env, store, dates) {
     itemSales: merged,
     l2Qty: Object.fromEntries(merged.categories.map(c => [c.category, Math.round(c.qty)])),
     l2Net: Object.fromEntries(merged.categories.map(c => [c.category, roundCents(c.netSales)])),
+    // L3 nested UNDER its L2, not flat: "Sku Book Items" really does appear under
+    // 5 different L2 parents, so an l3-only key would silently merge them.
+    // `itemSales` above keeps the raw, un-normalized l3Rows — the per-store tab
+    // reads that and is unaffected by the normalization applied here.
+    ...l3MapsFrom(merged.categories),
+  };
+}
+
+// { L2: { normalizedL3: qty } } and the same for net, from merged categories.
+// Rounds the way the l2Qty/l2Net lines above do: units whole, money to cents.
+// Synthetic "Auction" carries `l3Rows: []` and so contributes nothing — correct,
+// it is a manual Sheet entry, not a Clover category.
+function l3MapsFrom(categories) {
+  const qty = {}, net = {};
+  for (const c of categories) {
+    if (!Array.isArray(c.l3Rows) || !c.l3Rows.length) continue;
+    const q = qty[c.category] || (qty[c.category] = {});
+    const n = net[c.category] || (net[c.category] = {});
+    for (const l of c.l3Rows) {
+      const k = normalizeL3Key(l.l3);
+      q[k] = (q[k] || 0) + (Number(l.qty) || 0);
+      n[k] = (n[k] || 0) + (Number(l.netSales) || 0);
+    }
+  }
+  for (const cat of Object.keys(qty)) {
+    for (const k of Object.keys(qty[cat])) qty[cat][k] = Math.round(qty[cat][k]);
+    for (const k of Object.keys(net[cat])) net[cat][k] = roundCents(net[cat][k]);
+  }
+  return { l3Qty: qty, l3Net: net };
+}
+
+// The stored shape of a `week-summary:` KV value. TWO call sites write these —
+// writeWeekSummary below (cron) and ?action=rebuild-week-summaries (operator) —
+// and they drifted apart as separate object literals. Adding l3Qty/l3Net to only
+// one would have left the operator rebuild writing L3-less entries, which is
+// exactly the rebuild T13 depends on. One function now, asserted by
+// scripts/test-t13-l3.mjs.
+function weekSummaryPayload(store, week, year, dates, bundle) {
+  return {
+    store, week: String(week), year: Number(year), dates,
+    totals: bundle.totals,
+    l2Qty: bundle.l2Qty || {},
+    l2Net: bundle.l2Net || {},
+    l3Qty: bundle.l3Qty || {},
+    l3Net: bundle.l3Net || {},
+    snapshotTime: new Date().toISOString(),
   };
 }
 
@@ -2364,13 +2436,7 @@ async function writeWeekSummary(env, store, week, year) {
   const dates = await resolveWeekDates(env, week, year);
   if (!dates.length) return null;
   const bundle = await buildStoreWeekly(env, store, dates);
-  const payload = {
-    store, week: String(week), year: Number(year), dates,
-    totals: bundle.totals,
-    l2Qty: bundle.l2Qty || {},
-    l2Net: bundle.l2Net || {},
-    snapshotTime: new Date().toISOString(),
-  };
+  const payload = weekSummaryPayload(store, week, year, dates, bundle);
   await env.SALES_SNAPSHOTS.put(
     `week-summary:${store.toLowerCase()}:${week}-${year}`,
     JSON.stringify(payload)
@@ -11692,11 +11758,18 @@ export default {
         // to a subset of stores without an extra API round-trip.
         const perStoreL2UnitsByWeek = [];
         const perStoreL2NetByWeek = [];
+        // Same idea one level down: { storeKey: { L2Name: { L3Name: qty/net } } }.
+        // No combined l3 arrays are shipped — the client sums these for both the
+        // all-stores and the filtered case, so there is one code path, not two.
+        const perStoreL3UnitsByWeek = [];
+        const perStoreL3NetByWeek = [];
         for (const wkObj of weeks) {
           const wk = wkObj.week;
           const perStore = {};
           const perStoreL2 = {};
           const perStoreL2Net = {};
+          const perStoreL3 = {};
+          const perStoreL3Net = {};
           // Shared BL12/BL16 account: attribute this whole week to one store.
           // wkObj.start is the week's MIN(date); the cutover is a week boundary.
           const isPostCutover = (wkObj.start || "") >= WRS_CUTOVER;
@@ -11710,6 +11783,8 @@ export default {
               perStore[s] = { netSales: 0, qty: 0, transactions: 0, asp: 0, laborPct: 0, budget: 0, auction: 0 };
               perStoreL2[s] = {};
               perStoreL2Net[s] = {};
+              perStoreL3[s] = {};
+              perStoreL3Net[s] = {};
               return;
             }
             let summary = null;
@@ -11725,14 +11800,18 @@ export default {
               const dates = await resolveWeekDates(env, wk, (wkObj.start || "").slice(0, 4) || year);
               if (dates.length) {
                 const bundle = await buildStoreWeekly(env, s, dates);
-                summary = { totals: bundle.totals, l2Qty: bundle.l2Qty, l2Net: bundle.l2Net };
+                summary = { totals: bundle.totals, l2Qty: bundle.l2Qty, l2Net: bundle.l2Net, l3Qty: bundle.l3Qty, l3Net: bundle.l3Net };
               } else {
-                summary = { totals: { netSales: 0, qty: 0, transactions: 0, asp: 0, laborPct: 0, budget: 0 }, l2Qty: {}, l2Net: {} };
+                summary = { totals: { netSales: 0, qty: 0, transactions: 0, asp: 0, laborPct: 0, budget: 0 }, l2Qty: {}, l2Net: {}, l3Qty: {}, l3Net: {} };
               }
             }
             perStore[s] = summary.totals;
             perStoreL2[s] = summary.l2Qty || {};
             perStoreL2Net[s] = summary.l2Net || {};
+            // A summary pre-rolled before L3 shipped has no l3Qty — `{}` here, so
+            // the card renders L2-only until ?action=rebuild-week-summaries runs.
+            perStoreL3[s] = summary.l3Qty || {};
+            perStoreL3Net[s] = summary.l3Net || {};
           }));
 
           let wkNet = 0, wkQty = 0, wkTxn = 0, wkBudget = 0, wkLaborNum = 0, wkLaborDen = 0, wkAuction = 0;
@@ -11787,6 +11866,14 @@ export default {
               [s, Object.fromEntries(Object.entries(cats).map(([k, v]) => [k, roundCents(v)]))]
             ))
           );
+          perStoreL3UnitsByWeek.push({ ...perStoreL3 });
+          perStoreL3NetByWeek.push(
+            Object.fromEntries(Object.entries(perStoreL3Net).map(([s, cats]) =>
+              [s, Object.fromEntries(Object.entries(cats).map(([cat, rows]) =>
+                [cat, Object.fromEntries(Object.entries(rows).map(([k, v]) => [k, roundCents(v)]))]
+              ))]
+            ))
+          );
         }
 
         if (liveBuilds > 0) {
@@ -11802,6 +11889,8 @@ export default {
           l2Net: l2NetByWeek,
           perStoreL2Units: perStoreL2UnitsByWeek,
           perStoreL2Net: perStoreL2NetByWeek,
+          perStoreL3Units: perStoreL3UnitsByWeek,
+          perStoreL3Net: perStoreL3NetByWeek,
           liveBuilds,
         }), { headers: corsJson });
       } catch (err) {
@@ -13463,13 +13552,7 @@ export default {
         const settled = await Promise.allSettled(
           ALL_STORES.map(async (store) => {
             const bundle = await buildStoreWeekly(env, store, dates);
-            const payload = {
-              store, week: String(wk), year: Number(year), dates,
-              totals: bundle.totals,
-              l2Qty: bundle.l2Qty || {},
-              l2Net: bundle.l2Net || {},
-              snapshotTime: new Date().toISOString(),
-            };
+            const payload = weekSummaryPayload(store, wk, year, dates, bundle);
             await env.SALES_SNAPSHOTS.put(
               `week-summary:${store.toLowerCase()}:${wk}-${year}`,
               JSON.stringify(payload)
