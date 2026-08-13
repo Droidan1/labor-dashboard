@@ -13535,10 +13535,36 @@ export default {
       // 7 stores × (1 D1 + 7 KV get + 1 KV put = 9)] = 1 + 13×64 = 833. Under
       // Cloudflare's 1,000-per-invocation cap.
       const trailing = Math.max(1, Math.min(20, parseInt(url.searchParams.get("weeks") || "13", 10)));
+
+      // 🛑 "Trailing 13 weeks" means BY DATE, anchored at today — not the 13
+      // highest week labels. Two things broke the old
+      // `ORDER BY week DESC LIMIT 13`:
+      //
+      //   1. `week` is TEXT, so DESC sorts lexicographically: '9' > '52' > '33'.
+      //   2. `daily_sales` is seeded with FUTURE rows (budget/labour land ahead
+      //      of sales) — on 2026-08-13 it already held every week out to 52
+      //      (2026-12-26).
+      //
+      // Together those selected ['9','8','7','6','52','51','50','5',…]: not one
+      // of the 13 weeks T13 charts. The button says "re-rolls the trailing 13
+      // weeks" and reported success while rebuilding weeks nobody was looking
+      // at. Anchor on MIN(date) the same way ?action=weekly-t13 does, and cap at
+      // today so pre-seeded future weeks cannot crowd out real ones.
+      const anchor = url.searchParams.get("end") || getETToday().dateStr;
       const { results } = await env.DB.prepare(
-        "SELECT DISTINCT week FROM daily_sales WHERE date LIKE ? ORDER BY week DESC LIMIT ?"
-      ).bind(`${year}-%`, trailing).all();
-      const weeks = (results || []).map(r => r.week).filter(Boolean).reverse();
+        `SELECT week, MIN(date) AS start_date
+           FROM daily_sales
+          WHERE week IS NOT NULL AND date LIKE ? AND date <= ?
+          GROUP BY week
+          ORDER BY MIN(date) DESC
+          LIMIT ?`
+      ).bind(`${year}-%`, anchor, trailing).all();
+      // Each week carries its OWN year, taken from its start date — the KV key
+      // and resolveWeekDates must agree with what weekly-t13 reads back.
+      const weeks = (results || [])
+        .filter(r => r.week)
+        .map(r => ({ week: String(r.week), year: String(r.start_date).slice(0, 4) }))
+        .reverse();
 
       // 🔑 WRS_STORES, not ALL_STORES. T13 reads week summaries for every store
       // it charts, and that includes closed Wyoming (BL12) — which is the LIVE
@@ -13548,10 +13574,14 @@ export default {
       // combined card's L3 rows silently stopped summing to their L2 parent for
       // those weeks.
       const REBUILD_STORES = WRS_STORES;
-      const summary = { year: Number(year), weeks: weeks.length, stores: REBUILD_STORES.length, written: 0, errors: [] };
-      for (const wk of weeks) {
+      const summary = {
+        year: Number(year), weeks: weeks.length, stores: REBUILD_STORES.length,
+        weekLabels: weeks.map(w => w.week),   // so a caller can SEE what was rebuilt
+        written: 0, errors: [],
+      };
+      for (const { week: wk, year: wkYear } of weeks) {
         // Resolve dates ONCE per week, reuse across every store.
-        const dates = await resolveWeekDates(env, wk, year);
+        const dates = await resolveWeekDates(env, wk, wkYear);
         if (!dates.length) continue;
 
         // Parallel per store within a week — drops wall-clock per week from ~5s
@@ -13563,9 +13593,9 @@ export default {
           const settled = await Promise.allSettled(
             batch.map(async (store) => {
               const bundle = await buildStoreWeekly(env, store, dates);
-              const payload = weekSummaryPayload(store, wk, year, dates, bundle);
+              const payload = weekSummaryPayload(store, wk, wkYear, dates, bundle);
               await env.SALES_SNAPSHOTS.put(
-                `week-summary:${store.toLowerCase()}:${wk}-${year}`,
+                `week-summary:${store.toLowerCase()}:${wk}-${wkYear}`,
                 JSON.stringify(payload)
               );
               return store;

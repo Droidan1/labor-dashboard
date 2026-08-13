@@ -236,6 +236,37 @@ ok(Object.keys(u[iPost].BL16 || {}).length > 0, 'BL16 L3 is populated after the 
      `every store is written each week (7 per week), got ${b.written} over ${b.weeks} weeks`);
 }
 
+// ── the rebuild picks the trailing weeks BY DATE, not by week label ─────────
+// Two real production conditions, reproduced together:
+//   · `week` is TEXT, so ORDER BY week DESC sorts '9' above '52' above '33'
+//   · daily_sales is seeded with FUTURE rows (budget/labour land ahead of sales)
+// On 2026-08-13 prod already held every week out to 52 (2026-12-26), and the
+// old query returned ['9','8','7','6','52','51','50','5',…] — not one of the 13
+// weeks T13 charts. The endpoint then reported success having rebuilt weeks
+// nobody was looking at.
+{
+  const insF = db.prepare(
+    'INSERT INTO daily_sales (store,date,week,total,retail,bin,auction,order_count,budget,labor_pct) VALUES (?,?,?,?,?,?,?,?,?,?)');
+  // A low-numbered past week that sorts HIGH as text, and future weeks that
+  // sort high both as text and as integers.
+  insF.run('BL1', '2026-03-01', '9', 0, 0, 0, 0, 0, 900, 0);
+  insF.run('BL1', '2026-11-01', '45', 0, 0, 0, 0, 0, 900, 0);
+  insF.run('BL1', '2026-12-20', '52', 0, 0, 0, 0, 0, 900, 0);
+
+  const r = await worker.fetch(
+    req('/?action=rebuild-week-summaries&year=2026&weeks=2&end=2026-06-15', { user: 'u-su', method: 'POST' }), env, ctx);
+  const b = JSON.parse(await r.text());
+  ok(r.status === 200 && b.ok, `rebuild still succeeds, got ${r.status}`);
+  ok(Array.isArray(b.weekLabels), 'the response reports which weeks it rebuilt');
+  const picked = (b.weekLabels || []).map(String);
+  ok(picked.length === 2, `weeks=2 rebuilds exactly 2 weeks, got ${picked.length}: ${picked}`);
+  ok(!picked.includes('52') && !picked.includes('45'),
+     `future weeks are never selected, got ${picked}`);
+  ok(!picked.includes('9'), `a low week that sorts high as TEXT is not selected, got ${picked}`);
+  ok(picked.includes(WK_POST.week) && picked.includes(WK_PRE.week),
+     `the two weeks nearest the anchor are selected, got ${picked}`);
+}
+
 // ── a pre-cutover week keeps L3 == L2 once BL12 has a stored summary ────────
 // The live-build fallback masked the gap above: with no stored summary, BL12
 // built fresh and had L3. This re-reads AFTER the rebuild, which is the state
