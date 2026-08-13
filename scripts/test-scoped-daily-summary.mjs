@@ -298,5 +298,75 @@ ok('no key -> nothing was sent', noKey.sends.length === 0, `${noKey.sends.length
 ok('no key -> logged as skipped', nkRows.some(x => x.status === 'skipped' && x.n === 1), JSON.stringify(nkRows));
 ok('no key -> nothing claims to have been sent', !nkRows.some(x => x.status === 'sent'), JSON.stringify(nkRows));
 
+// 🛑 Every notification cron was ctx.waitUntil(dispatch().then(log)) with no
+// .catch(). A throw took the whole run with it — no email, no push, no alert,
+// one unhandled rejection nobody reads. The daily summary being wrong is
+// survivable; not knowing it never ran is not.
+console.log('\na cron that THROWS alerts instead of vanishing:');
+{
+  // Break the run at its first D1 read so the dispatch rejects for real, rather
+  // than simulating a rejection the production path could never produce.
+  const pushes = [];
+  responder = () => new Response(JSON.stringify({ id: 'x' }), { status: 200 });
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, role TEXT, stores TEXT, status TEXT);`);
+  let reads = 0;
+  const env = {
+    DB: { prepare(sql) {
+      const mk = p => ({
+        bind: (...a) => mk(a),
+        all: async () => { reads++; throw new Error('D1 unavailable'); },
+        run: async () => { throw new Error('D1 unavailable'); },
+        first: async () => { throw new Error('D1 unavailable'); },
+      });
+      return mk([]);
+    } },
+    RESEND_API_KEY: 'k',
+  };
+  const waits = [];
+  const errs = [];
+  const realErr = console.error, realLog = console.log;
+  console.error = (...a) => errs.push(a.join(' '));
+  console.log = (...a) => errs.push(a.join(' '));
+  let threw = false;
+  try {
+    await worker.scheduled({ cron: '0 12 * * *', scheduledTime: Date.now() }, env,
+      { waitUntil: p => waits.push(p), passThroughOnException: () => {} });
+    // 🔑 waitUntil's promise must RESOLVE. A rejecting promise here is the bug:
+    // the runtime swallows it and the operator learns nothing.
+    await Promise.all(waits);
+  } catch (e) { threw = true; }
+  console.error = realErr; console.log = realLog;
+
+  ok('the dispatch really did fail (guard against a vacuous pass)', reads > 0, `${reads} D1 reads`);
+  ok('waitUntil resolves rather than rejecting', !threw);
+  ok('the failure is logged with its job name',
+     errs.some(l => l.includes('daily-summary') && (l.includes('threw') || l.includes('cron_job_failed'))),
+     JSON.stringify(errs.slice(0, 3)));
+  ok('an alert is raised, not just a log line',
+     errs.some(l => l.includes('cron_job_failed') && l.includes('D1 unavailable')),
+     JSON.stringify(errs.filter(l => l.includes('cron_job_failed')).slice(0, 2)));
+}
+
+// A partly-failed fan-out resolves CLEANLY carrying counters — 3 of 12 emails
+// refused looks exactly like success unless something reads summary.email.failed.
+console.log('\na partial fan-out failure is treated as a failure:');
+{
+  const problem = (() => {
+    // Exercise the real predicate through the module's own shape.
+    const src2 = fs.readFileSync(path.join(REPO, 'worker.js'), 'utf8');
+    const m = src2.match(/function cronJobProblem\(r\) \{[\s\S]*?\n\}/);
+    if (!m) { console.error('FATAL: cronJobProblem not found'); process.exit(1); }
+    return new Function(m[0] + '; return cronJobProblem;')();
+  })();
+  ok('clean run -> no problem', problem({ ok: true, summary: { email: { sent: 4, failed: 0 } } }) === null);
+  ok('3 of 12 refused -> flagged',
+     (problem({ summary: { email: { sent: 9, failed: 3 } } }) || '').includes('3 email(s) failed'));
+  ok('scoped-side failures counted too',
+     (problem({ summary: { email: { failed: 1 } }, scoped: { email: { failed: 2 } } }) || '').includes('3 email(s) failed'));
+  ok('a resolved { error } is flagged', (problem({ error: 'DB not configured' }) || '').includes('DB not configured'));
+  ok('a scoped { error } is flagged', (problem({ scoped: { error: 'boom' } }) || '').includes('boom'));
+}
+
 console.log(fail ? `\n${fail} FAILED` : '\nall assertions passed');
 process.exit(fail ? 1 : 0);

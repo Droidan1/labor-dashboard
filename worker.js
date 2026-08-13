@@ -5897,20 +5897,16 @@ async function dispatchWeeklyDigest(env, startDate, endDate) {
 }
 
 // Push-only alert to superusers when the nightly snapshot cron has store errors.
-async function dispatchCronFailureAlert(env, failedStores) {
-  if (!env.DB || !env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return;
-  const storeList = failedStores.join(', ');
-  const payload = JSON.stringify({
-    title: '⚠️ Snapshot Error',
-    body: `${storeList} failed to snapshot. Check the dashboard.`,
-    tag: 'cron-error',
-    url: '/',
-  });
-
+// Push to every active superuser. The one copy of this loop — the snapshot
+// alert and the notification-job alert below both go through it.
+async function pushSuperusers(env, { title, body, tag, url = '/' }) {
+  if (!env.DB || !env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return { sent: 0 };
+  const payload = JSON.stringify({ title, body, tag, url });
   const { results: superusers } = await env.DB.prepare(
     "SELECT id FROM users WHERE role = 'superuser' AND status = 'active'"
   ).all();
 
+  let sent = 0;
   for (const user of (superusers || [])) {
     const { results: subs } = await env.DB.prepare(
       'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?'
@@ -5920,10 +5916,77 @@ async function dispatchCronFailureAlert(env, failedStores) {
         const res = await sendWebPush(env, sub, payload);
         if (res.expired) {
           await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
-        }
-      } catch (e) { console.error('Cron failure push error:', e.message); }
+        } else sent++;
+      } catch (e) { console.error('Superuser push error:', e.message); }
     }
   }
+  return { sent };
+}
+
+async function dispatchCronFailureAlert(env, failedStores) {
+  return pushSuperusers(env, {
+    title: '⚠️ Snapshot Error',
+    body: `${failedStores.join(', ')} failed to snapshot. Check the dashboard.`,
+    tag: 'cron-error',
+  });
+}
+
+// ── Cron job supervision ────────────────────────────────────────────────────
+// 🛑 Every notification cron was `ctx.waitUntil(dispatch(...).then(log))` with
+// NO .catch(). A throw anywhere inside — buildDailySummaryData on a bad day, a
+// D1 blip, a KV timeout — took the whole run with it: no email, no push, no
+// alert, and one unhandled rejection nobody reads. The daily summary being
+// wrong is survivable; not knowing it never ran is not.
+//
+// 🔑 A THROW IS NOT THE ONLY FAILURE. Several dispatchers report a problem by
+// RESOLVING with an { error }, and a partly-failed fan-out resolves cleanly
+// carrying counters — 3 of 12 emails refused looks exactly like success unless
+// something reads `summary.email.failed`. Both are treated as failures here.
+function cronJobProblem(r) {
+  if (!r || typeof r !== 'object') return null;
+  const bits = [];
+  if (r.error) bits.push(String(r.error));
+  if (r.scoped && r.scoped.error) bits.push(`scoped: ${r.scoped.error}`);
+  const failed =
+    ((r.summary && r.summary.email && r.summary.email.failed) || 0) +
+    ((r.scoped && r.scoped.email && r.scoped.email.failed) || 0);
+  if (failed > 0) bits.push(`${failed} email(s) failed`);
+  return bits.length ? bits.join(' · ') : null;
+}
+
+// ⚠️ Never throws. This is the last line of defence — if the alert itself
+// fails there is nothing left to notify with, so the console line is the record.
+async function alertJobFailure(env, job, detail) {
+  try {
+    console.error(JSON.stringify({ cron_job_failed: job, detail: String(detail).slice(0, 300) }));
+    await pushSuperusers(env, {
+      title: '⚠️ Notification job failed',
+      body: `${job}: ${String(detail).slice(0, 120)}`,
+      tag: `cron-fail-${job}`,
+    });
+  } catch (e) {
+    console.error('Failure alert itself failed:', e && e.message);
+  }
+}
+
+// Wrap a cron dispatch so neither a throw nor a quietly-reported problem can
+// pass unnoticed. Returns a promise that NEVER rejects — it is handed straight
+// to ctx.waitUntil, where a rejection would be swallowed by the runtime anyway.
+function superviseCronJob(env, job, promise) {
+  return Promise.resolve(promise)
+    .then(async r => {
+      console.log(`${job}:`, JSON.stringify(r));
+      const problem = cronJobProblem(r);
+      if (problem) await alertJobFailure(env, job, problem);
+      return r;
+    })
+    .catch(async e => {
+      // The stack matters here: these failures are rare and the message alone
+      // rarely says which builder gave up.
+      console.error(`${job} threw:`, (e && e.stack) || e);
+      await alertJobFailure(env, job, (e && e.message) || String(e));
+      return { error: String((e && e.message) || e) };
+    });
 }
 
 // Push-only interval sales summary to opted-in users (1h or 3h cadence).
@@ -13954,9 +14017,7 @@ export default {
     // Route by cron expression.
     // "0 * * * *" — top-of-hour interval sales summary push notifications
     if (event.cron === "0 * * * *") {
-      ctx.waitUntil(
-        dispatchIntervalSummary(env).then(r => console.log("Interval summary dispatch:", JSON.stringify(r)))
-      );
+      ctx.waitUntil(superviseCronJob(env, "interval-summary", dispatchIntervalSummary(env)));
       return;
     }
 
@@ -13973,9 +14034,7 @@ export default {
     if (event.cron === "0 12 * * *") {
       const yesterday = new Date(Date.now() - 24 * 3600 * 1000);
       const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(yesterday);
-      ctx.waitUntil(
-        dispatchDailySummary(env, date).then(r => console.log("Daily summary dispatch:", JSON.stringify(r)))
-      );
+      ctx.waitUntil(superviseCronJob(env, "daily-summary", dispatchDailySummary(env, date)));
       return;
     }
 
@@ -13988,10 +14047,7 @@ export default {
       const endD = new Date(Date.now() - 24 * 3600 * 1000);
       const startD = new Date(endD.getTime() - 6 * 24 * 3600 * 1000);
       const etFmt = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);
-      ctx.waitUntil(
-        dispatchWeeklyDigest(env, etFmt(startD), etFmt(endD))
-          .then(r => console.log("Weekly digest dispatch:", JSON.stringify(r)))
-      );
+      ctx.waitUntil(superviseCronJob(env, "weekly-digest", dispatchWeeklyDigest(env, etFmt(startD), etFmt(endD))));
       return;
     }
 
