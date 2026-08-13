@@ -6430,21 +6430,30 @@ async function notifySupplyRequestNew(env, { requestId, requesterId, requesterEm
       } catch (e) { console.error('Supply new push error:', e.message); }
     }
 
-    // Email superusers
-    if (env.RESEND_API_KEY) {
-      const html = buildSupplyRequestEmailHtml({ requesterEmail, store, priority, notes, items, requestId });
-      for (const u of superusers) {
-        await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            from: 'RETJG HUB <noreply@retjghub.com>',
-            to: u.email,
-            subject: `${urgentPrefix}New Supply Request — ${storeLabel}`,
-            html,
-          }),
-        }).catch(e => console.error('Supply email error:', e.message));
+    // Email superusers.
+    //
+    // 🛑 This was `await fetch(...).catch(log)` with NO res.ok check, so a 429,
+    // a 422 or a 500 was not merely unretried — it was completely invisible.
+    // The .catch() only ever fired on a network error. Through resendSend a
+    // transient failure retries, and every outcome lands in notification_log.
+    //
+    // The RESEND_API_KEY gate is gone on purpose: resendSend reports an absent
+    // key as `skipped`, which is then recorded, rather than the whole branch
+    // silently not existing.
+    const html = buildSupplyRequestEmailHtml({ requesterEmail, store, priority, notes, items, requestId });
+    for (const u of superusers) {
+      // A request is created once, so keying on request+recipient makes a
+      // double-POST idempotent too, not just resendSend's internal retry.
+      const r = await resendSend(env, {
+        from: 'RETJG HUB <noreply@retjghub.com>',
+        to: u.email,
+        subject: `${urgentPrefix}New Supply Request — ${storeLabel}`,
+        html,
+      }, `supply-new-${requestId}-${u.id}`);
+      if (!r.ok && !r.skipped) {
+        console.error(`Supply new email failed for ${u.email} after ${r.attempts} attempt(s): ${r.error}`);
       }
+      await logEmailAttempt(env, { userId: u.id, eventType: 'supply-request-new', result: r });
     }
   }
 
@@ -6546,19 +6555,34 @@ async function notifySupplyStatusChange(env, { requestId, requesterId, requester
     } catch (e) { console.error('Supply status push error:', e.message); }
   }
 
-  // Email
-  if (env.RESEND_API_KEY && requesterEmail) {
+  // Email — same story as notifySupplyRequestNew: previously fire-and-forget
+  // with no res.ok check, so every non-2xx vanished.
+  if (requesterEmail) {
     const html = buildStatusUpdateEmailHtml({ store, oldStatus, newStatus, note, requestId });
-    await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: 'RETJG HUB <noreply@retjghub.com>',
-        to: requesterEmail,
-        subject: `Supply Request Update — ${storeLabel}`,
-        html,
-      }),
-    }).catch(e => console.error('Supply status email error:', e.message));
+    // 🔑 A PER-CALL key, deliberately not one derived from requestId + status.
+    // The key's job here is only to stop resendSend's own retry from delivering
+    // twice.
+    //
+    // A stable `requestId + newStatus` key would look safe — the endpoint
+    // refuses a no-op update, so the same status cannot be set twice in a row —
+    // but status CYCLES: pending → under_review → on_hold → under_review is an
+    // ordinary week, and the second under_review is a real notification the
+    // requester needs. A stable key would have Resend silently drop it inside
+    // the idempotency window.
+    //
+    // Where a stable key IS correct it is used: a request is created exactly
+    // once, so notifySupplyRequestNew keys on request+recipient and gets
+    // double-POST protection for free.
+    const r = await resendSend(env, {
+      from: 'RETJG HUB <noreply@retjghub.com>',
+      to: requesterEmail,
+      subject: `Supply Request Update — ${storeLabel}`,
+      html,
+    }, `supply-status-${requestId}-${randomHex(6)}`);
+    if (!r.ok && !r.skipped) {
+      console.error(`Supply status email failed for ${requesterEmail} after ${r.attempts} attempt(s): ${r.error}`);
+    }
+    await logEmailAttempt(env, { userId: requesterId, eventType: 'supply-status-change', result: r });
   }
 }
 
