@@ -115,6 +115,33 @@ double-counted stores the gate zeroes. The measured worst case is **Wk 21
 Coliseum, +$6,265.80**, and BL12's stored entries do not move at all — its
 history is frozen.
 
+## Shipped 2026-08-13 — one step left
+
+- **Worker** — deployed from `main`, version `6766d6ab-9e70-4781-bd88-34d208d5bda0`, 100%.
+  Bindings and all 6 crons re-verified on the deploy output. Three consecutive clean
+  passes against prod (structured 401, not a 500; `auth-me` 200).
+- **Frontend** — `main` `452746a`, Pages run `31750492068` green, and the live site
+  verified by content: `sw.js` at `v77`, and `toggleT13AllL2` / `sumPerStoreL3` /
+  `perStoreL3Units` / `l3RowsFor` / `t13ExpandedL2` / `Other / unmapped` all present in
+  the served `index.html`, with pre-existing markers intact (not a partial tree).
+- 🛑 **The re-roll has NOT run.** `?action=rebuild-week-summaries` is a POST, and
+  `requireAdminAccess` requires `role === "superuser"` or the `X-Snapshot-Secret` header
+  for any mutating method. Neither is available outside a signed-in browser session, so
+  this step must be done by a superuser from **Settings → Rebuild Week Summaries**.
+
+**Current state is clean and looks exactly like it did before.** All 84 non-gated
+(store, week) entries have a stored, L3-less summary, so `perStoreL3*` comes back empty
+and T13 renders no chevrons and no L3 rows. The 7 entries with no stored summary are
+precisely the gated store-weeks (BL16 pre-cutover, BL12 post-cutover), which are zeroed
+before KV is ever read — so nothing live-builds and nothing renders half-populated.
+
+⏰ **That stops being true at 03:55 UTC (11:55 PM ET) tonight.** The daily snapshot cron
+calls `rollupWeekSummariesIfReady`, which rewrites the *current* week only — so week 33
+would gain L3 while weeks 21–32 stay without it. T13 would then show expandable rows whose
+children are populated in the newest column and zero everywhere else, not summing to their
+parent. Running the re-roll before then avoids that window entirely; running it afterwards
+fixes it just the same.
+
 ## Rollout order
 
 1. Deploy the worker from `main`. Verify by content (`grep -q normalizeL3Key worker.js`)
