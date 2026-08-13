@@ -158,8 +158,8 @@ Gaps:
 ### P0 — restore the missing mail
 1. ✅ **DONE (built + tested locally, NOT deployed).** Store-scoped daily email for
    managers — see "What shipped" below.
-2. ⬜ **Unblock kevin@retjg.com** — verify the address, resend, confirm the response.
-   Invited 2026-07-27, re-invited 07-29, still never signed in.
+2. 🟡 **kevin@retjg.com** — the machinery is fixed and deployed (see "Kevin" below); the
+   remaining step needs a human with the Resend dashboard and knowledge of the address.
 
 ### P0 — stop the UI claiming otherwise
 3. ✅ **DONE.** The weekly-digest toggle is now admin/superuser-gated
@@ -171,14 +171,17 @@ Gaps:
    had.
 
 ### P1 — make failures visible
-5. Write real status + error to `notification_log` in both email dispatchers (copy
-   `sendEbayAlert`).
-6. `.catch()` on the email crons, wired to `dispatchCronFailureAlert`.
-7. Persist invite-email failures so "who never got their invite" is a query.
+5. ✅ **DONE.** Daily and weekly now record the real outcome. The hardcoded
+   `status = 'sent'` is gone from every insert.
+6. ⬜ `.catch()` on the email crons, wired to `dispatchCronFailureAlert`. **Still open** —
+   a throw in `buildDailySummaryData` still loses the whole run silently.
+7. ✅ **DONE.** `logEmailAttempt()` records both invite paths under event_type `invite` /
+   `invite-resend`.
 
 ### P1 — retries
-8. Retry Resend on 429/5xx, 3 attempts with backoff, plus an `Idempotency-Key` so a retry
-   can't duplicate. Highest-value single change for transient failures.
+8. ✅ **DONE.** `resendSend()` retries 429/5xx/network 3× with backoff and sends a stable
+   `Idempotency-Key`. A 4xx other than 429 returns immediately — a refused address is a
+   permanent answer. Now used by invite, magic-link, daily (both loops) and weekly.
 
 ### P2 — deliverability
 9. `List-Unsubscribe` + `List-Unsubscribe-Post` and a real `reply_to` on bulk mail.
@@ -249,6 +252,74 @@ the email from real prod rows and reading it surfaced the mislabel.
 
 🔑 Lesson: a table that does not render cannot be asserted on. Seed the data that makes
 every section appear, or the assertions pass against nothing.
+
+---
+
+## Kevin — 2026-08-13 (worker `300ace53`, main `29877a3`)
+
+### A dead end that looked like evidence
+
+`magic_links.used_at` is NULL for both of Kevin's invites — which looks damning until you
+check the rest of the table. **Every invite before ~2026-06-23 was consumed; not one since
+has been.** That is not a delivery cliff: it is the commit that removed the tokenized link
+from the invite email (the token is still written, deliberately unused — worker.js
+`sendInviteEmail`). bhoward's own 07-30 invite is also "never used", and the superuser
+plainly has access.
+
+🔑 **`used_at` on an invite has been a dead signal since June.** Do not read it as
+delivery. The real signals are `users.last_login`, `sessions`, and `magic_links` rows
+carrying an `otp_code` (one per sign-in attempt).
+
+Two typo'd invites are in that history — `nmartinez@retjg.**con**` and
+`adara@bargainlane.**om**` — each followed by a correct one that was used. Mistyped
+addresses are an established failure mode here. Kevin's two invites are both spelled
+`kevin@retjg.com`, and the domain matches three working colleagues, so a typo is unlikely
+but not excluded.
+
+### What the evidence actually says
+
+| | |
+|---|---|
+| Invited | 2026-07-27, re-invited 07-29 |
+| `last_login` / sessions | **never** / **0** |
+| Sign-in attempts (`otp_code` rows) | **0** — he has never even tried |
+| Messages sent to that address | **19** (2 invites + ~17 daily summaries — he is one of the 4 chain-wide recipients) |
+
+19 messages, zero engagement. Until today every one of those was logged `'sent'`
+unconditionally, so **the log cannot distinguish "Resend accepted it" from "Resend
+refused it"** — which is exactly why 17 days passed with nobody able to answer the
+question.
+
+### Fixed and deployed
+
+`resendSend()` (retry + `Idempotency-Key`) and `logEmailAttempt()` — so the next resend
+records what Resend actually said, and a transient failure no longer loses the message.
+The invite also gained a `reply_to` that reaches a person; it was going out from a
+no-reply address, which is a poor choice for the one email whose recipient most needs to
+say "this didn't work".
+
+### The remaining step needs a human
+
+I cannot call `resend-invite` — it requires a superuser session and has no
+`X-Snapshot-Secret` bypass. **Brian: click Resend invite on the Users page**, then:
+
+```sql
+SELECT event_type, status, error, created_at FROM notification_log l
+  JOIN users u ON u.id = l.user_id
+ WHERE u.email = 'kevin@retjg.com' AND l.type = 'email'
+ ORDER BY created_at DESC LIMIT 5;
+```
+
+- `status = 'failed'` → the error text names the cause (bad address, suppressed, blocked).
+- `status = 'sent'` → Resend **accepted** it. That is not proof of delivery: check the
+  Resend dashboard for `kevin@retjg.com` for a **hard bounce or suppression**. A single
+  early bounce would have put the address on Resend's suppression list, after which every
+  send succeeds at the API and silently goes nowhere — consistent with all 19.
+- If Resend shows clean deliveries, the address works and Kevin simply has not signed in.
+  Ask him to check spam (`retjghub.com` publishes DMARC `p=quarantine`, and the bulk mail
+  still has no `List-Unsubscribe` header — P2 #9).
+
+---
 
 ### Verified against real production data (read-only)
 
