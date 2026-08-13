@@ -34,11 +34,17 @@ globalThis.Date = class extends RealDate {
 
 // Capture Resend sends. Everything else on the network is refused loudly rather
 // than stubbed to 200 — a silent success would hide a call we did not expect.
+// `responder` is swappable so the retry tests at the bottom can fail on demand;
+// it counts ATTEMPTS, while `sends` records one entry per HTTP call (so a
+// retried message appears more than once, which is what the retry test needs).
 const sends = [];
+let responder = () => new Response(JSON.stringify({ id: 'msg_test' }), { status: 200 });
 globalThis.fetch = async (url, opts = {}) => {
   if (String(url) === 'https://api.resend.com/emails') {
-    sends.push(JSON.parse(opts.body));
-    return new Response(JSON.stringify({ id: 'msg_test' }), { status: 200 });
+    const body = JSON.parse(opts.body);
+    body.__key = (opts.headers || {})['Idempotency-Key'];
+    sends.push(body);
+    return responder(body, sends.length);
   }
   throw new Error(`unexpected network call: ${url}`);
 };
@@ -232,23 +238,45 @@ ok('scoped sends are logged', rows.some(x => x.event_type === 'daily-summary-sco
    JSON.stringify(rows));
 
 console.log('\na failing Resend is recorded as failed, not as sent:');
-globalThis.fetch = async (url, opts = {}) => {
-  if (String(url) === 'https://api.resend.com/emails') {
-    sends.push(JSON.parse(opts.body));
-    return new Response('rate limited', { status: 429 });
-  }
-  throw new Error(`unexpected network call: ${url}`);
-};
+responder = () => new Response('rate limited', { status: 429 });
 const bad = await run([SU, M1]);
 const badRows = bad.db.prepare("SELECT status, COUNT(*) n FROM notification_log WHERE event_type='daily-summary-scoped' GROUP BY status").all();
 console.log('   notification_log:', JSON.stringify(badRows));
 ok('a 429 is logged as failed', badRows.some(x => x.status === 'failed' && x.n === 1), JSON.stringify(badRows));
 ok('nothing is logged as sent', !badRows.some(x => x.status === 'sent'), JSON.stringify(badRows));
 
+// Kevin's invite got two sends across three days and no retry on either. This
+// cron now emits 12 messages where it emitted 4, sequentially, against a mailer
+// that rate-limits around 2/sec — so "does a 429 actually get retried" is a
+// question about whether eight managers get their email, not a nicety.
+console.log('\na transient failure is retried rather than lost:');
+let n = 0;
+responder = () => (++n <= 2)
+  ? new Response('upstream hiccup', { status: 503 })   // fail the first two calls
+  : new Response(JSON.stringify({ id: 'msg_ok' }), { status: 200 });
+const flaky = await run([M1]);
+const flakyRows = flaky.db.prepare("SELECT status, COUNT(*) n FROM notification_log WHERE event_type='daily-summary-scoped' GROUP BY status").all();
+console.log(`   http calls=${flaky.sends.length}  notification_log=${JSON.stringify(flakyRows)}`);
+ok('two 503s then success -> 3 HTTP attempts', flaky.sends.length === 3, `${flaky.sends.length}`);
+ok('...and the message is ultimately SENT, not dropped',
+   flakyRows.some(x => x.status === 'sent' && x.n === 1), JSON.stringify(flakyRows));
+ok('...all three attempts carried the SAME Idempotency-Key (no duplicate delivery)',
+   new Set(flaky.sends.map(s => s.__key)).size === 1 && !!flaky.sends[0].__key,
+   JSON.stringify(flaky.sends.map(s => s.__key)));
+
+console.log('\nbut a permanent rejection is NOT retried:');
+responder = () => new Response('{"message":"Invalid `to` field"}', { status: 422 });
+const perm = await run([M1]);
+console.log(`   http calls=${perm.sends.length}`);
+ok('a 422 is attempted exactly once', perm.sends.length === 1, `${perm.sends.length}`);
+ok('...and recorded as failed', perm.db
+   .prepare("SELECT COUNT(*) n FROM notification_log WHERE event_type='daily-summary-scoped' AND status='failed'")
+   .get().n === 1);
+
 console.log('\nand an unconfigured mailer is "skipped", not "sent":');
 // Any send here would be a bug, so the network refuses outright rather than
 // returning a success the assertions could mistake for correct behaviour.
-globalThis.fetch = async (url) => { throw new Error(`must not send with no API key: ${url}`); };
+responder = () => { throw new Error('must not send with no API key'); };
 const noKey = await run([SU, M1], { noKey: true });
 const nkRows = noKey.db.prepare("SELECT status, COUNT(*) n FROM notification_log WHERE event_type='daily-summary-scoped' GROUP BY status").all();
 console.log('   notification_log:', JSON.stringify(nkRows));

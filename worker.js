@@ -5575,29 +5575,24 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
       const pref = prefMapAll[user.id] || { push_enabled: 1, daily_summary: 1 };
       let emailOk = null;
 
-      if (env.RESEND_API_KEY) {
-        try {
-          const res = await fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              from: 'RETJG HUB <noreply@retjghub.com>',
-              to: user.email,
-              subject: `Sales Summary${scopeSuffix} — ${displayDate}`,
-              html: emailHtml,
-            }),
-          });
-          emailOk = res.ok;
-          if (res.ok) summary.email.sent++;
-          else {
-            summary.email.failed++;
-            const err = await res.text().catch(() => '');
-            console.error(`Scoped email failed for ${user.email}: ${res.status} ${err.slice(0, 100)}`);
-          }
-        } catch (e) {
-          emailOk = false;
+      // 🔑 Through resendSend, which retries a 429. This cron now sends 12
+      // messages where it sent 4, sequentially, and Resend rate-limits around
+      // 2/sec — so a retry is not a nicety here, it is what stops the extra
+      // recipients from knocking each other's mail out.
+      // The idempotency key is stable per user+day: a retry inside one run
+      // cannot duplicate, and neither can a re-run of the same day.
+      const r = await resendSend(env, {
+        from: 'RETJG HUB <noreply@retjghub.com>',
+        to: user.email,
+        subject: `Sales Summary${scopeSuffix} — ${displayDate}`,
+        html: emailHtml,
+      }, `daily-scoped-${date}-${user.id}`);
+      if (!r.skipped) {
+        emailOk = r.ok;
+        if (r.ok) summary.email.sent++;
+        else {
           summary.email.failed++;
-          console.error(`Scoped email exception for ${user.email}:`, e.message);
+          console.error(`Scoped email failed for ${user.email} after ${r.attempts} attempt(s): ${r.error}`);
         }
       }
 
@@ -5719,36 +5714,37 @@ async function dispatchDailySummary(env, date) {
     }
 
     // ── Email ─────────────────────────────────────────────────────────────
-    if (pref.daily_summary && env.RESEND_API_KEY) {
-      try {
-        const displayDate = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-        const res = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            from: 'noreply@retjghub.com',
-            to: user.email,
-            subject: `Sales Summary — ${displayDate}`,
-            html: emailHtml,
-          }),
-        });
-        if (res.ok) {
-          summary.email.sent++;
-        } else {
-          const err = await res.text().catch(() => '');
-          console.error(`Email failed for ${user.email}: ${res.status} ${err.slice(0,100)}`);
+    let emailOk = null;
+    if (pref.daily_summary) {
+      const displayDate = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      const r = await resendSend(env, {
+        from: 'RETJG HUB <noreply@retjghub.com>',
+        to: user.email,
+        subject: `Sales Summary — ${displayDate}`,
+        html: emailHtml,
+      }, `daily-chain-${date}-${user.id}`);
+      if (!r.skipped) {
+        emailOk = r.ok;
+        if (r.ok) summary.email.sent++;
+        else {
           summary.email.failed++;
+          console.error(`Email failed for ${user.email} after ${r.attempts} attempt(s): ${r.error}`);
         }
-      } catch (e) {
-        summary.email.failed++;
-        console.error(`Email exception for ${user.email}:`, e.message);
       }
     }
 
-    // Log one entry per user
+    // 🛑 The status is what HAPPENED. This row said 'sent' unconditionally for
+    // months — including through the week when this list had silently dropped
+    // from 13 recipients to 4 — so the audit trail actively concealed the
+    // outage it existed to record.
     await env.DB.prepare(
-      "INSERT INTO notification_log (id, user_id, type, event_type, status, created_at) VALUES (?, ?, 'push+email', 'daily-summary', 'sent', ?)"
-    ).bind(randomHex(16), user.id, now).run().catch(() => {});
+      "INSERT INTO notification_log (id, user_id, type, event_type, status, error, created_at) VALUES (?, ?, 'push+email', 'daily-summary', ?, ?, ?)"
+    ).bind(
+      randomHex(16), user.id,
+      emailOk === true ? 'sent' : emailOk === false ? 'failed' : 'skipped',
+      emailOk === false ? 'resend send failed' : null,
+      now
+    ).run().catch(() => {});
   }
 
   return { ok: true, date, summary, scoped };
@@ -5895,26 +5891,30 @@ async function dispatchWeeklyDigest(env, startDate, endDate) {
     }
 
     // Email
-    if (env.RESEND_API_KEY) {
-      try {
-        const res = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            from: 'noreply@retjghub.com',
-            to: user.email,
-            subject: `Weekly Sales Digest — ${weekLabel}`,
-            html: buildWeeklyDigestEmailHtml(data),
-          }),
-        });
-        if (res.ok) { summary.email.sent++; }
-        else { summary.email.failed++; console.error(`Weekly digest email failed ${user.email}: ${res.status}`); }
-      } catch (e) { summary.email.failed++; }
+    const r = await resendSend(env, {
+      from: 'RETJG HUB <noreply@retjghub.com>',
+      to: user.email,
+      subject: `Weekly Sales Digest — ${weekLabel}`,
+      html: buildWeeklyDigestEmailHtml(data),
+    }, `weekly-${startDate}-${user.id}`);
+    let emailOk = null;
+    if (!r.skipped) {
+      emailOk = r.ok;
+      if (r.ok) summary.email.sent++;
+      else {
+        summary.email.failed++;
+        console.error(`Weekly digest email failed ${user.email} after ${r.attempts} attempt(s): ${r.error}`);
+      }
     }
 
     await env.DB.prepare(
-      "INSERT INTO notification_log (id, user_id, type, event_type, status, created_at) VALUES (?, ?, 'push+email', 'weekly-digest', 'sent', ?)"
-    ).bind(randomHex(16), user.id, now).run().catch(() => {});
+      "INSERT INTO notification_log (id, user_id, type, event_type, status, error, created_at) VALUES (?, ?, 'push+email', 'weekly-digest', ?, ?, ?)"
+    ).bind(
+      randomHex(16), user.id,
+      emailOk === true ? 'sent' : emailOk === false ? 'failed' : 'skipped',
+      emailOk === false ? 'resend send failed' : null,
+      now
+    ).run().catch(() => {});
   }
   return { ok: true, startDate, endDate, summary };
 }
@@ -7206,15 +7206,75 @@ function sessionCookie(id, maxAge, env) {
   return `${sessionCookieName(env)}=${id}; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=retjghub.com; Max-Age=${maxAge}`;
 }
 
+// ── Resend transport ────────────────────────────────────────────────────────
+// One place where mail actually leaves, so retry and idempotency exist once
+// rather than four times.
+//
+// 🔑 A 2xx here means Resend ACCEPTED the message, not that anyone received it.
+// Bounces and suppressions happen afterwards and are only visible in Resend's
+// dashboard or via a webhook. So `ok` is the strongest claim this can make, and
+// callers must not log it as "delivered".
+//
+// ⚠️ Kevin's invite is why this exists: two sends on 2026-07-27 and 07-29, no
+// retry on either, no record of what Resend said, and 17 days later nobody
+// could tell whether the mail failed or he simply never opened it.
+const RESEND_MAX_ATTEMPTS = 3;
+async function resendSend(env, payload, idempotencyKey) {
+  if (!env.RESEND_API_KEY) {
+    return { ok: false, skipped: true, attempts: 0, error: 'RESEND_API_KEY is not configured' };
+  }
+  let last = null;
+  for (let attempt = 1; attempt <= RESEND_MAX_ATTEMPTS; attempt++) {
+    try {
+      const headers = {
+        'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      };
+      // 🔑 The SAME key across retries — that is the entire point. A send that
+      // times out after Resend accepted it would otherwise be delivered twice
+      // by the retry; with this, Resend collapses the duplicate.
+      if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST', headers, body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { ok: true, status: res.status, id: body.id || null, attempts: attempt };
+      }
+      const text = await res.text().catch(() => '');
+      last = { ok: false, status: res.status, attempts: attempt, error: `${res.status} ${text.slice(0, 160)}` };
+      // 🛑 Retry only what can change. A 4xx other than 429 is a permanent
+      // answer — a malformed body, a refused address, a suppressed recipient —
+      // and re-sending spends attempts to be told the same thing three times.
+      if (res.status !== 429 && res.status < 500) return last;
+    } catch (e) {
+      // Network/DNS failure. Genuinely transient, so this one does retry.
+      last = { ok: false, status: 0, attempts: attempt, error: String(e && e.message).slice(0, 160) };
+    }
+    if (attempt < RESEND_MAX_ATTEMPTS) {
+      await new Promise(r => setTimeout(r, 300 * Math.pow(2, attempt - 1)));   // 300ms, 600ms
+    }
+  }
+  return last;
+}
+
+// Record what the mailer actually said. Best-effort by construction: failing to
+// write the audit row must never fail the send it is describing.
+async function logEmailAttempt(env, { userId, eventType, result }) {
+  if (!env.DB || !userId) return;
+  const status = result.ok ? 'sent' : result.skipped ? 'skipped' : 'failed';
+  await env.DB.prepare(
+    "INSERT INTO notification_log (id, user_id, type, event_type, status, error, created_at) VALUES (?, ?, 'email', ?, ?, ?, ?)"
+  ).bind(
+    randomHex(16), userId, eventType, status,
+    result.ok ? null : String(result.error || '').slice(0, 200),
+    new Date().toISOString()
+  ).run().catch(() => {});
+}
+
 async function sendMagicLinkEmail(email, token, otpCode, env) {
   const link = `${apiOrigin(env)}/?action=auth-verify&token=${token}`;
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${env.RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
+  const res = await resendSend(env, {
       from: 'noreply@retjghub.com',
       to: email,
       subject: 'Your RETJG HUB login link',
@@ -7230,12 +7290,9 @@ async function sendMagicLinkEmail(email, token, otpCode, env) {
           <p style="color:#999;font-size:12px;margin:0">Code expires in 15 minutes.</p>
           <p style="color:#999;font-size:12px;margin-top:24px">If you didn't request this, ignore this email.</p>
         </div>`,
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Resend error ${res.status}: ${err}`);
-  }
+  }, `login-${token}`);
+  if (!res.ok) throw new Error(`Resend error: ${res.error}`);
+  return res;
 }
 
 // Welcome email for a newly added user. Sent by ?action=create-user and again
@@ -7258,15 +7315,13 @@ async function sendInviteEmail(email, token, env) {
   const site = appOrigin(env);
   const siteLabel = site.replace(/^https?:\/\//, '');
   const green = '#3BB54A';
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${env.RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
+  const res = await resendSend(env, {
       from: 'RETJG HUB <noreply@retjghub.com>',
       to: email,
+      // A reply-to that reaches a person. The invite is the one email whose
+      // recipient most needs to be able to say "this didn't work", and it was
+      // being sent from a no-reply address with no way back.
+      reply_to: 'bhoward@bargainlane.com',
       subject: "You're in — welcome to RETJG HUB",
       html: `
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
@@ -7307,12 +7362,16 @@ async function sendInviteEmail(email, token, env) {
             <a href="${site}" style="color:${green};text-decoration:none">${siteLabel}</a>.
           </p>
         </div>`,
-    }),
-  });
+  }, `invite-${token}`);
+  // Callers depend on the throw: invite-user catches it to report emailed:false
+  // while keeping the account, resend-invite lets it 500 because there the email
+  // IS the work. The result is returned as well so they can log what happened.
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Resend error ${res.status}: ${err}`);
+    const err = new Error(`Resend error: ${res.error}`);
+    err.resendResult = res;
+    throw err;
   }
+  return res;
 }
 
 // ─── Worker export ───────────────────────────────────────────────
@@ -9534,14 +9593,24 @@ export default {
         //
         // NOT applied to resend-invite: there the email IS the work, so a
         // failure there is a real failure and 500 is correct.
+        //
+        // 🔑 The outcome is RECORDED, not just returned. Before this, a failed
+        // invite existed only as a toast in one admin's browser: kevin@retjg.com
+        // was invited 2026-07-27, re-invited 07-29, and 17 days later nothing in
+        // the system could say whether either email left the building. "Who never
+        // got their invite" must be a query.
         let emailed = true, emailError = null;
         try {
-          if (!env.RESEND_API_KEY) throw new Error("RESEND_API_KEY is not configured");
-          await sendInviteEmail(normalized, token, env);
+          const r = await sendInviteEmail(normalized, token, env);
+          await logEmailAttempt(env, { userId: id, eventType: 'invite', result: r });
         } catch (e) {
           emailed = false;
           emailError = String(e && e.message).slice(0, 200);
           console.log(JSON.stringify({ invite_email_failed: normalized, error: emailError }));
+          await logEmailAttempt(env, {
+            userId: id, eventType: 'invite',
+            result: e.resendResult || { ok: false, error: emailError },
+          });
         }
         return new Response(JSON.stringify({ ok: true, emailed, emailError }), { headers: corsJson });
       } catch (e) {
@@ -9563,8 +9632,19 @@ export default {
         const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
         await env.DB.prepare("INSERT INTO magic_links (token, email, expires_at) VALUES (?, ?, ?)")
           .bind(token, normalized, expires).run();
-        await sendInviteEmail(normalized, token, env);
-        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+        // Logged on BOTH paths — a resend that fails is the more interesting
+        // event, since it means someone already reported not receiving one.
+        try {
+          const r = await sendInviteEmail(normalized, token, env);
+          await logEmailAttempt(env, { userId: user.id, eventType: 'invite-resend', result: r });
+          return new Response(JSON.stringify({ ok: true, attempts: r.attempts, messageId: r.id }), { headers: corsJson });
+        } catch (e) {
+          await logEmailAttempt(env, {
+            userId: user.id, eventType: 'invite-resend',
+            result: e.resendResult || { ok: false, error: String(e && e.message) },
+          });
+          throw e;   // the email IS the work here — a failure is a real 500
+        }
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
