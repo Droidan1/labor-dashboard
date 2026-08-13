@@ -13532,41 +13532,53 @@ export default {
 
       // Default: rebuild the trailing 13 weeks (what T13 needs). Optional `weeks`
       // param overrides. Subrequest budget: 1 (week list) + per week [1 (dates) +
-      // 6 stores × (1 D1 + 7 KV get + 1 KV put = 9)] = 1 + 13×55 = 716. Well
-      // under Cloudflare's 1,000-per-invocation cap.
+      // 7 stores × (1 D1 + 7 KV get + 1 KV put = 9)] = 1 + 13×64 = 833. Under
+      // Cloudflare's 1,000-per-invocation cap.
       const trailing = Math.max(1, Math.min(20, parseInt(url.searchParams.get("weeks") || "13", 10)));
       const { results } = await env.DB.prepare(
         "SELECT DISTINCT week FROM daily_sales WHERE date LIKE ? ORDER BY week DESC LIMIT ?"
       ).bind(`${year}-%`, trailing).all();
       const weeks = (results || []).map(r => r.week).filter(Boolean).reverse();
 
-      const summary = { year: Number(year), weeks: weeks.length, written: 0, errors: [] };
+      // 🔑 WRS_STORES, not ALL_STORES. T13 reads week summaries for every store
+      // it charts, and that includes closed Wyoming (BL12) — which is the LIVE
+      // store for every week before the 2026-06-14 cutover. Rebuilding only
+      // ALL_STORES left BL12 on whatever was rolled at the time, so its L2
+      // numbers kept being charted while its L3 detail stayed absent, and the
+      // combined card's L3 rows silently stopped summing to their L2 parent for
+      // those weeks.
+      const REBUILD_STORES = WRS_STORES;
+      const summary = { year: Number(year), weeks: weeks.length, stores: REBUILD_STORES.length, written: 0, errors: [] };
       for (const wk of weeks) {
-        // Resolve dates ONCE per week, reuse across all 6 stores.
+        // Resolve dates ONCE per week, reuse across every store.
         const dates = await resolveWeekDates(env, wk, year);
         if (!dates.length) continue;
 
-        // Parallel per store within a week — drops wall-clock per week
-        // from ~5s to ~1s. Concurrent subrequest pressure: 6 stores ×
-        // (1 D1 + 7 KV get) = 48, just under CF's 50-concurrent limit.
-        const settled = await Promise.allSettled(
-          ALL_STORES.map(async (store) => {
-            const bundle = await buildStoreWeekly(env, store, dates);
-            const payload = weekSummaryPayload(store, wk, year, dates, bundle);
-            await env.SALES_SNAPSHOTS.put(
-              `week-summary:${store.toLowerCase()}:${wk}-${year}`,
-              JSON.stringify(payload)
-            );
-            return store;
-          })
-        );
-        settled.forEach((r, i) => {
-          if (r.status === "fulfilled") {
-            summary.written++;
-          } else {
-            summary.errors.push(`${ALL_STORES[i]}/${wk}: ${r.reason?.message || r.reason}`);
-          }
-        });
+        // Parallel per store within a week — drops wall-clock per week from ~5s
+        // to ~1s. Each store costs 1 D1 + 7 KV get = 8 concurrent subrequests
+        // and Cloudflare caps that at 50, so go 6 at a time: 7 stores at once
+        // would be 56 and start failing.
+        for (let i = 0; i < REBUILD_STORES.length; i += 6) {
+          const batch = REBUILD_STORES.slice(i, i + 6);
+          const settled = await Promise.allSettled(
+            batch.map(async (store) => {
+              const bundle = await buildStoreWeekly(env, store, dates);
+              const payload = weekSummaryPayload(store, wk, year, dates, bundle);
+              await env.SALES_SNAPSHOTS.put(
+                `week-summary:${store.toLowerCase()}:${wk}-${year}`,
+                JSON.stringify(payload)
+              );
+              return store;
+            })
+          );
+          settled.forEach((r, j) => {
+            if (r.status === "fulfilled") {
+              summary.written++;
+            } else {
+              summary.errors.push(`${batch[j]}/${wk}: ${r.reason?.message || r.reason}`);
+            }
+          });
+        }
       }
       return new Response(JSON.stringify({ ok: true, ...summary }), { headers: corsJson });
     }

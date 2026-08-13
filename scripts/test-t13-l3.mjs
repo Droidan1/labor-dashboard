@@ -222,6 +222,38 @@ ok(Object.keys(u[iPost].BL16 || {}).length > 0, 'BL16 L3 is populated after the 
   const producers = (src.match(/^\s*l2Qty:/gm) || []).length;
   ok(producers === 2,
      `exactly 2 sites name l2Qty (buildStoreWeekly + weekSummaryPayload), found ${producers} — a third means a payload literal was re-inlined`);
+
+  // 🔑 The rebuild must cover WRS_STORES, not ALL_STORES. Closed Wyoming (BL12)
+  // is the LIVE store for every week before the cutover, and T13 charts it. If
+  // the rebuild skips it, BL12 keeps an L3-less summary while its L2 numbers are
+  // still charted — so the combined card's L3 rows stop summing to their parent
+  // for those weeks, which is exactly the invariant this suite exists to hold.
+  const bl12 = await env.SALES_SNAPSHOTS.get('week-summary:bl12:24-2026', 'json');
+  ok(!!bl12, 'the rebuild writes BL12 (closed Wyoming) — it is live pre-cutover and T13 charts it');
+  ok(bl12 && bl12.l3Qty && Object.keys(bl12.l3Qty).length > 0,
+     `BL12's rebuilt summary carries l3Qty, got ${JSON.stringify(bl12 && bl12.l3Qty)}`);
+  ok(b.written === b.weeks * 7 || b.written % 7 === 0,
+     `every store is written each week (7 per week), got ${b.written} over ${b.weeks} weeks`);
+}
+
+// ── a pre-cutover week keeps L3 == L2 once BL12 has a stored summary ────────
+// The live-build fallback masked the gap above: with no stored summary, BL12
+// built fresh and had L3. This re-reads AFTER the rebuild, which is the state
+// production is actually in.
+{
+  const r = await call('end=2026-06-15');
+  const b = JSON.parse(await r.text());
+  const i = b.weeks.indexOf(WK_PRE.week);
+  const l2 = (b.perStoreL2Units[i] || {}).BL12 || {};
+  const l3 = (b.perStoreL3Units[i] || {}).BL12 || {};
+  ok(Object.keys(l2).length > 0, 'BL12 has L2 numbers in a pre-cutover week (the check is non-vacuous)');
+  let worst = 0;
+  for (const [cat, v] of Object.entries(l2)) {
+    const kids = l3[cat];
+    if (!kids) { worst = Math.max(worst, v); continue; }
+    worst = Math.max(worst, Math.abs(Object.values(kids).reduce((a, c) => a + c, 0) - v));
+  }
+  ok(worst === 0, `BL12 L3 still sums to L2 after the rebuild (worst ${worst})`);
 }
 
 // ── a summary stored before L3 shipped degrades to empty, not to a 500 ──────
