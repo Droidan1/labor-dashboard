@@ -4081,7 +4081,12 @@ async function fetchMetaInsights(env) {
 }
 
 // Returns { date, priorDate, stores: [{store,label,sales,budget,prior}], totals }
-async function buildDailySummaryData(env, date) {
+// `scopeStores` (null = every store) narrows the report to one recipient's
+// permitted stores, so a store-scoped manager can be sent a daily email built
+// from their own stores instead of the chain-wide body they are refused.
+// Defaulting to null keeps every existing caller byte-identical.
+async function buildDailySummaryData(env, date, scopeStores = null) {
+  const inScope = scopeStores || ALL_STORES;
   // Per-store channel split. "sales" (Total) = POS total + auction — the same
   // net the dashboard shows. Stores with no sales (closed / non-reporting, e.g.
   // Wyoming) are omitted from the email entirely.
@@ -4094,7 +4099,7 @@ async function buildDailySummaryData(env, date) {
 
   let totRetail = 0, totBin = 0, totAuction = 0, totSales = 0, totBudget = 0;
   const stores = [];
-  for (const store of ALL_STORES) {
+  for (const store of inScope) {
     const r = rowMap[store];
     if (!r) continue;                                       // no row → omit
     const retail  = Number(r.retail)  || 0;
@@ -4116,10 +4121,11 @@ async function buildDailySummaryData(env, date) {
 // merged { categories[] (sorted by net desc), totals } plus the day's auction
 // dollars (rendered as a sales-only row so the table Total ties to the By-Store
 // Total). Returns null when no snapshots exist for the day.
-async function buildDailyCategoryData(env, date) {
+async function buildDailyCategoryData(env, date, scopeStores = null) {
   if (!env.SALES_SNAPSHOTS) return null;
+  const inScope = scopeStores || ALL_STORES;
   const snaps = await Promise.all(
-    ALL_STORES.map(s => env.SALES_SNAPSHOTS.get(`items:${s.toLowerCase()}:${date}`, "json").catch(() => null))
+    inScope.map(s => env.SALES_SNAPSHOTS.get(`items:${s.toLowerCase()}:${date}`, "json").catch(() => null))
   );
   const present = snaps.filter(Boolean);
   if (!present.length) return null;
@@ -4131,8 +4137,8 @@ async function buildDailyCategoryData(env, date) {
     // (Wyoming), whose budget/auction duplicate BL16 (Indy East) — see the
     // store filter in buildWeeklyByDayData.
     const row = await env.DB.prepare(
-      `SELECT SUM(auction) AS a FROM daily_sales WHERE date = ? AND store IN (${ALL_STORES.map(() => "?").join(",")})`
-    ).bind(date, ...ALL_STORES).first().catch(() => null);
+      `SELECT SUM(auction) AS a FROM daily_sales WHERE date = ? AND store IN (${inScope.map(() => "?").join(",")})`
+    ).bind(date, ...inScope).first().catch(() => null);
     auction = Number(row && row.a) || 0;
   }
   return { categories: merged.categories, totals: merged.totals, auction };
@@ -4143,8 +4149,9 @@ async function buildDailyCategoryData(env, date) {
 // auction (matches the By-Store Total). Month- and week-to-date totals prorate
 // budget to the ELAPSED days (through `date`), so the % is a true like-for-like
 // rather than partial sales vs a full-period budget. Returns null on failure.
-async function buildWeeklyByDayData(env, date) {
+async function buildWeeklyByDayData(env, date, scopeStores = null) {
   if (!env.DB) return null;
+  const inScope = scopeStores || ALL_STORES;
   try {
     const year = date.slice(0, 4);
     const wkRow = await env.DB.prepare("SELECT week FROM daily_sales WHERE date = ? LIMIT 1").bind(date).first().catch(() => null);
@@ -4158,12 +4165,12 @@ async function buildWeeklyByDayData(env, date) {
     // with no sales, so an unfiltered SUM(budget) double-counts Indy's budget
     // (~$65k/month) while sales look fine. Table 1 avoids this by iterating
     // ALL_STORES; these cross-store aggregates must filter explicitly.
-    const storePh = ALL_STORES.map(() => "?").join(",");
+    const storePh = inScope.map(() => "?").join(",");
     const ph = dates.map(() => "?").join(",");
     const { results } = await env.DB.prepare(
       `SELECT date, SUM(total) AS pos, SUM(auction) AS auction, SUM(budget) AS budget, COUNT(total) AS reported
        FROM daily_sales WHERE date IN (${ph}) AND store IN (${storePh}) GROUP BY date`
-    ).bind(...dates, ...ALL_STORES).all();
+    ).bind(...dates, ...inScope).all();
     const byDate = {};
     for (const r of (results || [])) byDate[r.date] = r;
 
@@ -4202,7 +4209,7 @@ async function buildWeeklyByDayData(env, date) {
     const mRow = await env.DB.prepare(
       `SELECT SUM(total) AS pos, SUM(auction) AS auction, SUM(budget) AS budget
        FROM daily_sales WHERE date >= ? AND date <= ? AND store IN (${storePh})`
-    ).bind(monthStart, date, ...ALL_STORES).first().catch(() => null);
+    ).bind(monthStart, date, ...inScope).first().catch(() => null);
     const mtdSales = mRow ? (Number(mRow.pos) || 0) + (Number(mRow.auction) || 0) : 0;
     const mtdBudget = mRow ? (Number(mRow.budget) || 0) : 0;
 
@@ -5140,7 +5147,7 @@ function _fmtVarDollars(v) {
 // Consolidated L2 category table (Category | Units | Net Sales | ASP) with an
 // Auction sales-only row so the Total ties to the By-Store Total. Returns '' if
 // no data so the email simply omits the section.
-function renderCategoryTableHtml(cat) {
+function renderCategoryTableHtml(cat, scopeLabel = 'All Stores') {
   if (!cat || !cat.categories || !cat.categories.length) return '';
   const catRow = (name, qty, net, asp, bg = '') => `
     <tr style="border-bottom:1px solid #eee${bg}">
@@ -5166,7 +5173,7 @@ function renderCategoryTableHtml(cat) {
   const auctionRow = (cat.auction > 0) ? catRow('Auction', null, cat.auction, null, ';background:#fbfaf5') : '';
   const totNet = (Number(cat.totals.netSales) || 0) + (Number(cat.auction) || 0);
   return `
-      <h3 style="margin:34px 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#194975">Category Sales · All Stores</h3>
+      <h3 style="margin:34px 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#194975">Category Sales · ${_esc(scopeLabel)}</h3>
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead>
           <tr style="background:#3BB54A;color:#fff">
@@ -5200,7 +5207,7 @@ function _barHtml(pct, color) {
 // App-style "Daily Breakdown" — one card per day (date badge, actual, budget,
 // progress bar, variance) plus a Month-to-Date header and Week-to-Date footer,
 // both with budget prorated to elapsed days. Returns '' if no data.
-function renderWeeklyBreakdownHtml(wk) {
+function renderWeeklyBreakdownHtml(wk, scopeLabel = 'All Stores') {
   if (!wk || !wk.days || !wk.days.length) return '';
   const dayRows = wk.days.map(d => {
     const isToday = d.state === 'today';
@@ -5273,13 +5280,21 @@ function renderWeeklyBreakdownHtml(wk) {
         </tr>
       </table>`;
   return `
-      <h3 style="margin:34px 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#194975">Daily Breakdown · All Stores</h3>
+      <h3 style="margin:34px 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#194975">Daily Breakdown · ${_esc(scopeLabel)}</h3>
       ${mtdHeader}
       ${dayRows}
       ${weekFooter}`;
 }
 
-function buildSummaryEmailHtml(data, brief, categoryData, weeklyData) {
+// `totalsLabel` names the by-store footer row; `scopeLabel` names what the two
+// sub-tables below it cover. Neither may keep saying "All Stores" on a
+// store-scoped send — those figures are the recipient's stores only, and
+// mislabelling them as the chain misreports revenue by an order of magnitude.
+//
+// They differ because a single-store email would otherwise print the store name
+// twice in the same table ("Coliseum … / Coliseum"); its footer says "Total"
+// while its section headers still name the store.
+function buildSummaryEmailHtml(data, brief, categoryData, weeklyData, totalsLabel = 'All Stores', scopeLabel = totalsLabel) {
   const { date, stores, totals } = data;
   const displayDate = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 
@@ -5325,7 +5340,7 @@ function buildSummaryEmailHtml(data, brief, categoryData, weeklyData) {
         <tbody>${storeRows}</tbody>
         <tfoot>
           <tr style="background:#f7f7f7;font-weight:700;border-top:2px solid #3BB54A">
-            <td style="padding:11px 8px 11px 22px;color:#111">All Stores</td>
+            <td style="padding:11px 8px 11px 22px;color:#111">${totalsLabel}</td>
             <td style="padding:11px 8px;text-align:right;color:#333">${_fmtDollars(tr)}</td>
             <td style="padding:11px 8px;text-align:right;color:#333">${_fmtDollars(tbn)}</td>
             <td style="padding:11px 8px;text-align:right;color:#333">${_fmtDollars(tau)}</td>
@@ -5335,8 +5350,8 @@ function buildSummaryEmailHtml(data, brief, categoryData, weeklyData) {
           </tr>
         </tfoot>
       </table>
-      ${renderCategoryTableHtml(categoryData)}
-      ${renderWeeklyBreakdownHtml(weeklyData)}
+      ${renderCategoryTableHtml(categoryData, scopeLabel)}
+      ${renderWeeklyBreakdownHtml(weeklyData, scopeLabel)}
       <p style="margin-top:28px;font-size:12px;color:#aaa">
         <a href="https://www.retjghub.com" style="color:#3BB54A;text-decoration:none">Open Dashboard</a>
         &nbsp;·&nbsp; RETJG HUB Notification System
@@ -5408,6 +5423,221 @@ async function chainWideRecipients(env) {
     (u.role === 'superuser' || canAccessBusiness(u, 'bl')));
 }
 
+// Recipients for a STORE-SCOPED daily send — the exact complement of
+// chainWideRecipients(): everyone entitled to SOME Bargain Lane stores but not
+// all of them. Each gets a body built from their own stores only.
+//
+// 🔑 This exists because the 2026-08-04 fix that stopped emailing managers the
+// whole chain's revenue removed them from the only daily email there was, and
+// nothing replaced it. notification_log went from 12-13 recipients/day to 4
+// overnight and stayed there. The exclusion was correct; the silence was not.
+//
+// 🛑 Deliberately a SEPARATE function rather than a widening of
+// chainWideRecipients(). That one is pinned by test-cron-recipients.js, which
+// extracts it from source by regex and asserts no store-scoped user is on it.
+// Both statements must stay true at once: nobody store-scoped may receive the
+// chain-wide body, and they must receive their own.
+//
+// Three filters, all fail-closed:
+//   canSeeFinancials   a `staff` lead may never be sent money, and cron never
+//                      passes through the request-path financial gate.
+//   canAccessBusiness  an E-Commerce-only admin must not get Bargain Lane's.
+//   allowedStores      null => chain-wide, already served above; empty => no
+//                      entitlement (an executive with a NULL bl grant reads as
+//                      empty by the legacy bl convention) => nothing to send.
+async function storeScopedRecipients(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT u.id, u.email, u.role, u.stores,
+            g.business_id, g.role AS grant_role, g.units
+       FROM users u
+       LEFT JOIN user_grants g ON g.user_id = u.id
+      WHERE u.status = 'active'`
+  ).all();
+
+  const byId = new Map();
+  for (const r of results || []) {
+    if (!byId.has(r.id)) {
+      // `stores` is parsed to match getAuthUser. Defensive rather than
+      // load-bearing today — the canAccessBusiness gate below means every
+      // survivor holds a bl grant, so allowedUnits() reads `units` and never
+      // reaches its users.stores fallback. It matters if that gate is ever
+      // relaxed: left as the raw JSON string, `allow.includes(store)` degrades
+      // into a substring test, and '["BL14"]'.includes('BL1') is true — a BL14
+      // manager would be handed BL1's figures.
+      let stores = null;
+      try { stores = r.stores ? JSON.parse(r.stores) : null; } catch (_) { stores = null; }
+      byId.set(r.id, { id: r.id, email: r.email, role: r.role, stores, grants: [] });
+    }
+    if (r.business_id) {
+      let units = null;
+      try { units = r.units ? JSON.parse(r.units) : null; } catch (_) { units = null; }
+      byId.get(r.id).grants.push({ business_id: r.business_id, role: r.grant_role, units });
+    }
+  }
+
+  const out = [];
+  for (const u of byId.values()) {
+    if (!canSeeFinancials(u)) continue;
+    if (!canAccessBusiness(u, 'bl')) {
+      // 🔑 Fail closed, but LOUDLY. allowedUnits() has a documented
+      // users.stores fallback for a manager whose grant row is missing, and
+      // this gate deliberately overrides it — an unknown entitlement state is
+      // not something to email revenue into. Every prod manager holds a grant,
+      // so nothing is lost today. The log exists because being dropped from the
+      // daily email in silence is the exact bug this whole function repairs.
+      if (u.role === 'manager' && u.stores && u.stores.length) {
+        console.log(JSON.stringify({ scoped_summary_dropped: u.id, role: u.role, reason: 'no bl grant', stores: u.stores }));
+      }
+      continue;
+    }
+    const allow = allowedStores(u);
+    if (allow === null) continue;                 // chain-wide — served above
+    // Intersect with ALL_STORES so a stale code (retired BL12) cannot widen the
+    // scope or produce an empty-but-truthy store list.
+    const scopeStores = ALL_STORES.filter(s => allow.includes(s));
+    if (!scopeStores.length) continue;
+    out.push({ ...u, scopeStores });
+  }
+  return out;
+}
+
+// Send the store-scoped daily summary to everyone chainWideRecipients() leaves
+// out. Bodies are built ONCE PER DISTINCT STORE SET, not once per recipient:
+// eight managers in prod share six store sets, and each body costs a D1 read
+// plus one KV read per store. Grouping keeps this a fixed small cost as the
+// team grows rather than something that scales with headcount inside a cron.
+async function dispatchScopedDailySummaries(env, date, prefMapAll) {
+  const recipients = await storeScopedRecipients(env);
+  if (!recipients.length) return { recipients: 0 };
+
+  // Group by store set. The key is order-independent so ["BL1","BL4"] and
+  // ["BL4","BL1"] share one body.
+  const groups = new Map();
+  for (const u of recipients) {
+    const key = u.scopeStores.slice().sort().join(',');
+    if (!groups.has(key)) groups.set(key, { stores: u.scopeStores, users: [] });
+    groups.get(key).users.push(u);
+  }
+
+  const summary = { recipients: recipients.length, groups: groups.size, email: { sent: 0, failed: 0, skipped: 0 }, push: { sent: 0, failed: 0, expired: 0 } };
+  const now = new Date().toISOString();
+  const displayDate = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+  for (const { stores, users } of groups.values()) {
+    // Opted-in recipients for this group. Built before the body so a group where
+    // everyone has opted out costs no queries at all.
+    const wanted = users.filter(u => {
+      const pref = prefMapAll[u.id] || { push_enabled: 1, daily_summary: 1 };
+      return !!pref.daily_summary;
+    });
+    if (!wanted.length) { summary.email.skipped += users.length; continue; }
+
+    let data, categoryData, weeklyData;
+    try {
+      data = await buildDailySummaryData(env, date, stores);
+      [categoryData, weeklyData] = await Promise.all([
+        buildDailyCategoryData(env, date, stores).catch(() => null),
+        buildWeeklyByDayData(env, date, stores).catch(() => null),
+      ]);
+    } catch (e) {
+      console.error(`Scoped summary build failed for [${stores.join(',')}]: ${e.message}`);
+      summary.email.failed += wanted.length;
+      continue;
+    }
+
+    // Every one of this group's stores was closed or non-reporting yesterday.
+    // An email whose only table is empty is worse than no email.
+    if (!data.stores.length) {
+      console.log(JSON.stringify({ scoped_summary_skipped: stores, reason: 'no reporting stores', date }));
+      summary.email.skipped += wanted.length;
+      continue;
+    }
+
+    const labels = stores.map(s => STORE_LABELS[s] || s);
+    // One store: the only body row already names it, so the footer says "Total"
+    // and the section headers carry the name. Several: both say "My Stores".
+    const single = stores.length === 1;
+    const scopeLabel = single ? labels[0] : 'My Stores';
+    const totalsLabel = single ? 'Total' : 'My Stores';
+    const scopeSuffix = stores.length <= 2 ? ` (${labels.join(' + ')})` : '';
+    const emailHtml = buildSummaryEmailHtml(data, null, categoryData, weeklyData, totalsLabel, scopeLabel);
+
+    const tb = data.totals.budget, ts = data.totals.sales;
+    const budgetLine = tb > 0 ? ` • Budget: ${_fmtVsBudget(ts, tb)}` : '';
+    const pushPayload = JSON.stringify({
+      title: `Sales Summary — ${displayDate}`,
+      body: `${_fmtDollars(ts)}${stores.length === 1 ? ` at ${labels[0]}` : ' across your stores'}${budgetLine}`,
+      tag: 'daily-summary',
+      url: '/',
+    });
+
+    for (const user of wanted) {
+      const pref = prefMapAll[user.id] || { push_enabled: 1, daily_summary: 1 };
+      let emailOk = null;
+
+      if (env.RESEND_API_KEY) {
+        try {
+          const res = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              from: 'RETJG HUB <noreply@retjghub.com>',
+              to: user.email,
+              subject: `Sales Summary${scopeSuffix} — ${displayDate}`,
+              html: emailHtml,
+            }),
+          });
+          emailOk = res.ok;
+          if (res.ok) summary.email.sent++;
+          else {
+            summary.email.failed++;
+            const err = await res.text().catch(() => '');
+            console.error(`Scoped email failed for ${user.email}: ${res.status} ${err.slice(0, 100)}`);
+          }
+        } catch (e) {
+          emailOk = false;
+          summary.email.failed++;
+          console.error(`Scoped email exception for ${user.email}:`, e.message);
+        }
+      }
+
+      if (pref.push_enabled && env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) {
+        const { results: subs } = await env.DB.prepare(
+          'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?'
+        ).bind(user.id).all();
+        for (const sub of (subs || [])) {
+          try {
+            const res = await sendWebPush(env, sub, pushPayload);
+            if (res.expired) {
+              summary.push.expired++;
+              await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(sub.endpoint).run().catch(() => {});
+            } else summary.push.sent++;
+          } catch (e) {
+            summary.push.failed++;
+            console.error(`Scoped push failed for ${user.email}:`, e.message);
+          }
+        }
+      }
+
+      // 🔑 Logged with the status that ACTUALLY happened, including the case
+      // where no send was attempted at all (no API key) — that is 'skipped',
+      // not 'sent'. The chain-wide loop above still hardcodes 'sent', which is
+      // why the Aug 6 drop was invisible in notification_log for a week; new
+      // code must not repeat that in any of its three outcomes.
+      const status = emailOk === true ? 'sent' : emailOk === false ? 'failed' : 'skipped';
+      await env.DB.prepare(
+        "INSERT INTO notification_log (id, user_id, type, event_type, status, error, created_at) VALUES (?, ?, 'push+email', 'daily-summary-scoped', ?, ?, ?)"
+      ).bind(
+        randomHex(16), user.id, status,
+        emailOk === false ? 'resend send failed' : emailOk === null ? 'RESEND_API_KEY not configured' : null,
+        now
+      ).run().catch(() => {});
+    }
+  }
+
+  return summary;
+}
+
 async function dispatchDailySummary(env, date) {
   if (!env.DB) return { error: 'DB not configured' };
 
@@ -5438,19 +5668,27 @@ async function dispatchDailySummary(env, date) {
     url: '/',
   });
 
-  // All active users (notification_preferences controls per-user opt-in)
-  const superusers = await chainWideRecipients(env);
-  if (!superusers?.length) return { ok: true, skipped: 'no active users' };
-
-  const userIds = superusers.map(u => u.id);
-  const placeholders = userIds.map(() => '?').join(',');
-
-  // Preferences (default: both enabled if no row)
+  // Preferences for EVERY user (default: both enabled if no row). Read in one
+  // unfiltered query rather than an `IN (?,?,…)` built from the recipient list:
+  // the scoped pass below needs the same map, and D1 caps bound parameters at
+  // 100 per query, so a list-driven IN would have become a hard failure as the
+  // team grew rather than a slowdown.
   const { results: prefs } = await env.DB.prepare(
-    `SELECT user_id, push_enabled, daily_summary FROM notification_preferences WHERE user_id IN (${placeholders})`
-  ).bind(...userIds).all();
+    `SELECT user_id, push_enabled, daily_summary FROM notification_preferences`
+  ).all();
   const prefMap = {};
   for (const p of (prefs || [])) prefMap[p.user_id] = p;
+
+  // Store-scoped recipients are disjoint from the chain-wide list by
+  // construction (allowedStores() null vs non-null), so this cannot double-send.
+  // Run it even when the chain-wide list is empty — those are different people,
+  // and an empty chain-wide list must not silence the managers too.
+  const scoped = await dispatchScopedDailySummaries(env, date, prefMap)
+    .catch(e => { console.error('Scoped daily summary failed:', e.message); return { error: e.message }; });
+
+  // All active users (notification_preferences controls per-user opt-in)
+  const superusers = await chainWideRecipients(env);
+  if (!superusers?.length) return { ok: true, skipped: 'no chain-wide recipients', scoped };
 
   const summary = { push: { sent: 0, failed: 0, expired: 0 }, email: { sent: 0, failed: 0 } };
   const now = new Date().toISOString();
@@ -5513,7 +5751,7 @@ async function dispatchDailySummary(env, date) {
     ).bind(randomHex(16), user.id, now).run().catch(() => {});
   }
 
-  return { ok: true, date, summary };
+  return { ok: true, date, summary, scoped };
 }
 
 // Returns { startDate, endDate, stores, totals } for a Mon–Sun week range.
@@ -11918,9 +12156,16 @@ export default {
       }
     }
 
-    // GET ?action=preview-daily-summary[&date=YYYY-MM-DD]
+    // GET ?action=preview-daily-summary[&date=YYYY-MM-DD][&stores=BL1,BL4]
     // Renders the daily-summary email HTML WITHOUT sending anything. Read-only,
     // superuser/admin-secret only. Used to eyeball the layout in a browser.
+    //
+    // `stores` renders the STORE-SCOPED body a manager would receive, using the
+    // same labels dispatchScopedDailySummaries() picks. Without it there is no
+    // way to check a scoped send against live data short of waiting for the next
+    // 8 AM cron — and "it will be right tomorrow" is not a verification.
+    // Unknown codes are dropped rather than queried, so this cannot be used to
+    // probe for stores that do not exist.
     if (request.method === "GET" && url.searchParams.get("action") === "preview-daily-summary") {
       const isAdminReq = hasSnapshotSecret(request, env);
       if (!isAdminReq && (!currentUser || currentUser.role !== 'superuser')) {
@@ -11930,13 +12175,25 @@ export default {
         const y = new Date(); y.setUTCDate(y.getUTCDate() - 1);
         return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(y);
       })();
+      const rawStores = (url.searchParams.get("stores") || '').trim();
+      const scope = rawStores
+        ? ALL_STORES.filter(s => rawStores.toUpperCase().split(',').map(x => x.trim()).includes(s))
+        : null;
+      if (rawStores && !scope.length) {
+        return new Response(JSON.stringify({ error: "No known store codes in `stores`" }), { status: 400, headers: corsJson });
+      }
+      // Mirrors dispatchScopedDailySummaries so the preview cannot drift from
+      // what is actually sent.
+      const single = scope && scope.length === 1;
+      const scopeLabel  = scope ? (single ? (STORE_LABELS[scope[0]] || scope[0]) : 'My Stores') : 'All Stores';
+      const totalsLabel = scope ? (single ? 'Total' : 'My Stores') : 'All Stores';
       try {
-        const data = await buildDailySummaryData(env, dateParam);
+        const data = await buildDailySummaryData(env, dateParam, scope);
         const [categoryData, weeklyData] = await Promise.all([
-          buildDailyCategoryData(env, dateParam).catch(() => null),
-          buildWeeklyByDayData(env, dateParam).catch(() => null),
+          buildDailyCategoryData(env, dateParam, scope).catch(() => null),
+          buildWeeklyByDayData(env, dateParam, scope).catch(() => null),
         ]);
-        const html = buildSummaryEmailHtml(data, null, categoryData, weeklyData);
+        const html = buildSummaryEmailHtml(data, null, categoryData, weeklyData, totalsLabel, scopeLabel);
         return new Response(html, { headers: { ...corsHeaders, "Content-Type": "text/html; charset=utf-8" } });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });

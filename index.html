@@ -2548,12 +2548,12 @@
                 <label class="flex items-center justify-between cursor-pointer">
                   <div>
                     <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Daily summary email</p>
-                    <p class="text-xs text-gray-500 dark:text-gray-400">5 AM recap of all-store sales, vs last week &amp; budget</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">8 AM recap of yesterday's sales for your stores, vs budget</p>
                   </div>
                   <input type="checkbox" id="notif-daily-summary-toggle" onchange="updateNotifPrefs()"
                     class="w-4 h-4 accent-[#3BB54A] cursor-pointer ml-4">
                 </label>
-                <label class="flex items-center justify-between cursor-pointer">
+                <label id="notif-weekly-digest-row" class="hidden flex items-center justify-between cursor-pointer">
                   <div>
                     <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Weekly digest email</p>
                     <p class="text-xs text-gray-500 dark:text-gray-400">Sunday morning full-week recap with orders &amp; budget</p>
@@ -17777,6 +17777,13 @@
     const fcEd = el('fc-edit-toggle'); if (fcEd) fcEd.classList.toggle('hidden', !isAdmin);
     // Photo upload alerts toggle (Settings › Notifications): admin/superuser only.
     const uaRow = el('notif-upload-alerts-row'); if (uaRow) uaRow.classList.toggle('hidden', !isAdmin);
+    // Weekly digest is still a CHAIN-WIDE body, so chainWideRecipients() sends it
+    // to admins and superusers only. Same principle as the eBay row below: a
+    // manager left looking at a checked box that can never fire is how the daily
+    // email went unnoticed for a week after the Aug 4 scoping fix. The daily
+    // toggle stays visible to everyone because the daily email is now built
+    // per-recipient (dispatchScopedDailySummaries) and does reach managers.
+    const wdRow = el('notif-weekly-digest-row'); if (wdRow) wdRow.classList.toggle('hidden', !isAdmin);
     // Same gate as nav-ebay-cases: holding the business, not a role. Showing this
     // to someone who cannot receive the alerts would be a setting that does nothing.
     const ebRow = el('notif-ebay-alerts-row');
