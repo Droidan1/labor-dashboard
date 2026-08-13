@@ -91,7 +91,7 @@ async function run(people, opts = {}) {
     CREATE TABLE user_grants (user_id TEXT, business_id TEXT, role TEXT, units TEXT, PRIMARY KEY(user_id,business_id));
     CREATE TABLE notification_preferences (user_id TEXT PRIMARY KEY, push_enabled INTEGER, daily_summary INTEGER, weekly_digest INTEGER);
     CREATE TABLE push_subscriptions (id TEXT PRIMARY KEY, user_id TEXT, endpoint TEXT, p256dh TEXT, auth TEXT);
-    CREATE TABLE notification_log (id TEXT PRIMARY KEY, user_id TEXT, type TEXT, event_type TEXT, status TEXT, error TEXT, created_at TEXT);
+    CREATE TABLE notification_log (id TEXT PRIMARY KEY, user_id TEXT, type TEXT, event_type TEXT, status TEXT, error TEXT, provider_message_id TEXT, created_at TEXT);
     CREATE TABLE daily_sales (id INTEGER PRIMARY KEY AUTOINCREMENT, store TEXT, date TEXT, week TEXT,
                               total REAL, retail REAL, bin REAL, auction REAL, budget REAL);
   `);
@@ -237,6 +237,16 @@ console.log('   notification_log:', JSON.stringify(rows));
 ok('scoped sends are logged', rows.some(x => x.event_type === 'daily-summary-scoped' && x.status === 'sent' && x.n === 4),
    JSON.stringify(rows));
 
+// The status alone cannot answer "did KEVIN get HIS email?" — a 2xx from Resend
+// is acceptance, and the bounce happens afterwards in their system. The message
+// id is the handle that makes their dashboard searchable per recipient.
+const ids = r.db.prepare("SELECT status, provider_message_id AS mid, COUNT(*) n FROM notification_log WHERE type='push+email' GROUP BY status, mid").all();
+console.log('   provider ids:', JSON.stringify(ids));
+ok("every 'sent' row carries Resend's message id",
+   ids.filter(x => x.status === 'sent').every(x => x.mid === 'msg_test'), JSON.stringify(ids));
+ok('...for the chain-wide rows as well as the scoped ones',
+   r.db.prepare("SELECT COUNT(*) n FROM notification_log WHERE event_type='daily-summary' AND provider_message_id='msg_test'").get().n === 2);
+
 console.log('\na failing Resend is recorded as failed, not as sent:');
 responder = () => new Response('rate limited', { status: 429 });
 const bad = await run([SU, M1]);
@@ -244,6 +254,10 @@ const badRows = bad.db.prepare("SELECT status, COUNT(*) n FROM notification_log 
 console.log('   notification_log:', JSON.stringify(badRows));
 ok('a 429 is logged as failed', badRows.some(x => x.status === 'failed' && x.n === 1), JSON.stringify(badRows));
 ok('nothing is logged as sent', !badRows.some(x => x.status === 'sent'), JSON.stringify(badRows));
+ok('a failed row carries no message id (there is no message to look up)',
+   bad.db.prepare("SELECT COUNT(*) n FROM notification_log WHERE status='failed' AND provider_message_id IS NOT NULL").get().n === 0);
+ok('...but it does carry the error text',
+   (bad.db.prepare("SELECT error FROM notification_log WHERE status='failed' LIMIT 1").get().error || '').includes('429'));
 
 // Kevin's invite got two sends across three days and no retry on either. This
 // cron now emits 12 messages where it emitted 4, sequentially, against a mailer

@@ -5573,7 +5573,6 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
 
     for (const user of wanted) {
       const pref = prefMapAll[user.id] || { push_enabled: 1, daily_summary: 1 };
-      let emailOk = null;
 
       // 🔑 Through resendSend, which retries a 429. This cron now sends 12
       // messages where it sent 4, sequentially, and Resend rate-limits around
@@ -5588,7 +5587,6 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
         html: emailHtml,
       }, `daily-scoped-${date}-${user.id}`);
       if (!r.skipped) {
-        emailOk = r.ok;
         if (r.ok) summary.email.sent++;
         else {
           summary.email.failed++;
@@ -5614,19 +5612,11 @@ async function dispatchScopedDailySummaries(env, date, prefMapAll) {
         }
       }
 
-      // 🔑 Logged with the status that ACTUALLY happened, including the case
-      // where no send was attempted at all (no API key) — that is 'skipped',
-      // not 'sent'. The chain-wide loop above still hardcodes 'sent', which is
-      // why the Aug 6 drop was invisible in notification_log for a week; new
-      // code must not repeat that in any of its three outcomes.
-      const status = emailOk === true ? 'sent' : emailOk === false ? 'failed' : 'skipped';
-      await env.DB.prepare(
-        "INSERT INTO notification_log (id, user_id, type, event_type, status, error, created_at) VALUES (?, ?, 'push+email', 'daily-summary-scoped', ?, ?, ?)"
-      ).bind(
-        randomHex(16), user.id, status,
-        emailOk === false ? 'resend send failed' : emailOk === null ? 'RESEND_API_KEY not configured' : null,
-        now
-      ).run().catch(() => {});
+      // Logged with the status that ACTUALLY happened, plus Resend's message id
+      // so a later "did this one land?" is a lookup rather than a guess.
+      await logEmailAttempt(env, {
+        userId: user.id, type: 'push+email', eventType: 'daily-summary-scoped', result: r, at: now,
+      });
     }
   }
 
@@ -5714,21 +5704,20 @@ async function dispatchDailySummary(env, date) {
     }
 
     // ── Email ─────────────────────────────────────────────────────────────
-    let emailOk = null;
+    let emailResult = null;                    // null = opted out, nothing attempted
     if (pref.daily_summary) {
       const displayDate = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-      const r = await resendSend(env, {
+      emailResult = await resendSend(env, {
         from: 'RETJG HUB <noreply@retjghub.com>',
         to: user.email,
         subject: `Sales Summary — ${displayDate}`,
         html: emailHtml,
       }, `daily-chain-${date}-${user.id}`);
-      if (!r.skipped) {
-        emailOk = r.ok;
-        if (r.ok) summary.email.sent++;
+      if (!emailResult.skipped) {
+        if (emailResult.ok) summary.email.sent++;
         else {
           summary.email.failed++;
-          console.error(`Email failed for ${user.email} after ${r.attempts} attempt(s): ${r.error}`);
+          console.error(`Email failed for ${user.email} after ${emailResult.attempts} attempt(s): ${emailResult.error}`);
         }
       }
     }
@@ -5737,14 +5726,9 @@ async function dispatchDailySummary(env, date) {
     // months — including through the week when this list had silently dropped
     // from 13 recipients to 4 — so the audit trail actively concealed the
     // outage it existed to record.
-    await env.DB.prepare(
-      "INSERT INTO notification_log (id, user_id, type, event_type, status, error, created_at) VALUES (?, ?, 'push+email', 'daily-summary', ?, ?, ?)"
-    ).bind(
-      randomHex(16), user.id,
-      emailOk === true ? 'sent' : emailOk === false ? 'failed' : 'skipped',
-      emailOk === false ? 'resend send failed' : null,
-      now
-    ).run().catch(() => {});
+    await logEmailAttempt(env, {
+      userId: user.id, type: 'push+email', eventType: 'daily-summary', result: emailResult, at: now,
+    });
   }
 
   return { ok: true, date, summary, scoped };
@@ -5897,9 +5881,7 @@ async function dispatchWeeklyDigest(env, startDate, endDate) {
       subject: `Weekly Sales Digest — ${weekLabel}`,
       html: buildWeeklyDigestEmailHtml(data),
     }, `weekly-${startDate}-${user.id}`);
-    let emailOk = null;
     if (!r.skipped) {
-      emailOk = r.ok;
       if (r.ok) summary.email.sent++;
       else {
         summary.email.failed++;
@@ -5907,14 +5889,9 @@ async function dispatchWeeklyDigest(env, startDate, endDate) {
       }
     }
 
-    await env.DB.prepare(
-      "INSERT INTO notification_log (id, user_id, type, event_type, status, error, created_at) VALUES (?, ?, 'push+email', 'weekly-digest', ?, ?, ?)"
-    ).bind(
-      randomHex(16), user.id,
-      emailOk === true ? 'sent' : emailOk === false ? 'failed' : 'skipped',
-      emailOk === false ? 'resend send failed' : null,
-      now
-    ).run().catch(() => {});
+    await logEmailAttempt(env, {
+      userId: user.id, type: 'push+email', eventType: 'weekly-digest', result: r, at: now,
+    });
   }
   return { ok: true, startDate, endDate, summary };
 }
@@ -7258,17 +7235,36 @@ async function resendSend(env, payload, idempotencyKey) {
   return last;
 }
 
-// Record what the mailer actually said. Best-effort by construction: failing to
-// write the audit row must never fail the send it is describing.
-async function logEmailAttempt(env, { userId, eventType, result }) {
+// Record what the mailer actually said. The one place a notification_log row is
+// written for email, so "sent" cannot drift back into meaning "we tried".
+//
+// 🔑 `provider_message_id` is Resend's id for the message (migration-038). The
+// status here can only ever say ACCEPTED — bounces, complaints and suppression
+// hits happen after the API call returns 2xx and are visible only in Resend's
+// dashboard. The id is what turns "did Kevin get his email?" into a lookup
+// instead of scrolling their log by timestamp guessing which of twelve 12:00 UTC
+// sends was his.
+//
+// ⚠️ Best-effort by construction: failing to write the audit row must never fail
+// the send it describes. That is also why migration-038 has to land BEFORE this
+// code — the .catch() would swallow "no such column" and silently discard every
+// row rather than erroring.
+//
+// `result` null means no send was attempted at all (opted out) → 'skipped'.
+async function logEmailAttempt(env, { userId, type = 'email', eventType, result, at }) {
   if (!env.DB || !userId) return;
-  const status = result.ok ? 'sent' : result.skipped ? 'skipped' : 'failed';
+  const status = !result ? 'skipped'
+    : result.skipped ? 'skipped'
+    : result.ok ? 'sent'
+    : 'failed';
   await env.DB.prepare(
-    "INSERT INTO notification_log (id, user_id, type, event_type, status, error, created_at) VALUES (?, ?, 'email', ?, ?, ?, ?)"
+    "INSERT INTO notification_log (id, user_id, type, event_type, status, error, provider_message_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   ).bind(
-    randomHex(16), userId, eventType, status,
-    result.ok ? null : String(result.error || '').slice(0, 200),
-    new Date().toISOString()
+    randomHex(16), userId, type, eventType, status,
+    status === 'failed' ? String(result.error || '').slice(0, 200)
+      : (result && result.skipped ? String(result.error || '').slice(0, 200) : null),
+    (result && result.id) || null,
+    at || new Date().toISOString()
   ).run().catch(() => {});
 }
 
