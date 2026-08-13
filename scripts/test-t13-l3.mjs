@@ -223,6 +223,21 @@ ok(Object.keys(u[iPost].BL16 || {}).length > 0, 'BL16 L3 is populated after the 
   ok(producers === 2,
      `exactly 2 sites name l2Qty (buildStoreWeekly + weekSummaryPayload), found ${producers} — a third means a payload literal was re-inlined`);
 
+  // 🔑 No caller may pick its own store roster for week summaries. FOUR sites
+  // did — the nightly rollup, the re-snapshot auto-rebuild, the ALL-store
+  // re-snapshot, and this endpoint — and every one of them chose ALL_STORES,
+  // silently excluding BL12. writeWeekSummariesForWeek owns the roster now; a
+  // bare store list mapped over writeWeekSummary is how the bug comes back.
+  const rosterPicks = src.split('\n').filter(l =>
+    /writeWeekSummary\(/.test(l) && /ALL_STORES|WRS_STORES/.test(l));
+  ok(rosterPicks.length === 0,
+     `no writeWeekSummary call names a store roster inline, found ${rosterPicks.length}: ${rosterPicks.map(s => s.trim()).join(' | ')}`);
+  ok(/async function writeWeekSummariesForWeek[\s\S]{0,600}WRS_STORES/.test(src),
+     'writeWeekSummariesForWeek is the one place that names WRS_STORES for summaries');
+  const helperCalls = (src.match(/writeWeekSummariesForWeek\(/g) || []).length;
+  ok(helperCalls >= 4,
+     `all week-summary writers go through the helper (declaration + 3 callers), found ${helperCalls}`);
+
   // 🔑 The rebuild must cover WRS_STORES, not ALL_STORES. Closed Wyoming (BL12)
   // is the LIVE store for every week before the cutover, and T13 charts it. If
   // the rebuild skips it, BL12 keeps an L3-less summary while its L2 numbers are

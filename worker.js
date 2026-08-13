@@ -2431,9 +2431,13 @@ function weekSummaryPayload(store, week, year, dates, bundle) {
 // Pre-roll a single (store, week, year) into `week-summary:<store>:<week>-<year>`.
 // Cron calls this for every week whose 7 days are now in D1; the rebuild
 // endpoint calls it across an entire year for backfill.
-async function writeWeekSummary(env, store, week, year) {
+// `knownDates` lets a caller that already resolved the week's dates pass them
+// in, instead of every store re-running the same D1 query — that mattered for
+// ?action=rebuild-week-summaries, which does this 7 stores × 13 weeks and has a
+// 1,000-subrequest ceiling to stay under.
+async function writeWeekSummary(env, store, week, year, knownDates = null) {
   if (!env.SALES_SNAPSHOTS) return null;
-  const dates = await resolveWeekDates(env, week, year);
+  const dates = knownDates || await resolveWeekDates(env, week, year);
   if (!dates.length) return null;
   const bundle = await buildStoreWeekly(env, store, dates);
   const payload = weekSummaryPayload(store, week, year, dates, bundle);
@@ -2444,8 +2448,44 @@ async function writeWeekSummary(env, store, week, year) {
   return payload;
 }
 
-// Cron-side rollup: when today is Sunday (last day of an ISO-style week), the
-// week's 7 days are now finalized — write the pre-roll for every store.
+// Write one week's summary for EVERY store T13 charts.
+//
+// 🔑 This is the only place that decides which stores get a `week-summary:` key,
+// and it deliberately uses WRS_STORES rather than ALL_STORES. ALL_STORES is the
+// six *operating* stores; T13 also charts closed Wyoming (BL12), which is the
+// LIVE store for every week before the 2026-06-14 cutover. A writer that skips
+// it leaves BL12's L2 numbers being charted with no L3 beneath them, so the
+// combined card's rows stop summing to their parent on those weeks.
+//
+// Three separate call sites each chose their own roster and all three chose
+// wrong — the nightly rollup, the re-snapshot auto-rebuild, and
+// ?action=rebuild-week-summaries. Hence one function; callers no longer pick.
+//
+// Batched: each store costs 1 D1 + 7 KV get = 8 concurrent subrequests, and
+// Cloudflare caps concurrency at 50, so 6 at a time (all 7 would be 56).
+async function writeWeekSummariesForWeek(env, wk, year, knownDates = null) {
+  const out = { written: 0, errors: [] };
+  for (let i = 0; i < WRS_STORES.length; i += 6) {
+    const batch = WRS_STORES.slice(i, i + 6);
+    const settled = await Promise.allSettled(
+      batch.map(store => writeWeekSummary(env, store, wk, year, knownDates))
+    );
+    settled.forEach((r, j) => {
+      // Count only a real write. writeWeekSummary returns null when it wrote
+      // nothing (no resolvable dates, or no KV binding), and a count that
+      // includes those reports success for work that did not happen.
+      // ⚠️ Defensive, not currently reachable: every caller either pre-checks
+      // `dates.length` or derives the week from rows that resolve. It survives
+      // mutation testing for that reason — do not read the counter as evidence
+      // that a rebuild wrote anything. Verify `snapshotTime` on the keys.
+      if (r.status === "fulfilled" && r.value) out.written++;
+      else if (r.status === "rejected") out.errors.push(`${batch[j]}/${wk}: ${r.reason?.message || r.reason}`);
+    });
+  }
+  return out;
+}
+
+// Cron-side rollup: rewrite the current week's pre-roll so T13 stays fresh.
 async function rollupWeekSummariesIfReady(env, todayStr) {
   if (!env.DB) return;
   // Look up any week where today is the latest date for that week → that
@@ -2456,12 +2496,9 @@ async function rollupWeekSummariesIfReady(env, todayStr) {
   if (!results || !results.length) return;
   const year = parseInt(todayStr.slice(0, 4), 10);
   for (const r of results) {
-    const wk = r.week;
-    if (!wk) continue;
-    for (const store of ALL_STORES) {
-      try { await writeWeekSummary(env, store, wk, year); }
-      catch (e) { console.error(`writeWeekSummary ${store}/${wk}:`, e.message); }
-    }
+    if (!r.week) continue;
+    const { errors } = await writeWeekSummariesForWeek(env, r.week, year);
+    for (const e of errors) console.error("rollupWeekSummaries:", e);
   }
 }
 
@@ -10447,8 +10484,14 @@ export default {
         ).bind(dateParam).all().catch(() => ({ results: [] }));
         for (const { week: wk } of (wkRows || [])) {
           if (!wk) continue;
-          const rebuildStores = storeParam === "ALL" ? ALL_STORES : stores;
-          await Promise.allSettled(rebuildStores.map(s => writeWeekSummary(env, s, wk, year)));
+          // A whole-chain re-snapshot goes through the shared roster so BL12 is
+          // not left behind (see writeWeekSummariesForWeek). A single-store
+          // re-snapshot only invalidates that store's summary, so rewrite just it.
+          if (storeParam === "ALL") {
+            await writeWeekSummariesForWeek(env, wk, year);
+          } else {
+            await Promise.allSettled(stores.map(s => writeWeekSummary(env, s, wk, year)));
+          }
         }
       }
 
@@ -12125,10 +12168,8 @@ export default {
       const rebuildResults = [];
       for (const key of affectedWeeks) {
         const [wk, year] = key.split('|');
-        const settled = await Promise.allSettled(
-          ALL_STORES.map(s => writeWeekSummary(env, s, wk, year))
-        );
-        rebuildResults.push({ week: wk, year, written: settled.filter(s => s.status === 'fulfilled' && s.value).length });
+        const { written, errors } = await writeWeekSummariesForWeek(env, wk, year);
+        rebuildResults.push({ week: wk, year, written, ...(errors.length ? { errors } : {}) });
       }
 
       const ok = results.filter(r => r.ok).length;
@@ -13566,49 +13607,20 @@ export default {
         .map(r => ({ week: String(r.week), year: String(r.start_date).slice(0, 4) }))
         .reverse();
 
-      // 🔑 WRS_STORES, not ALL_STORES. T13 reads week summaries for every store
-      // it charts, and that includes closed Wyoming (BL12) — which is the LIVE
-      // store for every week before the 2026-06-14 cutover. Rebuilding only
-      // ALL_STORES left BL12 on whatever was rolled at the time, so its L2
-      // numbers kept being charted while its L3 detail stayed absent, and the
-      // combined card's L3 rows silently stopped summing to their L2 parent for
-      // those weeks.
-      const REBUILD_STORES = WRS_STORES;
       const summary = {
-        year: Number(year), weeks: weeks.length, stores: REBUILD_STORES.length,
+        year: Number(year), weeks: weeks.length, stores: WRS_STORES.length,
         weekLabels: weeks.map(w => w.week),   // so a caller can SEE what was rebuilt
         written: 0, errors: [],
       };
       for (const { week: wk, year: wkYear } of weeks) {
-        // Resolve dates ONCE per week, reuse across every store.
+        // Resolve dates ONCE per week and hand them to every store, rather than
+        // 7 stores × 13 weeks repeating the same D1 query — that is 91
+        // subrequests against a 1,000 ceiling.
         const dates = await resolveWeekDates(env, wk, wkYear);
         if (!dates.length) continue;
-
-        // Parallel per store within a week — drops wall-clock per week from ~5s
-        // to ~1s. Each store costs 1 D1 + 7 KV get = 8 concurrent subrequests
-        // and Cloudflare caps that at 50, so go 6 at a time: 7 stores at once
-        // would be 56 and start failing.
-        for (let i = 0; i < REBUILD_STORES.length; i += 6) {
-          const batch = REBUILD_STORES.slice(i, i + 6);
-          const settled = await Promise.allSettled(
-            batch.map(async (store) => {
-              const bundle = await buildStoreWeekly(env, store, dates);
-              const payload = weekSummaryPayload(store, wk, wkYear, dates, bundle);
-              await env.SALES_SNAPSHOTS.put(
-                `week-summary:${store.toLowerCase()}:${wk}-${wkYear}`,
-                JSON.stringify(payload)
-              );
-              return store;
-            })
-          );
-          settled.forEach((r, j) => {
-            if (r.status === "fulfilled") {
-              summary.written++;
-            } else {
-              summary.errors.push(`${batch[j]}/${wk}: ${r.reason?.message || r.reason}`);
-            }
-          });
-        }
+        const r = await writeWeekSummariesForWeek(env, wk, wkYear, dates);
+        summary.written += r.written;
+        summary.errors.push(...r.errors);
       }
       return new Response(JSON.stringify({ ok: true, ...summary }), { headers: corsJson });
     }
