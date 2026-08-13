@@ -256,6 +256,46 @@ every section appear, or the assertions pass against nothing.
 
 ---
 
+## One transport — worker `8b5a5ec9`
+
+Every email in the codebase now goes through `resendSend`. **One direct call to
+`api.resend.com` remains: the helper itself.**
+
+The last two holdouts were the supply-request emails, and they were the least observable
+sends in the system — `await fetch(...).catch(log)` with **no `res.ok` check at all**, so a
+429, a 422 or a 500 was not merely unretried, it was invisible. The `.catch()` only ever
+fired on a network error.
+
+⚠️ **`notifyPhotoUpload` does not send email — it is push-only.** It had been listed here
+as an outstanding caller; reading it disproved that.
+
+### The two idempotency keys are deliberately different in kind
+
+| Sender | Key | Why |
+|---|---|---|
+| `supply-request-new` | **stable** — `supply-new-<requestId>-<userId>` | a request is created exactly once, so this makes a double-POST idempotent too, not just the retry |
+| `supply-status-change` | **per-call** — `supply-status-<requestId>-<random>` | see below |
+
+The status key looks like it could be stable: the endpoint refuses a no-op update
+(`if (existing.status === status) return { unchanged: true }`), so the same status cannot
+be set twice in a row. But **status cycles** — `pending → under_review → on_hold →
+under_review` is an ordinary week — and that second `under_review` is a real notification.
+A stable `requestId + status` key would have Resend drop it silently inside the idempotency
+window. Pinned by a test that walks exactly that cycle.
+
+### ⚠️ Two traps hit while testing this
+
+- The shared harness `SCHEMA` lacks `supply_request_items` / `supply_request_history`, so
+  the endpoint 500s **before reaching the mailer** and every mail assertion fails for the
+  wrong reason. Created locally rather than widening the shared schema.
+- **A mutant directory containing only `worker.js` makes `makeEnv()` throw**, because
+  `applyMigrationAlters` reads the repo's own `migration-*.sql`. The mutation run then
+  reports zero failures and reads as a surviving mutant. Copy the migrations in. After
+  fixing: dropping the key kills 1 assertion, a stable status key kills 1, removing the
+  logging kills 6.
+
+---
+
 ## Cron supervision — worker `de673d6a`, main `9a0cc28`
 
 `superviseCronJob(env, job, promise)` wraps all three notification crons. It returns a
