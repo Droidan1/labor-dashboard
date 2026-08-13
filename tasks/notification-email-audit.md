@@ -173,8 +173,9 @@ Gaps:
 ### P1 — make failures visible
 5. ✅ **DONE.** Daily and weekly now record the real outcome. The hardcoded
    `status = 'sent'` is gone from every insert.
-6. ⬜ `.catch()` on the email crons, wired to `dispatchCronFailureAlert`. **Still open** —
-   a throw in `buildDailySummaryData` still loses the whole run silently.
+6. ✅ **DONE.** `superviseCronJob()` wraps `daily-summary`, `weekly-digest` and
+   `interval-summary`. See "Cron supervision" below — a throw is no longer the only thing
+   it catches.
 7. ✅ **DONE.** `logEmailAttempt()` records both invite paths under event_type `invite` /
    `invite-resend`.
 
@@ -252,6 +253,40 @@ the email from real prod rows and reading it surfaced the mislabel.
 
 🔑 Lesson: a table that does not render cannot be asserted on. Seed the data that makes
 every section appear, or the assertions pass against nothing.
+
+---
+
+## Cron supervision — worker `de673d6a`, main `9a0cc28`
+
+`superviseCronJob(env, job, promise)` wraps all three notification crons. It returns a
+promise that never rejects, since a rejection handed to `ctx.waitUntil` is swallowed by the
+runtime anyway.
+
+🔑 **A throw is not the only failure, and this is the part that matters.** Several
+dispatchers report a problem by *resolving* with an `{ error }`, and a partly-failed
+fan-out resolves cleanly carrying counters — **3 of 12 emails refused looks exactly like
+success** unless something reads `summary.email.failed`. `cronJobProblem()` treats all
+three shapes as failures: a thrown error, a resolved `{ error }` (including
+`scoped.error`), and any non-zero email failure count across both loops.
+
+Failures push the active superusers via `pushSuperusers()`, extracted from
+`dispatchCronFailureAlert` so the subscription loop has one copy instead of a third.
+`alertJobFailure()` never throws — it is the last line of defence, so if it fails the
+console line is the record.
+
+⚠️ **`test-interval-summary.mjs` parses the dispatch result out of the log line** and was
+coupled to the old `"Interval summary dispatch:"` prefix. Its own vacuity guard caught the
+rename; without that guard a null capture would have read as "everyone was correctly
+excluded" and passed against nothing. The coupling is now commented in that file.
+
+**Verified:** deployed source carries all three wrapped jobs and zero unsupervised
+dispatches. The test drives a *real* failure (D1 refusing its first read) through
+`worker.scheduled` and asserts the dispatch actually failed before asserting anything about
+the handling. Removing the `.catch()` and problem detection kills 3 assertions.
+
+⏳ Live proof that the wrapper sits in the path arrives with the next successful run —
+`interval-summary` hourly, `daily-summary` at 12:00 UTC. The log line is now
+`daily-summary: {…}` rather than `Daily summary dispatch: {…}`.
 
 ---
 
