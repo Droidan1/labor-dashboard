@@ -71,13 +71,17 @@ const bl1 = (db) => db.prepare('SELECT * FROM daily_sales WHERE store = ?').all(
 
   const r = bl1(db);
   ok(r != null, 'the sheet row reached daily_sales');
-  eq(r.labor_pct, 0.21099, 'actual labour % is imported (col 22)');
-  eq(r.labor_hours, 118.1833, 'actual HOURS are imported (col 21) — never read before');
-  eq(r.budget_labor_pct, 0.141, 'budgeted labour % is imported (col 10) — never read before');
-  eq(r.budget_labor_hours, 96, 'budgeted HOURS are imported (col 9) — never read before');
-  // Guard against a mis-indexed COL map: these must not pick up neighbours.
+  // 🛑 ACTUALS ARE NO LONGER IMPORTED (2026-08-14). Hours are entered in the
+  // dashboard, so the nightly run must not carry them or it overwrites
+  // hand-entered figures. The fixture DOES hold real values in cols 21/22
+  // (118.1833 and 0.21099) — that is what keeps these two non-vacuous: they
+  // fail the moment somebody re-enables the read.
+  eq(r.labor_pct, null, 'actual labour % is NOT imported, though col 22 holds 0.21099');
+  eq(r.labor_hours, null, 'actual HOURS are NOT imported, though col 21 holds 118.1833');
+  eq(r.budget_labor_pct, 0.141, 'budgeted labour % is imported (col 10) — the PLAN still comes from the sheet');
+  eq(r.budget_labor_hours, 96, 'budgeted HOURS are imported (col 9) — the PLAN still comes from the sheet');
+  // Guard against a mis-indexed COL map: this must not pick up a neighbour.
   ok(r.budget_labor_hours !== 8605, 'budgeted hours is not the budget TOTAL from col 8');
-  ok(r.labor_hours !== 5844.78, 'actual hours is not the actual total from col 20');
   eq(r.budget, 8605, 'the pre-existing budget import is unaffected');
 }
 
@@ -112,21 +116,29 @@ const bl1 = (db) => db.prepare('SELECT * FROM daily_sales WHERE store = ?').all(
 }
 
 // ══ 3. The COALESCE ordering — the trap that would pin every row at 0 ══════
-// Every existing row already holds labor_pct = 0 from runs made before the
-// sheet was filled in. If the upsert were COALESCE(existing, excluded), a
-// re-run would keep the 0 forever and this whole slice would be inert.
+// Every existing row already holds budget_labor_pct = 0 from runs made before
+// the sheet was filled in. If the upsert were COALESCE(existing, excluded), a
+// re-run would keep the 0 forever and the plan import would be inert.
+//
+// Retargeted 2026-08-14 from the ACTUAL columns to the PLAN columns: actuals
+// no longer import at all, so they can no longer demonstrate this ordering.
+// The trap is unchanged and still live on the half that does import.
 {
   const { db, env } = makeEnv(repo);
   db.exec('DELETE FROM daily_sales');
-  db.prepare(`INSERT INTO daily_sales (store, date, total, labor_pct, budget) VALUES (?,?,?,?,?)`)
-    .run('BL1', '2026-08-10', 5844.78, 0, 8605);
-  eq(bl1(db).labor_pct, 0, 'precondition: the stored row holds a 0, as prod does');
+  db.prepare(`INSERT INTO daily_sales (store, date, total, budget_labor_pct, budget_labor_hours, budget)
+              VALUES (?,?,?,?,?,?)`).run('BL1', '2026-08-10', 5844.78, 0, 0, 8605);
+  eq(bl1(db).budget_labor_pct, 0, 'precondition: the stored row holds a 0, as prod does');
 
   await runBackfill(env, row());
   const r = bl1(db);
-  eq(r.labor_pct, 0.21099, 'a re-run OVERWRITES the stored 0 — fresh sheet value wins');
-  eq(r.labor_hours, 118.1833, 'and fills hours that were never populated');
-  eq(r.budget_labor_pct, 0.141, 'and the plan');
+  eq(r.budget_labor_pct, 0.141, 'a re-run OVERWRITES the stored 0 — fresh sheet value wins');
+  eq(r.budget_labor_hours, 96, 'and fills planned hours that were never populated');
+  // The other direction, now that actuals are dashboard-owned: a stored hour
+  // must NOT be disturbed by the same run. Fixture col 21 holds 118.1833.
+  db.prepare(`UPDATE daily_sales SET labor_hours = 47.25 WHERE store='BL1'`).run();
+  await runBackfill(env, row());
+  eq(bl1(db).labor_hours, 47.25, 'while a dashboard-entered hour is left alone');
 }
 
 // ══ 4. Manual-override rows stay immutable ════════════════════════════════

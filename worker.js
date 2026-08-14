@@ -7839,6 +7839,11 @@ const SHEET_COL = {
 // deliberately: correcting a rate in the API would hide a spreadsheet problem
 // rather than fix it.
 //
+// ⚠️ MOOT as of 2026-08-14: actual labour is no longer imported for ANY store,
+// so this set no longer gates anything. Kept for the measurement above, which is
+// still the reason BL16 has no labour history in D1. Now unreferenced — delete
+// it, and the note, once that history stops mattering.
+//
 // Remove a store from this set only once its tab matches the others.
 const LABOUR_ACTUALS_EXCLUDED = new Set(["BL16"]);
 
@@ -7913,9 +7918,16 @@ async function importSheetToD1(env, { filterStore = null, fromDate = null, toDat
         const aBins = sheetParseNum(c[COL.A_BINS]);
         const aAuction = sheetParseNum(c[COL.A_AUCTION]);
         const aTotal = sheetParseNum(c[COL.A_TOTAL]);
-        // aLabor is nulled for excluded stores too — see the note below. The
-        // flag is computed there because it sits with the other labour reads.
-        const aLabor = LABOUR_ACTUALS_EXCLUDED.has(storeCode) ? null : sheetParseNum(c[COL.A_LABOR]);
+        // 🛑 ACTUAL labour is no longer imported from the sheet, for ANY store.
+        // Hours are entered in the dashboard (Labor page → Hours) as of
+        // 2026-08-14; if this kept reading col 22 the nightly run would
+        // overwrite hand-entered figures the same night. Nulled rather than
+        // deleted so the column map still documents the sheet's real layout.
+        // Nothing already stored is lost: the upsert below COALESCEs a null
+        // onto the existing value. `labor_pct` is derived from hours at the
+        // current rate now, never read from the sheet — which is what ends the
+        // $14.40-vs-$15.00 drift between the sheet's tabs.
+        const aLabor = null;
         // Labour plan + actual hours. Each is bound with `|| null` below,
         // exactly as aLabor already was: the sheet writes a literal 0 into
         // every cell nobody has filled in (actual hours stop on 2026-08-04
@@ -7924,13 +7936,11 @@ async function importSheetToD1(env, { filterStore = null, fromDate = null, toDat
         // nothing real.
         const bHours = sheetParseNum(c[COL.B_HOURS]);
         const bLabor = sheetParseNum(c[COL.B_LABOR]);
-        // Actuals are dropped entirely for a store whose tab does not follow
-        // the standard layout — see LABOUR_ACTUALS_EXCLUDED. Nulled HERE rather
-        // than filtered at the API, so the wrong figure never enters D1 at all:
-        // anything stored will eventually be read by something that has not
-        // heard of the exclusion.
-        const excludeActuals = LABOUR_ACTUALS_EXCLUDED.has(storeCode);
-        const aHours = excludeActuals ? null : sheetParseNum(c[COL.A_HOURS]);
+        // Same as aLabor above: actual hours now come from the dashboard, not
+        // the sheet. This used to be gated on LABOUR_ACTUALS_EXCLUDED (BL16
+        // only); it is now unconditional, which makes that set moot — see the
+        // note on its declaration.
+        const aHours = null;
 
         // Also read KV snapshot for this date (Clover metrics)
         let kvData = null;

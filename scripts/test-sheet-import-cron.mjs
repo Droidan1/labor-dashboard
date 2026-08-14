@@ -88,7 +88,8 @@ const rowsFor = (db, store = 'BL1') =>
   for (const n of [0, 1, WINDOW - 1]) {
     ok(r[back(n)] != null, `day -${n} (inside the window) was imported`);
     eq(r[back(n)]?.budget_labor_hours, 90 + n, `day -${n} carries its budgeted hours`);
-    eq(r[back(n)]?.labor_hours, 100 + n, `day -${n} carries its actual hours`);
+    // The fixture serves 100+n in col 21; actuals stopped importing 2026-08-14.
+    eq(r[back(n)]?.labor_hours, null, `day -${n} does NOT carry actual hours from the sheet`);
   }
   // The window INCLUDES today, so today's budget is refreshed before the day
   // starts — that is what keeps todayBudget at most ~24h stale.
@@ -121,7 +122,7 @@ const rowsFor = (db, store = 'BL1') =>
   eq(row.order_count, 404, 'nor the order count');
   // …while still filling the columns only the sheet can supply.
   eq(row.budget_labor_pct, 0.101, 'but the labour PLAN was filled in');
-  eq(row.labor_hours, 101, 'and the actual hours');
+  eq(row.labor_hours, null, 'and actual hours stayed out — the sheet no longer supplies them');
 }
 
 // ══ 3. Manual-override rows stay immutable under the cron ═════════════════
@@ -167,15 +168,16 @@ const rowsFor = (db, store = 'BL1') =>
   eq(Object.keys(rowsFor(db)).length, 1, 'and writes no new rows');
 }
 
-// ══ 4b. Indy East's labour ACTUALS are excluded; its plan still imports ═══
-// BL16's tab fills col 21 for dates that have not happened — 57.5 hours on a
-// future day with no sales — so those are SCHEDULED hours, and importing them
-// labels a schedule as an actual. Col 22 is never computed there either.
-// Confirmed with Brian 2026-08-11: exclude the actuals until the tab matches
-// the others. The plan columns are still a coherent target and stay.
+// ══ 4b. Labour ACTUALS import for NO store; every plan still imports ══════
+// Was: BL16-only exclusion, because its tab fills col 21 for dates that have
+// not happened — 57.5 hours on a future day with no sales — so those are
+// SCHEDULED hours and importing them labels a schedule as an actual.
 //
-// The exclusion must be STORE-SCOPED: the same sheet fixture is served for
-// every tab here, so a leak shows up immediately as BL1 losing its actuals.
+// Now (2026-08-14): actual hours are entered in the dashboard, so the sheet
+// must not supply them for ANY store — a nightly run would overwrite what
+// somebody typed that afternoon. What used to be a store-scoped exclusion is
+// deliberately a global switch-off. The PLAN columns still come from the
+// sheet, which is the half of this that must NOT regress.
 {
   const { db, env } = makeEnv(repo);
   db.exec('DELETE FROM daily_sales');
@@ -185,16 +187,36 @@ const rowsFor = (db, store = 'BL1') =>
   const bl16 = rowsFor(db, 'BL16')[back(1)];
   const bl1 = rowsFor(db, 'BL1')[back(1)];
 
+  // The fixture serves cols 21/22 for every tab, so these are non-vacuous.
+  eq(bl1.labor_hours, null, 'BL1 actual hours are NOT imported');
+  eq(bl1.labor_pct, null, 'BL1 actual labour % is NOT imported');
   eq(bl16.labor_hours, null, 'BL16 actual hours are NOT imported');
   eq(bl16.labor_pct, null, 'BL16 actual labour % is NOT imported');
+
+  // …while the plan still lands, for both.
+  eq(bl1.budget_labor_hours, 90 + 1, 'BL1 budgeted hours ARE imported');
   eq(bl16.budget_labor_hours, 91, 'BL16 scheduled hours ARE imported — the plan is still wanted');
   eq(bl16.budget_labor_pct, 0.101, 'BL16 target % is still imported');
+}
 
-  // Same fixture, a non-excluded store: everything comes through.
-  eq(bl1.labor_hours, 101, 'BL1 actual hours are unaffected by the exclusion');
-  eq(bl1.labor_pct, 0.201, 'BL1 actual labour % is unaffected');
-  ok(bl1.labor_hours !== null && bl16.labor_hours === null,
-     'the exclusion is store-scoped, not a global switch-off');
+// ══ 4c. A stored hour survives the nightly run ════════════════════════════
+// 🔑 THE property Phase 0 rests on. Turning the import off is only safe
+// because the upsert COALESCEs a null onto the existing value; if that ever
+// changed to a straight bind, every hand-entered hour would be wiped the next
+// night and nothing else in this suite would notice. The sheet fixture serves
+// a DIFFERENT number (101) for this date, so a regression shows up as the
+// stored 47.25 turning into 101 or into null.
+{
+  const { db, env } = makeEnv(repo);
+  db.exec('DELETE FROM daily_sales');
+  db.prepare(`INSERT INTO daily_sales (store,date,labor_hours,snapshot_time,is_manual_override)
+              VALUES ('BL1',?,47.25,'2026-08-14T03:55:00Z',0)`).run(back(1));
+  stubNetwork();
+  await worker.scheduled({ cron: '55 3 * * *' }, env, ctx);
+
+  const row = rowsFor(db)[back(1)];
+  eq(row.labor_hours, 47.25, 'a dashboard-entered hour survives the nightly sheet import');
+  eq(row.budget_labor_hours, 91, 'and the plan still refreshed alongside it');
 }
 
 // ══ 5. Only the NIGHTLY cron runs it ══════════════════════════════════════
