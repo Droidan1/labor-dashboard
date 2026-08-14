@@ -17822,17 +17822,16 @@
     if (t === 'hours') { try { laborHoursLoad(); } catch (_) {} }
   }
 
-  // 🔑 SUPERUSER, not admin. The save posts to ?action=manual-override, and
-  // requireAdminAccess treats any non-GET as mutating and demands superuser —
-  // so an admin shown this tab would fill in a whole week and get a 403 on
-  // save. Matched to the server rather than the other way round: widening a
-  // destructive endpoint that can also overwrite sales is a bigger decision
-  // than hiding a tab. scripts/test-labor-plan.mjs pins the boundary.
+  // Admin or superuser. The save posts an HOURS-ONLY payload, which
+  // manual-override widens to admin for exactly that shape (Brian,
+  // 2026-08-14); a payload carrying sales still needs a superuser. Keep this
+  // in step with the server — scripts/test-labor-plan.mjs pins both ends.
   //
   // A manager gets Planning and Budget vs Actual for their own store and no
-  // Hours tab at all.
+  // Hours tab at all: entry here is chain-wide.
   function laborApplyRole() {
-    const canEnter = !!currentUser && currentUser.role === 'superuser';
+    const role = currentUser && currentUser.role;
+    const canEnter = role === 'superuser' || role === 'admin';
     const hoursTab = el('labor-tab-hours');
     if (hoursTab) hoursTab.classList.toggle('hidden', !canEnter);
     if (!canEnter && laborState.tab === 'hours') laborSetTab('plan');

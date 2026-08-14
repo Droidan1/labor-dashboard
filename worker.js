@@ -3953,16 +3953,22 @@ function requireAdminSecret(request, env, corsJson) {
 // An authenticated user with the wrong role must see a refusal, not a login page.
 // `superuserOnly` tightens even the READ side to superuser — used by the Repair
 // console, which Brian scoped to superuser regardless of verb.
-function requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly = false } = {}) {
+// `allowAdminMutation` lets ONE caller open a write to admins as well. Used by
+// manual-override for an hours-only payload, so the Labor page's hours grid is
+// usable by an admin — decided by Brian 2026-08-14. It is deliberately an
+// argument rather than a change to the default: every other write in this file
+// stays superuser-only, and `superuserOnly` still wins over it.
+function requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly = false, allowAdminMutation = false } = {}) {
   if (isAdminSecret) return null;
   const mutating = superuserOnly || request.method !== "GET";
+  const adminMayWrite = allowAdminMutation && !superuserOnly;
   const allowed = mutating
-    ? currentUser?.role === "superuser"
+    ? (adminMayWrite ? canAccessInventory(currentUser) : currentUser?.role === "superuser")
     : canAccessInventory(currentUser);
   if (allowed) return null;
   return new Response(JSON.stringify({
     error: "Forbidden",
-    code: mutating ? "NEED_SUPERUSER" : "NEED_ADMIN",
+    code: (mutating && !adminMayWrite) ? "NEED_SUPERUSER" : "NEED_ADMIN",
   }), { status: 403, headers: corsJson });
 }
 
@@ -12395,17 +12401,39 @@ export default {
     // cron snapshot and Sheet backfill will not overwrite this row.
     if (request.method === "POST" && url.searchParams.get("action") === "manual-override") {
       const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
-      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
-      if (unauth) return unauth;
       if (!env.DB) {
         return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       }
+      // Body BEFORE the gate, because who may write this depends on WHAT it
+      // writes. Parsing is side-effect free, and an unauthenticated caller
+      // never reaches here — the session gate above already refused them.
       let body = {};
       try { body = await request.json(); } catch {}
       const entries = Array.isArray(body.entries) ? body.entries : (body.store && body.date ? [body] : []);
       if (!entries.length) {
         return new Response(JSON.stringify({ error: "No entries provided. Send { entries: [...] } or a single object." }), { status: 400, headers: corsJson });
       }
+
+      // 🔑 Admins may write HOURS. Everything else here stays superuser-only.
+      //
+      // This action can rewrite total/retail/bin/auction/labor_pct — it is how
+      // sales get corrected — so opening the whole endpoint to admins would
+      // hand them the sales ledger as a side effect of wanting a labour screen.
+      // The widening is therefore scoped to the PAYLOAD: every entry must carry
+      // labor_hours and nothing but labor_hours. One `total` anywhere in the
+      // batch and the whole request needs a superuser again.
+      //
+      // Fail-closed by construction: an unrecognised field is not on the
+      // allowlist, so a future column added to FIELDS does not silently become
+      // admin-writable.
+      const HOURS_ONLY_KEYS = new Set(['store', 'date', 'week', 'labor_hours']);
+      const hoursOnly = entries.every(e =>
+        e && typeof e === 'object' &&
+        e.labor_hours !== undefined &&
+        Object.keys(e).every(k => HOURS_ONLY_KEYS.has(k)));
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson,
+        { allowAdminMutation: hoursOnly });
+      if (unauth) return unauth;
       // When true, rows that already have is_manual_override=1 are left untouched.
       // Used by the daily-CSV import flow to avoid clobbering hand-entered values.
       const skipIfOverrideExists = !!body.skipIfOverrideExists;

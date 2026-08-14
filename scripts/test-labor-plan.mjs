@@ -236,24 +236,41 @@ async function plan(env, qs = `week=${WEEK}`, user = 'u-su') {
   eq(row().total, 5000, 'and the protected sales figure is untouched');
 }
 
-// ══ 11. Who may actually WRITE hours ════════════════════════════════════
-// 🛑 requireAdminAccess treats any non-GET as mutating and demands SUPERUSER,
-// not admin. The Hours tab must therefore be superuser-only on the client too,
-// or an admin sees a grid they can fill in and cannot save. Pinned here so the
+// ══ 11. Who may WRITE hours, and who may not write anything else ════════
+// 🛑 manual-override can rewrite total/retail/bin/auction — it is how sales get
+// corrected. Admins were widened to it for HOURS ONLY (Brian, 2026-08-14), so
+// the boundary is the PAYLOAD, not the endpoint. Pinned from both ends so the
 // client gate and the server gate cannot drift apart silently.
 {
   const { db, env } = makeEnv(repo);
   db.exec('DELETE FROM daily_sales');
-  const post = (user) => worker.fetch(req('/?action=manual-override', {
-    user, method: 'POST',
-    body: { markOverride: false, entries: [{ store: 'BL1', date: '2026-08-05', labor_hours: 41 }] },
+  const post = (user, entries, extra = {}) => worker.fetch(req('/?action=manual-override', {
+    user, method: 'POST', body: Object.assign({ markOverride: false, entries }, extra),
   }), env, ctx);
+  const HOURS = [{ store: 'BL1', date: '2026-08-05', labor_hours: 41 }];
+  const SALES = [{ store: 'BL1', date: '2026-08-05', total: 9999 }];
+  const MIXED = [{ store: 'BL1', date: '2026-08-05', labor_hours: 41 },
+                 { store: 'BL2', date: '2026-08-05', total: 9999 }];
 
-  eq((await post('u-su')).status, 200, 'a superuser may write hours');
-  const admin = await post('u-admin');
-  eq(admin.status, 403, 'an ADMIN may not — this is the real boundary');
-  eq((await admin.json()).code, 'NEED_SUPERUSER', 'and says so');
-  eq((await post('u-mgr1')).status, 403, 'nor a manager');
+  eq((await post('u-su', HOURS)).status, 200, 'a superuser may write hours');
+  eq((await post('u-admin', HOURS)).status, 200, 'an ADMIN may write hours');
+  eq((await post('u-mgr1', HOURS)).status, 403, 'a manager may not');
+
+  eq((await post('u-su', SALES)).status, 200, 'a superuser may still correct sales');
+  const adminSales = await post('u-admin', SALES);
+  eq(adminSales.status, 403, 'an admin may NOT rewrite sales through the same endpoint');
+  eq((await adminSales.json()).code, 'NEED_SUPERUSER', 'and is told why');
+
+  // One sales field anywhere in the batch takes the whole request back.
+  eq((await post('u-admin', MIXED)).status, 403, 'a mixed batch is refused for an admin');
+  eq((await post('u-su', MIXED)).status, 200, 'but not for a superuser');
+
+  // An unrecognised field is not on the allowlist, so a column added to FIELDS
+  // later cannot become admin-writable by accident.
+  eq((await post('u-admin', [{ store:'BL1', date:'2026-08-05', labor_hours: 41, labor_pct: 0.2 }])).status,
+     403, 'labor_hours plus anything else is not hours-only');
+  eq((await post('u-admin', [{ store:'BL1', date:'2026-08-05' }])).status,
+     403, 'and an entry with no hours at all is not hours-only either');
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);
