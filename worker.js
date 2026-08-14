@@ -3816,6 +3816,7 @@ const ACTION_BUSINESS = new Map([
   ["items-hour", "bl"],
   ["items-snapshot", "bl"],
   ["labor", "bl"],
+  ["labor-plan", "bl"],
   ["list-sale-schedules", "bl"],
   ["list-users", "bl"],
   ["ly-sales", "bl"],
@@ -7871,6 +7872,91 @@ const LABOR_STORES = ["BL1", "BL2", "BL4", "BL14", "BL16"];
 // rolls forward to May 1 — so without the round-trip check those rows would be
 // folded into a legitimate week and quietly inflate it. The caller counts what
 // this rejects rather than dropping it in silence.
+// Hours the sheet's planning tab adds on top of column J, one ASM per store.
+// 🔑 Keeping this is a DECISION, not an oversight (Brian, 2026-08-14, after
+// seeing it removed): it is 200 hrs/week chain-wide and it moves the chain
+// from +43 hrs of room to 120 hrs over. Without it every store's budget labour
+// % collapses to a flat 14.00%, which is the tell that it has gone missing.
+// A flat constant assumes exactly one ASM everywhere; the day a store runs two
+// or none, this becomes a per-store config row.
+const ASM_HOURS_PER_STORE_WEEK = 40;
+
+// Oldest → newest over the four trailing weeks. Last week carries 4x the
+// weight of the oldest, matching the planning sheet.
+const LABOR_TREND_WEIGHTS = [0.10, 0.20, 0.30, 0.40];
+
+// How far back to look for four USABLE weeks before giving up and quoting the
+// plain budget. Weeks that fail laborWeekUsable are skipped, not counted — a
+// store dark for a fortnight should still trend on the four good weeks before
+// it, but not reach back a whole quarter to find them.
+const LABOR_TREND_LOOKBACK_WEEKS = 12;
+
+// A week can only carry a trend if it has both halves of the ratio. Indy East
+// logged 1,268 hours across three weeks with no sales at all before it opened,
+// and Holland has sold nothing since 2026-07-24 — trending on either produces
+// a recommendation of 49 and 66 hours respectively.
+// `missingDays` is set by the caller that builds weeks from daily rows: a week
+// where some selling days have hours and some do not sums to a partial figure,
+// which would drag the trend down while looking perfectly plausible.
+function laborWeekUsable(w) {
+  return w.budgetSales > 0 && w.actualSales > 0 && w.actualHours > 0 && !w.missingDays;
+}
+
+// The whole model, as one pure function so it can be pinned by tests without
+// a database. `trailing` is oldest → newest; `budgetWeek` is the week being
+// planned. Hours out are whole numbers because that is what a schedule is
+// written in, and deltaHours is the difference of the ROUNDED figures so the
+// number on screen is the subtraction the reader can do themselves.
+function laborRecommendation(trailing, budgetWeek) {
+  const N = LABOR_TREND_WEIGHTS.length;
+  const usable = (trailing || []).filter(laborWeekUsable).slice(-N);
+  const budgetSales = Number(budgetWeek?.budgetSales) || 0;
+  const budgetHours = (Number(budgetWeek?.budgetHours) || 0) + ASM_HOURS_PER_STORE_WEEK;
+  const budgetLaborPct = budgetSales > 0 ? (budgetHours * LABOR_RATE_PER_HOUR / budgetSales) : null;
+  const p2 = (n) => (n == null ? null : Math.round(n * 10000) / 100);
+
+  const base = {
+    weeksUsed: usable.map((w, i) => ({
+      weekEnd: w.weekEnd, weight: LABOR_TREND_WEIGHTS[i] * 100,
+      budgetSales: w.budgetSales, actualSales: w.actualSales, actualHours: w.actualHours,
+      variancePct: p2((w.actualSales - w.budgetSales) / w.budgetSales),
+      laborPct: p2(w.actualHours * LABOR_RATE_PER_HOUR / w.actualSales),
+    })),
+    budgetHours: Math.round(budgetHours),
+    budgetLaborPct: p2(budgetLaborPct),
+  };
+
+  // Not enough history: quote the plain budget and say so. Deliberately NOT
+  // renormalising the weights over fewer weeks — that would have handed Indy
+  // East a recommendation off a single week, which is worse than admitting
+  // we do not know.
+  if (usable.length < N || !budgetSales) {
+    return {
+      ...base, basis: 'budget-only',
+      reason: `only ${usable.length} of ${N} trailing weeks are usable`,
+      weightedVariancePct: null, projectedSales: null, trendLaborPct: null,
+      recommendedHours: Math.round(budgetHours), trendingHours: null, deltaHours: null,
+    };
+  }
+
+  let wv = 0, wp = 0;
+  usable.forEach((w, i) => {
+    const weight = LABOR_TREND_WEIGHTS[i];
+    wv += weight * ((w.actualSales - w.budgetSales) / w.budgetSales);
+    wp += weight * (w.actualHours * LABOR_RATE_PER_HOUR / w.actualSales);
+  });
+  const projectedSales = budgetSales * (1 + wv);
+  const rec = Math.round(budgetLaborPct * projectedSales / LABOR_RATE_PER_HOUR);
+  const trend = Math.round(wp * projectedSales / LABOR_RATE_PER_HOUR);
+  return {
+    ...base, basis: 'trend', reason: null,
+    weightedVariancePct: p2(wv),
+    projectedSales: Math.round(projectedSales * 100) / 100,
+    trendLaborPct: p2(wp),
+    recommendedHours: rec, trendingHours: trend, deltaHours: rec - trend,
+  };
+}
+
 function laborBucketKey(date, grain) {
   if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   const d = new Date(date + "T00:00:00Z");
@@ -11730,6 +11816,99 @@ export default {
 
       return new Response(JSON.stringify({
         grain, from: rFrom, to: rTo, rate: LABOR_RATE_PER_HOUR, stores, periods, invalidDateRows,
+      }), { headers: corsJson });
+    }
+
+    // ── Labor: the recommendation for an upcoming week ────────────────
+    //    GET ?action=labor-plan&week=YYYY-MM-DD[&store=BLn]
+    //
+    // `week` is the SATURDAY that ends the week being planned. Returns, per
+    // store, the four trailing weeks it used and what they imply, plus a chain
+    // roll-up over the stores that could actually be trended.
+    if (url.searchParams.get("action") === "labor-plan") {
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      }
+      const week = url.searchParams.get("week") || "";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(week) || laborBucketKey(week, "w") !== week) {
+        return new Response(JSON.stringify({
+          error: "week must be the YYYY-MM-DD of a Saturday",
+        }), { status: 400, headers: corsJson });
+      }
+
+      const _allow = allowedStores(currentUser);
+      let stores = _allow ? LABOR_STORES.filter(s => _allow.includes(s)) : LABOR_STORES.slice();
+      const wanted = (url.searchParams.get("store") || "").toUpperCase();
+      if (wanted) {
+        if (!stores.includes(wanted)) {
+          return new Response(JSON.stringify({ error: "Forbidden", code: "STORE_NOT_ALLOWED" }), { status: 403, headers: corsJson });
+        }
+        stores = [wanted];
+      }
+      if (!stores.length) {
+        return new Response(JSON.stringify({ week, stores: [], byStore: {}, chain: null }), { headers: corsJson });
+      }
+
+      // Far enough back to find four usable weeks, and no further.
+      const start = new Date(week + "T00:00:00Z");
+      start.setUTCDate(start.getUTCDate() - (LABOR_TREND_LOOKBACK_WEEKS * 7 + 6));
+      const rangeFrom = start.toISOString().slice(0, 10);
+
+      const ph = stores.map(() => "?").join(",");
+      const q = await env.DB.prepare(
+        `SELECT store, date, budget, total, budget_labor_hours, labor_hours
+           FROM daily_sales
+          WHERE date >= ? AND date <= ? AND store IN (${ph})
+          ORDER BY date`
+      ).bind(rangeFrom, week, ...stores).all();
+
+      // Fold daily rows into weeks, per store.
+      const byStoreWeeks = new Map();
+      for (const r of (q.results || [])) {
+        const key = laborBucketKey(r.date, "w");
+        if (!key) continue;
+        let weeks = byStoreWeeks.get(r.store);
+        if (!weeks) { weeks = new Map(); byStoreWeeks.set(r.store, weeks); }
+        let w = weeks.get(key);
+        if (!w) { w = { weekEnd: key, budgetSales: 0, actualSales: 0, budgetHours: 0, actualHours: 0, missingDays: 0 }; weeks.set(key, w); }
+        const as = Number(r.total) || 0, ah = Number(r.labor_hours) || 0;
+        w.budgetSales += Number(r.budget) || 0;
+        w.budgetHours += Number(r.budget_labor_hours) || 0;
+        w.actualSales += as;
+        w.actualHours += ah;
+        if (as > 0 && !(ah > 0)) w.missingDays++;
+      }
+
+      const byStore = {};
+      let cRec = 0, cTrend = 0, cProj = 0, cBudget = 0, trended = 0;
+      for (const s of stores) {
+        const weeks = byStoreWeeks.get(s) || new Map();
+        const ordered = [...weeks.values()].sort((a, b) => (a.weekEnd < b.weekEnd ? -1 : 1));
+        const trailing = ordered.filter(w => w.weekEnd < week);
+        const budgetWeek = weeks.get(week) || { budgetSales: 0, budgetHours: 0 };
+        const plan = laborRecommendation(trailing, budgetWeek);
+        byStore[s] = plan;
+        if (plan.basis === 'trend') {
+          trended++;
+          cRec += plan.recommendedHours; cTrend += plan.trendingHours;
+          cProj += plan.projectedSales; cBudget += budgetWeek.budgetSales;
+        }
+      }
+
+      // The chain line covers only the stores that could be trended — a store
+      // quoting its plain budget has no pace to add to a pace total, and
+      // folding it in would read as agreement rather than absence.
+      const chain = trended ? {
+        storesTrended: trended,
+        recommendedHours: cRec, trendingHours: cTrend, deltaHours: cRec - cTrend,
+        projectedSales: Math.round(cProj * 100) / 100,
+        budgetSales: Math.round(cBudget * 100) / 100,
+      } : null;
+
+      return new Response(JSON.stringify({
+        week, rate: LABOR_RATE_PER_HOUR, asmHours: ASM_HOURS_PER_STORE_WEEK,
+        weights: LABOR_TREND_WEIGHTS.map(w => w * 100),
+        stores, byStore, chain,
       }), { headers: corsJson });
     }
 
