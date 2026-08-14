@@ -3815,6 +3815,7 @@ const ACTION_BUSINESS = new Map([
   ["items", "bl"],
   ["items-hour", "bl"],
   ["items-snapshot", "bl"],
+  ["labor", "bl"],
   ["list-sale-schedules", "bl"],
   ["list-users", "bl"],
   ["ly-sales", "bl"],
@@ -7847,6 +7848,39 @@ const SHEET_COL = {
 // Remove a store from this set only once its tab matches the others.
 const LABOUR_ACTUALS_EXCLUDED = new Set(["BL16"]);
 
+// ── Labor page ──────────────────────────────────────────────────────────────
+// 🔑 Labour cost is hours x a flat blended rate. It is NOT payroll, and it is
+// NOT daily_sales.labor_pct: that column holds whatever rate the source sheet
+// hardcoded into the cell ($14.40 on the Summary tab, $15.00 on the store tabs,
+// $14.40 again on Indy East), which is the drift this page exists to end.
+// Every labour % the page serves is computed here, from stored hours, at ONE
+// rate. If the rate moves again, history restates — deliberate, and the reason
+// this is a named constant rather than a literal in three query builders.
+const LABOR_RATE_PER_HOUR = 15.00;
+
+// Stores the Labor page covers. BL8 (Holland) is excluded per Brian
+// 2026-08-14 — it has had no sales feed since 07-24, so every labour % it
+// could produce is a divide-by-a-dark-store. BL12 (Wyoming) is closed.
+const LABOR_STORES = ["BL1", "BL2", "BL4", "BL14", "BL16"];
+
+// Which period a date belongs to. Weeks are Sunday→Saturday and are keyed by
+// the SATURDAY that ends them, matching both source sheets.
+//
+// 🛑 Returns null for a date that is not real. `daily_sales` holds six rows
+// dated 2026-04-31 carrying $45,685, and `new Date("2026-04-31")` silently
+// rolls forward to May 1 — so without the round-trip check those rows would be
+// folded into a legitimate week and quietly inflate it. The caller counts what
+// this rejects rather than dropping it in silence.
+function laborBucketKey(date, grain) {
+  if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const d = new Date(date + "T00:00:00Z");
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== date) return null;
+  if (grain === "d") return date;
+  if (grain === "m") return date.slice(0, 7);
+  d.setUTCDate(d.getUTCDate() + (6 - d.getUTCDay()));
+  return d.toISOString().slice(0, 10);
+}
+
 // Trailing window the nightly cron imports. Wide enough to absorb a couple of
 // weeks of retrospective labour entry, and it INCLUDES today, so today's budget
 // is refreshed before the day starts. Cost: 21 days x 6 stores x 2 subrequests
@@ -11605,6 +11639,100 @@ export default {
     // ── Public: Weekly Retail Summary feed
     //    ?action=weekly-summary&week=15&year=2026
     // Returns one payload feeding the Summary tab + all 6 per-store tabs.
+    // ── Labor: budget vs actual hours, at day / week / month grain ────
+    //    GET ?action=labor&grain=<d|w|m>&from=YYYY-MM-DD&to=YYYY-MM-DD[&store=BLn]
+    //
+    // Feeds the Labor page's Budget-vs-Actual tab. Both sides are valued at
+    // LABOR_RATE_PER_HOUR so the comparison is hours-for-hours.
+    if (url.searchParams.get("action") === "labor") {
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      }
+      const grain = (url.searchParams.get("grain") || "w").toLowerCase();
+      if (!["d", "w", "m"].includes(grain)) {
+        return new Response(JSON.stringify({ error: "Invalid grain — use d, w or m" }), { status: 400, headers: corsJson });
+      }
+      let rFrom = url.searchParams.get("from") || "";
+      let rTo = url.searchParams.get("to") || "";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(rFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(rTo)) {
+        return new Response(JSON.stringify({ error: "Invalid from/to (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+      }
+      if (rFrom > rTo) { const t = rFrom; rFrom = rTo; rTo = t; }
+
+      // Scope. LABOR_STORES is the page's set; allowedStores() is what this
+      // caller may see. A manager asking for everything gets their own store,
+      // not a 403 and not the chain.
+      const _allow = allowedStores(currentUser);
+      let stores = _allow ? LABOR_STORES.filter(s => _allow.includes(s)) : LABOR_STORES.slice();
+      const wanted = (url.searchParams.get("store") || "").toUpperCase();
+      if (wanted) {
+        // An explicit store outside scope is refused rather than silently
+        // widened or silently emptied — the caller asked a direct question.
+        if (!stores.includes(wanted)) {
+          return new Response(JSON.stringify({ error: "Forbidden", code: "STORE_NOT_ALLOWED" }), { status: 403, headers: corsJson });
+        }
+        stores = [wanted];
+      }
+      if (!stores.length) {
+        return new Response(JSON.stringify({
+          grain, from: rFrom, to: rTo, rate: LABOR_RATE_PER_HOUR, stores: [], periods: [], invalidDateRows: 0,
+        }), { headers: corsJson });
+      }
+
+      const ph = stores.map(() => "?").join(",");
+      const q = await env.DB.prepare(
+        `SELECT store, date, budget, total, budget_labor_hours, labor_hours
+           FROM daily_sales
+          WHERE date >= ? AND date <= ? AND store IN (${ph})
+          ORDER BY date`
+      ).bind(rFrom, rTo, ...stores).all();
+
+      const buckets = new Map();
+      let invalidDateRows = 0;
+      const blank = () => ({ budgetSales: 0, actualSales: 0, budgetHours: 0, actualHours: 0, missing: 0 });
+      const add = (o, bs, as, bh, ah) => {
+        o.budgetSales += bs; o.actualSales += as; o.budgetHours += bh; o.actualHours += ah;
+        // A day that SOLD but carries no hours makes its whole period
+        // incomplete. Without this a part-entered week renders as a
+        // spectacular labour % — 57 chain hours against $43k of sales reads
+        // as 2%, which looks like the best week on record.
+        if (as > 0 && !(ah > 0)) o.missing++;
+      };
+      for (const r of (q.results || [])) {
+        const key = laborBucketKey(r.date, grain);
+        if (!key) { invalidDateRows++; continue; }
+        let b = buckets.get(key);
+        if (!b) { b = Object.assign(blank(), { key, byStore: {} }); buckets.set(key, b); }
+        const bs = Number(r.budget) || 0, as = Number(r.total) || 0;
+        const bh = Number(r.budget_labor_hours) || 0, ah = Number(r.labor_hours) || 0;
+        add(b, bs, as, bh, ah);
+        add(b.byStore[r.store] || (b.byStore[r.store] = blank()), bs, as, bh, ah);
+      }
+
+      const r2 = (n) => Math.round(n * 100) / 100;
+      const pct = (h, s) => (s > 0 && h > 0) ? Math.round((h * LABOR_RATE_PER_HOUR / s) * 1e6) / 1e4 : null;
+      const shape = (o) => ({
+        budgetSales: r2(o.budgetSales), actualSales: r2(o.actualSales),
+        budgetHours: r2(o.budgetHours), actualHours: r2(o.actualHours),
+        budgetLaborPct: pct(o.budgetHours, o.budgetSales),
+        // Withheld, not zeroed, while any selling day is missing its hours.
+        actualLaborPct: o.missing ? null : pct(o.actualHours, o.actualSales),
+        hoursMissingDays: o.missing,
+        complete: o.missing === 0,
+      });
+      const periods = [...buckets.values()]
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+        .map(b => {
+          const out = { key: b.key, ...shape(b), byStore: {} };
+          for (const s of stores) if (b.byStore[s]) out.byStore[s] = shape(b.byStore[s]);
+          return out;
+        });
+
+      return new Response(JSON.stringify({
+        grain, from: rFrom, to: rTo, rate: LABOR_RATE_PER_HOUR, stores, periods, invalidDateRows,
+      }), { headers: corsJson });
+    }
+
     if (url.searchParams.get("action") === "weekly-summary") {
       const week = url.searchParams.get("week");
       const year = url.searchParams.get("year") || String(new Date().getUTCFullYear());
