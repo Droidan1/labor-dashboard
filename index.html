@@ -2249,7 +2249,13 @@
          week's hours from a 4-week weighted trend; Budget vs Actual and Hours
          land in the following phases. Every figure is hours x $15.00 — never
          payroll, never the sheet's own labour % column. -->
-    <div id="page-labor" class="hidden">
+    <!-- 🔑 text-opl-ink/dark:text-op-ink on the CONTAINER, not on each element.
+         Nothing in this app sets a default ink colour on body or #main-scroll —
+         every existing element carries its own — so anything here that relied on
+         inheritance rendered pure black on the dark background. Colour is
+         inherited, and a child's own text-* class still overrides it, so one
+         class here fixes the lot without touching the pieces that set theirs. -->
+    <div id="page-labor" class="hidden text-opl-ink dark:text-op-ink">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="flex items-center gap-3 max-w-7xl mx-auto flex-wrap">
           <h1 class="text-xl font-brand text-accent-green uppercase tracking-wide leading-none">Labor</h1>
