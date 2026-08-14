@@ -236,5 +236,25 @@ async function plan(env, qs = `week=${WEEK}`, user = 'u-su') {
   eq(row().total, 5000, 'and the protected sales figure is untouched');
 }
 
+// ══ 11. Who may actually WRITE hours ════════════════════════════════════
+// 🛑 requireAdminAccess treats any non-GET as mutating and demands SUPERUSER,
+// not admin. The Hours tab must therefore be superuser-only on the client too,
+// or an admin sees a grid they can fill in and cannot save. Pinned here so the
+// client gate and the server gate cannot drift apart silently.
+{
+  const { db, env } = makeEnv(repo);
+  db.exec('DELETE FROM daily_sales');
+  const post = (user) => worker.fetch(req('/?action=manual-override', {
+    user, method: 'POST',
+    body: { markOverride: false, entries: [{ store: 'BL1', date: '2026-08-05', labor_hours: 41 }] },
+  }), env, ctx);
+
+  eq((await post('u-su')).status, 200, 'a superuser may write hours');
+  const admin = await post('u-admin');
+  eq(admin.status, 403, 'an ADMIN may not — this is the real boundary');
+  eq((await admin.json()).code, 'NEED_SUPERUSER', 'and says so');
+  eq((await post('u-mgr1')).status, 403, 'nor a manager');
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -17822,15 +17822,20 @@
     if (t === 'hours') { try { laborHoursLoad(); } catch (_) {} }
   }
 
-  // Hours entry is chain-wide, so it is admin-only — a manager gets Planning
-  // and Budget vs Actual for their own store and no Hours tab at all. The
-  // worker refuses the write regardless; this is about not offering it.
+  // 🔑 SUPERUSER, not admin. The save posts to ?action=manual-override, and
+  // requireAdminAccess treats any non-GET as mutating and demands superuser —
+  // so an admin shown this tab would fill in a whole week and get a 403 on
+  // save. Matched to the server rather than the other way round: widening a
+  // destructive endpoint that can also overwrite sales is a bigger decision
+  // than hiding a tab. scripts/test-labor-plan.mjs pins the boundary.
+  //
+  // A manager gets Planning and Budget vs Actual for their own store and no
+  // Hours tab at all.
   function laborApplyRole() {
-    const role = currentUser && currentUser.role;
-    const isAdmin = role === 'superuser' || role === 'admin';
+    const canEnter = !!currentUser && currentUser.role === 'superuser';
     const hoursTab = el('labor-tab-hours');
-    if (hoursTab) hoursTab.classList.toggle('hidden', !isAdmin);
-    if (!isAdmin && laborState.tab === 'hours') laborSetTab('plan');
+    if (hoursTab) hoursTab.classList.toggle('hidden', !canEnter);
+    if (!canEnter && laborState.tab === 'hours') laborSetTab('plan');
   }
 
   async function initLabor(force) {

@@ -58,7 +58,7 @@ Decisions already made by Brian:
 
 ---
 
-## Phase 0 — Freeze the sheet as the hours source  ⚠️ do this first
+## Phase 0 — Freeze the sheet as the hours source  ✅ SHIPPED PROD 2026-08-14
 
 The importer currently writes `labor_hours` nightly. Until it stops, anything
 entered in the dashboard gets overwritten the same night.
@@ -90,7 +90,7 @@ back it out.
 
 ---
 
-## Phase 1 — Worker: read endpoint
+## Phase 1 — Worker: read endpoint  ✅ built (`8059f9c`), staging only
 
 - [ ] `GET ?action=labor&scope=<all|BLn>&grain=<d|w|m>&from=&to=`
       returning per store per period: budget sales, actual sales, budget hours,
@@ -111,7 +111,7 @@ wiring, and wiring is what enforces scoping.
 
 ---
 
-## Phase 2 — Worker: recommendation engine
+## Phase 2 — Worker: recommendation engine  ✅ built (`ef5a25d`)
 
 - [ ] Pure function: `(trailing4, budgetWeek) → { weightedVar, projSales,
       trendLaborPct, recHours, trendHours, delta, basis }` where `basis` is
@@ -139,7 +139,7 @@ Plus a case where a zero-sales week appears mid-window and must be rejected
 
 ---
 
-## Phase 3 — Client: page shell + Planning tab
+## Phase 3 — Client: page shell + Planning tab  ✅ built (`61c61f7`, `03cf821`)
 
 - [ ] `#page-labor` following the existing page pattern; header, freshness pill,
       week chip, store `<select>`, tab bar.
@@ -147,14 +147,14 @@ Plus a case where a zero-sales week appears mid-window and must be rejected
       4-week detail, needs-attention panel.
 - [ ] Store picker admin-only; manager view forces their store and hides it.
 
-## Phase 4 — Client: Budget vs Actual tab
+## Phase 4 — Client: Budget vs Actual tab  ✅ built (`cafd519`)
 
 - [ ] Daily / Weekly / Monthly segmented control, default Weekly.
 - [ ] Over/under column is `actual − budget` (positive = over = red). ⚠️ Opposite
       sign convention to Planning's Δ — keep the column headings explicit.
 - [ ] Incomplete periods render a **"hours pending"** chip, never a labour %.
 
-## Phase 5 — Client: Hours grid (admin only)
+## Phase 5 — Client: Hours grid  ✅ built (`5cf8b9b`) — SUPERUSER only, see below
 
 - [ ] Stores × 7 days, budget printed under each input, blanks amber.
 - [ ] Paste handler: TSV block fills right and down from the focused cell.
@@ -167,10 +167,17 @@ Plus a case where a zero-sales week appears mid-window and must be rejected
 - [ ] No "fill from budget" button. It would fabricate a week of plausible data
       in one click.
 
-## Phase 6 — Nav, permissions, retire the sheet
+## Phase 6 — Nav, permissions, retire the sheet  ◐ in progress
 
-- [ ] Nav entry for Labor, gated in `applyRoleUI` the same way Marketing is.
-- [ ] Hours tab admin/superuser only, client **and** server.
+- [x] Nav entry for Labor, gated in `applyRoleUI` — visible to anyone with
+      financial access, since a manager needs their own store's recommendation.
+- [x] Hours tab **SUPERUSER** only, client and server. 🛑 Not admin, as first
+      written: `requireAdminAccess` treats any non-GET as mutating and demands
+      superuser, so an admin would have filled in a week and been refused on
+      save. The client was matched to the server rather than the reverse —
+      widening an endpoint that can also overwrite sales is a bigger decision
+      than hiding a tab. **If admins should enter hours, that is a deliberate
+      loosening of `manual-override` and needs its own call.**
 - [ ] Tell whoever maintains the planning sheet to stop the weekly copy/paste.
 - [ ] Note in MEMORY.md that the sheet's Summary tab remains on 14.40 and will
       disagree with the page by ~4% for anything after 2026-02-15.
