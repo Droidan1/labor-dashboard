@@ -2304,9 +2304,24 @@
           <div id="labor-act-body" class="mt-4"></div>
         </div>
         <div id="labor-pane-hours" class="hidden">
-          <div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 text-[13px] text-opl-inkDim dark:text-op-inkDim">
-            Hours entry arrives in the phase after next.
-          </div>
+          <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors">
+            <div class="p-5 pb-3 flex items-start gap-3 flex-wrap">
+              <div>
+                <div class="text-[10.5px] font-extrabold tracking-[0.09em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer">Hours entry</div>
+                <h2 id="labor-hours-title" class="text-[15px] font-extrabold mt-0.5">—</h2>
+                <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim">Budget hours sit under each box. Paste a block straight from Paylocity onto any cell.</div>
+              </div>
+              <div class="ml-auto flex items-center gap-2.5">
+                <span id="labor-hours-status" class="text-[12px] font-bold text-opl-inkDim dark:text-op-inkDim"></span>
+                <button type="button" onclick="laborHoursReset()"
+                  class="h-[34px] px-3 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border text-[12.5px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Discard</button>
+                <button id="labor-hours-save" type="button" onclick="laborHoursSave()" disabled
+                  class="h-[34px] px-4 rounded-[11px] bg-accent-green text-[#0b1220] text-[13px] font-extrabold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">Save week</button>
+              </div>
+            </div>
+            <div id="labor-hours-warn" class="hidden mx-5 mb-3 rounded-[12px] p-3 text-[12.5px] leading-relaxed border" style="background:rgba(239,68,68,.07);border-color:rgba(239,68,68,.32)"></div>
+            <div id="labor-hours-grid" class="overflow-x-auto px-5 pb-5"></div>
+          </section>
         </div>
       </div>
     </div><!-- end #page-labor -->
@@ -17804,6 +17819,7 @@
     // Budget vs Actual is its own endpoint — fetched on first open, not at
     // page load, so landing on Planning costs one request rather than two.
     if (t === 'act') { try { laborLoadActuals(); } catch (_) {} }
+    if (t === 'hours') { try { laborHoursLoad(); } catch (_) {} }
   }
 
   // Hours entry is chain-wide, so it is admin-only — a manager gets Planning
@@ -18000,6 +18016,261 @@
     }
 
     body.innerHTML = html;
+  }
+
+  // ── Hours entry ──────────────────────────────────────────────────────────
+  // Stores down, the seven days of the entered week across. Reuses
+  // ?action=labor&grain=d, which already returns budget hours, actual hours and
+  // actual sales per store per day — everything a cell needs.
+  //
+  // The week entered is the one that just RAN, matching Budget vs Actual, so
+  // Planning forecasts week W while these two report and fill week W-1.
+  const laborHours = { week: null, days: [], stores: [], base: {}, cur: {}, budget: {}, sales: {}, busy: false };
+  const hKey = (s, d) => s + '|' + d;
+
+  function laborHoursWeek() {
+    const d = new Date((laborState.week || laborUpcomingSaturday()) + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - 7);
+    return d.toISOString().slice(0, 10);
+  }
+  function laborHoursNum(v) {
+    const s = String(v == null ? '' : v).trim();
+    if (s === '') return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  async function laborHoursLoad(force) {
+    const wkEnd = laborHoursWeek();
+    if (laborHours.week === wkEnd && !force) { laborHoursRender(); return; }
+    if (laborHours.busy) return;
+    laborHours.busy = true;
+    const grid = el('labor-hours-grid');
+    if (grid) grid.innerHTML = '<div class="text-[13px] font-medium text-opl-inkDim dark:text-op-inkDim py-6">Loading…</div>';
+    try {
+      const start = new Date(wkEnd + 'T00:00:00Z'); start.setUTCDate(start.getUTCDate() - 6);
+      const from = start.toISOString().slice(0, 10);
+      const res = await fetch(`${WORKER_BASE}?action=labor&grain=d&from=${from}&to=${wkEnd}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const d = await res.json();
+
+      laborHours.week = wkEnd;
+      laborHours.stores = d.stores || [];
+      laborHours.days = [];
+      for (let i = 0; i < 7; i++) {
+        const dt = new Date(start); dt.setUTCDate(dt.getUTCDate() + i);
+        laborHours.days.push(dt.toISOString().slice(0, 10));
+      }
+      laborHours.base = {}; laborHours.cur = {}; laborHours.budget = {}; laborHours.sales = {};
+      for (const p of (d.periods || [])) {
+        for (const s of laborHours.stores) {
+          const cell = p.byStore && p.byStore[s]; if (!cell) continue;
+          const k = hKey(s, p.key);
+          laborHours.base[k] = cell.actualHours > 0 ? cell.actualHours : null;
+          laborHours.cur[k] = laborHours.base[k];
+          laborHours.budget[k] = cell.budgetHours || 0;
+          laborHours.sales[k] = cell.actualSales || 0;
+        }
+      }
+      laborHoursRender();
+    } catch (e) {
+      if (grid) grid.innerHTML = `<div class="text-[13px] text-op-bad py-6">Could not load hours — ${laborEsc(e && e.message)}</div>`;
+    } finally { laborHours.busy = false; }
+  }
+
+  // A cell wildly out of line with its own budget is almost always a typo or a
+  // mis-aligned paste. 3,127 hours really is sitting in the source sheet for one
+  // Coliseum week; this is the gate that would have stopped it.
+  function laborHoursFlagged(k) {
+    const v = laborHours.cur[k], b = laborHours.budget[k];
+    return v != null && b > 0 && (v > b * 2.5 || v < b * 0.25);
+  }
+  const LH_INPUT_BASE = 'w-full min-w-[62px] h-9 rounded-[9px] border text-center text-[13.5px] font-bold tabular-nums text-opl-ink dark:text-op-ink px-1 focus:outline-none focus:border-accent-green ';
+  function laborHoursCellCls(k) {
+    if (laborHours.cur[k] == null) return 'bg-[rgba(245,158,11,0.10)] border-[rgba(245,158,11,0.34)]';
+    if (laborHoursFlagged(k)) return 'border-op-bad ring-2 ring-[rgba(239,68,68,0.18)]';
+    return 'bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.05)] border-[rgba(20,16,8,0.08)] dark:border-op-border';
+  }
+  const laborLpCls = (p) => p == null ? 'text-opl-inkDimmer dark:text-op-inkDimmer'
+    : (p > 18 ? 'text-op-bad' : p < 10 ? 'text-op-warn' : 'text-op-good');
+
+  // Recompute every total in place. Called on each keystroke — a full re-render
+  // would take the caret with it, and this page is one long typing session.
+  function laborHoursTotals() {
+    let cTot = 0, cNum = 0, cDen = 0, cAny = false;
+    for (const s of laborHours.stores) {
+      let tot = 0, has = false, sales = 0;
+      for (const d of laborHours.days) {
+        const k = hKey(s, d), v = laborHours.cur[k];
+        if (v != null) { tot += v; has = true; sales += (laborHours.sales[k] || 0); }
+      }
+      const lp = (has && sales > 0) ? (tot * 15 / sales * 100) : null;
+      if (has) { cTot += tot; cNum += tot; cDen += sales; cAny = true; }
+      const tEl = el('lh-tot-' + s), lEl = el('lh-lp-' + s);
+      if (tEl) tEl.textContent = has ? laborNum(Math.round(tot * 10) / 10) : '—';
+      if (lEl) { lEl.textContent = lp == null ? '—' : lp.toFixed(2) + '%'; lEl.className = 'text-[11.5px] font-bold tabular-nums ' + laborLpCls(lp); }
+    }
+    for (const d of laborHours.days) {
+      let t = 0, any = false;
+      for (const s of laborHours.stores) { const v = laborHours.cur[hKey(s, d)]; if (v != null) { t += v; any = true; } }
+      const e = el('lh-cd-' + d);
+      if (e) { e.textContent = any ? String(Math.round(t * 10) / 10) : '—'; e.className = 'block text-[13px] font-extrabold tabular-nums ' + (any ? '' : 'text-opl-inkDimmer dark:text-op-inkDimmer'); }
+    }
+    const clp = (cAny && cDen > 0) ? (cNum * 15 / cDen * 100) : null;
+    const ct = el('lh-tot-chain'), cl = el('lh-lp-chain');
+    if (ct) ct.textContent = cAny ? laborNum(Math.round(cTot * 10) / 10) : '—';
+    if (cl) { cl.textContent = clp == null ? '—' : clp.toFixed(2) + '%'; cl.className = 'text-[11.5px] font-bold tabular-nums ' + laborLpCls(clp); }
+  }
+
+  function laborHoursRender() {
+    const grid = el('labor-hours-grid'); if (!grid) return;
+    const title = el('labor-hours-title');
+    if (title) title.textContent = 'Week of ' + laborWeekLabel(laborHours.week);
+    const dayLabel = (d) => new Date(d + 'T00:00:00Z')
+      .toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', timeZone: 'UTC' });
+
+    let head = '<th class="text-left py-2 px-1 min-w-[140px]">Store</th>';
+    laborHours.days.forEach(d => { head += `<th class="py-2 px-1 text-center whitespace-nowrap">${laborEsc(dayLabel(d))}</th>`; });
+    head += '<th class="py-2 px-1 text-center">Week</th><th class="py-2 px-1 text-center">Labor %</th>';
+
+    let rows = '', cTot = 0, cNum = 0, cDen = 0, cAny = false;
+    for (const s of laborHours.stores) {
+      const nm = LABOR_NAMES[s] || [s, ''];
+      let cells = '', tot = 0, has = false, sales = 0;
+      for (const d of laborHours.days) {
+        const k = hKey(s, d), v = laborHours.cur[k], b = laborHours.budget[k] || 0;
+        if (v != null) { tot += v; has = true; sales += (laborHours.sales[k] || 0); }
+        cells += `<td class="py-1 px-1 align-top text-center">
+          <input inputmode="decimal" data-hk="${laborEsc(k)}" value="${v == null ? '' : v}"
+            class="${LH_INPUT_BASE}${laborHoursCellCls(k)}">
+          <span class="block text-[10px] font-bold tabular-nums text-opl-inkDimmer dark:text-op-inkDimmer mt-0.5">bud ${Math.round(b)}</span></td>`;
+      }
+      const lp = (has && sales > 0) ? (tot * 15 / sales * 100) : null;
+      if (has) { cTot += tot; cNum += tot; cDen += sales; cAny = true; }
+      rows += `<tr>
+        <td class="py-2 px-1 align-top"><span class="block font-extrabold text-[13.5px]">${laborEsc(nm[0])}</span><span class="text-[11px] font-bold text-opl-inkDimmer dark:text-op-inkDimmer">${laborEsc(nm[1])}</span></td>
+        ${cells}
+        <td class="py-2 px-1 text-center align-top"><span id="lh-tot-${laborEsc(s)}" class="text-[15px] font-extrabold tabular-nums">${has ? laborNum(Math.round(tot * 10) / 10) : '—'}</span></td>
+        <td class="py-2 px-1 text-center align-top"><span id="lh-lp-${laborEsc(s)}" class="text-[11.5px] font-bold tabular-nums ${laborLpCls(lp)}">${lp == null ? '—' : lp.toFixed(2) + '%'}</span></td>
+      </tr>`;
+    }
+    const chainLp = (cAny && cDen > 0) ? (cNum * 15 / cDen * 100) : null;
+    let chainCells = '';
+    for (const d of laborHours.days) {
+      let t = 0, any = false, bud = 0;
+      for (const s of laborHours.stores) {
+        const k = hKey(s, d); bud += laborHours.budget[k] || 0;
+        if (laborHours.cur[k] != null) { t += laborHours.cur[k]; any = true; }
+      }
+      chainCells += `<td class="py-2 px-1 text-center align-top"><span id="lh-cd-${laborEsc(d)}" class="block text-[13px] font-extrabold tabular-nums ${any ? '' : 'text-opl-inkDimmer dark:text-op-inkDimmer'}">${any ? Math.round(t * 10) / 10 : '—'}</span><span class="block text-[10px] font-bold tabular-nums text-opl-inkDimmer dark:text-op-inkDimmer">bud ${Math.round(bud)}</span></td>`;
+    }
+    rows += `<tr class="border-t border-[rgba(20,16,8,0.12)] dark:border-op-borderHi">
+      <td class="py-2 px-1"><span class="block font-extrabold text-[13px]">Chain</span><span class="text-[11px] font-bold text-opl-inkDimmer dark:text-op-inkDimmer">${laborHours.stores.length} stores</span></td>
+      ${chainCells}
+      <td class="py-2 px-1 text-center"><span id="lh-tot-chain" class="text-[15px] font-extrabold tabular-nums">${cAny ? laborNum(Math.round(cTot * 10) / 10) : '—'}</span></td>
+      <td class="py-2 px-1 text-center"><span id="lh-lp-chain" class="text-[11.5px] font-bold tabular-nums ${laborLpCls(chainLp)}">${chainLp == null ? '—' : chainLp.toFixed(2) + '%'}</span></td></tr>`;
+
+    grid.innerHTML = `<table class="w-full min-w-[900px] border-separate" style="border-spacing:0 2px">
+      <thead><tr class="text-[10.5px] font-extrabold tracking-[0.05em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer">${head}</tr></thead>
+      <tbody>${rows}</tbody></table>`;
+
+    grid.querySelectorAll('input[data-hk]').forEach(inp => {
+      inp.addEventListener('input', (e) => {
+        const k = e.target.dataset.hk;
+        laborHours.cur[k] = laborHoursNum(e.target.value);
+        e.target.className = LH_INPUT_BASE + laborHoursCellCls(k);
+        laborHoursTotals();
+        laborHoursStatus();
+      });
+      inp.addEventListener('paste', laborHoursPaste);
+    });
+    laborHoursStatus();
+  }
+
+  // Paste a block straight out of Paylocity or Excel: fills right and down from
+  // the focused cell. A single value is left to the browser.
+  function laborHoursPaste(e) {
+    const txt = (e.clipboardData || window.clipboardData).getData('text') || '';
+    if (txt.indexOf('\t') < 0 && txt.indexOf('\n') < 0) return;
+    e.preventDefault();
+    const [s0, d0] = String(e.target.dataset.hk).split('|');
+    const si = laborHours.stores.indexOf(s0), di = laborHours.days.indexOf(d0);
+    txt.replace(/\r/g, '').split('\n').forEach((line, r) => {
+      if (!line.trim()) return;
+      line.split('\t').forEach((cell, c) => {
+        const s = laborHours.stores[si + r], d = laborHours.days[di + c];
+        if (s && d) laborHours.cur[hKey(s, d)] = laborHoursNum(cell);
+      });
+    });
+    laborHoursRender();
+  }
+
+  function laborHoursChanged() {
+    return Object.keys(laborHours.cur).filter(k => laborHours.cur[k] !== laborHours.base[k]);
+  }
+  function laborHoursStatus() {
+    const changed = laborHoursChanged();
+    const flagged = Object.keys(laborHours.cur).filter(laborHoursFlagged);
+    const blank = Object.keys(laborHours.cur).filter(k => laborHours.cur[k] == null).length;
+    const st = el('labor-hours-status'), btn = el('labor-hours-save'), warn = el('labor-hours-warn');
+    if (st) st.textContent = changed.length
+      ? `${changed.length} cell${changed.length === 1 ? '' : 's'} changed · ${blank} still blank`
+      : `${blank} of ${Object.keys(laborHours.cur).length} cells blank`;
+    if (btn) { btn.disabled = changed.length === 0; btn.textContent = flagged.length ? 'Review & save' : 'Save week'; }
+    if (warn) {
+      warn.classList.toggle('hidden', flagged.length === 0);
+      if (flagged.length) {
+        const names = flagged.slice(0, 3).map(k => {
+          const [s, d] = k.split('|');
+          return `${(LABOR_NAMES[s] || [s])[0]} ${new Date(d + 'T00:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })}`;
+        });
+        warn.innerHTML = `<b class="font-extrabold">${flagged.length} value${flagged.length === 1 ? '' : 's'} outside 25–250% of budget</b> — ${laborEsc(names.join(', '))}${flagged.length > 3 ? ' and others' : ''}. Check before saving.`;
+      }
+    }
+  }
+  function laborHoursReset() {
+    laborHours.cur = Object.assign({}, laborHours.base);
+    laborHoursRender();
+  }
+
+  async function laborHoursSave() {
+    const changed = laborHoursChanged();
+    if (!changed.length) return;
+    const flagged = Object.keys(laborHours.cur).filter(laborHoursFlagged);
+    if (flagged.length) {
+      const okGo = await uiConfirm(
+        `${flagged.length} value${flagged.length === 1 ? '' : 's'} sit outside 25–250% of that day's budget. Save anyway?`,
+        { okText: 'Save anyway', title: 'Check these hours', danger: true });
+      if (!okGo) return;
+    }
+    const btn = el('labor-hours-save');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      const entries = changed.map(k => {
+        const [store, date] = k.split('|');
+        return { store, date, labor_hours: laborHours.cur[k] };
+      });
+      // 🔑 markOverride:false — is_manual_override freezes the WHOLE row against
+      // the sheet import, and budget hours still come from there.
+      const res = await fetch(`${WORKER_BASE}?action=manual-override`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ markOverride: false, entries }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const out = await res.json();
+      const bad = (out.results || []).filter(r => r.error);
+      if (bad.length) throw new Error(`${bad.length} of ${entries.length} rejected — ${bad[0].error}`);
+      changed.forEach(k => { laborHours.base[k] = laborHours.cur[k]; });
+      // Hours moved, so the trend and the actuals both did.
+      laborState.data = null; laborState.actData = null;
+      laborHoursRender();
+      const st = el('labor-hours-status');
+      if (st) st.textContent = `Saved ${entries.length} cell${entries.length === 1 ? '' : 's'}.`;
+    } catch (e) {
+      await uiAlert(`Could not save hours — ${(e && e.message) || e}`, { title: 'Save failed' });
+      laborHoursStatus();
+    }
   }
 
   const NAV_BUSINESS = {

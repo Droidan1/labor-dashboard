@@ -12410,6 +12410,20 @@ export default {
       // Used by the daily-CSV import flow to avoid clobbering hand-entered values.
       const skipIfOverrideExists = !!body.skipIfOverrideExists;
 
+      // 🔑 `markOverride: false` writes WITHOUT claiming the row.
+      //
+      // The flag freezes the ENTIRE row against the sheet import, not just the
+      // column being written — so the Labor page's hours grid must not set it.
+      // Budget hours still arrive from the sheet and sales from Clover; a grid
+      // save that stamped is_manual_override would silently freeze both for
+      // that store-day, and the damage would only show up weeks later as a
+      // budget that stopped moving.
+      //
+      // Safe in both directions: false never CLEARS an existing 1 either, so a
+      // row somebody deliberately protected stays protected. It simply leaves
+      // the flag alone. Defaults to the old behaviour for every other caller.
+      const markOverride = body.markOverride === false ? 0 : 1;
+
       const num = (v) => (v === '' || v == null ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
       const FIELDS = ['total', 'retail', 'bin', 'auction', 'labor_pct', 'labor_hours'];
       const results = [];
@@ -12457,12 +12471,12 @@ export default {
         try {
           await env.DB.prepare(
             `INSERT INTO daily_sales (store, date, week, ${colList}, snapshot_time, is_manual_override)
-             VALUES (?, ?, ?, ${placeholders}, ?, 1)
+             VALUES (?, ?, ?, ${placeholders}, ?, ${markOverride})
              ON CONFLICT(store, date) DO UPDATE SET
                ${updateList},
                week=COALESCE(excluded.week, week),
-               snapshot_time=excluded.snapshot_time,
-               is_manual_override=1`
+               snapshot_time=excluded.snapshot_time${markOverride ? `,
+               is_manual_override=1` : ''}`
           ).bind(store, date, wk, ...values, snapshotTime).run();
           results.push({ store, date, ok: true, fields: updates });
         } catch (err) {

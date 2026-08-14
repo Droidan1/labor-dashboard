@@ -206,5 +206,35 @@ async function plan(env, qs = `week=${WEEK}`, user = 'u-su') {
   eq((await plan(env, 'week=2026-04-31')).status, 400, 'and an impossible date is refused');
 }
 
+// ══ 10. manual-override honours markOverride:false ══════════════════════
+// 🔑 The Labor hours grid writes with markOverride:false. is_manual_override
+// freezes the ENTIRE row against the sheet import — not just the column being
+// written — so stamping it on an hours save would silently freeze that
+// store-day's BUDGET too, and nobody would notice for weeks.
+{
+  const { db, env } = makeEnv(repo);
+  db.exec('DELETE FROM daily_sales');
+  const post = (body) => worker.fetch(req('/?action=manual-override', { user:'u-su', method:'POST', body }), env, ctx);
+  const row = () => db.prepare('SELECT * FROM daily_sales WHERE store=? AND date=?').all('BL1','2026-08-05')[0];
+
+  // Default behaviour is unchanged for every existing caller.
+  await post({ entries: [{ store:'BL1', date:'2026-08-05', labor_hours: 41 }] });
+  eq(row().labor_hours, 41, 'a default write lands');
+  eq(row().is_manual_override, 1, 'and still claims the row, as every other caller expects');
+
+  db.exec('DELETE FROM daily_sales');
+  await post({ markOverride: false, entries: [{ store:'BL1', date:'2026-08-05', labor_hours: 41 }] });
+  eq(row().labor_hours, 41, 'a grid write lands too');
+  eq(row().is_manual_override, 0, 'but does NOT claim the row — the sheet keeps feeding budget and sales');
+
+  // …and never CLEARS a flag somebody set deliberately.
+  db.exec('DELETE FROM daily_sales');
+  db.prepare(`INSERT INTO daily_sales (store,date,total,is_manual_override) VALUES ('BL1','2026-08-05',5000,1)`).run();
+  await post({ markOverride: false, entries: [{ store:'BL1', date:'2026-08-05', labor_hours: 47.25 }] });
+  eq(row().is_manual_override, 1, 'an existing override survives a grid write');
+  eq(row().labor_hours, 47.25, 'while the hours still update');
+  eq(row().total, 5000, 'and the protected sales figure is untouched');
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
