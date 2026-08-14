@@ -2280,9 +2280,22 @@
           <div id="labor-plan-body"></div>
         </div>
         <div id="labor-pane-act" class="hidden">
-          <div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 text-[13px] text-opl-inkDim dark:text-op-inkDim">
-            Budget vs Actual arrives in the next phase. The endpoint behind it is already live.
-          </div>
+          <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
+            <div class="flex items-start gap-3 flex-wrap">
+              <div>
+                <div class="text-[10.5px] font-extrabold tracking-[0.09em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer">Budget vs actual</div>
+                <h2 id="labor-act-title" class="text-[15px] font-extrabold mt-0.5">—</h2>
+                <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim">Both sides valued at $15.00/hr, so the comparison is hours for hours.</div>
+              </div>
+              <div class="ml-auto inline-flex bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-[9px] p-0.5 gap-0.5">
+                <button id="labor-grain-d" onclick="laborSetGrain('d')" class="labor-grain px-2.5 py-1 rounded-[7px] text-[11.5px] font-bold transition-colors">Daily</button>
+                <button id="labor-grain-w" onclick="laborSetGrain('w')" class="labor-grain px-2.5 py-1 rounded-[7px] text-[11.5px] font-bold transition-colors">Weekly</button>
+                <button id="labor-grain-m" onclick="laborSetGrain('m')" class="labor-grain px-2.5 py-1 rounded-[7px] text-[11.5px] font-bold transition-colors">Monthly</button>
+              </div>
+            </div>
+            <div id="labor-act-tiles" class="grid grid-cols-2 lg:grid-cols-4 gap-px bg-[rgba(20,16,8,0.08)] dark:bg-op-border rounded-[12px] overflow-hidden mt-4"></div>
+          </section>
+          <div id="labor-act-body" class="mt-4"></div>
         </div>
         <div id="labor-pane-hours" class="hidden">
           <div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 text-[13px] text-opl-inkDim dark:text-op-inkDim">
@@ -17578,7 +17591,8 @@
     BL1: ['Coliseum', 'BL1/6'], BL2: ['South Bend', 'BL2/7'], BL4: ['Dupont', 'BL4/5'],
     BL14: ['Battle Creek', 'BL14/15'], BL16: ['Indy East', 'BL16/17'],
   };
-  const laborState = { week: null, store: 'all', tab: 'plan', data: null, busy: false };
+  const laborState = { week: null, store: 'all', tab: 'plan', grain: 'w',
+                       data: null, busy: false, actData: null, actBusy: false };
 
   const laborEsc = (s) => String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -17605,10 +17619,167 @@
     const d = new Date((laborState.week || laborUpcomingSaturday()) + 'T00:00:00Z');
     d.setUTCDate(d.getUTCDate() + n * 7);
     laborState.week = d.toISOString().slice(0, 10);
-    laborState.data = null;
+    laborState.data = null; laborState.actData = null;
     initLabor(true);
+    if (laborState.tab === 'act') laborLoadActuals(true);
   }
-  function laborSetStore(v) { laborState.store = v; laborState.data = null; initLabor(true); }
+  function laborSetStore(v) {
+    laborState.store = v;
+    laborState.data = null; laborState.actData = null;
+    initLabor(true);
+    if (laborState.tab === 'act') laborLoadActuals(true);
+  }
+  function laborSetGrain(g) { laborState.grain = g; laborState.actData = null; laborLoadActuals(true); }
+
+  // ── Budget vs Actual ─────────────────────────────────────────────────────
+  // Anchored on the CURRENT week, not the one being planned: this tab reports
+  // what happened, the Planning tab forecasts what should. They deliberately
+  // move together when you change weeks, so the two never describe different
+  // moments in time.
+  function laborActRange() {
+    const cur = new Date((laborState.week || laborUpcomingSaturday()) + 'T00:00:00Z');
+    cur.setUTCDate(cur.getUTCDate() - 7);                 // the week that just ran
+    const to = cur.toISOString().slice(0, 10);
+    const from = new Date(cur);
+    if (laborState.grain === 'd') from.setUTCDate(from.getUTCDate() - 13);
+    else if (laborState.grain === 'w') from.setUTCDate(from.getUTCDate() - 7 * 7 - 6);
+    else from.setUTCFullYear(from.getUTCFullYear(), 0, 1);
+    return { from: from.toISOString().slice(0, 10), to };
+  }
+  function laborPeriodLabel(key, grain) {
+    if (grain === 'm') {
+      const d = new Date(key + '-01T00:00:00Z');
+      return d.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+    }
+    const d = new Date(key + 'T00:00:00Z');
+    return grain === 'd'
+      ? d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+      : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  }
+
+  async function laborLoadActuals(force) {
+    ['d', 'w', 'm'].forEach(g => {
+      const b = el('labor-grain-' + g); if (!b) return;
+      const on = g === laborState.grain;
+      b.classList.toggle('bg-accent-green', on);
+      b.classList.toggle('text-[#0b1220]', on);
+      b.classList.toggle('text-opl-inkDim', !on);
+      b.classList.toggle('dark:text-op-inkDim', !on);
+    });
+    const body = el('labor-act-body');
+    if (laborState.actData && !force) { laborActRender(); return; }
+    if (laborState.actBusy) return;
+    laborState.actBusy = true;
+    if (body) body.innerHTML = '<div class="text-[13px] font-medium text-opl-inkDim dark:text-op-inkDim px-1 py-6">Loading…</div>';
+    try {
+      const { from, to } = laborActRange();
+      const qs = `?action=labor&grain=${laborState.grain}&from=${from}&to=${to}` +
+                 (laborState.store !== 'all' ? `&store=${encodeURIComponent(laborState.store)}` : '');
+      const res = await fetch(WORKER_BASE + qs, { credentials: 'include' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      laborState.actData = await res.json();
+      laborActRender();
+    } catch (e) {
+      if (body) body.innerHTML = `<div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 text-[13px] text-op-bad">Could not load budget vs actual — ${laborEsc(e && e.message)}</div>`;
+    } finally { laborState.actBusy = false; }
+  }
+
+  function laborActRender() {
+    const d = laborState.actData, body = el('labor-act-body'), tiles = el('labor-act-tiles');
+    if (!d || !body) return;
+    const g = d.grain;
+    const title = el('labor-act-title');
+    if (title) {
+      title.textContent = laborState.store !== 'all'
+        ? `${(LABOR_NAMES[laborState.store] || [laborState.store])[0]} · ${(LABOR_NAMES[laborState.store] || ['', ''])[1]}`
+        : `Chain · ${(d.stores || []).length} store${(d.stores || []).length === 1 ? '' : 's'}`;
+    }
+
+    // Totals cover COMPLETE periods only. Folding a part-entered period into a
+    // total understates hours while looking like a finished number.
+    const done = (d.periods || []).filter(p => p.complete);
+    const sum = (k) => done.reduce((a, p) => a + (p[k] || 0), 0);
+    const tbh = sum('budgetHours'), tah = sum('actualHours');
+    const tbs = sum('budgetSales'), tas = sum('actualSales');
+    const bp = tbs > 0 ? tbh * d.rate / tbs * 100 : null;
+    const ap = tas > 0 ? tah * d.rate / tas * 100 : null;
+    const over = tah - tbh;
+
+    const tile = (k, v, n, cls) => `
+      <div class="bg-opl-panel dark:bg-op-panel p-4">
+        <div class="text-[10.5px] font-extrabold tracking-[0.07em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer mb-1">${k}</div>
+        <div class="text-2xl font-extrabold tabular-nums ${cls || ''}">${v}</div>
+        <div class="text-[11.5px] font-semibold text-opl-inkDim dark:text-op-inkDim mt-0.5">${n}</div>
+      </div>`;
+    if (tiles) {
+      tiles.innerHTML =
+        tile('Budget hours', laborNum(Math.round(tbh)), bp == null ? 'no complete periods' : `at ${bp.toFixed(2)}% of budget sales`) +
+        tile('Actual hours', laborNum(Math.round(tah)), ap == null ? '—' : `at ${ap.toFixed(2)}% of actual sales`) +
+        tile('Over / under', laborSigned(Math.round(over)), over > 0 ? 'hours over budget' : 'hours under budget',
+             over > 0 ? 'text-op-bad' : 'text-op-good') +
+        tile('Labor % gap', (bp == null || ap == null) ? '—' : ((ap - bp > 0 ? '+' : '') + (ap - bp).toFixed(2) + ' pts'),
+             'actual vs budget', (bp != null && ap != null && ap - bp > 0) ? 'text-op-bad' : 'text-op-good');
+    }
+
+    const rows = (d.periods || []).map(p => {
+      const label = laborPeriodLabel(p.key, g);
+      if (!p.complete) {
+        // Never a labour % on a part-entered period — 57 chain hours against
+        // $43k reads as 2%, which looks like the best week on record.
+        return `<tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDimmer dark:text-op-inkDimmer">
+          <td class="py-3 px-3">${laborEsc(label)}</td>
+          <td class="py-3 px-3 text-right tabular-nums">${laborMoney(p.budgetSales)}</td>
+          <td class="py-3 px-3 text-right tabular-nums">${laborMoney(p.actualSales)}</td>
+          <td class="py-3 px-3 text-right tabular-nums">${laborNum(Math.round(p.budgetHours))}</td>
+          <td class="py-3 px-3 text-right" colspan="4"><span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)]">hours pending${p.hoursMissingDays ? ` · ${p.hoursMissingDays} day${p.hoursMissingDays === 1 ? '' : 's'}` : ''}</span></td></tr>`;
+      }
+      const dh = Math.round(p.actualHours - p.budgetHours);
+      return `<tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <td class="py-3 px-3">${laborEsc(label)}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborMoney(p.budgetSales)}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborMoney(p.actualSales)}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborNum(Math.round(p.budgetHours))}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborNum(Math.round(p.actualHours))}</td>
+        <td class="py-3 px-3 text-right tabular-nums ${dh > 0 ? 'text-op-bad' : 'text-op-good'}">${laborSigned(dh)}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborPct(p.budgetLaborPct)}</td>
+        <td class="py-3 px-3 text-right tabular-nums font-extrabold text-[15px] ${p.actualLaborPct > p.budgetLaborPct ? 'text-op-bad' : 'text-op-good'}">${laborPct(p.actualLaborPct)}</td></tr>`;
+    }).join('');
+
+    const totalRow = done.length ? `
+      <tr class="border-t border-[rgba(20,16,8,0.12)] dark:border-op-borderHi bg-opl-panelHi dark:bg-op-panelHi font-extrabold">
+        <td class="py-3 px-3">Total · ${done.length} complete</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborMoney(tbs)}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborMoney(tas)}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborNum(Math.round(tbh))}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborNum(Math.round(tah))}</td>
+        <td class="py-3 px-3 text-right tabular-nums ${over > 0 ? 'text-op-bad' : 'text-op-good'}">${laborSigned(Math.round(over))}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${bp == null ? '—' : bp.toFixed(2) + '%'}</td>
+        <td class="py-3 px-3 text-right tabular-nums text-[15px] ${(ap != null && bp != null && ap > bp) ? 'text-op-bad' : 'text-op-good'}">${ap == null ? '—' : ap.toFixed(2) + '%'}</td></tr>` : '';
+
+    const pending = (d.periods || []).filter(p => !p.complete).length;
+    const note = pending
+      ? `${pending} period${pending === 1 ? '' : 's'} still awaiting hours — those rows and the totals exclude them.`
+      : 'Every period in range has its hours entered.';
+    const invalid = d.invalidDateRows
+      ? ` <b class="text-op-warn">${d.invalidDateRows} row${d.invalidDateRows === 1 ? '' : 's'} carried an impossible date and were excluded.</b>`
+      : '';
+
+    body.innerHTML = `
+      <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors">
+        <div class="overflow-x-auto"><table class="w-full text-[13px] font-semibold min-w-[860px]">
+          <thead><tr class="text-[10.5px] font-extrabold tracking-[0.06em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+            <th class="py-2.5 px-3 text-left">${g === 'd' ? 'Day' : g === 'w' ? 'Week ending' : 'Month'}</th>
+            <th class="py-2.5 px-3 text-right">Budget sales</th><th class="py-2.5 px-3 text-right">Actual sales</th>
+            <th class="py-2.5 px-3 text-right">Budget hrs</th><th class="py-2.5 px-3 text-right">Actual hrs</th>
+            <th class="py-2.5 px-3 text-right">Over / under</th>
+            <th class="py-2.5 px-3 text-right">Budget labor %</th><th class="py-2.5 px-3 text-right">Actual labor %</th>
+          </tr></thead><tbody>${rows || '<tr><td class="py-6 px-3 text-opl-inkDim dark:text-op-inkDim" colspan="8">No data in this range.</td></tr>'}${totalRow}</tbody>
+        </table></div>
+        <div class="text-[11.5px] font-medium text-opl-inkDimmer dark:text-op-inkDimmer px-5 py-3">
+          Over / under is actual minus budget, so positive is <b>over</b> — the opposite sign to the Δ on Planning, which is room. ${laborEsc(note)}${invalid}
+        </div>
+      </section>`;
+  }
 
   function laborSetTab(t) {
     laborState.tab = t;
@@ -17624,6 +17795,9 @@
         tab.classList.toggle('dark:text-op-inkDim', x !== t);
       }
     });
+    // Budget vs Actual is its own endpoint — fetched on first open, not at
+    // page load, so landing on Planning costs one request rather than two.
+    if (t === 'act') { try { laborLoadActuals(); } catch (_) {} }
   }
 
   // Hours entry is chain-wide, so it is admin-only — a manager gets Planning
