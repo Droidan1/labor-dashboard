@@ -716,6 +716,10 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
           <span class="nav-label">Inventory</span>
         </div>
+        <div id="nav-labor" class="hidden nav-item" data-page="labor" onclick="navigateToPage('labor')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg></span>
+          <span class="nav-label">Labor</span>
+        </div>
         <div id="nav-supply-request" class="hidden nav-item" data-page="supply-request" onclick="navigateToPage('supply-request')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/><line x1="9" y1="9" x2="10" y2="9"/></svg></span>
           <span class="nav-label">Supply Request</span>
@@ -2239,6 +2243,54 @@
         </details>
       </div>
     </div><!-- end #page-ebay-cases -->
+
+    <!-- ══ Labor ══════════════════════════════════════════════════════════
+         Replaces the Retail Payroll Planning sheet. Planning recommends next
+         week's hours from a 4-week weighted trend; Budget vs Actual and Hours
+         land in the following phases. Every figure is hours x $15.00 — never
+         payroll, never the sheet's own labour % column. -->
+    <div id="page-labor" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="flex items-center gap-3 max-w-7xl mx-auto flex-wrap">
+          <h1 class="text-xl font-brand text-accent-green uppercase tracking-wide leading-none">Labor</h1>
+          <span id="labor-fresh" class="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-semibold whitespace-nowrap border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.03)] text-opl-inkDim dark:text-op-inkDim">—</span>
+          <div class="ml-auto flex items-center gap-2.5">
+            <select id="labor-store" onchange="laborSetStore(this.value)"
+              class="hidden h-[38px] px-3 rounded-[11px] text-[12.5px] font-bold border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+            <button id="labor-week-prev" type="button" onclick="laborShiftWeek(-1)" aria-label="Previous week"
+              class="w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim flex items-center justify-center hover:border-accent-green/40 transition-colors">‹</button>
+            <span id="labor-week-label" class="text-[12.5px] font-bold text-opl-ink dark:text-op-ink whitespace-nowrap tabular-nums">—</span>
+            <button id="labor-week-next" type="button" onclick="laborShiftWeek(1)" aria-label="Next week"
+              class="w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim flex items-center justify-center hover:border-accent-green/40 transition-colors">›</button>
+            <button type="button" onclick="initLabor(true)" aria-label="Refresh" title="Refresh"
+              class="w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hidden lg:flex items-center justify-center hover:border-accent-green/40 transition-colors">
+              <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="max-w-7xl mx-auto flex gap-6 mt-3.5">
+          <button id="labor-tab-plan" data-ltab="plan" onclick="laborSetTab('plan')" class="labor-tab pb-2.5 text-[13.5px] font-extrabold border-b-2 transition-colors">Planning</button>
+          <button id="labor-tab-act" data-ltab="act" onclick="laborSetTab('act')" class="labor-tab pb-2.5 text-[13.5px] font-extrabold border-b-2 transition-colors">Budget vs Actual</button>
+          <button id="labor-tab-hours" data-ltab="hours" onclick="laborSetTab('hours')" class="labor-tab hidden pb-2.5 text-[13.5px] font-extrabold border-b-2 transition-colors">Hours</button>
+        </div>
+      </div>
+
+      <div class="p-4 sm:p-6 max-w-7xl mx-auto space-y-4">
+        <div id="labor-pane-plan">
+          <div id="labor-plan-body"></div>
+        </div>
+        <div id="labor-pane-act" class="hidden">
+          <div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 text-[13px] text-opl-inkDim dark:text-op-inkDim">
+            Budget vs Actual arrives in the next phase. The endpoint behind it is already live.
+          </div>
+        </div>
+        <div id="labor-pane-hours" class="hidden">
+          <div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 text-[13px] text-opl-inkDim dark:text-op-inkDim">
+            Hours entry arrives in the phase after next.
+          </div>
+        </div>
+      </div>
+    </div><!-- end #page-labor -->
 
     <div id="page-settings" class="hidden">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
@@ -7494,7 +7546,7 @@
     // Only fires for a role outside FINANCIAL_ROLES — today `staff` and anything
     // unrecognised. Every role in production is unaffected.
     const FINANCIAL_PAGES = ['dashboard', 'weekly-summary', 'store-detail',
-                             'all-stores-detail', 'inventory', 'supply-request'];
+                             'all-stores-detail', 'inventory', 'supply-request', 'labor'];
     if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)) return;
 
     // Guard admin-only pages
@@ -7537,7 +7589,7 @@
     // restores it via its own Close button; if it's ever dismissed another way
     // (Android back gesture, etc.) scrolling would stay frozen app-wide.
     if (document.body.style.overflow) document.body.style.overflow = '';
-    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings', 'no-access', 'landing', 'ebay-cases'];
+    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings', 'no-access', 'landing', 'ebay-cases', 'labor'];
     for (const p of pages) {
       const pageEl = el('page-' + p);
       if (pageEl) pageEl.classList.toggle('hidden', p !== page);
@@ -7576,6 +7628,9 @@
     // so subsequent visits don't refetch unnecessarily.
     if (page === 'weekly-summary') {
       initWeeklyRetail();
+    }
+    if (page === 'labor') {
+      try { initLabor(); } catch (_) {}
     }
     if (page === 'marketing') {
       initMarketing();
@@ -17514,12 +17569,266 @@
   // worker refuses the data regardless — and a nav item silently vanishing is a
   // far worse failure here than one showing up where it does not belong.
   // navBusinessAudit() below turns an unmapped id into a test failure instead.
+  // ══ Labor page ═══════════════════════════════════════════════════════════
+  // 🔑 Every figure on this page is hours x $15.00, and ALL of the arithmetic
+  // lives in the worker (?action=labor-plan). This file renders what comes back
+  // and computes nothing — deliberately, so the number on screen is the same
+  // number the worker's tests pin. The one thing done here is formatting.
+  const LABOR_NAMES = {
+    BL1: ['Coliseum', 'BL1/6'], BL2: ['South Bend', 'BL2/7'], BL4: ['Dupont', 'BL4/5'],
+    BL14: ['Battle Creek', 'BL14/15'], BL16: ['Indy East', 'BL16/17'],
+  };
+  const laborState = { week: null, store: 'all', tab: 'plan', data: null, busy: false };
+
+  const laborEsc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const laborNum = (n) => (n == null ? '—' : Number(n).toLocaleString('en-US'));
+  const laborMoney = (n) => (n == null ? '—' : '$' + Math.round(Number(n)).toLocaleString('en-US'));
+  const laborPct = (n) => (n == null ? '—' : Number(n).toFixed(2) + '%');
+  const laborSigned = (n) => (n == null ? '—' : (n > 0 ? '+' : '') + Number(n).toLocaleString('en-US'));
+
+  // The week we plan is the NEXT full one — a schedule is written before the
+  // week it covers, so on any day of this week we are scheduling the next.
+  function laborUpcomingSaturday(fromISO) {
+    const d = fromISO ? new Date(fromISO + 'T00:00:00Z') : new Date();
+    const u = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    u.setUTCDate(u.getUTCDate() + ((6 - u.getUTCDay() + 7) % 7) + 7);
+    return u.toISOString().slice(0, 10);
+  }
+  function laborWeekLabel(satISO) {
+    const end = new Date(satISO + 'T00:00:00Z');
+    const start = new Date(end); start.setUTCDate(start.getUTCDate() - 6);
+    const f = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    return `${f(start)} – ${f(end)}`;
+  }
+  function laborShiftWeek(n) {
+    const d = new Date((laborState.week || laborUpcomingSaturday()) + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + n * 7);
+    laborState.week = d.toISOString().slice(0, 10);
+    laborState.data = null;
+    initLabor(true);
+  }
+  function laborSetStore(v) { laborState.store = v; laborState.data = null; initLabor(true); }
+
+  function laborSetTab(t) {
+    laborState.tab = t;
+    ['plan', 'act', 'hours'].forEach(x => {
+      const pane = el('labor-pane-' + x), tab = el('labor-tab-' + x);
+      if (pane) pane.classList.toggle('hidden', x !== t);
+      if (tab) {
+        tab.classList.toggle('border-accent-green', x === t);
+        tab.classList.toggle('text-opl-ink', x === t);
+        tab.classList.toggle('dark:text-op-ink', x === t);
+        tab.classList.toggle('border-transparent', x !== t);
+        tab.classList.toggle('text-opl-inkDim', x !== t);
+        tab.classList.toggle('dark:text-op-inkDim', x !== t);
+      }
+    });
+  }
+
+  // Hours entry is chain-wide, so it is admin-only — a manager gets Planning
+  // and Budget vs Actual for their own store and no Hours tab at all. The
+  // worker refuses the write regardless; this is about not offering it.
+  function laborApplyRole() {
+    const role = currentUser && currentUser.role;
+    const isAdmin = role === 'superuser' || role === 'admin';
+    const hoursTab = el('labor-tab-hours');
+    if (hoursTab) hoursTab.classList.toggle('hidden', !isAdmin);
+    if (!isAdmin && laborState.tab === 'hours') laborSetTab('plan');
+  }
+
+  async function initLabor(force) {
+    if (!laborState.week) laborState.week = laborUpcomingSaturday();
+    laborApplyRole();
+    laborSetTab(laborState.tab);
+    const lbl = el('labor-week-label');
+    if (lbl) lbl.textContent = laborWeekLabel(laborState.week);
+    if (laborState.busy) return;
+    if (laborState.data && !force) { laborRender(); return; }
+
+    const body = el('labor-plan-body');
+    laborState.busy = true;
+    if (body) body.innerHTML = '<div class="text-[13px] font-medium text-opl-inkDim dark:text-op-inkDim px-1 py-6">Loading…</div>';
+    try {
+      const qs = `?action=labor-plan&week=${encodeURIComponent(laborState.week)}` +
+                 (laborState.store !== 'all' ? `&store=${encodeURIComponent(laborState.store)}` : '');
+      const res = await fetch(WORKER_BASE + qs, { credentials: 'include' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      laborState.data = await res.json();
+      laborRender();
+    } catch (e) {
+      if (body) body.innerHTML = `<div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 text-[13px] text-op-bad">Could not load labor — ${laborEsc(e && e.message)}</div>`;
+    } finally { laborState.busy = false; }
+  }
+
+  function laborRender() {
+    const d = laborState.data, body = el('labor-plan-body');
+    if (!d || !body) return;
+
+    // Store picker: only worth showing to somebody with more than one store.
+    const sel = el('labor-store');
+    if (sel) {
+      const multi = (d.stores || []).length > 1 || laborState.store !== 'all';
+      sel.classList.toggle('hidden', !multi);
+      if (multi && sel.dataset.built !== String((d.stores || []).join(','))) {
+        const all = laborState.store === 'all' ? (d.stores || []) : null;
+        const list = all || Object.keys(LABOR_NAMES);
+        sel.innerHTML = ['<option value="all">All stores</option>']
+          .concat(list.map(s => `<option value="${laborEsc(s)}">${laborEsc((LABOR_NAMES[s] || [s])[0])}</option>`)).join('');
+        sel.dataset.built = (d.stores || []).join(',');
+      }
+      sel.value = laborState.store;
+    }
+
+    const fresh = el('labor-fresh');
+    const single = laborState.store !== 'all' ? d.byStore[laborState.store] : null;
+    const used = single ? single.weeksUsed : (Object.values(d.byStore).find(p => p.basis === 'trend') || {}).weeksUsed;
+    if (fresh) {
+      fresh.textContent = (used && used.length)
+        ? `Trailing 4 wks · thru ${laborWeekLabel(used[used.length - 1].weekEnd).split('– ')[1]}`
+        : 'No usable history';
+    }
+
+    const chain = d.chain;
+    const hero = single || null;
+    const tile = (k, v, n, cls) => `
+      <div class="bg-opl-panel dark:bg-op-panel p-4">
+        <div class="text-[10.5px] font-extrabold tracking-[0.07em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer mb-1">${k}</div>
+        <div class="text-2xl font-extrabold tabular-nums ${cls || ''}">${v}</div>
+        <div class="text-[11.5px] font-semibold text-opl-inkDim dark:text-op-inkDim mt-0.5">${n}</div>
+      </div>`;
+
+    let tiles = '';
+    if (hero && hero.basis === 'budget-only') {
+      tiles = tile('Recommended hours', laborNum(hero.recommendedHours), 'budget only, no trend')
+            + tile('Trending hours', '—', 'needs 4 usable weeks', 'text-opl-inkDimmer dark:text-op-inkDimmer')
+            + tile('Difference', '—', '', 'text-opl-inkDimmer dark:text-op-inkDimmer')
+            + tile('Budget labor %', laborPct(hero.budgetLaborPct), 'no projection applied');
+    } else {
+      const rec = hero ? hero.recommendedHours : (chain && chain.recommendedHours);
+      const tr = hero ? hero.trendingHours : (chain && chain.trendingHours);
+      const dl = hero ? hero.deltaHours : (chain && chain.deltaHours);
+      const ps = hero ? hero.projectedSales : (chain && chain.projectedSales);
+      const bs = hero ? null : (chain && chain.budgetSales);
+      tiles = tile('Recommended hours', laborNum(rec), 'to hold budgeted labor %')
+            + tile('Trending hours', laborNum(tr), 'if recent behaviour holds')
+            + tile('Difference', laborSigned(dl), dl == null ? '' : (dl > 0 ? 'room' : 'over'),
+                   dl == null ? '' : (dl > 0 ? 'text-op-good' : 'text-op-bad'))
+            + tile('Projected sales', laborMoney(ps), bs ? `vs ${laborMoney(bs)} budget` : 'from the weighted trend');
+    }
+
+    const scopeLabel = hero
+      ? `${(LABOR_NAMES[laborState.store] || [laborState.store])[0]} · ${(LABOR_NAMES[laborState.store] || ['', ''])[1]}`
+      : (chain ? `${chain.storesTrended} store${chain.storesTrended === 1 ? '' : 's'} trended` : 'No stores trended');
+
+    let html = `
+      <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
+        <div class="flex items-start gap-3 flex-wrap">
+          <div>
+            <div class="text-[10.5px] font-extrabold tracking-[0.09em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer">Recommended schedule</div>
+            <h2 class="text-[15px] font-extrabold mt-0.5">Week of ${laborWeekLabel(d.week)} · ${laborEsc(scopeLabel)}</h2>
+            <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim">Labor valued at $${Number(d.rate).toFixed(2)}/hr · ${d.asmHours} ASM hrs per store included</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-px bg-[rgba(20,16,8,0.08)] dark:bg-op-border rounded-[12px] overflow-hidden mt-4">${tiles}</div>
+      </section>`;
+
+    // By-store table — only when looking at everything.
+    if (!hero) {
+      const rows = (d.stores || []).map(s => {
+        const p = d.byStore[s]; if (!p) return '';
+        const nm = LABOR_NAMES[s] || [s, ''];
+        if (p.basis === 'budget-only') {
+          return `<tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border cursor-pointer hover:bg-[rgba(20,16,8,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)]" onclick="laborSetStore('${laborEsc(s)}')">
+            <td class="py-3 px-3"><span class="font-extrabold text-[13.5px]">${laborEsc(nm[0])}</span><br><span class="text-[11px] font-bold text-opl-inkDimmer dark:text-op-inkDimmer">${laborEsc(nm[1])}</span></td>
+            <td class="py-3 px-3 text-right tabular-nums text-op-warn">${laborEsc(p.reason || 'not enough history')}</td>
+            <td class="py-3 px-3 text-right tabular-nums">—</td>
+            <td class="py-3 px-3 text-right tabular-nums">${laborPct(p.budgetLaborPct)}</td>
+            <td class="py-3 px-3 text-right tabular-nums font-extrabold text-[15px]">${laborNum(p.recommendedHours)}</td>
+            <td class="py-3 px-3 text-right tabular-nums">—</td>
+            <td class="py-3 px-3 text-right tabular-nums">—</td>
+            <td class="py-3 px-3 text-right"><span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-[rgba(245,158,11,0.14)] text-op-warn">Budget only</span></td></tr>`;
+        }
+        const dl = p.deltaHours;
+        const act = Math.abs(dl) <= 3 ? '<span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim">On plan</span>'
+          : dl < 0 ? `<span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-[rgba(239,68,68,0.14)] text-op-bad">Cut ${Math.abs(dl)} hrs</span>`
+                   : `<span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-[rgba(34,197,94,0.14)] text-op-good">Room +${dl}</span>`;
+        return `<tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border cursor-pointer hover:bg-[rgba(20,16,8,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)]" onclick="laborSetStore('${laborEsc(s)}')">
+          <td class="py-3 px-3"><span class="font-extrabold text-[13.5px]">${laborEsc(nm[0])}</span><br><span class="text-[11px] font-bold text-opl-inkDimmer dark:text-op-inkDimmer">${laborEsc(nm[1])}</span></td>
+          <td class="py-3 px-3 text-right tabular-nums ${p.weightedVariancePct > 0 ? 'text-op-good' : 'text-op-bad'}">${p.weightedVariancePct > 0 ? '+' : ''}${laborPct(p.weightedVariancePct)}</td>
+          <td class="py-3 px-3 text-right tabular-nums">${laborMoney(p.projectedSales)}</td>
+          <td class="py-3 px-3 text-right tabular-nums">${laborPct(p.budgetLaborPct)}</td>
+          <td class="py-3 px-3 text-right tabular-nums font-extrabold text-[15px]">${laborNum(p.recommendedHours)}</td>
+          <td class="py-3 px-3 text-right tabular-nums">${laborNum(p.trendingHours)}</td>
+          <td class="py-3 px-3 text-right tabular-nums ${dl > 0 ? 'text-op-good' : 'text-op-bad'}">${laborSigned(dl)}</td>
+          <td class="py-3 px-3 text-right">${act}</td></tr>`;
+      }).join('');
+
+      html += `
+      <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden mt-4 transition-colors">
+        <div class="p-5 pb-2">
+          <h2 class="text-[15px] font-extrabold">By store</h2>
+          <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim">Recommended holds the budgeted labor %. Trending is the 4-week weighted pace. Pick a row to drill in.</div>
+        </div>
+        <div class="overflow-x-auto"><table class="w-full text-[13px] font-semibold min-w-[820px]">
+          <thead><tr class="text-[10.5px] font-extrabold tracking-[0.06em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+            <th class="py-2.5 px-3 text-left">Store</th><th class="py-2.5 px-3 text-right">Sales trend</th>
+            <th class="py-2.5 px-3 text-right">Projected sales</th><th class="py-2.5 px-3 text-right">Budget labor %</th>
+            <th class="py-2.5 px-3 text-right">Recommended</th><th class="py-2.5 px-3 text-right">Trending</th>
+            <th class="py-2.5 px-3 text-right">Δ</th><th class="py-2.5 px-3 text-right">Action</th>
+          </tr></thead><tbody>${rows}</tbody>
+        </table></div>
+      </section>`;
+    }
+
+    // Trailing weeks — the four the recommendation actually used.
+    if (hero) {
+      const cards = (hero.weeksUsed || []).map(w => `
+        <div class="bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-[11px] p-3">
+          <div class="text-[11.5px] font-extrabold text-opl-inkDim dark:text-op-inkDim">${laborWeekLabel(w.weekEnd).split(' – ')[1]}
+            <span class="float-right text-[10px] font-extrabold px-1.5 rounded-full bg-[rgba(34,197,94,0.14)] text-op-good">${w.weight}%</span></div>
+          <div class="flex justify-between text-[12px] mt-1.5"><span class="text-opl-inkDim dark:text-op-inkDim">Sales</span><span class="tabular-nums">${laborMoney(w.actualSales)}</span></div>
+          <div class="flex justify-between text-[12px] mt-1.5"><span class="text-opl-inkDim dark:text-op-inkDim">vs budget</span><span class="tabular-nums ${w.variancePct > 0 ? 'text-op-good' : 'text-op-bad'}">${w.variancePct > 0 ? '+' : ''}${laborPct(w.variancePct)}</span></div>
+          <div class="flex justify-between text-[12px] mt-1.5"><span class="text-opl-inkDim dark:text-op-inkDim">Hours</span><span class="tabular-nums">${laborNum(Math.round(w.actualHours))}</span></div>
+          <div class="flex justify-between text-[12px] mt-1.5"><span class="text-opl-inkDim dark:text-op-inkDim">Labor %</span><span class="tabular-nums">${laborPct(w.laborPct)}</span></div>
+        </div>`).join('');
+      html += `
+      <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 mt-4 transition-colors">
+        <div class="flex items-start gap-3 flex-wrap">
+          <div>
+            <div class="text-[10.5px] font-extrabold tracking-[0.09em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer">Store detail</div>
+            <h2 class="text-[15px] font-extrabold mt-0.5">${laborEsc(scopeLabel)}</h2>
+            <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim">The weeks behind the recommendation, oldest to newest.</div>
+          </div>
+          <button type="button" onclick="laborSetStore('all')" class="ml-auto text-[12px] font-bold text-accent-green">← All stores</button>
+        </div>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 mt-3.5">${cards || '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim">No usable weeks.</div>'}</div>
+      </section>`;
+    }
+
+    // Anything quoting a plain budget says so, in words, where it is visible.
+    const flagged = (d.stores || []).filter(s => d.byStore[s] && d.byStore[s].basis === 'budget-only');
+    if (flagged.length) {
+      html += `
+      <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 mt-4 transition-colors">
+        <div class="text-[10.5px] font-extrabold tracking-[0.09em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer mb-2.5">Needs attention</div>
+        ${flagged.map(s => `<div class="rounded-[12px] p-3 border text-[12.5px] leading-relaxed" style="background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.30)">
+          <b class="font-extrabold">${laborEsc((LABOR_NAMES[s] || [s])[0])}</b> is on its plain budget — ${laborEsc(d.byStore[s].reason)}.
+          It shows ${laborNum(d.byStore[s].recommendedHours)} hours and no trend until four usable weeks exist.
+        </div>`).join('')}
+      </section>`;
+    }
+
+    body.innerHTML = html;
+  }
+
   const NAV_BUSINESS = {
     // 🔑 The first non-'bl' entry. Until this, every item was Bargain Lane's and
     // applyBusinessNav had nothing to keep out of anyone's way in the other
     // direction — inside E-Commerce the whole sidebar simply emptied.
     'nav-ebay-cases': 'ecom',
     'nav-inventory': 'bl',
+    'nav-labor': 'bl',
     'nav-supply-request': 'bl',
     'nav-users': 'bl',
     'nav-admin-settings': 'bl',
@@ -17922,6 +18231,12 @@
     // Marketing dropdown: the GROUP is visible to every authenticated user so
     // all users can reach Submit Photos. Ad Reporting + Flow Calendar stay
     // admin/superuser-only (gated individually below).
+    // Labor: anyone who may see money may see it — a manager needs their own
+    // store's recommendation. The HOURS tab inside it is admin-only and is
+    // gated separately (laborApplyRole), because entry is chain-wide.
+    const navLabor = el('nav-labor');
+    if (navLabor) navLabor.classList.toggle('hidden', !seesMoney);
+
     el('nav-marketing-group').classList.remove('hidden');
     el('nav-marketing-ads').classList.toggle('hidden', !isAdmin);     // Ad Reporting: admin/superuser
     el('nav-flow-calendar').classList.toggle('hidden', !isAdmin);     // Flow Calendar: admin/superuser
