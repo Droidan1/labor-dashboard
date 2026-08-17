@@ -2156,9 +2156,23 @@ function normalizeL3Key(l3) {
 function mergeItemSnapshots(snapshots) {
   const cats = {}; // L2 → { qty, gross, discounts, refunds, net, cost, l3: { l3Name → {qty,gross,discounts,refunds,net,cost} } }
   let totalOrders = 0;
+  // Basket-touch counts, summed across days. Summing is correct: an order
+  // belongs to exactly ONE store-day, so no basket is counted twice here. The
+  // overlap that makes these exceed orderCount happens WITHIN a day, between
+  // categories — never across days.
+  const l2Orders = {}, l3Orders = {};
+  let sawOrders = false;
   for (const snap of snapshots) {
     if (!snap || !Array.isArray(snap.categories)) continue;
     totalOrders += Number(snap.orderCount) || 0;
+    if (snap.l2Orders && typeof snap.l2Orders === "object") {
+      sawOrders = true;
+      for (const [c, n] of Object.entries(snap.l2Orders)) l2Orders[c] = (l2Orders[c] || 0) + (Number(n) || 0);
+      for (const [c, kids] of Object.entries(snap.l3Orders || {})) {
+        const b = l3Orders[c] || (l3Orders[c] = {});
+        for (const [k, n] of Object.entries(kids)) b[k] = (b[k] || 0) + (Number(n) || 0);
+      }
+    }
     for (const c of snap.categories) {
       const name = c.category || "Uncategorized";
       if (!cats[name]) {
@@ -2262,6 +2276,11 @@ function mergeItemSnapshots(snapshots) {
       coverage: { item: roundCents(totCovItem), category: roundCents(totCovCat), none: roundCents(totCovNone) },
     },
     orderCount: totalOrders,
+    // null, not {}, when NO day in the range carried counts — the difference
+    // between "no basket touched this" and "we do not know" has to survive, or
+    // pre-backfill weeks would render a confident 0.
+    l2Orders: sawOrders ? l2Orders : null,
+    l3Orders: sawOrders ? l3Orders : null,
   };
 }
 
@@ -2384,6 +2403,10 @@ async function buildStoreWeekly(env, store, dates) {
     // `itemSales` above keeps the raw, un-normalized l3Rows — the per-store tab
     // reads that and is unaffected by the normalization applied here.
     ...l3MapsFrom(merged.categories),
+    // Basket-touch counts, already normalized and already summed across the
+    // week's days by mergeItemSnapshots. null when no day carried them.
+    l2Orders: merged.l2Orders,
+    l3Orders: merged.l3Orders,
   };
 }
 
@@ -2424,6 +2447,10 @@ function weekSummaryPayload(store, week, year, dates, bundle) {
     l2Net: bundle.l2Net || {},
     l3Qty: bundle.l3Qty || {},
     l3Net: bundle.l3Net || {},
+    // `|| null` not `|| {}`: an empty object would claim "no basket touched any
+    // category", which is false for every week written before the backfill.
+    l2Orders: bundle.l2Orders || null,
+    l3Orders: bundle.l3Orders || null,
     snapshotTime: new Date().toISOString(),
   };
 }
@@ -2703,6 +2730,13 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   // and the combined view (the unfiltered tiles) would divide by too many
   // orders. Combined orders = retail.orders + bin.orders − mixed.
   const _ch = { retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 }, mixed: 0 };
+  // How many BASKETS touched each category — the denominator for "when a basket
+  // contains Furniture, how much Furniture is in it". Deliberately NOT derivable
+  // from the qty/net maps: a basket holding three categories increments three
+  // counters, so these sum to MORE than the day's orderCount. That overlap is
+  // the metric, not a bug — the same reason `_ch.mixed` has to exist.
+  const _l2Orders = {};   // L2 → basket count
+  const _l3Orders = {};   // L2 → { normalized L3 → basket count }
   // covItem/covCat/covNone = net $ whose cost came from an IM# item-master cost
   // (known), an L3 category flat cost (estimate), or no cost source (uncovered).
   // Feeds the Cost Coverage report so admins can see what's known vs. estimated.
@@ -2750,6 +2784,14 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     const lineItems = order.lineItems?.elements || [];
     let orderLineItemNetCents = 0;
     const _ordCh = { retail: { net: 0, units: 0 }, bin: { net: 0, units: 0 } };
+    // Which categories THIS basket touched. Presence only — no units gate:
+    // `qty` is derived from unitQty and is positive even on a refund line, so
+    // "units > 0" would be dead code pretending to be a guard. It is not needed
+    // either, because a negatively-priced line resolves to L2 "Refund" (see the
+    // priceCents < 0 branch below) rather than to the category it reverses, so
+    // a touch on one of the real categories is always a positive one.
+    const _ordL2 = new Set();          // L2s this basket touched
+    const _ordL3 = new Map();          // L2 → Set(normalized L3)
 
     // ── Phase 2B: pre-compute discounts (amount + percentage) ─────
     // Clover stores percentage-based discounts as `percentage` with no
@@ -3021,6 +3063,14 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       const l3Cat = getL3(l2, l3Key);
       const grossCents = Math.abs(priceCents);
 
+      // Basket-touch tracking. Normalize the L3 the same way l3MapsFrom does,
+      // or the penetration denominators would key on "[Name match] X" while the
+      // net numerators key on "X" and the two would never line up.
+      _ordL2.add(l2);
+      let _s = _ordL3.get(l2);
+      if (!_s) { _s = new Set(); _ordL3.set(l2, _s); }
+      _s.add(normalizeL3Key(l3Key));
+
       // Record this line item's category so refunds from /v3/refunds (which
       // reference lineItem.id) can be attributed back to the right L2/L3.
       if (li.id) lineItemCatMap.set(li.id, { l2, l3Key });
@@ -3106,6 +3156,12 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
     if (_ordCh.retail.units > 0 && _ordCh.bin.units > 0) _ch.mixed++;
     for (const k of ['retail', 'bin']) {
       if (_ordCh[k].units > 0) { _ch[k].orders++; _ch[k].net += _ordCh[k].net; _ch[k].units += _ordCh[k].units; }
+    }
+    // One basket, counted once per category it touched.
+    for (const l2 of _ordL2) _l2Orders[l2] = (_l2Orders[l2] || 0) + 1;
+    for (const [l2, set] of _ordL3) {
+      const b = _l3Orders[l2] || (_l3Orders[l2] = {});
+      for (const nk of set) b[nk] = (b[nk] || 0) + 1;
     }
   }
 
@@ -3381,6 +3437,11 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       coverage: { item: roundCents(totCovItem), category: roundCents(totCovCat), none: roundCents(totCovNone) },
     },
     orderCount: allElements.length,
+    // Baskets that touched each category / L3. Sums to MORE than orderCount,
+    // by design — see the declaration comment. Absent on snapshots written
+    // before this shipped, so every consumer must treat missing as unknown.
+    l2Orders: _l2Orders,
+    l3Orders: _l3Orders,
     channels: {
       retail: _chAvg(_chRetailNet, _ch.retail.units, _ch.retail.orders),
       bin:    _chAvg(_chBinNet,    _ch.bin.units,    _ch.bin.orders),
@@ -12129,6 +12190,10 @@ export default {
         // all-stores and the filtered case, so there is one code path, not two.
         const perStoreL3UnitsByWeek = [];
         const perStoreL3NetByWeek = [];
+        // Basket-touch counts. null for a (store, week) whose summary predates
+        // the backfill — the client must render those as unknown, not zero.
+        const perStoreL2OrdersByWeek = [];
+        const perStoreL3OrdersByWeek = [];
         for (const wkObj of weeks) {
           const wk = wkObj.week;
           const perStore = {};
@@ -12136,6 +12201,8 @@ export default {
           const perStoreL2Net = {};
           const perStoreL3 = {};
           const perStoreL3Net = {};
+          const perStoreL2Ord = {};
+          const perStoreL3Ord = {};
           // Shared BL12/BL16 account: attribute this whole week to one store.
           // wkObj.start is the week's MIN(date); the cutover is a week boundary.
           const isPostCutover = (wkObj.start || "") >= WRS_CUTOVER;
@@ -12151,6 +12218,8 @@ export default {
               perStoreL2Net[s] = {};
               perStoreL3[s] = {};
               perStoreL3Net[s] = {};
+              perStoreL2Ord[s] = {};
+              perStoreL3Ord[s] = {};
               return;
             }
             let summary = null;
@@ -12166,9 +12235,9 @@ export default {
               const dates = await resolveWeekDates(env, wk, (wkObj.start || "").slice(0, 4) || year);
               if (dates.length) {
                 const bundle = await buildStoreWeekly(env, s, dates);
-                summary = { totals: bundle.totals, l2Qty: bundle.l2Qty, l2Net: bundle.l2Net, l3Qty: bundle.l3Qty, l3Net: bundle.l3Net };
+                summary = { totals: bundle.totals, l2Qty: bundle.l2Qty, l2Net: bundle.l2Net, l3Qty: bundle.l3Qty, l3Net: bundle.l3Net, l2Orders: bundle.l2Orders, l3Orders: bundle.l3Orders };
               } else {
-                summary = { totals: { netSales: 0, qty: 0, transactions: 0, asp: 0, laborPct: 0, budget: 0 }, l2Qty: {}, l2Net: {}, l3Qty: {}, l3Net: {} };
+                summary = { totals: { netSales: 0, qty: 0, transactions: 0, asp: 0, laborPct: 0, budget: 0 }, l2Qty: {}, l2Net: {}, l3Qty: {}, l3Net: {}, l2Orders: null, l3Orders: null };
               }
             }
             perStore[s] = summary.totals;
@@ -12178,6 +12247,8 @@ export default {
             // the card renders L2-only until ?action=rebuild-week-summaries runs.
             perStoreL3[s] = summary.l3Qty || {};
             perStoreL3Net[s] = summary.l3Net || {};
+            perStoreL2Ord[s] = summary.l2Orders || null;
+            perStoreL3Ord[s] = summary.l3Orders || null;
           }));
 
           let wkNet = 0, wkQty = 0, wkTxn = 0, wkBudget = 0, wkLaborNum = 0, wkLaborDen = 0, wkAuction = 0;
@@ -12232,6 +12303,8 @@ export default {
               [s, Object.fromEntries(Object.entries(cats).map(([k, v]) => [k, roundCents(v)]))]
             ))
           );
+          perStoreL2OrdersByWeek.push({ ...perStoreL2Ord });
+          perStoreL3OrdersByWeek.push({ ...perStoreL3Ord });
           perStoreL3UnitsByWeek.push({ ...perStoreL3 });
           perStoreL3NetByWeek.push(
             Object.fromEntries(Object.entries(perStoreL3Net).map(([s, cats]) =>
@@ -12257,6 +12330,8 @@ export default {
           perStoreL2Net: perStoreL2NetByWeek,
           perStoreL3Units: perStoreL3UnitsByWeek,
           perStoreL3Net: perStoreL3NetByWeek,
+          perStoreL2Orders: perStoreL2OrdersByWeek,
+          perStoreL3Orders: perStoreL3OrdersByWeek,
           liveBuilds,
         }), { headers: corsJson });
       } catch (err) {
