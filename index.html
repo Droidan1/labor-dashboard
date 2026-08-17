@@ -2918,6 +2918,17 @@
                 <div id="backfill-sales-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
               </div>
             </div>
+
+            <div>
+              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Backfill Category Basket Counts</p>
+              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Adds <em>how many baskets touched each category</em> to the last 13 weeks of item snapshots — the denominator the T13 Penetration view needs. <strong>Adds two fields only</strong>: sales figures, categories and totals are never rewritten. Any day whose Clover fetch comes back more than 1% short is skipped and reported rather than written. Loops one store-day at a time; takes several minutes. Run <em>Rebuild Week Summaries</em> afterwards.</p>
+              <div class="flex items-center gap-3">
+                <button onclick="runBackfillCategoryOrders()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
+                  Backfill Basket Counts
+                </button>
+                <div id="backfill-orders-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
+              </div>
+            </div>
           </div>
 
           <!-- Manual Sales Override -->
@@ -10773,6 +10784,83 @@
   //   - Failed dates are remembered; re-running picks them up
   //   - If the auto-rebuild fails, retry it 2× with backoff before giving up
   let _backfillFailed = []; // sticky list of failed dates from prior runs
+  // Backfill per-category basket counts across the trailing 13 weeks, one
+  // STORE-DAY per worker invocation so each request's Clover fetch and
+  // subrequest budget stays small. Mirrors runBackfillSales13w's resilience:
+  // retries per unit, a sticky failed list so re-running resumes, and a
+  // per-unit result so skipped days are visible rather than silent.
+  let _ordFillFailed = [];
+  async function runBackfillCategoryOrders() {
+    const statusEl = el('backfill-orders-status');
+    const setStatus = (msg, tone) => {
+      statusEl.classList.remove('hidden');
+      const colors = {
+        info:  'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300',
+        ok:    'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-700 dark:text-green-300',
+        error: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300',
+      };
+      statusEl.className = `text-sm rounded-lg px-4 py-3 border flex-1 ${colors[tone]}`;
+      statusEl.innerHTML = msg;
+    };
+
+    const stores = ['BL1', 'BL2', 'BL4', 'BL8', 'BL12', 'BL14', 'BL16'];
+    let units;
+    if (_ordFillFailed.length) {
+      units = [..._ordFillFailed];
+    } else {
+      units = [];
+      const today = new Date(); today.setHours(12, 0, 0, 0);
+      for (let i = 0; i < 91; i++) {
+        const day = new Date(today.getTime() - i * 86400000).toISOString().slice(0, 10);
+        for (const s of stores) units.push({ store: s, date: day });
+      }
+    }
+
+    const t0 = Date.now();
+    let wrote = 0, skipped = 0, noSnap = 0, failed = [];
+    const lowCoverage = [];
+    for (let i = 0; i < units.length; i++) {
+      const u = units[i];
+      let okUnit = false;
+      for (let attempt = 0; attempt < 3 && !okUnit; attempt++) {
+        try {
+          const resp = await fetch(`${WORKER_BASE}?action=backfill-category-orders&store=${u.store}&date=${u.date}`,
+            { method: 'POST', credentials: 'include' });
+          const data = await resp.json();
+          if (!resp.ok || data.error) throw new Error(data.error || ('HTTP ' + resp.status));
+          okUnit = true;
+          if (data.wrote) wrote++;
+          else if (data.skipped === 'no existing snapshot') noSnap++;
+          else {
+            skipped++;
+            if (data.skipped === 'coverage below floor') {
+              lowCoverage.push(`${u.store} ${u.date} (${Math.round((data.coverage || 0) * 100)}%)`);
+            }
+          }
+        } catch (e) {
+          if (attempt === 2) failed.push(u);
+          else await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+        }
+      }
+      if (i % 7 === 0 || i === units.length - 1) {
+        const pct = Math.round(((i + 1) / units.length) * 100);
+        setStatus(`Backfilling basket counts… ${pct}% (${i + 1}/${units.length}) · ${wrote} written, ${skipped} skipped`, 'info');
+      }
+    }
+    _ordFillFailed = failed;
+    const secs = Math.round((Date.now() - t0) / 1000);
+    const bits = [`${wrote} store-days written`, `${noSnap} had no snapshot`];
+    if (skipped) bits.push(`<b>${skipped} skipped</b>`);
+    if (failed.length) bits.push(`<b>${failed.length} failed</b> (re-run to retry just those)`);
+    let msg = `Done in ${secs}s — ${bits.join(', ')}.`;
+    if (lowCoverage.length) {
+      msg += `<br><span class="text-xs">Skipped for low Clover coverage: ${lowCoverage.slice(0, 8).join(', ')}${lowCoverage.length > 8 ? ` and ${lowCoverage.length - 8} more` : ''}. Their sales figures are untouched.</span>`;
+    }
+    msg += `<br><span class="text-xs">Now run <b>Rebuild Week Summaries</b> so T13 picks these up.</span>`;
+    setStatus(msg, failed.length ? 'error' : 'ok');
+  }
+  window.runBackfillCategoryOrders = runBackfillCategoryOrders;
+
   async function runBackfillSales13w() {
     const statusEl = el('backfill-sales-status');
     const setStatus = (msg, tone) => {

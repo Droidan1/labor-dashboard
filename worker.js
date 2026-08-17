@@ -3842,6 +3842,7 @@ const ACTION_BUSINESS = new Map([
   ["ebay-cases", "ecom"],
   ["afternoon-briefing", "bl"],
   ["backfill", "bl"],
+  ["backfill-category-orders", "bl"],
   ["backfill-items-snapshots", "bl"],
   ["cancel-sale-schedule", "bl"],
   ["category-costs", "bl"],
@@ -10610,6 +10611,112 @@ export default {
     //    Header: X-Snapshot-Secret. Feeders (Apps Script for Drive drops, worker
     //    crons for APIs) all normalize to this shape and POST here. Idempotent:
     //    UNIQUE(channel, store, date) upserts, so re-sent files never double-count.
+
+    // ── Admin: backfill per-category BASKET COUNTS into one existing snapshot.
+    //    POST ?action=backfill-category-orders&store=BL1&date=YYYY-MM-DD
+    //
+    // Why this exists: `l2Orders` / `l3Orders` are the denominator for the T13
+    // penetration view, and they were never stored — no per-order detail is
+    // retained anywhere, only per-day category aggregates. So the counts for any
+    // past day can only come from re-reading Clover.
+    //
+    // 🔑 THIS IS NOT A RE-SNAPSHOT. It reads the existing snapshot, adds exactly
+    // two keys, and writes it back. `categories`, `totals`, `channels`, qty, net,
+    // cost and l3Rows are never touched, and `saveItemSalesSnapshot` is never
+    // called. That is what keeps it clear of the rule this repo has lost data to
+    // three times: the danger in a re-pull is overwriting good sales figures with
+    // a degraded fetch, and no sales figure is written here.
+    //
+    // The exposure is narrower than it looks. Penetration's NUMERATOR is the
+    // stored, healthy `l2Net`; only the DENOMINATOR comes from the re-fetch, and
+    // denominators depend on orders still existing, not on refunds surviving.
+    // Even so, a short fetch is refused rather than written — see the guard.
+    if (request.method === "POST" && url.searchParams.get("action") === "backfill-category-orders") {
+      const corsJson = { ...corsHeaders, "Content-Type": "application/json" };
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
+      if (unauth) return unauth;
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: corsJson });
+      }
+
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      const date = url.searchParams.get("date") || "";
+      if (!ALL_STORES.includes(store) && store !== "BL12") {
+        return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return new Response(JSON.stringify({ error: "Missing or malformed date (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+      }
+
+      const key = `items:${store.toLowerCase()}:${date}`;
+      const existingRaw = await env.SALES_SNAPSHOTS.get(key);
+      // No snapshot → nothing to enrich. Deliberately NOT created: this endpoint
+      // adds a field to history, it does not manufacture history.
+      if (!existingRaw) {
+        return new Response(JSON.stringify({ ok: true, store, date, skipped: "no existing snapshot" }), { headers: corsJson });
+      }
+      let existing;
+      try { existing = JSON.parse(existingRaw); }
+      catch (e) { return new Response(JSON.stringify({ error: "existing snapshot is not valid JSON", detail: e.message }), { status: 500, headers: corsJson }); }
+
+      const { dateStr: todayStr } = getETToday();
+      const sinceTs = getStartOfDayET(date);
+      let untilTs = null;
+      if (date !== todayStr) {
+        const nextDay = new Date(date + "T12:00:00Z");
+        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+        untilTs = getStartOfDayET(nextDay.toISOString().slice(0, 10));
+      }
+
+      try {
+        const [overrides, itemCosts] = await Promise.all([fetchItemOverrides(env), fetchItemCosts(env)]);
+        const [elements, refundElements, manualRefundElements] = await Promise.all([
+          fetchItemOrders(store, env, sinceTs, untilTs),
+          fetchRefundElements(store, env, sinceTs, untilTs),
+          fetchManualRefunds(store, env, sinceTs, untilTs),
+        ]);
+        if (!elements) {
+          return new Response(JSON.stringify({ ok: true, store, date, skipped: "no credentials" }), { headers: corsJson });
+        }
+        const itemCatMap = await fetchItemCategoryMap(store, env);
+        const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
+        // Reuse the REAL aggregator rather than re-deriving categories here: the
+        // counts must key on exactly the same L2/L3 the stored maps use, and a
+        // second copy of the resolution ladder would drift from it immediately.
+        // Everything except the two count maps is discarded.
+        const agg = aggregateItemSales(elements, itemCatMap, store, date, overrides, itemCosts,
+                                       refundElements, extraOrders, manualRefundElements);
+
+        // ── Magnitude guard ────────────────────────────────────────────────
+        // Clover's retention decays, so an old day can come back short. Compare
+        // against the order count this day ALREADY recorded and refuse to write
+        // an understated denominator. Floor matches the existing backfill guard.
+        const storedOrders = Number(existing.orderCount) || 0;
+        const fetchedOrders = Number(agg.orderCount) || 0;
+        const coverage = storedOrders > 0 ? fetchedOrders / storedOrders : (fetchedOrders > 0 ? 1 : 0);
+        if (storedOrders > 0 && coverage < 0.99) {
+          return new Response(JSON.stringify({
+            ok: true, store, date, skipped: "coverage below floor",
+            storedOrders, fetchedOrders, coverage: Math.round(coverage * 1000) / 1000,
+          }), { headers: corsJson });
+        }
+
+        // ── The write: two keys, nothing else ─────────────────────────────
+        existing.l2Orders = agg.l2Orders || {};
+        existing.l3Orders = agg.l3Orders || {};
+        existing.categoryOrdersBackfilledAt = new Date().toISOString();
+        await env.SALES_SNAPSHOTS.put(key, JSON.stringify(existing));
+
+        return new Response(JSON.stringify({
+          ok: true, store, date, wrote: true,
+          storedOrders, fetchedOrders, coverage: Math.round(coverage * 1000) / 1000,
+          l2Categories: Object.keys(existing.l2Orders).length,
+          categoryTouches: Object.values(existing.l2Orders).reduce((a, b) => a + b, 0),
+        }), { headers: corsJson });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "backfill-category-orders failed", store, date, detail: err.message }), { status: 500, headers: corsJson });
+      }
+    }
 
     // ── Admin: re-snapshot item sales for a date: ?action=items-snapshot&store=BL1[&date=2026-04-08]
     // store=all re-processes every store. Requires X-Snapshot-Secret header.
