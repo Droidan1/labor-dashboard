@@ -15304,6 +15304,19 @@
     // free item rather than an empty cell.
     const fmtAsp = v => (v == null || !isFinite(v)) ? '—'
       : (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2);
+    const fmtCart = fmtAsp;                       // money to the cent, em dash on no orders
+    const fmtItems = v => (v == null || !isFinite(v)) ? '—' : v.toFixed(2);
+    const fmtOrders = v => v ? Math.round(v).toLocaleString() : '—';
+
+    // Chain orders per week, following the store filter — the denominator for
+    // both derived cards and the body of the Orders card.
+    const weeklyOrders = weeks.map((_, i) =>
+      filteredStoreKeys.reduce((s, k) => s + (((stores[k] || {}).transactions || [])[i] || 0), 0));
+    // Chain revenue / units per week, ALL categories — not just the 12 shown.
+    const weeklyNetAll = weeks.map((_, i) =>
+      filteredStoreKeys.reduce((s, k) => s + (((stores[k] || {}).netSales || [])[i] || 0), 0));
+    const weeklyUnitsAll = weeks.map((_, i) =>
+      filteredStoreKeys.reduce((s, k) => s + (((stores[k] || {}).qty || [])[i] || 0), 0));
 
     const renderL2Card = (title, perWeek, fmt, opts = {}) => {
       // `opts.l3` is the matching { L2: { L3: v } } series. Absent → this card
@@ -15319,27 +15332,35 @@
       // averaging the weekly ASPs would weight a dead week the same as a peak
       // one, and averaging per-category ASPs would weight Gift Cards the same
       // as Bin Products. Same trap ?action=channel-range exists to avoid.
-      // `opts.ratio = { num, den, numL3, denL3 }` supplies both series.
+      // `opts.ratio = { num, numL3, … }` supplies the numerator series, plus a
+      // denominator in ONE of two shapes:
+      //   · `denWeek: [n]`      one shared denominator per week — every category
+      //                         divides by the same thing, so the rows still
+      //                         partition the whole (ASP by units, cart by orders)
+      //   · `den` / `denL3`     a per-category denominator — the rows then
+      //                         OVERLAP and must not be summed (penetration)
       const R = opts.ratio || null;
       const ratio = (n, d) => (d > 0 ? n / d : null);
       const sum = a => a.reduce((x, y) => x + y, 0);
       const l2At = (series, cat, i) => (series[i] || {})[cat] || 0;
+      const denAt = (cat, i) => R.denWeek ? (R.denWeek[i] || 0) : l2At(R.den, cat, i);
+      const denAt3 = (cat, i, nm) => R.denWeek ? (R.denWeek[i] || 0) : at3(R.denL3, cat, i, nm);
       // one L2 cell
       const cellAt = (cat, i) => R
-        ? ratio(l2At(R.num, cat, i), l2At(R.den, cat, i))
+        ? ratio(l2At(R.num, cat, i), denAt(cat, i))
         : l2At(perWeek, cat, i);
       // one L2 row's Total column
       const rowTotalOf = (cat, vals) => R
         ? ratio(sum(weeks.map((_, i) => l2At(R.num, cat, i))),
-                sum(weeks.map((_, i) => l2At(R.den, cat, i))))
+                sum(weeks.map((_, i) => denAt(cat, i))))
         : sum(vals);
       // one L3 cell / that L3 row's Total
       const l3CellAt = (cat, i, nm) => R
-        ? ratio(at3(R.numL3, cat, i, nm), at3(R.denL3, cat, i, nm))
+        ? ratio(at3(R.numL3, cat, i, nm), denAt3(cat, i, nm))
         : l3Of(cat, i, nm);
       const l3TotalOf = (cat, nm, lv) => R
         ? ratio(sum(weeks.map((_, i) => at3(R.numL3, cat, i, nm))),
-                sum(weeks.map((_, i) => at3(R.denL3, cat, i, nm))))
+                sum(weeks.map((_, i) => denAt3(cat, i, nm))))
         : sum(lv);
       // Optional heat shading: alpha by cell value relative to the max cell.
       // L2 and L3 get SEPARATE scales — every L3 cell is a fraction of its
@@ -15377,6 +15398,17 @@
             <th class="${thCls} text-right">Total</th>
           </tr></thead>
           <tbody>`;
+      // Optional lead row, above the categories. Used by the derived cards to
+      // put the TRUE chain figure first — the number a manager would quote —
+      // before the per-category breakdown that sums to slightly less.
+      if (opts.headRow) {
+        const hr = opts.headRow;
+        html += `<tr class="bg-opl-panelHi dark:bg-op-panelHi border-b-2 border-[rgba(20,16,8,0.12)] dark:border-op-borderHi">
+          <td class="${tdTotCls} text-left ${stickyLtot}">${escapeHtml(hr.label)}</td>
+          ${hr.values.map(v => `<td class="${tdTotCls}">${fmt(v)}</td>`).join('')}
+          <td class="${tdTotCls}">${fmt(hr.total)}</td>
+        </tr>`;
+      }
       for (const cat of T13_L2_CATS) {
         const vals = weeks.map((_, i) => cellAt(cat, i));
         const rowTotal = rowTotalOf(cat, vals);
@@ -15406,22 +15438,37 @@
           }
         }
       }
+      // Grand denominator: with a shared per-week denominator it is that value
+      // ONCE, not summed across categories — 12 categories all divided by the
+      // same order count still divide by one order count, not twelve.
+      const grandDen = (i) => R.denWeek
+        ? (R.denWeek[i] || 0)
+        : T13_L2_CATS.reduce((s, c) => s + l2At(R.den, c, i), 0);
       const grandVals = weeks.map((_, i) => R
-        ? ratio(T13_L2_CATS.reduce((s, c) => s + l2At(R.num, c, i), 0),
-                T13_L2_CATS.reduce((s, c) => s + l2At(R.den, c, i), 0))
+        ? ratio(T13_L2_CATS.reduce((s, c) => s + l2At(R.num, c, i), 0), grandDen(i))
         : T13_L2_CATS.reduce((s, cat) => s + ((perWeek[i] || {})[cat] || 0), 0)
       );
       // For a ratio this is NOT the sum of grandVals — it is the ratio of the
       // 13-week totals, so a heavy week counts for what it actually sold.
       const grandTotal = R
         ? ratio(sum(weeks.map((_, i) => T13_L2_CATS.reduce((s, c) => s + l2At(R.num, c, i), 0))),
-                sum(weeks.map((_, i) => T13_L2_CATS.reduce((s, c) => s + l2At(R.den, c, i), 0))))
+                sum(weeks.map((_, i) => grandDen(i))))
         : grandVals.reduce((a, b) => a + b, 0);
       html += `<tr class="bg-opl-panelHi dark:bg-op-panelHi border-t-2 border-[rgba(20,16,8,0.12)] dark:border-op-borderHi">
-        <td class="${tdTotCls} text-left ${stickyLtot}">All Categories</td>
+        <td class="${tdTotCls} text-left ${stickyLtot}">${escapeHtml(opts.totalLabel || 'All Categories')}</td>
         ${grandVals.map(v => `<td class="${tdTotCls}">${fmt(v)}</td>`).join('')}
         <td class="${tdTotCls}">${fmt(grandTotal)}</td>
       </tr>`;
+      // Optional reconciliation row. The 12 merchandise categories do not cover
+      // all revenue — auction, Custom Sales, Other / Non-Item and refunds are
+      // real but uncategorised, and that gap runs 2–11% and is growing. Showing
+      // it is what lets the category rows and the chain row agree.
+      if (opts.gapRow) {
+        const gr = opts.gapRow;
+        html += `<tr><td class="px-2.5 py-2 text-[11px] italic text-opl-inkDim dark:text-op-inkDim whitespace-nowrap ${stickyL}" title="${escapeHtml(gr.label)}">${escapeHtml(gr.label)}</td>
+          ${gr.values.map(v => `<td class="${tdCls} text-opl-inkDim dark:text-op-inkDim">${fmt(v)}</td>`).join('')}
+          <td class="${tdCls} text-opl-inkDim dark:text-op-inkDim">${fmt(gr.total)}</td></tr>`;
+      }
       // Budget + % Budget rows (net table only; budget is per-week, not per-category)
       if (opts.budget) {
         const budTot = opts.budget.reduce((a, b) => a + b, 0);
@@ -15458,6 +15505,63 @@
       ratio: { num: l2Net, den: l2Units, numL3: l3Net, denL3: l3Units },
     });
 
+    // ── Orders: a basket count, so it has no category dimension. Store rows ×
+    // week columns, matching the other cards' orientation.
+    const ordersTitle = allOn ? 'Orders by Store' :
+      (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} Orders` : `Orders (${filteredStoreKeys.length} stores)`);
+    let ordersHtml = `<div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl overflow-hidden">
+      <div class="px-4 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(ordersTitle)}</h3>
+      </div>
+      <div class="overflow-x-auto"><table class="w-full text-sm">
+        <thead><tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+          <th class="${thCls} text-left ${stickyL}">Store</th>
+          ${wkLabels.map(l => `<th class="${thCls} text-right">${escapeHtml(l)}</th>`).join('')}
+          <th class="${thCls} text-right">Total</th>
+        </tr></thead><tbody>`;
+    for (const s of filteredStoreKeys) {
+      const v = weeks.map((_, i) => ((stores[s] || {}).transactions || [])[i] || 0);
+      // A store with no orders in the whole window (closed, or not yet open) is
+      // dropped rather than shown as a row of dashes.
+      if (!v.some(x => x)) continue;
+      ordersHtml += `<tr class="border-b border-[rgba(20,16,8,0.05)] dark:border-op-border/50">
+        <td class="px-2.5 py-2 text-xs font-medium text-opl-ink dark:text-op-ink whitespace-nowrap ${stickyL}">${escapeHtml(WRS_STORE_NAMES[s] || s)}</td>
+        ${v.map(x => `<td class="${tdCls}">${fmtOrders(x)}</td>`).join('')}
+        <td class="${tdTotCls}">${fmtOrders(v.reduce((a, b) => a + b, 0))}</td></tr>`;
+    }
+    ordersHtml += `<tr class="bg-opl-panelHi dark:bg-op-panelHi border-t-2 border-[rgba(20,16,8,0.12)] dark:border-op-borderHi">
+        <td class="${tdTotCls} text-left ${stickyLtot}">All Stores</td>
+        ${weeklyOrders.map(v => `<td class="${tdTotCls}">${fmtOrders(v)}</td>`).join('')}
+        <td class="${tdTotCls}">${fmtOrders(weeklyOrders.reduce((a, b) => a + b, 0))}</td>
+      </tr></tbody></table></div></div>`;
+
+    // ── Avg Cart / Avg Items. Both are <numerator> ÷ orders, so they share the
+    // same shape: the true chain figure on top, then what each category
+    // contributes to it, then the uncategorised remainder so the two reconcile.
+    const sumA = a => a.reduce((x, y) => x + y, 0);
+    const ratioOf = (n, d) => (d > 0 ? n / d : null);
+    const shownNet = weeks.map((_, i) => T13_L2_CATS.reduce((s, c) => s + ((l2Net[i] || {})[c] || 0), 0));
+    const shownUnits = weeks.map((_, i) => T13_L2_CATS.reduce((s, c) => s + ((l2Units[i] || {})[c] || 0), 0));
+    const derivedCard = (title, kind, numer, numerL3, chainSeries, shownSeries, fmt) => renderL2Card(
+      title, numer, fmt, {
+        kind, l3: numerL3,
+        ratio: { num: numer, numL3: numerL3, denWeek: weeklyOrders },
+        totalLabel: 'The categories above',
+        headRow: {
+          label: kind === 'cart' ? 'Chain average cart' : 'Chain average items',
+          values: weeks.map((_, i) => ratioOf(chainSeries[i], weeklyOrders[i])),
+          total: ratioOf(sumA(chainSeries), sumA(weeklyOrders)),
+        },
+        gapRow: {
+          label: 'Auction, Custom Sales, Other / Non-Item, refunds',
+          values: weeks.map((_, i) => ratioOf(chainSeries[i] - shownSeries[i], weeklyOrders[i])),
+          total: ratioOf(sumA(chainSeries) - sumA(shownSeries), sumA(weeklyOrders)),
+        },
+      });
+    const storeTag = allOn ? '' : (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} ` : `${filteredStoreKeys.length} stores · `);
+    const cartHtml = derivedCard(`${storeTag}Average Cart`, 'cart', l2Net, l3Net, weeklyNetAll, shownNet, fmtCart);
+    const itemsHtml = derivedCard(`${storeTag}Average Items per Basket`, 'items', l2Units, l3Units, weeklyUnitsAll, shownUnits, fmtItems);
+
     // Empty state if user deselected everything
     if (filteredStoreKeys.length === 0) {
       el('wrs-pane-t13').innerHTML = filterHtml +
@@ -15469,7 +15573,10 @@
       '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mb-3 px-0.5">Weekly net sales</h3>' + topHtml +
       '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Units sold by category × week</h3>' + unitsHtml +
       '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Net sales by category × week</h3>' + netHtml +
-      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Average selling price by category × week</h3>' + aspHtml;
+      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Average selling price by category × week</h3>' + aspHtml +
+      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Orders by store × week</h3>' + ordersHtml +
+      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Average cart × week</h3>' + cartHtml +
+      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Average items per basket × week</h3>' + itemsHtml;
   }
 
   // ═══════════════════════════════════════════════════════════════
