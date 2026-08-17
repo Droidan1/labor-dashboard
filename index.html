@@ -15242,6 +15242,17 @@
     t13ExpandedL2.has(key) ? t13ExpandedL2.delete(key) : t13ExpandedL2.add(key);
     renderT13();
   };
+  // Avg Cart / Avg Items each read two ways. 'contribution' divides by ALL
+  // orders — every category shares the denominator, so the rows partition the
+  // basket and add up. 'penetration' divides by the baskets that actually
+  // contained the category — more intuitive per row, but the rows then overlap
+  // and must not be summed.
+  const t13Mode = { cart: 'contribution', items: 'contribution' };
+  window.toggleT13Mode = (kind, mode) => {
+    if (t13Mode[kind] === mode) return;
+    t13Mode[kind] = mode;
+    renderT13();
+  };
   window.toggleT13AllL2 = (kind) => {
     const cats = T13_L2_CATS.filter(c => t13ExpandedL2.has(kind + ':' + c));
     const allOpen = cats.length === T13_L2_CATS.length;
@@ -15366,6 +15377,45 @@
     const l3Units = sumPerStoreL3(perStoreL3Units);
     const l3Net = sumPerStoreL3(perStoreL3Net);
 
+    // ── per-category basket counts (penetration denominators) ────────────
+    // Additive across stores: a basket belongs to one store, so summing counts
+    // over the selected stores is a true count of baskets.
+    //
+    // 🔑 A week is only usable if EVERY selected store that traded has counts.
+    // A store still missing them (never backfilled, or its fetch was refused by
+    // the coverage guard) would silently shrink the denominator and inflate the
+    // figure. Better to show nothing than a confidently wrong number.
+    const perStoreL2Orders = d.perStoreL2Orders || [];
+    const perStoreL3Orders = d.perStoreL3Orders || [];
+    const ordersKnown = weeks.map((_, i) => {
+      const wk = perStoreL2Orders[i] || {};
+      let anyStore = false;
+      for (const s of filteredStoreKeys) {
+        const traded = Object.keys((perStoreL2Units[i] || {})[s] || {}).length > 0;
+        if (!traded) continue;            // closed / gated store contributes nothing either way
+        anyStore = true;
+        if (!wk[s]) return false;         // traded but has no counts → unknown
+      }
+      return anyStore;
+    });
+    const sumOrders = (arr, deep) => weeks.map((_, i) => {
+      if (!ordersKnown[i]) return null;
+      const wkObj = arr[i] || {};
+      const out = {};
+      for (const s of filteredStoreKeys) {
+        for (const [cat, v] of Object.entries(wkObj[s] || {})) {
+          if (deep) {
+            const b = out[cat] || (out[cat] = {});
+            for (const [k, n] of Object.entries(v)) b[k] = (b[k] || 0) + n;
+          } else out[cat] = (out[cat] || 0) + v;
+        }
+      }
+      return out;
+    });
+    const l2Orders = sumOrders(perStoreL2Orders, false);
+    const l3Orders = sumOrders(perStoreL3Orders, true);
+    const anyPenetration = ordersKnown.some(Boolean);
+
     // L3 row order per L2: biggest 13-week net first, "Other / unmapped" pinned
     // last however big it is — it is a remainder, not a category, and reading it
     // at the top of Seasonal would imply otherwise.
@@ -15437,18 +15487,29 @@
       const cellAt = (cat, i) => R
         ? ratio(l2At(R.num, cat, i), denAt(cat, i))
         : l2At(perWeek, cat, i);
+      // Row totals divide 13-week sums, but ONLY over weeks whose denominator is
+      // known. Including a week's numerator while its denominator is missing —
+      // which happens for any week not yet backfilled — would divide a full top
+      // by a partial bottom and overstate the row.
+      const totalOver = (num, den) => {
+        let n = 0, dsum = 0;
+        for (let i = 0; i < weeks.length; i++) {
+          const dv = den(i);
+          if (!(dv > 0)) continue;
+          n += num(i); dsum += dv;
+        }
+        return ratio(n, dsum);
+      };
       // one L2 row's Total column
       const rowTotalOf = (cat, vals) => R
-        ? ratio(sum(weeks.map((_, i) => l2At(R.num, cat, i))),
-                sum(weeks.map((_, i) => denAt(cat, i))))
+        ? totalOver(i => l2At(R.num, cat, i), i => denAt(cat, i))
         : sum(vals);
       // one L3 cell / that L3 row's Total
       const l3CellAt = (cat, i, nm) => R
         ? ratio(at3(R.numL3, cat, i, nm), denAt3(cat, i, nm))
         : l3Of(cat, i, nm);
       const l3TotalOf = (cat, nm, lv) => R
-        ? ratio(sum(weeks.map((_, i) => at3(R.numL3, cat, i, nm))),
-                sum(weeks.map((_, i) => denAt3(cat, i, nm))))
+        ? totalOver(i => at3(R.numL3, cat, i, nm), i => denAt3(cat, i, nm))
         : sum(lv);
       // Optional heat shading: alpha by cell value relative to the max cell.
       // L2 and L3 get SEPARATE scales — every L3 cell is a fraction of its
@@ -15474,11 +15535,27 @@
       const expandBtn = anyL3
         ? `<button onclick="toggleT13AllL2('${kind}')" class="px-2.5 py-1 text-[11px] font-semibold rounded-full border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">${allOpen ? 'Collapse all' : 'Expand all'}</button>`
         : '';
+      // Contribution / Penetration switch, on the two derived cards only.
+      const modeBtn = (m, label, enabled) => {
+        const on = opts.mode === m;
+        const cls = on
+          ? 'bg-[#3BB54A] border-[#3BB54A] text-white'
+          : (enabled ? 'border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink'
+                     : 'border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDimmer dark:text-op-inkDimmer cursor-not-allowed');
+        const click = enabled
+          ? ` onclick="toggleT13Mode('${kind}','${m}')"`
+          : ' disabled title="No basket counts stored for these weeks yet — run Backfill Basket Counts, then Rebuild Week Summaries."';
+        return `<button${click} class="px-2.5 py-1 text-[11px] font-semibold rounded-full border transition-colors ${cls}">${label}</button>`;
+      };
+      const modeSwitch = opts.mode
+        ? `<span class="inline-flex gap-1.5">${modeBtn('contribution', 'Contribution', true)}${modeBtn('penetration', 'Penetration', !!opts.penetrationAvailable)}</span>`
+        : '';
       let html = `<div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl overflow-hidden">
         <div class="px-4 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-center justify-between gap-3">
           <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(title)}</h3>
-          ${expandBtn}
+          <span class="flex items-center gap-2">${modeSwitch}${expandBtn}</span>
         </div>
+        ${opts.note ? `<div class="px-4 py-2 text-[11px] text-opl-inkDim dark:text-op-inkDim border-b border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panelHi dark:bg-op-panelHi">${opts.note}</div>` : ''}
         <div class="overflow-x-auto"><table class="w-full text-sm">
           <thead><tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
             <th class="${thCls} text-left ${stickyL}">Category</th>
@@ -15537,16 +15614,20 @@
         : T13_L2_CATS.reduce((s, cat) => s + ((perWeek[i] || {})[cat] || 0), 0)
       );
       // For a ratio this is NOT the sum of grandVals — it is the ratio of the
-      // 13-week totals, so a heavy week counts for what it actually sold.
+      // 13-week totals, so a heavy week counts for what it actually sold, and
+      // weeks with no denominator drop out of both sides.
       const grandTotal = R
-        ? ratio(sum(weeks.map((_, i) => T13_L2_CATS.reduce((s, c) => s + l2At(R.num, c, i), 0))),
-                sum(weeks.map((_, i) => grandDen(i))))
+        ? totalOver(i => T13_L2_CATS.reduce((s, c) => s + l2At(R.num, c, i), 0), grandDen)
         : grandVals.reduce((a, b) => a + b, 0);
-      html += `<tr class="bg-opl-panelHi dark:bg-op-panelHi border-t-2 border-[rgba(20,16,8,0.12)] dark:border-op-borderHi">
-        <td class="${tdTotCls} text-left ${stickyLtot}">${escapeHtml(opts.totalLabel || 'All Categories')}</td>
-        ${grandVals.map(v => `<td class="${tdTotCls}">${fmt(v)}</td>`).join('')}
-        <td class="${tdTotCls}">${fmt(grandTotal)}</td>
-      </tr>`;
+      // Suppressed in penetration mode: the rows overlap, so a "sum of the
+      // categories" line would be arithmetic nobody should read.
+      if (!opts.hideTotalRow) {
+        html += `<tr class="bg-opl-panelHi dark:bg-op-panelHi border-t-2 border-[rgba(20,16,8,0.12)] dark:border-op-borderHi">
+          <td class="${tdTotCls} text-left ${stickyLtot}">${escapeHtml(opts.totalLabel || 'All Categories')}</td>
+          ${grandVals.map(v => `<td class="${tdTotCls}">${fmt(v)}</td>`).join('')}
+          <td class="${tdTotCls}">${fmt(grandTotal)}</td>
+        </tr>`;
+      }
       // Optional reconciliation row. The 12 merchandise categories do not cover
       // all revenue — auction, Custom Sales, Other / Non-Item and refunds are
       // real but uncategorised, and that gap runs 2–11% and is growing. Showing
@@ -15630,22 +15711,40 @@
     const ratioOf = (n, d) => (d > 0 ? n / d : null);
     const shownNet = weeks.map((_, i) => T13_L2_CATS.reduce((s, c) => s + ((l2Net[i] || {})[c] || 0), 0));
     const shownUnits = weeks.map((_, i) => T13_L2_CATS.reduce((s, c) => s + ((l2Units[i] || {})[c] || 0), 0));
-    const derivedCard = (title, kind, numer, numerL3, chainSeries, shownSeries, fmt) => renderL2Card(
-      title, numer, fmt, {
-        kind, l3: numerL3,
-        ratio: { num: numer, numL3: numerL3, denWeek: weeklyOrders },
-        totalLabel: 'The categories above',
+    const derivedCard = (title, kind, numer, numerL3, chainSeries, shownSeries, fmt) => {
+      const mode = anyPenetration ? t13Mode[kind] : 'contribution';
+      const common = {
+        kind, l3: numerL3, mode, penetrationAvailable: anyPenetration,
         headRow: {
+          // The chain figure is the same either way — all revenue over all
+          // baskets — so it stays put and gives the two modes a common anchor.
           label: kind === 'cart' ? 'Chain average cart' : 'Chain average items',
           values: weeks.map((_, i) => ratioOf(chainSeries[i], weeklyOrders[i])),
           total: ratioOf(sumA(chainSeries), sumA(weeklyOrders)),
         },
+      };
+      if (mode === 'penetration') {
+        return renderL2Card(title, numer, fmt, {
+          ...common,
+          // Per-category denominators. `l2Orders[i]` is null for a week that has
+          // not been backfilled, and ratio() turns a 0/absent denominator into an
+          // em dash — so an unmeasured week reads as unknown, never as zero.
+          ratio: { num: numer, numL3: numerL3, den: l2Orders, denL3: l3Orders },
+          hideTotalRow: true,
+          note: 'Divided by the baskets that <b>contained</b> each category. Rows overlap — one basket holding three categories counts in all three — so they deliberately do not add up to the chain figure.',
+        });
+      }
+      return renderL2Card(title, numer, fmt, {
+        ...common,
+        ratio: { num: numer, numL3: numerL3, denWeek: weeklyOrders },
+        totalLabel: 'The categories above',
         gapRow: {
           label: 'Auction, Custom Sales, Other / Non-Item, refunds',
           values: weeks.map((_, i) => ratioOf(chainSeries[i] - shownSeries[i], weeklyOrders[i])),
           total: ratioOf(sumA(chainSeries) - sumA(shownSeries), sumA(weeklyOrders)),
         },
       });
+    };
     const storeTag = allOn ? '' : (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} ` : `${filteredStoreKeys.length} stores · `);
     const cartHtml = derivedCard(`${storeTag}Average Cart`, 'cart', l2Net, l3Net, weeklyNetAll, shownNet, fmtCart);
     const itemsHtml = derivedCard(`${storeTag}Average Items per Basket`, 'items', l2Units, l3Units, weeklyUnitsAll, shownUnits, fmtItems);
