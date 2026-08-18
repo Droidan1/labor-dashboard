@@ -4098,6 +4098,11 @@ const META_API_VERSION = "v25.0";
 const MARKETING_POST_TYPES = ["bin_preview", "weekly_promo", "new_arrivals", "event", "other"];
 // Plain-English rendering of the post-type keys, for prompts. The keys are UI
 // values; handing "bin_preview" to a model is worse than handing it the phrase.
+// Post types whose subject IS the week's plan. Only these get the Flow Calendar
+// as background — for a bin preview or a new-arrivals post it competes with the
+// post's real subject, and once hijacked a caption outright (see the New
+// Arrivals post that opened on "Customer Appreciation week").
+const MARKETING_FLOW_POST_TYPES = ["weekly_promo", "event"];
 const MARKETING_POST_TYPE_LABELS = {
   bin_preview: "weekly bin preview",
   weekly_promo: "weekly promotion",
@@ -9594,16 +9599,20 @@ export default {
             }
           }
         }
-        // Pull the current retail week from the Flow Calendar as OPTIONAL background.
+        const label = (typeof STORE_LABELS !== "undefined" && STORE_LABELS[store]) ? STORE_LABELS[store] : (store || "the store");
+        const postType = MARKETING_POST_TYPES.includes(String(b.post_type)) ? String(b.post_type) : null;
+        // Pull the current retail week from the Flow Calendar as background, but
+        // ONLY for the post types it actually describes. Skipping the query for
+        // the rest also saves a D1 round-trip on the commonest captions. An
+        // absent/unrecognised post_type gets no flow context — for a caller we
+        // cannot identify, too little context beats the wrong context.
         let wk = null;
-        if (env.DB) {
+        if (env.DB && MARKETING_FLOW_POST_TYPES.includes(postType)) {
           const today = new Date().toISOString().slice(0, 10);
           wk = await env.DB.prepare(
             "SELECT * FROM marketing_flow WHERE fiscal_year = ? AND week_start <= ? AND week_end >= ? LIMIT 1"
           ).bind(fy, today, today).first().catch(() => null);
         }
-        const label = (typeof STORE_LABELS !== "undefined" && STORE_LABELS[store]) ? STORE_LABELS[store] : (store || "the store");
-        const postType = MARKETING_POST_TYPES.includes(String(b.post_type)) ? String(b.post_type) : null;
         // The store's most recent published captions, handed to the model as a
         // DO-NOT-REPEAT list rather than as style examples. Voice is already
         // carried by the few-shot examples in the system prompt; feeding AI
@@ -9628,7 +9637,7 @@ export default {
           postType ? `Post type: ${MARKETING_POST_TYPE_LABELS[postType] || postType}.` : "",
           `This post is about: ${topic}.`,
           coverImg ? "The attached image is THIS post's branded cover graphic. Match the caption to what it actually promotes — its theme, headline, and any recurring schedule, day-by-day pricing, or offer printed on it. You MAY reference prices, days, or offers that are clearly printed on the cover; do NOT invent any that are not shown." : "",
-          bg ? `Background only — the chain-wide plan for this week is: ${bg}. This is NOT what this post is about. Do not open with it, do not build the caption around it, and do not let it displace the subject above. At most, mention ONE item from it in a later sentence, and only where it genuinely adds to this post's own subject. If it does not fit, leave it out entirely — a post that ignores the weekly plan is fine.` : "",
+          bg ? `This week's chain-wide plan: ${bg}. This post type is about the week's plan, so this is directly relevant — work in what fits naturally. The cover graphic and the description above still set the specifics: do not contradict them, and do not state a price, date, or offer that is not printed on the cover or given in the description. If a part of the plan does not fit this post, leave it out rather than listing it.` : "",
           recent.length ? [
             `Already published at this store recently (newest first):`,
             ...recent.map((r, i) => {
@@ -9659,7 +9668,7 @@ export default {
           "Aim for 50-80 words before the hashtags. Facebook hides anything past roughly 80 words behind a 'See more' link, so stay under that.",
           "",
           "Write for THIS post, not a generic promo. The user says what it is about and may attach the post's cover graphic — match the caption to what that cover actually promotes.",
-          "When the inputs disagree, this is the order of authority. The cover graphic and the post type define what this post IS. The operator's description refines that. The weekly store plan is background about the chain, and it is never the subject. Your first sentence must be about this post's own subject — if the cover says NEW ARRIVALS, the caption opens on new arrivals, whatever else is running that week.",
+          "When the inputs disagree, this is the order of authority. The cover graphic and the post type define what this post IS. The operator's description refines that. Anything you are told about the week's wider store plan is supporting context — use it where it genuinely belongs, but never let it displace what the cover shows. Your first sentence must be about this post's own subject: if the cover says NEW ARRIVALS, the caption opens on new arrivals, whatever else is running that week.",
           "Only reference prices, discounts, dates, schedules, offers, or claims that are printed on the attached cover image or given to you in the text. Never invent, guess, or embellish beyond what you were given: a made-up price is a promise the store has to honor at the register.",
           "Vary the opening and the structure from one caption to the next — do not reuse the same hook shape every time.",
           "Do not use the store's internal code (BL1, BL4, and so on).",

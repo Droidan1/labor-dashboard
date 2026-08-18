@@ -1778,7 +1778,7 @@
                 <button type="button" id="ct-ai-btn" onclick="ctAiCaption()" class="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-accent-green/50 text-accent-green hover:bg-accent-green/10 transition">✨ AI generate</button>
               </div>
               <textarea id="ct-caption" rows="4" oninput="ctUpdateCaptionUI();ctMarkDirty()" placeholder="Write the post caption…" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></textarea>
-              <p id="ct-ai-note" class="hidden text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">✨ AI-drafted from this week's Flow Calendar — edit as needed.</p>
+              <p id="ct-ai-note" class="hidden text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">✨ AI-drafted — edit as needed.</p>
             </div>
 
             <div class="flex items-center gap-3">
@@ -13918,7 +13918,7 @@
     ctClearLocal();
     if (el('ct-caption')) el('ct-caption').value = '';
     if (el('ct-topic')) el('ct-topic').value = '';
-    if (el('ct-ai-note')) el('ct-ai-note').classList.add('hidden');
+    if (el('ct-ai-note')) { ctSetAiNote(false); el('ct-ai-note').classList.add('hidden'); }
     if (el('ct-compose-status')) el('ct-compose-status').classList.add('hidden');
     if (el('ct-clear')) el('ct-clear').classList.add('hidden');
     if (el('ct-save-draft')) el('ct-save-draft').textContent = 'Save draft';
@@ -13942,6 +13942,12 @@
     } finally { btn.disabled = false; if (btn.textContent === 'Saving…') btn.textContent = label; }
   }
   window.ctSaveDraft = ctSaveDraft;
+
+  // The Flow Calendar only feeds promo/event captions now, so only claim it as a
+  // source when the worker says it actually used it (it returns the retail week).
+  const CT_AI_NOTE_BASE = '✨ AI-drafted — edit as needed.';
+  const CT_AI_NOTE_FLOW = "✨ AI-drafted from this week's Flow Calendar — edit as needed.";
+  function ctSetAiNote(usedFlow) { const n = el('ct-ai-note'); if (n) n.textContent = usedFlow ? CT_AI_NOTE_FLOW : CT_AI_NOTE_BASE; }
 
   function ctSetTopic(t) { if (el('ct-topic')) el('ct-topic').value = t; }
   window.ctSetTopic = ctSetTopic;
@@ -13973,6 +13979,7 @@
       el('ct-caption').value = d.caption || '';
       ctUpdateCaptionUI();
       ctCaptionSource = 'ai';
+      ctSetAiNote(d.week != null);
       el('ct-ai-note').classList.remove('hidden');
       st.classList.add('hidden');
     } catch (e) {
@@ -14188,6 +14195,7 @@
     if (el('ct-topic')) el('ct-topic').value = d.topic || '';
     ctPostType = (CT_POST_TYPES.some(t => t.key === d.post_type) ? d.post_type : 'other');
     ctCaptionSource = d.caption_source || 'manual';
+    ctSetAiNote(false);   // provenance isn't stored on the draft — don't claim Flow
     el('ct-ai-note').classList.toggle('hidden', ctCaptionSource !== 'ai');
     ctDirty = false;
     ctRenderTypeChips(); ctRenderThumbPicker(); ctRenderPhotoPicker(); ctRenderPreview();
