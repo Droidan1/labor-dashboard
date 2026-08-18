@@ -13986,6 +13986,7 @@
   // specific comment, and the text that posts is whatever is in the box at that
   // moment — not the stored draft — so what you see is what goes out.
   const fbcState = { store: 'all', status: 'open', comments: [], counts: [] };
+  let fbcLastRefresh = null;
 
   function fbcEsc(s) { return escapeHtml(String(s == null ? '' : s)); }
 
@@ -14044,7 +14045,14 @@
     const list = el('fbc-list');
     if (!list) return;
     if (!fbcState.comments.length) {
-      list.innerHTML = `<div class="text-sm text-opl-inkDim dark:text-op-inkDim py-6 text-center">Nothing here. New comments are pulled hourly — “Check for new” pulls now.</div>`;
+      const lr = fbcLastRefresh;
+      let why = 'New comments are pulled hourly — “Check for new” pulls now.';
+      if (lr && (lr.errors || []).length) {
+        why = `Last check: ${lr.errors.length} of ${lr.posts || 0} posts failed — ${fbcEsc((lr.errors[0] || {}).error || 'unknown error')}`;
+      } else if (lr) {
+        why = `Last check looked at ${lr.posts || 0} post${lr.posts === 1 ? '' : 's'} and saw ${lr.seen || 0} comment${lr.seen === 1 ? '' : 's'}. These posts genuinely have none.`;
+      }
+      list.innerHTML = `<div class="text-sm text-opl-inkDim dark:text-op-inkDim py-6 text-center">Nothing here.<br><span class="text-[12px]">${why}</span></div>`;
       return;
     }
     list.innerHTML = fbcState.comments.map(c => {
@@ -14140,7 +14148,19 @@
       const r = await fetch(`${WORKER_BASE}?action=fb-comments-refresh`, { method: 'POST', credentials: 'include' });
       const d = await r.json();
       if (!r.ok || !d.ok) throw new Error(d.error || 'Refresh failed');
-      fbcSay(d.ingested ? `${d.ingested} new comment${d.ingested === 1 ? '' : 's'}.` : 'No new comments.', 'text-accent-green');
+      // 🛑 The endpoint reports per-post failures in `errors` and still returns
+      // ok:true. Reporting "no new comments" over a stack of permission errors is
+      // a cheerful lie — say which happened.
+      fbcLastRefresh = d;
+      const errs = (d.errors || []);
+      if (errs.length) {
+        const first = errs[0] || {};
+        fbcSay(`Checked ${d.posts || 0} post${d.posts === 1 ? '' : 's'} — ${errs.length} failed. ${first.error || 'Unknown error'}`, 'text-op-bad');
+      } else if (d.ingested) {
+        fbcSay(`${d.ingested} new comment${d.ingested === 1 ? '' : 's'} from ${d.posts || 0} posts.`, 'text-accent-green');
+      } else {
+        fbcSay(`Checked ${d.posts || 0} post${d.posts === 1 ? '' : 's'} across ${d.pages || 0} page${d.pages === 1 ? '' : 's'} — ${d.seen || 0} comments seen, nothing new.`, 'text-accent-green');
+      }
       fbcLoad();
     } catch (e) { fbcSay((e && e.message) || 'Refresh failed', 'text-op-bad'); }
     finally { if (b) { b.disabled = false; b.textContent = orig; } }

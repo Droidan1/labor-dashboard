@@ -204,5 +204,46 @@ console.log('Facebook comment review queue');
   eq(db.prepare(`SELECT COUNT(*) n FROM fb_comments`).all()[0].n, 1, 'still exactly one row');
 }
 
+// 10 — `from` is permission-gated: fall back rather than returning nothing
+{
+  const { env, db } = makeEnv();
+  db.prepare(`INSERT INTO marketing_publish_log (store,page_id,post_id,status,created_at) VALUES ('BL1','PAGE1','P1','published',?)`)
+    .run(new Date().toISOString());
+  const asked = [];
+  globalThis.fetch = async (u) => {
+    const url = String(u);
+    if (url.includes('fields=name%2Caccess_token')) return new Response(JSON.stringify({ id: 'PAGE1', access_token: 'pt' }), { status: 200 });
+    asked.push(decodeURIComponent(url));
+    // Graph rejects the whole request when `from` is not readable.
+    if (url.includes('from')) return new Response(JSON.stringify({ error: { message: '(#10) requires pages_read_user_content' } }), { status: 403 });
+    return new Response(JSON.stringify({ comments: { data: [
+      { id: 'Y1', message: 'hello', created_time: '2026-08-18T10:00:00Z' },
+    ] } }), { status: 200 });
+  };
+  const d = await (await post(env, 'fb-comments-refresh', {})).json();
+  ok(asked.length === 2, 'tried the full field set, then retried without the gated field');
+  ok(/from/.test(asked[0]) && !/from/.test(asked[1]), 'the retry drops `from` specifically');
+  eq(d.ingested, 1, 'comment still ingested via the degraded read — not lost to a gated field');
+  eq(d.degraded, 1, 'the response reports that the read was degraded');
+  eq((d.errors || []).length, 0, 'a recovered post is not reported as an error');
+}
+
+// 11 — 🛑 a genuine failure is REPORTED, never silently counted as "no comments"
+{
+  const { env, db } = makeEnv();
+  db.prepare(`INSERT INTO marketing_publish_log (store,page_id,post_id,status,created_at) VALUES ('BL1','PAGE1','P1','published',?)`)
+    .run(new Date().toISOString());
+  globalThis.fetch = async (u) => {
+    const url = String(u);
+    if (url.includes('fields=name%2Caccess_token')) return new Response(JSON.stringify({ id: 'PAGE1', access_token: 'pt' }), { status: 200 });
+    return new Response(JSON.stringify({ error: { message: 'Insufficient permission to read comments' } }), { status: 403 });
+  };
+  const d = await (await post(env, 'fb-comments-refresh', {})).json();
+  eq(d.ingested, 0, 'nothing ingested');
+  ok((d.errors || []).length === 1, '🛑 the failure is surfaced in errors, not swallowed');
+  ok(/Insufficient permission/.test(d.errors[0].error), 'the real Graph message is preserved for diagnosis');
+  ok(d.posts === 1, 'the response still says how many posts were attempted');
+}
+
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

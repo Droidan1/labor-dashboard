@@ -7909,18 +7909,34 @@ async function ingestFacebookComments(env, { days = 30, perPost = 50 } = {}) {
     if (!t.ok) { out.errors.push({ page_id: pageId, error: t.error }); continue; }
     out.pages++;
     for (const post of list) {
-      const qs = new URLSearchParams({
-        fields: `comments.limit(${perPost}){id,message,created_time,from,parent}`,
-        access_token: t.pageToken,
-      });
-      const res = await fetch(`https://graph.facebook.com/${ver}/${post.post_id}?${qs}`)
-        .then(r => r.json()).catch(e => ({ error: { message: String((e && e.message) || e) } }));
+      // `from` on a comment is permission-gated, and Graph fails the WHOLE request
+      // rather than omitting the field when it is not readable. Try the full shape,
+      // then fall back to one that asks for nothing gated — a degraded read still
+      // gets us the comments, which beats returning none.
+      const ask = async (fields) => fetch(
+        `https://graph.facebook.com/${ver}/${post.post_id}?${new URLSearchParams({ fields, access_token: t.pageToken })}`
+      ).then(r => r.json()).catch(e => ({ error: { message: String((e && e.message) || e) } }));
+
+      let res = await ask(`comments.limit(${perPost}){id,message,created_time,from,parent}`);
+      let degraded = false;
+      if (res && res.error) {
+        const retry = await ask(`comments.limit(${perPost}){id,message,created_time}`);
+        if (retry && !retry.error) { res = retry; degraded = true; out.degraded = (out.degraded || 0) + 1; }
+      }
       if (!res || res.error) { out.errors.push({ post_id: post.post_id, error: (res && res.error && res.error.message) || "fetch failed" }); continue; }
+      // Without `from` we cannot tell our own replies apart by author, so fall
+      // back to the ids of replies we know we posted.
+      let ownReplyIds = null;
+      if (degraded) {
+        const own = await env.DB.prepare("SELECT reply_id FROM fb_comments WHERE reply_id IS NOT NULL AND post_id = ?").bind(post.post_id).all().catch(() => null);
+        ownReplyIds = new Set(((own && own.results) || []).map(r => String(r.reply_id)));
+      }
       const items = (res.comments && res.comments.data) || [];
       for (const c of items) {
         out.seen++;
         // Never ingest our own replies as things needing a reply.
         if (c.from && c.from.id && String(c.from.id) === String(pageId)) continue;
+        if (ownReplyIds && ownReplyIds.has(String(c.id))) continue;
         try {
           const r = await env.DB.prepare(
             `INSERT INTO fb_comments (comment_id, store, page_id, post_id, post_url, parent_id, author_name, author_id, message, created_time, status, fetched_at)
