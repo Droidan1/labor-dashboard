@@ -4096,6 +4096,15 @@ function storeByPage(pageId) {
 const META_API_VERSION = "v25.0";
 // Post-type categories for Content-page folder organization (drafts + covers).
 const MARKETING_POST_TYPES = ["bin_preview", "weekly_promo", "new_arrivals", "event", "other"];
+// Plain-English rendering of the post-type keys, for prompts. The keys are UI
+// values; handing "bin_preview" to a model is worse than handing it the phrase.
+const MARKETING_POST_TYPE_LABELS = {
+  bin_preview: "weekly bin preview",
+  weekly_promo: "weekly promotion",
+  new_arrivals: "new arrivals",
+  event: "store event",
+  other: "general post",
+};
 const META_ACCOUNT_NAMES = {
   "273307252412674": "Brian Howard",
   "900771016120912": "Bargain Lane - Ad Account 2",
@@ -9594,6 +9603,20 @@ export default {
           ).bind(fy, today, today).first().catch(() => null);
         }
         const label = (typeof STORE_LABELS !== "undefined" && STORE_LABELS[store]) ? STORE_LABELS[store] : (store || "the store");
+        const postType = MARKETING_POST_TYPES.includes(String(b.post_type)) ? String(b.post_type) : null;
+        // The store's most recent published captions, handed to the model as a
+        // DO-NOT-REPEAT list rather than as style examples. Voice is already
+        // carried by the few-shot examples in the system prompt; feeding AI
+        // captions back in as models to imitate would compound their own drift.
+        let recent = [];
+        if (env.DB) {
+          const rows = await env.DB.prepare(
+            "SELECT caption, post_type FROM marketing_drafts" +
+            " WHERE store = ? AND status = 'published' AND caption IS NOT NULL AND TRIM(caption) <> ''" +
+            " ORDER BY COALESCE(published_at, updated_at, created_at) DESC LIMIT 5"
+          ).bind(store).all().catch(() => null);
+          recent = (rows && rows.results) || [];
+        }
         const bg = [
           wk && wk.weekly_theme ? `weekly theme "${wk.weekly_theme}"` : "",
           wk && wk.product_focus ? `product focus "${wk.product_focus}"` : "",
@@ -9602,9 +9625,22 @@ export default {
         ].filter(Boolean).join(", ");
         const userText = [
           `Store: Bargain Lane ${label}.`,
+          postType ? `Post type: ${MARKETING_POST_TYPE_LABELS[postType] || postType}.` : "",
           `This post is about: ${topic}.`,
           coverImg ? "The attached image is THIS post's branded cover graphic. Match the caption to what it actually promotes — its theme, headline, and any recurring schedule, day-by-day pricing, or offer printed on it. You MAY reference prices, days, or offers that are clearly printed on the cover; do NOT invent any that are not shown." : "",
           bg ? `Extra background — this week's store plan: ${bg}. Use it ONLY if it fits this specific post; do not force it in.` : "",
+          recent.length ? [
+            `Already published at this store recently (newest first):`,
+            ...recent.map((r, i) => {
+              const t = MARKETING_POST_TYPE_LABELS[r.post_type] || r.post_type || "post";
+              // Cap each one so five long captions can't crowd the prompt, but
+              // break on a word boundary — a caption cut mid-word reads as noise.
+              const full = String(r.caption || "").replace(/\s+/g, " ").trim();
+              const cut = full.length <= 400 ? full : full.slice(0, 400).replace(/\s+\S*$/, "") + "…";
+              return `${i + 1}. [${t}] ${cut}`;
+            }),
+            "Use these two ways. Follow the house conventions they share — the store's own hashtag, the emoji rhythm, the level of concrete detail. Do NOT reuse the specific angle, opening line, or turns of phrase of any one of them: this caption should be recognisably new next to these, not a variation on the most recent one. Any recurring mechanic they mention (a price ladder, a fixed new-inventory day) is real, but only state it if this post's own cover or description gives it to you.",
+          ].join("\n") : "",
           "Write the caption.",
         ].filter(Boolean).join("\n");
         const content = coverImg ? [coverImg, { type: "text", text: userText }] : userText;
@@ -9616,7 +9652,9 @@ export default {
           "1. A hook that makes someone stop scrolling — a question, a specific find, a number.",
           "2. Two or three sentences of concrete detail: what is actually in the bins, what the theme is, why this week is worth the trip.",
           "3. One clear call to action.",
-          "4. Three to five hashtags, always including #BargainLane. Keep any location hashtag matched to the store named in the request.",
+          "4. Three to five hashtags. Lead with the store's own tag, written as #BargainLane + the store name with no spaces (Coliseum -> #BargainLaneColiseum), then two to four topical ones.",
+          "",
+          "Use a few emoji — roughly two to five, placed where they punctuate a beat rather than decorating every line. That is the house style on this page.",
           "",
           "Aim for 50-80 words before the hashtags. Facebook hides anything past roughly 80 words behind a 'See more' link, so stay under that.",
           "",
@@ -9627,11 +9665,11 @@ export default {
           "",
           "Two examples, illustrative of length and voice only — do not reuse their wording or their specifics:",
           "",
-          "Guess what just hit the bins at Bargain Lane Coliseum? Fresh pallets went out this morning and the floor is packed — small kitchen appliances, kids' toys, seasonal decor, and plenty we have not even dug through yet. The early crowd always finds the best stuff, so come see what you can turn up before it walks out the door. See you in the bins!",
-          "#BargainLane #BinStore #TreasureHunt #FortWayne",
+          "Guess what just hit the bins at Bargain Lane Coliseum? 🔥 Fresh pallets went out this morning and the floor is packed — small kitchen appliances, kids' toys, seasonal decor, and plenty we have not even dug through yet. The early crowd always finds the best stuff, so come dig before it walks out the door! 🛍️",
+          "#BargainLaneColiseum #DigForDeals #TreasureHunt #ShopLocal",
           "",
-          "New week, new bins. Our team just refilled the floor with home goods, tools, and a surprising number of name-brand finds — the kind of thing that does not sit around long. Bring a friend, take your time, and see what you walk out with. Tag someone who needs to know about this one!",
-          "#BargainLane #NewArrivals #BinDiving #DealHunting",
+          "New week, new bins! 🙌 Our team just refilled the floor with home goods, tools, and a surprising number of name-brand finds — the kind of thing that does not sit around long. Bring a friend, take your time, and see what you walk out with. Tag someone who needs to see this one! 👀",
+          "#BargainLaneColiseum #NewArrivals #BinDiving #GreatFinds",
           "",
           "Return ONLY the caption text — no preamble, no quotation marks, no explanation.",
         ].join("\n");
