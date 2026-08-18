@@ -6159,6 +6159,229 @@ async function alertJobFailure(env, job, detail) {
 // Wrap a cron dispatch so neither a throw nor a quietly-reported problem can
 // pass unnoticed. Returns a promise that NEVER rejects — it is handed straight
 // to ctx.waitUntil, where a rejection would be swallowed by the runtime anyway.
+// Build a Facebook caption for one post. Extracted from the draft-generate-caption
+// handler so the Thursday auto-draft cron runs the SAME implementation — a cron has
+// no session, so it must not reach through the request path to get one.
+// Returns {ok:true, caption, week} or {ok:false, status, error, detail?} — never throws
+// for an API-level failure, so the cron can degrade to a captionless draft.
+async function buildCaption(env, opts) {
+          const store = String(opts.store || "").trim().toUpperCase();
+  const fy = String(opts.fiscalYear || "F26").trim();
+  const topic = String(opts.topic || "").trim() || "our weekly bin preview — fresh bargain finds just put out in the bins";
+  // Load the selected cover thumbnail so the model can SEE what the post
+  // promotes (theme, day-by-day pricing, "new inventory Friday", etc.).
+  let coverImg = null;
+  const thumbId = (opts.thumbnailId != null && opts.thumbnailId !== "") ? parseInt(opts.thumbnailId, 10) : null;
+  if (env.DB && env.MEDIA && Number.isInteger(thumbId)) {
+    const th = await env.DB.prepare("SELECT r2_key, content_type FROM marketing_thumbnails WHERE id = ?").bind(thumbId).first().catch(() => null);
+    const obj = th && th.r2_key ? await env.MEDIA.get(th.r2_key) : null;
+    if (obj) {
+      const bytes = new Uint8Array(await obj.arrayBuffer());
+      let mt = (th.content_type || "image/png").toLowerCase();
+      if (mt === "image/jpg") mt = "image/jpeg";
+      if (/^image\/(png|jpeg|gif|webp)$/.test(mt) && bytes.length <= 5 * 1024 * 1024) {
+        let bin = ""; const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        coverImg = { type: "image", source: { type: "base64", media_type: mt, data: btoa(bin) } };
+      }
+    }
+  }
+  const label = (typeof STORE_LABELS !== "undefined" && STORE_LABELS[store]) ? STORE_LABELS[store] : (store || "the store");
+  const postType = MARKETING_POST_TYPES.includes(String(opts.postType)) ? String(opts.postType) : null;
+  // Pull the current retail week from the Flow Calendar as background, but
+  // ONLY for the post types it actually describes. Skipping the query for
+  // the rest also saves a D1 round-trip on the commonest captions. An
+  // absent/unrecognised post_type gets no flow context — for a caller we
+  // cannot identify, too little context beats the wrong context.
+  let wk = null;
+  if (env.DB && MARKETING_FLOW_POST_TYPES.includes(postType)) {
+    const today = new Date().toISOString().slice(0, 10);
+    wk = await env.DB.prepare(
+      "SELECT * FROM marketing_flow WHERE fiscal_year = ? AND week_start <= ? AND week_end >= ? LIMIT 1"
+    ).bind(fy, today, today).first().catch(() => null);
+  }
+  // The store's most recent published captions, handed to the model as a
+  // DO-NOT-REPEAT list rather than as style examples. Voice is already
+  // carried by the few-shot examples in the system prompt; feeding AI
+  // captions back in as models to imitate would compound their own drift.
+  let recent = [];
+  if (env.DB) {
+    const rows = await env.DB.prepare(
+      "SELECT caption, post_type FROM marketing_drafts" +
+      " WHERE store = ? AND status = 'published' AND caption IS NOT NULL AND TRIM(caption) <> ''" +
+      " ORDER BY COALESCE(published_at, updated_at, created_at) DESC LIMIT 5"
+    ).bind(store).all().catch(() => null);
+    recent = (rows && rows.results) || [];
+  }
+  const bg = [
+    wk && wk.weekly_theme ? `weekly theme "${wk.weekly_theme}"` : "",
+    wk && wk.product_focus ? `product focus "${wk.product_focus}"` : "",
+    wk && wk.special_event ? `special event "${wk.special_event}"` : "",
+    wk && wk.dd_loyalty ? `loyalty promo "${wk.dd_loyalty}"` : "",
+  ].filter(Boolean).join(", ");
+  const userText = [
+    `Store: Bargain Lane ${label}.`,
+    postType ? `Post type: ${MARKETING_POST_TYPE_LABELS[postType] || postType}.` : "",
+    `This post is about: ${topic}.`,
+    coverImg ? "The attached image is THIS post's branded cover graphic. Match the caption to what it actually promotes — its theme, headline, and any recurring schedule, day-by-day pricing, or offer printed on it. You MAY reference prices, days, or offers that are clearly printed on the cover; do NOT invent any that are not shown." : "",
+    bg ? `This week's chain-wide plan: ${bg}. This post type is about the week's plan, so this is directly relevant — work in what fits naturally. The cover graphic and the description above still set the specifics: do not contradict them, and do not state a price, date, or offer that is not printed on the cover or given in the description. If a part of the plan does not fit this post, leave it out rather than listing it.` : "",
+    recent.length ? [
+      `Already published at this store recently (newest first):`,
+      ...recent.map((r, i) => {
+        const t = MARKETING_POST_TYPE_LABELS[r.post_type] || r.post_type || "post";
+        // Cap each one so five long captions can't crowd the prompt, but
+        // break on a word boundary — a caption cut mid-word reads as noise.
+        const full = String(r.caption || "").replace(/\s+/g, " ").trim();
+        const cut = full.length <= 400 ? full : full.slice(0, 400).replace(/\s+\S*$/, "") + "…";
+        return `${i + 1}. [${t}] ${cut}`;
+      }),
+      "Use these two ways. Follow the house conventions they share — the store's own hashtag, the emoji rhythm, the level of concrete detail. Do NOT reuse the specific angle, opening line, or turns of phrase of any one of them: this caption should be recognisably new next to these, not a variation on the most recent one. Any recurring mechanic they mention (a price ladder, a fixed new-inventory day) is real, but only state it if this post's own cover or description gives it to you.",
+    ].join("\n") : "",
+    "Write the caption.",
+  ].filter(Boolean).join("\n");
+  const content = coverImg ? [coverImg, { type: "text", text: userText }] : userText;
+  const system = [
+    "You write Facebook post captions for Bargain Lane, a chain of discount bin stores.",
+    "Voice: friendly, exciting, community-minded, a little playful — a neighbor telling you what just landed, not an ad agency.",
+    "",
+    "Shape each caption like this:",
+    "1. A hook that makes someone stop scrolling — a question, a specific find, a number.",
+    "2. Two or three sentences of concrete detail: what is actually in the bins, what the theme is, why this week is worth the trip.",
+    "3. One clear call to action.",
+    "4. Three to five hashtags. Lead with the store's own tag, written as #BargainLane + the store name with no spaces (Coliseum -> #BargainLaneColiseum), then two to four topical ones.",
+    "",
+    "Use a few emoji — roughly two to five, placed where they punctuate a beat rather than decorating every line. That is the house style on this page.",
+    "",
+    "Aim for 50-80 words before the hashtags. Facebook hides anything past roughly 80 words behind a 'See more' link, so stay under that.",
+    "",
+    "Write for THIS post, not a generic promo. The user says what it is about and may attach the post's cover graphic — match the caption to what that cover actually promotes.",
+    "When the inputs disagree, this is the order of authority. The cover graphic and the post type define what this post IS. The operator's description refines that. Anything you are told about the week's wider store plan is supporting context — use it where it genuinely belongs, but never let it displace what the cover shows. Your first sentence must be about this post's own subject: if the cover says NEW ARRIVALS, the caption opens on new arrivals, whatever else is running that week.",
+    "Only reference prices, discounts, dates, schedules, offers, or claims that are printed on the attached cover image or given to you in the text. Never invent, guess, or embellish beyond what you were given: a made-up price is a promise the store has to honor at the register.",
+    "Vary the opening and the structure from one caption to the next — do not reuse the same hook shape every time.",
+    "Do not use the store's internal code (BL1, BL4, and so on).",
+    "",
+    "Two examples, illustrative of length and voice only — do not reuse their wording or their specifics:",
+    "",
+    "Guess what just hit the bins at Bargain Lane Coliseum? 🔥 Fresh pallets went out this morning and the floor is packed — small kitchen appliances, kids' toys, seasonal decor, and plenty we have not even dug through yet. The early crowd always finds the best stuff, so come dig before it walks out the door! 🛍️",
+    "#BargainLaneColiseum #DigForDeals #TreasureHunt #ShopLocal",
+    "",
+    "New week, new bins! 🙌 Our team just refilled the floor with home goods, tools, and a surprising number of name-brand finds — the kind of thing that does not sit around long. Bring a friend, take your time, and see what you walk out with. Tag someone who needs to see this one! 👀",
+    "#BargainLaneColiseum #NewArrivals #BinDiving #GreatFinds",
+    "",
+    "Return ONLY the caption text — no preamble, no quotation marks, no explanation.",
+  ].join("\n");
+  const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-opus-5",
+      // max_tokens caps thinking + caption text together on Opus 5, so this is
+      // sized well above the ~80-word caption. Thinking stays on: with it
+      // disabled, Opus 5 can leak <thinking> tags straight into the caption.
+      max_tokens: 1500,
+      thinking: { type: "adaptive" },
+      output_config: { effort: "medium" },
+      system,
+      messages: [{ role: "user", content }],
+    }),
+  });
+  if (!aiRes.ok) {
+    const errTxt = await aiRes.text().catch(() => "");
+    return { ok: false, status: 502, error: `Claude API ${aiRes.status}`, detail: errTxt.slice(0, 200) };
+  }
+  const aiJson = await aiRes.json();
+  if (aiJson.stop_reason === "refusal") {
+    return { ok: false, status: 400, error: "The caption request was declined by the safety system. Edit the details and try again." };
+  }
+  const caption = (aiJson.content || []).filter(x => x.type === "text").map(x => x.text).join("").trim();
+  if (!caption) return { ok: false, status: 502, error: "No caption produced" };
+  return { ok: true, caption, week: wk ? wk.retail_week : null };
+}
+
+// Auto-draft from bin photos, triggered by the upload itself rather than a clock.
+// A manager submitting bin photos gets a ready-to-review draft in Drafts; Brian
+// only edits and posts.
+//
+// A single Thursday batch is ~30 SEPARATE photo-upload requests, so this has to be
+// safe under a burst. Two properties make it so, and both matter:
+//   1. The INSERT is guarded by uq_drafts_auto_week, so exactly one request in the
+//      burst creates the draft and the rest no-op. Only the winner pays for a caption.
+//   2. photo_ids is RECOMPUTED from marketing_photos, never appended to, so
+//      concurrent uploads converge on the same list instead of clobbering.
+// 🛑 The sync is gated on status='draft': once Brian schedules or publishes the
+// post, later uploads must not mutate it.
+function autoWeekOf(d) {                       // Sunday that starts the retail week
+  const u = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  u.setUTCDate(u.getUTCDate() - u.getUTCDay());
+  return u.toISOString().slice(0, 10);
+}
+
+async function ensureAutoDraftForPhotos(env, store, now) {
+  if (!env.DB) return { skipped: "no D1" };
+  const nowIso = now.toISOString();
+  const week = autoWeekOf(now);
+  const weekEnd = new Date(new Date(week + "T00:00:00Z").getTime() + 7 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+
+  // Newest active bin_preview cover, else any active one.
+  const cover = await env.DB.prepare(
+    "SELECT id FROM marketing_thumbnails WHERE active = 1 AND post_type = 'bin_preview' ORDER BY created_at DESC LIMIT 1"
+  ).first().catch(() => null)
+    || await env.DB.prepare(
+    "SELECT id FROM marketing_thumbnails WHERE active = 1 ORDER BY created_at DESC LIMIT 1"
+  ).first().catch(() => null);
+  const coverId = cover ? cover.id : null;
+
+  let createdNow = false;
+  try {
+    const res = await env.DB.prepare(
+      `INSERT INTO marketing_drafts (store, thumbnail_id, photo_ids, caption, caption_source, topic, post_type, status, origin, auto_week, created_by, created_at, updated_at)
+       VALUES (?, ?, '[]', NULL, 'manual', ?, 'bin_preview', 'draft', 'photos', ?, 'auto:bin-photos', ?, ?)
+       ON CONFLICT DO NOTHING`
+    ).bind(store, coverId, "This week's bin photos", week, nowIso, nowIso).run();
+    createdNow = !!(res.meta && res.meta.changes);
+  } catch (e) {
+    if (!/UNIQUE|constraint/i.test(String((e && e.message) || e))) throw e;
+  }
+
+  // Recompute the photo list from source, so a burst converges. Only while the
+  // draft is still a draft — a scheduled or published post is off-limits.
+  await env.DB.prepare(
+    `UPDATE marketing_drafts
+        SET photo_ids = COALESCE((SELECT json_group_array(id) FROM marketing_photos
+                                   WHERE store = ? AND photo_type = 'bins'
+                                     AND created_at >= ? AND created_at < ?), '[]'),
+            updated_at = ?
+      WHERE store = ? AND origin = 'photos' AND auto_week = ? AND status = 'draft'`
+  ).bind(store, week + "T00:00:00.000Z", weekEnd + "T00:00:00.000Z", nowIso, store, week).run();
+
+  return { store, week, cover_id: coverId, created: createdNow };
+}
+
+// Write the caption for a freshly created auto-draft. Runs in waitUntil so the
+// manager's upload never waits on a model call, and stays best-effort: a draft
+// with no caption is still useful, a failed upload is not.
+async function fillAutoDraftCaption(env, store, week) {
+  try {
+    if (!env.ANTHROPIC_API_KEY) return;
+    const row = await env.DB.prepare(
+      "SELECT id, thumbnail_id FROM marketing_drafts WHERE store = ? AND origin = 'photos' AND auto_week = ? LIMIT 1"
+    ).bind(store, week).first().catch(() => null);
+    if (!row) return;
+    const r = await buildCaption(env, {
+      store, postType: "bin_preview", thumbnailId: row.thumbnail_id,
+      topic: "this week's bin photos — fresh finds just put out in the bins",
+    });
+    if (!r || !r.ok || !r.caption) { console.log("auto-draft caption skipped:", store, (r && r.error) || "no caption"); return; }
+    // Only fill a caption that is still empty — never overwrite Brian's editing.
+    await env.DB.prepare(
+      "UPDATE marketing_drafts SET caption = ?, caption_source = 'ai', updated_at = ?" +
+      " WHERE id = ? AND status = 'draft' AND (caption IS NULL OR TRIM(caption) = '')"
+    ).bind(r.caption, new Date().toISOString(), row.id).run();
+  } catch (e) {
+    console.error("auto-draft caption failed:", store, (e && e.message) || e);
+  }
+}
+
 function superviseCronJob(env, job, promise) {
   return Promise.resolve(promise)
     .then(async r => {
@@ -9199,7 +9422,22 @@ export default {
            VALUES (?,?,?,?,?,?,?, 'new', ?)`
         ).bind(store, ptype, key, ct, bytes, (currentUser && currentUser.email) || null, note, now.toISOString()).run();
         const id = res.meta && res.meta.last_row_id;
-        return new Response(JSON.stringify({ ok: true, id, store, photo_type: ptype, r2_key: key, bytes, url: `?action=photo&id=${id}` }), { headers: corsJson });
+        // Bin photos build their own post: ensure this store has a draft for the
+        // week and re-sync its photo list. Best-effort and non-blocking — the
+        // upload is the thing that must not fail, and the manager should not wait
+        // on a model call. Only the request that actually creates the draft pays
+        // for a caption; the rest of the burst just re-syncs.
+        let autoDraft = null;
+        if (ptype === "bins") {
+          autoDraft = await ensureAutoDraftForPhotos(env, store, now).catch(e => {
+            console.error("auto-draft failed:", store, (e && e.message) || e);
+            return null;
+          });
+          if (autoDraft && autoDraft.created) {
+            ctx.waitUntil(fillAutoDraftCaption(env, store, autoDraft.week));
+          }
+        }
+        return new Response(JSON.stringify({ ok: true, id, store, photo_type: ptype, r2_key: key, bytes, url: `?action=photo&id=${id}`, auto_draft: autoDraft }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
       }
@@ -9578,137 +9816,16 @@ export default {
       }
       try {
         const b = await request.json();
-        const store = String(b.store || "").trim().toUpperCase();
-        const fy = String(b.fiscal_year || "F26").trim();
-        const topic = String(b.topic || "").trim() || "our weekly bin preview — fresh bargain finds just put out in the bins";
-        // Load the selected cover thumbnail so the model can SEE what the post
-        // promotes (theme, day-by-day pricing, "new inventory Friday", etc.).
-        let coverImg = null;
-        const thumbId = (b.thumbnail_id != null && b.thumbnail_id !== "") ? parseInt(b.thumbnail_id, 10) : null;
-        if (env.DB && env.MEDIA && Number.isInteger(thumbId)) {
-          const th = await env.DB.prepare("SELECT r2_key, content_type FROM marketing_thumbnails WHERE id = ?").bind(thumbId).first().catch(() => null);
-          const obj = th && th.r2_key ? await env.MEDIA.get(th.r2_key) : null;
-          if (obj) {
-            const bytes = new Uint8Array(await obj.arrayBuffer());
-            let mt = (th.content_type || "image/png").toLowerCase();
-            if (mt === "image/jpg") mt = "image/jpeg";
-            if (/^image\/(png|jpeg|gif|webp)$/.test(mt) && bytes.length <= 5 * 1024 * 1024) {
-              let bin = ""; const chunk = 0x8000;
-              for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-              coverImg = { type: "image", source: { type: "base64", media_type: mt, data: btoa(bin) } };
-            }
-          }
-        }
-        const label = (typeof STORE_LABELS !== "undefined" && STORE_LABELS[store]) ? STORE_LABELS[store] : (store || "the store");
-        const postType = MARKETING_POST_TYPES.includes(String(b.post_type)) ? String(b.post_type) : null;
-        // Pull the current retail week from the Flow Calendar as background, but
-        // ONLY for the post types it actually describes. Skipping the query for
-        // the rest also saves a D1 round-trip on the commonest captions. An
-        // absent/unrecognised post_type gets no flow context — for a caller we
-        // cannot identify, too little context beats the wrong context.
-        let wk = null;
-        if (env.DB && MARKETING_FLOW_POST_TYPES.includes(postType)) {
-          const today = new Date().toISOString().slice(0, 10);
-          wk = await env.DB.prepare(
-            "SELECT * FROM marketing_flow WHERE fiscal_year = ? AND week_start <= ? AND week_end >= ? LIMIT 1"
-          ).bind(fy, today, today).first().catch(() => null);
-        }
-        // The store's most recent published captions, handed to the model as a
-        // DO-NOT-REPEAT list rather than as style examples. Voice is already
-        // carried by the few-shot examples in the system prompt; feeding AI
-        // captions back in as models to imitate would compound their own drift.
-        let recent = [];
-        if (env.DB) {
-          const rows = await env.DB.prepare(
-            "SELECT caption, post_type FROM marketing_drafts" +
-            " WHERE store = ? AND status = 'published' AND caption IS NOT NULL AND TRIM(caption) <> ''" +
-            " ORDER BY COALESCE(published_at, updated_at, created_at) DESC LIMIT 5"
-          ).bind(store).all().catch(() => null);
-          recent = (rows && rows.results) || [];
-        }
-        const bg = [
-          wk && wk.weekly_theme ? `weekly theme "${wk.weekly_theme}"` : "",
-          wk && wk.product_focus ? `product focus "${wk.product_focus}"` : "",
-          wk && wk.special_event ? `special event "${wk.special_event}"` : "",
-          wk && wk.dd_loyalty ? `loyalty promo "${wk.dd_loyalty}"` : "",
-        ].filter(Boolean).join(", ");
-        const userText = [
-          `Store: Bargain Lane ${label}.`,
-          postType ? `Post type: ${MARKETING_POST_TYPE_LABELS[postType] || postType}.` : "",
-          `This post is about: ${topic}.`,
-          coverImg ? "The attached image is THIS post's branded cover graphic. Match the caption to what it actually promotes — its theme, headline, and any recurring schedule, day-by-day pricing, or offer printed on it. You MAY reference prices, days, or offers that are clearly printed on the cover; do NOT invent any that are not shown." : "",
-          bg ? `This week's chain-wide plan: ${bg}. This post type is about the week's plan, so this is directly relevant — work in what fits naturally. The cover graphic and the description above still set the specifics: do not contradict them, and do not state a price, date, or offer that is not printed on the cover or given in the description. If a part of the plan does not fit this post, leave it out rather than listing it.` : "",
-          recent.length ? [
-            `Already published at this store recently (newest first):`,
-            ...recent.map((r, i) => {
-              const t = MARKETING_POST_TYPE_LABELS[r.post_type] || r.post_type || "post";
-              // Cap each one so five long captions can't crowd the prompt, but
-              // break on a word boundary — a caption cut mid-word reads as noise.
-              const full = String(r.caption || "").replace(/\s+/g, " ").trim();
-              const cut = full.length <= 400 ? full : full.slice(0, 400).replace(/\s+\S*$/, "") + "…";
-              return `${i + 1}. [${t}] ${cut}`;
-            }),
-            "Use these two ways. Follow the house conventions they share — the store's own hashtag, the emoji rhythm, the level of concrete detail. Do NOT reuse the specific angle, opening line, or turns of phrase of any one of them: this caption should be recognisably new next to these, not a variation on the most recent one. Any recurring mechanic they mention (a price ladder, a fixed new-inventory day) is real, but only state it if this post's own cover or description gives it to you.",
-          ].join("\n") : "",
-          "Write the caption.",
-        ].filter(Boolean).join("\n");
-        const content = coverImg ? [coverImg, { type: "text", text: userText }] : userText;
-        const system = [
-          "You write Facebook post captions for Bargain Lane, a chain of discount bin stores.",
-          "Voice: friendly, exciting, community-minded, a little playful — a neighbor telling you what just landed, not an ad agency.",
-          "",
-          "Shape each caption like this:",
-          "1. A hook that makes someone stop scrolling — a question, a specific find, a number.",
-          "2. Two or three sentences of concrete detail: what is actually in the bins, what the theme is, why this week is worth the trip.",
-          "3. One clear call to action.",
-          "4. Three to five hashtags. Lead with the store's own tag, written as #BargainLane + the store name with no spaces (Coliseum -> #BargainLaneColiseum), then two to four topical ones.",
-          "",
-          "Use a few emoji — roughly two to five, placed where they punctuate a beat rather than decorating every line. That is the house style on this page.",
-          "",
-          "Aim for 50-80 words before the hashtags. Facebook hides anything past roughly 80 words behind a 'See more' link, so stay under that.",
-          "",
-          "Write for THIS post, not a generic promo. The user says what it is about and may attach the post's cover graphic — match the caption to what that cover actually promotes.",
-          "When the inputs disagree, this is the order of authority. The cover graphic and the post type define what this post IS. The operator's description refines that. Anything you are told about the week's wider store plan is supporting context — use it where it genuinely belongs, but never let it displace what the cover shows. Your first sentence must be about this post's own subject: if the cover says NEW ARRIVALS, the caption opens on new arrivals, whatever else is running that week.",
-          "Only reference prices, discounts, dates, schedules, offers, or claims that are printed on the attached cover image or given to you in the text. Never invent, guess, or embellish beyond what you were given: a made-up price is a promise the store has to honor at the register.",
-          "Vary the opening and the structure from one caption to the next — do not reuse the same hook shape every time.",
-          "Do not use the store's internal code (BL1, BL4, and so on).",
-          "",
-          "Two examples, illustrative of length and voice only — do not reuse their wording or their specifics:",
-          "",
-          "Guess what just hit the bins at Bargain Lane Coliseum? 🔥 Fresh pallets went out this morning and the floor is packed — small kitchen appliances, kids' toys, seasonal decor, and plenty we have not even dug through yet. The early crowd always finds the best stuff, so come dig before it walks out the door! 🛍️",
-          "#BargainLaneColiseum #DigForDeals #TreasureHunt #ShopLocal",
-          "",
-          "New week, new bins! 🙌 Our team just refilled the floor with home goods, tools, and a surprising number of name-brand finds — the kind of thing that does not sit around long. Bring a friend, take your time, and see what you walk out with. Tag someone who needs to see this one! 👀",
-          "#BargainLaneColiseum #NewArrivals #BinDiving #GreatFinds",
-          "",
-          "Return ONLY the caption text — no preamble, no quotation marks, no explanation.",
-        ].join("\n");
-        const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-          body: JSON.stringify({
-            model: "claude-opus-5",
-            // max_tokens caps thinking + caption text together on Opus 5, so this is
-            // sized well above the ~80-word caption. Thinking stays on: with it
-            // disabled, Opus 5 can leak <thinking> tags straight into the caption.
-            max_tokens: 1500,
-            thinking: { type: "adaptive" },
-            output_config: { effort: "medium" },
-            system,
-            messages: [{ role: "user", content }],
-          }),
+        const r = await buildCaption(env, {
+          store: b.store, fiscalYear: b.fiscal_year, topic: b.topic,
+          postType: b.post_type, thumbnailId: b.thumbnail_id,
         });
-        if (!aiRes.ok) {
-          const errTxt = await aiRes.text().catch(() => "");
-          return new Response(JSON.stringify({ error: `Claude API ${aiRes.status}`, detail: errTxt.slice(0, 200) }), { status: 502, headers: corsJson });
+        if (!r.ok) {
+          const payload = { error: r.error };
+          if (r.detail) payload.detail = r.detail;
+          return new Response(JSON.stringify(payload), { status: r.status, headers: corsJson });
         }
-        const aiJson = await aiRes.json();
-        if (aiJson.stop_reason === "refusal") {
-          return new Response(JSON.stringify({ error: "The caption request was declined by the safety system. Edit the details and try again." }), { status: 400, headers: corsJson });
-        }
-        const caption = (aiJson.content || []).filter(x => x.type === "text").map(x => x.text).join("").trim();
-        if (!caption) return new Response(JSON.stringify({ error: "No caption produced" }), { status: 502, headers: corsJson });
-        return new Response(JSON.stringify({ ok: true, caption, week: wk ? wk.retail_week : null }), { headers: corsJson });
+        return new Response(JSON.stringify({ ok: true, caption: r.caption, week: r.week }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
       }
