@@ -9628,7 +9628,7 @@ export default {
           postType ? `Post type: ${MARKETING_POST_TYPE_LABELS[postType] || postType}.` : "",
           `This post is about: ${topic}.`,
           coverImg ? "The attached image is THIS post's branded cover graphic. Match the caption to what it actually promotes — its theme, headline, and any recurring schedule, day-by-day pricing, or offer printed on it. You MAY reference prices, days, or offers that are clearly printed on the cover; do NOT invent any that are not shown." : "",
-          bg ? `Extra background — this week's store plan: ${bg}. Use it ONLY if it fits this specific post; do not force it in.` : "",
+          bg ? `Background only — the chain-wide plan for this week is: ${bg}. This is NOT what this post is about. Do not open with it, do not build the caption around it, and do not let it displace the subject above. At most, mention ONE item from it in a later sentence, and only where it genuinely adds to this post's own subject. If it does not fit, leave it out entirely — a post that ignores the weekly plan is fine.` : "",
           recent.length ? [
             `Already published at this store recently (newest first):`,
             ...recent.map((r, i) => {
@@ -9659,6 +9659,7 @@ export default {
           "Aim for 50-80 words before the hashtags. Facebook hides anything past roughly 80 words behind a 'See more' link, so stay under that.",
           "",
           "Write for THIS post, not a generic promo. The user says what it is about and may attach the post's cover graphic — match the caption to what that cover actually promotes.",
+          "When the inputs disagree, this is the order of authority. The cover graphic and the post type define what this post IS. The operator's description refines that. The weekly store plan is background about the chain, and it is never the subject. Your first sentence must be about this post's own subject — if the cover says NEW ARRIVALS, the caption opens on new arrivals, whatever else is running that week.",
           "Only reference prices, discounts, dates, schedules, offers, or claims that are printed on the attached cover image or given to you in the text. Never invent, guess, or embellish beyond what you were given: a made-up price is a promise the store has to honor at the register.",
           "Vary the opening and the structure from one caption to the next — do not reuse the same hook shape every time.",
           "Do not use the store's internal code (BL1, BL4, and so on).",

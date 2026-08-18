@@ -13950,7 +13950,13 @@
   function ctOnTypeChange() {
     const t = CT_POST_TYPES.find(x => x.key === ctPostType);
     const topic = el('ct-topic');
-    if (t && topic && !topic.value.trim()) topic.value = t.topic;
+    if (!t || !topic) return;
+    // Refresh the box when it is empty OR still holds another type's prefill —
+    // a stale default here reads to the AI as the real subject and fights the
+    // post type. Anything the operator actually typed is left alone.
+    const cur = topic.value.trim();
+    const isStalePrefill = cur !== '' && CT_POST_TYPES.some(x => x.topic && x.topic === cur);
+    if (cur === '' || isStalePrefill) topic.value = t.topic;
   }
   window.ctOnTypeChange = ctOnTypeChange;
 
