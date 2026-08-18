@@ -7609,6 +7609,19 @@
     }
   });
 
+  // Show exactly one page section and hide the rest.
+  // 🛑 This used to be a hardcoded id list in two places. Adding Marketing >
+  // Comments missed the list in navigateToPage, so nothing un-hid AND everything
+  // else got hidden — a blank screen with the nav item lit. Derive from the DOM
+  // instead: every `page-*` element IS a page section (verified), so a new page
+  // can never be orphaned from the switcher again.
+  function showOnlyPage(name) {
+    document.querySelectorAll('[id^="page-"]').forEach(elm => {
+      elm.classList.toggle('hidden', elm.id !== 'page-' + name);
+    });
+  }
+  window.showOnlyPage = showOnlyPage;
+
   function navigateToPage(page, pushHistory = true) {
     // Guard pages that show money. The worker refuses the data for these roles
     // (NO_FINANCIAL_ACCESS) but the shell would still render, so gate here too.
@@ -7658,11 +7671,7 @@
     // restores it via its own Close button; if it's ever dismissed another way
     // (Android back gesture, etc.) scrolling would stay frozen app-wide.
     if (document.body.style.overflow) document.body.style.overflow = '';
-    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings', 'no-access', 'landing', 'ebay-cases', 'labor'];
-    for (const p of pages) {
-      const pageEl = el('page-' + p);
-      if (pageEl) pageEl.classList.toggle('hidden', p !== page);
-    }
+    showOnlyPage(page);
 
     // Pre-app surfaces: you have not entered a business yet (landing), or you
     // have nothing to enter (no-access). Either way the business-specific nav
@@ -9767,11 +9776,7 @@
     if (chip) chip.textContent = `Week ${selectedWeek}`;
     el('as-metrics').innerHTML = buildAllStoresHero();
 
-    const pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','marketing','flow-calendar','inventory','supply-request','submit-photos','content','settings','users','admin-settings'];
-    for (const p of pages) {
-      const pageEl = el('page-' + p);
-      if (pageEl) pageEl.classList.toggle('hidden', p !== 'all-stores-detail');
-    }
+    showOnlyPage('all-stores-detail');
     document.querySelectorAll('.nav-item[data-page]').forEach(item => item.classList.remove('active'));
     currentPage = 'all-stores-detail';
     if (typeof window.__syncBottomNav === 'function') try { window.__syncBottomNav('all-stores-detail'); } catch (_) {}
