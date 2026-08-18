@@ -694,6 +694,10 @@
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
               <span class="nav-label">Flow Calendar</span>
             </div>
+            <div id="nav-comments" class="nav-item nav-subitem" data-page="comments" onclick="navigateToPage('comments')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+              <span class="nav-label">Comments</span>
+            </div>
             <div id="nav-content" class="nav-item nav-subitem" data-page="content" onclick="navigateToPage('content')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></span>
               <span class="nav-label">Content</span>
@@ -1949,6 +1953,26 @@
         </div>
       </div>
     </div><!-- end #page-marketing -->
+
+    <div id="page-comments" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-7xl mx-auto">
+          <div class="flex items-center gap-2.5 flex-wrap">
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Comments</h1>
+            <span class="text-[11px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded-md px-2 py-0.5">Review</span>
+            <button id="fbc-refresh" onclick="fbcRefresh()" class="ml-auto text-[11px] font-semibold px-2.5 py-1 rounded-md border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Check for new</button>
+          </div>
+          <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Every reply is reviewed by you before it posts. Nothing here goes out on its own.</p>
+        </div>
+      </div>
+
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 pt-4 pb-6">
+        <div class="flex gap-1.5 flex-wrap mb-3" id="fbc-store-tabs"></div>
+        <div class="flex gap-1 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border mb-4" id="fbc-status-tabs"></div>
+        <div id="fbc-status" class="hidden text-sm mb-3"></div>
+        <div id="fbc-list" class="space-y-3"></div>
+      </div>
+    </div>
 
     <div id="page-flow-calendar" class="hidden">
       <style>
@@ -7595,7 +7619,7 @@
     if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)) return;
 
     // Guard admin-only pages
-    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content'];
+    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments'];
     if (adminOnly.includes(page)) {
       const role = currentUser && currentUser.role;
       if (role !== 'superuser' && role !== 'admin') return;
@@ -7683,8 +7707,11 @@
     if (page === 'flow-calendar') {
       if (typeof initFlowCalendar === 'function') initFlowCalendar();
     }
-    // Keep the Marketing dropdown expanded while on either of its pages.
-    if ((page === 'marketing' || page === 'flow-calendar' || page === 'submit-photos' || page === 'content') && typeof toggleMarketingMenu === 'function') {
+    if (page === 'comments') {
+      if (typeof fbcLoad === 'function') fbcLoad();
+    }
+    // Keep the Marketing dropdown expanded while on any of its pages.
+    if ((page === 'marketing' || page === 'flow-calendar' || page === 'submit-photos' || page === 'content' || page === 'comments') && typeof toggleMarketingMenu === 'function') {
       toggleMarketingMenu(true);
     }
     if (page === 'ebay-cases') {
@@ -13949,6 +13976,172 @@
   const CT_AI_NOTE_FLOW = "✨ AI-drafted from this week's Flow Calendar — edit as needed.";
   function ctSetAiNote(usedFlow) { const n = el('ct-ai-note'); if (n) n.textContent = usedFlow ? CT_AI_NOTE_FLOW : CT_AI_NOTE_BASE; }
 
+  // ── Comments page ──────────────────────────────────────────────────
+  // A review queue. Nothing posts to Facebook without an explicit click on a
+  // specific comment, and the text that posts is whatever is in the box at that
+  // moment — not the stored draft — so what you see is what goes out.
+  const fbcState = { store: 'all', status: 'open', comments: [], counts: [] };
+
+  function fbcEsc(s) { return escapeHtml(String(s == null ? '' : s)); }
+
+  async function fbcLoad() {
+    const list = el('fbc-list');
+    if (list) list.innerHTML = '<div class="text-sm text-opl-inkDim dark:text-op-inkDim py-3">Loading…</div>';
+    try {
+      const qs = new URLSearchParams({ status: fbcState.status });
+      if (fbcState.store !== 'all') qs.set('store', fbcState.store);
+      const r = await fetch(`${WORKER_BASE}?action=fb-comments&${qs}`, { credentials: 'include' });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Failed to load');
+      fbcState.comments = d.comments || [];
+      fbcState.counts = d.counts || [];
+    } catch (e) {
+      fbcState.comments = []; fbcState.counts = [];
+      if (list) list.innerHTML = `<div class="text-sm text-op-bad py-3">${fbcEsc((e && e.message) || 'Failed to load')}</div>`;
+      fbcRenderTabs();
+      return;
+    }
+    fbcRenderTabs();
+    fbcRenderList();
+  }
+  window.fbcLoad = fbcLoad;
+
+  function fbcRenderTabs() {
+    const byStore = {}; let openAll = 0;
+    for (const c of fbcState.counts) { byStore[c.store] = c; openAll += Number(c.open || 0); }
+    const chip = (id, label, n, on) =>
+      `<button onclick="fbcPickStore('${id}')" class="text-[11px] font-semibold px-2.5 py-1 rounded-md border transition-colors ${on
+        ? 'bg-accent-green/15 border-accent-green/50 text-accent-green'
+        : 'border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink'}">${fbcEsc(label)}${n ? ` <span class="opacity-70">${n}</span>` : ''}</button>`;
+    const tabs = el('fbc-store-tabs');
+    if (tabs) {
+      tabs.innerHTML = chip('all', 'All stores', openAll, fbcState.store === 'all')
+        + STORES.map(s => {
+            const code = s.split('/')[0];
+            const label = s.slice(s.indexOf(' ') + 1);
+            return chip(code, label, Number((byStore[code] || {}).open || 0), fbcState.store === code);
+          }).join('');
+    }
+    const st = el('fbc-status-tabs');
+    if (st) {
+      const t = (id, label) => `<button onclick="fbcPickStatus('${id}')" class="px-3 py-2 text-sm font-semibold border-b-2 transition-colors ${fbcState.status === id
+        ? 'border-accent-green text-accent-green'
+        : 'border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink'}">${label}</button>`;
+      st.innerHTML = t('open', 'Needs reply') + t('replied', 'Replied') + t('ignored', 'Dismissed') + t('all', 'All');
+    }
+  }
+
+  function fbcPickStore(s) { fbcState.store = s; fbcLoad(); }
+  function fbcPickStatus(s) { fbcState.status = s; fbcLoad(); }
+  window.fbcPickStore = fbcPickStore; window.fbcPickStatus = fbcPickStatus;
+
+  function fbcRenderList() {
+    const list = el('fbc-list');
+    if (!list) return;
+    if (!fbcState.comments.length) {
+      list.innerHTML = `<div class="text-sm text-opl-inkDim dark:text-op-inkDim py-6 text-center">Nothing here. New comments are pulled hourly — “Check for new” pulls now.</div>`;
+      return;
+    }
+    list.innerHTML = fbcState.comments.map(c => {
+      const cid = fbcEsc(c.comment_id);
+      const when = c.created_time ? new Date(c.created_time).toLocaleString() : '';
+      const replied = c.status === 'replied';
+      const ignored = c.status === 'ignored';
+      const badge = replied
+        ? '<span class="text-[10px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded px-1.5 py-0.5">Replied</span>'
+        : ignored
+        ? '<span class="text-[10px] font-bold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim border border-[rgba(20,16,8,0.15)] dark:border-op-border rounded px-1.5 py-0.5">Dismissed</span>'
+        : '';
+      const actions = replied
+        ? (c.post_url ? `<a href="${fbcEsc(c.post_url)}" target="_blank" rel="noopener" class="text-[11px] font-semibold text-accent-blue">View on Facebook ↗</a>` : '')
+        : `<button onclick="fbcDraft('${cid}')" class="text-[11px] font-semibold px-2.5 py-1 rounded-md border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">${c.draft_reply ? 'Redraft' : '✨ Draft reply'}</button>
+           <button onclick="fbcSend('${cid}')" class="text-[11px] font-semibold px-2.5 py-1 rounded-md bg-accent-green/15 border border-accent-green/50 text-accent-green">Approve &amp; post</button>
+           <button onclick="fbcIgnore('${cid}', ${ignored ? 'true' : 'false'})" class="text-[11px] font-semibold px-2.5 py-1 rounded-md border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim">${ignored ? 'Restore' : 'Dismiss'}</button>`;
+      const box = replied
+        ? `<div class="text-sm mt-2 p-2 rounded-md bg-black/5 dark:bg-white/5">${fbcEsc(c.draft_reply)}</div>`
+        : `<textarea id="fbc-r-${cid}" rows="2" placeholder="Write a reply, or draft one…" class="w-full mt-2 text-sm p-2 rounded-md bg-transparent border border-[rgba(20,16,8,0.12)] dark:border-op-border">${fbcEsc(c.draft_reply)}</textarea>`;
+      return `<div class="rounded-lg border border-[rgba(20,16,8,0.10)] dark:border-op-border p-3">
+        <div class="flex items-center gap-2 flex-wrap text-[11px] text-opl-inkDim dark:text-op-inkDim">
+          <span class="font-semibold text-opl-ink dark:text-op-ink">${fbcEsc(c.author_name || 'Someone')}</span>
+          <span>${fbcEsc(fbcStoreLabel(c.store))}</span><span>${fbcEsc(when)}</span>${badge}
+        </div>
+        <div class="text-sm mt-1 whitespace-pre-wrap">${fbcEsc(c.message)}</div>
+        ${box}
+        <div class="flex gap-1.5 flex-wrap mt-2 items-center" id="fbc-a-${cid}">${actions}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function fbcStoreLabel(code) { const m = STORES.find(s => s.split('/')[0] === code); return m ? m.slice(m.indexOf(' ') + 1) : code; }
+
+  function fbcSay(msg, cls) {
+    const s = el('fbc-status'); if (!s) return;
+    s.textContent = msg; s.className = 'text-sm mb-3 ' + (cls || 'text-opl-inkDim dark:text-op-inkDim');
+    s.classList.remove('hidden');
+    if (cls === 'text-accent-green') setTimeout(() => s.classList.add('hidden'), 3000);
+  }
+
+  async function fbcDraft(cid) {
+    fbcSay('Drafting…');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=fb-comment-draft`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comment_id: cid }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Draft failed');
+      if (d.escalate) { fbcSay('This one needs you — it reads as a complaint or needs a fact we do not have.', 'text-op-bad'); return; }
+      const box = el('fbc-r-' + cid); if (box) box.value = d.reply || '';
+      fbcSay('Drafted — read it before posting.', 'text-accent-green');
+    } catch (e) { fbcSay((e && e.message) || 'Draft failed', 'text-op-bad'); }
+  }
+
+  async function fbcSend(cid) {
+    const box = el('fbc-r-' + cid);
+    const message = box ? box.value.trim() : '';
+    if (!message) { fbcSay('Nothing to post — write or draft a reply first.', 'text-op-bad'); return; }
+    // Public and effectively irreversible, so confirm with the actual text.
+    const okGo = await uiConfirm(`Post this reply publicly on Facebook?\n\n"${message}"`);
+    if (!okGo) return;
+    fbcSay('Posting…');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=fb-comment-reply`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comment_id: cid, message }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Post failed');
+      fbcSay('Replied.', 'text-accent-green');
+      fbcLoad();
+    } catch (e) { fbcSay((e && e.message) || 'Post failed', 'text-op-bad'); }
+  }
+
+  async function fbcIgnore(cid, undo) {
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=fb-comment-ignore`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comment_id: cid, undo: !!undo }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Failed');
+      fbcLoad();
+    } catch (e) { fbcSay((e && e.message) || 'Failed', 'text-op-bad'); }
+  }
+
+  async function fbcRefresh() {
+    const b = el('fbc-refresh'); const orig = b ? b.textContent : '';
+    if (b) { b.disabled = true; b.textContent = 'Checking…'; }
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=fb-comments-refresh`, { method: 'POST', credentials: 'include' });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Refresh failed');
+      fbcSay(d.ingested ? `${d.ingested} new comment${d.ingested === 1 ? '' : 's'}.` : 'No new comments.', 'text-accent-green');
+      fbcLoad();
+    } catch (e) { fbcSay((e && e.message) || 'Refresh failed', 'text-op-bad'); }
+    finally { if (b) { b.disabled = false; b.textContent = orig; } }
+  }
+  window.fbcDraft = fbcDraft; window.fbcSend = fbcSend; window.fbcIgnore = fbcIgnore; window.fbcRefresh = fbcRefresh;
+
   function ctSetTopic(t) { if (el('ct-topic')) el('ct-topic').value = t; }
   window.ctSetTopic = ctSetTopic;
 
@@ -18664,6 +18857,7 @@
     'nav-marketing': 'bl',
     'nav-marketing-group': 'bl',
     'nav-marketing-ads': 'bl',
+    'nav-comments': 'bl',
     'nav-marketing-sub': 'bl',
     'nav-marketing-chev': 'bl',
     'nav-flow-calendar': 'bl',
@@ -20519,7 +20713,7 @@
       // active tab
       // 'ebay-cases' has no bar tab of its own, so without it here every tab
       // sits dim while you are standing on the page.
-      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1 };
+      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1 };
       if (!mgrBar) morePages['submit-photos'] = 1; // no center button → page lives under More
       if (isAdminBar) { morePages['inventory'] = 1; morePages['supply-request'] = 1; } // admin: both under More
       else { morePages['flow-calendar'] = 1; morePages['content'] = 1; }               // no bar tab for these
