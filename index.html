@@ -2002,18 +2002,31 @@
          applies until it is published with a note. -->
     <div id="page-merch-criteria" class="hidden">
       <style>
-        #mc-tbl{border-collapse:separate;border-spacing:0;font-size:12px}
+        /* Colour comes from the V1 palette in tailwind.config.js, stated for BOTH themes.
+           Nothing here may rely on an inherited colour: this table sits on op-bg in dark
+           and opl-bg in light, and a value that is only correct in one of them is a bug
+           you cannot see unless you look in the other. ink/inkDim/inkDimmer below are
+           literal token values (op.* dark, opl.* light) — a <style> block cannot use the
+           Tailwind class names, so the values are duplicated on purpose. */
+        #mc-tbl{border-collapse:separate;border-spacing:0;font-size:12px;color:#14110a}
+        .dark #mc-tbl{color:#e7ecf3}
         #mc-tbl th,#mc-tbl td{border-bottom:.5px solid rgba(20,16,8,.10);padding:5px 8px;text-align:left;white-space:nowrap}
         .dark #mc-tbl th,.dark #mc-tbl td{border-bottom-color:rgba(255,255,255,.09)}
-        #mc-tbl th{font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+        #mc-tbl th{font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#6b6453}
+        .dark #mc-tbl th{color:#8893a7}
         #mc-tbl .mc-cat{position:sticky;left:0;z-index:2;white-space:normal;min-width:190px;font-weight:500}
-        #mc-tbl tr.mc-group td{font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;padding-top:12px}
+        #mc-tbl tr.mc-group td{font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;padding-top:12px;color:#6b6453}
+        .dark #mc-tbl tr.mc-group td{color:#8893a7}
         #mc-tbl tr.mc-default td{font-weight:600}
-        #mc-tbl input{width:76px;border-radius:6px;padding:2px 6px;font-size:12px;border:1px solid transparent;background:transparent}
+        #mc-tbl input{width:76px;border-radius:6px;padding:2px 6px;font-size:12px;border:1px solid transparent;background:transparent;color:inherit}
         #mc-tbl input:focus{outline:none;border-color:#639922;background:rgba(99,153,34,.06)}
         /* Inherited vs override vs changed-in-draft — the three states the PRD asks
            the table to show at a glance, so nobody has to guess where a number came from. */
-        #mc-tbl input.mc-inherit{color:#9aa0a6}
+        /* inkDim, not inkDimmer. inkDimmer (#9c9484) reads as "inherited" but measures
+           2.71:1 on opl-bg — under AA. inkDim is 5.29:1 and still unmistakably muted
+           against an override, which is near-black at 16.96:1. */
+        #mc-tbl input.mc-inherit{color:#6b6453}
+        .dark #mc-tbl input.mc-inherit{color:#8893a7}
         #mc-tbl input.mc-override{color:inherit;border-color:rgba(20,16,8,.14)}
         .dark #mc-tbl input.mc-override{border-color:rgba(255,255,255,.16)}
         #mc-tbl input.mc-dirty{background:rgba(234,179,8,.16);border-color:rgba(234,179,8,.55)}
@@ -17219,7 +17232,7 @@
       const value = now != null ? now : (prev != null ? prev : '');
       return `<div class="flex items-center gap-3 bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl px-4 py-3">
         <div class="flex-1 min-w-0">
-          <div class="font-semibold text-sm truncate" title="${esc(c.l3)}">${esc(c.label)}</div>
+          <div class="font-semibold text-sm truncate text-opl-ink dark:text-op-ink" title="${esc(c.l3)}">${esc(c.label)}</div>
           <div class="text-[11px] text-opl-inkDim dark:text-op-inkDim">${prev != null ? `Last week: ${prev}` : 'No count last week'}</div>
         </div>
         <input data-l3="${esc(c.l3)}" type="number" min="0" max="999" step="0.5" inputmode="decimal" value="${value}"

@@ -44,6 +44,19 @@ const ORAL   = 'FG BL CONSUMABLES - HBA - ORAL';
 
 console.log('Merchandising — buy criteria + shelf counts');
 
+// ── 🛑 A virgin install still renders a table you can author v1 in ───────────
+// Shipped broken: the no-versions branch returned `categories: []`, so the very first
+// visit showed a lone "Chain default" row with nothing to tick core on. v1 could not be
+// authored through the page that exists to author it.
+{
+  const { body } = await get('merch-criteria', 'u-su');
+  eq(body.version, null, 'no version yet');
+  ok((body.categories || []).length > 40, `the full category list is offered anyway (got ${(body.categories || []).length})`);
+  ok(body.categories.every(c => c.core === false), 'nothing is core until someone says so');
+  ok(body.categories.some(c => c.l3 === SNACKS), 'a core candidate is present to tick');
+  ok(body.defaults && 'max_cost_pct_retail' in body.defaults, 'the chain-default row is present to fill in');
+}
+
 // ── The category list is L3, grouped by L2 ───────────────────────────────────
 // If this ever collapses to the 15 coarse L2 buckets, the core flag becomes one
 // boolean over all food and the whole module stops answering its own question.

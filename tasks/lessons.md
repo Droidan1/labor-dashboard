@@ -1,5 +1,45 @@
 # Lessons
 
+## Never let a colour be INHERITED, and never sign off a UI change in one theme (2026-08-19)
+
+**Context:** Brian opened the just-shipped Buy Criteria page in dark mode on production and
+the table was unreadable — "Chain default" and every column header were dark grey on
+near-black. I had verified the page only in light mode and called it done.
+
+**Root cause — two mistakes, one habit.**
+
+1. **I set no `color` at all** on `#mc-tbl`, its `th`, `td` or `.mc-cat`. They inherited,
+   and what they inherited was correct in light and invisible in dark (measured ~1.07:1
+   against `op-bg`). An unset colour is not neutral — it is a value you did not choose and
+   therefore did not check.
+2. **The one colour I did set was a number I made up.** `#9aa0a6` for inherited cells,
+   picked by eye against a white background. The repo has a whole palette for this in
+   `tailwind.config.js` — `op.*` for dark, `opl.*` for light, in ink / inkDim / inkDimmer
+   pairs — and I used none of it.
+
+**Rules:**
+1. **Every colour gets both themes, explicitly.** In a `<style>` block that means a rule
+   and a `.dark` rule, side by side. Writing one without the other is the bug.
+2. **Use the palette, never a hand-picked hex.** Light `opl.ink #14110a` / `inkDim #6b6453`
+   / `inkDimmer #9c9484`; dark `op.ink #e7ecf3` / `inkDim #8893a7` / `inkDimmer #5a6478`.
+   A `<style>` block cannot use the Tailwind class names, so duplicate the token VALUE and
+   say in a comment that it is a token — do not invent a nearby grey.
+3. **Verify in BOTH themes before saying done.** `document.documentElement.classList
+   .toggle('dark')` and re-measure. Do not eyeball it: compute the contrast ratio against
+   the real background (`op-bg #0a0f1a` / `opl-bg #f4f3ee`) and require ≥ 4.5:1. Doing this
+   caught a second problem the screenshot did not show — `inkDimmer` measures 2.71:1 in
+   light, so the "inherited" cells needed `inkDim` instead.
+4. **The local server serves a STALE `tailwind.css`** whose `dark:` variants are missing
+   entirely (it also lacks `max-w-2xl`). `build.sh` regenerates into `dist/` at deploy
+   time, so production is right and local dev is wrong. A dark-mode check against the
+   local stylesheet proves nothing — pull the shipped CSS, or measure inline-`<style>`
+   colours against the known token background.
+
+**Same-pattern watch:** any generated markup with a `font-semibold`/`text-sm` class list
+and no `text-*` colour is this bug waiting to happen. Shelf Count's row label had it too
+(`<div class="font-semibold text-sm truncate">`) and was fixed in the same pass.
+
+
 ## Measure scroll geometry on the ACTUAL scroller — `#app` is `min-h-screen`, so the DOCUMENT scrolls (2026-08-19)
 
 **Context:** Verifying the new Shelf Count page on a 375px viewport. I set

@@ -7393,10 +7393,14 @@ async function merchCoreCategories(env) {
 
 // Resolve one version into the table the UI draws: chain defaults, then a row per
 // category, each cell carrying whether it is inherited or an override.
+// version === null means "nothing published yet". It still returns the FULL category
+// list with every cell empty, rather than an empty table: the first thing anyone does
+// here is tick core flags, and a page with no rows to tick is a dead end — v1 could
+// never be authored through the UI that exists to author it.
 async function merchResolve(env, version) {
-  const { results } = await env.DB.prepare(
+  const results = version === null ? [] : (await env.DB.prepare(
     `SELECT l3, field, value, updated_by, updated_at FROM merch_criteria WHERE version = ?`
-  ).bind(version).all();
+  ).bind(version).all()).results;
   const defaults = {}, byCat = {};
   for (const r of results || []) {
     if (r.l3 === null) defaults[r.field] = r;
@@ -14167,9 +14171,10 @@ export default {
         }
         if (version === null) {
           return new Response(JSON.stringify({
-            ok: true, version: null, live: null, draft: null,
-            defaults: {}, categories: [], fields: [...MERCH_FIELDS],
+            ok: true, version: null, published: false, live: null, draft: null,
+            fields: [...MERCH_FIELDS],
             note: "No criteria yet — saving a cell creates v1 from the chain defaults.",
+            ...(await merchResolve(env, null)),
           }), { headers: corsJson });
         }
         const meta = all.find(r => r.version === version);
