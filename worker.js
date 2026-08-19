@@ -3863,6 +3863,14 @@ const ACTION_BUSINESS = new Map([
   ["fb-comment-reply", "bl"],
   ["fb-comment-ignore", "bl"],
   ["fb-comments-refresh", "bl"],
+  // Merchandising (buy criteria + shelf counts). Bargain Lane's floor, so 'bl'.
+  ["merch-criteria", "bl"],
+  ["merch-criteria-draft", "bl"],
+  ["merch-criteria-publish", "bl"],
+  ["merch-criteria-discard", "bl"],
+  ["merch-criteria-log", "bl"],
+  ["shelf-counts", "bl"],
+  ["shelf-count-save", "bl"],
   ["draft-save", "bl"],
   ["draft-schedule", "bl"],
   ["draft-unschedule", "bl"],
@@ -7242,6 +7250,206 @@ function randomHex(bytes) {
   const arr = new Uint8Array(bytes);
   crypto.getRandomValues(arr);
   return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ─── Merchandising: buy criteria + shelf counts ───────────────────────────────
+//
+// ⚠️ `l3` throughout this feature is the PRD's "L2". This repo's L2 is the coarse
+// 15-bucket Clover taxonomy (Consumable Food, Seasonal, Hardlines...); the categories
+// purchasing actually argues about — snacks, candy, coffee & tea — are L3, all inside
+// `Consumable Food`. Keying criteria on L2 would collapse the core flag to a single
+// boolean over all food. The Food/HBA/Household grouping the PRD asks for is L3_TO_L2,
+// derived at read time rather than stored. See migration-041.sql.
+
+const MERCH_FIELDS = new Set([
+  "core", "max_cost_pct_retail", "min_margin_per_unit", "price_cap_pct_retail",
+  "rounding", "max_breakeven_sellthru", "max_per_store", "cash_back_days", "note",
+]);
+
+// Ryan's heuristic as the starting point, not a law. `core` defaults off so the core
+// list is something Brian states deliberately rather than something that happens.
+// PRD §5.3: the 30% cost test produces a WARN, never a hard fail, on its own.
+const MERCH_DEFAULTS = {
+  core: "0",
+  max_cost_pct_retail: "30",
+  price_cap_pct_retail: "50",
+  rounding: ".99",
+  max_breakeven_sellthru: "50",
+  cash_back_days: "40",
+};
+
+// L2 buckets that are not merchandise anyone buys for a shelf. `Sku Book Items` is a
+// Clover POS convenience page rather than a category at all (see pickPrimaryCategory);
+// the rest are ledger artifacts.
+const MERCH_NON_CATEGORY_L2 = new Set([
+  "Custom Sales", "Gift Cards", "Refund", "Bin Products", "Sku Book Items",
+]);
+
+// The one non-Clover bucket on the shelf-count form. A store's food shelf is not fully
+// described by the core categories, and the 60% floor is a share OF food — so the
+// denominator needs the remainder to be counted, not inferred.
+const MERCH_OTHER_FOOD = "__other_food__";
+
+// Every category eligible for a criteria row, grouped by its L2. Derived from the
+// taxonomy rather than stored, so a new Clover category appears here the moment
+// L3_TO_L2 learns about it.
+function merchCategories() {
+  return Object.entries(L3_TO_L2)
+    .filter(([, l2]) => !MERCH_NON_CATEGORY_L2.has(l2))
+    .map(([l3, l2]) => ({ l3, l2 }))
+    .sort((a, b) => a.l2.localeCompare(b.l2) || a.l3.localeCompare(b.l3));
+}
+
+// A Clover L3 is a warehouse string ("FG BL CONSUMABLES - FOOD - COFFEE & TEA").
+// The store manager filling in the form should see "Coffee & Tea"; the raw value stays
+// on the payload so the UI can show it on hover and nothing has to parse the label back.
+function merchLabel(l3) {
+  if (l3 === MERCH_OTHER_FOOD) return "Other food";
+  const tail = String(l3).split(" - ").pop();
+  return tail.replace(/[A-Za-z0-9&']+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase());
+}
+
+function merchIsCategory(l3) {
+  return Object.prototype.hasOwnProperty.call(L3_TO_L2, l3) &&
+         !MERCH_NON_CATEGORY_L2.has(L3_TO_L2[l3]);
+}
+
+// Sunday-anchored week end for a YYYY-MM-DD date. Date-only math, so the noon
+// anchor keeps it timezone-proof rather than timezone-aware.
+function merchWeekEnding(dateStr) {
+  const d = new Date(dateStr + "T12:00:00Z");
+  if (isNaN(d)) return null;
+  d.setUTCDate(d.getUTCDate() + (7 - d.getUTCDay()) % 7);
+  return d.toISOString().slice(0, 10);
+}
+
+// { live, draft } — live is the newest PUBLISHED version (what the scorer reads),
+// draft is the open unpublished one if there is one. Either may be null.
+async function merchVersions(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT version, published_at, published_by, note, created_at
+       FROM merch_criteria_versions ORDER BY version DESC`
+  ).all();
+  const rows = results || [];
+  return {
+    live: rows.find(r => r.published_at) || null,
+    draft: rows.find(r => !r.published_at) || null,
+    all: rows,
+  };
+}
+
+// Open the draft, creating it as a full COPY of the live version if absent.
+//
+// Copy-on-draft rather than storing only the deltas: every version is then a complete,
+// self-contained snapshot, which is what lets a published version be immutable and lets
+// a manifest scored under v7 still read v7's numbers a year later without replaying
+// history. The first draft of all seeds the chain defaults instead of copying nothing.
+async function merchEnsureDraft(env, who) {
+  const { live, draft, all } = await merchVersions(env);
+  if (draft) return draft.version;
+  const next = all.length ? Math.max(...all.map(r => r.version)) + 1 : 1;
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO merch_criteria_versions (version, published_at, published_by, note, created_at)
+     VALUES (?, NULL, NULL, NULL, ?)`
+  ).bind(next, now).run();
+  if (live) {
+    await env.DB.prepare(
+      `INSERT INTO merch_criteria (version, l3, field, value, note, updated_by, updated_at)
+       SELECT ?, l3, field, value, note, updated_by, updated_at FROM merch_criteria WHERE version = ?`
+    ).bind(next, live.version).run();
+  } else {
+    const stmt = env.DB.prepare(
+      `INSERT INTO merch_criteria (version, l3, field, value, note, updated_by, updated_at)
+       VALUES (?, NULL, ?, ?, NULL, ?, ?)`
+    );
+    await env.DB.batch(Object.entries(MERCH_DEFAULTS).map(([f, v]) =>
+      stmt.bind(next, f, v, who || null, now)));
+  }
+  return next;
+}
+
+// What the shelf-count form asks a manager to count: the core categories, in shelf order,
+// plus the other-food bucket that makes the 60% floor a share rather than a raw number.
+//
+// Read from the LIVE criteria version, not the draft — a manager should never be counting
+// against a definition nobody has published. Before v1 exists this is empty on purpose:
+// "count the core" is not a question you can ask before someone has said what core is.
+async function merchCoreCategories(env) {
+  const { live } = await merchVersions(env);
+  if (!live) return [];
+  const { results } = await env.DB.prepare(
+    `SELECT l3, value FROM merch_criteria WHERE version = ? AND field = 'core'`
+  ).bind(live.version).all();
+  const chainDefault = (results || []).find(r => r.l3 === null)?.value === "1";
+  const flags = new Map((results || []).filter(r => r.l3 !== null).map(r => [r.l3, r.value === "1"]));
+  const core = merchCategories()
+    .filter(({ l3 }) => flags.has(l3) ? flags.get(l3) : chainDefault)
+    .map(({ l3, l2 }) => ({ l3, l2, label: merchLabel(l3) }));
+  return core.length
+    ? [...core, { l3: MERCH_OTHER_FOOD, l2: "Consumable Food", label: merchLabel(MERCH_OTHER_FOOD) }]
+    : [];
+}
+
+// Resolve one version into the table the UI draws: chain defaults, then a row per
+// category, each cell carrying whether it is inherited or an override.
+async function merchResolve(env, version) {
+  const { results } = await env.DB.prepare(
+    `SELECT l3, field, value, updated_by, updated_at FROM merch_criteria WHERE version = ?`
+  ).bind(version).all();
+  const defaults = {}, byCat = {};
+  for (const r of results || []) {
+    if (r.l3 === null) defaults[r.field] = r;
+    else (byCat[r.l3] || (byCat[r.l3] = {}))[r.field] = r;
+  }
+  const cell = (own, inherited) => own
+    ? { value: own.value, inherited: false, updated_by: own.updated_by, updated_at: own.updated_at }
+    : { value: inherited ? inherited.value : null, inherited: true };
+  const fields = [...MERCH_FIELDS];
+  return {
+    defaults: Object.fromEntries(fields.map(f => [f, cell(defaults[f], null)])),
+    categories: merchCategories().map(({ l3, l2 }) => ({
+      l3, l2,
+      core: (byCat[l3]?.core?.value ?? defaults.core?.value) === "1",
+      fields: Object.fromEntries(fields.map(f => [f, cell(byCat[l3]?.[f], defaults[f])])),
+    })),
+  };
+}
+
+// The change log is a DIFF between consecutive versions, not a fourth table — a stored
+// log can drift out of sync with the values it claims to describe; a derived one cannot.
+async function merchChangeLog(env) {
+  const { all } = await merchVersions(env);
+  const published = all.filter(r => r.published_at).sort((a, b) => a.version - b.version);
+  if (!published.length) return [];
+  // Range bounds, not IN (?,?,...): D1 caps bound params at 100 per query and the
+  // version list is unbounded. Drafts inside the range are filtered out in JS.
+  const wanted = new Set(published.map(r => r.version));
+  const { results } = await env.DB.prepare(
+    `SELECT version, l3, field, value, updated_by FROM merch_criteria
+      WHERE version >= ? AND version <= ?`
+  ).bind(published[0].version, published[published.length - 1].version).all();
+  const snap = {};
+  for (const r of results || []) {
+    if (!wanted.has(r.version)) continue;
+    (snap[r.version] || (snap[r.version] = {}))[`${r.l3 === null ? "" : r.l3}|${r.field}`] = r;
+  }
+  const out = [];
+  for (let i = 0; i < published.length; i++) {
+    const v = published[i], prev = i ? snap[published[i - 1].version] || {} : {};
+    const cur = snap[v.version] || {};
+    for (const key of new Set([...Object.keys(prev), ...Object.keys(cur)])) {
+      const before = prev[key]?.value ?? null, after = cur[key]?.value ?? null;
+      if (before === after) continue;
+      const [l3, field] = key.split("|");
+      out.push({
+        version: v.version, published_at: v.published_at, published_by: v.published_by,
+        note: v.note, l3: l3 || null, field, from: before, to: after,
+        editor: cur[key]?.updated_by ?? null,
+      });
+    }
+  }
+  return out.sort((a, b) => b.version - a.version || String(a.l3).localeCompare(String(b.l3)));
 }
 
 // ─── WebAuthn / Passkey Utilities ────────────────────────────────
@@ -13929,6 +14137,267 @@ export default {
           `SELECT store, year, month, budget FROM supply_budgets ORDER BY year DESC, month DESC, store`
         ).all();
         return new Response(JSON.stringify({ ok: true, budgets }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Merchandising: buy criteria ───────────────────────────────────────────
+    // The versioned per-category thresholds a buy is scored against, and the source of
+    // the `core` flag.
+    //
+    // ACCESS IS BY ROLE, NOT BY PERSON: superuser and admin both read and both write.
+    // `allowAdminMutation` is what lets an admin write — without it `requireAdminAccess`
+    // reserves every mutation for superuser. Nothing below admin touches this table,
+    // in either direction. Stated as a rule so it survives any change in who holds
+    // which account.
+    //
+    // GET ?action=merch-criteria[&version=N]  — resolved table; defaults to live, or to
+    // the draft when nothing is published yet.
+    if (url.searchParams.get("action") === "merch-criteria" && request.method === "GET") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const { live, draft, all } = await merchVersions(env);
+        const asked = url.searchParams.get("version");
+        let version = asked ? Number(asked) : (live?.version ?? draft?.version ?? null);
+        if (asked && !all.some(r => r.version === version)) {
+          return new Response(JSON.stringify({ error: "No such version" }), { status: 404, headers: corsJson });
+        }
+        if (version === null) {
+          return new Response(JSON.stringify({
+            ok: true, version: null, live: null, draft: null,
+            defaults: {}, categories: [], fields: [...MERCH_FIELDS],
+            note: "No criteria yet — saving a cell creates v1 from the chain defaults.",
+          }), { headers: corsJson });
+        }
+        const meta = all.find(r => r.version === version);
+        return new Response(JSON.stringify({
+          ok: true, version,
+          published: !!meta.published_at, published_at: meta.published_at,
+          published_by: meta.published_by, versionNote: meta.note,
+          live: live?.version ?? null, draft: draft?.version ?? null,
+          fields: [...MERCH_FIELDS],
+          ...(await merchResolve(env, version)),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=merch-criteria-draft
+    // Body: { cells: [{ l3|null, field, value }] }  — value null clears the override
+    // (the cell falls back to inheriting). Opens the draft if there isn't one.
+    if (url.searchParams.get("action") === "merch-criteria-draft" && request.method === "POST") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const cells = Array.isArray(body?.cells) ? body.cells : null;
+        if (!cells || !cells.length) {
+          return new Response(JSON.stringify({ error: "cells[] required" }), { status: 400, headers: corsJson });
+        }
+        if (cells.length > 200) {
+          return new Response(JSON.stringify({ error: "Too many cells in one request (max 200)" }), { status: 400, headers: corsJson });
+        }
+        for (const c of cells) {
+          if (!MERCH_FIELDS.has(c?.field)) {
+            return new Response(JSON.stringify({ error: `Unknown field: ${c?.field}` }), { status: 400, headers: corsJson });
+          }
+          if (c.l3 != null && !merchIsCategory(c.l3)) {
+            return new Response(JSON.stringify({ error: `Unknown category: ${c.l3}` }), { status: 400, headers: corsJson });
+          }
+          if (c.l3 == null && c.value == null) {
+            return new Response(JSON.stringify({ error: "A chain default cannot be cleared — it is what everything else inherits" }), { status: 400, headers: corsJson });
+          }
+        }
+        const version = await merchEnsureDraft(env, currentUser?.email || currentUser?.name || null);
+        const now = new Date().toISOString();
+        const who = currentUser?.email || currentUser?.name || null;
+        // `l3 IS ?` rather than `l3 = ?`: SQLite's `=` never matches NULL, so a plain
+        // equality would silently fail to clear the chain-default row.
+        const del = env.DB.prepare(
+          `DELETE FROM merch_criteria WHERE version = ? AND field = ? AND l3 IS ?`);
+        const ins = env.DB.prepare(
+          `INSERT INTO merch_criteria (version, l3, field, value, note, updated_by, updated_at)
+           VALUES (?, ?, ?, ?, NULL, ?, ?)`);
+        const stmts = [];
+        for (const c of cells) {
+          const l3 = c.l3 ?? null;
+          stmts.push(del.bind(version, c.field, l3));
+          if (c.value !== null && c.value !== undefined && c.value !== "") {
+            stmts.push(ins.bind(version, l3, c.field, String(c.value), who, now));
+          }
+        }
+        await env.DB.batch(stmts);
+        return new Response(JSON.stringify({ ok: true, version, applied: cells.length }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=merch-criteria-publish   Body: { note }
+    // A note is REQUIRED. PRD G5: every threshold change has a who/when/why, so there is
+    // no silent drift — a publish with nothing to say is the drift it exists to prevent.
+    if (url.searchParams.get("action") === "merch-criteria-publish" && request.method === "POST") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json().catch(() => ({}));
+        const note = (body?.note || "").trim();
+        if (!note) {
+          return new Response(JSON.stringify({ error: "A note is required to publish" }), { status: 400, headers: corsJson });
+        }
+        const { draft } = await merchVersions(env);
+        if (!draft) {
+          return new Response(JSON.stringify({ error: "No draft to publish" }), { status: 409, headers: corsJson });
+        }
+        // `published_at IS NULL` in the WHERE, and the row count checked after: two admins
+        // publishing at once must not both be told they published, or the loser's note is
+        // the one nobody can find later.
+        const res = await env.DB.prepare(
+          `UPDATE merch_criteria_versions SET published_at = ?, published_by = ?, note = ?
+            WHERE version = ? AND published_at IS NULL`
+        ).bind(new Date().toISOString(), currentUser?.email || currentUser?.name || null, note, draft.version).run();
+        if (!res?.meta?.changes) {
+          return new Response(JSON.stringify({ error: "That draft was already published" }), { status: 409, headers: corsJson });
+        }
+        return new Response(JSON.stringify({ ok: true, version: draft.version }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=merch-criteria-discard — throws the open draft away.
+    if (url.searchParams.get("action") === "merch-criteria-discard" && request.method === "POST") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const { draft } = await merchVersions(env);
+        if (!draft) {
+          return new Response(JSON.stringify({ error: "No draft to discard" }), { status: 409, headers: corsJson });
+        }
+        await env.DB.batch([
+          env.DB.prepare(`DELETE FROM merch_criteria WHERE version = ?`).bind(draft.version),
+          env.DB.prepare(`DELETE FROM merch_criteria_versions WHERE version = ? AND published_at IS NULL`).bind(draft.version),
+        ]);
+        return new Response(JSON.stringify({ ok: true, discarded: draft.version }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=merch-criteria-log — version / date / editor / category / field / old → new.
+    if (url.searchParams.get("action") === "merch-criteria-log" && request.method === "GET") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        return new Response(JSON.stringify({ ok: true, entries: await merchChangeLog(env) }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Merchandising: weekly shelf counts ────────────────────────────────────
+    // Bays of shelf per category per store, entered by the store manager. Guarded like
+    // supply-request-create: any authenticated user may submit, and a manager/DM is held
+    // to their own stores.
+    //
+    // GET ?action=shelf-counts&store=BL1[&week_ending=YYYY-MM-DD]
+    // Returns this week's entry and the previous week's, which the form prefills from.
+    if (url.searchParams.get("action") === "shelf-counts" && request.method === "GET") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      if (!store) return new Response(JSON.stringify({ error: "store required" }), { status: 400, headers: corsJson });
+      if (!canAccessStore(currentUser, store)) {
+        return new Response(JSON.stringify({ error: "Store not permitted" }), { status: 403, headers: corsJson });
+      }
+      const asked = url.searchParams.get("week_ending");
+      if (asked && !/^\d{4}-\d{2}-\d{2}$/.test(asked)) {
+        return new Response(JSON.stringify({ error: "Invalid week_ending (use YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+      }
+      const week = merchWeekEnding(asked || new Date().toISOString().slice(0, 10));
+      if (!week) return new Response(JSON.stringify({ error: "Invalid week_ending" }), { status: 400, headers: corsJson });
+      const prev = new Date(week + "T12:00:00Z");
+      prev.setUTCDate(prev.getUTCDate() - 7);
+      const prevWeek = prev.toISOString().slice(0, 10);
+      try {
+        // Append-only table: the newest row per (store, week, category) is the answer,
+        // so read by descending id and keep the first of each.
+        const { results } = await env.DB.prepare(
+          `SELECT week_ending, l3, bays, entered_by, entered_at FROM shelf_counts
+            WHERE store = ? AND week_ending IN (?, ?) ORDER BY id DESC`
+        ).bind(store, week, prevWeek).all();
+        const pick = (w) => {
+          const out = {};
+          for (const r of results || []) {
+            if (r.week_ending !== w || out[r.l3]) continue;
+            out[r.l3] = { bays: r.bays, entered_by: r.entered_by, entered_at: r.entered_at };
+          }
+          return out;
+        };
+        const current = pick(week);
+        const categories = await merchCoreCategories(env);
+        return new Response(JSON.stringify({
+          ok: true, store, week_ending: week, previous_week_ending: prevWeek,
+          // The form's own question list. Sent with the answers so the page never needs
+          // the criteria endpoint, which a store manager is not allowed to read.
+          categories,
+          counts: current, previous: pick(prevWeek),
+          entered: Object.keys(current).length > 0,
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=shelf-count-save
+    // Body: { store, week_ending, counts: [{ l3, bays }] }
+    if (url.searchParams.get("action") === "shelf-count-save" && request.method === "POST") {
+      if (!currentUser) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsJson });
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const store = (body?.store || "").toUpperCase();
+        const counts = Array.isArray(body?.counts) ? body.counts : null;
+        if (!store || !counts || !counts.length) {
+          return new Response(JSON.stringify({ error: "store and at least one count required" }), { status: 400, headers: corsJson });
+        }
+        if (!canAccessStore(currentUser, store)) {
+          return new Response(JSON.stringify({ error: "Store not permitted" }), { status: 403, headers: corsJson });
+        }
+        if (counts.length > 100) {
+          return new Response(JSON.stringify({ error: "Too many counts in one request (max 100)" }), { status: 400, headers: corsJson });
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(body?.week_ending || "")) {
+          return new Response(JSON.stringify({ error: "week_ending required (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+        }
+        const week = merchWeekEnding(body.week_ending);
+        if (week !== body.week_ending) {
+          return new Response(JSON.stringify({ error: `week_ending must be a Sunday — did you mean ${week}?` }), { status: 400, headers: corsJson });
+        }
+        for (const c of counts) {
+          if (c?.l3 !== MERCH_OTHER_FOOD && !merchIsCategory(c?.l3)) {
+            return new Response(JSON.stringify({ error: `Unknown category: ${c?.l3}` }), { status: 400, headers: corsJson });
+          }
+          const n = Number(c?.bays);
+          if (!Number.isFinite(n) || n < 0 || n > 999) {
+            return new Response(JSON.stringify({ error: `Invalid bays for ${c?.l3}: must be 0–999` }), { status: 400, headers: corsJson });
+          }
+        }
+        const now = new Date().toISOString();
+        const who = currentUser?.email || currentUser?.name || null;
+        const ins = env.DB.prepare(
+          `INSERT INTO shelf_counts (store, week_ending, l3, bays, entered_by, entered_at)
+           VALUES (?, ?, ?, ?, ?, ?)`);
+        await env.DB.batch(counts.map(c => ins.bind(store, week, c.l3, Number(c.bays), who, now)));
+        return new Response(JSON.stringify({ ok: true, store, week_ending: week, saved: counts.length }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }

@@ -708,6 +708,28 @@
             </div>
           </div>
         </div>
+        <!-- Merchandising. Its own group rather than an item because it is the section
+             the buy tools grow into — allocation and layout land here next, and a
+             renamed nav item is a worse migration than an empty sub-menu. The GROUP is
+             visible to every manager so they can reach Shelf Count; Buy Criteria is
+             gated to admins below, the same shape as Marketing. -->
+        <div id="nav-merch-group" class="hidden">
+          <div id="nav-merch" class="nav-item" onclick="toggleMerchMenu()">
+            <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="15"/><line x1="15" y1="15" x2="15" y2="21"/></svg></span>
+            <span class="nav-label">Merchandising</span>
+            <span id="nav-merch-chev" class="nav-chev nav-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          </div>
+          <div id="nav-merch-sub" class="nav-sub hidden">
+            <div id="nav-merch-criteria" class="nav-item nav-subitem" data-page="merch-criteria" onclick="navigateToPage('merch-criteria')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 15 11 17 15 12"/></svg></span>
+              <span class="nav-label">Buy Criteria</span>
+            </div>
+            <div id="nav-merch-shelf-count" class="nav-item nav-subitem" data-page="merch-shelf-count" onclick="navigateToPage('merch-shelf-count')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="7" x2="21" y2="7"/><line x1="3" y1="13" x2="21" y2="13"/><line x1="3" y1="19" x2="21" y2="19"/><line x1="7" y1="4" x2="7" y2="7"/><line x1="13" y1="10" x2="13" y2="13"/><line x1="10" y1="16" x2="10" y2="19"/></svg></span>
+              <span class="nav-label">Shelf Count</span>
+            </div>
+          </div>
+        </div>
         <!-- E-Commerce's only nav item today. Hidden by default and shown by
              applyRoleUI only for an account that actually holds E-Commerce;
              applyBusinessNav then hides it again while you are inside Bargain
@@ -1971,6 +1993,81 @@
         <div class="flex gap-1 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border mb-4" id="fbc-status-tabs"></div>
         <div id="fbc-status" class="hidden text-sm mb-3"></div>
         <div id="fbc-list" class="space-y-3"></div>
+      </div>
+    </div>
+
+    <!-- ── Merchandising: Buy Criteria ─────────────────────────────────────────
+         The versioned thresholds a buy is scored against, and the definition of
+         "core" everything downstream reads. Edits accumulate in a draft; nothing
+         applies until it is published with a note. -->
+    <div id="page-merch-criteria" class="hidden">
+      <style>
+        #mc-tbl{border-collapse:separate;border-spacing:0;font-size:12px}
+        #mc-tbl th,#mc-tbl td{border-bottom:.5px solid rgba(20,16,8,.10);padding:5px 8px;text-align:left;white-space:nowrap}
+        .dark #mc-tbl th,.dark #mc-tbl td{border-bottom-color:rgba(255,255,255,.09)}
+        #mc-tbl th{font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+        #mc-tbl .mc-cat{position:sticky;left:0;z-index:2;white-space:normal;min-width:190px;font-weight:500}
+        #mc-tbl tr.mc-group td{font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;padding-top:12px}
+        #mc-tbl tr.mc-default td{font-weight:600}
+        #mc-tbl input{width:76px;border-radius:6px;padding:2px 6px;font-size:12px;border:1px solid transparent;background:transparent}
+        #mc-tbl input:focus{outline:none;border-color:#639922;background:rgba(99,153,34,.06)}
+        /* Inherited vs override vs changed-in-draft — the three states the PRD asks
+           the table to show at a glance, so nobody has to guess where a number came from. */
+        #mc-tbl input.mc-inherit{color:#9aa0a6}
+        #mc-tbl input.mc-override{color:inherit;border-color:rgba(20,16,8,.14)}
+        .dark #mc-tbl input.mc-override{border-color:rgba(255,255,255,.16)}
+        #mc-tbl input.mc-dirty{background:rgba(234,179,8,.16);border-color:rgba(234,179,8,.55)}
+      </style>
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-[1500px] mx-auto">
+          <div class="flex items-end justify-between gap-4 flex-wrap">
+            <div>
+              <div class="flex items-center gap-2.5 flex-wrap">
+                <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Buy Criteria</h1>
+                <span id="mc-version" class="text-[11px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded-md px-2 py-0.5"></span>
+              </div>
+              <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">What a buy has to pass, and what counts as core. Published versions never move.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <label class="flex items-center gap-1.5 text-xs font-semibold text-opl-inkDim dark:text-op-inkDim cursor-pointer">
+                <input type="checkbox" id="mc-only-overrides" onchange="mcRender()" class="accent-accent-green"> Only overrides
+              </label>
+              <button id="mc-discard" onclick="mcDiscard()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim active:scale-95 transition">Discard draft</button>
+              <button id="mc-publish" onclick="mcPublish()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg bg-accent-green text-white active:scale-95 transition">Publish…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="max-w-[1500px] mx-auto px-4 sm:px-6 pt-4 pb-10">
+        <div id="mc-status" class="text-sm text-opl-inkDim dark:text-op-inkDim mb-3">Loading…</div>
+        <div class="overflow-x-auto"><table id="mc-tbl"></table></div>
+        <div class="mt-8">
+          <button onclick="mcToggleLog()" class="flex items-center gap-1.5 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim">
+            <span id="mc-log-chev" class="inline-block transition-transform">▸</span> Change log
+          </button>
+          <div id="mc-log" class="hidden mt-3 text-xs space-y-2"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Merchandising: Shelf Count ───────────────────────────────────────────
+         The weekly bay count, entered on a phone by the store manager. Kept
+         deliberately short: seven numbers and a save. -->
+    <div id="page-merch-shelf-count" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-2xl mx-auto">
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Shelf Count</h1>
+          <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">How many bays each core category has on your floor this week. An end cap counts as one bay.</p>
+          <div class="flex items-center gap-2 mt-3 flex-wrap">
+            <select id="sc-store" onchange="scLoad()" class="rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-sm px-3 py-2"></select>
+            <select id="sc-week" onchange="scLoad()" class="rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-sm px-3 py-2"></select>
+          </div>
+        </div>
+      </div>
+      <div class="max-w-2xl mx-auto px-4 sm:px-6 pt-4 pb-10">
+        <div id="sc-status" class="text-sm text-opl-inkDim dark:text-op-inkDim mb-3">Loading…</div>
+        <div id="sc-rows" class="space-y-2"></div>
+        <button id="sc-save" onclick="scSave()" class="hidden w-full mt-5 py-3 rounded-xl bg-accent-green text-white font-semibold active:scale-[.99] transition">Save count</button>
       </div>
     </div>
 
@@ -3762,7 +3859,7 @@
   // installed standalone PWA (iOS) — they freeze the whole app. These
   // Promise-based, in-app replacements never block. uiConfirm → Promise<bool>,
   // uiAlert → Promise<void>. Text is set via textContent (no HTML injection).
-  function _uiDialog({ message, title, okText = 'OK', cancelText = null, danger = false }) {
+  function _uiDialog({ message, title, okText = 'OK', cancelText = null, danger = false, prompt = null }) {
     return new Promise(resolve => {
       const dark = document.documentElement.classList.contains('dark');
       const bg = dark ? '#0f1722' : '#ffffff', fg = dark ? '#e6edf3' : '#13243a';
@@ -3776,20 +3873,40 @@
       if (title) { const h = document.createElement('div'); h.textContent = title; h.style.cssText = `font-size:16px;font-weight:700;margin-bottom:8px;color:${fg};`; box.appendChild(h); }
       const p = document.createElement('div'); p.textContent = message;
       p.style.cssText = `font-size:14px;line-height:1.5;color:${dim};margin-bottom:18px;white-space:pre-wrap;overflow-wrap:anywhere;`; box.appendChild(p);
+      // uiPrompt's text field. Kept inside _uiDialog rather than given its own overlay so
+      // the three dialogs stay one implementation — the PWA-safety reason they exist at all
+      // applies identically to a prompt.
+      let input = null;
+      if (prompt !== null) {
+        input = document.createElement('input');
+        input.type = 'text'; input.value = prompt || ''; input.setAttribute('aria-label', message);
+        input.style.cssText = `width:100%;box-sizing:border-box;padding:9px 11px;font-size:14px;border-radius:10px;border:1px solid ${border};background:transparent;color:${fg};margin-bottom:18px;`;
+        box.appendChild(input);
+      }
       const rowEl = document.createElement('div'); rowEl.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
       let done = false;
       const onKey = (e) => { if (e.key === 'Escape') finish(cancelText ? false : true); else if (e.key === 'Enter') finish(true); };
-      function finish(val) { if (done) return; done = true; document.removeEventListener('keydown', onKey); overlay.remove(); resolve(val); }
+      function finish(val) {
+        if (done) return; done = true;
+        document.removeEventListener('keydown', onKey); overlay.remove();
+        // A prompt resolves to the typed text, or null when cancelled — '' is a real
+        // answer ("they cleared it") and must not read as a cancel.
+        resolve(input ? (val ? input.value : null) : val);
+      }
       if (cancelText) { const c = document.createElement('button'); c.textContent = cancelText; c.style.cssText = `padding:9px 16px;font-size:14px;font-weight:600;border-radius:10px;border:1px solid ${border};background:transparent;color:${fg};cursor:pointer;`; c.onclick = () => finish(false); rowEl.appendChild(c); }
       const okEl = document.createElement('button'); okEl.textContent = okText; okEl.style.cssText = `padding:9px 16px;font-size:14px;font-weight:700;border-radius:10px;border:none;background:${okBg};color:${okFg};cursor:pointer;`; okEl.onclick = () => finish(true); rowEl.appendChild(okEl);
       box.appendChild(rowEl); overlay.appendChild(box);
       overlay.addEventListener('click', e => { if (e.target === overlay) finish(cancelText ? false : true); });
-      document.addEventListener('keydown', onKey); document.body.appendChild(overlay); okEl.focus();
+      document.addEventListener('keydown', onKey); document.body.appendChild(overlay); (input || okEl).focus();
     });
   }
   function uiConfirm(message, opts = {}) { return _uiDialog({ message, cancelText: opts.cancelText || 'Cancel', okText: opts.okText || 'OK', title: opts.title, danger: opts.danger }); }
   function uiAlert(message, opts = {}) { return _uiDialog({ message, okText: opts.okText || 'OK', title: opts.title }); }
-  window.uiConfirm = uiConfirm; window.uiAlert = uiAlert;
+  // uiPrompt → Promise<string|null>. null means cancelled.
+  function uiPrompt(title, message, opts = {}) {
+    return _uiDialog({ message, title, prompt: opts.value || '', cancelText: opts.cancelText || 'Cancel', okText: opts.okText || 'OK' });
+  }
+  window.uiConfirm = uiConfirm; window.uiAlert = uiAlert; window.uiPrompt = uiPrompt;
   function fmtK(n) {
     if (n == null) return "—";
     const abs = Math.abs(n), sign = n < 0 ? "-" : "";
@@ -7632,12 +7749,19 @@
     if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)) return;
 
     // Guard admin-only pages
-    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments'];
+    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria'];
     if (adminOnly.includes(page)) {
       const role = currentUser && currentUser.role;
       if (role !== 'superuser' && role !== 'admin') return;
     }
     if (page === 'supply-request') {
+      const role = currentUser && currentUser.role;
+      const allowed = ['superuser','admin','district_manager','manager'];
+      if (!allowed.includes(role)) return;
+    }
+    // Shelf Count is the one Merchandising surface a store manager needs. The worker
+    // scopes the write to their own stores; this only decides whether the shell opens.
+    if (page === 'merch-shelf-count') {
       const role = currentUser && currentUser.role;
       const allowed = ['superuser','admin','district_manager','manager'];
       if (!allowed.includes(role)) return;
@@ -7737,6 +7861,16 @@
     }
     if (page === 'content') {
       if (typeof initContent === 'function') initContent();
+    }
+    if (page === 'merch-criteria') {
+      if (typeof initMerchCriteria === 'function') initMerchCriteria();
+    }
+    if (page === 'merch-shelf-count') {
+      if (typeof initShelfCount === 'function') initShelfCount();
+    }
+    // Keep the Merchandising dropdown expanded while on any of its pages.
+    if ((page === 'merch-criteria' || page === 'merch-shelf-count') && typeof toggleMerchMenu === 'function') {
+      toggleMerchMenu(true);
     }
 
     // Close mobile sidebar
@@ -16788,6 +16922,338 @@
   }
   window.toggleMarketingMenu = toggleMarketingMenu;
 
+
+  // ═══════════════════════════════════════════════════════════════
+  //  MERCHANDISING — Buy Criteria + Shelf Count
+  //
+  //  ⚠️ `l3` here is the PRD's "L2". This repo's L2 is the coarse 15-bucket Clover
+  //  taxonomy; the categories purchasing argues about — snacks, candy, coffee & tea —
+  //  are L3, all inside `Consumable Food`. The L2 is used for the group headings only.
+  // ═══════════════════════════════════════════════════════════════
+
+  function toggleMerchMenu(force) {
+    const sub = el('nav-merch-sub');
+    const chev = el('nav-merch-chev');
+    if (!sub) return;
+    const open = force === true ? true
+      : force === false ? false
+      : sub.classList.contains('hidden');
+    sub.classList.toggle('hidden', !open);
+    if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
+  }
+  window.toggleMerchMenu = toggleMerchMenu;
+
+  // ── Buy Criteria ──────────────────────────────────────────────────────────
+  const MC_COLS = [
+    ['core',                   'Core',        'check'],
+    ['max_cost_pct_retail',    'Max cost %',  'num'],
+    ['min_margin_per_unit',    'Min margin $', 'num'],
+    ['price_cap_pct_retail',   'Price cap %', 'num'],
+    ['rounding',               'Rounding',    'text'],
+    ['max_breakeven_sellthru', 'Max B/E %',   'num'],
+    ['max_per_store',          'Max/store',   'text'],
+    ['cash_back_days',         'Cash back d', 'num'],
+  ];
+  let mcData = null;
+  // Cells edited since the last save, keyed `l3|field` (empty l3 = chain default).
+  // Held here rather than written on every keystroke so a half-typed number never
+  // becomes a threshold.
+  let mcDirty = new Map();
+
+  async function initMerchCriteria() {
+    mcDirty = new Map();
+    el('mc-status').textContent = 'Loading…';
+    el('mc-tbl').innerHTML = '';
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=merch-criteria`, { credentials: 'include' });
+      mcData = await r.json();
+      if (!r.ok) throw new Error(mcData.error || `HTTP ${r.status}`);
+      mcRender();
+    } catch (e) {
+      el('mc-status').textContent = `Could not load criteria: ${e.message}`;
+    }
+  }
+  window.initMerchCriteria = initMerchCriteria;
+
+  function mcKey(l3, field) { return `${l3 || ''}|${field}`; }
+
+  function mcCellValue(l3, field) {
+    const k = mcKey(l3, field);
+    if (mcDirty.has(k)) return mcDirty.get(k);
+    if (!l3) return mcData.defaults?.[field]?.value ?? '';
+    const cell = mcData.categories.find(c => c.l3 === l3)?.fields?.[field];
+    return cell?.inherited ? '' : (cell?.value ?? '');
+  }
+
+  function mcRender() {
+    if (!mcData) return;
+    const onlyOverrides = el('mc-only-overrides').checked;
+    const hasDraft = mcData.draft != null;
+    const dirty = mcDirty.size > 0;
+    el('mc-version').textContent = mcData.version == null ? 'No criteria yet'
+      : hasDraft && mcData.version === mcData.draft ? `Draft v${mcData.draft}`
+      : `Live v${mcData.version}${hasDraft ? ` · draft v${mcData.draft} open` : ''}`;
+    el('mc-publish').classList.toggle('hidden', !(hasDraft || dirty));
+    el('mc-discard').classList.toggle('hidden', !hasDraft);
+    el('mc-status').textContent = dirty
+      ? `${mcDirty.size} unsaved change${mcDirty.size === 1 ? '' : 's'} — Publish… saves and publishes them.`
+      : hasDraft
+        ? 'A draft is open. Nothing in it applies until it is published.'
+        : mcData.version == null
+          ? 'Nothing published yet. Set the chain defaults and any core flags, then publish v1.'
+          : 'Blank cells inherit the chain default above.';
+
+    const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const head = `<thead><tr><th class="mc-cat">Category</th>${
+      MC_COLS.map(([, label]) => `<th>${label}</th>`).join('')}</tr></thead>`;
+
+    const inputFor = (l3, field, type) => {
+      const k = mcKey(l3, field);
+      const raw = mcCellValue(l3, field);
+      const inherited = !l3 ? false : raw === '';
+      const cls = mcDirty.has(k) ? 'mc-dirty' : inherited ? 'mc-inherit' : 'mc-override';
+      if (type === 'check') {
+        const on = l3 ? (mcDirty.has(k) ? raw === '1' : mcData.categories.find(c => c.l3 === l3)?.core)
+                      : mcCellValue(null, field) === '1';
+        return `<input type="checkbox" ${on ? 'checked' : ''} class="accent-accent-green ${mcDirty.has(k) ? 'mc-dirty' : ''}"
+                  onchange="mcEdit(${l3 ? `'${esc(l3).replace(/'/g, "\\'")}'` : 'null'},'${field}',this.checked?'1':'0')">`;
+      }
+      const ph = l3 ? esc(mcData.defaults?.[field]?.value ?? '') : '';
+      return `<input class="${cls}" value="${esc(raw)}" placeholder="${ph}" inputmode="${type === 'num' ? 'decimal' : 'text'}"
+                onchange="mcEdit(${l3 ? `'${esc(l3).replace(/'/g, "\\'")}'` : 'null'},'${field}',this.value)">`;
+    };
+
+    const rows = [`<tr class="mc-default"><td class="mc-cat">Chain default</td>${
+      MC_COLS.map(([f, , t]) => `<td>${inputFor(null, f, t)}</td>`).join('')}</tr>`];
+
+    let group = null;
+    for (const cat of (mcData.categories || [])) {
+      const overridden = MC_COLS.some(([f]) => !cat.fields[f].inherited) || mcDirty.has(mcKey(cat.l3, 'core'));
+      if (onlyOverrides && !overridden) continue;
+      if (cat.l2 !== group) {
+        group = cat.l2;
+        rows.push(`<tr class="mc-group"><td class="mc-cat" colspan="${MC_COLS.length + 1}">${esc(group)}</td></tr>`);
+      }
+      rows.push(`<tr><td class="mc-cat" title="${esc(cat.l3)}">${esc(mcLabel(cat.l3))}</td>${
+        MC_COLS.map(([f, , t]) => `<td>${inputFor(cat.l3, f, t)}</td>`).join('')}</tr>`);
+    }
+    el('mc-tbl').innerHTML = head + `<tbody>${rows.join('')}</tbody>`;
+  }
+  window.mcRender = mcRender;
+
+  // Same shortening the worker applies for the shelf-count form, so a category reads
+  // the same on both pages.
+  function mcLabel(l3) {
+    const tail = String(l3).split(' - ').pop();
+    return tail.replace(/[A-Za-z0-9&']+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase());
+  }
+
+  function mcEdit(l3, field, value) {
+    mcDirty.set(mcKey(l3, field), value);
+    mcRender();
+  }
+  window.mcEdit = mcEdit;
+
+  // Save + publish are ONE action from the user's side. Splitting them would leave a
+  // draft nobody remembers opening, and a draft that is never published is a threshold
+  // change that silently did not happen.
+  async function mcPublish() {
+    const note = await uiPrompt('Publish criteria', 'What changed, and why? (required)');
+    if (note === null) return;
+    if (!String(note).trim()) { uiAlert('A note is required to publish.'); return; }
+    try {
+      if (mcDirty.size) {
+        const cells = [...mcDirty.entries()].map(([k, value]) => {
+          const i = k.indexOf('|');
+          const l3 = k.slice(0, i);
+          return { l3: l3 || null, field: k.slice(i + 1), value };
+        });
+        const d = await fetch(`${WORKER_BASE}?action=merch-criteria-draft`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cells }),
+        });
+        const dj = await d.json();
+        if (!d.ok) throw new Error(dj.error || `HTTP ${d.status}`);
+      }
+      const r = await fetch(`${WORKER_BASE}?action=merch-criteria-publish`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await uiAlert(`Published v${j.version}.`);
+      initMerchCriteria();
+    } catch (e) {
+      uiAlert(`Publish failed: ${e.message}`);
+    }
+  }
+  window.mcPublish = mcPublish;
+
+  async function mcDiscard() {
+    if (!await uiConfirm('Discard the open draft? Every unpublished edit in it is lost.')) return;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=merch-criteria-discard`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      mcDirty = new Map();
+      initMerchCriteria();
+    } catch (e) {
+      uiAlert(`Discard failed: ${e.message}`);
+    }
+  }
+  window.mcDiscard = mcDiscard;
+
+  async function mcToggleLog() {
+    const box = el('mc-log'), chev = el('mc-log-chev');
+    const opening = box.classList.contains('hidden');
+    box.classList.toggle('hidden', !opening);
+    chev.style.transform = opening ? 'rotate(90deg)' : '';
+    if (!opening) return;
+    box.textContent = 'Loading…';
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=merch-criteria-log`, { credentials: 'include' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const esc = (t) => String(t == null ? '—' : t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+      const byVersion = {};
+      for (const e of j.entries || []) (byVersion[e.version] || (byVersion[e.version] = [])).push(e);
+      const versions = Object.keys(byVersion).sort((a, b) => b - a);
+      box.innerHTML = versions.length ? versions.map(v => {
+        const first = byVersion[v][0];
+        return `<div class="border-l-2 border-accent-green/40 pl-3 py-1">
+          <div class="font-semibold">v${v} · ${esc((first.published_at || '').slice(0, 10))} · ${esc(first.published_by)}</div>
+          <div class="text-opl-inkDim dark:text-op-inkDim italic mb-1">${esc(first.note)}</div>
+          ${byVersion[v].map(e => `<div>${esc(e.l3 ? mcLabel(e.l3) : 'Chain default')} · ${esc(e.field)}: ${esc(e.from)} → ${esc(e.to)}</div>`).join('')}
+        </div>`;
+      }).join('') : '<div class="text-opl-inkDim dark:text-op-inkDim">Nothing published yet.</div>';
+    } catch (e) {
+      box.textContent = `Could not load the log: ${e.message}`;
+    }
+  }
+  window.mcToggleLog = mcToggleLog;
+
+  // ── Shelf Count ───────────────────────────────────────────────────────────
+  let scData = null;
+
+  // The eight most recent week-ends, newest first. A count is entered for the week
+  // that just closed, so the current week is the default rather than the next one.
+  function scWeeks() {
+    const out = [];
+    const d = new Date();
+    d.setUTCHours(12, 0, 0, 0);
+    d.setUTCDate(d.getUTCDate() + (7 - d.getUTCDay()) % 7);
+    for (let i = 0; i < 8; i++) {
+      out.push(d.toISOString().slice(0, 10));
+      d.setUTCDate(d.getUTCDate() - 7);
+    }
+    return out;
+  }
+
+  // Supply Request's getUserStores/SR_LABELS live inside its own IIFE, so they are
+  // deliberately re-stated here rather than reached into. Same rule, same roster.
+  const SC_LABELS = { BL1: 'Coliseum', BL2: 'South Bend', BL4: 'Dupont', BL8: 'Holland', BL14: 'Battle Creek', BL16: 'Indy East' };
+  const SC_ALL_STORES = ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'];
+
+  function scStores() {
+    if (!currentUser) return [];
+    if (currentUser.role === 'superuser' || currentUser.role === 'admin') return SC_ALL_STORES;
+    const s = currentUser.stores;
+    if (Array.isArray(s)) return s;
+    try { return JSON.parse(s || '[]'); } catch (e) { return []; }
+  }
+
+  function initShelfCount() {
+    const stores = scStores();
+    const sel = el('sc-store');
+    sel.innerHTML = stores.map(s => `<option value="${s}">${SC_LABELS[s] || s}</option>`).join('');
+    const wk = el('sc-week');
+    wk.innerHTML = scWeeks().map((w, i) => `<option value="${w}">${i === 0 ? 'This week' : `Week ending ${w}`}</option>`).join('');
+    if (!stores.length) {
+      el('sc-status').textContent = 'No store is assigned to your account, so there is nothing to count.';
+      el('sc-rows').innerHTML = '';
+      el('sc-save').classList.add('hidden');
+      return;
+    }
+    scLoad();
+  }
+  window.initShelfCount = initShelfCount;
+
+  async function scLoad() {
+    const store = el('sc-store').value, week = el('sc-week').value;
+    if (!store || !week) return;
+    el('sc-status').textContent = 'Loading…';
+    el('sc-rows').innerHTML = '';
+    el('sc-save').classList.add('hidden');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=shelf-counts&store=${encodeURIComponent(store)}&week_ending=${week}`, { credentials: 'include' });
+      scData = await r.json();
+      if (!r.ok) throw new Error(scData.error || `HTTP ${r.status}`);
+      scRender();
+    } catch (e) {
+      el('sc-status').textContent = `Could not load: ${e.message}`;
+    }
+  }
+  window.scLoad = scLoad;
+
+  function scRender() {
+    const cats = scData.categories || [];
+    if (!cats.length) {
+      // Not an error state: you cannot count "the core" before anyone has published
+      // what core is. Say that, rather than showing an empty form.
+      el('sc-status').textContent = 'Core categories have not been published yet — once Buy Criteria v1 is live, the list to count appears here.';
+      el('sc-rows').innerHTML = '';
+      return;
+    }
+    el('sc-status').textContent = scData.entered
+      ? `Already entered for week ending ${scData.week_ending}. Saving again replaces it; the earlier entry is kept.`
+      : `Week ending ${scData.week_ending}. An end cap counts as one bay.`;
+    const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    el('sc-rows').innerHTML = cats.map(c => {
+      const now = scData.counts?.[c.l3]?.bays;
+      const prev = scData.previous?.[c.l3]?.bays;
+      // Prefilled from last week when this week is blank — the fastest correct answer
+      // for a shelf that has not moved, and the PRD's two-minute target depends on it.
+      const value = now != null ? now : (prev != null ? prev : '');
+      return `<div class="flex items-center gap-3 bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl px-4 py-3">
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-sm truncate" title="${esc(c.l3)}">${esc(c.label)}</div>
+          <div class="text-[11px] text-opl-inkDim dark:text-op-inkDim">${prev != null ? `Last week: ${prev}` : 'No count last week'}</div>
+        </div>
+        <input data-l3="${esc(c.l3)}" type="number" min="0" max="999" step="0.5" inputmode="decimal" value="${value}"
+          class="w-20 text-right rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-base px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+      </div>`;
+    }).join('');
+    el('sc-save').classList.remove('hidden');
+  }
+
+  async function scSave() {
+    const counts = [...document.querySelectorAll('#sc-rows input[data-l3]')]
+      .map(i => ({ l3: i.dataset.l3, bays: i.value }))
+      .filter(c => c.bays !== '');
+    if (!counts.length) { uiAlert('Enter at least one number.'); return; }
+    const btn = el('sc-save');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=shelf-count-save`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ store: el('sc-store').value, week_ending: el('sc-week').value, counts: counts.map(c => ({ l3: c.l3, bays: Number(c.bays) })) }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await uiAlert(`Saved ${j.saved} counts for week ending ${j.week_ending}.`);
+      scLoad();
+    } catch (e) {
+      uiAlert(`Save failed: ${e.message}`);
+    } finally {
+      btn.disabled = false; btn.textContent = 'Save count';
+    }
+  }
+  window.scSave = scSave;
+
   // ═══════════════════════════════════════════════════════════════
   //  SIDEBAR
   // ═══════════════════════════════════════════════════════════════
@@ -18888,6 +19354,12 @@
     'nav-flow-calendar': 'bl',
     'nav-content': 'bl',
     'nav-submit-photos': 'bl',
+    'nav-merch-group': 'bl',
+    'nav-merch': 'bl',
+    'nav-merch-chev': 'bl',
+    'nav-merch-sub': 'bl',
+    'nav-merch-criteria': 'bl',
+    'nav-merch-shelf-count': 'bl',
     // Hub-level, not owned by any one business.
     'nav-settings': null,
     'nav-switch-business': null,
@@ -19284,6 +19756,13 @@
     // gated separately (laborApplyRole), because entry is chain-wide.
     const navLabor = el('nav-labor');
     if (navLabor) navLabor.classList.toggle('hidden', !seesMoney);
+
+    // Merchandising: the GROUP is visible to anyone who may enter Shelf Count, so a
+    // store manager can reach the form; Buy Criteria is gated to admins beneath it.
+    // Same shape as Marketing directly below.
+    const merchRoles = ['superuser', 'admin', 'district_manager', 'manager'];
+    el('nav-merch-group').classList.toggle('hidden', !merchRoles.includes(user.role));
+    el('nav-merch-criteria').classList.toggle('hidden', !isAdmin);
 
     el('nav-marketing-group').classList.remove('hidden');
     el('nav-marketing-ads').classList.toggle('hidden', !isAdmin);     // Ad Reporting: admin/superuser

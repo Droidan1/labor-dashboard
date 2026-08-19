@@ -1,5 +1,39 @@
 # Lessons
 
+## Measure scroll geometry on the ACTUAL scroller — `#app` is `min-h-screen`, so the DOCUMENT scrolls (2026-08-19)
+
+**Context:** Verifying the new Shelf Count page on a 375px viewport. I set
+`#main-scroll.scrollTop = scrollHeight`, measured the Save button against
+`#bottom-nav`, saw it fully behind the nav, and told the user "real bug — Save is
+unreachable on a phone." It was not a bug.
+
+**Root cause:** `#app` is `min-h-screen flex` (index.html:658), not `h-screen`. A tall
+page therefore grows `#app` past the viewport and the **document** scrolls; `#main-scroll`
+(`flex-1 overflow-y-auto`) has `clientHeight === scrollHeight` and nothing to scroll. My
+`scrollTop` assignment was a no-op, so I measured the un-scrolled position and read it as
+"cannot reach". Scrolling `window` instead put Save at 612–660 against a nav top of 732 —
+72px of clearance, exactly what `#main-scroll { padding-bottom: calc(7rem + env(...)) }`
+(index.html:529) is there to provide.
+
+**Rules:**
+1. Before asserting an element is unreachable, prove the scroller actually moved:
+   assert `scrollTop > 0`, or that `scrollHeight > clientHeight` on the box you scrolled.
+   `atBottom === true` is meaningless on a box with nothing to scroll.
+2. `min-h-screen` ≠ `h-screen`. With `min-h-screen`, an inner `overflow-y-auto` child is
+   inert and the document is the scroller. Check which one moves before measuring.
+3. **Differential check first.** The cheap disproof was to run the same measurement on an
+   existing page with a bottom button (Supply Request's Submit). If the established
+   pattern "fails" too, the harness is wrong, not the new code. I reached for a fix before
+   reaching for that comparison.
+4. The synthetic admin-page harness (hide `#login-page`, force `#app` to `display:flex`)
+   reproduces DOM and behaviour faithfully but NOT layout — forcing `display` leaves `#app`
+   unconstrained. Trust it for wiring and role gating; distrust it for geometry.
+
+**Related:** `currentUser` is a top-level `let` (index.html:18168), so the harness must set
+it with a BARE assignment — `window.currentUser = …` does not reach the binding and every
+role guard silently returns early.
+
+
 ## Cross-store SUMs over daily_sales MUST filter `store IN (ALL_STORES)` — BL12 duplicates Indy's budget (2026-07-17)
 
 **Context:** User: "we are adding Indy budget amount twice in the month to date amount."
