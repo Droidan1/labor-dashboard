@@ -33,11 +33,41 @@ So: **PRD "L2" → code `l3`**, **PRD "group" → code `l2`**. Confirmed with Br
 - [x] `node scripts/test-nav-registry.mjs` green
 - [x] `bash scripts/test.sh` green — 1615 assertions, 44 suites
 
-## Deploy (not started — needs Brian's go-ahead per CLAUDE.md rule 7)
+## Deploy — PRODUCTION, 2026-08-19
 
-- [ ] migration-041 → staging, then prod
-- [ ] Worker deploy **first**, then frontend (client calls new endpoints)
-- [ ] Verify on staging with a manager-role account
+Brian: "run the migration on prod, we will run and push everything straight to
+production. and update staging later." Prod-first, deliberately.
+
+- [x] **migration-041 → PROD** (`labor-dashboard-db`). Was a true create: none of the
+      three tables existed. 3 tables + 5 indexes, all empty; prod went 38 → 39 tables.
+      Nothing overwritten, so nothing to back up.
+- [x] **Worker → prod**, version `a932dc15-8fb6-4c16-b9ae-79c431a0c8b6`, 100% of traffic.
+      Bindings read back per the deploy lesson: SALES_SNAPSHOTS, DB=labor-dashboard-db,
+      MEDIA=bl-marketing-media, BL1/2/4/8/12/14/16 merchant ids, all 6 crons.
+- [x] **Frontend → main** (`21d1117`), Pages build green. All 8 markers present in the
+      deployed index.html; `max-w-2xl` and `accent-accent-green` present in the
+      CI-rebuilt tailwind.css.
+- [x] **Service worker bumped v89 → v90** (`5fd3236`) — missed on the first commit, which
+      would have left installed PWAs on the old shell with no Merchandising section.
+
+### Not verified, and why
+
+The new endpoints all sit below the auth gate, so an unauthenticated probe returns
+`401 NO_SESSION` on both old and new code — there is no way to functionally confirm them
+from outside without a session. What was confirmed: the new version is at 100% on the
+control plane, the API is alive, and the auth gate is intact. **The first real functional
+check is Brian logging in and opening Buy Criteria.** Nothing calls these endpoints until
+someone does, so the blast radius until then is zero.
+
+### Still to do
+
+- [ ] **Staging**: `migration-041` → `labor-dashboard-db-staging`, and deploy the staging
+      worker. Prod is ahead of staging until this happens.
+- [ ] **Publish criteria v1** — the tables are live but empty, so Shelf Count currently
+      shows "core categories have not been published yet" for every store. That is the
+      correct state, not a bug: v1 has to name the core before anyone can count it.
+      ⚠️ Set `min_margin_per_unit` for oral care with Brandon BEFORE publishing (open
+      question 2a), or the % test governs alone and warns on staples you would buy.
 
 ## Out of scope this pass
 
