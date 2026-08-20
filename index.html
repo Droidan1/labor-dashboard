@@ -2053,6 +2053,12 @@
         .mf-flag{display:inline-block;font-size:10px;border-radius:4px;padding:1px 5px;margin-left:5px;
           background:rgba(20,16,8,.07);color:#6b6453}
         .dark .mf-flag{background:rgba(255,255,255,.08);color:#8893a7}
+        /* Quiet until you look for it: destructive, so it should not compete with the
+           row itself, but it must be findable without opening the manifest first. */
+        .mf-x{background:none;border:none;color:#9c9484;cursor:pointer;font-size:17px;line-height:1;
+          padding:2px 7px;border-radius:6px}
+        .dark .mf-x{color:#5a6478}
+        .mf-x:hover{color:#b91c1c;background:rgba(239,68,68,.12)}
         .mf-note{padding:12px 18px;font-size:12.5px;color:#6b6453;border-top:1px solid rgba(20,16,8,.10)}
         .dark .mf-note{color:#8893a7;border-top-color:rgba(255,255,255,.09)}
         .mf-row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
@@ -17227,7 +17233,7 @@
   // ── Manifest Scorer ───────────────────────────────────────────────────────
   // The CSV is held in memory only: a remap re-reads the same text rather than the
   // server storing a vendor's price file it has no reason to keep.
-  let mfCsv = null, mfPending = null, mfOpenId = null;
+  let mfCsv = null, mfPending = null, mfOpenId = null, mfManifests = [];
 
   const mfEsc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
   const mfMoney = (n) => n === null || n === undefined ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n);
@@ -17255,12 +17261,17 @@
     mfSay('Loading…');
     try {
       const j = await mfApi('manifests');
+      mfManifests = j.manifests || [];
       const rows = (j.manifests || []).map(m => `<tr onclick="mfOpen('${mfEsc(m.id)}')" style="cursor:pointer">
         <td class="mf-l"><strong>${mfEsc(m.vendor)}</strong>${m.filename ? ` <span class="mf-flag">${mfEsc(m.filename)}</span>` : ''}</td>
         <td class="mf-l">${mfEsc((m.uploaded_at || '').slice(0,10))}</td>
         <td>${mfNum(m.line_count)}</td>
         <td>${mfMoney(m.landed_cost)}</td>
         <td class="mf-l"><span class="mf-v ${m.status === 'passed' ? 'mf-fail' : m.status?.startsWith('approved') ? 'mf-pass' : 'mf-warn'}">${mfEsc((m.status||'').replace('_',' '))}</span></td>
+        <td class="mf-l">${['draft','scored'].includes(m.status)
+          ? `<button class="mf-x" title="Delete this upload" aria-label="Delete ${mfEsc(m.vendor)}"
+               onclick="event.stopPropagation();mfDelete('${mfEsc(m.id)}')">&times;</button>`
+          : ''}</td>
       </tr>`).join('');
       mfSay('');
       el('mf-view').innerHTML = `
@@ -17279,7 +17290,7 @@
         <div class="mf-panel" style="margin-top:16px">
           <div class="mf-bar"><span class="mf-barlbl">Recent</span></div>
           ${rows ? `<div class="mf-scroll"><table class="mf-tbl"><thead><tr>
-              <th class="mf-l">Vendor</th><th class="mf-l">Uploaded</th><th>Lines</th><th>Landed cost</th><th class="mf-l">Status</th>
+              <th class="mf-l">Vendor</th><th class="mf-l">Uploaded</th><th>Lines</th><th>Landed cost</th><th class="mf-l">Status</th><th></th>
             </tr></thead><tbody>${rows}</tbody></table></div>`
             : `<div class="mf-body" style="color:#6b6453">Nothing uploaded yet.</div>`}
         </div>`;
@@ -17506,13 +17517,24 @@
   }
   window.mfRetail = mfRetail;
 
-  async function mfDelete() {
+  // Callable from a list row (with an explicit target) or from the open manifest.
+  // The confirm names the vendor and the line count, because "delete this item?" tells
+  // you nothing when two uploads of the same file are sitting next to each other.
+  async function mfDelete(id) {
+    const target = id || mfOpenId;
+    // Only an id crosses the HTML attribute boundary; everything human comes from data
+    // we already hold. A vendor name in an onclick attribute is a quoting bug waiting to
+    // happen — this one silently swallowed the click and opened the manifest instead.
+    const listed = (mfManifests || []).find(x => x.id === target);
     const m = (mfLast && mfLast.manifest) || {};
+    const name = listed?.vendor || m.vendor || 'this manifest';
+    const n = listed?.line_count ?? mfLast?.lines?.length ?? null;
+    if (!target) return;
     if (!await uiConfirm(
-      `Delete this ${mfEsc(m.vendor || 'manifest')} upload and its lines? Re-uploading the file starts it fresh.`,
+      `Delete "${name}"${n === null ? '' : ` and its ${n} lines`}? Re-uploading the file starts it fresh.`,
       { title: 'Delete manifest', danger: true, okText: 'Delete' })) return;
     try {
-      const j = await mfApi('manifest-delete', { id: mfOpenId });
+      const j = await mfApi('manifest-delete', { id: target });
       await uiAlert(`Deleted — ${j.lines} lines removed. ${j.note}`);
       mfList();
     } catch (e) { uiAlert(`Could not delete: ${e.message}`); }
