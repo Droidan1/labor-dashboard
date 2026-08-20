@@ -7563,6 +7563,76 @@ function retailDecide(line, cands, domains = [], opts = {}) {
   };
 }
 
+// ─── Firecrawl: the paid fallback ─────────────────────────────────────────────
+//
+// TinyFish Search and Fetch are free and do most of the work. They have two measured
+// gaps, and Firecrawl exists here to cover exactly those and nothing else:
+//
+//   1. JS-WALLED PAGES. A TinyFish fetch of a Dollar Tree product page returned
+//      navigation chrome after ten seconds. Firecrawl renders the page.
+//   2. FETCH-HOSTILE SITES (R8). Home Depot 403s a plain fetch. Firecrawl's `proxy:
+//      "auto"` retries through enhanced proxies at no credit surcharge.
+//
+// ⚠️ THIS ONE COSTS MONEY. Every other call in this pipeline is free; Firecrawl bills
+// credits (1 per scrape, 1,000/month free). So it is off unless a key is set, it runs
+// ONLY after a free attempt has already failed, and it is hard-capped per run with the
+// spend written to lookup_log. A cost that is not counted becomes a surprise on a bill.
+//
+// Endpoint verified against docs.firecrawl.dev, Aug 2026:
+//   POST https://api.firecrawl.dev/v2/scrape   Authorization: Bearer <key>
+//
+// `product` is the reason to prefer it over a plain markdown scrape: it returns
+// price.amount and availability.inStock as STRUCTURED data, so a fetched page no longer
+// has to go through the model to yield a price — which is where a third of the Alliance
+// run's parses died with a bare HTTP 400.
+async function firecrawlScrape(env, url, budget, ctx = {}) {
+  if (!env.FIRECRAWL_API_KEY) return null;
+  if (!budget || budget.credits <= 0) return null;
+  const t0 = Date.now();
+  let res, body = null, ok = false;
+  try {
+    res = await fetch("https://api.firecrawl.dev/v2/scrape", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.FIRECRAWL_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        formats: ["product", "markdown"],
+        onlyMainContent: true,
+        proxy: "auto",          // retries through enhanced proxies for the 403-ing sites
+        maxAge: 172800000,      // a two-day-old price is still the price, and costs less
+        timeout: 30000,
+        location: { country: "US", languages: ["en-US"] },
+      }),
+    });
+    ok = res.ok;
+    if (ok) body = await res.json();
+  } catch (_) { ok = false; }
+  // Counted whether or not it worked: a failed scrape can still have been billed, and a
+  // budget that only counts successes is not a budget.
+  budget.credits -= 1;
+  await retailLog(env, { ...ctx, provider: "firecrawl", detail: url, credits: 1,
+    ok, status: res?.status ?? null, ms: Date.now() - t0 });
+  return ok ? (body?.data ?? null) : null;
+}
+
+// Turn Firecrawl's structured product block into the same candidate shape the model
+// parser produces, so everything downstream — R2 through R7 — is unchanged.
+function firecrawlCandidates(data, url) {
+  const p = data?.product;
+  if (!p || !Array.isArray(p.variants)) return [];
+  return p.variants
+    .map(v => ({
+      url: v.url || p.url || url,
+      title: v.title || p.title || null,
+      price: Number(v?.price?.amount),
+      pack: retailPackSize(v.title || p.title),
+      size_oz: retailOunces(v.title || p.title),
+      in_stock: typeof v?.availability?.inStock === "boolean" ? v.availability.inStock : null,
+      sold_by: null,
+    }))
+    .filter(c => Number.isFinite(c.price) && c.price > 0);
+}
+
 // Price one line. Snippet-first (R1): search, read the snippets, and only fetch a page
 // when the snippets carry no price or disagree. The Aug 19 test priced 16 of 20 lines
 // from snippets alone, so a fetch is the exception rather than the plan.
@@ -7591,14 +7661,30 @@ async function retailPriceLine(env, line, budget, ctx) {
     const urls = results.slice(0, 3).map(r => r.url).filter(u => !RETAIL_MARKETPLACE.test(u));
     if (urls.length) {
       const pages = await retailFetch(env, urls, ctx);
-      if (pages === null) {
-        // R8: big-ticket sites 403 plain fetches. That is where the metered Agent
-        // endpoint would go — flagged, deliberately not spent.
-        const d = retailDecide(line, cands, domains);
-        d.flags.push(bigTicket ? "needs agent" : "fetch blocked");
-        return { decided: d };
-      }
-      if (pages.length) {
+      // A fetch that "worked" but came back with almost nothing is the JS-wall case, and
+      // it is indistinguishable from success unless you look at what came back.
+      const thin = (pages || []).every(pg => String(pg?.text || "").length < 400);
+      if (pages === null || !pages.length || thin) {
+        // ESCALATE, in that order: free first, paid only once free has actually failed.
+        const scraped = await firecrawlScrape(env, urls[0], budget, ctx);
+        const fc = scraped ? firecrawlCandidates(scraped, urls[0]) : [];
+        if (fc.length) {
+          cands = fc;                       // structured price — no model parse needed
+        } else if (scraped?.markdown) {
+          const parsed = await retailParsePrices(env, item,
+            [{ url: urls[0], title: scraped?.metadata?.title, text: scraped.markdown }], ctx);
+          if (parsed.length) cands = parsed;
+        } else if (!cands.length) {
+          const d = retailDecide(line, cands, domains);
+          // Two separate facts, and collapsing them loses one. WHAT stopped us —
+          // a refused request or a page that rendered to nothing — and, for big-ticket,
+          // that a heavier tool is required (R8). "no first-party stockist" is a third
+          // thing entirely and is not this.
+          d.flags.push(pages === null ? "fetch blocked" : "page unreadable");
+          if (bigTicket) d.flags.push("needs agent");
+          return { decided: d };
+        }
+      } else if (pages.length) {
         const parsed = await retailParsePrices(env, item,
           pages.map(pg => ({ url: pg.url, title: pg.title, text: pg.text })), ctx);
         if (parsed.length) cands = parsed;
@@ -7626,7 +7712,11 @@ async function retailRunManifest(env, manifestId, opts = {}) {
   // than the PRD's 16-of-20 figure suggested: in the live check, first-party snippets for
   // a Tide query carried no price at all. A fetch budget well below the search budget
   // would have stopped most CPG lines from ever being priced.
-  const budget = { searches: maxSearches, fetches: Number(opts.maxFetches) || maxSearches };
+  // Credits are the only line here that costs money, so it gets its own small allowance
+  // rather than riding on the free budgets. Ten a batch keeps a 331-line manifest inside
+  // Firecrawl's free monthly tier even if every escalation fires.
+  const budget = { searches: maxSearches, fetches: Number(opts.maxFetches) || maxSearches,
+                   credits: Number(opts.maxCredits) ?? 10 };
   const { results: allLines } = await env.DB.prepare(
     `SELECT * FROM manifest_lines WHERE manifest_id = ? ORDER BY row_no`).bind(manifestId).all();
   if (!allLines?.length) return { priced: 0, cached: 0, skipped: 0, partial: false, remaining: 0 };
@@ -7706,6 +7796,7 @@ async function retailRunManifest(env, manifestId, opts = {}) {
     }
   }
   return { priced, cached, skipped, partial,
+           creditsSpent: Math.max(0, (Number(opts.maxCredits) ?? 10) - budget.credits),
            remaining: Math.max(0, pending.length - lines.length),
            lookedAt: lines.length, total: allLines.length,
            searchesLeft: budget.searches };

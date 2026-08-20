@@ -37,7 +37,8 @@ env.TINYFISH_API_KEY = 'tf-test';
 env.ANTHROPIC_API_KEY = 'sk-test';
 
 // Network stubs, RECORDED so "did we fetch when we didn't need to" is an assertion.
-let searches = [], fetches = [], agentCalls = [];
+let searches = [], fetches = [], agentCalls = [], crawls = [];
+let firecrawlBody = null, firecrawlOk = true;
 let searchResults = [], snippetPrices = [], pagePrices = null, fetchFails = false;
 globalThis.fetch = async (u, init) => {
   const url = String(u);
@@ -51,6 +52,11 @@ globalThis.fetch = async (u, init) => {
     return new Response(JSON.stringify({ results: (JSON.parse(init.body).urls || []).map(u => ({ url: u, title: 'page', text: 'page text' })) }), { status: 200 });
   }
   if (url.includes('agent.tinyfish.ai')) { agentCalls.push(url); return new Response('{}', { status: 200 }); }
+  if (url.startsWith('https://api.firecrawl.dev')) {
+    crawls.push(JSON.parse(init.body));
+    if (!firecrawlOk) return new Response('{"error":"Payment required"}', { status: 402 });
+    return new Response(JSON.stringify({ success: true, data: firecrawlBody || {} }), { status: 200 });
+  }
   if (url.includes('api.anthropic.com')) {
     const body = JSON.parse(init.body);
     const isPage = body.messages[0].content.includes('page text');
@@ -78,7 +84,7 @@ async function scenario({ desc, upc = null, cost = 1, msrp = null, comp = null, 
   db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,msrp,vendor_claimed_retail,flags)
               VALUES (?,1,?,?,?,10,?,?,?,'[]')`)
     .run(id, upc, upc ? 'upc' : 'none', desc, cost, msrp, comp);
-  searches = []; fetches = []; agentCalls = [];
+  searches = []; fetches = []; agentCalls = []; crawls = [];
   searchResults = results; snippetPrices = snippets; pagePrices = pages; fetchFails = blocked;
   const r = await post('manifest-retail', { id });
   const line = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id=?`).get(id);
@@ -366,6 +372,59 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   await tick2();
   ok(db.prepare(`SELECT flags f FROM manifest_lines WHERE manifest_id=?`).get(id).f !== '[]',
      '...and resumes when the switch is removed');
+}
+
+// Firecrawl is the PAID fallback, and only ever a fallback.
+{
+  const FC = { product: { title: 'Widget', url: 'https://www.target.com/p/w', variants: [
+    { title: 'Widget 2 pack', price: { amount: 7.00, currency: 'USD' }, availability: { inStock: true } },
+  ]}};
+
+  // 🛑 Without a key it never fires, whatever happens upstream.
+  delete env.FIRECRAWL_API_KEY;
+  firecrawlBody = FC;
+  let s1 = await scenario({ desc: 'Widget 2 ct', upc: '012345678940',
+    results: RES('https://www.target.com/p/w'), snippets: [], blocked: true });
+  eq(crawls.length, 0, '🛑 no key, no paid call');
+  ok(s1.flags.includes('fetch blocked'), '...and the line says the free path was blocked');
+
+  // 🛑 With a key it STILL does not fire while the free path is working.
+  env.FIRECRAWL_API_KEY = 'fc-test';
+  const s2 = await scenario({ desc: 'Widget 2 ct', upc: '012345678941',
+    results: RES('https://www.target.com/p/w'),
+    snippets: [{ url:'https://www.target.com/p/w', price:3.50, title:'Widget 2 pack', pack:2, in_stock:true }] });
+  eq(crawls.length, 0, '🛑 snippets answered, so nothing paid was spent');
+  // $3.50 for a 2-pack, and the line IS a 2-count: (3.50/2)x2 = 3.50.
+  near(s2.line.retail_price, 3.50, '...and the free answer stands');
+
+  // It fires only once the free fetch has actually failed.
+  const s3 = await scenario({ desc: 'Widget 2 ct', upc: '012345678942',
+    results: RES('https://www.target.com/p/w'), snippets: [], blocked: true });
+  eq(crawls.length, 1, 'a blocked free fetch escalates exactly once');
+  eq(crawls[0].proxy, 'auto', 'with the proxy retry that gets past a 403');
+  ok(crawls[0].formats.includes('product'), 'asking for structured product data');
+  near(s3.line.retail_price, 7.00, 'and the structured price lands');
+  eq(s3.line.retail_basis, 'single', '...in our own unit');
+
+  // 🔑 The structured path needs NO model parse — which is where a third of the Alliance
+  // run died with a bare 400.
+  const modelBefore = db.prepare(`SELECT COUNT(*) n FROM lookup_log WHERE provider='claude'`).get().n;
+  await scenario({ desc: 'Widget 2 ct', upc: '012345678943',
+    results: RES('https://www.target.com/p/w'), snippets: [], blocked: true });
+  const modelAfter = db.prepare(`SELECT COUNT(*) n FROM lookup_log WHERE provider='claude'`).get().n;
+  ok(modelAfter - modelBefore <= 1,
+     'structured product data avoids a second model parse — where a third of the Alliance run died');
+
+  // Spend is counted and logged, including a call that failed.
+  firecrawlOk = false;
+  await scenario({ desc: 'Widget 2 ct', upc: '012345678944',
+    results: RES('https://www.target.com/p/w'), snippets: [], blocked: true });
+  firecrawlOk = true;
+  const spend = db.prepare(`SELECT COALESCE(SUM(credits),0) c, COUNT(*) n FROM lookup_log WHERE provider='firecrawl'`).get();
+  ok(spend.c > 0, 'credits are recorded, not assumed to be zero');
+  eq(spend.c, spend.n, '🔑 a failed scrape is counted too — it can still have been billed');
+
+  delete env.FIRECRAWL_API_KEY;
 }
 
 // ── Access + a decided manifest is not re-priced underneath its decision ───
