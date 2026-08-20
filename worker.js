@@ -7283,6 +7283,25 @@ function randomHex(bytes) {
 // R3: first-party sellers only, by channel. A domain allowlist is necessary but NOT
 // sufficient — walmart.com hosts marketplace sellers at 3–5× real retail, which is what
 // the Yardley line in the Aug 19 test returned. A fetched page is seller-checked too.
+// ⚠️ DOLLAR GENERAL AND DOLLAR TREE WERE TRIED AND DELIBERATELY LEFT OUT (2026-08-20).
+// They are the right comparator for this business on price point, so the omission needs a
+// reason on the record rather than looking like an oversight:
+//
+//   dollargeneral.com  — publishes no price at all. Snippets carry none, and a fetched
+//                        product page says only "Available / Instore". Their pricing is
+//                        per-store. Adding it buys a search and a fetch per line for
+//                        nothing, and crowds out retailers that do publish.
+//   dollartree.com     — the main site is the same, and its product pages are JS-walled:
+//                        a fetch returns navigation chrome after ten seconds.
+//   sameday.dollartree.com — DOES carry prices, and that is the trap. They are same-day
+//                        delivery prices, marked up over shelf and labelled on the page
+//                        "Estimated price is approximate and provided only for reference".
+//                        An inflated retail makes every cost-of-retail look better than
+//                        it is, which is the same direction of error R7 exists to stop a
+//                        vendor's comp making. Worse than no price.
+//
+// If Dollar Tree's fixed price point is wanted as a ceiling for a size band, that is a
+// different feature from a retail lookup and should not borrow this one's plumbing.
 const RETAIL_CPG_DOMAINS = ["walmart.com", "target.com", "walgreens.com", "cvs.com", "kroger.com"];
 const RETAIL_BIG_DOMAINS = ["bestbuy.com", "lowes.com", "homedepot.com"];
 // Never a price from any of these, whatever the domain filter let through.
