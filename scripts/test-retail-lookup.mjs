@@ -30,7 +30,7 @@ const near = (a, b, m) => ok(a !== null && Math.abs(a - b) < 0.02, `${m} (got ${
 
 const worker = await loadWorker(repo);
 const { db, env } = makeEnv(repo);
-for (const m of ['migration-041.sql','migration-042.sql','migration-043.sql','migration-044.sql'])
+for (const m of ['migration-041.sql','migration-042.sql','migration-043.sql','migration-044.sql','migration-045.sql'])
   db.exec(fs.readFileSync(path.join(repo, m), 'utf8'));
 applyMigrationAlters(db, repo);
 env.TINYFISH_API_KEY = 'tf-test';
@@ -307,6 +307,65 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   ok(l.costPctRetail !== null, 'and reports cost of retail');
   eq(r.body.score.withoutRetail, false, 'the without-retail caveat lifts');
   ok(/street retail/i.test(r.body.score.basis), '...and the basis line says so');
+}
+
+// The lookup finishes on its own, and only where somebody asked.
+{
+  // The shared ctx fires waitUntil and forgets, so a cron's real work finishes after
+  // scheduled() returns. Collect the promises and await them, or this asserts on the
+  // database before the drainer has touched it.
+  const tick = async () => {
+    const held = [];
+    await worker.scheduled({ cron: '* * * * *' }, env,
+      { waitUntil: (pr) => held.push(Promise.resolve(pr).catch(() => {})), passThroughOnException: () => {} });
+    await Promise.all(held);
+  };
+
+  const id = 'drain1';
+  db.prepare(`INSERT INTO manifests (id,vendor,uploaded_at,sell_as,units_per_case,status) VALUES (?,?,?,'each',1,'draft')`)
+    .run(id, 'Queued', '2026-08-20T00:00:00Z');
+  const ins = db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,flags) VALUES (?,?,?,'upc',?,1,1,'[]')`);
+  for (let i = 1; i <= 25; i++) ins.run(id, i, `770000000${String(i).padStart(3,'0')}`, `Thing ${i}`);
+  searchResults = []; snippetPrices = [];
+
+  // 🛑 Nobody asked, so nothing happens — an upload must never make the Hub call out.
+  await tick();
+  eq(db.prepare(`SELECT COUNT(*) n FROM manifest_lines WHERE manifest_id=? AND flags='[]'`).get(id).n, 25,
+     'a manifest nobody asked about is left completely alone');
+
+  // Consent, then the drainer picks it up a batch at a time.
+  db.prepare(`UPDATE manifests SET auto_retail=1 WHERE id=?`).run(id);
+  await tick();
+  const afterOne = db.prepare(`SELECT COUNT(*) n FROM manifest_lines WHERE manifest_id=? AND flags='[]'`).get(id).n;
+  ok(afterOne < 25 && afterOne > 0, `one tick does a bounded batch, not the lot (${25 - afterOne} done)`);
+
+  for (let i = 0; i < 5; i++) await tick();
+  eq(db.prepare(`SELECT COUNT(*) n FROM manifest_lines WHERE manifest_id=? AND flags='[]'`).get(id).n, 0,
+     'successive ticks finish the manifest');
+  eq(db.prepare(`SELECT auto_retail a FROM manifests WHERE id=?`).get(id).a, 0,
+     'and the flag clears, so the queue drains to empty rather than spinning');
+}
+
+// The kill switch stops it without a deploy.
+{
+  const id = 'drain2';
+  db.prepare(`INSERT INTO manifests (id,vendor,uploaded_at,sell_as,units_per_case,status,auto_retail) VALUES (?,?,?,'each',1,'draft',1)`)
+    .run(id, 'Switched', '2026-08-20T00:00:00Z');
+  db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,flags) VALUES (?,1,'770000000999','upc','Thing',1,1,'[]')`).run(id);
+  const tick2 = async () => {
+    const held = [];
+    await worker.scheduled({ cron: '* * * * *' }, env,
+      { waitUntil: (pr) => held.push(Promise.resolve(pr).catch(() => {})), passThroughOnException: () => {} });
+    await Promise.all(held);
+  };
+  await env.SALES_SNAPSHOTS.put('merch:retail-auto', 'off');
+  await tick2();
+  eq(db.prepare(`SELECT flags f FROM manifest_lines WHERE manifest_id=?`).get(id).f, '[]',
+     'switched off, the drainer does nothing');
+  await env.SALES_SNAPSHOTS.delete('merch:retail-auto');
+  await tick2();
+  ok(db.prepare(`SELECT flags f FROM manifest_lines WHERE manifest_id=?`).get(id).f !== '[]',
+     '...and resumes when the switch is removed');
 }
 
 // ── Access + a decided manifest is not re-priced underneath its decision ───

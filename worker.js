@@ -8065,6 +8065,38 @@ async function merchShelfStates(env, aspByL3) {
   return out;
 }
 
+// Continue any retail lookup somebody started, one small batch per minute.
+//
+// 🔑 CONSENT FIRST. It only ever touches a manifest whose auto_retail flag is set, which
+// happens when a person presses "Look up retail". Uploading a file never causes the Hub
+// to call a third party on its own.
+//
+// 🔑 BOUNDED. Ten lines a minute against a 30-searches-per-minute key, one manifest at a
+// time, and nothing at all without an API key. A 331-line file finishes in about half an
+// hour, unattended, which is the point — the alternative was a person clicking through
+// thirteen rounds of a progress bar.
+//
+// Kill switch: set KV `merch:retail-auto` to "off" and this stops without a deploy.
+async function retailDrainQueue(env) {
+  if (!env.TINYFISH_API_KEY || !env.DB || !env.SALES_SNAPSHOTS) return { skipped: "not configured" };
+  const sw = await env.SALES_SNAPSHOTS.get("merch:retail-auto");
+  if (sw && String(sw).trim().toLowerCase() === "off") return { skipped: "switched off" };
+
+  const m = await env.DB.prepare(
+    `SELECT id, vendor FROM manifests
+      WHERE auto_retail = 1 AND status IN ('draft','scored')
+      ORDER BY uploaded_at LIMIT 1`).first();
+  if (!m) return { idle: true };
+
+  const out = await retailRunManifest(env, m.id, { batch: 10 });
+  // Clear the flag the moment there is nothing left, so a finished manifest stops being
+  // picked up and the queue drains to empty rather than spinning on it.
+  if (!out.remaining) {
+    await env.DB.prepare(`UPDATE manifests SET auto_retail = 0 WHERE id = ?`).bind(m.id).run();
+  }
+  return { manifest: m.id, vendor: m.vendor, ...out };
+}
+
 // Score one manifest against a resolved criteria version.
 //
 // ⚠️ THIS SLICE HAS NO STREET RETAIL. Every threshold in §5.3 is written against retail,
@@ -15828,10 +15860,16 @@ export default {
         if (m.status !== "draft" && m.status !== "scored") {
           return new Response(JSON.stringify({ error: "A decided manifest is not re-priced underneath its decision" }), { status: 409, headers: corsJson });
         }
+        // Pressing the button is the consent. The first batch runs now so there is
+        // something to look at, and the every-minute drainer finishes the rest.
+        await env.DB.prepare(`UPDATE manifests SET auto_retail = 1 WHERE id = ?`).bind(m.id).run();
         const out = await retailRunManifest(env, m.id, {
           batch: Number(body?.batch) || 25,
           maxSearches: body?.max_searches ? Math.min(Number(body.max_searches), 60) : undefined,
         });
+        if (!out.remaining) {
+          await env.DB.prepare(`UPDATE manifests SET auto_retail = 0 WHERE id = ?`).bind(m.id).run();
+        }
         if (out.priced > 0) {
           await env.DB.prepare(`UPDATE manifests SET scored_without_retail = 0 WHERE id = ?`).bind(m.id).run();
         }
@@ -17405,6 +17443,11 @@ export default {
     if (event.cron === "* * * * *") {
       ctx.waitUntil(processSaleSchedules(env, new Date()));
       ctx.waitUntil(processScheduledPosts(env, new Date()).then(r => console.log("Scheduled posts:", JSON.stringify(r))));
+      // Its own waitUntil, like the two above: a retail lookup that throws must not take
+      // the sale scheduler down with it.
+      ctx.waitUntil(retailDrainQueue(env)
+        .then(r => { if (!r.idle && !r.skipped) console.log("retail-drain:", JSON.stringify(r)); })
+        .catch(e => console.error("retail-drain threw:", (e && e.stack) || e)));
       return;
     }
 
