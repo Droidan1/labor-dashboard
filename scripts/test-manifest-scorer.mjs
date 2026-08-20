@@ -167,7 +167,7 @@ let mid;
     sell_as: 'case', units_per_case: 12 });
   eq(r.status, 200, 'remap succeeds');
   const again = await post('manifest-upload', { vendor: 'Alliance', csv: CSV });
-  eq(again.body.map_source, 'template', "the vendor's saved mapping is reused");
+  ok(/^template/.test(again.body.map_source), "the vendor's saved mapping is reused");
   eq(again.body.sell_as, 'case', '...along with how they sell');
 }
 
@@ -320,6 +320,43 @@ let mid;
   eq(db.prepare(`SELECT COUNT(*) n FROM manifest_lines WHERE manifest_id=?`).get(tmp).n, 0, 'its lines go with it');
   eq(db.prepare(`SELECT COUNT(*) n FROM manifests WHERE id=?`).get(tmp).n, 0, 'and the manifest itself');
   eq((await post('manifest-delete', { id: tmp })).status, 404, 'deleting it twice is a 404, not a silent success');
+}
+
+// A stale template cannot withhold a field it predates.
+// Kind's template mapped "Case pack" to uom back when that was its only home. After
+// units_per_case shipped, "template wins" turned that silence into a permanent NO and
+// re-uploading still produced null packs on every line — the detector built to find
+// exactly that column never got to run.
+{
+  const V = 'LegacyVendor';
+  // A template written before units_per_case existed.
+  db.prepare(`INSERT INTO vendor_templates (vendor, column_map, sell_as_default, units_per_case_default, updated_at)
+              VALUES (?,?,'each',12,'2026-08-01T00:00:00Z')`)
+    .run(V, JSON.stringify({ identifier:'UPC', description:'Item Description', qty:'Qty', uom:'Case pack', cost:'Unit Cost' }));
+
+  const r = await post('manifest-upload', { vendor: V, csv: CSV });
+  eq(r.status, 200, 'the upload succeeds');
+  eq(r.body.column_map.units_per_case, 'Case pack',
+     'the column moves out of uom into the field that does real work');
+  ok(!r.body.column_map.uom, '...and is not left in both places');
+  ok(/newly detected/i.test(r.body.map_source), 'and the page is told the template was extended');
+
+  const rows = db.prepare(`SELECT units_per_case FROM manifest_lines WHERE manifest_id=? ORDER BY row_no LIMIT 2`).all(r.body.id);
+  eq(rows[0].units_per_case, 6, 'so the pack lands on the line');
+  eq(rows[1].units_per_case, 5, '...per line');
+  await post('manifest-delete', { id: r.body.id });
+}
+
+// A template's own choices are still respected where it HAS an opinion.
+{
+  const V = 'OpinionatedVendor';
+  db.prepare(`INSERT INTO vendor_templates (vendor, column_map, sell_as_default, units_per_case_default, updated_at)
+              VALUES (?,?,'each',12,'2026-08-01T00:00:00Z')`)
+    .run(V, JSON.stringify({ identifier:'UPC', description:'Item Description', qty:'Qty', cost:'Unit Cost', units_per_case:'Qty' }));
+  const r = await post('manifest-upload', { vendor: V, csv: CSV });
+  eq(r.body.column_map.units_per_case, 'Qty',
+     'a deliberate mapping is not second-guessed by detection');
+  await post('manifest-delete', { id: r.body.id });
 }
 
 // ── Access ──────────────────────────────────────────────────────────────────

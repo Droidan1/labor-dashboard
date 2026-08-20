@@ -7787,6 +7787,34 @@ function manifestGuessMap(headers) {
   return map;
 }
 
+// A saved template must never be able to withhold a field it predates.
+//
+// 🔑 Templates pin a vendor's mapping so the second file maps itself — but a template
+// written before a canonical field existed has no opinion about it, and the plain
+// "template wins" rule turned that silence into a permanent NO. Kind's template mapped
+// "Case pack" to `uom` back when that was the only home for it; after units_per_case
+// shipped, re-uploading still produced null packs on every line, because the stale
+// template beat the detector that was built to find exactly that column.
+//
+// So: the template decides the fields it actually names, and detection fills the rest.
+// A header already claimed by a MEANINGFUL field is left alone; `uom` is the one
+// exception, because it is stored and never calculated with, so a column sitting there
+// is free to move somewhere it does real work.
+function manifestUpgradeMap(map, headers) {
+  const guess = manifestGuessMap(headers);
+  const out = { ...map };
+  let changed = false;
+  for (const [field, header] of Object.entries(guess)) {
+    if (out[field]) continue;
+    const heldBy = Object.keys(out).find(k => out[k] === header);
+    if (heldBy && heldBy !== "uom") continue;
+    if (heldBy === "uom") delete out.uom;
+    out[field] = header;
+    changed = true;
+  }
+  return { map: out, changed };
+}
+
 // Our own selling price and velocity per L3, from the snapshots that already exist.
 //
 // ASP is what WE actually get for a thing, which is the honest comparator when there is
@@ -15502,7 +15530,13 @@ export default {
 
         const tpl = await env.DB.prepare(`SELECT * FROM vendor_templates WHERE vendor = ?`).bind(vendor).first();
         let map = body?.column_map, mapSource = "supplied";
-        if (!map && tpl) { try { map = JSON.parse(tpl.column_map); mapSource = "template"; } catch (_) {} }
+        if (!map && tpl) {
+          try {
+            const up = manifestUpgradeMap(JSON.parse(tpl.column_map), headers);
+            map = up.map;
+            mapSource = up.changed ? "template + newly detected columns" : "template";
+          } catch (_) {}
+        }
         if (!map) { map = manifestGuessMap(headers); mapSource = "guessed"; }
         const missing = MANIFEST_REQUIRED.filter(f => !map[f] || !headers.includes(map[f]));
         const sellAs = (body?.sell_as || tpl?.sell_as_default || "each") === "case" ? "case" : "each";
