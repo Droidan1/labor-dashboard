@@ -135,10 +135,26 @@ let mid;
 
   const r = await get(`manifest&id=${mid}`);
   const l1 = r.body.lines.find(x => x.row_no === 1);
-  eq(l1.pack_used, 6, 'the pack applied is the one the sheet gave');
-  eq(l1.pack_source, 'sheet', '...and the page can say where it came from');
-  eq(l1.qty, 480 * 6, 'units expand by that line own pack');
-  near(l1.cost, 0.42 / 6, '...and cost divides by it');
+  eq(l1.pack_used, 6, "the sheet's pack is reported");
+  eq(l1.pack_source, 'sheet', '...and where it came from');
+  // A pack column says how many are in a box. It does NOT say the qty and cost columns
+  // are quoted per case — Kind's are named "Units" and "Price per unit". Converting on a
+  // pack alone turned 810 boxes at $1.45 into 4,050 units at $0.29, and a believable 35%
+  // of retail into 175%.
+  eq(l1.pack_converted, false, 'a pack alone does NOT mean the sheet is quoted in cases');
+  eq(l1.qty, 480, 'so quantity is left as the sheet states it');
+  near(l1.cost, 0.42, '...and so is cost');
+}
+
+// The toggle is still what converts, and then the pack is what it converts BY.
+{
+  const up = await post('manifest-upload', { vendor: 'CaseVendor', csv: CSV, sell_as: 'case' });
+  const r = await get(`manifest&id=${up.body.id}`);
+  const l1 = r.body.lines.find(x => x.row_no === 1);
+  eq(l1.pack_converted, true, 'with sell_as=case the conversion happens');
+  eq(l1.qty, 480 * 6, "...by the line's own pack, not one number for the file");
+  near(l1.cost, 0.42 / 6, '...and cost divides by the same');
+  await post('manifest-delete', { id: up.body.id });
 }
 
 

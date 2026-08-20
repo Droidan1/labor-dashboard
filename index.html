@@ -17343,7 +17343,7 @@
           </select></label>
         <label class="mf-row" style="gap:6px;font-size:13px" title="Only used for lines where the sheet gives no case pack of its own">Units per case
           <input id="mf-upc" class="mf-in" style="width:70px" value="${j.units_per_case}"></label>
-        <span style="font-size:11.5px;color:#6b6453">used only where the sheet has no pack column</span>
+        <span style="font-size:11.5px;color:#6b6453">only set this if Qty and Cost are per CASE — a pack column alone does not mean they are</span>
         <button class="mf-btn" style="margin-left:auto" onclick="mfConfirmMap()">Use this mapping</button>
       </div>
       <div class="mf-body">
@@ -17419,7 +17419,9 @@
         <td class="mf-l">${mfEsc(l.description || '(no description)')}
           ${(l.flags || []).map(f => `<span class="mf-flag">${mfEsc(f)}</span>`).join('')}</td>
         <td class="mf-l">${mfEsc(l.l3 ? l.l3.split(' - ').pop() : '—')}</td>
-        <td>${l.pack_used > 1 ? `${l.pack_used}<div style="font-size:10px;color:#6b6453">${mfEsc(l.pack_source || '')}</div>` : '—'}</td>
+        <td>${l.pack_used > 1
+          ? `${l.pack_used}<div style="font-size:10px;color:#6b6453">${mfEsc(l.pack_source || '')}${l.pack_converted ? ' · applied' : ''}</div>`
+          : '—'}</td>
         <td>${mfNum(l.qty)}</td>
         <td>${mfMoney(l.cost)}</td>
         <td>${mfMoney(l.std_cost_l3)}</td>

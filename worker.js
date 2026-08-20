@@ -15666,13 +15666,19 @@ export default {
         const resolved = live ? await merchResolve(env, live.version) : null;
 
         const lines = (rawLines || []).map(l => {
-          // 🔑 A pack the VENDOR stated on the line beats the manifest-wide toggle. That
-          // toggle is one number for the whole file, which cannot describe a sheet like
-          // Kind's where the pack is 5 on some lines and 6 on others. The toggle stays as
-          // the fallback for files that give us nothing.
+          // 🔑 TWO DIFFERENT QUESTIONS, and conflating them cost a wrong answer.
+          //
+          //   How many are in a pack?      -> the sheet's Case pack column. Used to price
+          //                                   retail against the same thing we are buying.
+          //   Is qty/cost quoted per CASE? -> the sell_as toggle, and ONLY that.
+          //
+          // A Case pack column answers the first and says nothing about the second. Kind's
+          // sheet names its columns "Units" and "Price per unit": 810 boxes at $1.45 a box.
+          // Treating a pack of 5 as "these are cases" turned that into 4,050 units at
+          // $0.29 — and cost-of-retail from a believable 35% into 175%, which nobody buys.
           const linePack = Number(l.units_per_case) || null;
-          const upc = linePack || factor;
-          const asCase = linePack ? linePack > 1 : m.sell_as === "case";
+          const asCase = m.sell_as === "case";
+          const upc = asCase ? (linePack || factor) : 1;
           const units = (Number(l.qty) || 0) * (asCase ? upc : 1);
           const costPerUnit = l.cost === null ? null : roundCents(Number(l.cost) / (asCase ? upc : 1));
           const stdCost = l.l3 && stdCosts[l.l3] !== undefined ? roundCents(Number(stdCosts[l.l3])) : null;
@@ -15694,7 +15700,10 @@ export default {
                    // 100% is a better buy than our own book cost; over it is not.
                    cost_vs_std: stdCost && costPerUnit !== null && stdCost > 0
                      ? +((costPerUnit / stdCost) * 100).toFixed(0) : null,
-                   pack_used: upc, pack_source: linePack ? "sheet" : (m.sell_as === "case" ? "toggle" : null),
+                   // What the pack IS, and separately whether it was used to convert.
+                   pack_used: linePack || (asCase ? factor : null),
+                   pack_source: linePack ? "sheet" : (asCase ? "toggle" : null),
+                   pack_converted: asCase,
                    velocity_l3: stats?.velocity ?? null,
                    suggested_price: suggested,
                    suggested_source: l.suggested_price !== null && l.suggested_price !== undefined ? "manual" : "rule",
