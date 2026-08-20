@@ -30,7 +30,7 @@ const near = (a, b, m) => ok(a !== null && Math.abs(a - b) < 0.02, `${m} (got ${
 
 const worker = await loadWorker(repo);
 const { db, env } = makeEnv(repo);
-for (const m of ['migration-041.sql','migration-042.sql','migration-043.sql','migration-044.sql','migration-045.sql','migration-046.sql'])
+for (const m of ['migration-041.sql','migration-042.sql','migration-043.sql','migration-044.sql','migration-045.sql','migration-046.sql','migration-047.sql'])
   db.exec(fs.readFileSync(path.join(repo, m), 'utf8'));
 applyMigrationAlters(db, repo);
 env.TINYFISH_API_KEY = 'tf-test';
@@ -158,7 +158,10 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   pricedId = s.id;
   near(s.line.retail_price, 2.49, 'the price lands');
   eq(s.line.retail_basis, 'single', 'basis recorded as single');
-  eq(s.line.retail_confidence, 'high', 'a single in-stock first-party price is high confidence');
+  // Not high any more, deliberately. "High" now means we saw it on a SHELF; a page that
+  // says only "in stock" online, with no store availability, is a weaker answer and reads
+  // as one. That is the point of the in-store check.
+  eq(s.line.retail_confidence, 'medium', 'in stock online but not confirmed in a store caps at medium');
   ok(!s.flags.includes('no retail'), 'not flagged as unpriced');
 }
 
@@ -514,6 +517,60 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   await Promise.all(held);
   ok(db.prepare(`SELECT flags f FROM manifest_lines WHERE manifest_id=?`).get(id).f !== '[]',
      'an expired claim is taken over rather than blocking the manifest forever');
+}
+
+// 🛑 A third-party seller is refused UNLESS a store actually stocks it.
+// Walmart and Target host marketplace sellers on their own domain, sometimes at multiples
+// of real retail. Being on the retailer's site is not proof the retailer sells it; being
+// on a shelf is.
+{
+  const s1 = await scenario({ desc: 'Widget', upc: '012345678960',
+    results: RES('https://www.walmart.com/ip/widget'),
+    snippets: [{ url:'https://www.walmart.com/ip/widget', price:18.99, title:'Widget', pack:1,
+                 in_stock:true, in_store:false, sold_by:'BargainBin LLC' }] });
+  eq(s1.line.retail_price, null, '🛑 a third-party price with no shelf presence is refused');
+
+  const s2 = await scenario({ desc: 'Widget', upc: '012345678961',
+    results: RES('https://www.walmart.com/ip/widget'),
+    snippets: [{ url:'https://www.walmart.com/ip/widget', price:4.99, title:'Widget', pack:1,
+                 in_stock:true, in_store:true, sold_by:'BargainBin LLC' }] });
+  near(s2.line.retail_price, 4.99, '...but the same seller IS trusted when a store stocks it');
+  eq(s2.line.retail_in_store, 1, 'and that is recorded');
+
+  const s3 = await scenario({ desc: 'Widget', upc: '012345678965',
+    results: RES('https://www.target.com/p/w'),
+    snippets: [{ url:'https://www.target.com/p/w', price:4.99, title:'Widget', pack:1,
+                 in_stock:true, in_store:true, sold_by:'Target' }] });
+  eq(s3.line.retail_confidence, 'high', 'confirmed on a shelf at a first-party retailer IS high confidence');
+}
+
+// A shelf price beats an online-only one, even when the online one is cheaper.
+{
+  const s = await scenario({ desc: 'Widget', upc: '012345678962',
+    results: RES('https://www.target.com/p/w', 'https://www.walmart.com/ip/w'),
+    snippets: [
+      { url:'https://www.target.com/p/w',  price:9.99, title:'Widget', pack:1, in_stock:true, in_store:true, sold_by:'Target' },
+      { url:'https://www.walmart.com/ip/w', price:8.99, title:'Widget', pack:1, in_stock:true, in_store:false, sold_by:'Walmart' },
+    ]});
+  near(s.line.retail_price, 9.99, 'the shelf price wins — it is what a customer walks up and pays');
+}
+
+// 🛑 Walmart Business quotes CASE prices and is not consumer retail.
+// Found live: 13 Alliance lines priced off business.walmart.com.
+{
+  const s = await scenario({ desc: 'Widget', upc: '012345678963',
+    results: [{ position:1, url:'https://business.walmart.com/ip/widget', title:'Widget', snippet:'$2.10' },
+              { position:2, url:'https://beta.walmart.com/ip/widget', title:'Widget', snippet:'$2.10' }],
+    snippets: [{ url:'https://business.walmart.com/ip/widget', price:2.10, title:'Widget', pack:1, in_stock:true, sold_by:'Walmart' }] });
+  eq(s.line.retail_price, null, '🛑 no price is taken from a B2B or beta subdomain');
+}
+
+// A bulk listing with no readable count cannot become a shelf price.
+{
+  const s = await scenario({ desc: 'Widget', upc: '012345678964',
+    results: RES('https://www.walmart.com/ip/widget'),
+    snippets: [{ url:'https://www.walmart.com/ip/widget', price:89.00, title:'Widget Bulk Carton', pack:1, in_stock:true, sold_by:'Walmart' }] });
+  eq(s.line.retail_price, null, '🛑 a bulk listing with no count to divide by is dropped, not used whole');
 }
 
 // ── Access + a decided manifest is not re-priced underneath its decision ───
