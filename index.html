@@ -17469,11 +17469,21 @@
 
   async function mfRetail() {
     if (!await uiConfirm('Look up street prices for this manifest? It searches first-party retailers only, and skips anything already priced in the last 90 days.')) return;
-    mfSay('Looking up street prices — this takes a moment on a long manifest…');
+    // Batched, because a long manifest cannot be priced in one request. The loop is here
+    // rather than hidden in the worker so progress is visible while it runs — a silent
+    // two-minute wait is indistinguishable from a hang.
+    let priced = 0, cached = 0, skipped = 0, rounds = 0;
     try {
-      const j = await mfApi('manifest-retail', { id: mfOpenId });
-      mfSay(`${j.priced} priced, ${j.cached} from cache, ${j.skipped} without a first-party price`
-        + (j.partial ? ' — stopped at the lookup budget, run it again to continue.' : '.'));
+      for (;;) {
+        const j = await mfApi('manifest-retail', { id: mfOpenId });
+        priced += j.priced; cached += j.cached; skipped += j.skipped; rounds++;
+        if (!j.remaining) {
+          mfSay(`${priced} priced, ${cached} from cache, ${skipped} with no first-party price.`);
+          break;
+        }
+        mfSay(`${priced} priced so far · ${j.remaining} lines to go…`);
+        if (rounds > 40) { mfSay(`Stopped after ${priced} priced — ${j.remaining} still to do, run it again to continue.`); break; }
+      }
       mfOpen(mfOpenId);
     } catch (e) {
       // The one failure worth explaining rather than just reporting.

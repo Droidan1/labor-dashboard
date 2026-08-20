@@ -7460,11 +7460,18 @@ function retailDecide(line, cands, domains = [], opts = {}) {
              retail_in_stock: null, retail_source: null, retail_url: null, flags };
   }
 
-  // R2 — a multipack price divided down, and the basis recorded as first-class.
+  // R2 — a multipack price divided down to ONE unit, then multiplied back up to the pack
+  // WE are buying.
+  //
+  // 🔑 Retail has to be quoted in the same unit as cost or the comparison is nonsense.
+  // The manifest's cost is per pack: "Kind bar … 6 ct" costs $1.95 for the box, and
+  // "ENERGIZER MAX BATT AAA 8CT" costs $2.90 for the eight. Dividing a found 6-pack down
+  // to $1.12 a bar and stopping there compared a box price against a bar price and made
+  // the buy look 174% of retail. Found live on the Kind and Alliance manifests.
   const priced = firstParty.map(c => {
     const pack = Math.max(1, Number(c.pack) || 1);
-    let unit = Number(c.price) / pack;
-    let basis = pack > 1 ? "multipack_div_n" : "single";
+    let unit = (Number(c.price) / pack) * targetPack;
+    let basis = pack === targetPack ? "single" : "multipack_div_n";
     // R5 — an import with no exact US SKU: scale the nearest same-line US product by size.
     const oz = Number(c.size_oz) || retailOunces(c.title);
     if (targetOz && oz && Math.abs(oz - targetOz) / targetOz > 0.1) {
@@ -7568,15 +7575,32 @@ async function retailPriceLine(env, line, budget, ctx) {
 // price. A line with no identifier is looked up on its own because there is nothing to
 // key a cache on.
 async function retailRunManifest(env, manifestId, opts = {}) {
-  const maxSearches = Number(opts.maxSearches) || 120;
+  // 🔑 A long manifest CANNOT be priced in one request. Alliance is 331 lines and a
+  // search averages 2.6s: the run died partway and left 305 lines silently untouched —
+  // not flagged, not skipped, just never reached, which reads on the page as "no retail
+  // found" when nothing was ever asked. Work is done in bounded batches and the caller
+  // is told what is left, so a partial run is a fact rather than a wrong answer.
+  const batch = Math.min(Math.max(Number(opts.batch) || 25, 1), 60);
+  const maxSearches = Number(opts.maxSearches) || batch;
   // Fetch is free and capped at 150 URLs/min, and the CPG channel needs it far more often
   // than the PRD's 16-of-20 figure suggested: in the live check, first-party snippets for
   // a Tide query carried no price at all. A fetch budget well below the search budget
   // would have stopped most CPG lines from ever being priced.
   const budget = { searches: maxSearches, fetches: Number(opts.maxFetches) || maxSearches };
-  const { results: lines } = await env.DB.prepare(
+  const { results: allLines } = await env.DB.prepare(
     `SELECT * FROM manifest_lines WHERE manifest_id = ? ORDER BY row_no`).bind(manifestId).all();
-  if (!lines?.length) return { priced: 0, cached: 0, skipped: 0, partial: false };
+  if (!allLines?.length) return { priced: 0, cached: 0, skipped: 0, partial: false, remaining: 0 };
+
+  // A line is DONE when it has a price, or when a previous run recorded that there was
+  // none to find. Anything else has not been asked yet.
+  const isDone = (l) => {
+    if (l.retail_price !== null && l.retail_price !== undefined) return true;
+    try { return JSON.parse(l.flags || "[]").includes("no retail"); } catch { return false; }
+  };
+  const pending = allLines.filter(l => !isDone(l));
+  const lines = pending.slice(0, batch);
+  if (!lines.length) return { priced: 0, cached: 0, skipped: 0, partial: false, remaining: 0,
+                              note: "Every line has already been looked up." };
 
   const cutoff = new Date(Date.now() - 90 * 86400e3).toISOString();
   const { results: cacheRows } = await env.DB.prepare(
@@ -7641,7 +7665,10 @@ async function retailRunManifest(env, manifestId, opts = {}) {
         d.retail_basis, d.retail_confidence, d.retail_in_stock ?? null, d.retail_url, now, now).run();
     }
   }
-  return { priced, cached, skipped, partial, searchesLeft: budget.searches };
+  return { priced, cached, skipped, partial,
+           remaining: Math.max(0, pending.length - lines.length),
+           lookedAt: lines.length, total: allLines.length,
+           searchesLeft: budget.searches };
 }
 
 // ─── Manifest Scorer ──────────────────────────────────────────────────────────
@@ -15661,7 +15688,10 @@ export default {
         if (m.status !== "draft" && m.status !== "scored") {
           return new Response(JSON.stringify({ error: "A decided manifest is not re-priced underneath its decision" }), { status: 409, headers: corsJson });
         }
-        const out = await retailRunManifest(env, m.id, { maxSearches: Math.min(Number(body?.max_searches) || 120, 300) });
+        const out = await retailRunManifest(env, m.id, {
+          batch: Number(body?.batch) || 25,
+          maxSearches: body?.max_searches ? Math.min(Number(body.max_searches), 60) : undefined,
+        });
         if (out.priced > 0) {
           await env.DB.prepare(`UPDATE manifests SET scored_without_retail = 0 WHERE id = ?`).bind(m.id).run();
         }

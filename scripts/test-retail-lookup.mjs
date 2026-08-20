@@ -155,8 +155,10 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   const s = await scenario({ desc: 'Soap bar 4 ct', upc: '012345678906',
     results: RES('https://www.walmart.com/ip/soap'),
     snippets: [{ url:'https://www.walmart.com/ip/soap', price:10.39, title:'Soap 6 pack', pack:6, in_stock:true, sold_by:'Walmart.com' }] });
-  near(s.line.retail_price, 1.73, '🔑 R2 — $10.39 over a 6-pack is $1.73 a unit');
-  eq(s.line.retail_basis, 'multipack_div_n', 'the basis is first-class, not inferred later');
+  // $10.39 over a found 6-pack is $1.73 a bar; the LINE is a 4-count, so its retail is
+  // $6.93. Quoting $1.73 against a 4-count's cost is the unit mismatch R2 exists to stop.
+  near(s.line.retail_price, 6.93, '🔑 R2 — a 6-pack at $10.39 prices our 4-count at $6.93');
+  eq(s.line.retail_basis, 'multipack_div_n', 'the basis records that a conversion happened');
   eq(s.line.retail_confidence, 'medium', '...and it caps confidence at medium');
 }
 
@@ -238,6 +240,51 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   eq(searches.length, 0, '🔑 the second manifest carrying it searches ZERO times');
   near(again.line.retail_price, 3.99, '...and reuses the cached price, not the new stub');
   eq(again.r.body.cached, 1, 'reported as a cache hit');
+}
+
+// ── 🔑 R2's unit — retail is quoted in the pack WE buy, not one bar ────────
+// Found live, not in a stub. "Kind bar … 6 ct" costs $1.95 for the BOX; a found 6-pack
+// divided down to $1.12 a bar and left there compared a box price against a bar price
+// and reported the buy at 174% of retail. Same for "ENERGIZER … AAA 8CT" at $2.90.
+{
+  const s = await scenario({ desc: 'Kind bar - peanut butter dark chocolate - 1.4 oz - 6 ct', upc: '012345678930', cost: 1.95,
+    results: RES('https://www.walmart.com/ip/kind-6pk'),
+    snippets: [{ url:'https://www.walmart.com/ip/kind-6pk', price:6.72, title:'Kind bars 6 pack', pack:6, in_stock:true, sold_by:'Walmart' }] });
+  near(s.line.retail_price, 6.72, '🔑 a 6-ct line priced off a 6-pack is the PACK price, not the bar price');
+  eq(s.line.retail_basis, 'single', 'pack matches pack, so the basis is single');
+
+  // A found pack that differs from ours still lands in our unit.
+  const t = await scenario({ desc: 'Batteries AAA 8CT', upc: '012345678931', cost: 2.90,
+    results: RES('https://www.target.com/p/batt'),
+    snippets: [{ url:'https://www.target.com/p/batt', price:2.44, title:'AAA 4 pack', pack:4, in_stock:true }] });
+  near(t.line.retail_price, 4.88, 'a 4-pack at $2.44 becomes $4.88 for our 8-count');
+  eq(t.line.retail_basis, 'multipack_div_n', '...and the basis records the conversion');
+}
+
+// ── 🔑 A long manifest is batched, and says what is left ──────────────────
+// Alliance is 331 lines at ~2.6s a search: the single-request run died partway and left
+// 305 lines never even asked — which read on the page as "no retail found".
+{
+  const id = 'batch1';
+  db.prepare(`INSERT INTO manifests (id,vendor,uploaded_at,sell_as,units_per_case,status) VALUES (?,?,?,'each',1,'draft')`)
+    .run(id, 'Big', '2026-08-20T00:00:00Z');
+  const ins = db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,flags) VALUES (?,?,?,'upc',?,1,1,'[]')`);
+  for (let i = 1; i <= 30; i++) ins.run(id, i, `9000000000${String(i).padStart(2,'0')}`, `Widget ${i}`);
+  searchResults = []; snippetPrices = [];   // nothing found, so every line resolves fast
+
+  const first = await post('manifest-retail', { id, batch: 10 });
+  eq(first.body.lookedAt, 10, 'the first call handles one batch');
+  eq(first.body.remaining, 20, '🔑 ...and reports exactly what is left');
+  eq(first.body.total, 30, '...against the real total');
+
+  const second = await post('manifest-retail', { id, batch: 10 });
+  eq(second.body.remaining, 10, 'the second call picks up where the first stopped');
+  await post('manifest-retail', { id, batch: 10 });
+  const done = await post('manifest-retail', { id, batch: 10 });
+  eq(done.body.remaining, 0, 'and it finishes');
+  ok(/already been looked up/i.test(done.body.note || ''), '...saying there is nothing left rather than redoing it');
+  const untouched = db.prepare(`SELECT COUNT(*) n FROM manifest_lines WHERE manifest_id=? AND flags='[]'`).get(id).n;
+  eq(untouched, 0, '🛑 no line is left silently unasked');
 }
 
 // ── Every call is logged, so cost is a fact rather than an assumption ──────
