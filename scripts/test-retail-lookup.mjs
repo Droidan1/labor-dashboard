@@ -38,6 +38,7 @@ env.ANTHROPIC_API_KEY = 'sk-test';
 
 // Network stubs, RECORDED so "did we fetch when we didn't need to" is an assertion.
 let searches = [], fetches = [], agentCalls = [], crawls = [];
+let normalizeCalls = [], priceParsePrompts = [], normalizeReply = [];
 let firecrawlBody = null, firecrawlOk = true;
 let searchResults = [], snippetPrices = [], pagePrices = null, fetchFails = false;
 globalThis.fetch = async (u, init) => {
@@ -59,6 +60,11 @@ globalThis.fetch = async (u, init) => {
   }
   if (url.includes('api.anthropic.com')) {
     const body = JSON.parse(init.body);
+    if (/expand abbreviated/i.test(body.system || '')) {
+      normalizeCalls.push(body.messages[0].content);
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ items: normalizeReply }) }] }), { status: 200 });
+    }
+    priceParsePrompts.push(body.messages[0].content);
     const isPage = body.messages[0].content.includes('page text');
     const prices = isPage && pagePrices ? pagePrices : snippetPrices;
     return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ prices }) }] }), { status: 200 });
@@ -84,7 +90,7 @@ async function scenario({ desc, upc = null, cost = 1, msrp = null, comp = null, 
   db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,msrp,vendor_claimed_retail,flags)
               VALUES (?,1,?,?,?,10,?,?,?,'[]')`)
     .run(id, upc, upc ? 'upc' : 'none', desc, cost, msrp, comp);
-  searches = []; fetches = []; agentCalls = []; crawls = [];
+  searches = []; fetches = []; agentCalls = []; crawls = []; normalizeCalls = []; priceParsePrompts = [];
   searchResults = results; snippetPrices = snippets; pagePrices = pages; fetchFails = blocked;
   const r = await post('manifest-retail', { id });
   const line = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id=?`).get(id);
@@ -408,10 +414,11 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
 
   // 🔑 The structured path needs NO model parse — which is where a third of the Alliance
   // run died with a bare 400.
-  const modelBefore = db.prepare(`SELECT COUNT(*) n FROM lookup_log WHERE provider='claude'`).get().n;
+  const parseCount = () => db.prepare(`SELECT COUNT(*) n FROM lookup_log WHERE provider='claude' AND detail LIKE 'price parse%'`).get().n;
+  const modelBefore = parseCount();
   await scenario({ desc: 'Widget 2 ct', upc: '012345678943',
     results: RES('https://www.target.com/p/w'), snippets: [], blocked: true });
-  const modelAfter = db.prepare(`SELECT COUNT(*) n FROM lookup_log WHERE provider='claude'`).get().n;
+  const modelAfter = parseCount();
   ok(modelAfter - modelBefore <= 1,
      'structured product data avoids a second model parse — where a third of the Alliance run died');
 
@@ -425,6 +432,46 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   eq(spend.c, spend.n, '🔑 a failed scrape is counted too — it can still have been billed');
 
   delete env.FIRECRAWL_API_KEY;
+}
+
+// Warehouse shorthand is expanded before it becomes a search.
+// 🔑 This is the difference between 80% and 25%. Kind described items the way a person
+// would and priced at 80%. Alliance writes "CASCADE AP COMP FRSH 4CT" and priced at 25%,
+// with every call succeeding technically and finding nothing. Searching an abbreviation
+// is not a lookup problem — it is a question nobody would ask out loud.
+{
+  normalizeReply = [{ row: 1, brand: 'Cascade', title: 'Cascade ActionPacs Complete Fresh dishwasher detergent', size: '4 ct' }];
+  const s1 = await scenario({ desc: 'CASCADE AP COMP FRSH 4CT', upc: '030772176269',
+    results: RES('https://www.target.com/p/cascade'),
+    snippets: [{ url:'https://www.target.com/p/cascade', price:5.99, title:'Cascade ActionPacs 4ct', pack:4, in_stock:true }] });
+  eq(normalizeCalls.length, 1, 'the shorthand is expanded first');
+  ok(/Cascade ActionPacs/.test(searches[0]),
+     `🔑 the SEARCH uses the expanded name, not the abbreviation (${searches[0].slice(0, 90)})`);
+  ok(!/AP COMP FRSH/.test(searches[0]),
+     '...and the warehouse string never reaches the search box');
+  near(s1.line.retail_price, 5.99, 'and the price lands');
+
+  // The expansion is cached, so the next manifest carrying it costs nothing.
+  const cached = db.prepare(`SELECT brand, title FROM item_cache WHERE identifier='030772176269'`).get();
+  eq(cached.title, 'Cascade ActionPacs Complete Fresh dishwasher detergent', 'the expanded name is cached');
+  eq(cached.brand, 'Cascade', '...with its brand');
+
+  normalizeCalls = [];
+  await scenario({ desc: 'CASCADE AP COMP FRSH 4CT', upc: '030772176269',
+    results: RES('https://www.target.com/p/cascade'),
+    snippets: [{ url:'https://www.target.com/p/cascade', price:5.99, title:'Cascade ActionPacs 4ct', pack:4, in_stock:true }] });
+  eq(normalizeCalls.length, 0, 'a name already expanded is never expanded twice');
+}
+
+// 🛑 A refused expansion falls back to the raw text rather than inventing a product.
+{
+  normalizeReply = [];   // the model declines rather than guessing
+  const s2 = await scenario({ desc: 'ZZQ MYSTERY THING 9X', upc: '012345678950',
+    results: RES('https://www.target.com/p/z'),
+    snippets: [{ url:'https://www.target.com/p/z', price:2.00, title:'Thing', pack:1, in_stock:true }] });
+  ok(/ZZQ/.test(decodeURIComponent(searches[0])),
+     '🛑 with no expansion the original text is searched, not a guessed one');
+  near(s2.line.retail_price, 2.00, 'and it still works');
 }
 
 // ── Access + a decided manifest is not re-priced underneath its decision ───
