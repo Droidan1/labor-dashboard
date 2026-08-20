@@ -301,6 +301,25 @@ let mid;
   eq(row.scored_without_retail, 1, '...and that it was judged without retail');
   const locked = await post('manifest-remap', { id: mid, csv: CSV, column_map: { description:'Item Description', qty:'Qty', cost:'Unit Cost' } });
   eq(locked.status, 409, 'a decided manifest cannot be silently remapped underneath the decision');
+  const del = await post('manifest-delete', { id: mid });
+  eq(del.status, 409, 'a decided manifest is not deletable either — it is the record of a call');
+  ok(/record of a decision/i.test(del.body.error || ''), '...and says why');
+}
+
+// Deleting a draft, and refusing to delete a decision.
+{
+  // A fresh draft, so the decided one below is untouched.
+  const up = await post('manifest-upload', { vendor: 'Throwaway', csv: CSV });
+  const tmp = up.body.id;
+  const before = db.prepare(`SELECT COUNT(*) n FROM manifest_lines WHERE manifest_id=?`).get(tmp).n;
+  ok(before > 0, 'the throwaway upload wrote lines');
+
+  eq((await post('manifest-delete', { id: tmp }, 'u-admin')).status, 403, 'an admin may not delete a manifest');
+  const d = await post('manifest-delete', { id: tmp });
+  eq(d.status, 200, 'a superuser may delete a draft');
+  eq(db.prepare(`SELECT COUNT(*) n FROM manifest_lines WHERE manifest_id=?`).get(tmp).n, 0, 'its lines go with it');
+  eq(db.prepare(`SELECT COUNT(*) n FROM manifests WHERE id=?`).get(tmp).n, 0, 'and the manifest itself');
+  eq((await post('manifest-delete', { id: tmp })).status, 404, 'deleting it twice is a 404, not a silent success');
 }
 
 // ── Access ──────────────────────────────────────────────────────────────────

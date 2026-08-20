@@ -17385,7 +17385,9 @@
   }
   window.mfClassify = mfClassify;
 
+  let mfLast = null;
   function mfRenderScore(j) {
+    mfLast = j;
     const m = j.manifest, s = j.score;
     el('mf-pill').textContent = m.status === 'draft' ? 'Not decided' : (m.status || '').replace('_',' ');
     mfSay('');
@@ -17427,6 +17429,7 @@
           <span style="font-size:12px;color:#6b6453">${mfEsc(m.sell_as === 'case' ? `sold as cases of ${m.units_per_case}` : 'sold as each')}</span>
           <button class="mf-btn ghost" style="margin-left:auto" onclick="mfClassify()">Categorise remaining</button>
           <button class="mf-btn ghost" onclick="mfRetail()">Look up retail</button>
+          <button class="mf-btn ghost" onclick="mfDelete()">Delete</button>
           <button class="mf-btn" onclick="mfDecide()">Record decision</button>
         </div>
         <div class="mf-kpi">
@@ -17502,6 +17505,19 @@
     }
   }
   window.mfRetail = mfRetail;
+
+  async function mfDelete() {
+    const m = (mfLast && mfLast.manifest) || {};
+    if (!await uiConfirm(
+      `Delete this ${mfEsc(m.vendor || 'manifest')} upload and its lines? Re-uploading the file starts it fresh.`,
+      { title: 'Delete manifest', danger: true, okText: 'Delete' })) return;
+    try {
+      const j = await mfApi('manifest-delete', { id: mfOpenId });
+      await uiAlert(`Deleted — ${j.lines} lines removed. ${j.note}`);
+      mfList();
+    } catch (e) { uiAlert(`Could not delete: ${e.message}`); }
+  }
+  window.mfDelete = mfDelete;
 
   async function mfDecide() {
     const status = await uiPrompt('Record decision', 'approved, approved_edits or passed');

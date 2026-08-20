@@ -3876,6 +3876,7 @@ const ACTION_BUSINESS = new Map([
   ["manifests", "bl"],
   ["manifest", "bl"],
   ["manifest-line", "bl"],
+  ["manifest-delete", "bl"],
   ["manifest-retail", "bl"],
   ["manifest-decide", "bl"],
   ["shelf-counts", "bl"],
@@ -15722,6 +15723,44 @@ export default {
             .bind(p, line.id).run();
         }
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=manifest-delete { id }
+    // Superuser only, and drafts only. Iterating on a vendor file means uploading it
+    // again; without this every attempt strands a permanent draft, which is how a
+    // manifest list stops being readable.
+    //
+    // 🛑 A DECIDED manifest is never deleted. It is the record of a call somebody made,
+    // and the criteria version it was judged under. Deleting it would erase the decision,
+    // not tidy the list.
+    //
+    // lookup_log rows are deliberately KEPT. They record what was actually spent looking
+    // this file up, and that stays true whether or not the manifest survives.
+    if (url.searchParams.get("action") === "manifest-delete" && request.method === "POST") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
+      if (unauth) return unauth;
+      try {
+        const body = await request.json();
+        const m = await env.DB.prepare(`SELECT * FROM manifests WHERE id = ?`).bind(body?.id).first();
+        if (!m) return new Response(JSON.stringify({ error: "No such manifest" }), { status: 404, headers: corsJson });
+        if (m.status !== "draft" && m.status !== "scored") {
+          return new Response(JSON.stringify({
+            error: `This manifest was marked "${String(m.status).replace("_", " ")}" — it is the record of a decision, not a draft, so it cannot be deleted.`,
+          }), { status: 409, headers: corsJson });
+        }
+        const { results: cnt } = await env.DB.prepare(
+          `SELECT COUNT(*) n FROM manifest_lines WHERE manifest_id = ?`).bind(m.id).all();
+        await env.DB.batch([
+          env.DB.prepare(`DELETE FROM manifest_lines WHERE manifest_id = ?`).bind(m.id),
+          env.DB.prepare(`DELETE FROM manifests WHERE id = ? AND status IN ('draft','scored')`).bind(m.id),
+        ]);
+        return new Response(JSON.stringify({
+          ok: true, deleted: m.id, vendor: m.vendor, lines: cnt?.[0]?.n ?? 0,
+          note: "The lookup log for this manifest is kept — it records what was actually spent.",
+        }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
