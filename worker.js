@@ -7717,6 +7717,33 @@ function manifestNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+// A quantity as a liquidator writes one. Alliance caps availability at "1k+" — 279 of
+// 331 lines on their August file — which is a FLOOR, not a count.
+//
+// 🔑 Both halves of this matter. Leaving it null makes 84% of the manifest unusable;
+// reading it as exactly 1000 makes landed cost, units per store and days-to-clear look
+// precise when they rest on "at least a thousand, they wouldn't say". So it parses, and
+// it comes back marked, and the mark rides through to the line as a flag.
+function manifestQty(v) {
+  if (v === null || v === undefined) return { value: null, approx: false };
+  const t = String(v).trim();
+  if (!t) return { value: null, approx: false };
+  const bare = t.replace(/[$,\s]/g, "");
+  // "1k+", "1.5K", "2k"
+  const k = bare.match(/^([\d.]+)k\+?$/i);
+  if (k) {
+    const n = Number(k[1]) * 1000;
+    return Number.isFinite(n) ? { value: n, approx: true } : { value: null, approx: false };
+  }
+  // "500+", "1000 +"
+  const plus = bare.match(/^([\d.]+)\+$/);
+  if (plus) {
+    const n = Number(plus[1]);
+    return Number.isFinite(n) ? { value: n, approx: true } : { value: null, approx: false };
+  }
+  return { value: manifestNum(t), approx: false };
+}
+
 // What kind of identifier is this? A UPC is 12–14 digits; a bare number that short is a
 // vendor SKU, and anything with letters is a model number. Getting this wrong matters
 // later: the retail slice looks up a UPC very differently from a model number.
@@ -7824,7 +7851,8 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
       row_no: i + 1, identifier,
       identifier_type: identifier ? manifestIdentType(identifier) : "none",
       description: String(at("description") ?? "").trim().slice(0, 400) || null,
-      qty: manifestNum(at("qty")), uom: String(at("uom") ?? "").trim() || null,
+      ...(() => { const q = manifestQty(at("qty")); return { qty: q.value, qtyApprox: q.approx }; })(),
+      uom: String(at("uom") ?? "").trim() || null,
       cost: manifestNum(at("cost")), msrp: manifestNum(at("msrp")),
       vendor_claimed_retail: manifestNum(at("vendor_claimed_retail")),
     };
@@ -7852,6 +7880,7 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
       const flags = [];
       if (!l.identifier) flags.push("no identifier");
       if (l.qty === null) flags.push("no qty");
+      if (l.qtyApprox) flags.push("qty is a minimum");
       if (l.cost === null) flags.push("no cost");
       return ins.bind(manifestId, l.row_no, l.identifier, l.identifier_type, l.description,
         l.qty, l.uom, l.cost, l.msrp, l.vendor_claimed_retail,

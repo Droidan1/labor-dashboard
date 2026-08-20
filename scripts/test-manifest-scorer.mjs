@@ -81,6 +81,9 @@ const CSV = [
   // The Kind list's real fourth row: qty and cost, nothing else. Nothing about it can be
   // judged, and that must not read as a pass.
   ',,815,1.45,',
+  // Alliance caps availability at "1k+" on 279 of 331 lines. It is a FLOOR, not a count.
+  '012345678930,Widget in bulk,1k+,0.80,',
+  '012345678931,Widget also bulk,500+,0.80,',
   '',
 ].join('\n');
 
@@ -97,16 +100,34 @@ let mid;
   eq(r.body.column_map.cost, 'Unit Cost', 'cost column found');
   eq(r.body.column_map.qty, 'Qty', 'qty column found');
   eq(r.body.missing.length, 0, 'nothing required is unmapped');
-  eq(r.body.rows, 4, 'the blank padding line is not a row, but the description-less one is');
+  eq(r.body.rows, 6, 'the blank padding line is not a row, but the description-less one is');
 
   const lines = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(mid);
-  eq(lines.length, 4, 'four lines written');
+  eq(lines.length, 6, 'six lines written');
   eq(lines[0].description, 'Chips, sour cream & onion 8oz', 'a quoted comma survives');
   eq(lines[1].description, 'Toothpaste 4.6oz "whitening"', 'a doubled quote survives');
   near(lines[0].cost, 0.42, '"$0.42" parses');
   near(lines[0].msrp, 2.49, 'MSRP parses');
   near(lines[2].cost, -1.5, 'a parenthesised negative parses as negative');
   eq(lines[0].identifier_type, 'upc', '12 digits reads as a UPC');
+}
+
+// ── 🔑 A capped quantity parses, and says it is a floor ────────────────────
+// Alliance writes "1k+" rather than a count. Leaving it null made 84% of their file
+// unusable; reading it as exactly 1000 would make landed cost, units per store and
+// days-to-clear look precise when they rest on "at least a thousand".
+{
+  const rows = db.prepare(`SELECT description, qty, flags FROM manifest_lines WHERE manifest_id=? AND description LIKE 'Widget%' ORDER BY row_no`).all(mid);
+  eq(rows.length, 2, 'both capped-quantity lines were written');
+  eq(rows[0].qty, 1000, '"1k+" reads as 1000');
+  ok(JSON.parse(rows[0].flags).includes('qty is a minimum'), '🔑 ...and is flagged as a floor, not a count');
+  ok(!JSON.parse(rows[0].flags).includes('no qty'), '...and is no longer treated as missing');
+  eq(rows[1].qty, 500, '"500+" reads as 500');
+  ok(JSON.parse(rows[1].flags).includes('qty is a minimum'), '...also flagged');
+  // An ordinary number stays exact and unflagged.
+  const plain = db.prepare(`SELECT qty, flags FROM manifest_lines WHERE manifest_id=? AND row_no=1`).get(mid);
+  eq(plain.qty, 480, 'a plain quantity is unchanged');
+  ok(!JSON.parse(plain.flags).includes('qty is a minimum'), '...and carries no approximation flag');
 }
 
 // ── The template is remembered, so the NEXT file maps itself ─────────────────
