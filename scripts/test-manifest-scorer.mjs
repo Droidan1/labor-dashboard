@@ -55,6 +55,22 @@ const get  = (qs, user = 'u-su') => call(`/?action=${qs}`, { user });
 const SNACKS = 'FG BL CONSUMABLES - FOOD - SNACKS';
 const ORAL   = 'FG BL CONSUMABLES - HBA - ORAL';
 
+// A day of real item sales, so ASP is an actual number rather than absent. Without this
+// every ASP is null and the scoring assertions below test nothing.
+{
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
+    .format(new Date(Date.now() - 86400e3));
+  env.SALES_SNAPSHOTS.put(`items:bl1:${day}`, JSON.stringify({
+    orderCount: 40,
+    categories: [
+      { category: 'Consumable Food', qty: 300, netSales: 399,
+        l3Rows: [{ l3: SNACKS, qty: 300, netSales: 399 }] },            // ASP $1.33
+      { category: 'Consumable HBA', qty: 100, netSales: 53,
+        l3Rows: [{ l3: ORAL, qty: 100, netSales: 53 }] },               // ASP $0.53
+    ],
+  }));
+}
+
 // A vendor file with the awkward bits real ones have: a quoted comma, a doubled quote,
 // a $-and-comma price, a parenthesised negative, and a blank padding line.
 const CSV = [
@@ -164,9 +180,13 @@ let mid;
   const s = r.body.score;
   eq(s.withoutRetail, true, '🔑 the verdict is marked as reached without retail');
   ok(/average selling price/i.test(s.basis), '...and says so in words');
-  ok(s.lines.every(l => l.costPctAsp === undefined || 'costPctAsp' in l),
-     'the cost share is named costPctAsp, never costPctRetail');
-  ok(!JSON.stringify(s).includes('costPctRetail'), '🔑 nothing in the payload calls it retail');
+  // The two measurements live in two fields on purpose. With no lookup run, the retail
+  // one must be EMPTY and the basis must name ASP — an ASP figure reported under a
+  // retail label is the misrepresentation this whole slice is built to avoid.
+  ok(s.lines.every(l => l.costPctRetail === null), '🔑 with no lookup run, costPctRetail is null on every line');
+  ok(s.lines.every(l => l.basisPct === null || l.basisName === 'our ASP'),
+     '🔑 ...and every scored line names its basis as our ASP');
+  ok(s.lines.some(l => l.costPctAsp !== null), 'the ASP figure is still reported, under its own name');
 }
 
 // ── 🛑 The % test alone WARNS; it never fails a buy (§5.3) ──────────────────

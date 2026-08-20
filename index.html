@@ -17400,8 +17400,11 @@
         <td class="mf-l">${mfEsc(l.description || '(no description)')}
           ${(l.flags || []).map(f => `<span class="mf-flag">${mfEsc(f)}</span>`).join('')}</td>
         <td class="mf-l">${mfEsc(l.l3 ? l.l3.split(' - ').pop() : '—')}</td>
-        <td>${mfNum(l.qty)}</td><td>${mfMoney(l.cost)}</td><td>${mfMoney(l.asp_l3)}</td>
-        <td>${mfPct(sc.costPctAsp)}</td><td>${mfMoney(l.suggested_price)}</td>
+        <td>${mfNum(l.qty)}</td><td>${mfMoney(l.cost)}</td>
+        <td>${l.retail_price ? `${mfMoney(l.retail_price)}<div style="font-size:10px;color:#6b6453">${mfEsc(mfBasis(l))}</div>` : '—'}</td>
+        <td>${mfMoney(l.asp_l3)}</td>
+        <td>${mfPct(sc.basisPct)}<div style="font-size:10px;color:#6b6453">${mfEsc(sc.basisName || '')}</div></td>
+        <td>${mfMoney(l.suggested_price)}</td>
         <td>${sc.perStore ?? '—'}</td><td>${sc.daysToClear ?? '—'}</td>
         <td class="mf-l">${sc.verdict ? `<span class="mf-v mf-${sc.verdict === 'pass' ? 'pass' : sc.verdict}">${sc.verdict}</span>` : ''}</td>
       </tr>`;
@@ -17412,6 +17415,7 @@
         <div class="mf-bar"><span class="mf-barlbl">${mfEsc(m.vendor)}</span>
           <span style="font-size:12px;color:#6b6453">${mfEsc(m.sell_as === 'case' ? `sold as cases of ${m.units_per_case}` : 'sold as each')}</span>
           <button class="mf-btn ghost" style="margin-left:auto" onclick="mfClassify()">Categorise remaining</button>
+          <button class="mf-btn ghost" onclick="mfRetail()">Look up retail</button>
           <button class="mf-btn" onclick="mfDecide()">Record decision</button>
         </div>
         <div class="mf-kpi">
@@ -17445,11 +17449,37 @@
         <div class="mf-bar"><span class="mf-barlbl">Lines</span>
           <span style="font-size:12px;color:#6b6453">${mfNum(j.lines.length)} rows</span></div>
         <div class="mf-scroll" style="max-height:60vh"><table class="mf-tbl"><thead><tr>
-          <th class="mf-l">Item</th><th class="mf-l">Category</th><th>Qty</th><th>Cost</th><th>Our ASP</th>
-          <th>Cost of ASP</th><th>Suggested</th><th>Per store</th><th>Days to clear</th><th class="mf-l"></th>
+          <th class="mf-l">Item</th><th class="mf-l">Category</th><th>Qty</th><th>Cost</th><th>Retail</th>
+          <th>Our ASP</th><th>Cost of</th><th>Suggested</th><th>Per store</th><th>Days to clear</th><th class="mf-l"></th>
         </tr></thead><tbody>${lines}</tbody></table></div>
       </div>`;
   }
+
+  // A price is only as good as where it came from, so the basis and confidence ride
+  // with it in the cell rather than living in a tooltip nobody opens.
+  const MF_BASIS = { single:'single', multipack_div_n:'from a multipack', per_oz_scaled:'scaled by size',
+                     same_line:'same line', msrp:'MSRP' };
+  const mfBasis = (l) => [MF_BASIS[l.retail_basis] || l.retail_basis,
+                          l.retail_confidence && l.retail_confidence !== 'high' ? l.retail_confidence : null,
+                          l.retail_source].filter(Boolean).join(' · ');
+
+  async function mfRetail() {
+    if (!await uiConfirm('Look up street prices for this manifest? It searches first-party retailers only, and skips anything already priced in the last 90 days.')) return;
+    mfSay('Looking up street prices — this takes a moment on a long manifest…');
+    try {
+      const j = await mfApi('manifest-retail', { id: mfOpenId });
+      mfSay(`${j.priced} priced, ${j.cached} from cache, ${j.skipped} without a first-party price`
+        + (j.partial ? ' — stopped at the lookup budget, run it again to continue.' : '.'));
+      mfOpen(mfOpenId);
+    } catch (e) {
+      // The one failure worth explaining rather than just reporting.
+      if (/not configured/i.test(e.message)) {
+        uiAlert('Retail lookup is not switched on yet — the worker needs a TinyFish API key.', { title: 'Not configured' });
+      } else uiAlert(`Lookup failed: ${e.message}`);
+      mfSay('');
+    }
+  }
+  window.mfRetail = mfRetail;
 
   async function mfDecide() {
     const status = await uiPrompt('Record decision', 'approved, approved_edits or passed');
