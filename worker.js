@@ -7331,8 +7331,24 @@ async function retailLog(env, row) {
   } catch (_) { /* logging must never break a lookup */ }
 }
 
-// Search, scoped to the allowlist at the QUERY rather than filtered afterwards — fewer
-// results to reason about, and no chance of a marketplace URL reaching the parser.
+// Is this URL actually on one of our first-party domains? Subdomains count
+// (shop.kroger.com), lookalikes do not (sameday.familydollar.com is not familydollar,
+// and familydollar is not on the list anyway).
+function retailHostAllowed(url, domains) {
+  const host = (String(url).match(/^https?:\/\/([^/:]+)/) || [])[1];
+  if (!host) return false;
+  const h = host.toLowerCase().replace(/^www\./, "");
+  return domains.some(d => h === d || h.endsWith("." + d));
+}
+
+// Search, preferring the allowlist at the query — and then ENFORCING it on the results.
+//
+// 🔑 `include_domains` is a ranking preference, not a guarantee. Verified against the
+// live API on Aug 20: a Tide query scoped to five first-party domains returned five
+// results from domains that were not among them (familydollar, savemart, starmarket,
+// homedepot, tide.com) — and those leaked results were the ONLY ones carrying prices in
+// their snippets. They are not marketplaces, so the marketplace regex waves them
+// through. Without this second filter a grocery site nobody approved sets our retail.
 async function retailSearch(env, query, domains, ctx = {}) {
   const t0 = Date.now();
   const url = `https://api.search.tinyfish.ai?query=${encodeURIComponent(query)}`
@@ -7345,7 +7361,8 @@ async function retailSearch(env, query, domains, ctx = {}) {
   } catch (_) { ok = false; }
   await retailLog(env, { ...ctx, provider: "tinyfish_search", detail: query,
     ok, status: res?.status ?? null, ms: Date.now() - t0 });
-  return ok ? (body?.results || []) : null;
+  if (!ok) return null;
+  return (body?.results || []).filter(r => retailHostAllowed(r.url, domains));
 }
 
 async function retailFetch(env, urls, ctx = {}) {
@@ -7413,20 +7430,27 @@ async function retailParsePrices(env, item, candidates, ctx = {}) {
 
 // Turn parsed candidates into ONE retail price, a basis, a confidence and any flags.
 // This is where R2–R7 actually land.
-function retailDecide(line, cands, opts = {}) {
+function retailDecide(line, cands, domains = [], opts = {}) {
   const flags = [];
   const targetPack = retailPackSize(line.description);
   const targetOz = retailOunces(line.description);
 
   // R3 — a marketplace listing is never a retail price, whatever domain it sits on.
   const firstParty = cands.filter(c => {
+    // 🔑 The allowlist is checked HERE too, not only on the search results. What comes
+    // back from the parser is model output carrying a URL, and the only safe assumption
+    // about model output is that it might be anything.
+    if (domains.length && !retailHostAllowed(c.url, domains)) return false;
     if (RETAIL_MARKETPLACE.test(String(c.url || ""))) return false;
     if (c.sold_by && RETAIL_MARKETPLACE.test(String(c.sold_by))) return false;
     // "sold and shipped by" naming anyone other than the retailer itself.
     if (c.sold_by) {
-      const host = (String(c.url).match(/https?:\/\/(?:www\.)?([^/]+)/) || [])[1] || "";
-      const brandOfHost = host.split(".")[0].toLowerCase();
-      if (!String(c.sold_by).toLowerCase().includes(brandOfHost)) return false;
+      // The brand is the registrable domain's label ("kroger" in shop.kroger.com), NOT
+      // the first label — taking the first read shop.kroger.com as brand "shop" and
+      // rejected a genuine Kroger page as a third-party seller.
+      const matched = domains.find(d => retailHostAllowed(c.url, [d]));
+      const brand = (matched || "").split(".")[0].toLowerCase();
+      if (brand && !String(c.sold_by).toLowerCase().includes(brand)) return false;
     }
     return true;
   });
@@ -7506,7 +7530,7 @@ async function retailPriceLine(env, line, budget, ctx) {
   budget.searches--;
   const results = await retailSearch(env, line.description.slice(0, 180), domains, ctx);
   if (results === null) return { skipped: "search failed" };
-  if (!results.length) return { decided: retailDecide(line, [], {}) };
+  if (!results.length) return { decided: retailDecide(line, [], domains) };
 
   // R1 step one: the snippets, which are free and already in hand.
   let cands = await retailParsePrices(env, item, results.slice(0, 8), ctx);
@@ -7523,7 +7547,7 @@ async function retailPriceLine(env, line, budget, ctx) {
       if (pages === null) {
         // R8: big-ticket sites 403 plain fetches. That is where the metered Agent
         // endpoint would go — flagged, deliberately not spent.
-        const d = retailDecide(line, cands, {});
+        const d = retailDecide(line, cands, domains);
         d.flags.push(bigTicket ? "needs agent" : "fetch blocked");
         return { decided: d };
       }
@@ -7534,7 +7558,7 @@ async function retailPriceLine(env, line, budget, ctx) {
       }
     }
   }
-  return { decided: retailDecide(line, cands, {}) };
+  return { decided: retailDecide(line, cands, domains) };
 }
 
 // Run the lookup across a manifest.
@@ -7545,7 +7569,11 @@ async function retailPriceLine(env, line, budget, ctx) {
 // key a cache on.
 async function retailRunManifest(env, manifestId, opts = {}) {
   const maxSearches = Number(opts.maxSearches) || 120;
-  const budget = { searches: maxSearches, fetches: Number(opts.maxFetches) || 40 };
+  // Fetch is free and capped at 150 URLs/min, and the CPG channel needs it far more often
+  // than the PRD's 16-of-20 figure suggested: in the live check, first-party snippets for
+  // a Tide query carried no price at all. A fetch budget well below the search budget
+  // would have stopped most CPG lines from ever being priced.
+  const budget = { searches: maxSearches, fetches: Number(opts.maxFetches) || maxSearches };
   const { results: lines } = await env.DB.prepare(
     `SELECT * FROM manifest_lines WHERE manifest_id = ? ORDER BY row_no`).bind(manifestId).all();
   if (!lines?.length) return { priced: 0, cached: 0, skipped: 0, partial: false };

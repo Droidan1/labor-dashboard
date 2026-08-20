@@ -99,13 +99,51 @@ console.log('Retail lookup (R1–R8)');
   env.TINYFISH_API_KEY = saved;
 }
 
+// ── 🛑 include_domains LEAKS — the allowlist is enforced on results too ────
+// Not hypothetical. Verified against the live TinyFish API on 2026-08-20: a Tide query
+// scoped to five first-party domains returned familydollar, savemart, starmarket,
+// homedepot and tide.com as well — and those leaked rows were the ONLY ones whose
+// snippets carried prices. None of them is a marketplace, so the marketplace regex lets
+// them through. Without the host filter, a grocery site nobody approved sets our retail.
+{
+  const s = await scenario({ desc: 'Tide Pods 42 ct', upc: '012345678920',
+    results: [
+      { position:1, url:'https://www.cvs.com/shop/tide-pods-42-ct', title:'Tide PODS 42 ct', snippet:'no price here' },
+      { position:2, url:'https://sameday.familydollar.com/store/family-dollar/products/tide', title:'Tide Pods', snippet:'Current price: $16.99' },
+      { position:3, url:'https://shop.savemart.com/store/savemart/products/tide', title:'Tide Pods', snippet:'Current price: $13.00' },
+      { position:4, url:'https://www.starmarket.com/shop/product-details.tide.html', title:'Tide', snippet:'$15.49' },
+      { position:5, url:'https://tide.com/en-us/shop/tide-pods', title:'Tide', snippet:'$18.00' },
+    ],
+    // The parser would happily read every one of these if they reached it.
+    snippets: [
+      { url:'https://sameday.familydollar.com/store/family-dollar/products/tide', price:16.99, title:'Tide Pods 42ct', pack:1, in_stock:true },
+      { url:'https://shop.savemart.com/store/savemart/products/tide', price:13.00, title:'Tide Pods 42ct', pack:1, in_stock:true },
+    ]});
+  // Only the cvs.com row survives the host filter, and it carries no price.
+  eq(s.line.retail_price, null, '🛑 a price from an unapproved domain is never used');
+  ok(s.flags.includes('no retail'), '...the line reads as unpriced rather than cheaply priced');
+  const sent = searches[0] || '';
+  ok(sent.includes('include_domains'), 'the allowlist is still sent as a query hint');
+  ok(!/familydollar/.test(JSON.stringify(s.line)), 'nothing from the leaked domain reaches the row');
+}
+
+// ── A subdomain of an approved retailer IS approved ────────────────────────
+{
+  const s = await scenario({ desc: 'Cereal 12oz', upc: '012345678921',
+    results: [{ position:1, url:'https://shop.kroger.com/p/cereal', title:'Cereal', snippet:'$3.49' }],
+    snippets: [{ url:'https://shop.kroger.com/p/cereal', price:3.49, title:'Cereal 12oz', pack:1, in_stock:true, sold_by:'Kroger' }] });
+  near(s.line.retail_price, 3.49, 'shop.kroger.com counts as Kroger');
+}
+
 // ── R1 — snippets answer, so NO page is fetched ────────────────────────────
+let pricedId;   // captured, not assumed — inserting a scenario above renumbers them all
 {
   const s = await scenario({ desc: 'Chips 8oz', upc: '012345678905',
     results: RES('https://www.target.com/p/chips'),
     snippets: [{ url:'https://www.target.com/p/chips', price:2.49, title:'Chips 8oz', pack:1, in_stock:true }] });
   eq(searches.length, 1, 'one search');
   eq(fetches.length, 0, '🔑 R1 — snippets answered, so nothing was fetched');
+  pricedId = s.id;
   near(s.line.retail_price, 2.49, 'the price lands');
   eq(s.line.retail_basis, 'single', 'basis recorded as single');
   eq(s.line.retail_confidence, 'high', 'a single in-stock first-party price is high confidence');
@@ -216,7 +254,7 @@ console.log('Retail lookup (R1–R8)');
 {
   await post('merch-criteria-draft', { cells: [{ category: null, field: 'max_cost_pct_retail', value: '30' }] });
   await post('merch-criteria-publish', { note: 'v1' });
-  const r = await get('manifest&id=m1');
+  const r = await get(`manifest&id=${pricedId}`);
   const l = r.body.score.lines[0];
   eq(l.basisName, 'street retail', '🔑 with a retail price the cost test uses retail');
   ok(l.costPctRetail !== null, 'and reports cost of retail');
@@ -226,9 +264,9 @@ console.log('Retail lookup (R1–R8)');
 
 // ── Access + a decided manifest is not re-priced underneath its decision ───
 {
-  eq((await post('manifest-retail', { id: 'm1' }, 'u-admin')).status, 403, '🛑 an admin may not run the lookup — superuser only');
-  await post('manifest-decide', { id: 'm1', status: 'approved', note: 'yes' });
-  eq((await post('manifest-retail', { id: 'm1' })).status, 409, '🛑 a decided manifest is not re-priced');
+  eq((await post('manifest-retail', { id: pricedId }, 'u-admin')).status, 403, '🛑 an admin may not run the lookup — superuser only');
+  await post('manifest-decide', { id: pricedId, status: 'approved', note: 'yes' });
+  eq((await post('manifest-retail', { id: pricedId })).status, 409, '🛑 a decided manifest is not re-priced');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
