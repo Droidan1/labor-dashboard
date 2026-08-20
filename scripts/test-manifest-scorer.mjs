@@ -78,6 +78,9 @@ const CSV = [
   '012345678905,"Chips, sour cream & onion 8oz",480,"$0.42","$2.49"',
   '012345678912,"Toothpaste 4.6oz ""whitening""",240,0.63,1.99',
   '012345678929,Mystery widget,10,"(1.50)",',
+  // The Kind list's real fourth row: qty and cost, nothing else. Nothing about it can be
+  // judged, and that must not read as a pass.
+  ',,815,1.45,',
   '',
 ].join('\n');
 
@@ -94,10 +97,10 @@ let mid;
   eq(r.body.column_map.cost, 'Unit Cost', 'cost column found');
   eq(r.body.column_map.qty, 'Qty', 'qty column found');
   eq(r.body.missing.length, 0, 'nothing required is unmapped');
-  eq(r.body.rows, 3, 'the blank padding line is not a row');
+  eq(r.body.rows, 4, 'the blank padding line is not a row, but the description-less one is');
 
   const lines = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(mid);
-  eq(lines.length, 3, 'three lines written');
+  eq(lines.length, 4, 'four lines written');
   eq(lines[0].description, 'Chips, sour cream & onion 8oz', 'a quoted comma survives');
   eq(lines[1].description, 'Toothpaste 4.6oz "whitening"', 'a doubled quote survives');
   near(lines[0].cost, 0.42, '"$0.42" parses');
@@ -201,6 +204,25 @@ let mid;
   ok(['buy', 'buy_with_edits', 'pass_with_edits'].includes(r.body.score.verdict), 'a verdict is produced');
   ok(r.body.score.verdictText.length > 0, '...with a sentence a buyer can take to a vendor');
   ok(r.body.score.rollup.length > 0, 'and a rollup at the category level, not per SKU');
+}
+
+// ── 🛑 A line nothing could be judged on does NOT read as a pass ───────────
+// Shipped wrong and Brian saw it on the Kind list: the one row with no description, no
+// category and no ASP showed GREEN — 815 units and $1,181.75 of cost reading as cleared,
+// because every test returned "unknown" and the verdict fell through to pass.
+{
+  const r = await get(`manifest&id=${mid}`);
+  const s = r.body.score;
+  const blind = s.lines.find(l => Object.values(l.tests || {}).every(t => t.verdict === 'unknown'));
+  if (blind) {
+    eq(blind.verdict, 'unknown', '🛑 a line with nothing to judge reads unknown, never pass');
+    ok(s.totals.unjudged >= 1, '...and is counted, not hidden');
+    ok(/could not be judged/i.test(s.verdictText), '...and the verdict sentence admits it');
+  } else {
+    ok(false, 'fixture should contain a line with no category and no ASP');
+  }
+  // A line that WAS judged still passes normally.
+  ok(s.lines.some(l => l.verdict === 'pass' || l.verdict === 'warn'), 'judged lines still get a real verdict');
 }
 
 // ── A decision records what it was measured against ─────────────────────────

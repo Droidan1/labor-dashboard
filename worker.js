@@ -8041,8 +8041,14 @@ function manifestScore(lines, resolved, opts = {}) {
     const dead = shelfState[l.l3] === "dead" || shelfState[l.l2] === "dead";
     const hardFail = tests.cost.verdict === "warn"
       && minMargin !== null && marginPerUnit !== null && marginPerUnit < minMargin && dead;
+    // 🔑 "Nothing could be judged" is not the same as "passed". Every test returning
+    // unknown used to fall through to pass, so a line with no description, no category
+    // and no ASP showed GREEN — on the Kind list that was 815 units and $1,181.75 of
+    // cost reading as cleared. A verdict needs at least one test that actually ran.
+    const ran = Object.values(tests).filter(t => t.verdict !== "unknown");
     const verdict = hardFail ? "fail"
-      : Object.values(tests).some(t => t.verdict === "warn") ? "warn" : "pass";
+      : ran.some(t => t.verdict === "warn") ? "warn"
+      : ran.length ? "pass" : "unknown";
 
     const perStore = storeCount > 0 ? +((Number(l.qty) || 0) / storeCount).toFixed(1) : null;
     const daysToClear = l.velocity_l3 > 0 ? Math.round((Number(l.qty) || 0) / l.velocity_l3) : null;
@@ -8055,12 +8061,13 @@ function manifestScore(lines, resolved, opts = {}) {
   const rollup = {};
   lines.forEach((l, i) => {
     const key = l.l2 || "Unclassified";
-    const r = rollup[key] || (rollup[key] = { category: key, lines: 0, units: 0, cost: 0, aspValue: 0, aspLines: 0, warn: 0, fail: 0 });
+    const r = rollup[key] || (rollup[key] = { category: key, lines: 0, units: 0, cost: 0, aspValue: 0, aspLines: 0, warn: 0, fail: 0, unknown: 0 });
     const qty = Number(l.qty) || 0;
     r.lines++; r.units += qty; r.cost += (Number(l.cost) || 0) * qty;
     if (l.asp_l3) { r.aspValue += Number(l.asp_l3) * qty; r.aspLines++; }
     if (perLine[i].verdict === "warn") r.warn++;
     if (perLine[i].verdict === "fail") r.fail++;
+    if (perLine[i].verdict === "unknown") r.unknown++;
   });
   const rows = Object.values(rollup).map(r => ({
     ...r, cost: roundCents(r.cost), aspValue: roundCents(r.aspValue),
@@ -8072,15 +8079,20 @@ function manifestScore(lines, resolved, opts = {}) {
   const totalAsp = roundCents(rows.reduce((t, r) => t + r.aspValue, 0));
   const warns = perLine.filter(l => l.verdict === "warn").length;
   const fails = perLine.filter(l => l.verdict === "fail").length;
+  const unjudged = perLine.filter(l => l.verdict === "unknown").length;
 
   // The edit ask, in the vendor's terms: which categories to drop, not which SKUs.
   const worst = rows.filter(r => r.fail > 0 || r.warn > 0).sort((a, b) => (b.fail - a.fail) || (b.warn - a.warn)).slice(0, 3);
   const verdict = fails ? "pass_with_edits" : warns ? "buy_with_edits" : "buy";
+  const unjudgedNote = unjudged
+    ? ` ${unjudged} line${unjudged === 1 ? "" : "s"} could not be judged at all — no category or no price to compare against.`
+    : "";
   const say = fails
     ? `Buy with edits — drop ${worst.filter(w => w.fail).map(w => w.category).join(", ") || "the failing lines"}.`
     : warns
       ? `Buy with edits — ${worst.map(w => `${w.category} (${w.warn} line${w.warn === 1 ? "" : "s"} flagged)`).join(", ")}.`
-      : "Buy — every line clears the criteria.";
+      : unjudged === lines.length ? "Nothing here could be scored yet."
+        : "Buy — every judged line clears the criteria.";
 
   const pricedFromRetail = lines.filter(l => l.retail_price).length;
   return {
@@ -8089,10 +8101,10 @@ function manifestScore(lines, resolved, opts = {}) {
       lines: lines.length, units: Math.round(lines.reduce((t, l) => t + (Number(l.qty) || 0), 0)),
       cost: totalCost, aspValue: totalAsp,
       costPctAsp: totalAsp > 0 ? +((totalCost / totalAsp) * 100).toFixed(1) : null,
-      warns, fails,
+      warns, fails, unjudged,
       linesPriced: lines.filter(l => l.asp_l3).length,
     },
-    verdict, verdictText: say,
+    verdict, verdictText: say + unjudgedNote,
     // Says what it actually is, per line count — a manifest half-priced from retail is
     // neither "scored against retail" nor "scored without it", and claiming either
     // would be the misrepresentation this whole slice exists to avoid.

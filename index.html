@@ -2045,6 +2045,10 @@
         .mf-warn{background:rgba(245,158,11,.18);color:#92600b}
         .dark .mf-warn{color:#fbbf24}
         .mf-fail{background:rgba(239,68,68,.18);color:#b91c1c}
+        /* Neutral on purpose: an unjudged line is not a soft warning, it is an absence
+           of information, and colouring it amber would read as a mild problem. */
+        .mf-unknown{background:rgba(20,16,8,.10);color:#6b6453}
+        .dark .mf-unknown{background:rgba(255,255,255,.10);color:#8893a7}
         .dark .mf-fail{color:#f87171}
         .mf-flag{display:inline-block;font-size:10px;border-radius:4px;padding:1px 5px;margin-left:5px;
           background:rgba(20,16,8,.07);color:#6b6453}
@@ -17390,7 +17394,7 @@
         : r.shelfState === 'starved' ? '<span class="mf-flag">starved</span>' : ''}</td>
       <td>${mfNum(r.lines)}</td><td>${mfNum(r.units)}</td><td>${mfMoney(r.cost)}</td>
       <td>${mfMoney(r.aspValue)}</td><td>${mfPct(r.costPctAsp)}</td>
-      <td>${r.warn ? `<span class="mf-v mf-warn">${r.warn}</span>` : ''}${r.fail ? ` <span class="mf-v mf-fail">${r.fail}</span>` : ''}</td>
+      <td>${r.warn ? `<span class="mf-v mf-warn">${r.warn}</span>` : ''}${r.fail ? ` <span class="mf-v mf-fail">${r.fail}</span>` : ''}${r.unknown ? ` <span class="mf-v mf-unknown">${r.unknown} unjudged</span>` : ''}</td>
     </tr>`).join('');
 
     const byId = Object.fromEntries(s.lines.map(l => [l.id, l]));
@@ -17441,7 +17445,7 @@
         </tr></thead><tbody>${rollup}
           <tr class="mf-tot"><td class="mf-l">Total</td><td>${mfNum(s.totals.lines)}</td><td>${mfNum(s.totals.units)}</td>
             <td>${mfMoney(s.totals.cost)}</td><td>${mfMoney(s.totals.aspValue)}</td><td>${mfPct(s.totals.costPctAsp)}</td>
-            <td>${s.totals.warns ? `<span class="mf-v mf-warn">${s.totals.warns}</span>` : ''}${s.totals.fails ? ` <span class="mf-v mf-fail">${s.totals.fails}</span>` : ''}</td></tr>
+            <td>${s.totals.warns ? `<span class="mf-v mf-warn">${s.totals.warns}</span>` : ''}${s.totals.fails ? ` <span class="mf-v mf-fail">${s.totals.fails}</span>` : ''}${s.totals.unjudged ? ` <span class="mf-v mf-unknown">${s.totals.unjudged} unjudged</span>` : ''}</td></tr>
         </tbody></table></div>
       </div>
 
