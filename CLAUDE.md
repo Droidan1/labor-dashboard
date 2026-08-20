@@ -50,6 +50,19 @@
 	⁃	﻿﻿**No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
 	⁃	﻿﻿**Minimat Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
 
+## UI work
+
+Read [DESIGN.md](DESIGN.md) before building or restyling a surface, and extend what is
+there rather than deriving a new look. In particular, **any dense/tabular Merchandising
+surface follows §4.8** (panel + bar + legend, the three cell states, the level badges) —
+the Coverage heatmap and the Manifest Scorer's tables are meant to look like Buy Criteria,
+not like six different tables. §4.8 also lists the six rendering traps this repo has
+already shipped broken once; check them before saying a table is done.
+
+Verify a colour change in BOTH themes by computing contrast against the real background
+(≥ 4.5:1), never by looking at a screenshot — and never against the local `tailwind.css`,
+which is stale and carries no `dark:` variants.
+
 ## Destructive Operations (this repo has lost production data three times)
 
 <rules>
