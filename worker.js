@@ -7285,37 +7285,55 @@ const MERCH_NON_CATEGORY_L2 = new Set([
   "Custom Sales", "Gift Cards", "Refund", "Bin Products", "Sku Book Items",
 ]);
 
-// The one non-Clover bucket on the shelf-count form. A store's food shelf is not fully
-// described by the core categories, and the 60% floor is a share OF food — so the
-// denominator needs the remainder to be counted, not inferred.
-const MERCH_OTHER_FOOD = "__other_food__";
+// A shelf-count row for "everything else in this L2". Only appears when an L2 is core
+// AND some of its L3s carry their own core flag — then those L3s are counted
+// individually and this catches the remainder, so the L2's share still adds up.
+const MERCH_OTHER_PREFIX = "__other__:";
+const merchOtherBucket = (l2) => MERCH_OTHER_PREFIX + l2;
+const merchOtherParent = (key) =>
+  String(key).startsWith(MERCH_OTHER_PREFIX) ? String(key).slice(MERCH_OTHER_PREFIX.length) : null;
 
-// Every category eligible for a criteria row, grouped by its L2. Derived from the
-// taxonomy rather than stored, so a new Clover category appears here the moment
-// L3_TO_L2 learns about it.
-function merchCategories() {
-  return Object.entries(L3_TO_L2)
-    .filter(([, l2]) => !MERCH_NON_CATEGORY_L2.has(l2))
-    .map(([l3, l2]) => ({ l3, l2 }))
-    .sort((a, b) => a.l2.localeCompare(b.l2) || a.l3.localeCompare(b.l3));
+// The taxonomy as a two-level tree: the 10 merchandise L2s, each with its L3s. Derived
+// from L3_TO_L2 rather than stored, so a new Clover category appears the moment the map
+// learns about it.
+function merchTree() {
+  const tree = {};
+  for (const [l3, l2] of Object.entries(L3_TO_L2)) {
+    if (MERCH_NON_CATEGORY_L2.has(l2)) continue;
+    (tree[l2] || (tree[l2] = [])).push(l3);
+  }
+  const out = {};
+  for (const l2 of Object.keys(tree).sort()) out[l2] = tree[l2].sort();
+  return out;
 }
 
-// A Clover L3 is a warehouse string ("FG BL CONSUMABLES - FOOD - COFFEE & TEA").
-// The store manager filling in the form should see "Coffee & Tea"; the raw value stays
-// on the payload so the UI can show it on hover and nothing has to parse the label back.
-function merchLabel(l3) {
-  if (l3 === MERCH_OTHER_FOOD) return "Other food";
-  const tail = String(l3).split(" - ").pop();
+function merchL2s() { return Object.keys(merchTree()); }
+function merchIsL2(x) { return Object.prototype.hasOwnProperty.call(merchTree(), x); }
+function merchIsL3(x) {
+  return Object.prototype.hasOwnProperty.call(L3_TO_L2, x) && !MERCH_NON_CATEGORY_L2.has(L3_TO_L2[x]);
+}
+function merchParentOf(l3) { return merchIsL3(l3) ? L3_TO_L2[l3] : null; }
+
+// An L2 is already a human name. A Clover L3 is a warehouse string
+// ("FG BL CONSUMABLES - FOOD - COFFEE & TEA") and the person reading the row should see
+// "Coffee & Tea"; the raw key stays on the payload so the UI can show it on hover and
+// nothing has to parse the label back into a key.
+function merchLabel(key) {
+  const other = merchOtherParent(key);
+  if (other) return "Other " + other.replace(/^Consumable /, "").toLowerCase();
+  if (merchIsL2(key)) return key;
+  const tail = String(key).split(" - ").pop();
   return tail.replace(/[A-Za-z0-9&']+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase());
 }
 
-function merchIsCategory(l3) {
-  return Object.prototype.hasOwnProperty.call(L3_TO_L2, l3) &&
-         !MERCH_NON_CATEGORY_L2.has(L3_TO_L2[l3]);
+// Which level a criteria row for this key belongs at. Returns null if it is neither.
+function merchLevelOf(key) {
+  if (key === null || key === undefined) return "chain";
+  if (merchIsL2(key)) return "l2";
+  if (merchIsL3(key)) return "l3";
+  return null;
 }
 
-// Sunday-anchored week end for a YYYY-MM-DD date. Date-only math, so the noon
-// anchor keeps it timezone-proof rather than timezone-aware.
 function merchWeekEnding(dateStr) {
   const d = new Date(dateStr + "T12:00:00Z");
   if (isNaN(d)) return null;
@@ -7355,13 +7373,13 @@ async function merchEnsureDraft(env, who) {
   ).bind(next, now).run();
   if (live) {
     await env.DB.prepare(
-      `INSERT INTO merch_criteria (version, l3, field, value, note, updated_by, updated_at)
-       SELECT ?, l3, field, value, note, updated_by, updated_at FROM merch_criteria WHERE version = ?`
+      `INSERT INTO merch_criteria (version, level, category, field, value, note, updated_by, updated_at)
+       SELECT ?, level, category, field, value, note, updated_by, updated_at FROM merch_criteria WHERE version = ?`
     ).bind(next, live.version).run();
   } else {
     const stmt = env.DB.prepare(
-      `INSERT INTO merch_criteria (version, l3, field, value, note, updated_by, updated_at)
-       VALUES (?, NULL, ?, ?, NULL, ?, ?)`
+      `INSERT INTO merch_criteria (version, level, category, field, value, note, updated_by, updated_at)
+       VALUES (?, 'chain', NULL, ?, ?, NULL, ?, ?)`
     );
     await env.DB.batch(Object.entries(MERCH_DEFAULTS).map(([f, v]) =>
       stmt.bind(next, f, v, who || null, now)));
@@ -7369,54 +7387,99 @@ async function merchEnsureDraft(env, who) {
   return next;
 }
 
-// What the shelf-count form asks a manager to count: the core categories, in shelf order,
-// plus the other-food bucket that makes the 60% floor a share rather than a raw number.
+// What the shelf-count form asks a manager to count.
 //
-// Read from the LIVE criteria version, not the draft — a manager should never be counting
-// against a definition nobody has published. Before v1 exists this is empty on purpose:
-// "count the core" is not a question you can ask before someone has said what core is.
+// The list FOLLOWS the core flag wherever it was set, which is the whole point of the
+// three-level table: flag `Consumable Food` and a manager counts one number for food;
+// flag `Coffee & Tea` under it and they count that separately. When both are flagged the
+// L3s are counted individually and an "Other food" row catches the remainder, so the
+// L2's share still adds up instead of double-counting.
+//
+// Read from the LIVE version, never a draft — nobody should be counting against a
+// definition nobody has published. Before v1 this is empty on purpose: "count the core"
+// is not a question you can ask before someone has said what core is.
 async function merchCoreCategories(env) {
   const { live } = await merchVersions(env);
   if (!live) return [];
-  const { results } = await env.DB.prepare(
-    `SELECT l3, value FROM merch_criteria WHERE version = ? AND field = 'core'`
-  ).bind(live.version).all();
-  const chainDefault = (results || []).find(r => r.l3 === null)?.value === "1";
-  const flags = new Map((results || []).filter(r => r.l3 !== null).map(r => [r.l3, r.value === "1"]));
-  const core = merchCategories()
-    .filter(({ l3 }) => flags.has(l3) ? flags.get(l3) : chainDefault)
-    .map(({ l3, l2 }) => ({ l3, l2, label: merchLabel(l3) }));
-  return core.length
-    ? [...core, { l3: MERCH_OTHER_FOOD, l2: "Consumable Food", label: merchLabel(MERCH_OTHER_FOOD) }]
-    : [];
+  const resolved = await merchResolve(env, live.version);
+  const rows = [];
+  for (const l2 of resolved.categories) {
+    // 🔑 Its OWN core flag, not an inherited one. An L3 row often exists for some
+    // unrelated reason — a different price cap — and it inherits `core` from its parent
+    // like every other field. If that counted, adding a price cap to Coffee & Tea would
+    // silently split it out of the food count and stop the L2 being counted whole.
+    // Counting a category separately has to be something someone chose.
+    const coreKids = l2.children.filter(c => c.fields.core.inherited === false && c.fields.core.value === "1");
+    if (coreKids.length) {
+      for (const c of coreKids) rows.push({ key: c.key, level: "l3", parent: l2.key, label: c.label });
+      // The parent is core too, so what is left of it after the named children still
+      // counts toward the floor and needs a number of its own.
+      if (l2.core) {
+        const key = merchOtherBucket(l2.key);
+        rows.push({ key, level: "other", parent: l2.key, label: merchLabel(key) });
+      }
+    } else if (l2.core) {
+      rows.push({ key: l2.key, level: "l2", parent: null, label: l2.label });
+    }
+  }
+  return rows;
 }
 
-// Resolve one version into the table the UI draws: chain defaults, then a row per
-// category, each cell carrying whether it is inherited or an override.
-// version === null means "nothing published yet". It still returns the FULL category
-// list with every cell empty, rather than an empty table: the first thing anyone does
-// here is tick core flags, and a page with no rows to tick is a dead end — v1 could
-// never be authored through the UI that exists to author it.
+// Resolve one version into the table the page draws: the chain default row, then one
+// row per L2, each carrying whichever of its L3s have a row of their own in this
+// version. A cell walks UP — own value, else the L2's, else the chain default — so an
+// L3 row only stores what actually differs from its parent.
+//
+// version === null means "nothing published yet". It still returns the full L2 list with
+// every cell empty, rather than an empty table: the first thing anyone does here is set
+// defaults and tick core, and a page with no rows is a dead end.
 async function merchResolve(env, version) {
   const results = version === null ? [] : (await env.DB.prepare(
-    `SELECT l3, field, value, updated_by, updated_at FROM merch_criteria WHERE version = ?`
+    `SELECT level, category, field, value, updated_by, updated_at FROM merch_criteria WHERE version = ?`
   ).bind(version).all()).results;
-  const defaults = {}, byCat = {};
+
+  const chain = {}, byCat = {};
   for (const r of results || []) {
-    if (r.l3 === null) defaults[r.field] = r;
-    else (byCat[r.l3] || (byCat[r.l3] = {}))[r.field] = r;
+    if (r.level === "chain") chain[r.field] = r;
+    else (byCat[r.category] || (byCat[r.category] = {}))[r.field] = r;
   }
-  const cell = (own, inherited) => own
-    ? { value: own.value, inherited: false, updated_by: own.updated_by, updated_at: own.updated_at }
-    : { value: inherited ? inherited.value : null, inherited: true };
   const fields = [...MERCH_FIELDS];
+  const tree = merchTree();
+
+  // own → the row's own value; chain[] is the last resort. `from` names where a value
+  // came from so the UI can say "inherited from Consumable Food" rather than just greying.
+  const cell = (own, parent, from) => own
+    ? { value: own.value, inherited: false, from: "self", updated_by: own.updated_by, updated_at: own.updated_at }
+    : parent
+      ? { value: parent.value, inherited: true, from }
+      : { value: null, inherited: true, from: null };
+
+  const coreOf = (own, parent) => (own?.core?.value ?? parent?.core?.value ?? null) === "1";
+
+  const categories = merchL2s().map(l2 => {
+    const own = byCat[l2];
+    // An L3 appears as a row only when this version actually holds one for it.
+    const children = (tree[l2] || []).filter(l3 => byCat[l3]).map(l3 => ({
+      key: l3, level: "l3", parent: l2, label: merchLabel(l3),
+      core: coreOf(byCat[l3], own || chain),
+      fields: Object.fromEntries(fields.map(f =>
+        [f, cell(byCat[l3][f], own?.[f] || chain[f], own?.[f] ? l2 : "chain")])),
+    }));
+    return {
+      key: l2, level: "l2", label: l2,
+      core: coreOf(own, chain),
+      fields: Object.fromEntries(fields.map(f => [f, cell(own?.[f], chain[f], "chain")])),
+      children,
+    };
+  });
+
   return {
-    defaults: Object.fromEntries(fields.map(f => [f, cell(defaults[f], null)])),
-    categories: merchCategories().map(({ l3, l2 }) => ({
-      l3, l2,
-      core: (byCat[l3]?.core?.value ?? defaults.core?.value) === "1",
-      fields: Object.fromEntries(fields.map(f => [f, cell(byCat[l3]?.[f], defaults[f])])),
-    })),
+    defaults: Object.fromEntries(fields.map(f => [f, cell(chain[f], null, null)])),
+    categories,
+    // The picker's contents. Sent whole so the page can offer every L3 without a
+    // second round trip, and mark the ones that already have a row.
+    tree: Object.fromEntries(merchL2s().map(l2 =>
+      [l2, (tree[l2] || []).map(l3 => ({ key: l3, label: merchLabel(l3), added: !!byCat[l3] }))])),
   };
 }
 
@@ -7430,13 +7493,13 @@ async function merchChangeLog(env) {
   // version list is unbounded. Drafts inside the range are filtered out in JS.
   const wanted = new Set(published.map(r => r.version));
   const { results } = await env.DB.prepare(
-    `SELECT version, l3, field, value, updated_by FROM merch_criteria
+    `SELECT version, level, category, field, value, updated_by FROM merch_criteria
       WHERE version >= ? AND version <= ?`
   ).bind(published[0].version, published[published.length - 1].version).all();
   const snap = {};
   for (const r of results || []) {
     if (!wanted.has(r.version)) continue;
-    (snap[r.version] || (snap[r.version] = {}))[`${r.l3 === null ? "" : r.l3}|${r.field}`] = r;
+    (snap[r.version] || (snap[r.version] = {}))[`${r.category === null ? "" : r.category}|${r.field}`] = r;
   }
   const out = [];
   for (let i = 0; i < published.length; i++) {
@@ -7445,15 +7508,18 @@ async function merchChangeLog(env) {
     for (const key of new Set([...Object.keys(prev), ...Object.keys(cur)])) {
       const before = prev[key]?.value ?? null, after = cur[key]?.value ?? null;
       if (before === after) continue;
-      const [l3, field] = key.split("|");
+      const i = key.indexOf("|");
+      const category = key.slice(0, i) || null;
       out.push({
         version: v.version, published_at: v.published_at, published_by: v.published_by,
-        note: v.note, l3: l3 || null, field, from: before, to: after,
+        note: v.note, category, label: category ? merchLabel(category) : "Chain default",
+        level: (cur[key] || prev[key])?.level ?? merchLevelOf(category),
+        field: key.slice(i + 1), from: before, to: after,
         editor: cur[key]?.updated_by ?? null,
       });
     }
   }
-  return out.sort((a, b) => b.version - a.version || String(a.l3).localeCompare(String(b.l3)));
+  return out.sort((a, b) => b.version - a.version || String(a.category).localeCompare(String(b.category)));
 }
 
 // ─── WebAuthn / Passkey Utilities ────────────────────────────────
@@ -14211,10 +14277,13 @@ export default {
           if (!MERCH_FIELDS.has(c?.field)) {
             return new Response(JSON.stringify({ error: `Unknown field: ${c?.field}` }), { status: 400, headers: corsJson });
           }
-          if (c.l3 != null && !merchIsCategory(c.l3)) {
-            return new Response(JSON.stringify({ error: `Unknown category: ${c.l3}` }), { status: 400, headers: corsJson });
+          // The level is DERIVED from the key, never taken from the client: an L2 name
+          // and an L3 key cannot collide, so the taxonomy alone settles which it is and
+          // there is no way to write a row at the wrong level.
+          if (merchLevelOf(c.category ?? null) === null) {
+            return new Response(JSON.stringify({ error: `Unknown category: ${c.category}` }), { status: 400, headers: corsJson });
           }
-          if (c.l3 == null && c.value == null) {
+          if (c.category == null && c.value == null) {
             return new Response(JSON.stringify({ error: "A chain default cannot be cleared — it is what everything else inherits" }), { status: 400, headers: corsJson });
           }
         }
@@ -14223,17 +14292,19 @@ export default {
         const who = currentUser?.email || currentUser?.name || null;
         // `l3 IS ?` rather than `l3 = ?`: SQLite's `=` never matches NULL, so a plain
         // equality would silently fail to clear the chain-default row.
+        // `category IS ?` rather than `= ?`: SQLite's `=` never matches NULL, so a plain
+        // equality would silently fail to clear the chain-default row.
         const del = env.DB.prepare(
-          `DELETE FROM merch_criteria WHERE version = ? AND field = ? AND l3 IS ?`);
+          `DELETE FROM merch_criteria WHERE version = ? AND field = ? AND category IS ?`);
         const ins = env.DB.prepare(
-          `INSERT INTO merch_criteria (version, l3, field, value, note, updated_by, updated_at)
-           VALUES (?, ?, ?, ?, NULL, ?, ?)`);
+          `INSERT INTO merch_criteria (version, level, category, field, value, note, updated_by, updated_at)
+           VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`);
         const stmts = [];
         for (const c of cells) {
-          const l3 = c.l3 ?? null;
-          stmts.push(del.bind(version, c.field, l3));
+          const category = c.category ?? null;
+          stmts.push(del.bind(version, c.field, category));
           if (c.value !== null && c.value !== undefined && c.value !== "") {
-            stmts.push(ins.bind(version, l3, c.field, String(c.value), who, now));
+            stmts.push(ins.bind(version, merchLevelOf(category), category, c.field, String(c.value), who, now));
           }
         }
         await env.DB.batch(stmts);
@@ -14336,14 +14407,14 @@ export default {
         // Append-only table: the newest row per (store, week, category) is the answer,
         // so read by descending id and keep the first of each.
         const { results } = await env.DB.prepare(
-          `SELECT week_ending, l3, bays, entered_by, entered_at FROM shelf_counts
+          `SELECT week_ending, category, bays, entered_by, entered_at FROM shelf_counts
             WHERE store = ? AND week_ending IN (?, ?) ORDER BY id DESC`
         ).bind(store, week, prevWeek).all();
         const pick = (w) => {
           const out = {};
           for (const r of results || []) {
-            if (r.week_ending !== w || out[r.l3]) continue;
-            out[r.l3] = { bays: r.bays, entered_by: r.entered_by, entered_at: r.entered_at };
+            if (r.week_ending !== w || out[r.category]) continue;
+            out[r.category] = { bays: r.bays, entered_by: r.entered_by, entered_at: r.entered_at };
           }
           return out;
         };
@@ -14387,21 +14458,29 @@ export default {
         if (week !== body.week_ending) {
           return new Response(JSON.stringify({ error: `week_ending must be a Sunday — did you mean ${week}?` }), { status: 400, headers: corsJson });
         }
+        // Validate against what the form actually ASKED for, not against the taxonomy at
+        // large: a count only means anything against the published core definition, and
+        // this refuses a stale form posting a category that is no longer core.
+        const asked = new Set((await merchCoreCategories(env)).map(c => c.key));
         for (const c of counts) {
-          if (c?.l3 !== MERCH_OTHER_FOOD && !merchIsCategory(c?.l3)) {
-            return new Response(JSON.stringify({ error: `Unknown category: ${c?.l3}` }), { status: 400, headers: corsJson });
+          if (!asked.has(c?.category)) {
+            return new Response(JSON.stringify({
+              error: asked.size
+                ? `Not a core category in the live criteria: ${c?.category}`
+                : "No criteria published yet, so there is nothing to count",
+            }), { status: 400, headers: corsJson });
           }
           const n = Number(c?.bays);
           if (!Number.isFinite(n) || n < 0 || n > 999) {
-            return new Response(JSON.stringify({ error: `Invalid bays for ${c?.l3}: must be 0–999` }), { status: 400, headers: corsJson });
+            return new Response(JSON.stringify({ error: `Invalid bays for ${c?.category}: must be 0–999` }), { status: 400, headers: corsJson });
           }
         }
         const now = new Date().toISOString();
         const who = currentUser?.email || currentUser?.name || null;
         const ins = env.DB.prepare(
-          `INSERT INTO shelf_counts (store, week_ending, l3, bays, entered_by, entered_at)
+          `INSERT INTO shelf_counts (store, week_ending, category, bays, entered_by, entered_at)
            VALUES (?, ?, ?, ?, ?, ?)`);
-        await env.DB.batch(counts.map(c => ins.bind(store, week, c.l3, Number(c.bays), who, now)));
+        await env.DB.batch(counts.map(c => ins.bind(store, week, c.category, Number(c.bays), who, now)));
         return new Response(JSON.stringify({ ok: true, store, week_ending: week, saved: counts.length }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });

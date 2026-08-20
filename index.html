@@ -2015,9 +2015,23 @@
         #mc-tbl th{font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#6b6453}
         .dark #mc-tbl th{color:#8893a7}
         #mc-tbl .mc-cat{position:sticky;left:0;z-index:2;white-space:normal;min-width:190px;font-weight:500}
-        #mc-tbl tr.mc-group td{font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;padding-top:12px;color:#6b6453}
-        .dark #mc-tbl tr.mc-group td{color:#8893a7}
-        #mc-tbl tr.mc-default td{font-weight:600}
+        #mc-tbl tr.mc-chain td{font-weight:600;background:#fafaf6}
+        .dark #mc-tbl tr.mc-chain td{background:#16203a}
+        #mc-tbl tr.mc-l2 td.mc-cat{font-weight:600}
+        /* An L3 sits under its parent, indented, with a rule drawn back up to it — the
+           inheritance is the point, so it is shown structurally rather than labelled. */
+        #mc-tbl tr.mc-l3 td.mc-cat{padding-left:30px;position:relative}
+        #mc-tbl tr.mc-l3 td.mc-cat::before{content:"";position:absolute;left:14px;top:0;bottom:50%;width:9px;
+          border-left:1px solid rgba(20,16,8,.18);border-bottom:1px solid rgba(20,16,8,.18);border-bottom-left-radius:5px}
+        .dark #mc-tbl tr.mc-l3 td.mc-cat::before{border-color:rgba(255,255,255,.16)}
+        .mc-lvl{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+          border:1px solid rgba(20,16,8,.18);border-radius:4px;padding:1px 4px;margin-right:7px;color:#9c9484}
+        .dark .mc-lvl{border-color:rgba(255,255,255,.16);color:#5a6478}
+        #mc-tbl tr.mc-l3 .mc-lvl{color:#22c55e;border-color:rgba(34,197,94,.4)}
+        .mc-rm{background:none;border:none;color:#9c9484;cursor:pointer;font-size:15px;line-height:1;padding:1px 5px;margin-left:6px;border-radius:5px}
+        .dark .mc-rm{color:#5a6478}
+        .mc-rm:hover{color:#14110a;background:rgba(20,16,8,.08)}
+        .dark .mc-rm:hover{color:#e7ecf3;background:rgba(255,255,255,.10)}
         #mc-tbl input{width:76px;border-radius:6px;padding:2px 6px;font-size:12px;border:1px solid transparent;background:transparent;color:inherit}
         #mc-tbl input:focus{outline:none;border-color:#639922;background:rgba(99,153,34,.06)}
         /* Inherited vs override vs changed-in-draft — the three states the PRD asks
@@ -2039,9 +2053,12 @@
                 <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Buy Criteria</h1>
                 <span id="mc-version" class="text-[11px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded-md px-2 py-0.5"></span>
               </div>
-              <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">What a buy has to pass, and what counts as core. Published versions never move.</p>
+              <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">What a buy has to pass, and what counts as core. Set it per category; add a specific one only when it needs to differ. Published versions never move.</p>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
+              <select id="mc-add" aria-label="Add criteria for a specific category"
+                class="rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-xs px-2.5 py-1.5 max-w-[280px]"></select>
+              <button id="mc-add-btn" onclick="mcAddOverride()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim active:scale-95 transition disabled:opacity-40">Add override</button>
               <label class="flex items-center gap-1.5 text-xs font-semibold text-opl-inkDim dark:text-op-inkDim cursor-pointer">
                 <input type="checkbox" id="mc-only-overrides" onchange="mcRender()" class="accent-accent-green"> Only overrides
               </label>
@@ -16958,19 +16975,19 @@
 
   // ── Buy Criteria ──────────────────────────────────────────────────────────
   const MC_COLS = [
-    ['core',                   'Core',        'check'],
-    ['max_cost_pct_retail',    'Max cost %',  'num'],
+    ['core',                   'Core',         'check'],
+    ['max_cost_pct_retail',    'Max cost %',   'num'],
     ['min_margin_per_unit',    'Min margin $', 'num'],
-    ['price_cap_pct_retail',   'Price cap %', 'num'],
-    ['rounding',               'Rounding',    'text'],
-    ['max_breakeven_sellthru', 'Max B/E %',   'num'],
-    ['max_per_store',          'Max/store',   'text'],
-    ['cash_back_days',         'Cash back d', 'num'],
+    ['price_cap_pct_retail',   'Price cap %',  'num'],
+    ['rounding',               'Rounding',     'text'],
+    ['max_breakeven_sellthru', 'Max B/E %',    'num'],
+    ['max_per_store',          'Max/store',    'text'],
+    ['cash_back_days',         'Cash back d',  'num'],
   ];
   let mcData = null;
-  // Cells edited since the last save, keyed `l3|field` (empty l3 = chain default).
-  // Held here rather than written on every keystroke so a half-typed number never
-  // becomes a threshold.
+  // Cells edited since the last publish, keyed `category|field` (empty category = the
+  // chain default). Held here rather than written on every keystroke so a half-typed
+  // number never becomes a threshold.
   let mcDirty = new Map();
 
   async function initMerchCriteria() {
@@ -16982,20 +16999,92 @@
       mcData = await r.json();
       if (!r.ok) throw new Error(mcData.error || `HTTP ${r.status}`);
       mcRender();
+      mcFillPicker();
     } catch (e) {
       el('mc-status').textContent = `Could not load criteria: ${e.message}`;
     }
   }
   window.initMerchCriteria = initMerchCriteria;
 
-  function mcKey(l3, field) { return `${l3 || ''}|${field}`; }
+  const mcKey = (cat, field) => `${cat || ''}|${field}`;
+  const mcEsc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-  function mcCellValue(l3, field) {
-    const k = mcKey(l3, field);
+  // Every row currently on the table, flattened in display order: the chain default,
+  // then each L2 with whichever L3s hang off it.
+  function mcRows() {
+    const out = [{ key: null, level: 'chain', label: 'Chain default', fields: mcData.defaults || {} }];
+    for (const l2 of (mcData.categories || [])) {
+      out.push(l2);
+      for (const kid of (l2.children || [])) out.push(kid);
+    }
+    return out;
+  }
+
+  // The picker offers every L3, grouped by its L2, minus the ones already on the table.
+  function mcFillPicker() {
+    const sel = el('mc-add');
+    if (!sel) return;
+    const tree = mcData.tree || {};
+    const groups = Object.keys(tree).map(l2 => {
+      const kids = (tree[l2] || []).filter(c => !c.added);
+      if (!kids.length) return '';
+      return `<optgroup label="${mcEsc(l2)}">${
+        kids.map(c => `<option value="${mcEsc(c.key)}">${mcEsc(c.label)}</option>`).join('')}</optgroup>`;
+    }).join('');
+    sel.innerHTML = `<option value="">Add criteria for a specific category…</option>${groups}`;
+    el('mc-add-btn').disabled = !groups;
+  }
+
+  // Adding a row is a LOCAL act until something is typed into it: an empty L3 row would
+  // be indistinguishable from inheriting, so it is not worth a version of its own.
+  let mcPending = [];
+  function mcAddOverride() {
+    const sel = el('mc-add');
+    const key = sel.value;
+    if (!key) return;
+    const parent = Object.keys(mcData.tree || {}).find(l2 => (mcData.tree[l2] || []).some(c => c.key === key));
+    const l2 = (mcData.categories || []).find(c => c.key === parent);
+    if (!l2) return;
+    const entry = (mcData.tree[parent] || []).find(c => c.key === key);
+    entry.added = true;
+    mcPending.push(key);
+    // Inherit everything until told otherwise — same shape the server would return.
+    l2.children.push({
+      key, level: 'l3', parent, label: entry.label, core: l2.core,
+      fields: Object.fromEntries(MC_COLS.map(([f]) => [f, { value: l2.fields[f]?.value ?? null, inherited: true, from: parent }])),
+    });
+    l2.children.sort((a, b) => a.label.localeCompare(b.label));
+    mcRender(); mcFillPicker();
+  }
+  window.mcAddOverride = mcAddOverride;
+
+  function mcRemoveOverride(key) {
+    for (const l2 of (mcData.categories || [])) {
+      const i = (l2.children || []).findIndex(c => c.key === key);
+      if (i < 0) continue;
+      l2.children.splice(i, 1);
+      const entry = (mcData.tree[l2.key] || []).find(c => c.key === key);
+      if (entry) entry.added = false;
+      // Clearing every field is what actually removes the row server-side; a row with
+      // no values IS an inheriting category.
+      for (const [f] of MC_COLS) mcDirty.set(mcKey(key, f), '');
+      mcPending = mcPending.filter(k => k !== key);
+      break;
+    }
+    mcRender(); mcFillPicker();
+  }
+  window.mcRemoveOverride = mcRemoveOverride;
+
+  // What a cell shows: an unsaved edit if there is one, else the row's own value, else
+  // blank — because blank IS how "inherited" reads, with the parent's value as the
+  // placeholder behind it.
+  function mcCellValue(row, field) {
+    const k = mcKey(row.key, field);
     if (mcDirty.has(k)) return mcDirty.get(k);
-    if (!l3) return mcData.defaults?.[field]?.value ?? '';
-    const cell = mcData.categories.find(c => c.l3 === l3)?.fields?.[field];
-    return cell?.inherited ? '' : (cell?.value ?? '');
+    const cell = row.fields?.[field];
+    if (!cell) return '';
+    if (row.level === 'chain') return cell.value ?? '';
+    return cell.inherited ? '' : (cell.value ?? '');
   }
 
   function mcRender() {
@@ -17013,63 +17102,60 @@
       : hasDraft
         ? 'A draft is open. Nothing in it applies until it is published.'
         : mcData.version == null
-          ? 'Nothing published yet. Set the chain defaults and any core flags, then publish v1.'
-          : 'Blank cells inherit the chain default above.';
+          ? 'Nothing published yet. Set the chain defaults and tick what counts as core, then publish v1.'
+          : 'A blank cell inherits from the row above it — the L2, then the chain default.';
 
-    const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const inputFor = (row, field, type) => {
+      const k = mcKey(row.key, field);
+      const raw = mcCellValue(row, field);
+      const cell = row.fields?.[field] || {};
+      const isOwn = row.level === 'chain' || (mcDirty.has(k) ? raw !== '' : !cell.inherited);
+      const cls = mcDirty.has(k) ? 'mc-dirty' : isOwn ? 'mc-override' : 'mc-inherit';
+      const arg = row.key === null ? 'null' : `'${mcEsc(row.key).replace(/'/g, "\\'")}'`;
+      if (type === 'check') {
+        const on = mcDirty.has(k) ? raw === '1' : !!row.core;
+        return `<input type="checkbox" ${on ? 'checked' : ''} class="accent-accent-green ${mcDirty.has(k) ? 'mc-dirty' : ''}"
+                  onchange="mcEdit(${arg},'${field}',this.checked?'1':'0')">`;
+      }
+      // The placeholder is what this cell would inherit, so an empty box is never a
+      // mystery — you can read the value you are choosing not to override.
+      const ph = row.level === 'chain' ? '' : mcEsc(cell.value ?? '');
+      return `<input class="${cls}" value="${mcEsc(raw)}" placeholder="${ph}" inputmode="${type === 'num' ? 'decimal' : 'text'}"
+                title="${cell.inherited && cell.from ? 'Inherited from ' + mcEsc(cell.from === 'chain' ? 'the chain default' : cell.from) : ''}"
+                onchange="mcEdit(${arg},'${field}',this.value)">`;
+    };
+
     const head = `<thead><tr><th class="mc-cat">Category</th>${
       MC_COLS.map(([, label]) => `<th>${label}</th>`).join('')}</tr></thead>`;
 
-    const inputFor = (l3, field, type) => {
-      const k = mcKey(l3, field);
-      const raw = mcCellValue(l3, field);
-      const inherited = !l3 ? false : raw === '';
-      const cls = mcDirty.has(k) ? 'mc-dirty' : inherited ? 'mc-inherit' : 'mc-override';
-      if (type === 'check') {
-        const on = l3 ? (mcDirty.has(k) ? raw === '1' : mcData.categories.find(c => c.l3 === l3)?.core)
-                      : mcCellValue(null, field) === '1';
-        return `<input type="checkbox" ${on ? 'checked' : ''} class="accent-accent-green ${mcDirty.has(k) ? 'mc-dirty' : ''}"
-                  onchange="mcEdit(${l3 ? `'${esc(l3).replace(/'/g, "\\'")}'` : 'null'},'${field}',this.checked?'1':'0')">`;
-      }
-      const ph = l3 ? esc(mcData.defaults?.[field]?.value ?? '') : '';
-      return `<input class="${cls}" value="${esc(raw)}" placeholder="${ph}" inputmode="${type === 'num' ? 'decimal' : 'text'}"
-                onchange="mcEdit(${l3 ? `'${esc(l3).replace(/'/g, "\\'")}'` : 'null'},'${field}',this.value)">`;
+    const rowHtml = (row) => {
+      const badge = row.level === 'chain' ? 'Default' : row.level === 'l2' ? 'L2' : 'L3';
+      const rm = row.level === 'l3'
+        ? `<button class="mc-rm" title="Remove this override" aria-label="Remove override"
+             onclick="mcRemoveOverride('${mcEsc(row.key).replace(/'/g, "\\'")}')">&times;</button>` : '';
+      return `<tr class="mc-${row.level}"><td class="mc-cat" title="${mcEsc(row.key || '')}">
+          <span class="mc-lvl">${badge}</span>${mcEsc(row.label)}${rm}</td>${
+        MC_COLS.map(([f, , t]) => `<td>${inputFor(row, f, t)}</td>`).join('')}</tr>`;
     };
 
-    const rows = [`<tr class="mc-default"><td class="mc-cat">Chain default</td>${
-      MC_COLS.map(([f, , t]) => `<td>${inputFor(null, f, t)}</td>`).join('')}</tr>`];
-
-    let group = null;
-    for (const cat of (mcData.categories || [])) {
-      const overridden = MC_COLS.some(([f]) => !cat.fields[f].inherited) || mcDirty.has(mcKey(cat.l3, 'core'));
-      if (onlyOverrides && !overridden) continue;
-      if (cat.l2 !== group) {
-        group = cat.l2;
-        rows.push(`<tr class="mc-group"><td class="mc-cat" colspan="${MC_COLS.length + 1}">${esc(group)}</td></tr>`);
+    const rows = [];
+    for (const row of mcRows()) {
+      if (onlyOverrides && row.level !== 'chain') {
+        const touched = MC_COLS.some(([f]) => !row.fields?.[f]?.inherited || mcDirty.has(mcKey(row.key, f)));
+        if (!touched) continue;
       }
-      rows.push(`<tr><td class="mc-cat" title="${esc(cat.l3)}">${esc(mcLabel(cat.l3))}</td>${
-        MC_COLS.map(([f, , t]) => `<td>${inputFor(cat.l3, f, t)}</td>`).join('')}</tr>`);
+      rows.push(rowHtml(row));
     }
     el('mc-tbl').innerHTML = head + `<tbody>${rows.join('')}</tbody>`;
   }
   window.mcRender = mcRender;
 
-  // Same shortening the worker applies for the shelf-count form, so a category reads
-  // the same on both pages.
-  function mcLabel(l3) {
-    const tail = String(l3).split(' - ').pop();
-    return tail.replace(/[A-Za-z0-9&']+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase());
-  }
-
-  function mcEdit(l3, field, value) {
-    mcDirty.set(mcKey(l3, field), value);
+  function mcEdit(cat, field, value) {
+    mcDirty.set(mcKey(cat, field), value);
     mcRender();
   }
   window.mcEdit = mcEdit;
 
-  // Save + publish are ONE action from the user's side. Splitting them would leave a
-  // draft nobody remembers opening, and a draft that is never published is a threshold
-  // change that silently did not happen.
   async function mcPublish() {
     const note = await uiPrompt('Publish criteria', 'What changed, and why? (required)');
     if (note === null) return;
@@ -17078,8 +17164,8 @@
       if (mcDirty.size) {
         const cells = [...mcDirty.entries()].map(([k, value]) => {
           const i = k.indexOf('|');
-          const l3 = k.slice(0, i);
-          return { l3: l3 || null, field: k.slice(i + 1), value };
+          const category = k.slice(0, i);
+          return { category: category || null, field: k.slice(i + 1), value };
         });
         const d = await fetch(`${WORKER_BASE}?action=merch-criteria-draft`, {
           method: 'POST', credentials: 'include',
@@ -17139,7 +17225,7 @@
         return `<div class="border-l-2 border-accent-green/40 pl-3 py-1">
           <div class="font-semibold">v${v} · ${esc((first.published_at || '').slice(0, 10))} · ${esc(first.published_by)}</div>
           <div class="text-opl-inkDim dark:text-op-inkDim italic mb-1">${esc(first.note)}</div>
-          ${byVersion[v].map(e => `<div>${esc(e.l3 ? mcLabel(e.l3) : 'Chain default')} · ${esc(e.field)}: ${esc(e.from)} → ${esc(e.to)}</div>`).join('')}
+          ${byVersion[v].map(e => `<div><span class="mc-lvl">${esc((e.level || '').toUpperCase() || 'DEFAULT')}</span> ${esc(e.label)} · ${esc(e.field)}: ${esc(e.from)} → ${esc(e.to)}</div>`).join('')}
         </div>`;
       }).join('') : '<div class="text-opl-inkDim dark:text-op-inkDim">Nothing published yet.</div>';
     } catch (e) {
@@ -17225,17 +17311,17 @@
       : `Week ending ${scData.week_ending}. An end cap counts as one bay.`;
     const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     el('sc-rows').innerHTML = cats.map(c => {
-      const now = scData.counts?.[c.l3]?.bays;
-      const prev = scData.previous?.[c.l3]?.bays;
+      const now = scData.counts?.[c.key]?.bays;
+      const prev = scData.previous?.[c.key]?.bays;
       // Prefilled from last week when this week is blank — the fastest correct answer
       // for a shelf that has not moved, and the PRD's two-minute target depends on it.
       const value = now != null ? now : (prev != null ? prev : '');
       return `<div class="flex items-center gap-3 bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl px-4 py-3">
         <div class="flex-1 min-w-0">
-          <div class="font-semibold text-sm truncate text-opl-ink dark:text-op-ink" title="${esc(c.l3)}">${esc(c.label)}</div>
+          <div class="font-semibold text-sm truncate text-opl-ink dark:text-op-ink" title="${esc(c.key)}">${esc(c.label)}</div>
           <div class="text-[11px] text-opl-inkDim dark:text-op-inkDim">${prev != null ? `Last week: ${prev}` : 'No count last week'}</div>
         </div>
-        <input data-l3="${esc(c.l3)}" type="number" min="0" max="999" step="0.5" inputmode="decimal" value="${value}"
+        <input data-cat="${esc(c.key)}" type="number" min="0" max="999" step="0.5" inputmode="decimal" value="${value}"
           class="w-20 text-right rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-base px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
       </div>`;
     }).join('');
@@ -17243,8 +17329,8 @@
   }
 
   async function scSave() {
-    const counts = [...document.querySelectorAll('#sc-rows input[data-l3]')]
-      .map(i => ({ l3: i.dataset.l3, bays: i.value }))
+    const counts = [...document.querySelectorAll('#sc-rows input[data-cat]')]
+      .map(i => ({ category: i.dataset.cat, bays: i.value }))
       .filter(c => c.bays !== '');
     if (!counts.length) { uiAlert('Enter at least one number.'); return; }
     const btn = el('sc-save');
@@ -17253,7 +17339,7 @@
       const r = await fetch(`${WORKER_BASE}?action=shelf-count-save`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ store: el('sc-store').value, week_ending: el('sc-week').value, counts: counts.map(c => ({ l3: c.l3, bays: Number(c.bays) })) }),
+        body: JSON.stringify({ store: el('sc-store').value, week_ending: el('sc-week').value, counts: counts.map(c => ({ category: c.category, bays: Number(c.bays) })) }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
