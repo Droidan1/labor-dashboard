@@ -2003,47 +2003,98 @@
     <div id="page-merch-criteria" class="hidden">
       <style>
         /* Colour comes from the V1 palette in tailwind.config.js, stated for BOTH themes.
-           Nothing here may rely on an inherited colour: this table sits on op-bg in dark
+           Nothing here may rely on an inherited colour: this panel sits on op-bg in dark
            and opl-bg in light, and a value that is only correct in one of them is a bug
-           you cannot see unless you look in the other. ink/inkDim/inkDimmer below are
-           literal token values (op.* dark, opl.* light) — a <style> block cannot use the
-           Tailwind class names, so the values are duplicated on purpose. */
-        #mc-tbl{border-collapse:separate;border-spacing:0;font-size:12px;color:#14110a}
+           you cannot see unless you look in the other. The ink/inkDim/inkDimmer values
+           below are the tokens' literals — a <style> block cannot use the Tailwind class
+           names, so they are duplicated on purpose. */
+        #mc-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;overflow:hidden}
+        .dark #mc-panel{background:#101826;border-color:rgba(255,255,255,.09)}
+        /* The controls belong to the table, so they sit on it rather than floating above
+           the page — the bar is what makes the picker read as "add a row to THIS". */
+        #mc-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;
+          background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #mc-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        #mc-bar .mc-barlbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
+        .dark #mc-bar .mc-barlbl{color:#8893a7}
+        #mc-add{background:#ffffff;border:1px solid rgba(20,16,8,.18);border-radius:9px;padding:7px 11px;
+          font-size:13px;color:#14110a;max-width:330px}
+        .dark #mc-add{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        #mc-add-btn{background:#22c55e;color:#06210f;border:none;border-radius:9px;padding:7px 14px;
+          font-size:13px;font-weight:700;cursor:pointer}
+        #mc-add-btn:disabled{opacity:.42;cursor:not-allowed}
+        #mc-scroll{overflow-x:auto}
+
+        #mc-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;color:#14110a;
+          font-variant-numeric:tabular-nums}
         .dark #mc-tbl{color:#e7ecf3}
-        #mc-tbl th,#mc-tbl td{border-bottom:.5px solid rgba(20,16,8,.10);padding:5px 8px;text-align:left;white-space:nowrap}
+        #mc-tbl th,#mc-tbl td{text-align:left;padding:0 10px;height:42px;white-space:nowrap;
+          border-bottom:1px solid rgba(20,16,8,.10)}
         .dark #mc-tbl th,.dark #mc-tbl td{border-bottom-color:rgba(255,255,255,.09)}
-        #mc-tbl th{font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#6b6453}
-        .dark #mc-tbl th{color:#8893a7}
-        #mc-tbl .mc-cat{position:sticky;left:0;z-index:2;white-space:normal;min-width:190px;font-weight:500}
+        #mc-tbl th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+          height:34px;color:#6b6453;background:#fafaf6;position:sticky;top:0;z-index:3}
+        .dark #mc-tbl th{color:#8893a7;background:#16203a}
+        /* The category column pins while the thresholds scroll sideways, so it needs an
+           opaque background of its own or the cells slide under it. */
+        #mc-tbl th.mc-cat,#mc-tbl td.mc-cat{position:sticky;left:0;z-index:2;white-space:normal;
+          min-width:230px;background:#ffffff}
+        .dark #mc-tbl th.mc-cat,.dark #mc-tbl td.mc-cat{background:#101826}
+        #mc-tbl th.mc-cat{z-index:4;background:#fafaf6}
+        .dark #mc-tbl th.mc-cat{background:#16203a}
         #mc-tbl tr.mc-chain td{font-weight:600;background:#fafaf6}
         .dark #mc-tbl tr.mc-chain td{background:#16203a}
         #mc-tbl tr.mc-l2 td.mc-cat{font-weight:600}
         /* An L3 sits under its parent, indented, with a rule drawn back up to it — the
            inheritance is the point, so it is shown structurally rather than labelled. */
-        #mc-tbl tr.mc-l3 td.mc-cat{padding-left:30px;position:relative}
-        #mc-tbl tr.mc-l3 td.mc-cat::before{content:"";position:absolute;left:14px;top:0;bottom:50%;width:9px;
+        #mc-tbl tr.mc-l3 td.mc-cat{padding-left:34px}
+        #mc-tbl tr.mc-l3 td.mc-cat::before{content:"";position:absolute;left:18px;top:0;bottom:50%;width:9px;
           border-left:1px solid rgba(20,16,8,.18);border-bottom:1px solid rgba(20,16,8,.18);border-bottom-left-radius:5px}
         .dark #mc-tbl tr.mc-l3 td.mc-cat::before{border-color:rgba(255,255,255,.16)}
-        .mc-lvl{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
-          border:1px solid rgba(20,16,8,.18);border-radius:4px;padding:1px 4px;margin-right:7px;color:#9c9484}
+        .mc-lvl{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+          border:1px solid rgba(20,16,8,.18);border-radius:4px;padding:2px 5px;margin-right:9px;color:#9c9484;
+          vertical-align:1px}
         .dark .mc-lvl{border-color:rgba(255,255,255,.16);color:#5a6478}
         #mc-tbl tr.mc-l3 .mc-lvl{color:#22c55e;border-color:rgba(34,197,94,.4)}
-        .mc-rm{background:none;border:none;color:#9c9484;cursor:pointer;font-size:15px;line-height:1;padding:1px 5px;margin-left:6px;border-radius:5px}
+        .mc-rm{background:none;border:none;color:#9c9484;cursor:pointer;font-size:15px;line-height:1;
+          padding:2px 5px;margin-left:8px;border-radius:5px}
         .dark .mc-rm{color:#5a6478}
         .mc-rm:hover{color:#14110a;background:rgba(20,16,8,.08)}
         .dark .mc-rm:hover{color:#e7ecf3;background:rgba(255,255,255,.10)}
-        #mc-tbl input{width:76px;border-radius:6px;padding:2px 6px;font-size:12px;border:1px solid transparent;background:transparent;color:inherit}
-        #mc-tbl input:focus{outline:none;border-color:#639922;background:rgba(99,153,34,.06)}
-        /* Inherited vs override vs changed-in-draft — the three states the PRD asks
-           the table to show at a glance, so nobody has to guess where a number came from. */
-        /* inkDim, not inkDimmer. inkDimmer (#9c9484) reads as "inherited" but measures
-           2.71:1 on opl-bg — under AA. inkDim is 5.29:1 and still unmistakably muted
-           against an override, which is near-black at 16.96:1. */
+
+        #mc-tbl input[type=text]{width:82px;border-radius:6px;padding:3px 7px;font-size:13px;
+          border:1px solid transparent;background:transparent;color:inherit;text-align:right;
+          font-variant-numeric:tabular-nums}
+        #mc-tbl input[type=text]:hover{border-color:rgba(20,16,8,.18)}
+        .dark #mc-tbl input[type=text]:hover{border-color:rgba(255,255,255,.16)}
+        #mc-tbl input[type=text]:focus{outline:none;border-color:#22c55e;background:rgba(34,197,94,.07)}
+        /* accent-color paints the CHECKED box; the unchecked one is UA-drawn and follows
+           color-scheme, which this app never sets — so in dark mode it came out white.
+           Scoped to this table rather than the root: setting it app-wide would restyle
+           every native control on every page, which is not what was asked for. */
+        #mc-tbl input[type=checkbox]{accent-color:#22c55e;width:15px;height:15px}
+        .dark #mc-tbl input[type=checkbox]{color-scheme:dark}
+        /* Inherited vs set-here vs changed-in-draft — the three states the table has to
+           show at a glance, so nobody has to guess where a number came from.
+           inkDim, not inkDimmer: inkDimmer (#9c9484) reads as "inherited" but measures
+           2.71:1 on opl-bg, under AA. inkDim is 5.29:1 and still unmistakably muted
+           against a value set here, which is near-black at 16.96:1. */
         #mc-tbl input.mc-inherit{color:#6b6453}
         .dark #mc-tbl input.mc-inherit{color:#8893a7}
-        #mc-tbl input.mc-override{color:inherit;border-color:rgba(20,16,8,.14)}
-        .dark #mc-tbl input.mc-override{border-color:rgba(255,255,255,.16)}
-        #mc-tbl input.mc-dirty{background:rgba(234,179,8,.16);border-color:rgba(234,179,8,.55)}
+        #mc-tbl input.mc-override{border-color:rgba(20,16,8,.18);background:#fafaf6}
+        .dark #mc-tbl input.mc-override{border-color:rgba(255,255,255,.16);background:#16203a}
+        #mc-tbl input.mc-dirty{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.55)}
+        .dark #mc-tbl input.mc-dirty{background:rgba(245,158,11,.16)}
+
+        #mc-legend{display:flex;gap:20px;flex-wrap:wrap;padding:12px 18px;font-size:12px;color:#6b6453;
+          border-top:1px solid rgba(20,16,8,.10)}
+        .dark #mc-legend{color:#8893a7;border-top-color:rgba(255,255,255,.09)}
+        #mc-legend span{display:flex;align-items:center;gap:7px}
+        #mc-legend i{width:22px;height:14px;border-radius:4px;display:inline-block;border:1px solid transparent}
+        .mc-sw-inherit{background:transparent;border-color:rgba(20,16,8,.10)!important}
+        .dark .mc-sw-inherit{border-color:rgba(255,255,255,.09)!important}
+        .mc-sw-own{background:#fafaf6;border-color:rgba(20,16,8,.18)!important}
+        .dark .mc-sw-own{background:#16203a;border-color:rgba(255,255,255,.16)!important}
+        .mc-sw-dirty{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.55)!important}
       </style>
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-[1500px] mx-auto">
@@ -2056,12 +2107,6 @@
               <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">What a buy has to pass, and what counts as core. Set it per category; add a specific one only when it needs to differ. Published versions never move.</p>
             </div>
             <div class="flex items-center gap-2 flex-wrap">
-              <select id="mc-add" aria-label="Add criteria for a specific category"
-                class="rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-xs px-2.5 py-1.5 max-w-[280px]"></select>
-              <button id="mc-add-btn" onclick="mcAddOverride()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim active:scale-95 transition disabled:opacity-40">Add override</button>
-              <label class="flex items-center gap-1.5 text-xs font-semibold text-opl-inkDim dark:text-op-inkDim cursor-pointer">
-                <input type="checkbox" id="mc-only-overrides" onchange="mcRender()" class="accent-accent-green"> Only overrides
-              </label>
               <button id="mc-discard" onclick="mcDiscard()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim active:scale-95 transition">Discard draft</button>
               <button id="mc-publish" onclick="mcPublish()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg bg-accent-green text-white active:scale-95 transition">Publish…</button>
             </div>
@@ -2069,8 +2114,23 @@
         </div>
       </div>
       <div class="max-w-[1500px] mx-auto px-4 sm:px-6 pt-4 pb-10">
-        <div id="mc-status" class="text-sm text-opl-inkDim dark:text-op-inkDim mb-3">Loading…</div>
-        <div class="overflow-x-auto"><table id="mc-tbl"></table></div>
+        <div id="mc-panel">
+          <div id="mc-bar">
+            <span class="mc-barlbl">Criteria</span>
+            <select id="mc-add" aria-label="Add criteria for a specific category"></select>
+            <button id="mc-add-btn" onclick="mcAddOverride()">Add override</button>
+            <label class="flex items-center gap-1.5 text-xs font-semibold text-opl-inkDim dark:text-op-inkDim cursor-pointer ml-auto">
+              <input type="checkbox" id="mc-only-overrides" onchange="mcRender()" class="accent-accent-green"> Only overrides
+            </label>
+          </div>
+          <div id="mc-status" class="text-sm text-opl-inkDim dark:text-op-inkDim px-[18px] py-3">Loading…</div>
+          <div id="mc-scroll"><table id="mc-tbl"></table></div>
+          <div id="mc-legend">
+            <span><i class="mc-sw-inherit"></i> Inherited from above</span>
+            <span><i class="mc-sw-own"></i> Set on this row</span>
+            <span><i class="mc-sw-dirty"></i> Changed in this draft</span>
+          </div>
+        </div>
         <div class="mt-8">
           <button onclick="mcToggleLog()" class="flex items-center gap-1.5 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim">
             <span id="mc-log-chev" class="inline-block transition-transform">▸</span> Change log
@@ -17120,7 +17180,10 @@
       // The placeholder is what this cell would inherit, so an empty box is never a
       // mystery — you can read the value you are choosing not to override.
       const ph = row.level === 'chain' ? '' : mcEsc(cell.value ?? '');
-      return `<input class="${cls}" value="${mcEsc(raw)}" placeholder="${ph}" inputmode="${type === 'num' ? 'decimal' : 'text'}"
+      // type="text" is load-bearing, not decoration: the stylesheet selects on
+      // input[type=text], and CSS matches the ATTRIBUTE, not the default an input falls
+      // back to. Without it every threshold cell renders as a browser-default white box.
+      return `<input type="text" class="${cls}" value="${mcEsc(raw)}" placeholder="${ph}" inputmode="${type === 'num' ? 'decimal' : 'text'}"
                 title="${cell.inherited && cell.from ? 'Inherited from ' + mcEsc(cell.from === 'chain' ? 'the chain default' : cell.from) : ''}"
                 onchange="mcEdit(${arg},'${field}',this.value)">`;
     };
