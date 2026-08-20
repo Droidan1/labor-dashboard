@@ -724,6 +724,10 @@
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
               <span class="nav-label">Coverage</span>
             </div>
+            <div id="nav-merch-manifests" class="nav-item nav-subitem" data-page="merch-manifests" onclick="navigateToPage('merch-manifests')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></span>
+              <span class="nav-label">Manifests</span>
+            </div>
             <div id="nav-merch-criteria" class="nav-item nav-subitem" data-page="merch-criteria" onclick="navigateToPage('merch-criteria')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 15 11 17 15 12"/></svg></span>
               <span class="nav-label">Buy Criteria</span>
@@ -1997,6 +2001,77 @@
         <div class="flex gap-1 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border mb-4" id="fbc-status-tabs"></div>
         <div id="fbc-status" class="hidden text-sm mb-3"></div>
         <div id="fbc-list" class="space-y-3"></div>
+      </div>
+    </div>
+
+    <!-- ── Merchandising: Manifest Scorer ──────────────────────────────────────
+         A vendor spreadsheet in, a decision out. Follows DESIGN.md §4.8. -->
+    <div id="page-merch-manifests" class="hidden">
+      <style>
+        .mf-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;overflow:hidden;color:#14110a}
+        .dark .mf-panel{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3}
+        .mf-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;
+          background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark .mf-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        .mf-barlbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
+        .dark .mf-barlbl{color:#8893a7}
+        .mf-body{padding:18px}
+        .mf-in{background:#ffffff;border:1px solid rgba(20,16,8,.18);border-radius:9px;padding:7px 11px;
+          font-size:13px;color:#14110a}
+        .dark .mf-in{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .mf-btn{background:#22c55e;color:#06210f;border:none;border-radius:9px;padding:7px 14px;
+          font-size:13px;font-weight:700;cursor:pointer}
+        .mf-btn:disabled{opacity:.42;cursor:not-allowed}
+        .mf-btn.ghost{background:transparent;color:#6b6453;border:1px solid rgba(20,16,8,.18);font-weight:600}
+        .dark .mf-btn.ghost{color:#8893a7;border-color:rgba(255,255,255,.16)}
+        .mf-scroll{overflow-x:auto}
+        .mf-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+        .mf-tbl th,.mf-tbl td{text-align:right;padding:0 10px;height:40px;white-space:nowrap;
+          border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark .mf-tbl th,.dark .mf-tbl td{border-bottom-color:rgba(255,255,255,.09)}
+        .mf-tbl th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;height:34px;
+          color:#6b6453;background:#fafaf6;position:sticky;top:0;z-index:3}
+        .dark .mf-tbl th{color:#8893a7;background:#16203a}
+        .mf-tbl th.mf-l,.mf-tbl td.mf-l{text-align:left;white-space:normal;min-width:230px}
+        .mf-tbl tr.mf-tot td{font-weight:700;background:#fafaf6}
+        .dark .mf-tbl tr.mf-tot td{background:#16203a}
+        .mf-kpi{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end;padding:18px}
+        .mf-big{font-size:30px;font-weight:700;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+        .mf-cap{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453;margin-bottom:5px}
+        .dark .mf-cap{color:#8893a7}
+        .mf-v{font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;border-radius:4px;padding:2px 6px}
+        .mf-pass{background:rgba(34,197,94,.18);color:#15803d}
+        .dark .mf-pass{color:#4ade80}
+        .mf-warn{background:rgba(245,158,11,.18);color:#92600b}
+        .dark .mf-warn{color:#fbbf24}
+        .mf-fail{background:rgba(239,68,68,.18);color:#b91c1c}
+        .dark .mf-fail{color:#f87171}
+        .mf-flag{display:inline-block;font-size:10px;border-radius:4px;padding:1px 5px;margin-left:5px;
+          background:rgba(20,16,8,.07);color:#6b6453}
+        .dark .mf-flag{background:rgba(255,255,255,.08);color:#8893a7}
+        .mf-note{padding:12px 18px;font-size:12.5px;color:#6b6453;border-top:1px solid rgba(20,16,8,.10)}
+        .dark .mf-note{color:#8893a7;border-top-color:rgba(255,255,255,.09)}
+        .mf-row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+        .mf-drop{border:1px dashed rgba(20,16,8,.24);border-radius:11px;padding:22px;text-align:center;font-size:13px;color:#6b6453}
+        .dark .mf-drop{border-color:rgba(255,255,255,.20);color:#8893a7}
+      </style>
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-[1500px] mx-auto flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <div class="flex items-center gap-2.5 flex-wrap">
+              <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Manifests</h1>
+              <span id="mf-pill" class="text-[11px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded-md px-2 py-0.5"></span>
+            </div>
+            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">A vendor's spreadsheet, scored against your criteria before the call.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="mf-back" onclick="mfList()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim active:scale-95 transition">All manifests</button>
+          </div>
+        </div>
+      </div>
+      <div class="max-w-[1500px] mx-auto px-4 sm:px-6 pt-4 pb-10 space-y-4">
+        <div id="mf-status" class="text-sm text-opl-inkDim dark:text-op-inkDim"></div>
+        <div id="mf-view"></div>
       </div>
     </div>
 
@@ -7945,7 +8020,7 @@
     if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)) return;
 
     // Guard admin-only pages
-    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria', 'merch-coverage'];
+    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria', 'merch-coverage', 'merch-manifests'];
     if (adminOnly.includes(page)) {
       const role = currentUser && currentUser.role;
       if (role !== 'superuser' && role !== 'admin') return;
@@ -8061,6 +8136,9 @@
     if (page === 'merch-coverage') {
       if (typeof initMerchCoverage === 'function') initMerchCoverage();
     }
+    if (page === 'merch-manifests') {
+      if (typeof initManifests === 'function') initManifests();
+    }
     if (page === 'merch-criteria') {
       if (typeof initMerchCriteria === 'function') initMerchCriteria();
     }
@@ -8068,7 +8146,7 @@
       if (typeof initShelfCount === 'function') initShelfCount();
     }
     // Keep the Merchandising dropdown expanded while on any of its pages.
-    if ((page === 'merch-coverage' || page === 'merch-criteria' || page === 'merch-shelf-count') && typeof toggleMerchMenu === 'function') {
+    if ((page === 'merch-coverage' || page === 'merch-manifests' || page === 'merch-criteria' || page === 'merch-shelf-count') && typeof toggleMerchMenu === 'function') {
       toggleMerchMenu(true);
     }
 
@@ -17142,6 +17220,252 @@
   }
   window.toggleMerchMenu = toggleMerchMenu;
 
+  // ── Manifest Scorer ───────────────────────────────────────────────────────
+  // The CSV is held in memory only: a remap re-reads the same text rather than the
+  // server storing a vendor's price file it has no reason to keep.
+  let mfCsv = null, mfPending = null, mfOpenId = null;
+
+  const mfEsc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+  const mfMoney = (n) => n === null || n === undefined ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n);
+  const mfPct = (n) => n === null || n === undefined ? '—' : `${n.toFixed(n < 10 ? 1 : 0)}%`;
+  const mfNum = (n) => n === null || n === undefined ? '—' : Math.round(n).toLocaleString('en-US');
+  const mfSay = (t) => { const n = el('mf-status'); if (n) n.textContent = t; };
+
+  function initManifests() { mfOpenId = null; mfList(); }
+  window.initManifests = initManifests;
+
+  async function mfApi(action, opts) {
+    const r = await fetch(`${WORKER_BASE}?action=${action}`, {
+      credentials: 'include',
+      ...(opts ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opts) } : {}),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    return j;
+  }
+
+  async function mfList() {
+    mfOpenId = null; mfPending = null;
+    el('mf-back').classList.add('hidden');
+    el('mf-pill').textContent = '';
+    mfSay('Loading…');
+    try {
+      const j = await mfApi('manifests');
+      const rows = (j.manifests || []).map(m => `<tr onclick="mfOpen('${mfEsc(m.id)}')" style="cursor:pointer">
+        <td class="mf-l"><strong>${mfEsc(m.vendor)}</strong>${m.filename ? ` <span class="mf-flag">${mfEsc(m.filename)}</span>` : ''}</td>
+        <td class="mf-l">${mfEsc((m.uploaded_at || '').slice(0,10))}</td>
+        <td>${mfNum(m.line_count)}</td>
+        <td>${mfMoney(m.landed_cost)}</td>
+        <td class="mf-l"><span class="mf-v ${m.status === 'passed' ? 'mf-fail' : m.status?.startsWith('approved') ? 'mf-pass' : 'mf-warn'}">${mfEsc((m.status||'').replace('_',' '))}</span></td>
+      </tr>`).join('');
+      mfSay('');
+      el('mf-view').innerHTML = `
+        <div class="mf-panel">
+          <div class="mf-bar"><span class="mf-barlbl">New manifest</span></div>
+          <div class="mf-body">
+            <div class="mf-row" style="margin-bottom:12px">
+              <input id="mf-vendor" class="mf-in" placeholder="Vendor name" style="min-width:200px">
+              <input id="mf-file" type="file" accept=".csv,text/csv" class="mf-in" onchange="mfPick(this)">
+              <button class="mf-btn" onclick="mfUpload()">Read file</button>
+            </div>
+            <div class="mf-drop">Save the vendor's sheet as CSV first — xlsx isn't read yet.
+              Nothing is stored until you've checked the column mapping.</div>
+          </div>
+        </div>
+        <div class="mf-panel" style="margin-top:16px">
+          <div class="mf-bar"><span class="mf-barlbl">Recent</span></div>
+          ${rows ? `<div class="mf-scroll"><table class="mf-tbl"><thead><tr>
+              <th class="mf-l">Vendor</th><th class="mf-l">Uploaded</th><th>Lines</th><th>Landed cost</th><th class="mf-l">Status</th>
+            </tr></thead><tbody>${rows}</tbody></table></div>`
+            : `<div class="mf-body" style="color:#6b6453">Nothing uploaded yet.</div>`}
+        </div>`;
+    } catch (e) { mfSay(`Could not load manifests: ${e.message}`); }
+  }
+  window.mfList = mfList;
+
+  function mfPick(input) {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => { mfCsv = String(rd.result); mfSay(`${f.name} read — ${mfCsv.split(/\r?\n/).length - 1} rows.`); };
+    rd.onerror = () => mfSay('Could not read that file.');
+    rd.readAsText(f);
+    if (!el('mf-vendor').value) el('mf-vendor').value = f.name.replace(/\.[^.]+$/, '');
+  }
+  window.mfPick = mfPick;
+
+  async function mfUpload() {
+    const vendor = el('mf-vendor').value.trim();
+    if (!vendor) { uiAlert('Give the vendor a name first.'); return; }
+    if (!mfCsv) { uiAlert('Choose a CSV file first.'); return; }
+    mfSay('Reading…');
+    try {
+      const j = await mfApi('manifest-upload', { vendor, filename: el('mf-file').files?.[0]?.name, csv: mfCsv });
+      mfPending = j;
+      mfShowMapping(j);
+    } catch (e) { mfSay(`Upload failed: ${e.message}`); }
+  }
+  window.mfUpload = mfUpload;
+
+  // The mapping is always shown for confirmation, even when it was guessed correctly —
+  // a wrong column is silent everywhere downstream, and this is the one cheap moment to
+  // catch it.
+  function mfShowMapping(j) {
+    el('mf-back').classList.remove('hidden');
+    el('mf-pill').textContent = j.map_source === 'template' ? 'Mapped from template' : 'Check the mapping';
+    mfSay(j.note || `${j.rows} lines. Confirm the columns below.`);
+    const FIELDS = [['identifier','Identifier (UPC/model)'],['description','Description'],['qty','Qty'],
+                    ['uom','Unit'],['cost','Cost'],['msrp','MSRP'],['vendor_claimed_retail','Vendor comp']];
+    const opts = (sel) => `<option value="">—</option>` +
+      j.headers.map(h => `<option value="${mfEsc(h)}" ${h === sel ? 'selected' : ''}>${mfEsc(h)}</option>`).join('');
+    el('mf-view').innerHTML = `<div class="mf-panel">
+      <div class="mf-bar"><span class="mf-barlbl">Columns · ${mfEsc(j.vendor)}</span>
+        <label class="mf-row" style="gap:6px;font-size:13px">Sells as
+          <select id="mf-sellas" class="mf-in">
+            <option value="each" ${j.sell_as === 'each' ? 'selected' : ''}>each</option>
+            <option value="case" ${j.sell_as === 'case' ? 'selected' : ''}>case</option>
+          </select></label>
+        <label class="mf-row" style="gap:6px;font-size:13px">Units per case
+          <input id="mf-upc" class="mf-in" style="width:70px" value="${j.units_per_case}"></label>
+        <button class="mf-btn" style="margin-left:auto" onclick="mfConfirmMap()">Use this mapping</button>
+      </div>
+      <div class="mf-body">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">
+          ${FIELDS.map(([f,label]) => `<label style="display:block;font-size:12px">
+            <span class="mf-cap" style="display:block">${label}${['description','qty','cost'].includes(f) ? ' *' : ''}</span>
+            <select id="mf-map-${f}" class="mf-in" style="width:100%">${opts(j.column_map[f])}</select>
+          </label>`).join('')}
+        </div>
+      </div>
+      <div class="mf-note">First five rows: ${(j.sample || []).slice(0,5).map(r => mfEsc(r.slice(0,4).join(' · '))).join(' <br> ')}</div>
+    </div>`;
+  }
+
+  async function mfConfirmMap() {
+    const map = {};
+    for (const f of ['identifier','description','qty','uom','cost','msrp','vendor_claimed_retail']) {
+      const v = el(`mf-map-${f}`).value; if (v) map[f] = v;
+    }
+    for (const need of ['description','qty','cost']) {
+      if (!map[need]) { uiAlert(`${need} has to be mapped — it is what the scoring is built on.`); return; }
+    }
+    mfSay('Applying…');
+    try {
+      await mfApi('manifest-remap', { id: mfPending.id, csv: mfCsv, column_map: map,
+        sell_as: el('mf-sellas').value, units_per_case: Number(el('mf-upc').value) || 12 });
+      mfSay('Categorising…');
+      await mfApi('manifest-classify', { id: mfPending.id });
+      mfOpen(mfPending.id);
+    } catch (e) { mfSay(`Could not apply: ${e.message}`); }
+  }
+  window.mfConfirmMap = mfConfirmMap;
+
+  async function mfOpen(id) {
+    mfOpenId = id;
+    el('mf-back').classList.remove('hidden');
+    mfSay('Scoring…');
+    try {
+      const j = await mfApi(`manifest&id=${encodeURIComponent(id)}`);
+      mfRenderScore(j);
+    } catch (e) { mfSay(`Could not open: ${e.message}`); }
+  }
+  window.mfOpen = mfOpen;
+
+  async function mfClassify() {
+    mfSay('Categorising…');
+    try { const j = await mfApi('manifest-classify', { id: mfOpenId });
+      mfSay(`${j.classified} categorised.`); mfOpen(mfOpenId);
+    } catch (e) { mfSay(`Could not categorise: ${e.message}`); }
+  }
+  window.mfClassify = mfClassify;
+
+  function mfRenderScore(j) {
+    const m = j.manifest, s = j.score;
+    el('mf-pill').textContent = m.status === 'draft' ? 'Not decided' : (m.status || '').replace('_',' ');
+    mfSay('');
+    const vClass = s.verdict === 'buy' ? 'mf-pass' : s.verdict === 'buy_with_edits' ? 'mf-warn' : 'mf-fail';
+
+    const rollup = s.rollup.map(r => `<tr>
+      <td class="mf-l">${mfEsc(r.category)}${r.shelfState === 'dead' ? '<span class="mf-flag">dead on the shelf</span>'
+        : r.shelfState === 'starved' ? '<span class="mf-flag">starved</span>' : ''}</td>
+      <td>${mfNum(r.lines)}</td><td>${mfNum(r.units)}</td><td>${mfMoney(r.cost)}</td>
+      <td>${mfMoney(r.aspValue)}</td><td>${mfPct(r.costPctAsp)}</td>
+      <td>${r.warn ? `<span class="mf-v mf-warn">${r.warn}</span>` : ''}${r.fail ? ` <span class="mf-v mf-fail">${r.fail}</span>` : ''}</td>
+    </tr>`).join('');
+
+    const byId = Object.fromEntries(s.lines.map(l => [l.id, l]));
+    const lines = j.lines.map(l => {
+      const sc = byId[l.id] || {};
+      return `<tr>
+        <td class="mf-l">${mfEsc(l.description || '(no description)')}
+          ${(l.flags || []).map(f => `<span class="mf-flag">${mfEsc(f)}</span>`).join('')}</td>
+        <td class="mf-l">${mfEsc(l.l3 ? l.l3.split(' - ').pop() : '—')}</td>
+        <td>${mfNum(l.qty)}</td><td>${mfMoney(l.cost)}</td><td>${mfMoney(l.asp_l3)}</td>
+        <td>${mfPct(sc.costPctAsp)}</td><td>${mfMoney(l.suggested_price)}</td>
+        <td>${sc.perStore ?? '—'}</td><td>${sc.daysToClear ?? '—'}</td>
+        <td class="mf-l">${sc.verdict ? `<span class="mf-v mf-${sc.verdict === 'pass' ? 'pass' : sc.verdict}">${sc.verdict}</span>` : ''}</td>
+      </tr>`;
+    }).join('');
+
+    el('mf-view').innerHTML = `
+      <div class="mf-panel">
+        <div class="mf-bar"><span class="mf-barlbl">${mfEsc(m.vendor)}</span>
+          <span style="font-size:12px;color:#6b6453">${mfEsc(m.sell_as === 'case' ? `sold as cases of ${m.units_per_case}` : 'sold as each')}</span>
+          <button class="mf-btn ghost" style="margin-left:auto" onclick="mfClassify()">Categorise remaining</button>
+          <button class="mf-btn" onclick="mfDecide()">Record decision</button>
+        </div>
+        <div class="mf-kpi">
+          <div><div class="mf-cap">Landed cost</div><div class="mf-big">${mfMoney(s.totals.cost)}</div></div>
+          <div><div class="mf-cap">At our ASP</div><div class="mf-big">${mfMoney(s.totals.aspValue)}</div></div>
+          <div><div class="mf-cap">Cost of ASP</div><div class="mf-big">${mfPct(s.totals.costPctAsp)}</div></div>
+          <div><div class="mf-cap">Units</div><div class="mf-big">${mfNum(s.totals.units)}</div></div>
+          <div style="flex:1;min-width:280px;max-width:56ch">
+            <div class="mf-cap">Verdict <span class="mf-v ${vClass}">${mfEsc(s.verdict.replace(/_/g,' '))}</span></div>
+            <p style="font-size:13.5px;margin:0">${mfEsc(s.verdictText)}</p>
+          </div>
+        </div>
+        <div class="mf-note">⚠️ ${mfEsc(s.basis)}
+          ${j.criteriaNote ? `<br>${mfEsc(j.criteriaNote)}` : ` Scored under criteria v${j.criteriaVersion}.`}
+          ${s.totals.linesPriced < s.totals.lines ? `<br>${s.totals.linesPriced} of ${s.totals.lines} lines have an ASP to compare against.` : ''}</div>
+      </div>
+
+      <div class="mf-panel" style="margin-top:16px">
+        <div class="mf-bar"><span class="mf-barlbl">By category</span>
+          <span style="font-size:12px;color:#6b6453">the level the call happens at</span></div>
+        <div class="mf-scroll"><table class="mf-tbl"><thead><tr>
+          <th class="mf-l">Category</th><th>Lines</th><th>Units</th><th>Cost</th><th>At ASP</th><th>Cost of ASP</th><th>Flagged</th>
+        </tr></thead><tbody>${rollup}
+          <tr class="mf-tot"><td class="mf-l">Total</td><td>${mfNum(s.totals.lines)}</td><td>${mfNum(s.totals.units)}</td>
+            <td>${mfMoney(s.totals.cost)}</td><td>${mfMoney(s.totals.aspValue)}</td><td>${mfPct(s.totals.costPctAsp)}</td>
+            <td>${s.totals.warns ? `<span class="mf-v mf-warn">${s.totals.warns}</span>` : ''}${s.totals.fails ? ` <span class="mf-v mf-fail">${s.totals.fails}</span>` : ''}</td></tr>
+        </tbody></table></div>
+      </div>
+
+      <div class="mf-panel" style="margin-top:16px">
+        <div class="mf-bar"><span class="mf-barlbl">Lines</span>
+          <span style="font-size:12px;color:#6b6453">${mfNum(j.lines.length)} rows</span></div>
+        <div class="mf-scroll" style="max-height:60vh"><table class="mf-tbl"><thead><tr>
+          <th class="mf-l">Item</th><th class="mf-l">Category</th><th>Qty</th><th>Cost</th><th>Our ASP</th>
+          <th>Cost of ASP</th><th>Suggested</th><th>Per store</th><th>Days to clear</th><th class="mf-l"></th>
+        </tr></thead><tbody>${lines}</tbody></table></div>
+      </div>`;
+  }
+
+  async function mfDecide() {
+    const status = await uiPrompt('Record decision', 'approved, approved_edits or passed');
+    if (status === null) return;
+    if (!['approved','approved_edits','passed'].includes(String(status).trim())) {
+      uiAlert('Use one of: approved, approved_edits, passed.'); return;
+    }
+    const note = await uiPrompt('Why', 'One line — this is the record of the call.');
+    if (note === null) return;
+    try {
+      await mfApi('manifest-decide', { id: mfOpenId, status: String(status).trim(), note });
+      mfOpen(mfOpenId);
+    } catch (e) { uiAlert(`Could not record: ${e.message}`); }
+  }
+  window.mfDecide = mfDecide;
+
   // ── Coverage scorecard ────────────────────────────────────────────────────
   let cvData = null, cvWindow = 7;
 
@@ -19768,6 +20092,7 @@
     'nav-merch-chev': 'bl',
     'nav-merch-sub': 'bl',
     'nav-merch-coverage': 'bl',
+    'nav-merch-manifests': 'bl',
     'nav-merch-criteria': 'bl',
     'nav-merch-shelf-count': 'bl',
     // Hub-level, not owned by any one business.
@@ -20173,6 +20498,7 @@
     const merchRoles = ['superuser', 'admin', 'district_manager', 'manager'];
     el('nav-merch-group').classList.toggle('hidden', !merchRoles.includes(user.role));
     el('nav-merch-coverage').classList.toggle('hidden', !isAdmin);
+    el('nav-merch-manifests').classList.toggle('hidden', !isAdmin);
     el('nav-merch-criteria').classList.toggle('hidden', !isAdmin);
 
     el('nav-marketing-group').classList.remove('hidden');

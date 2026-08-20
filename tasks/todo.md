@@ -1,134 +1,80 @@
-# Merchandising — Phase 1 (Buy Criteria + Shelf Counts)
+# Manifest Scorer — slice 1 (Hub-only)
 
-Plan doc: `~/.claude/plans/clever-honking-finch.md`.
-Source PRD: `~/Downloads/PRD-hub-merchandising-module.md` (v3, Aug 19 2026).
+Plan: PRD §5.2. Decisions taken with Brian this session:
 
-The first surface of a new **Merchandising** section on the Bargain Lane side. Long term it
-holds buy decisions, store allocation and store layout; this pass ships the section shell plus
-the two things everything else depends on:
+| Decision | Choice |
+|---|---|
+| First slice | **Hub-only** — no external lookups. Everything here runs on data already in the Hub. |
+| File format | **CSV to start.** The worker is one file with no imports; xlsx needs a real library and changes the deploy shape. |
+| Retail lookup | Later slice. TinyFish access exists; no UPC provider yet, so that stays behind an interface. |
 
-1. **Buy Criteria** — the versioned table that *defines core*. Every later surface reads it.
-2. **Shelf Count** — weekly manager-entered bay counts. Ratios need ~2 weeks of history before
-   they mean anything, so the form ships now even though nothing reads it yet.
+## The honesty problem this slice has to solve
 
-## The one thing to know before reading the code
+Every criterion in §5.3 is written against **street retail**, and this slice has none.
+It must NOT quietly substitute our ASP and call it retail — that is the same error R6 and
+R7 exist to stop vendors making. So: compute cost as a share of **our ASP**, label it as
+that everywhere it appears, and mark the verdict as scored without retail. When the
+lookup lands, the same fields switch to retail and the label changes.
 
-**The PRD's "L2" is this repo's `L3`.** `L3_TO_L2` (worker.js:160) has 15 coarse L2 buckets and
-89 L3s. The PRD's core list — snacks, candy, drinks, condiments, coffee & tea — is *entirely*
-L3, all inside the single L2 `Consumable Food`. Keying on the repo's L2 would collapse the core
-flag to one boolean over all food.
+## What IS computable from the Hub today
 
-So: **PRD "L2" → code `l3`**, **PRD "group" → code `l2`**. Confirmed with Brian this session.
+- **L3/L2 classification** — Claude API, already wired in this worker.
+- **Our ASP per L3** — `l3Net / l3Qty` over L28D from the `items:<store>:<date>` snapshots.
+- **Velocity per L3** — units/day chain-wide from the same snapshots, which makes
+  **days-to-clear** and therefore `cash_back_days` a real number, not a guess.
+- **Shelf-now** — the Coverage read, so a rollup row can say what the floor gives that
+  category today.
+- **Criteria** — the published version, scored per §5.3's warn-not-fail logic.
 
 ## Build
 
-- [x] `migration-041.sql` — `merch_criteria`, `merch_criteria_versions`, `shelf_counts`
-- [x] Worker: criteria read/draft/publish/discard/log
-- [x] Worker: shelf-count save + read
-- [x] Register the 7 new actions in `ACTION_BUSINESS` (worker's fail-closed gate — caught by the test)
-- [x] `index.html`: Merchandising nav group + `NAV_BUSINESS` registration
-- [x] `index.html`: Buy Criteria page
-- [x] `index.html`: Shelf Count page (mobile-first)
-- [x] `scripts/test-merch-criteria.mjs` — 55 assertions
-- [x] `node scripts/test-nav-registry.mjs` green
-- [x] `bash scripts/test.sh` green — 1615 assertions, 44 suites
+- [x] `migration-043.sql` — manifests, manifest_lines, vendor_templates, item_cache
+- [x] CSV parse + column mapper, per-vendor template remembered
+- [x] Sell-as (each/case) — all downstream maths in the chosen unit
+- [x] Claude L3 classification, batched, cached by identifier, manual override persists
+- [x] ASP + velocity per L3 from snapshots
+- [x] Suggested price (ASP + L2 rounding rule) and days-to-clear
+- [x] Score against the live criteria version; verdict with edit asks
+- [x] Rollup by category, with shelf-now
+- [x] Lines table with flags and filters
+- [x] Mark decision
+- [x] Tests
+- [x] DESIGN.md §4.8 followed (panel + bar + legend); check the second render
 
-## Deploy — PRODUCTION, 2026-08-19
+## Deliberately not in this slice
 
-Brian: "run the migration on prod, we will run and push everything straight to
-production. and update staging later." Prod-first, deliberately.
-
-- [x] **migration-041 → PROD** (`labor-dashboard-db`). Was a true create: none of the
-      three tables existed. 3 tables + 5 indexes, all empty; prod went 38 → 39 tables.
-      Nothing overwritten, so nothing to back up.
-- [x] **Worker → prod**, version `a932dc15-8fb6-4c16-b9ae-79c431a0c8b6`, 100% of traffic.
-      Bindings read back per the deploy lesson: SALES_SNAPSHOTS, DB=labor-dashboard-db,
-      MEDIA=bl-marketing-media, BL1/2/4/8/12/14/16 merchant ids, all 6 crons.
-- [x] **Frontend → main** (`21d1117`), Pages build green. All 8 markers present in the
-      deployed index.html; `max-w-2xl` and `accent-accent-green` present in the
-      CI-rebuilt tailwind.css.
-- [x] **Service worker bumped v89 → v90** (`5fd3236`) — missed on the first commit, which
-      would have left installed PWAs on the old shell with no Merchandising section.
-
-### Not verified, and why
-
-The new endpoints all sit below the auth gate, so an unauthenticated probe returns
-`401 NO_SESSION` on both old and new code — there is no way to functionally confirm them
-from outside without a session. What was confirmed: the new version is at 100% on the
-control plane, the API is alive, and the auth gate is intact. **The first real functional
-check is Brian logging in and opening Buy Criteria.** Nothing calls these endpoints until
-someone does, so the blast radius until then is zero.
-
-### Still to do
-
-- [ ] **Staging**: `migration-041` → `labor-dashboard-db-staging`, and deploy the staging
-      worker. Prod is ahead of staging until this happens.
-- [ ] **Publish criteria v1** — the tables are live but empty, so Shelf Count currently
-      shows "core categories have not been published yet" for every store. That is the
-      correct state, not a bug: v1 has to name the core before anyone can count it.
-      ⚠️ Set `min_margin_per_unit` for oral care with Brandon BEFORE publishing (open
-      question 2a), or the % test governs alone and warns on staples you would buy.
-
-## Out of scope this pass
-
-Coverage scorecard/heatmap · Manifest Scorer · TinyFish · UPC database · Claude classification ·
-suggested pricing · vendor coverage · buy-tracker handoff.
+Retail lookup (R1–R8) · UPC database · pack-size parser · price caps off retail ·
+facings-per-4ft · export one-slide · buy-tracker handoff · xlsx.
 
 ## Review
 
-**Shipped (uncommitted, not deployed).** Backend + both pages, verified in a browser.
+Shipped to prod. Worker `0e45801a`, migration-043 applied, suite 1754/46.
 
-| File | What |
-|---|---|
-| `migration-041.sql` | `merch_criteria`, `merch_criteria_versions`, `shelf_counts` (new) |
-| `worker.js` | +7 actions, merch helpers, 7 entries in `ACTION_BUSINESS` |
-| `index.html` | Merchandising nav group, 2 pages, `uiPrompt`, 6 `NAV_BUSINESS` entries |
-| `scripts/test-merch-criteria.mjs` | 69 assertions (new) |
-| `scripts/lib/worker-harness.mjs` | D1 shim now reports `run().meta.changes` |
+**The design decision that shapes everything here:** the score is computed on READ, not
+stored. Criteria move and our own ASP moves, so a stored verdict would go stale while
+still looking authoritative. What IS stored is the version a *decision* was taken under —
+`criteria_version` plus `scored_without_retail` — because "we approved this" only means
+something alongside what it was measured against.
 
-**Two design calls worth remembering:**
+**What the tests caught that reading the code would not have:**
 
-1. **Copy-on-draft.** Opening a draft copies the whole live version forward, so every
-   version is a self-contained snapshot. That is what makes "scored under v7" true a year
-   later without replaying history, and it means immutability is *structural* — the draft
-   endpoint has no version parameter, so it cannot target a published version at all.
-2. **The change log is a diff, not a table.** Derived by comparing consecutive published
-   versions. A stored log can drift out of sync with the values it describes; a derived
-   one cannot.
+- Header guessing was anchored (`/^desc/`), so "Item Description" — which is how real
+  vendor files are labelled — never matched. Now matched by contains, and checked against
+  four realistic layouts.
+- The `.99` rounding rule was written as an unreadable ternary and was wrong: $3.42 came
+  out $3.99 rather than $2.99. Rewritten as "nearest price ending in .99" and unit-tested
+  across eleven cases.
 
-**Found while building, folded back into the PRD:**
-- The PRD's "L2" is the Hub's L3 (the reason the whole feature is keyed on `l3`).
-- 6 stores, not 7. Wyoming is closed; the acceptance sample now uses Holland.
-- Energy drinks is already its own L3, so open question 4 is partly answered by the data.
-- **Cereal and laundry have no L3 to attach to** — cereal's nearest is `FOOD - BREAKFAST`;
-  Tide lands in `CHEMICALS`/`HOUSEKEEPING`. Both need a decision before v1 covers them.
-- Open question 2a is re-marked **blocking for v1**: publish with `min_margin_per_unit`
-  blank and the % test governs alone, so the first manifest warns on staples you'd buy.
+**Deliberately refused:** the model may only return a category copied exactly from our
+list. A free-text answer would invent categories matching no criteria row and no sales
+history, and the line would score against the chain default while looking correctly
+classified. An invented category is dropped, and the line stays visibly unclassified.
 
-**Access — settled by role, not by person (Brian, this session):**
+**Also refused:** the model never overwrites a human's category. `item_cache.l3_source`
+is checked in the upsert's WHERE clause, not in application code.
 
-> "Any admin and superuser can read criteria — let's not worry about who, just focus on
-> the superuser and admin role."
+## Next slice
 
-| Role | Read criteria | Write / publish | Shelf Count |
-|---|---|---|---|
-| superuser | ✅ | ✅ | ✅ |
-| admin | ✅ | ✅ | ✅ |
-| district_manager | ❌ | ❌ | ✅ |
-| manager | ❌ | ❌ | ✅ |
-| executive | ❌ | ❌ | — |
-| staff | ❌ | ❌ | — |
-
-This is what the code already did; what changed is that it is now stated as a role rule in
-the comments and pinned per role in the tests, rather than justified by who holds which
-account. `executive` is deliberately not special-cased — no read-only Merchandising surface
-exists yet, and Coverage is where that question actually lands.
-
-Managers keep the Merchandising group in the nav solely so they can reach Shelf Count; Buy
-Criteria is hidden from them and refused by both the router and the worker.
-
-**Left alone deliberately:** the committed root `tailwind.css` is stale relative to
-`tailwind.config.js` (it renders `accent-green` as `#3BB54A`; a fresh build gives
-`#22c55e`). Not regenerated here — `build.sh` writes `dist/tailwind.css` at deploy time, so
-production is unaffected, and committing a rebuild would be a 13KB colour diff across the
-whole app that has nothing to do with this change.
+Retail lookup (R1–R8) via TinyFish — Brian has access; no UPC provider yet, so that stays
+behind an interface. When it lands, `costPctAsp` gains a retail sibling and the
+`withoutRetail` banner comes off. Nothing else in the pipeline moves.
