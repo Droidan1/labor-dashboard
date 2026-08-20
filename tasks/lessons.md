@@ -1,5 +1,45 @@
 # Lessons
 
+## Deploying main's worker to a named env SILENTLY REVERTS whatever only lives on that env's branch (2026-08-19)
+
+**Context:** Asked to "update staging". I ran `npx wrangler deploy --env staging` from a
+`main` checkout as step one. That deployed **main's** `worker.js` to the staging worker —
+and `boost-post`, the Meta Boost endpoint, exists ONLY on the `staging` branch. I took the
+feature off staging without noticing, and only caught it a minute later while inspecting
+the branch diff for an unrelated reason.
+
+**Root cause:** `--env staging` selects the staging *bindings*, not the staging *code*. The
+code is whatever is in the working tree. `wrangler deploy --env X` from the wrong branch is
+a silent revert of everything unique to X, and nothing in the output hints at it — the
+bindings all print correctly, which reads like success.
+
+**Rules:**
+1. **Check out the environment's branch BEFORE deploying to that environment.** For a named
+   env with its own branch, `git checkout <branch>` is part of the deploy, not a preamble.
+2. **Before deploying to any env, diff the two sides for endpoints that exist on only one:**
+   `git diff origin/main origin/<branch> -- worker.js | grep -E '^[-+].*action.*==='`. If
+   that is non-empty, deploying either side over the other loses something.
+3. **Sync the branch first, deploy second.** The correct order was: merge main into staging,
+   resolve, test, THEN deploy the merged result once. I deployed twice and the first one
+   was a regression.
+
+**And the merge itself hid a second bug that only the test suite caught.** Three conflicts
+resolved by hand, but a FOURTH hunk auto-merged wrongly: it replaced main's upload-vocabulary
+check (`["retail","bins","event","team","other"]`) with staging's `MARKETING_POST_TYPES`
+(`["bin_preview","weekly_promo",...]`). Two different taxonomies with no overlapping member
+for "bins", so every bin-photo upload silently became `"other"` and no draft was ever
+created. Git reported no conflict because the two branches had edited *different* lines.
+
+4. **A clean `git merge` on these giant files is not evidence of a correct merge.** Run the
+   full suite after every merge, and pay attention to which side a test came from — the one
+   that went red (`test-bin-photo-autodraft`) exists only on main, so it had never run
+   against staging's code before. A green auto-merge plus a red main-only test is the exact
+   signature of a silently-dropped main behaviour.
+5. **Where two constants share a purpose but not a vocabulary, say so at BOTH sites.** The
+   restored line now carries a comment naming the other taxonomy and why they must not be
+   swapped, because the next merge will present the same choice.
+
+
 ## Never let a colour be INHERITED, and never sign off a UI change in one theme (2026-08-19)
 
 **Context:** Brian opened the just-shipped Buy Criteria page in dark mode on production and
