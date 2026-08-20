@@ -79,7 +79,13 @@ async function run(people) {
   const ctx = { waitUntil: p => waits.push(Promise.resolve(p).catch(() => {})), passThroughOnException: () => {} };
   let captured = null;
   const realLog = console.log;
-  console.log = (...a) => { const t = a.join(' '); if (t.startsWith('Interval summary dispatch:')) { try { captured = JSON.parse(t.split(': ').slice(1).join(': ')); } catch (_) {} } };
+  // ⚠️ Coupled to the log line superviseCronJob() emits — `${job}: ${json}` with
+  // job "interval-summary". Renaming the job breaks this capture, and `captured`
+  // goes null, which is why the vacuity guard below (`if (!all.sent)`) exists and
+  // must stay: without it a renamed job would read as "everyone was correctly
+  // excluded" and every assertion would pass against nothing. It caught exactly
+  // that when the prefix changed from "Interval summary dispatch:".
+  console.log = (...a) => { const t = a.join(' '); if (t.startsWith('interval-summary:')) { try { captured = JSON.parse(t.split(': ').slice(1).join(': ')); } catch (_) {} } };
   await worker.scheduled({ cron: '0 * * * *', scheduledTime: Date.now() }, env, ctx);
   await Promise.all(waits);
   console.log = realLog;

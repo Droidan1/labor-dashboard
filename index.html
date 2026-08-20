@@ -694,6 +694,10 @@
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
               <span class="nav-label">Flow Calendar</span>
             </div>
+            <div id="nav-comments" class="nav-item nav-subitem" data-page="comments" onclick="navigateToPage('comments')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+              <span class="nav-label">Comments</span>
+            </div>
             <div id="nav-content" class="nav-item nav-subitem" data-page="content" onclick="navigateToPage('content')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></span>
               <span class="nav-label">Content</span>
@@ -701,6 +705,28 @@
             <div id="nav-submit-photos" class="nav-item nav-subitem" data-page="submit-photos" onclick="navigateToPage('submit-photos')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>
               <span class="nav-label">Submit Photos</span>
+            </div>
+          </div>
+        </div>
+        <!-- Merchandising. Its own group rather than an item because it is the section
+             the buy tools grow into — allocation and layout land here next, and a
+             renamed nav item is a worse migration than an empty sub-menu. The GROUP is
+             visible to every manager so they can reach Shelf Count; Buy Criteria is
+             gated to admins below, the same shape as Marketing. -->
+        <div id="nav-merch-group" class="hidden">
+          <div id="nav-merch" class="nav-item" onclick="toggleMerchMenu()">
+            <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="15"/><line x1="15" y1="15" x2="15" y2="21"/></svg></span>
+            <span class="nav-label">Merchandising</span>
+            <span id="nav-merch-chev" class="nav-chev nav-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          </div>
+          <div id="nav-merch-sub" class="nav-sub hidden">
+            <div id="nav-merch-criteria" class="nav-item nav-subitem" data-page="merch-criteria" onclick="navigateToPage('merch-criteria')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 15 11 17 15 12"/></svg></span>
+              <span class="nav-label">Buy Criteria</span>
+            </div>
+            <div id="nav-merch-shelf-count" class="nav-item nav-subitem" data-page="merch-shelf-count" onclick="navigateToPage('merch-shelf-count')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="7" x2="21" y2="7"/><line x1="3" y1="13" x2="21" y2="13"/><line x1="3" y1="19" x2="21" y2="19"/><line x1="7" y1="4" x2="7" y2="7"/><line x1="13" y1="10" x2="13" y2="13"/><line x1="10" y1="16" x2="10" y2="19"/></svg></span>
+              <span class="nav-label">Shelf Count</span>
             </div>
           </div>
         </div>
@@ -715,6 +741,10 @@
         <div id="nav-inventory" class="hidden nav-item" data-page="inventory" onclick="navigateToPage('inventory')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
           <span class="nav-label">Inventory</span>
+        </div>
+        <div id="nav-labor" class="hidden nav-item" data-page="labor" onclick="navigateToPage('labor')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg></span>
+          <span class="nav-label">Labor</span>
         </div>
         <div id="nav-supply-request" class="hidden nav-item" data-page="supply-request" onclick="navigateToPage('supply-request')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/><line x1="9" y1="9" x2="10" y2="9"/></svg></span>
@@ -1774,7 +1804,7 @@
                 <button type="button" id="ct-ai-btn" onclick="ctAiCaption()" class="text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-accent-green/50 text-accent-green hover:bg-accent-green/10 transition">✨ AI generate</button>
               </div>
               <textarea id="ct-caption" rows="4" oninput="ctUpdateCaptionUI();ctMarkDirty()" placeholder="Write the post caption…" class="w-full rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-sm px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></textarea>
-              <p id="ct-ai-note" class="hidden text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">✨ AI-drafted from this week's Flow Calendar — edit as needed.</p>
+              <p id="ct-ai-note" class="hidden text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">✨ AI-drafted — edit as needed.</p>
             </div>
 
             <div class="flex items-center gap-3">
@@ -1945,6 +1975,114 @@
         </div>
       </div>
     </div><!-- end #page-marketing -->
+
+    <div id="page-comments" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-7xl mx-auto">
+          <div class="flex items-center gap-2.5 flex-wrap">
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Comments</h1>
+            <span class="text-[11px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded-md px-2 py-0.5">Review</span>
+            <button id="fbc-refresh" onclick="fbcRefresh()" class="ml-auto text-[11px] font-semibold px-2.5 py-1 rounded-md border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Check for new</button>
+          </div>
+          <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">Every reply is reviewed by you before it posts. Nothing here goes out on its own.</p>
+        </div>
+      </div>
+
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 pt-4 pb-6">
+        <div class="flex gap-1.5 flex-wrap mb-3" id="fbc-store-tabs"></div>
+        <div class="flex gap-1 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border mb-4" id="fbc-status-tabs"></div>
+        <div id="fbc-status" class="hidden text-sm mb-3"></div>
+        <div id="fbc-list" class="space-y-3"></div>
+      </div>
+    </div>
+
+    <!-- ── Merchandising: Buy Criteria ─────────────────────────────────────────
+         The versioned thresholds a buy is scored against, and the definition of
+         "core" everything downstream reads. Edits accumulate in a draft; nothing
+         applies until it is published with a note. -->
+    <div id="page-merch-criteria" class="hidden">
+      <style>
+        /* Colour comes from the V1 palette in tailwind.config.js, stated for BOTH themes.
+           Nothing here may rely on an inherited colour: this table sits on op-bg in dark
+           and opl-bg in light, and a value that is only correct in one of them is a bug
+           you cannot see unless you look in the other. ink/inkDim/inkDimmer below are
+           literal token values (op.* dark, opl.* light) — a <style> block cannot use the
+           Tailwind class names, so the values are duplicated on purpose. */
+        #mc-tbl{border-collapse:separate;border-spacing:0;font-size:12px;color:#14110a}
+        .dark #mc-tbl{color:#e7ecf3}
+        #mc-tbl th,#mc-tbl td{border-bottom:.5px solid rgba(20,16,8,.10);padding:5px 8px;text-align:left;white-space:nowrap}
+        .dark #mc-tbl th,.dark #mc-tbl td{border-bottom-color:rgba(255,255,255,.09)}
+        #mc-tbl th{font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#6b6453}
+        .dark #mc-tbl th{color:#8893a7}
+        #mc-tbl .mc-cat{position:sticky;left:0;z-index:2;white-space:normal;min-width:190px;font-weight:500}
+        #mc-tbl tr.mc-group td{font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;padding-top:12px;color:#6b6453}
+        .dark #mc-tbl tr.mc-group td{color:#8893a7}
+        #mc-tbl tr.mc-default td{font-weight:600}
+        #mc-tbl input{width:76px;border-radius:6px;padding:2px 6px;font-size:12px;border:1px solid transparent;background:transparent;color:inherit}
+        #mc-tbl input:focus{outline:none;border-color:#639922;background:rgba(99,153,34,.06)}
+        /* Inherited vs override vs changed-in-draft — the three states the PRD asks
+           the table to show at a glance, so nobody has to guess where a number came from. */
+        /* inkDim, not inkDimmer. inkDimmer (#9c9484) reads as "inherited" but measures
+           2.71:1 on opl-bg — under AA. inkDim is 5.29:1 and still unmistakably muted
+           against an override, which is near-black at 16.96:1. */
+        #mc-tbl input.mc-inherit{color:#6b6453}
+        .dark #mc-tbl input.mc-inherit{color:#8893a7}
+        #mc-tbl input.mc-override{color:inherit;border-color:rgba(20,16,8,.14)}
+        .dark #mc-tbl input.mc-override{border-color:rgba(255,255,255,.16)}
+        #mc-tbl input.mc-dirty{background:rgba(234,179,8,.16);border-color:rgba(234,179,8,.55)}
+      </style>
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-[1500px] mx-auto">
+          <div class="flex items-end justify-between gap-4 flex-wrap">
+            <div>
+              <div class="flex items-center gap-2.5 flex-wrap">
+                <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Buy Criteria</h1>
+                <span id="mc-version" class="text-[11px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded-md px-2 py-0.5"></span>
+              </div>
+              <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">What a buy has to pass, and what counts as core. Published versions never move.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <label class="flex items-center gap-1.5 text-xs font-semibold text-opl-inkDim dark:text-op-inkDim cursor-pointer">
+                <input type="checkbox" id="mc-only-overrides" onchange="mcRender()" class="accent-accent-green"> Only overrides
+              </label>
+              <button id="mc-discard" onclick="mcDiscard()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim active:scale-95 transition">Discard draft</button>
+              <button id="mc-publish" onclick="mcPublish()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg bg-accent-green text-white active:scale-95 transition">Publish…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="max-w-[1500px] mx-auto px-4 sm:px-6 pt-4 pb-10">
+        <div id="mc-status" class="text-sm text-opl-inkDim dark:text-op-inkDim mb-3">Loading…</div>
+        <div class="overflow-x-auto"><table id="mc-tbl"></table></div>
+        <div class="mt-8">
+          <button onclick="mcToggleLog()" class="flex items-center gap-1.5 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim">
+            <span id="mc-log-chev" class="inline-block transition-transform">▸</span> Change log
+          </button>
+          <div id="mc-log" class="hidden mt-3 text-xs space-y-2"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Merchandising: Shelf Count ───────────────────────────────────────────
+         The weekly bay count, entered on a phone by the store manager. Kept
+         deliberately short: seven numbers and a save. -->
+    <div id="page-merch-shelf-count" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-2xl mx-auto">
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Shelf Count</h1>
+          <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">How many bays each core category has on your floor this week. An end cap counts as one bay.</p>
+          <div class="flex items-center gap-2 mt-3 flex-wrap">
+            <select id="sc-store" onchange="scLoad()" class="rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-sm px-3 py-2"></select>
+            <select id="sc-week" onchange="scLoad()" class="rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-sm px-3 py-2"></select>
+          </div>
+        </div>
+      </div>
+      <div class="max-w-2xl mx-auto px-4 sm:px-6 pt-4 pb-10">
+        <div id="sc-status" class="text-sm text-opl-inkDim dark:text-op-inkDim mb-3">Loading…</div>
+        <div id="sc-rows" class="space-y-2"></div>
+        <button id="sc-save" onclick="scSave()" class="hidden w-full mt-5 py-3 rounded-xl bg-accent-green text-white font-semibold active:scale-[.99] transition">Save count</button>
+      </div>
+    </div>
 
     <div id="page-flow-calendar" class="hidden">
       <style>
@@ -2239,6 +2377,88 @@
         </details>
       </div>
     </div><!-- end #page-ebay-cases -->
+
+    <!-- ══ Labor ══════════════════════════════════════════════════════════
+         Replaces the Retail Payroll Planning sheet. Planning recommends next
+         week's hours from a 4-week weighted trend; Budget vs Actual and Hours
+         land in the following phases. Every figure is hours x $15.00 — never
+         payroll, never the sheet's own labour % column. -->
+    <!-- 🔑 text-opl-ink/dark:text-op-ink on the CONTAINER, not on each element.
+         Nothing in this app sets a default ink colour on body or #main-scroll —
+         every existing element carries its own — so anything here that relied on
+         inheritance rendered pure black on the dark background. Colour is
+         inherited, and a child's own text-* class still overrides it, so one
+         class here fixes the lot without touching the pieces that set theirs. -->
+    <div id="page-labor" class="hidden text-opl-ink dark:text-op-ink">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="flex items-center gap-3 max-w-7xl mx-auto flex-wrap">
+          <h1 class="text-xl font-brand text-accent-green uppercase tracking-wide leading-none">Labor</h1>
+          <span id="labor-fresh" class="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-semibold whitespace-nowrap border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.03)] text-opl-inkDim dark:text-op-inkDim">—</span>
+          <div class="ml-auto flex items-center gap-2.5">
+            <select id="labor-store" onchange="laborSetStore(this.value)"
+              class="hidden h-[38px] px-3 rounded-[11px] text-[12.5px] font-bold border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
+            <button id="labor-week-prev" type="button" onclick="laborShiftWeek(-1)" aria-label="Previous week"
+              class="w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim flex items-center justify-center hover:border-accent-green/40 transition-colors">‹</button>
+            <span id="labor-week-label" class="text-[12.5px] font-bold text-opl-ink dark:text-op-ink whitespace-nowrap tabular-nums">—</span>
+            <button id="labor-week-next" type="button" onclick="laborShiftWeek(1)" aria-label="Next week"
+              class="w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim flex items-center justify-center hover:border-accent-green/40 transition-colors">›</button>
+            <button type="button" onclick="initLabor(true)" aria-label="Refresh" title="Refresh"
+              class="w-[38px] h-[38px] rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hidden lg:flex items-center justify-center hover:border-accent-green/40 transition-colors">
+              <svg class="w-[17px] h-[17px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="max-w-7xl mx-auto flex gap-6 mt-3.5">
+          <button id="labor-tab-plan" data-ltab="plan" onclick="laborSetTab('plan')" class="labor-tab pb-2.5 text-[13.5px] font-extrabold border-b-2 transition-colors">Planning</button>
+          <button id="labor-tab-act" data-ltab="act" onclick="laborSetTab('act')" class="labor-tab pb-2.5 text-[13.5px] font-extrabold border-b-2 transition-colors">Budget vs Actual</button>
+          <button id="labor-tab-hours" data-ltab="hours" onclick="laborSetTab('hours')" class="labor-tab hidden pb-2.5 text-[13.5px] font-extrabold border-b-2 transition-colors">Hours</button>
+        </div>
+      </div>
+
+      <div class="p-4 sm:p-6 max-w-7xl mx-auto space-y-4">
+        <div id="labor-pane-plan">
+          <div id="labor-plan-body"></div>
+        </div>
+        <div id="labor-pane-act" class="hidden">
+          <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
+            <div class="flex items-start gap-3 flex-wrap">
+              <div>
+                <div class="text-[10.5px] font-extrabold tracking-[0.09em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer">Budget vs actual</div>
+                <h2 id="labor-act-title" class="text-[15px] font-extrabold mt-0.5">—</h2>
+                <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim">Both sides valued at $15.00/hr, so the comparison is hours for hours.</div>
+              </div>
+              <div class="ml-auto inline-flex bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-[9px] p-0.5 gap-0.5">
+                <button id="labor-grain-d" onclick="laborSetGrain('d')" class="labor-grain px-2.5 py-1 rounded-[7px] text-[11.5px] font-bold transition-colors">Daily</button>
+                <button id="labor-grain-w" onclick="laborSetGrain('w')" class="labor-grain px-2.5 py-1 rounded-[7px] text-[11.5px] font-bold transition-colors">Weekly</button>
+                <button id="labor-grain-m" onclick="laborSetGrain('m')" class="labor-grain px-2.5 py-1 rounded-[7px] text-[11.5px] font-bold transition-colors">Monthly</button>
+              </div>
+            </div>
+            <div id="labor-act-tiles" class="grid grid-cols-2 lg:grid-cols-4 gap-px bg-[rgba(20,16,8,0.08)] dark:bg-op-border rounded-[12px] overflow-hidden mt-4"></div>
+          </section>
+          <div id="labor-act-body" class="mt-4"></div>
+        </div>
+        <div id="labor-pane-hours" class="hidden">
+          <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors">
+            <div class="p-5 pb-3 flex items-start gap-3 flex-wrap">
+              <div>
+                <div class="text-[10.5px] font-extrabold tracking-[0.09em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer">Hours entry</div>
+                <h2 id="labor-hours-title" class="text-[15px] font-extrabold mt-0.5">—</h2>
+                <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim">Budget hours sit under each box. Paste a block straight from Paylocity onto any cell.</div>
+              </div>
+              <div class="ml-auto flex items-center gap-2.5">
+                <span id="labor-hours-status" class="text-[12px] font-bold text-opl-inkDim dark:text-op-inkDim"></span>
+                <button type="button" onclick="laborHoursReset()"
+                  class="h-[34px] px-3 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border text-[12.5px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Discard</button>
+                <button id="labor-hours-save" type="button" onclick="laborHoursSave()" disabled
+                  class="h-[34px] px-4 rounded-[11px] bg-accent-green text-[#0b1220] text-[13px] font-extrabold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">Save week</button>
+              </div>
+            </div>
+            <div id="labor-hours-warn" class="hidden mx-5 mb-3 rounded-[12px] p-3 text-[12.5px] leading-relaxed border" style="background:rgba(239,68,68,.07);border-color:rgba(239,68,68,.32)"></div>
+            <div id="labor-hours-grid" class="overflow-x-auto px-5 pb-5"></div>
+          </section>
+        </div>
+      </div>
+    </div><!-- end #page-labor -->
 
     <div id="page-settings" class="hidden">
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
@@ -2548,12 +2768,12 @@
                 <label class="flex items-center justify-between cursor-pointer">
                   <div>
                     <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Daily summary email</p>
-                    <p class="text-xs text-gray-500 dark:text-gray-400">5 AM recap of all-store sales, vs last week &amp; budget</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">8 AM recap of yesterday's sales for your stores, vs budget</p>
                   </div>
                   <input type="checkbox" id="notif-daily-summary-toggle" onchange="updateNotifPrefs()"
                     class="w-4 h-4 accent-[#3BB54A] cursor-pointer ml-4">
                 </label>
-                <label class="flex items-center justify-between cursor-pointer">
+                <label id="notif-weekly-digest-row" class="hidden flex items-center justify-between cursor-pointer">
                   <div>
                     <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Weekly digest email</p>
                     <p class="text-xs text-gray-500 dark:text-gray-400">Sunday morning full-week recap with orders &amp; budget</p>
@@ -2830,6 +3050,17 @@
                   Backfill Last 13 Weeks
                 </button>
                 <div id="backfill-sales-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
+              </div>
+            </div>
+
+            <div>
+              <p class="text-xs font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Backfill Category Basket Counts</p>
+              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">Adds <em>how many baskets touched each category</em> to the last 13 weeks of item snapshots — the denominator the T13 Penetration view needs. <strong>Adds two fields only</strong>: sales figures, categories and totals are never rewritten. Any day whose Clover fetch comes back more than 1% short is skipped and reported rather than written. Loops one store-day at a time; takes several minutes. Run <em>Rebuild Week Summaries</em> afterwards.</p>
+              <div class="flex items-center gap-3">
+                <button onclick="runBackfillCategoryOrders()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">
+                  Backfill Basket Counts
+                </button>
+                <div id="backfill-orders-status" class="hidden text-sm rounded-lg px-4 py-3 border flex-1"></div>
               </div>
             </div>
           </div>
@@ -3434,7 +3665,8 @@
   // Parallel to STORES by index (metrics map uses COLORS[i]); Holland's amber
   // moved to the end alongside it so every store keeps its accent color.
   const COLORS = ["#3BB54A","#194975","#00B8FF","#ef4444","#ec4899","#f59e0b"];
-  const MAX_TXN_DURATION_MS = 30 * 60 * 1000; // 30 min – filter out tabs/holds
+  // (MAX_TXN_DURATION_MS removed with the client-side aggregation — the
+  // transaction-time filter now lives only in the worker.)
   const C = {
     MONTH:1, WEEK:2, DATE:3,         // A–C: date identifiers
     B_TOTAL:8, B_LABOR:10,           // I,K: budgeted total & labor %
@@ -3467,13 +3699,18 @@
   // Dashboard Matrix channel filter: null = all stores blended; 'retail' | 'bin'
   // shows that channel's per-order metrics (from item-level L2 data).
   let dashChannel = null;
-  let dashChannelData = null;        // { date, retail:{net,units,orders,avgCart,avgItems,asp}, bin:{...} }
+  // Keyed by RANGE, not by date — the split follows the selected range, and a
+  // key mismatch is what makes a range change refetch instead of showing the
+  // previous range's numbers.
+  let dashChannelData = null;        // { key, retail:{net,units,orders,avgCart,avgItems,asp}, bin:{...} }
   let dashChannelLoading = false;
+  let dashChannelLoadKey = null;     // range key currently in flight, or null
   let _dashMxBlended = null;         // saved "All" matrix tile strings, to restore
   // Per-store-card channel filter (same idea, keyed by store code).
   let dashCardCh = {};               // code → 'retail' | 'bin' | null
-  let dashCardChData = {};           // code → { date, retail:{...}, bin:{...} }
+  let dashCardChData = {};           // code → { key, retail:{...}, bin:{...} }
   let dashCardChLoading = {};        // code → bool
+  let dashCardChLoadKey = {};        // code → range key in flight, or null
   let dashCardBlended = {};          // code → { cart, items, orders, asp }
   function etTodayStr() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); }
   let allWeeks       = [];
@@ -3635,7 +3872,7 @@
   // installed standalone PWA (iOS) — they freeze the whole app. These
   // Promise-based, in-app replacements never block. uiConfirm → Promise<bool>,
   // uiAlert → Promise<void>. Text is set via textContent (no HTML injection).
-  function _uiDialog({ message, title, okText = 'OK', cancelText = null, danger = false }) {
+  function _uiDialog({ message, title, okText = 'OK', cancelText = null, danger = false, prompt = null }) {
     return new Promise(resolve => {
       const dark = document.documentElement.classList.contains('dark');
       const bg = dark ? '#0f1722' : '#ffffff', fg = dark ? '#e6edf3' : '#13243a';
@@ -3649,20 +3886,40 @@
       if (title) { const h = document.createElement('div'); h.textContent = title; h.style.cssText = `font-size:16px;font-weight:700;margin-bottom:8px;color:${fg};`; box.appendChild(h); }
       const p = document.createElement('div'); p.textContent = message;
       p.style.cssText = `font-size:14px;line-height:1.5;color:${dim};margin-bottom:18px;white-space:pre-wrap;overflow-wrap:anywhere;`; box.appendChild(p);
+      // uiPrompt's text field. Kept inside _uiDialog rather than given its own overlay so
+      // the three dialogs stay one implementation — the PWA-safety reason they exist at all
+      // applies identically to a prompt.
+      let input = null;
+      if (prompt !== null) {
+        input = document.createElement('input');
+        input.type = 'text'; input.value = prompt || ''; input.setAttribute('aria-label', message);
+        input.style.cssText = `width:100%;box-sizing:border-box;padding:9px 11px;font-size:14px;border-radius:10px;border:1px solid ${border};background:transparent;color:${fg};margin-bottom:18px;`;
+        box.appendChild(input);
+      }
       const rowEl = document.createElement('div'); rowEl.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
       let done = false;
       const onKey = (e) => { if (e.key === 'Escape') finish(cancelText ? false : true); else if (e.key === 'Enter') finish(true); };
-      function finish(val) { if (done) return; done = true; document.removeEventListener('keydown', onKey); overlay.remove(); resolve(val); }
+      function finish(val) {
+        if (done) return; done = true;
+        document.removeEventListener('keydown', onKey); overlay.remove();
+        // A prompt resolves to the typed text, or null when cancelled — '' is a real
+        // answer ("they cleared it") and must not read as a cancel.
+        resolve(input ? (val ? input.value : null) : val);
+      }
       if (cancelText) { const c = document.createElement('button'); c.textContent = cancelText; c.style.cssText = `padding:9px 16px;font-size:14px;font-weight:600;border-radius:10px;border:1px solid ${border};background:transparent;color:${fg};cursor:pointer;`; c.onclick = () => finish(false); rowEl.appendChild(c); }
       const okEl = document.createElement('button'); okEl.textContent = okText; okEl.style.cssText = `padding:9px 16px;font-size:14px;font-weight:700;border-radius:10px;border:none;background:${okBg};color:${okFg};cursor:pointer;`; okEl.onclick = () => finish(true); rowEl.appendChild(okEl);
       box.appendChild(rowEl); overlay.appendChild(box);
       overlay.addEventListener('click', e => { if (e.target === overlay) finish(cancelText ? false : true); });
-      document.addEventListener('keydown', onKey); document.body.appendChild(overlay); okEl.focus();
+      document.addEventListener('keydown', onKey); document.body.appendChild(overlay); (input || okEl).focus();
     });
   }
   function uiConfirm(message, opts = {}) { return _uiDialog({ message, cancelText: opts.cancelText || 'Cancel', okText: opts.okText || 'OK', title: opts.title, danger: opts.danger }); }
   function uiAlert(message, opts = {}) { return _uiDialog({ message, okText: opts.okText || 'OK', title: opts.title }); }
-  window.uiConfirm = uiConfirm; window.uiAlert = uiAlert;
+  // uiPrompt → Promise<string|null>. null means cancelled.
+  function uiPrompt(title, message, opts = {}) {
+    return _uiDialog({ message, title, prompt: opts.value || '', cancelText: opts.cancelText || 'Cancel', okText: opts.okText || 'OK' });
+  }
+  window.uiConfirm = uiConfirm; window.uiAlert = uiAlert; window.uiPrompt = uiPrompt;
   function fmtK(n) {
     if (n == null) return "—";
     const abs = Math.abs(n), sign = n < 0 ? "-" : "";
@@ -3928,133 +4185,49 @@
     return { rows, cloverHistory };
   }
 
-  const BIN_PATTERNS = [/\bbin\b/i, /\bfill a bag\b/i, /\bglass case\b/i];
-  function isBinItem(name) { return BIN_PATTERNS.some(p => p.test(name)); }
+  // BIN_PATTERNS / isBinItem lived here to classify line items for the client's
+  // own sales aggregation. That aggregation is gone (the worker returns the
+  // finished figures), and with it the browser's copy of "what counts as a bin
+  // sale" — one fewer place for that definition to drift.
 
+  // Thin client by design: the worker returns the finished aggregate and this
+  // just renders it. There is deliberately NO second implementation here.
+  //
+  // 🔑 There used to be one — ~100 lines re-aggregating data.elements in the
+  // browser — and it is why the payment.amount fix reached only one side.
+  // Clover REDUCES order.total on a same-day refund but leaves payments at the
+  // original amount; the worker was fixed to read payment.amount, the client
+  // was not, so it took the already-reduced figure and subtracted refundCents
+  // a second time. Net then sat BELOW retail + bin on every live card, all day,
+  // and healed overnight when the nightly job rewrote all three from one
+  // pipeline. A manager caught it, not a test. See tasks/channel-reconciliation.md.
   async function fetchLiveCloverSales(storeKey) {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const workerUrl = `${WORKER_BASE}?store=${storeKey}&since=${startOfToday}`;
     try {
       const data = await cachedFetch(workerUrl, { credentials: 'include' });
-      let totalNet = 0, binNet = 0, retailNet = 0, orderCount = 0, totalItemCount = 0, retailItemCount = 0, totalTxnTimeMs = 0, txnTimeCount = 0;
-      let cartNet = 0, cartCount = 0; // avg cart excludes bin-only orders
-
-      if (data && data.elements) {
-        for (const order of data.elements) {
-          if (order.total == null || order.total === 0) continue;
-          if (order.state !== "locked") continue;
-          if (order.createdTime < startOfToday) continue;
-
-          const totalCents = order.total;
-
-          // Subtract tax from payment records when available
-          let taxCents = 0;
-          if (order.payments?.elements) {
-            for (const pmt of order.payments.elements) {
-              taxCents += (pmt.taxAmount || 0);
-            }
-          }
-          const orderNet = totalCents - taxCents;
-          totalNet += orderNet;
-          if (orderNet > 0) orderCount++;
-
-          // Transaction time: order created → last payment
-          if (orderNet > 0 && order.createdTime && order.payments?.elements?.length) {
-            let lastPaymentTime = 0;
-            for (const pmt of order.payments.elements) {
-              if (pmt.createdTime > lastPaymentTime) lastPaymentTime = pmt.createdTime;
-            }
-            if (lastPaymentTime > order.createdTime) {
-              const duration = lastPaymentTime - order.createdTime;
-              if (duration < MAX_TXN_DURATION_MS) {
-                totalTxnTimeMs += duration;
-                txnTimeCount++;
-              }
-            }
-          }
-
-          // Count line items and classify as bin vs retail
-          let binItemTotal = 0, retailItemTotal = 0, orderItemCount = 0;
-          if (order.lineItems?.elements) {
-            for (const item of order.lineItems.elements) {
-              const qty = item.unitQty != null ? item.unitQty / 1000 : 1;
-              const price = (item.price || 0) * qty;
-              orderItemCount += qty;
-              if (isBinItem(item.name || '')) {
-                binItemTotal += price;
-              } else {
-                retailItemTotal += price;
-                if (orderNet > 0) retailItemCount += qty;
-              }
-            }
-          }
-          if (orderNet > 0) totalItemCount += orderItemCount;
-
-          // Distribute order's net sales proportionally between bin and retail
-          const itemGross = binItemTotal + retailItemTotal;
-          if (itemGross > 0) {
-            binNet += orderNet * (binItemTotal / itemGross);
-            retailNet += orderNet * (retailItemTotal / itemGross);
-          } else {
-            // No line items (manual refund/adjustment) — attribute to retail
-            retailNet += orderNet;
-          }
-
-          // Avg cart: count only orders with retail items; use retail portion only
-          if (orderNet > 0) {
-            if (itemGross === 0) {
-              cartNet += orderNet;
-              cartCount++;
-            } else if (retailItemTotal > 0) {
-              cartNet += orderNet * (retailItemTotal / itemGross);
-              cartCount++;
-            }
-          }
-        }
-      }
-      // Subtract refunds (pre-tax) from totalNet so the live dashboard matches
-      // Clover's Sales Summary and the hourly notification (which reads
-      // daily_sales.total, already refund-adjusted).
-      const refundCents = data?.refundCents || 0;
-      if (refundCents > 0) totalNet -= refundCents;
-
-      // Bin/retail split: prefer the worker's category-based figures (in
-      // dollars). The legacy regex-on-name client-side classification missed
-      // items in Clover's "Bin Products" L3 category whose names don't
-      // contain "bin"/"fill a bag"/"glass case", causing a sizable undercount
-      // (e.g. dashboard $27.93 vs actual $121.15). Fall back to the in-loop
-      // numbers when the worker doesn't return them.
-      const totalDollars = totalNet / 100;
-      let binDollars, retailDollars;
-      if (typeof data?.binNet === 'number' && typeof data?.retailNet === 'number'
-          && (data.binNet + data.retailNet) > 0) {
-        binDollars = data.binNet;
-        retailDollars = data.retailNet;
-      } else {
-        // Fallback path: keep the proportional refund subtraction the old
-        // code did, just to keep totals consistent if binNet/retailNet absent.
-        if (refundCents > 0 && (retailNet + binNet) > 0) {
-          const totBeforeRef = retailNet + binNet;
-          const retailShare = retailNet / totBeforeRef;
-          const binShare    = binNet    / totBeforeRef;
-          retailNet -= refundCents * retailShare;
-          binNet    -= refundCents * binShare;
-        }
-        retailDollars = Math.round(retailNet) / 100;
-        binDollars    = Math.round(binNet)    / 100;
-      }
-
-      const avgCart = cartCount > 0 ? (cartNet / cartCount) / 100 : 0;
-      const avgItems = orderCount > 0 ? totalItemCount / orderCount : 0;
-      const avgTxnSec = txnTimeCount > 0 ? Math.round(totalTxnTimeMs / txnTimeCount / 1000) : null;
-      const avgASP = retailItemCount > 0 ? retailNet / retailItemCount / 100 : null;
-      return { total: totalDollars, retail: retailDollars, bin: binDollars, avgCart, avgItems, orderCount, avgTxnSec, avgASP };
+      // An older worker has no `aggregate` key at all. Return null rather than
+      // zeroes so a mid-rollout response reads as "no live data" instead of a
+      // confident $0 — the card falls back to its stored figures.
+      if (!data || !('aggregate' in data)) return null;
+      const a = data.aggregate || {
+        total: 0, retail: 0, bin: 0, avgCart: 0, avgItems: 0,
+        orderCount: 0, avgTxnSec: null, avgASP: null,
+      };
+      return {
+        total: a.total, retail: a.retail, bin: a.bin,
+        avgCart: a.avgCart, avgItems: a.avgItems, orderCount: a.orderCount,
+        avgTxnSec: a.avgTxnSec, avgASP: a.avgASP,
+        // Per-channel orders/units for the matrix tiles (combined / retail / bin).
+        channels: data.channels || null,
+      };
     } catch (error) {
       console.warn(`Clover API error for ${storeKey}:`, error.message);
       return null;
     }
   }
+
 
   async function fetchHistoricalCloverData(storeKey, fromDate, toDate) {
     const workerUrl = `${WORKER_BASE}?history=true&store=${storeKey}&from=${fromDate}&to=${toDate}`;
@@ -5238,7 +5411,10 @@
     // Save the blended values so toggling the channel filter off can restore
     // them, then re-apply any active channel filter.
     _dashMxBlended = { cart: el('mx-cart').textContent, items: el('mx-items').textContent, orders: el('mx-orders').textContent, asp: el('mx-asp').textContent };
-    applyDashChannel();
+    // ensure, not apply: a range change with a filter still active needs the
+    // new range's split FETCHED. Painting alone would leave the tiles on "—"
+    // for good, because nothing else triggers a reload.
+    ensureDashChannel();
 
     // Always show Weekly (week-to-date, live-boosted) — even when a
     // specific day is selected. The day selector affects per-store cards
@@ -5337,17 +5513,122 @@
     try { renderNotifications(); } catch (e) { /* never let notifs break dashboard */ }
   }
 
-  // ── Dashboard Matrix channel filter ─────────────────────────────
-  // Tap Retail / BIN in Channel Mix → the four Matrix tiles show that
-  // channel's per-order metrics. Per-channel data is derived from item-level
-  // L2 categories (Bin Products vs the rest), summed across all stores for
-  // today. Tap the active channel again → back to all-channels (blended).
+  // ── Channel filter (Retail / BIN) ───────────────────────────────
+  // Tap Retail / BIN — in the hero Channel Mix or on a store card — and the
+  // four Matrix tiles show that channel's per-order metrics instead of the
+  // blended ones. Per-channel data is derived from item-level L2 categories
+  // (Bin Products vs the rest). Tap the active channel again → back to blended.
+  //
+  // 🔑 The split FOLLOWS THE SELECTED RANGE. It used to be hardcoded to today
+  // while the dollars beside it followed the range, so on a Yesterday view the
+  // hero showed TODAY's cart/items/ASP next to yesterday's sales — no error,
+  // just quietly the wrong period. The store cards were frozen instead of
+  // fixed (rendered inert off-today). Both now share the loader below, so
+  // there is one answer to "which period is this split for".
+  //
+  // Past days come from the nightly `items:` KV snapshots in ONE request
+  // (?action=channel-range); today, when the range includes it, comes from the
+  // live ?action=items call — mirroring exactly how the cards already blend
+  // stored + live dollars.
+
+  // Cache key. The live flag belongs in it: the same dates with and without
+  // today's live contribution are genuinely different answers.
+  function chRangeKey() {
+    return `${dateRange.from}..${dateRange.to}${selIncludesToday() ? '+live' : ''}`;
+  }
+
+  // 🔑 Averages are re-derived from SUMMED totals. Averaging the per-day
+  // averages would weight a quiet Tuesday like a busy Saturday and give a
+  // different, wrong number — the same reason the cards weight by orderCount.
+  const chDerive = (x) => ({
+    net: x.net, units: x.units, orders: x.orders,
+    avgCart:  x.orders > 0 ? x.net / x.orders : 0,
+    avgItems: x.orders > 0 ? x.units / x.orders : 0,
+    asp:      x.units  > 0 ? x.net / x.units  : 0,
+  });
+
+  const chZero = () => ({
+    retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 },
+    mixed: 0, combinedOrders: 0,
+  });
+
+  // The unfiltered view: retail + bin as one population.
+  // 🔑 An order holding BOTH retail and bin items sits in each channel's order
+  // total, so the two counts are NOT additive — measured +10 on BL1 and +17 on
+  // BL4 in a single day. `combinedOrders` is resolved per day at the source
+  // (exactly from `mixed` where recorded, otherwise clamped from that day's
+  // orderCount) and summed, so a range spanning both kinds of snapshot is right.
+  const chCombined = (t) => ({
+    net:    t.retail.net   + t.bin.net,
+    units:  t.retail.units + t.bin.units,
+    orders: t.combinedOrders,
+  });
+
+  // Combined order count contributed by ONE payload. Two shapes reach this:
+  // ?action=channel-range already resolved it per day (spanning snapshots
+  // written before and after `mixed` existed) and sends `combinedOrders`; the
+  // live payload describes a single day and always carries `mixed`, where the
+  // subtraction is exact.
+  const chOrdersOf = (src) => (typeof src.combinedOrders === 'number')
+    ? src.combinedOrders
+    : Math.max(0, (src.retail?.orders || 0) + (src.bin?.orders || 0) - (src.mixed || 0));
+
+  const storeNameForCode = (code) => STORES.find(s => s.split('/')[0] === code);
+
+  // Summed channel totals for one store across the selected range.
+  async function fetchStoreChannels(storeKey) {
+    const out = chZero();
+    const add = (src) => {
+      if (!src) return;
+      for (const k of ['retail', 'bin']) {
+        out[k].net    += src[k]?.net    || 0;
+        out[k].units  += src[k]?.units  || 0;
+        out[k].orders += src[k]?.orders || 0;
+      }
+      out.mixed += src.mixed || 0;
+      out.combinedOrders += chOrdersOf(src);
+    };
+    const live = selIncludesToday();
+    // Mirror the card's own accumulation: when live covers today, the stored
+    // range must stop at yesterday or today gets counted twice.
+    const pastTo = live ? ymdShift(etTodayStr(), -1) : dateRange.to;
+    const jobs = [];
+    if (dateRange.from <= pastTo) {
+      jobs.push(cachedFetch(
+        `${WORKER_BASE}?action=channel-range&store=${storeKey}&from=${dateRange.from}&to=${pastTo}`,
+        { credentials: 'include' }).then(add).catch(() => {}));
+    }
+    if (live) {
+      // Today's split rides along on the live sales fetch the card already
+      // made — the worker computes it there anyway, so this costs no request.
+      // Only fall back to a dedicated call if live hasn't landed yet.
+      const nm = storeNameForCode(storeKey);
+      const fromLive = nm ? liveCloverData[nm]?.channels : null;
+      if (fromLive) add(fromLive);
+      else jobs.push(cachedFetch(`${WORKER_BASE}?action=items&store=${storeKey}`,
+        { credentials: 'include' }).then(d => add(d && d.channels)).catch(() => {}));
+    }
+    await Promise.all(jobs);
+    return out;
+  }
+
   function setDashChannel(ch) {
     dashChannel = (dashChannel === ch) ? null : ch;
-    if (dashChannel && !(dashChannelData && dashChannelData.date === etTodayStr())) loadDashChannel();
-    else applyDashChannel();
+    ensureDashChannel();
   }
   window.setDashChannel = setDashChannel;
+
+  // Load when the cached split is for a different range, else repaint. Called
+  // on tap AND on every dashboard render, so an active filter survives a range
+  // change by refetching instead of sitting on the previous range's numbers.
+  // Renders are frequent, so the in-flight key is what stops one tap turning
+  // into a fetch per render.
+  function ensureDashChannel() {
+    const key = chRangeKey();
+    if (dashChannelData && dashChannelData.key === key) { applyDashChannel(); return; }
+    if (dashChannelLoadKey === key) { applyDashChannel(); return; }   // already in flight
+    loadDashChannel();
+  }
 
   function applyDashChannel() {
     // Selection highlight on the chosen channel column. ring-inset draws the
@@ -5363,21 +5644,32 @@
       cb.classList.toggle('ring-accent-blue', binOn); cb.classList.toggle('bg-accent-blue/10', binOn);
     }
     const lbl = el('dash-matrix-label');
+    // The label tracks the range too — it read "Matrix · Today" on every view,
+    // including the ones it was not describing.
+    const period = dateRange.label || 'Today';
     const set4 = (cart, items, orders, asp) => {
       if (el('mx-cart')) el('mx-cart').textContent = cart;
       if (el('mx-items')) el('mx-items').textContent = items;
       if (el('mx-orders')) el('mx-orders').textContent = orders;
       if (el('mx-asp')) el('mx-asp').textContent = asp;
     };
-    if (!dashChannel) {
-      if (lbl) lbl.textContent = 'Matrix · Today';
-      if (_dashMxBlended) set4(_dashMxBlended.cart, _dashMxBlended.items, _dashMxBlended.orders, _dashMxBlended.asp);
+    if (lbl) lbl.textContent = 'Matrix · ' + period +
+      (dashChannel ? ' · ' + (dashChannel === 'retail' ? 'Retail' : 'BIN') : '');
+    // No selection → combined (retail + bin), which is what the four tiles
+    // describe by default now.
+    const d = (dashChannelData && dashChannelData.key === chRangeKey())
+      ? (dashChannel ? dashChannelData[dashChannel] : dashChannelData.combined)
+      : null;
+    if (!d) {
+      // Pre-load: keep the figures the dashboard was rendered with rather than
+      // blanking. daily_sales-derived and retail-weighted, so slightly high
+      // against the combined values that replace them. Transient only.
+      if (!dashChannel && _dashMxBlended) {
+        set4(_dashMxBlended.cart, _dashMxBlended.items, _dashMxBlended.orders, _dashMxBlended.asp);
+      } else if (dashChannelLoading) { set4('…', '…', '…', '…'); }
+      else { set4('—', '—', '—', '—'); }
       return;
     }
-    if (lbl) lbl.textContent = 'Matrix · Today · ' + (dashChannel === 'retail' ? 'Retail' : 'BIN');
-    if (dashChannelLoading) { set4('…', '…', '…', '…'); return; }
-    const d = (dashChannelData && dashChannelData.date === etTodayStr()) ? dashChannelData[dashChannel] : null;
-    if (!d) { set4('—', '—', '—', '—'); return; }
     set4(
       d.orders > 0 ? fmtDollar(d.avgCart) : '—',
       d.orders > 0 ? Number(d.avgItems).toFixed(1) : '—',
@@ -5388,37 +5680,52 @@
   window.applyDashChannel = applyDashChannel;
 
   async function loadDashChannel() {
-    const date = etTodayStr();
-    if (dashChannelData && dashChannelData.date === date) { applyDashChannel(); return; }
+    const key = chRangeKey();
+    if (dashChannelData && dashChannelData.key === key) { applyDashChannel(); return; }
+    dashChannelLoadKey = key;
     dashChannelLoading = true; applyDashChannel();
-    const sum = { retail: { net: 0, units: 0, orders: 0 }, bin: { net: 0, units: 0, orders: 0 } };
+    // Every commit below is guarded on the range not having moved on. Without
+    // it a slow load for the old range lands last and clobbers the new one.
+    const current = () => dashChannelLoadKey === key;
     try {
-      await Promise.all(STORES.map(async s => {
-        const storeKey = s.split('/')[0];
-        try {
-          const data = await cachedFetch(`${WORKER_BASE}?action=items&store=${storeKey}`, { credentials: 'include' });
-          const ch = data && data.channels;
-          if (ch) for (const k of ['retail', 'bin']) {
-            sum[k].net += ch[k]?.net || 0; sum[k].units += ch[k]?.units || 0; sum[k].orders += ch[k]?.orders || 0;
-          }
-        } catch (_) {}
-      }));
-      const derive = (x) => ({ net: x.net, units: x.units, orders: x.orders,
-        avgCart: x.orders > 0 ? x.net / x.orders : 0, avgItems: x.orders > 0 ? x.units / x.orders : 0, asp: x.units > 0 ? x.net / x.units : 0 });
-      dashChannelData = { date, retail: derive(sum.retail), bin: derive(sum.bin) };
-    } catch (_) { dashChannelData = null; }
-    finally { dashChannelLoading = false; applyDashChannel(); }
+      // STORES is already scoped to what this user may see, so the hero total
+      // covers exactly the stores whose dollars are in the strip above it.
+      const per = await Promise.all(STORES.map(s => fetchStoreChannels(s.split('/')[0])));
+      const sum = chZero();
+      for (const p of per) {
+        for (const k of ['retail', 'bin']) {
+          sum[k].net += p[k].net; sum[k].units += p[k].units; sum[k].orders += p[k].orders;
+        }
+        sum.mixed += p.mixed || 0;
+        sum.combinedOrders += p.combinedOrders || 0;
+      }
+      if (current()) dashChannelData = {
+        key, retail: chDerive(sum.retail), bin: chDerive(sum.bin), combined: chDerive(chCombined(sum)),
+      };
+    } catch (_) { if (current()) dashChannelData = null; }
+    finally {
+      if (current()) { dashChannelLoadKey = null; dashChannelLoading = false; applyDashChannel(); }
+    }
   }
 
   // Per-store-card channel filter — same behavior as the hero, scoped to one
   // card via [data-store-code] and that store's item channel data.
   function setCardChannel(code, ch) {
     dashCardCh[code] = (dashCardCh[code] === ch) ? null : ch;
-    const date = etTodayStr();
-    if (dashCardCh[code] && !(dashCardChData[code] && dashCardChData[code].date === date)) loadCardChannel(code);
-    else applyCardChannel(code);
+    ensureCardChannel(code);
   }
   window.setCardChannel = setCardChannel;
+
+  // Load when this card's cached split is for a different range, else repaint.
+  // Called on tap AND after every card rebuild.
+  // 🔑 No longer conditional on a channel being selected: the UNFILTERED tiles
+  // are now the combined retail+bin figures, which come from this same data.
+  function ensureCardChannel(code) {
+    const key = chRangeKey();
+    if (dashCardChData[code] && dashCardChData[code].key === key) { applyCardChannel(code); return; }
+    if (dashCardChLoadKey[code] === key) { applyCardChannel(code); return; }   // already in flight
+    loadCardChannel(code);
+  }
 
   function applyCardChannel(code) {
     const card = document.querySelector(`#store-cards [data-store-code="${code}"]`);
@@ -5432,15 +5739,20 @@
       t.classList.toggle('ring-accent-blue', on && c === 'bin');
     });
     const set = (k, v) => { const e = card.querySelector(`[data-mx="${k}"]`); if (e) e.textContent = v; };
-    if (!ch) {
-      const b = dashCardBlended[code];
+    const data = dashCardChData[code];
+    // ch null → combined (retail + bin), the default view.
+    const d = (data && data.key === chRangeKey()) ? (ch ? data[ch] : data.combined) : null;
+    if (!d) {
+      // Until the split arrives, keep showing the figures the card was built
+      // with rather than blanking. Those come from daily_sales and are
+      // retail-weighted, so they read slightly high against the combined
+      // values that replace them — a transient, not a second source of truth.
+      const b = !ch && dashCardBlended[code];
       if (b) { set('cart', b.cart); set('items', b.items); set('orders', b.orders); set('asp', b.asp); }
+      else if (dashCardChLoading[code]) { set('cart', '…'); set('items', '…'); set('orders', '…'); set('asp', '…'); }
+      else { set('cart', '—'); set('items', '—'); set('orders', '—'); set('asp', '—'); }
       return;
     }
-    if (dashCardChLoading[code]) { set('cart', '…'); set('items', '…'); set('orders', '…'); set('asp', '…'); return; }
-    const data = dashCardChData[code];
-    const d = (data && data.date === etTodayStr()) ? data[ch] : null;
-    if (!d) { set('cart', '—'); set('items', '—'); set('orders', '—'); set('asp', '—'); return; }
     set('cart', d.orders > 0 ? '$' + Number(d.avgCart).toFixed(2) : '—');
     set('items', d.orders > 0 ? Number(d.avgItems).toFixed(1) : '—');
     set('orders', (d.orders || 0).toLocaleString('en-US'));
@@ -5449,15 +5761,20 @@
   window.applyCardChannel = applyCardChannel;
 
   async function loadCardChannel(code) {
-    const date = etTodayStr();
-    if (dashCardChData[code] && dashCardChData[code].date === date) { applyCardChannel(code); return; }
+    const key = chRangeKey();
+    if (dashCardChData[code] && dashCardChData[code].key === key) { applyCardChannel(code); return; }
+    dashCardChLoadKey[code] = key;
     dashCardChLoading[code] = true; applyCardChannel(code);
+    const current = () => dashCardChLoadKey[code] === key;
     try {
-      const data = await cachedFetch(`${WORKER_BASE}?action=items&store=${code}`, { credentials: 'include' });
-      const ch = data && data.channels;
-      dashCardChData[code] = ch ? { date, retail: ch.retail, bin: ch.bin } : { date };
-    } catch (_) { dashCardChData[code] = { date }; }
-    finally { dashCardChLoading[code] = false; applyCardChannel(code); }
+      const t = await fetchStoreChannels(code);
+      if (current()) dashCardChData[code] = {
+        key, retail: chDerive(t.retail), bin: chDerive(t.bin), combined: chDerive(chCombined(t)),
+      };
+    } catch (_) { if (current()) dashCardChData[code] = { key }; }
+    finally {
+      if (current()) { dashCardChLoadKey[code] = null; dashCardChLoading[code] = false; applyCardChannel(code); }
+    }
   }
 
   // ── "vs last year" (YoY) comparison ─────────────────────────────────────
@@ -5807,14 +6124,13 @@
       const v1SparkColor = v1Ahead ? V1G : V1B;
       // Bar caps at 100% (target met = full). Matches the hero bar's logic.
       const v1BarW = v1Pct != null ? Math.min(100, Math.max(0, v1Pct)) : 0;
-      const isTodayOnly = dateRange.presetId === 'today';
-      const v1NetLabel = isTodayOnly
+      const v1NetLabel = dateRange.presetId === 'today'
         ? "Today's Net"
         : `${periodLabel} Net`;
-      // The channel filter (tap Retail/BIN → per-channel matrix) only makes
-      // sense when the card is showing exactly today, because the channel data
-      // is today-live only. For any other period the tiles render plain so the
-      // numbers can't mismatch the displayed blended figures.
+      // The channel filter (tap Retail/BIN → per-channel matrix) works on every
+      // range: fetchStoreChannels sums the same days this card is showing. It
+      // was previously today-only because the loader was hardcoded to today and
+      // would have mismatched the displayed figures.
       // Sparkline = a single day's hourly net sales (today for whole-week/multi
       // views, otherwise the one selected day), fetched per store after the card
       // mounts (?action=hourly).
@@ -5880,7 +6196,7 @@
         </div>
 
         <div class="mt-4 grid grid-cols-3 gap-2">
-          ${isTodayOnly ? chTile('Retail', fmtDollar(v1Retail), 'retail', 'ly-retail-' + cardCode) : tile('Retail', fmtDollar(v1Retail), 'ly-retail-' + cardCode)}${isTodayOnly ? chTile('BIN', fmtDollar(v1Bin), 'bin', 'ly-bin-' + cardCode) : tile('BIN', fmtDollar(v1Bin), 'ly-bin-' + cardCode)}${tile('Auction', fmtDollar(v1Auction))}
+          ${chTile('Retail', fmtDollar(v1Retail), 'retail', 'ly-retail-' + cardCode)}${chTile('BIN', fmtDollar(v1Bin), 'bin', 'ly-bin-' + cardCode)}${tile('Auction', fmtDollar(v1Auction))}
         </div>
 
         <div class="mt-2 grid grid-cols-4 gap-2">
@@ -5912,8 +6228,10 @@
         orders: v1Orders != null ? Number(v1Orders).toLocaleString('en-US') : '—',
         asp: v1Asp != null ? '$' + Number(v1Asp).toFixed(2) : '—',
       };
-      if (!isTodayOnly) dashCardCh[cardCode] = null;   // filter invalid off-today
-      if (isTodayOnly && dashCardCh[cardCode]) applyCardChannel(cardCode);
+      // Always: the four matrix tiles are driven by the channel data now, even
+      // unfiltered (combined = retail + bin). A range change lands here too,
+      // and ensureCardChannel reloads rather than repainting a stale split.
+      ensureCardChannel(cardCode);
       loadStoreHourlySpark(v1SparkKey, v1SparkDate, v1SparkColor, v1SparkId);
     }
     loadLYComparison();   // fill the "vs last year" pill + tile slots async
@@ -7421,22 +7739,42 @@
     }
   });
 
+  // Show exactly one page section and hide the rest.
+  // 🛑 This used to be a hardcoded id list in two places. Adding Marketing >
+  // Comments missed the list in navigateToPage, so nothing un-hid AND everything
+  // else got hidden — a blank screen with the nav item lit. Derive from the DOM
+  // instead: every `page-*` element IS a page section (verified), so a new page
+  // can never be orphaned from the switcher again.
+  function showOnlyPage(name) {
+    document.querySelectorAll('[id^="page-"]').forEach(elm => {
+      elm.classList.toggle('hidden', elm.id !== 'page-' + name);
+    });
+  }
+  window.showOnlyPage = showOnlyPage;
+
   function navigateToPage(page, pushHistory = true) {
     // Guard pages that show money. The worker refuses the data for these roles
     // (NO_FINANCIAL_ACCESS) but the shell would still render, so gate here too.
     // Only fires for a role outside FINANCIAL_ROLES — today `staff` and anything
     // unrecognised. Every role in production is unaffected.
     const FINANCIAL_PAGES = ['dashboard', 'weekly-summary', 'store-detail',
-                             'all-stores-detail', 'inventory', 'supply-request'];
+                             'all-stores-detail', 'inventory', 'supply-request', 'labor'];
     if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)) return;
 
     // Guard admin-only pages
-    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content'];
+    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria'];
     if (adminOnly.includes(page)) {
       const role = currentUser && currentUser.role;
       if (role !== 'superuser' && role !== 'admin') return;
     }
     if (page === 'supply-request') {
+      const role = currentUser && currentUser.role;
+      const allowed = ['superuser','admin','district_manager','manager'];
+      if (!allowed.includes(role)) return;
+    }
+    // Shelf Count is the one Merchandising surface a store manager needs. The worker
+    // scopes the write to their own stores; this only decides whether the shell opens.
+    if (page === 'merch-shelf-count') {
       const role = currentUser && currentUser.role;
       const allowed = ['superuser','admin','district_manager','manager'];
       if (!allowed.includes(role)) return;
@@ -7470,11 +7808,7 @@
     // restores it via its own Close button; if it's ever dismissed another way
     // (Android back gesture, etc.) scrolling would stay frozen app-wide.
     if (document.body.style.overflow) document.body.style.overflow = '';
-    const pages = ['dashboard', 'store-detail', 'all-stores-detail', 'weekly-summary', 'marketing', 'flow-calendar', 'inventory', 'supply-request', 'submit-photos', 'content', 'settings', 'users', 'admin-settings', 'no-access', 'landing', 'ebay-cases'];
-    for (const p of pages) {
-      const pageEl = el('page-' + p);
-      if (pageEl) pageEl.classList.toggle('hidden', p !== page);
-    }
+    showOnlyPage(page);
 
     // Pre-app surfaces: you have not entered a business yet (landing), or you
     // have nothing to enter (no-access). Either way the business-specific nav
@@ -7510,14 +7844,20 @@
     if (page === 'weekly-summary') {
       initWeeklyRetail();
     }
+    if (page === 'labor') {
+      try { initLabor(); } catch (_) {}
+    }
     if (page === 'marketing') {
       initMarketing();
     }
     if (page === 'flow-calendar') {
       if (typeof initFlowCalendar === 'function') initFlowCalendar();
     }
-    // Keep the Marketing dropdown expanded while on either of its pages.
-    if ((page === 'marketing' || page === 'flow-calendar' || page === 'submit-photos' || page === 'content') && typeof toggleMarketingMenu === 'function') {
+    if (page === 'comments') {
+      if (typeof fbcLoad === 'function') fbcLoad();
+    }
+    // Keep the Marketing dropdown expanded while on any of its pages.
+    if ((page === 'marketing' || page === 'flow-calendar' || page === 'submit-photos' || page === 'content' || page === 'comments') && typeof toggleMarketingMenu === 'function') {
       toggleMarketingMenu(true);
     }
     if (page === 'ebay-cases') {
@@ -7534,6 +7874,16 @@
     }
     if (page === 'content') {
       if (typeof initContent === 'function') initContent();
+    }
+    if (page === 'merch-criteria') {
+      if (typeof initMerchCriteria === 'function') initMerchCriteria();
+    }
+    if (page === 'merch-shelf-count') {
+      if (typeof initShelfCount === 'function') initShelfCount();
+    }
+    // Keep the Merchandising dropdown expanded while on any of its pages.
+    if ((page === 'merch-criteria' || page === 'merch-shelf-count') && typeof toggleMerchMenu === 'function') {
+      toggleMerchMenu(true);
     }
 
     // Close mobile sidebar
@@ -9573,11 +9923,7 @@
     if (chip) chip.textContent = `Week ${selectedWeek}`;
     el('as-metrics').innerHTML = buildAllStoresHero();
 
-    const pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','marketing','flow-calendar','inventory','supply-request','submit-photos','content','settings','users','admin-settings'];
-    for (const p of pages) {
-      const pageEl = el('page-' + p);
-      if (pageEl) pageEl.classList.toggle('hidden', p !== 'all-stores-detail');
-    }
+    showOnlyPage('all-stores-detail');
     document.querySelectorAll('.nav-item[data-page]').forEach(item => item.classList.remove('active'));
     currentPage = 'all-stores-detail';
     if (typeof window.__syncBottomNav === 'function') try { window.__syncBottomNav('all-stores-detail'); } catch (_) {}
@@ -10617,6 +10963,83 @@
   //   - Failed dates are remembered; re-running picks them up
   //   - If the auto-rebuild fails, retry it 2× with backoff before giving up
   let _backfillFailed = []; // sticky list of failed dates from prior runs
+  // Backfill per-category basket counts across the trailing 13 weeks, one
+  // STORE-DAY per worker invocation so each request's Clover fetch and
+  // subrequest budget stays small. Mirrors runBackfillSales13w's resilience:
+  // retries per unit, a sticky failed list so re-running resumes, and a
+  // per-unit result so skipped days are visible rather than silent.
+  let _ordFillFailed = [];
+  async function runBackfillCategoryOrders() {
+    const statusEl = el('backfill-orders-status');
+    const setStatus = (msg, tone) => {
+      statusEl.classList.remove('hidden');
+      const colors = {
+        info:  'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300',
+        ok:    'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-700 dark:text-green-300',
+        error: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300',
+      };
+      statusEl.className = `text-sm rounded-lg px-4 py-3 border flex-1 ${colors[tone]}`;
+      statusEl.innerHTML = msg;
+    };
+
+    const stores = ['BL1', 'BL2', 'BL4', 'BL8', 'BL12', 'BL14', 'BL16'];
+    let units;
+    if (_ordFillFailed.length) {
+      units = [..._ordFillFailed];
+    } else {
+      units = [];
+      const today = new Date(); today.setHours(12, 0, 0, 0);
+      for (let i = 0; i < 91; i++) {
+        const day = new Date(today.getTime() - i * 86400000).toISOString().slice(0, 10);
+        for (const s of stores) units.push({ store: s, date: day });
+      }
+    }
+
+    const t0 = Date.now();
+    let wrote = 0, skipped = 0, noSnap = 0, failed = [];
+    const lowCoverage = [];
+    for (let i = 0; i < units.length; i++) {
+      const u = units[i];
+      let okUnit = false;
+      for (let attempt = 0; attempt < 3 && !okUnit; attempt++) {
+        try {
+          const resp = await fetch(`${WORKER_BASE}?action=backfill-category-orders&store=${u.store}&date=${u.date}`,
+            { method: 'POST', credentials: 'include' });
+          const data = await resp.json();
+          if (!resp.ok || data.error) throw new Error(data.error || ('HTTP ' + resp.status));
+          okUnit = true;
+          if (data.wrote) wrote++;
+          else if (data.skipped === 'no existing snapshot') noSnap++;
+          else {
+            skipped++;
+            if (data.skipped === 'coverage below floor') {
+              lowCoverage.push(`${u.store} ${u.date} (${Math.round((data.coverage || 0) * 100)}%)`);
+            }
+          }
+        } catch (e) {
+          if (attempt === 2) failed.push(u);
+          else await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+        }
+      }
+      if (i % 7 === 0 || i === units.length - 1) {
+        const pct = Math.round(((i + 1) / units.length) * 100);
+        setStatus(`Backfilling basket counts… ${pct}% (${i + 1}/${units.length}) · ${wrote} written, ${skipped} skipped`, 'info');
+      }
+    }
+    _ordFillFailed = failed;
+    const secs = Math.round((Date.now() - t0) / 1000);
+    const bits = [`${wrote} store-days written`, `${noSnap} had no snapshot`];
+    if (skipped) bits.push(`<b>${skipped} skipped</b>`);
+    if (failed.length) bits.push(`<b>${failed.length} failed</b> (re-run to retry just those)`);
+    let msg = `Done in ${secs}s — ${bits.join(', ')}.`;
+    if (lowCoverage.length) {
+      msg += `<br><span class="text-xs">Skipped for low Clover coverage: ${lowCoverage.slice(0, 8).join(', ')}${lowCoverage.length > 8 ? ` and ${lowCoverage.length - 8} more` : ''}. Their sales figures are untouched.</span>`;
+    }
+    msg += `<br><span class="text-xs">Now run <b>Rebuild Week Summaries</b> so T13 picks these up.</span>`;
+    setStatus(msg, failed.length ? 'error' : 'ok');
+  }
+  window.runBackfillCategoryOrders = runBackfillCategoryOrders;
+
   async function runBackfillSales13w() {
     const statusEl = el('backfill-sales-status');
     const setStatus = (msg, tone) => {
@@ -11253,6 +11676,8 @@
     "FG BL CONSUMABLES - FOOD - SINGLES": "Consumable Food",
     "FG BL CONSUMABLES - FOOD - SNACKS": "Consumable Food",
     "FG G CI MIXED CANDY": "Consumable Food",
+    "FRONTE PASTA - 10LBS": "Consumable Food",
+    "FRONTE PASTA - 5LBS": "Consumable Food",
     "FG BL CONSUMABLES - FOOD - ENERGY DRINKS": "Consumable Food",
     "FG BL CONSUMABLES - FOOD - MIXED BAG CANDY": "Consumable Food",
     "FG BL CONSUMABLES - HBA - ALLERGY/COUGH/FLU": "Consumable HBA",
@@ -11270,6 +11695,7 @@
     "FG BL CONSUMABLES - HOUSEKEEPING": "Consumable Other",
     "FG BL CONSUMABLES - PAPER": "Consumable Other",
     "FG BL CONSUMABLES - PET": "Consumable Other",
+    "BL PAPER - NON INVENTORY": "Consumable Other",
     "FG BL FURNITURE - READY TO ASSEMBLE": "Furniture",
     "FG BL FURNITURE - RTA - CHAIRS": "Furniture",
     "FG BL FURNITURE - RTA - TABLES/STANDS": "Furniture",
@@ -11288,13 +11714,17 @@
     "FG BL HARDLINES - STORAGE": "Hardlines",
     "FG BL HARDLINES - TOYS": "Hardlines",
     "FG BL HARDLINES - SPORTING GOODS": "Hardlines",
+    "FG T BULLSEYE": "Hardlines",
     "APPLIANCES - BL STORES": "Hardlines",
+    "Bakers Secret - Kitchen Cooking": "Home",
     "FG BL HAMILTON BEACH": "Home",
+    "Hamilton Beach": "Home",
     "FG BL HOME - BATH": "Home",
     "FG BL HOME - BEDDING & PILLOWS": "Home",
     "FG BL HOME - HOME DECOR": "Home",
     "FG BL HOME - KITCHEN": "Home",
     "FG BL HOME - RUGS": "Home",
+    "BL FOAM PLATE PACKS": "Home",
     "FG BL SEASONAL - CHRISTMAS - CANDY": "Seasonal",
     "FG BL SEASONAL - CHRISTMAS - GM": "Seasonal",
     "FG BL SEASONAL - EASTER - GM": "Seasonal",
@@ -11307,10 +11737,20 @@
     "FG BL SEASONAL - HALLOWEEN - SINGLES": "Seasonal",
     "FG BL SEASONAL - SPRING/SUMMER": "Seasonal",
     "FG BL SEASONAL - LAWN & GARDEN": "Seasonal",
+    "FG BALSAM CHRISTMAS TREES B": "Seasonal",
+    "FG COSTUMES": "Seasonal",
     "FG BL SOFTLINES - APPAREL": "Softline - Apparel",
+    "Apparel": "Softline - Apparel",
     "FG BL SOFTLINES - SHOES": "Softline - Shoes",
+    "BL Shoe Event": "Softline - Shoes",
     "FG BL SOFTLINES - ACCESSORIES": "Softline - Accessories",
+    "Accesories": "Softline - Accessories",
+    "Custom Sales": "Custom Sales",
+    "MI Bottle/Can Deposit": "Custom Sales",
+    "Refund": "Refund",
     "Bin Products": "Bin Products",
+    "Gift Cards": "Gift Cards",
+    "Gift Card": "Gift Cards",
     "Sku Book Items": "Sku Book Items",
   };
 
@@ -12593,10 +13033,27 @@
   window.fcScrollNow = fcScrollNow;
 
   // ── Submit Photos (Slice 1a) — manager photo intake ─────────────────
-  // Uploads are tagged with a POST TYPE (same taxonomy as the composer /
-  // Content folders) so each photo files straight into its post-type folder.
-  let spType = 'bin_preview';
+  // spFiles holds { file, thumb, url } entries, NOT bare Files. The entry owns
+  // its preview object URL so it is minted exactly once and revoked exactly
+  // once; re-rendering the grid no longer mints anything. Previously every
+  // render called URL.createObjectURL(f) and nothing ever revoked it, so each
+  // add/remove leaked a fresh URL pinning the whole original blob — and the
+  // <img> painted that full-resolution original into a ~100px tile, forcing a
+  // full JPEG decode (a 50MP Android photo is ~200MB of bitmap). Android Chrome
+  // does not cap decode memory the way iOS WebKit does, which is why the page
+  // froze there and not on iPhone.
+  const SP_PREVIEW_MAX = 320;    // preview tile + the thumbnail stored in R2
+  const SP_UPLOAD_MAX  = 2048;   // long-edge cap for the uploaded original
+  let spType = 'retail';
   let spFiles = [];
+
+  // Release every preview URL. Any path that empties spFiles must go through
+  // this — dropping the entries alone leaks the blobs they pin.
+  function spClearFiles() {
+    for (const e of spFiles) if (e.url) URL.revokeObjectURL(e.url);
+    spFiles = [];
+  }
+
   function initSubmitPhotos() {
     const sel = el('sp-store');
     if (sel) {
@@ -12606,8 +13063,8 @@
         return `<option value="${code}">${escapeHtml(name)} (${code})</option>`;
       }).join('');
     }
-    spType = 'bin_preview';
-    spFiles = [];
+    spType = 'retail';
+    spClearFiles();
     renderSpTypes();
     if (el('sp-files')) el('sp-files').value = '';
     if (el('sp-thumbs')) el('sp-thumbs').innerHTML = '';
@@ -12630,28 +13087,56 @@
   function spRenderThumbs() {
     const wrap = el('sp-thumbs');
     wrap.innerHTML = '';
-    spFiles.forEach((f, i) => {
+    spFiles.forEach((e, i) => {
       const d = document.createElement('div');
       d.className = 'relative aspect-square rounded-lg overflow-hidden border border-[rgba(20,16,8,0.1)] dark:border-op-border';
-      d.innerHTML = `<img src="${URL.createObjectURL(f)}" class="w-full h-full object-cover">` +
+      // e.url is a downscaled copy, never the original. While it is still being
+      // generated — and if generation failed — show a neutral tile rather than
+      // falling back to the original, which is the decode we are avoiding.
+      const tile = e.url
+        ? `<img src="${e.url}" alt="" class="w-full h-full object-cover">`
+        : `<div class="w-full h-full flex flex-col items-center justify-center gap-1 bg-opl-panelHi dark:bg-op-panelHi text-opl-inkDim dark:text-op-inkDim px-1">
+             <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+             <span class="text-[9px] leading-tight text-center truncate w-full">${escapeHtml(e.file.name || 'Photo')}</span>
+           </div>`;
+      d.innerHTML = tile +
         `<button type="button" onclick="spRemoveFile(${i})" aria-label="Remove photo" class="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white text-base leading-none flex items-center justify-center active:scale-90 transition">&times;</button>`;
       wrap.appendChild(d);
     });
   }
-  function spFilesChange() {
+  async function spFilesChange() {
     // Append (so multiple picks accumulate); reset input so the same file can be re-added.
-    spFiles = spFiles.concat(Array.from(el('sp-files').files || []));
+    const picked = Array.from(el('sp-files').files || []);
     el('sp-files').value = '';
-    spRenderThumbs();
+    if (!picked.length) return;
+    const entries = picked.map(file => ({ file, thumb: null, url: null }));
+    spFiles = spFiles.concat(entries);
+    spRenderThumbs();                       // placeholders paint immediately
+    // Downscale one at a time — decoding every original at once is what put
+    // memory pressure on the device in the first place. The thumb is kept and
+    // reused at submit time, so this work is not repeated during upload.
+    for (const e of entries) {
+      e.thumb = await spDownscale(e.file, SP_PREVIEW_MAX, 0.72);
+      if (!spFiles.includes(e)) continue;   // removed while we were working
+      if (e.thumb) e.url = URL.createObjectURL(e.thumb);
+      spRenderThumbs();
+    }
   }
   window.spFilesChange = spFilesChange;
-  function spRemoveFile(i) { spFiles.splice(i, 1); spRenderThumbs(); }
+  function spRemoveFile(i) {
+    const [e] = spFiles.splice(i, 1);
+    if (e && e.url) URL.revokeObjectURL(e.url);
+    spRenderThumbs();
+  }
   window.spRemoveFile = spRemoveFile;
 
-  // Downscale a photo File to a ~320px JPEG thumbnail (Blob) so the Content
-  // grids/peeks load a few KB instead of the multi-MB original. Best-effort:
-  // returns null on any failure and the worker falls back to serving the original.
-  async function spMakeThumb(file, max = 320, quality = 0.72) {
+  // Downscale a photo File to a JPEG Blob whose long edge is at most `max`.
+  // Used twice: at ~320px for the preview tile + the thumbnail stored in R2 (so
+  // the Content grids/peeks load a few KB instead of the multi-MB original), and
+  // at ~2048px for the upload itself. Returns an image whose long edge is at
+  // most `max` — which may be the original File when it is already that small —
+  // or null if one could not be produced. Every caller must handle null.
+  async function spDownscale(file, max, quality) {
     try {
       let src = null, w = 0, h = 0, url = null;
       if (typeof createImageBitmap === 'function') {
@@ -12668,6 +13153,10 @@
       }
       if (!w || !h) { if (url) URL.revokeObjectURL(url); return null; }
       const scale = Math.min(1, max / Math.max(w, h));
+      // Already within `max` — hand back the original rather than re-encoding
+      // it, which would only lose quality (and can even grow the file). It is
+      // already small enough to preview and to upload as-is.
+      if (scale === 1) { if (src && src.close) src.close(); if (url) URL.revokeObjectURL(url); return file; }
       const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
       const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
       const cx = canvas.getContext('2d'); if (!cx) { if (url) URL.revokeObjectURL(url); return null; }
@@ -12687,13 +13176,27 @@
     if (!spFiles.length) return show('Add at least one photo.', 'text-op-bad');
     const btn = el('sp-submit'); btn.disabled = true;
     let ok = 0, fail = 0;
-    for (const f of spFiles) {
+    for (const e of spFiles) {
       btn.textContent = `Uploading… ${ok + fail + 1}/${spFiles.length}`;
       try {
         const fd = new FormData();
-        fd.append('photo', f);
-        const thumb = await spMakeThumb(f);
-        if (thumb) fd.append('thumb', thumb, 'thumb.jpg');
+        // Cap the long edge instead of sending the camera original. Besides the
+        // memory cost, the worker rejects anything over 15MB — a modern Android
+        // photo can exceed that on its own, so this also fixes uploads that
+        // previously failed outright.
+        const full = await spDownscale(e.file, SP_UPLOAD_MAX, 0.85);
+        const photo = full || e.file;
+        const name = full && full !== e.file
+          ? String(e.file.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg'
+          : (e.file.name || 'photo');
+        fd.append('photo', photo, name);
+        // Generated once when the file was picked — not recomputed here. Sent
+        // only when it really is a JPEG: the worker stores thumbs with a
+        // hardcoded image/jpeg content type, and spDownscale passes an
+        // already-small original straight through, which need not be one.
+        // Skipping it just means the grid falls back to the original, which in
+        // that case is tiny anyway.
+        if (e.thumb && e.thumb.type === 'image/jpeg') fd.append('thumb', e.thumb, 'thumb.jpg');
         fd.append('store', store);
         fd.append('photo_type', spType);
         if (note) fd.append('note', note);
@@ -12715,7 +13218,8 @@
     }
     if (fail === 0) {
       show(`✓ Sent ${ok} photo${ok === 1 ? '' : 's'} to marketing. Thank you!`, 'text-accent-green');
-      spFiles = []; el('sp-files').value = ''; el('sp-thumbs').innerHTML = ''; el('sp-note').value = '';
+      spClearFiles();
+      el('sp-files').value = ''; el('sp-thumbs').innerHTML = ''; el('sp-note').value = '';
     } else {
       show(`Sent ${ok}, but ${fail} failed. Please try again.`, 'text-op-bad');
     }
@@ -13596,7 +14100,7 @@
     ctClearLocal();
     if (el('ct-caption')) el('ct-caption').value = '';
     if (el('ct-topic')) el('ct-topic').value = '';
-    if (el('ct-ai-note')) el('ct-ai-note').classList.add('hidden');
+    if (el('ct-ai-note')) { ctSetAiNote(false); el('ct-ai-note').classList.add('hidden'); }
     if (el('ct-compose-status')) el('ct-compose-status').classList.add('hidden');
     if (el('ct-clear')) el('ct-clear').classList.add('hidden');
     if (el('ct-save-draft')) el('ct-save-draft').textContent = 'Save draft';
@@ -13621,6 +14125,198 @@
   }
   window.ctSaveDraft = ctSaveDraft;
 
+  // The Flow Calendar only feeds promo/event captions now, so only claim it as a
+  // source when the worker says it actually used it (it returns the retail week).
+  const CT_AI_NOTE_BASE = '✨ AI-drafted — edit as needed.';
+  const CT_AI_NOTE_FLOW = "✨ AI-drafted from this week's Flow Calendar — edit as needed.";
+  function ctSetAiNote(usedFlow) { const n = el('ct-ai-note'); if (n) n.textContent = usedFlow ? CT_AI_NOTE_FLOW : CT_AI_NOTE_BASE; }
+
+  // ── Comments page ──────────────────────────────────────────────────
+  // A review queue. Nothing posts to Facebook without an explicit click on a
+  // specific comment, and the text that posts is whatever is in the box at that
+  // moment — not the stored draft — so what you see is what goes out.
+  const fbcState = { store: 'all', status: 'open', comments: [], counts: [] };
+  let fbcLastRefresh = null;
+
+  function fbcEsc(s) { return escapeHtml(String(s == null ? '' : s)); }
+
+  async function fbcLoad() {
+    const list = el('fbc-list');
+    if (list) list.innerHTML = '<div class="text-sm text-opl-inkDim dark:text-op-inkDim py-3">Loading…</div>';
+    try {
+      const qs = new URLSearchParams({ status: fbcState.status });
+      if (fbcState.store !== 'all') qs.set('store', fbcState.store);
+      const r = await fetch(`${WORKER_BASE}?action=fb-comments&${qs}`, { credentials: 'include' });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Failed to load');
+      fbcState.comments = d.comments || [];
+      fbcState.counts = d.counts || [];
+    } catch (e) {
+      fbcState.comments = []; fbcState.counts = [];
+      if (list) list.innerHTML = `<div class="text-sm text-op-bad py-3">${fbcEsc((e && e.message) || 'Failed to load')}</div>`;
+      fbcRenderTabs();
+      return;
+    }
+    fbcRenderTabs();
+    fbcRenderList();
+  }
+  window.fbcLoad = fbcLoad;
+
+  function fbcRenderTabs() {
+    const byStore = {}; let openAll = 0;
+    for (const c of fbcState.counts) { byStore[c.store] = c; openAll += Number(c.open || 0); }
+    const chip = (id, label, n, on) =>
+      `<button onclick="fbcPickStore('${id}')" class="text-[11px] font-semibold px-2.5 py-1 rounded-md border transition-colors ${on
+        ? 'bg-accent-green/15 border-accent-green/50 text-accent-green'
+        : 'border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink'}">${fbcEsc(label)}${n ? ` <span class="opacity-70">${n}</span>` : ''}</button>`;
+    const tabs = el('fbc-store-tabs');
+    if (tabs) {
+      tabs.innerHTML = chip('all', 'All stores', openAll, fbcState.store === 'all')
+        + STORES.map(s => {
+            const code = s.split('/')[0];
+            const label = s.slice(s.indexOf(' ') + 1);
+            return chip(code, label, Number((byStore[code] || {}).open || 0), fbcState.store === code);
+          }).join('');
+    }
+    const st = el('fbc-status-tabs');
+    if (st) {
+      const t = (id, label) => `<button onclick="fbcPickStatus('${id}')" class="px-3 py-2 text-sm font-semibold border-b-2 transition-colors ${fbcState.status === id
+        ? 'border-accent-green text-accent-green'
+        : 'border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink'}">${label}</button>`;
+      st.innerHTML = t('open', 'Needs reply') + t('replied', 'Replied') + t('ignored', 'Dismissed') + t('all', 'All');
+    }
+  }
+
+  function fbcPickStore(s) { fbcState.store = s; fbcLoad(); }
+  function fbcPickStatus(s) { fbcState.status = s; fbcLoad(); }
+  window.fbcPickStore = fbcPickStore; window.fbcPickStatus = fbcPickStatus;
+
+  function fbcRenderList() {
+    const list = el('fbc-list');
+    if (!list) return;
+    if (!fbcState.comments.length) {
+      const lr = fbcLastRefresh;
+      let why = 'New comments are pulled hourly — “Check for new” pulls now.';
+      if (lr && (lr.errors || []).length) {
+        why = `Last check: ${lr.errors.length} of ${lr.posts || 0} posts failed — ${fbcEsc((lr.errors[0] || {}).error || 'unknown error')}`;
+      } else if (lr) {
+        why = `Last check looked at ${lr.posts || 0} post${lr.posts === 1 ? '' : 's'} and saw ${lr.seen || 0} comment${lr.seen === 1 ? '' : 's'}. These posts genuinely have none.`;
+      }
+      list.innerHTML = `<div class="text-sm text-opl-inkDim dark:text-op-inkDim py-6 text-center">Nothing here.<br><span class="text-[12px]">${why}</span></div>`;
+      return;
+    }
+    list.innerHTML = fbcState.comments.map(c => {
+      const cid = fbcEsc(c.comment_id);
+      const when = c.created_time ? new Date(c.created_time).toLocaleString() : '';
+      const replied = c.status === 'replied';
+      const ignored = c.status === 'ignored';
+      const badge = replied
+        ? '<span class="text-[10px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded px-1.5 py-0.5">Replied</span>'
+        : ignored
+        ? '<span class="text-[10px] font-bold uppercase tracking-wide text-opl-inkDim dark:text-op-inkDim border border-[rgba(20,16,8,0.15)] dark:border-op-border rounded px-1.5 py-0.5">Dismissed</span>'
+        : '';
+      const actions = replied
+        ? (c.post_url ? `<a href="${fbcEsc(c.post_url)}" target="_blank" rel="noopener" class="text-[11px] font-semibold text-accent-blue">View on Facebook ↗</a>` : '')
+        : `<button onclick="fbcDraft('${cid}')" class="text-[11px] font-semibold px-2.5 py-1 rounded-md border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">${c.draft_reply ? 'Redraft' : '✨ Draft reply'}</button>
+           <button onclick="fbcSend('${cid}')" class="text-[11px] font-semibold px-2.5 py-1 rounded-md bg-accent-green/15 border border-accent-green/50 text-accent-green">Approve &amp; post</button>
+           <button onclick="fbcIgnore('${cid}', ${ignored ? 'true' : 'false'})" class="text-[11px] font-semibold px-2.5 py-1 rounded-md border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim">${ignored ? 'Restore' : 'Dismiss'}</button>`;
+      const box = replied
+        ? `<div class="text-sm mt-2 p-2 rounded-md bg-black/5 dark:bg-white/5">${fbcEsc(c.draft_reply)}</div>`
+        : `<textarea id="fbc-r-${cid}" rows="2" placeholder="Write a reply, or draft one…" class="w-full mt-2 text-sm p-2 rounded-md bg-transparent border border-[rgba(20,16,8,0.12)] dark:border-op-border">${fbcEsc(c.draft_reply)}</textarea>`;
+      return `<div class="rounded-lg border border-[rgba(20,16,8,0.10)] dark:border-op-border p-3">
+        <div class="flex items-center gap-2 flex-wrap text-[11px] text-opl-inkDim dark:text-op-inkDim">
+          <span class="font-semibold text-opl-ink dark:text-op-ink">${fbcEsc(c.author_name || 'Someone')}</span>
+          <span>${fbcEsc(fbcStoreLabel(c.store))}</span><span>${fbcEsc(when)}</span>${badge}
+        </div>
+        <div class="text-sm mt-1 whitespace-pre-wrap">${fbcEsc(c.message)}</div>
+        ${box}
+        <div class="flex gap-1.5 flex-wrap mt-2 items-center" id="fbc-a-${cid}">${actions}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function fbcStoreLabel(code) { const m = STORES.find(s => s.split('/')[0] === code); return m ? m.slice(m.indexOf(' ') + 1) : code; }
+
+  function fbcSay(msg, cls) {
+    const s = el('fbc-status'); if (!s) return;
+    s.textContent = msg; s.className = 'text-sm mb-3 ' + (cls || 'text-opl-inkDim dark:text-op-inkDim');
+    s.classList.remove('hidden');
+    if (cls === 'text-accent-green') setTimeout(() => s.classList.add('hidden'), 3000);
+  }
+
+  async function fbcDraft(cid) {
+    fbcSay('Drafting…');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=fb-comment-draft`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comment_id: cid }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Draft failed');
+      if (d.escalate) { fbcSay('This one needs you — it reads as a complaint or needs a fact we do not have.', 'text-op-bad'); return; }
+      const box = el('fbc-r-' + cid); if (box) box.value = d.reply || '';
+      fbcSay('Drafted — read it before posting.', 'text-accent-green');
+    } catch (e) { fbcSay((e && e.message) || 'Draft failed', 'text-op-bad'); }
+  }
+
+  async function fbcSend(cid) {
+    const box = el('fbc-r-' + cid);
+    const message = box ? box.value.trim() : '';
+    if (!message) { fbcSay('Nothing to post — write or draft a reply first.', 'text-op-bad'); return; }
+    // Public and effectively irreversible, so confirm with the actual text.
+    const okGo = await uiConfirm(`Post this reply publicly on Facebook?\n\n"${message}"`);
+    if (!okGo) return;
+    fbcSay('Posting…');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=fb-comment-reply`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comment_id: cid, message }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Post failed');
+      fbcSay('Replied.', 'text-accent-green');
+      fbcLoad();
+    } catch (e) { fbcSay((e && e.message) || 'Post failed', 'text-op-bad'); }
+  }
+
+  async function fbcIgnore(cid, undo) {
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=fb-comment-ignore`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comment_id: cid, undo: !!undo }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Failed');
+      fbcLoad();
+    } catch (e) { fbcSay((e && e.message) || 'Failed', 'text-op-bad'); }
+  }
+
+  async function fbcRefresh() {
+    const b = el('fbc-refresh'); const orig = b ? b.textContent : '';
+    if (b) { b.disabled = true; b.textContent = 'Checking…'; }
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=fb-comments-refresh`, { method: 'POST', credentials: 'include' });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Refresh failed');
+      // 🛑 The endpoint reports per-post failures in `errors` and still returns
+      // ok:true. Reporting "no new comments" over a stack of permission errors is
+      // a cheerful lie — say which happened.
+      fbcLastRefresh = d;
+      const errs = (d.errors || []);
+      if (errs.length) {
+        const first = errs[0] || {};
+        fbcSay(`Checked ${d.posts || 0} post${d.posts === 1 ? '' : 's'} — ${errs.length} failed. ${first.error || 'Unknown error'}`, 'text-op-bad');
+      } else if (d.ingested) {
+        fbcSay(`${d.ingested} new comment${d.ingested === 1 ? '' : 's'} from ${d.posts || 0} posts.`, 'text-accent-green');
+      } else {
+        fbcSay(`Checked ${d.posts || 0} post${d.posts === 1 ? '' : 's'} across ${d.pages || 0} page${d.pages === 1 ? '' : 's'} — ${d.seen || 0} comments seen, nothing new.`, 'text-accent-green');
+      }
+      fbcLoad();
+    } catch (e) { fbcSay((e && e.message) || 'Refresh failed', 'text-op-bad'); }
+    finally { if (b) { b.disabled = false; b.textContent = orig; } }
+  }
+  window.fbcDraft = fbcDraft; window.fbcSend = fbcSend; window.fbcIgnore = fbcIgnore; window.fbcRefresh = fbcRefresh;
+
   function ctSetTopic(t) { if (el('ct-topic')) el('ct-topic').value = t; }
   window.ctSetTopic = ctSetTopic;
 
@@ -13628,7 +14324,13 @@
   function ctOnTypeChange() {
     const t = CT_POST_TYPES.find(x => x.key === ctPostType);
     const topic = el('ct-topic');
-    if (t && topic && !topic.value.trim()) topic.value = t.topic;
+    if (!t || !topic) return;
+    // Refresh the box when it is empty OR still holds another type's prefill —
+    // a stale default here reads to the AI as the real subject and fights the
+    // post type. Anything the operator actually typed is left alone.
+    const cur = topic.value.trim();
+    const isStalePrefill = cur !== '' && CT_POST_TYPES.some(x => x.topic && x.topic === cur);
+    if (cur === '' || isStalePrefill) topic.value = t.topic;
   }
   window.ctOnTypeChange = ctOnTypeChange;
 
@@ -13639,12 +14341,13 @@
     const topic = el('ct-topic') ? el('ct-topic').value.trim() : '';
     const btn = el('ct-ai-btn'); const orig = btn.textContent; btn.disabled = true; btn.textContent = 'Writing…';
     try {
-      const r = await fetch(`${WORKER_BASE}?action=draft-generate-caption`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ store, topic, thumbnail_id: ctSelThumb }) });
+      const r = await fetch(`${WORKER_BASE}?action=draft-generate-caption`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ store, topic, thumbnail_id: ctSelThumb, post_type: ctPostType }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) throw new Error(d.error || 'AI failed');
       el('ct-caption').value = d.caption || '';
       ctUpdateCaptionUI();
       ctCaptionSource = 'ai';
+      ctSetAiNote(d.week != null);
       el('ct-ai-note').classList.remove('hidden');
       st.classList.add('hidden');
     } catch (e) {
@@ -13861,6 +14564,7 @@
     if (el('ct-topic')) el('ct-topic').value = d.topic || '';
     ctPostType = (CT_POST_TYPES.some(t => t.key === d.post_type) ? d.post_type : 'other');
     ctCaptionSource = d.caption_source || 'manual';
+    ctSetAiNote(false);   // provenance isn't stored on the draft — don't claim Flow
     el('ct-ai-note').classList.toggle('hidden', ctCaptionSource !== 'ai');
     ctDirty = false;
     ctRenderTypeChips(); ctRenderThumbPicker(); ctRenderPhotoPicker(); ctRenderPreview();
@@ -14379,6 +15083,7 @@
       if (data.error) throw new Error(data.error);
       wrsData = data;
       wrsExpandedL2.clear();
+      t13ExpandedL2.clear();
       el('wrs-subtitle').textContent = wrsRange.label + ' · ' + fmtRangeShort(wrsRange.from, wrsRange.to);
     } catch(e) {
       wrsShowError('Failed to load weekly data: ' + e.message);
@@ -15016,6 +15721,16 @@
   // ═══════════════════════════════════════════════════════════════
   //  WEEKLY RETAIL SUMMARY — T13 tab renderer
   // ═══════════════════════════════════════════════════════════════
+  // The L2 rows the T13 cards show, in display order. Deliberately not every L2
+  // the feed carries: Custom Sales / Refund / Manual Refund / Other · Non-Item
+  // are diagnostics, not merchandise categories.
+  const T13_L2_CATS = [
+    'Consumable Food', 'Consumable HBA', 'Consumable Other',
+    'Furniture', 'Hardlines', 'Home', 'Seasonal',
+    'Softline - Accessories', 'Softline - Apparel', 'Softline - Shoes',
+    'Bin Products', 'Gift Cards',
+  ];
+
   // T13 store filter — user picks which stores to include in the
   // combined cards. Defaults to "all selected" on first render.
   let t13StoreFilter = null; // Set<string> of store keys, null = uninitialized
@@ -15037,6 +15752,34 @@
     renderT13();
   };
 
+  // Which L2 rows have their L3 detail open. Keyed "<card>:<L2>" so the Units
+  // and Net cards expand independently — they are read side by side and forcing
+  // them to move together is worse, not tidier.
+  let t13ExpandedL2 = new Set();
+  window.toggleT13L2 = (kind, l2) => {
+    const key = kind + ':' + l2;
+    t13ExpandedL2.has(key) ? t13ExpandedL2.delete(key) : t13ExpandedL2.add(key);
+    renderT13();
+  };
+  // Avg Cart / Avg Items each read two ways. 'contribution' divides by ALL
+  // orders — every category shares the denominator, so the rows partition the
+  // basket and add up. 'penetration' divides by the baskets that actually
+  // contained the category — more intuitive per row, but the rows then overlap
+  // and must not be summed.
+  const t13Mode = { cart: 'contribution', items: 'contribution' };
+  window.toggleT13Mode = (kind, mode) => {
+    if (t13Mode[kind] === mode) return;
+    t13Mode[kind] = mode;
+    renderT13();
+  };
+  window.toggleT13AllL2 = (kind) => {
+    const cats = T13_L2_CATS.filter(c => t13ExpandedL2.has(kind + ':' + c));
+    const allOpen = cats.length === T13_L2_CATS.length;
+    for (const c of T13_L2_CATS) t13ExpandedL2.delete(kind + ':' + c);
+    if (!allOpen) for (const c of T13_L2_CATS) t13ExpandedL2.add(kind + ':' + c);
+    renderT13();
+  };
+
   function renderT13() {
     if (!wrsT13Data) return;
     const d = wrsT13Data;
@@ -15046,11 +15789,17 @@
     const stores = d.stores || {};
     const perStoreL2Units = d.perStoreL2Units || [];
     const perStoreL2Net = d.perStoreL2Net || [];
+    // Absent when the worker predates L3, or when the week-summary KV entries
+    // have not been re-rolled yet — the cards then render exactly as before.
+    const perStoreL3Units = d.perStoreL3Units || [];
+    const perStoreL3Net = d.perStoreL3Net || [];
     const thCls = 'px-2.5 py-2 text-[10px] font-semibold text-opl-inkDim dark:text-op-inkDim uppercase tracking-wider whitespace-nowrap';
     const tdCls = 'px-2.5 py-2 text-xs text-right text-opl-ink dark:text-op-ink whitespace-nowrap tabular-nums';
     const tdTotCls = 'px-2.5 py-2 text-xs text-right font-bold text-opl-ink dark:text-op-ink whitespace-nowrap tabular-nums';
+    const tdL3Cls = 'px-2.5 py-1.5 text-[11px] text-right text-opl-inkDim dark:text-op-inkDim whitespace-nowrap tabular-nums';
     const stickyL = 'sticky left-0 bg-opl-panel dark:bg-op-panel z-[1]';
     const stickyLtot = 'sticky left-0 bg-opl-panelHi dark:bg-op-panelHi z-[1]';
+    const stickyL3 = 'sticky left-0 bg-opl-panelHi dark:bg-op-panelHi z-[1]';
 
     // Initialize filter if needed
     if (!t13StoreFilter) t13StoreFilter = new Set(WRS_STORE_KEYS);
@@ -15114,12 +15863,6 @@
     topHtml += `</tbody></table></div></div>`;
 
     // ── Combined Store Units Sold + Net Sales by L2 category ────
-    const T13_L2_CATS = [
-      'Consumable Food', 'Consumable HBA', 'Consumable Other',
-      'Furniture', 'Hardlines', 'Home', 'Seasonal',
-      'Softline - Accessories', 'Softline - Apparel', 'Softline - Shoes',
-      'Bin Products', 'Gift Cards',
-    ];
     // Recompute combined L2 arrays based on selected stores. If all stores
     // are selected we can use the precomputed d.l2Units/d.l2Net (saves work);
     // otherwise sum perStoreL2 arrays across just the selected stores.
@@ -15136,27 +15879,202 @@
     });
     const l2Units = allOn ? (d.l2Units || []) : sumPerStoreL2(perStoreL2Units);
     const l2Net = allOn ? (d.l2Net || []) : sumPerStoreL2(perStoreL2Net);
+    // Same fold one level deeper: { store: { L2: { L3: v } } } → [{ L2: { L3: v } }].
+    // No all-stores shortcut here — the feed ships only the per-store maps, so
+    // this is the single path for both the filtered and unfiltered case.
+    const sumPerStoreL3 = (perStoreArr) => weeks.map((_, i) => {
+      const wkObj = perStoreArr[i] || {};
+      const out = {};
+      for (const s of filteredStoreKeys) {
+        for (const [cat, rows] of Object.entries(wkObj[s] || {})) {
+          const bucket = out[cat] || (out[cat] = {});
+          for (const [l3, v] of Object.entries(rows)) bucket[l3] = (bucket[l3] || 0) + v;
+        }
+      }
+      return out;
+    });
+    const l3Units = sumPerStoreL3(perStoreL3Units);
+    const l3Net = sumPerStoreL3(perStoreL3Net);
+
+    // ── per-category basket counts (penetration denominators) ────────────
+    // Additive across stores: a basket belongs to one store, so summing counts
+    // over the selected stores is a true count of baskets.
+    //
+    // 🔑 A week is only usable if EVERY selected store that traded has counts.
+    // A store still missing them (never backfilled, or its fetch was refused by
+    // the coverage guard) would silently shrink the denominator and inflate the
+    // figure. Better to show nothing than a confidently wrong number.
+    const perStoreL2Orders = d.perStoreL2Orders || [];
+    const perStoreL3Orders = d.perStoreL3Orders || [];
+    const ordersKnown = weeks.map((_, i) => {
+      const wk = perStoreL2Orders[i] || {};
+      let anyStore = false;
+      for (const s of filteredStoreKeys) {
+        const traded = Object.keys((perStoreL2Units[i] || {})[s] || {}).length > 0;
+        if (!traded) continue;            // closed / gated store contributes nothing either way
+        anyStore = true;
+        if (!wk[s]) return false;         // traded but has no counts → unknown
+      }
+      return anyStore;
+    });
+    const sumOrders = (arr, deep) => weeks.map((_, i) => {
+      if (!ordersKnown[i]) return null;
+      const wkObj = arr[i] || {};
+      const out = {};
+      for (const s of filteredStoreKeys) {
+        for (const [cat, v] of Object.entries(wkObj[s] || {})) {
+          if (deep) {
+            const b = out[cat] || (out[cat] = {});
+            for (const [k, n] of Object.entries(v)) b[k] = (b[k] || 0) + n;
+          } else out[cat] = (out[cat] || 0) + v;
+        }
+      }
+      return out;
+    });
+    const l2Orders = sumOrders(perStoreL2Orders, false);
+    const l3Orders = sumOrders(perStoreL3Orders, true);
+    const anyPenetration = ordersKnown.some(Boolean);
+
+    // L3 row order per L2: biggest 13-week net first, "Other / unmapped" pinned
+    // last however big it is — it is a remainder, not a category, and reading it
+    // at the top of Seasonal would imply otherwise.
+    const L3_OTHER = 'Other / unmapped';
+    const l3RowsFor = (cat) => {
+      const names = new Set();
+      for (const wk of l3Net) for (const k of Object.keys((wk && wk[cat]) || {})) names.add(k);
+      for (const wk of l3Units) for (const k of Object.keys((wk && wk[cat]) || {})) names.add(k);
+      const net = (nm) => l3Net.reduce((s, wk) => s + (((wk && wk[cat]) || {})[nm] || 0), 0);
+      return [...names].sort((a, b) => {
+        if (a === L3_OTHER) return 1;
+        if (b === L3_OTHER) return -1;
+        return net(b) - net(a);
+      });
+    };
+
     const wkLabels = weeks.map((wk, i) => {
       const dObj = dates[i] || {};
       return dObj.start ? dObj.start.slice(5) : `Wk ${wk}`;
     });
     const fmtMoney = v => v ? '$' + Math.round(v).toLocaleString() : '—';
     const fmtUnits = v => v ? v.toLocaleString() : '—';
+    // ASP needs cents and a real "no units sold" state — $0.00 would read as a
+    // free item rather than an empty cell.
+    const fmtAsp = v => (v == null || !isFinite(v)) ? '—'
+      : (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2);
+    const fmtCart = fmtAsp;                       // money to the cent, em dash on no orders
+    const fmtItems = v => (v == null || !isFinite(v)) ? '—' : v.toFixed(2);
+    const fmtOrders = v => v ? Math.round(v).toLocaleString() : '—';
+
+    // Chain orders per week, following the store filter — the denominator for
+    // both derived cards and the body of the Orders card.
+    const weeklyOrders = weeks.map((_, i) =>
+      filteredStoreKeys.reduce((s, k) => s + (((stores[k] || {}).transactions || [])[i] || 0), 0));
+    // Chain revenue / units per week, ALL categories — not just the 12 shown.
+    const weeklyNetAll = weeks.map((_, i) =>
+      filteredStoreKeys.reduce((s, k) => s + (((stores[k] || {}).netSales || [])[i] || 0), 0));
+    const weeklyUnitsAll = weeks.map((_, i) =>
+      filteredStoreKeys.reduce((s, k) => s + (((stores[k] || {}).qty || [])[i] || 0), 0));
 
     const renderL2Card = (title, perWeek, fmt, opts = {}) => {
+      // `opts.l3` is the matching { L2: { L3: v } } series. Absent → this card
+      // renders exactly as it did before L3 existed.
+      const l3Series = opts.l3 || [];
+      const kind = opts.kind || '';
+      const at3 = (series, cat, i, nm) => (((series[i] || {})[cat]) || {})[nm] || 0;
+      const l3Of = (cat, i, nm) => at3(l3Series, cat, i, nm);
+
+      // ── ratio mode ────────────────────────────────────────────────────────
+      // 🔑 ASP is net ÷ units — a RATIO, and ratios do not add up. Every
+      // aggregate on this card must divide sums, never sum quotients:
+      // averaging the weekly ASPs would weight a dead week the same as a peak
+      // one, and averaging per-category ASPs would weight Gift Cards the same
+      // as Bin Products. Same trap ?action=channel-range exists to avoid.
+      // `opts.ratio = { num, numL3, … }` supplies the numerator series, plus a
+      // denominator in ONE of two shapes:
+      //   · `denWeek: [n]`      one shared denominator per week — every category
+      //                         divides by the same thing, so the rows still
+      //                         partition the whole (ASP by units, cart by orders)
+      //   · `den` / `denL3`     a per-category denominator — the rows then
+      //                         OVERLAP and must not be summed (penetration)
+      const R = opts.ratio || null;
+      const ratio = (n, d) => (d > 0 ? n / d : null);
+      const sum = a => a.reduce((x, y) => x + y, 0);
+      const l2At = (series, cat, i) => (series[i] || {})[cat] || 0;
+      const denAt = (cat, i) => R.denWeek ? (R.denWeek[i] || 0) : l2At(R.den, cat, i);
+      const denAt3 = (cat, i, nm) => R.denWeek ? (R.denWeek[i] || 0) : at3(R.denL3, cat, i, nm);
+      // one L2 cell
+      const cellAt = (cat, i) => R
+        ? ratio(l2At(R.num, cat, i), denAt(cat, i))
+        : l2At(perWeek, cat, i);
+      // Row totals divide 13-week sums, but ONLY over weeks whose denominator is
+      // known. Including a week's numerator while its denominator is missing —
+      // which happens for any week not yet backfilled — would divide a full top
+      // by a partial bottom and overstate the row.
+      const totalOver = (num, den) => {
+        let n = 0, dsum = 0;
+        for (let i = 0; i < weeks.length; i++) {
+          const dv = den(i);
+          if (!(dv > 0)) continue;
+          n += num(i); dsum += dv;
+        }
+        return ratio(n, dsum);
+      };
+      // one L2 row's Total column
+      const rowTotalOf = (cat, vals) => R
+        ? totalOver(i => l2At(R.num, cat, i), i => denAt(cat, i))
+        : sum(vals);
+      // one L3 cell / that L3 row's Total
+      const l3CellAt = (cat, i, nm) => R
+        ? ratio(at3(R.numL3, cat, i, nm), denAt3(cat, i, nm))
+        : l3Of(cat, i, nm);
+      const l3TotalOf = (cat, nm, lv) => R
+        ? totalOver(i => at3(R.numL3, cat, i, nm), i => denAt3(cat, i, nm))
+        : sum(lv);
       // Optional heat shading: alpha by cell value relative to the max cell.
-      let maxCell = 0;
-      if (opts.heat) for (const cat of T13_L2_CATS) for (const wk of perWeek) maxCell = Math.max(maxCell, (wk && wk[cat]) || 0);
-      const cellHtml = (v) => {
+      // L2 and L3 get SEPARATE scales — every L3 cell is a fraction of its
+      // parent, so sharing the L2 scale washes expanded detail out to a flat
+      // near-invisible tint, which is the opposite of why the shading is there.
+      let maxCell = 0, maxL3Cell = 0;
+      if (opts.heat) {
+        for (const cat of T13_L2_CATS) {
+          for (const wk of perWeek) maxCell = Math.max(maxCell, (wk && wk[cat]) || 0);
+          for (let i = 0; i < l3Series.length; i++) {
+            for (const v of Object.values(((l3Series[i] || {})[cat]) || {})) maxL3Cell = Math.max(maxL3Cell, v);
+          }
+        }
+      }
+      const cellHtml = (v, mx) => {
         if (!opts.heat) return fmt(v);
         if (!v) return '<span class="text-opl-inkDimmer dark:text-op-inkDimmer">—</span>';
-        const a = (0.04 + (v / maxCell) * 0.30).toFixed(2);
+        const a = (0.04 + (v / (mx || 1)) * 0.30).toFixed(2);
         return `<span class="inline-block px-1.5 py-0.5 rounded" style="background:rgba(34,197,94,${a})">${fmt(v)}</span>`;
       };
+      const anyL3 = T13_L2_CATS.some(c => l3RowsFor(c).length);
+      const allOpen = anyL3 && T13_L2_CATS.every(c => !l3RowsFor(c).length || t13ExpandedL2.has(kind + ':' + c));
+      const expandBtn = anyL3
+        ? `<button onclick="toggleT13AllL2('${kind}')" class="px-2.5 py-1 text-[11px] font-semibold rounded-full border border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">${allOpen ? 'Collapse all' : 'Expand all'}</button>`
+        : '';
+      // Contribution / Penetration switch, on the two derived cards only.
+      const modeBtn = (m, label, enabled) => {
+        const on = opts.mode === m;
+        const cls = on
+          ? 'bg-[#3BB54A] border-[#3BB54A] text-white'
+          : (enabled ? 'border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink'
+                     : 'border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDimmer dark:text-op-inkDimmer cursor-not-allowed');
+        const click = enabled
+          ? ` onclick="toggleT13Mode('${kind}','${m}')"`
+          : ' disabled title="No basket counts stored for these weeks yet — run Backfill Basket Counts, then Rebuild Week Summaries."';
+        return `<button${click} class="px-2.5 py-1 text-[11px] font-semibold rounded-full border transition-colors ${cls}">${label}</button>`;
+      };
+      const modeSwitch = opts.mode
+        ? `<span class="inline-flex gap-1.5">${modeBtn('contribution', 'Contribution', true)}${modeBtn('penetration', 'Penetration', !!opts.penetrationAvailable)}</span>`
+        : '';
       let html = `<div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl overflow-hidden">
-        <div class="px-4 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <div class="px-4 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-center justify-between gap-3">
           <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(title)}</h3>
+          <span class="flex items-center gap-2">${modeSwitch}${expandBtn}</span>
         </div>
+        ${opts.note ? `<div class="px-4 py-2 text-[11px] text-opl-inkDim dark:text-op-inkDim border-b border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panelHi dark:bg-op-panelHi">${opts.note}</div>` : ''}
         <div class="overflow-x-auto"><table class="w-full text-sm">
           <thead><tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
             <th class="${thCls} text-left ${stickyL}">Category</th>
@@ -15164,24 +16082,81 @@
             <th class="${thCls} text-right">Total</th>
           </tr></thead>
           <tbody>`;
-      for (const cat of T13_L2_CATS) {
-        const vals = perWeek.map(wk => (wk && wk[cat]) || 0);
-        const rowTotal = vals.reduce((a, b) => a + b, 0);
-        html += `<tr class="border-b border-[rgba(20,16,8,0.05)] dark:border-op-border/50">
-          <td class="px-2.5 py-2 text-xs font-medium text-opl-ink dark:text-op-ink whitespace-nowrap ${stickyL}">${escapeHtml(cat)}</td>
-          ${vals.map(v => `<td class="${tdCls}">${cellHtml(v)}</td>`).join('')}
-          <td class="${tdTotCls}">${fmt(rowTotal)}</td>
+      // Optional lead row, above the categories. Used by the derived cards to
+      // put the TRUE chain figure first — the number a manager would quote —
+      // before the per-category breakdown that sums to slightly less.
+      if (opts.headRow) {
+        const hr = opts.headRow;
+        html += `<tr class="bg-opl-panelHi dark:bg-op-panelHi border-b-2 border-[rgba(20,16,8,0.12)] dark:border-op-borderHi">
+          <td class="${tdTotCls} text-left ${stickyLtot}">${escapeHtml(hr.label)}</td>
+          ${hr.values.map(v => `<td class="${tdTotCls}">${fmt(v)}</td>`).join('')}
+          <td class="${tdTotCls}">${fmt(hr.total)}</td>
         </tr>`;
       }
-      const grandVals = weeks.map((_, i) =>
-        T13_L2_CATS.reduce((s, cat) => s + ((perWeek[i] || {})[cat] || 0), 0)
+      for (const cat of T13_L2_CATS) {
+        const vals = weeks.map((_, i) => cellAt(cat, i));
+        const rowTotal = rowTotalOf(cat, vals);
+        const kids = l3RowsFor(cat);
+        const expanded = kids.length > 0 && t13ExpandedL2.has(kind + ':' + cat);
+        const chevron = kids.length
+          ? `<span class="text-opl-inkDim dark:text-op-inkDim mr-0.5">${expanded ? '▾' : '▸'}</span>`
+          : '<span class="inline-block w-3 mr-0.5"></span>';
+        const tap = kids.length
+          ? ` role="button" tabindex="0" class="cursor-pointer hover:bg-[rgba(20,16,8,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)]" onclick="toggleT13L2('${kind}','${escapeHtml(cat).replace(/'/g, "\\'")}')"`
+          : '';
+        html += `<tr${tap} class="border-b border-[rgba(20,16,8,0.05)] dark:border-op-border/50">
+          <td class="px-2.5 py-2 text-xs font-medium text-opl-ink dark:text-op-ink whitespace-nowrap ${stickyL}">${chevron}${escapeHtml(cat)}${kids.length ? `<span class="ml-1.5 text-[10px] text-opl-inkDimmer dark:text-op-inkDimmer">${kids.length}</span>` : ''}</td>
+          ${vals.map(v => `<td class="${tdCls}">${cellHtml(v, maxCell)}</td>`).join('')}
+          <td class="${tdTotCls}">${fmt(rowTotal)}</td>
+        </tr>`;
+        if (expanded) {
+          for (const nm of kids) {
+            const lv = weeks.map((_, i) => l3CellAt(cat, i, nm));
+            const lTot = l3TotalOf(cat, nm, lv);
+            const isOther = nm === L3_OTHER;
+            html += `<tr class="border-b border-[rgba(20,16,8,0.04)] dark:border-op-border/30 bg-opl-panelHi dark:bg-op-panelHi">
+              <td class="px-2.5 py-1.5 pl-7 text-[11px] ${isOther ? 'italic ' : ''}text-opl-inkDim dark:text-op-inkDim whitespace-nowrap ${stickyL3}" title="${escapeHtml(nm)}">${escapeHtml(nm)}</td>
+              ${lv.map(v => `<td class="${tdL3Cls}">${cellHtml(v, maxL3Cell)}</td>`).join('')}
+              <td class="${tdL3Cls} font-semibold text-opl-ink dark:text-op-ink">${fmt(lTot)}</td>
+            </tr>`;
+          }
+        }
+      }
+      // Grand denominator: with a shared per-week denominator it is that value
+      // ONCE, not summed across categories — 12 categories all divided by the
+      // same order count still divide by one order count, not twelve.
+      const grandDen = (i) => R.denWeek
+        ? (R.denWeek[i] || 0)
+        : T13_L2_CATS.reduce((s, c) => s + l2At(R.den, c, i), 0);
+      const grandVals = weeks.map((_, i) => R
+        ? ratio(T13_L2_CATS.reduce((s, c) => s + l2At(R.num, c, i), 0), grandDen(i))
+        : T13_L2_CATS.reduce((s, cat) => s + ((perWeek[i] || {})[cat] || 0), 0)
       );
-      const grandTotal = grandVals.reduce((a, b) => a + b, 0);
-      html += `<tr class="bg-opl-panelHi dark:bg-op-panelHi border-t-2 border-[rgba(20,16,8,0.12)] dark:border-op-borderHi">
-        <td class="${tdTotCls} text-left ${stickyLtot}">All Categories</td>
-        ${grandVals.map(v => `<td class="${tdTotCls}">${fmt(v)}</td>`).join('')}
-        <td class="${tdTotCls}">${fmt(grandTotal)}</td>
-      </tr>`;
+      // For a ratio this is NOT the sum of grandVals — it is the ratio of the
+      // 13-week totals, so a heavy week counts for what it actually sold, and
+      // weeks with no denominator drop out of both sides.
+      const grandTotal = R
+        ? totalOver(i => T13_L2_CATS.reduce((s, c) => s + l2At(R.num, c, i), 0), grandDen)
+        : grandVals.reduce((a, b) => a + b, 0);
+      // Suppressed in penetration mode: the rows overlap, so a "sum of the
+      // categories" line would be arithmetic nobody should read.
+      if (!opts.hideTotalRow) {
+        html += `<tr class="bg-opl-panelHi dark:bg-op-panelHi border-t-2 border-[rgba(20,16,8,0.12)] dark:border-op-borderHi">
+          <td class="${tdTotCls} text-left ${stickyLtot}">${escapeHtml(opts.totalLabel || 'All Categories')}</td>
+          ${grandVals.map(v => `<td class="${tdTotCls}">${fmt(v)}</td>`).join('')}
+          <td class="${tdTotCls}">${fmt(grandTotal)}</td>
+        </tr>`;
+      }
+      // Optional reconciliation row. The 12 merchandise categories do not cover
+      // all revenue — auction, Custom Sales, Other / Non-Item and refunds are
+      // real but uncategorised, and that gap runs 2–11% and is growing. Showing
+      // it is what lets the category rows and the chain row agree.
+      if (opts.gapRow) {
+        const gr = opts.gapRow;
+        html += `<tr><td class="px-2.5 py-2 text-[11px] italic text-opl-inkDim dark:text-op-inkDim whitespace-nowrap ${stickyL}" title="${escapeHtml(gr.label)}">${escapeHtml(gr.label)}</td>
+          ${gr.values.map(v => `<td class="${tdCls} text-opl-inkDim dark:text-op-inkDim">${fmt(v)}</td>`).join('')}
+          <td class="${tdCls} text-opl-inkDim dark:text-op-inkDim">${fmt(gr.total)}</td></tr>`;
+      }
       // Budget + % Budget rows (net table only; budget is per-week, not per-category)
       if (opts.budget) {
         const budTot = opts.budget.reduce((a, b) => a + b, 0);
@@ -15204,8 +16179,94 @@
       (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} Units Sold` : `Combined Units Sold (${filteredStoreKeys.length} stores)`);
     const netTitle = allOn ? 'Combined Stores Category Net Sales' :
       (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} Category Net Sales` : `Combined Category Net Sales (${filteredStoreKeys.length} stores)`);
-    const unitsHtml = renderL2Card(unitsTitle, l2Units, fmtUnits);
-    const netHtml = renderL2Card(netTitle, l2Net, fmtMoney, { heat: true, budget: weeklyBudget });
+    const aspTitle = allOn ? 'Combined Store ASP' :
+      (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} ASP` : `Combined ASP (${filteredStoreKeys.length} stores)`);
+    const unitsHtml = renderL2Card(unitsTitle, l2Units, fmtUnits, { kind: 'units', l3: l3Units });
+    const netHtml = renderL2Card(netTitle, l2Net, fmtMoney, { kind: 'net', l3: l3Net, heat: true, budget: weeklyBudget });
+    // ASP is derived, not fetched — net ÷ units from the two series already on
+    // hand, so no extra round-trip and nothing new to store. No heat shading:
+    // a high ASP is not "good" the way high net sales are, and tinting
+    // Furniture dark green next to Bin Products would imply otherwise.
+    const aspHtml = renderL2Card(aspTitle, l2Net, fmtAsp, {
+      kind: 'asp',
+      l3: l3Net,
+      ratio: { num: l2Net, den: l2Units, numL3: l3Net, denL3: l3Units },
+    });
+
+    // ── Orders: a basket count, so it has no category dimension. Store rows ×
+    // week columns, matching the other cards' orientation.
+    const ordersTitle = allOn ? 'Orders by Store' :
+      (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} Orders` : `Orders (${filteredStoreKeys.length} stores)`);
+    let ordersHtml = `<div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl overflow-hidden">
+      <div class="px-4 py-3 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink">${escapeHtml(ordersTitle)}</h3>
+      </div>
+      <div class="overflow-x-auto"><table class="w-full text-sm">
+        <thead><tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+          <th class="${thCls} text-left ${stickyL}">Store</th>
+          ${wkLabels.map(l => `<th class="${thCls} text-right">${escapeHtml(l)}</th>`).join('')}
+          <th class="${thCls} text-right">Total</th>
+        </tr></thead><tbody>`;
+    for (const s of filteredStoreKeys) {
+      const v = weeks.map((_, i) => ((stores[s] || {}).transactions || [])[i] || 0);
+      // A store with no orders in the whole window (closed, or not yet open) is
+      // dropped rather than shown as a row of dashes.
+      if (!v.some(x => x)) continue;
+      ordersHtml += `<tr class="border-b border-[rgba(20,16,8,0.05)] dark:border-op-border/50">
+        <td class="px-2.5 py-2 text-xs font-medium text-opl-ink dark:text-op-ink whitespace-nowrap ${stickyL}">${escapeHtml(WRS_STORE_NAMES[s] || s)}</td>
+        ${v.map(x => `<td class="${tdCls}">${fmtOrders(x)}</td>`).join('')}
+        <td class="${tdTotCls}">${fmtOrders(v.reduce((a, b) => a + b, 0))}</td></tr>`;
+    }
+    ordersHtml += `<tr class="bg-opl-panelHi dark:bg-op-panelHi border-t-2 border-[rgba(20,16,8,0.12)] dark:border-op-borderHi">
+        <td class="${tdTotCls} text-left ${stickyLtot}">All Stores</td>
+        ${weeklyOrders.map(v => `<td class="${tdTotCls}">${fmtOrders(v)}</td>`).join('')}
+        <td class="${tdTotCls}">${fmtOrders(weeklyOrders.reduce((a, b) => a + b, 0))}</td>
+      </tr></tbody></table></div></div>`;
+
+    // ── Avg Cart / Avg Items. Both are <numerator> ÷ orders, so they share the
+    // same shape: the true chain figure on top, then what each category
+    // contributes to it, then the uncategorised remainder so the two reconcile.
+    const sumA = a => a.reduce((x, y) => x + y, 0);
+    const ratioOf = (n, d) => (d > 0 ? n / d : null);
+    const shownNet = weeks.map((_, i) => T13_L2_CATS.reduce((s, c) => s + ((l2Net[i] || {})[c] || 0), 0));
+    const shownUnits = weeks.map((_, i) => T13_L2_CATS.reduce((s, c) => s + ((l2Units[i] || {})[c] || 0), 0));
+    const derivedCard = (title, kind, numer, numerL3, chainSeries, shownSeries, fmt) => {
+      const mode = anyPenetration ? t13Mode[kind] : 'contribution';
+      const common = {
+        kind, l3: numerL3, mode, penetrationAvailable: anyPenetration,
+        headRow: {
+          // The chain figure is the same either way — all revenue over all
+          // baskets — so it stays put and gives the two modes a common anchor.
+          label: kind === 'cart' ? 'Chain average cart' : 'Chain average items',
+          values: weeks.map((_, i) => ratioOf(chainSeries[i], weeklyOrders[i])),
+          total: ratioOf(sumA(chainSeries), sumA(weeklyOrders)),
+        },
+      };
+      if (mode === 'penetration') {
+        return renderL2Card(title, numer, fmt, {
+          ...common,
+          // Per-category denominators. `l2Orders[i]` is null for a week that has
+          // not been backfilled, and ratio() turns a 0/absent denominator into an
+          // em dash — so an unmeasured week reads as unknown, never as zero.
+          ratio: { num: numer, numL3: numerL3, den: l2Orders, denL3: l3Orders },
+          hideTotalRow: true,
+          note: 'Divided by the baskets that <b>contained</b> each category. Rows overlap — one basket holding three categories counts in all three — so they deliberately do not add up to the chain figure.',
+        });
+      }
+      return renderL2Card(title, numer, fmt, {
+        ...common,
+        ratio: { num: numer, numL3: numerL3, denWeek: weeklyOrders },
+        totalLabel: 'The categories above',
+        gapRow: {
+          label: 'Auction, Custom Sales, Other / Non-Item, refunds',
+          values: weeks.map((_, i) => ratioOf(chainSeries[i] - shownSeries[i], weeklyOrders[i])),
+          total: ratioOf(sumA(chainSeries) - sumA(shownSeries), sumA(weeklyOrders)),
+        },
+      });
+    };
+    const storeTag = allOn ? '' : (filteredStoreKeys.length === 1 ? `${WRS_STORE_NAMES[filteredStoreKeys[0]]} ` : `${filteredStoreKeys.length} stores · `);
+    const cartHtml = derivedCard(`${storeTag}Average Cart`, 'cart', l2Net, l3Net, weeklyNetAll, shownNet, fmtCart);
+    const itemsHtml = derivedCard(`${storeTag}Average Items per Basket`, 'items', l2Units, l3Units, weeklyUnitsAll, shownUnits, fmtItems);
 
     // Empty state if user deselected everything
     if (filteredStoreKeys.length === 0) {
@@ -15217,7 +16278,11 @@
     el('wrs-pane-t13').innerHTML = filterHtml +
       '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mb-3 px-0.5">Weekly net sales</h3>' + topHtml +
       '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Units sold by category × week</h3>' + unitsHtml +
-      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Net sales by category × week</h3>' + netHtml;
+      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Net sales by category × week</h3>' + netHtml +
+      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Average selling price by category × week</h3>' + aspHtml +
+      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Orders by store × week</h3>' + ordersHtml +
+      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Average cart × week</h3>' + cartHtml +
+      '<h3 class="text-[11px] font-semibold uppercase tracking-[0.12em] text-opl-inkDim dark:text-op-inkDim mt-6 mb-3 px-0.5">Average items per basket × week</h3>' + itemsHtml;
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -15944,6 +17009,338 @@
   }
   window.toggleMarketingMenu = toggleMarketingMenu;
 
+
+  // ═══════════════════════════════════════════════════════════════
+  //  MERCHANDISING — Buy Criteria + Shelf Count
+  //
+  //  ⚠️ `l3` here is the PRD's "L2". This repo's L2 is the coarse 15-bucket Clover
+  //  taxonomy; the categories purchasing argues about — snacks, candy, coffee & tea —
+  //  are L3, all inside `Consumable Food`. The L2 is used for the group headings only.
+  // ═══════════════════════════════════════════════════════════════
+
+  function toggleMerchMenu(force) {
+    const sub = el('nav-merch-sub');
+    const chev = el('nav-merch-chev');
+    if (!sub) return;
+    const open = force === true ? true
+      : force === false ? false
+      : sub.classList.contains('hidden');
+    sub.classList.toggle('hidden', !open);
+    if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
+  }
+  window.toggleMerchMenu = toggleMerchMenu;
+
+  // ── Buy Criteria ──────────────────────────────────────────────────────────
+  const MC_COLS = [
+    ['core',                   'Core',        'check'],
+    ['max_cost_pct_retail',    'Max cost %',  'num'],
+    ['min_margin_per_unit',    'Min margin $', 'num'],
+    ['price_cap_pct_retail',   'Price cap %', 'num'],
+    ['rounding',               'Rounding',    'text'],
+    ['max_breakeven_sellthru', 'Max B/E %',   'num'],
+    ['max_per_store',          'Max/store',   'text'],
+    ['cash_back_days',         'Cash back d', 'num'],
+  ];
+  let mcData = null;
+  // Cells edited since the last save, keyed `l3|field` (empty l3 = chain default).
+  // Held here rather than written on every keystroke so a half-typed number never
+  // becomes a threshold.
+  let mcDirty = new Map();
+
+  async function initMerchCriteria() {
+    mcDirty = new Map();
+    el('mc-status').textContent = 'Loading…';
+    el('mc-tbl').innerHTML = '';
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=merch-criteria`, { credentials: 'include' });
+      mcData = await r.json();
+      if (!r.ok) throw new Error(mcData.error || `HTTP ${r.status}`);
+      mcRender();
+    } catch (e) {
+      el('mc-status').textContent = `Could not load criteria: ${e.message}`;
+    }
+  }
+  window.initMerchCriteria = initMerchCriteria;
+
+  function mcKey(l3, field) { return `${l3 || ''}|${field}`; }
+
+  function mcCellValue(l3, field) {
+    const k = mcKey(l3, field);
+    if (mcDirty.has(k)) return mcDirty.get(k);
+    if (!l3) return mcData.defaults?.[field]?.value ?? '';
+    const cell = mcData.categories.find(c => c.l3 === l3)?.fields?.[field];
+    return cell?.inherited ? '' : (cell?.value ?? '');
+  }
+
+  function mcRender() {
+    if (!mcData) return;
+    const onlyOverrides = el('mc-only-overrides').checked;
+    const hasDraft = mcData.draft != null;
+    const dirty = mcDirty.size > 0;
+    el('mc-version').textContent = mcData.version == null ? 'No criteria yet'
+      : hasDraft && mcData.version === mcData.draft ? `Draft v${mcData.draft}`
+      : `Live v${mcData.version}${hasDraft ? ` · draft v${mcData.draft} open` : ''}`;
+    el('mc-publish').classList.toggle('hidden', !(hasDraft || dirty));
+    el('mc-discard').classList.toggle('hidden', !hasDraft);
+    el('mc-status').textContent = dirty
+      ? `${mcDirty.size} unsaved change${mcDirty.size === 1 ? '' : 's'} — Publish… saves and publishes them.`
+      : hasDraft
+        ? 'A draft is open. Nothing in it applies until it is published.'
+        : mcData.version == null
+          ? 'Nothing published yet. Set the chain defaults and any core flags, then publish v1.'
+          : 'Blank cells inherit the chain default above.';
+
+    const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const head = `<thead><tr><th class="mc-cat">Category</th>${
+      MC_COLS.map(([, label]) => `<th>${label}</th>`).join('')}</tr></thead>`;
+
+    const inputFor = (l3, field, type) => {
+      const k = mcKey(l3, field);
+      const raw = mcCellValue(l3, field);
+      const inherited = !l3 ? false : raw === '';
+      const cls = mcDirty.has(k) ? 'mc-dirty' : inherited ? 'mc-inherit' : 'mc-override';
+      if (type === 'check') {
+        const on = l3 ? (mcDirty.has(k) ? raw === '1' : mcData.categories.find(c => c.l3 === l3)?.core)
+                      : mcCellValue(null, field) === '1';
+        return `<input type="checkbox" ${on ? 'checked' : ''} class="accent-accent-green ${mcDirty.has(k) ? 'mc-dirty' : ''}"
+                  onchange="mcEdit(${l3 ? `'${esc(l3).replace(/'/g, "\\'")}'` : 'null'},'${field}',this.checked?'1':'0')">`;
+      }
+      const ph = l3 ? esc(mcData.defaults?.[field]?.value ?? '') : '';
+      return `<input class="${cls}" value="${esc(raw)}" placeholder="${ph}" inputmode="${type === 'num' ? 'decimal' : 'text'}"
+                onchange="mcEdit(${l3 ? `'${esc(l3).replace(/'/g, "\\'")}'` : 'null'},'${field}',this.value)">`;
+    };
+
+    const rows = [`<tr class="mc-default"><td class="mc-cat">Chain default</td>${
+      MC_COLS.map(([f, , t]) => `<td>${inputFor(null, f, t)}</td>`).join('')}</tr>`];
+
+    let group = null;
+    for (const cat of (mcData.categories || [])) {
+      const overridden = MC_COLS.some(([f]) => !cat.fields[f].inherited) || mcDirty.has(mcKey(cat.l3, 'core'));
+      if (onlyOverrides && !overridden) continue;
+      if (cat.l2 !== group) {
+        group = cat.l2;
+        rows.push(`<tr class="mc-group"><td class="mc-cat" colspan="${MC_COLS.length + 1}">${esc(group)}</td></tr>`);
+      }
+      rows.push(`<tr><td class="mc-cat" title="${esc(cat.l3)}">${esc(mcLabel(cat.l3))}</td>${
+        MC_COLS.map(([f, , t]) => `<td>${inputFor(cat.l3, f, t)}</td>`).join('')}</tr>`);
+    }
+    el('mc-tbl').innerHTML = head + `<tbody>${rows.join('')}</tbody>`;
+  }
+  window.mcRender = mcRender;
+
+  // Same shortening the worker applies for the shelf-count form, so a category reads
+  // the same on both pages.
+  function mcLabel(l3) {
+    const tail = String(l3).split(' - ').pop();
+    return tail.replace(/[A-Za-z0-9&']+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase());
+  }
+
+  function mcEdit(l3, field, value) {
+    mcDirty.set(mcKey(l3, field), value);
+    mcRender();
+  }
+  window.mcEdit = mcEdit;
+
+  // Save + publish are ONE action from the user's side. Splitting them would leave a
+  // draft nobody remembers opening, and a draft that is never published is a threshold
+  // change that silently did not happen.
+  async function mcPublish() {
+    const note = await uiPrompt('Publish criteria', 'What changed, and why? (required)');
+    if (note === null) return;
+    if (!String(note).trim()) { uiAlert('A note is required to publish.'); return; }
+    try {
+      if (mcDirty.size) {
+        const cells = [...mcDirty.entries()].map(([k, value]) => {
+          const i = k.indexOf('|');
+          const l3 = k.slice(0, i);
+          return { l3: l3 || null, field: k.slice(i + 1), value };
+        });
+        const d = await fetch(`${WORKER_BASE}?action=merch-criteria-draft`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cells }),
+        });
+        const dj = await d.json();
+        if (!d.ok) throw new Error(dj.error || `HTTP ${d.status}`);
+      }
+      const r = await fetch(`${WORKER_BASE}?action=merch-criteria-publish`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await uiAlert(`Published v${j.version}.`);
+      initMerchCriteria();
+    } catch (e) {
+      uiAlert(`Publish failed: ${e.message}`);
+    }
+  }
+  window.mcPublish = mcPublish;
+
+  async function mcDiscard() {
+    if (!await uiConfirm('Discard the open draft? Every unpublished edit in it is lost.')) return;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=merch-criteria-discard`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      mcDirty = new Map();
+      initMerchCriteria();
+    } catch (e) {
+      uiAlert(`Discard failed: ${e.message}`);
+    }
+  }
+  window.mcDiscard = mcDiscard;
+
+  async function mcToggleLog() {
+    const box = el('mc-log'), chev = el('mc-log-chev');
+    const opening = box.classList.contains('hidden');
+    box.classList.toggle('hidden', !opening);
+    chev.style.transform = opening ? 'rotate(90deg)' : '';
+    if (!opening) return;
+    box.textContent = 'Loading…';
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=merch-criteria-log`, { credentials: 'include' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const esc = (t) => String(t == null ? '—' : t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+      const byVersion = {};
+      for (const e of j.entries || []) (byVersion[e.version] || (byVersion[e.version] = [])).push(e);
+      const versions = Object.keys(byVersion).sort((a, b) => b - a);
+      box.innerHTML = versions.length ? versions.map(v => {
+        const first = byVersion[v][0];
+        return `<div class="border-l-2 border-accent-green/40 pl-3 py-1">
+          <div class="font-semibold">v${v} · ${esc((first.published_at || '').slice(0, 10))} · ${esc(first.published_by)}</div>
+          <div class="text-opl-inkDim dark:text-op-inkDim italic mb-1">${esc(first.note)}</div>
+          ${byVersion[v].map(e => `<div>${esc(e.l3 ? mcLabel(e.l3) : 'Chain default')} · ${esc(e.field)}: ${esc(e.from)} → ${esc(e.to)}</div>`).join('')}
+        </div>`;
+      }).join('') : '<div class="text-opl-inkDim dark:text-op-inkDim">Nothing published yet.</div>';
+    } catch (e) {
+      box.textContent = `Could not load the log: ${e.message}`;
+    }
+  }
+  window.mcToggleLog = mcToggleLog;
+
+  // ── Shelf Count ───────────────────────────────────────────────────────────
+  let scData = null;
+
+  // The eight most recent week-ends, newest first. A count is entered for the week
+  // that just closed, so the current week is the default rather than the next one.
+  function scWeeks() {
+    const out = [];
+    const d = new Date();
+    d.setUTCHours(12, 0, 0, 0);
+    d.setUTCDate(d.getUTCDate() + (7 - d.getUTCDay()) % 7);
+    for (let i = 0; i < 8; i++) {
+      out.push(d.toISOString().slice(0, 10));
+      d.setUTCDate(d.getUTCDate() - 7);
+    }
+    return out;
+  }
+
+  // Supply Request's getUserStores/SR_LABELS live inside its own IIFE, so they are
+  // deliberately re-stated here rather than reached into. Same rule, same roster.
+  const SC_LABELS = { BL1: 'Coliseum', BL2: 'South Bend', BL4: 'Dupont', BL8: 'Holland', BL14: 'Battle Creek', BL16: 'Indy East' };
+  const SC_ALL_STORES = ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'];
+
+  function scStores() {
+    if (!currentUser) return [];
+    if (currentUser.role === 'superuser' || currentUser.role === 'admin') return SC_ALL_STORES;
+    const s = currentUser.stores;
+    if (Array.isArray(s)) return s;
+    try { return JSON.parse(s || '[]'); } catch (e) { return []; }
+  }
+
+  function initShelfCount() {
+    const stores = scStores();
+    const sel = el('sc-store');
+    sel.innerHTML = stores.map(s => `<option value="${s}">${SC_LABELS[s] || s}</option>`).join('');
+    const wk = el('sc-week');
+    wk.innerHTML = scWeeks().map((w, i) => `<option value="${w}">${i === 0 ? 'This week' : `Week ending ${w}`}</option>`).join('');
+    if (!stores.length) {
+      el('sc-status').textContent = 'No store is assigned to your account, so there is nothing to count.';
+      el('sc-rows').innerHTML = '';
+      el('sc-save').classList.add('hidden');
+      return;
+    }
+    scLoad();
+  }
+  window.initShelfCount = initShelfCount;
+
+  async function scLoad() {
+    const store = el('sc-store').value, week = el('sc-week').value;
+    if (!store || !week) return;
+    el('sc-status').textContent = 'Loading…';
+    el('sc-rows').innerHTML = '';
+    el('sc-save').classList.add('hidden');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=shelf-counts&store=${encodeURIComponent(store)}&week_ending=${week}`, { credentials: 'include' });
+      scData = await r.json();
+      if (!r.ok) throw new Error(scData.error || `HTTP ${r.status}`);
+      scRender();
+    } catch (e) {
+      el('sc-status').textContent = `Could not load: ${e.message}`;
+    }
+  }
+  window.scLoad = scLoad;
+
+  function scRender() {
+    const cats = scData.categories || [];
+    if (!cats.length) {
+      // Not an error state: you cannot count "the core" before anyone has published
+      // what core is. Say that, rather than showing an empty form.
+      el('sc-status').textContent = 'Core categories have not been published yet — once Buy Criteria v1 is live, the list to count appears here.';
+      el('sc-rows').innerHTML = '';
+      return;
+    }
+    el('sc-status').textContent = scData.entered
+      ? `Already entered for week ending ${scData.week_ending}. Saving again replaces it; the earlier entry is kept.`
+      : `Week ending ${scData.week_ending}. An end cap counts as one bay.`;
+    const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    el('sc-rows').innerHTML = cats.map(c => {
+      const now = scData.counts?.[c.l3]?.bays;
+      const prev = scData.previous?.[c.l3]?.bays;
+      // Prefilled from last week when this week is blank — the fastest correct answer
+      // for a shelf that has not moved, and the PRD's two-minute target depends on it.
+      const value = now != null ? now : (prev != null ? prev : '');
+      return `<div class="flex items-center gap-3 bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl px-4 py-3">
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-sm truncate text-opl-ink dark:text-op-ink" title="${esc(c.l3)}">${esc(c.label)}</div>
+          <div class="text-[11px] text-opl-inkDim dark:text-op-inkDim">${prev != null ? `Last week: ${prev}` : 'No count last week'}</div>
+        </div>
+        <input data-l3="${esc(c.l3)}" type="number" min="0" max="999" step="0.5" inputmode="decimal" value="${value}"
+          class="w-20 text-right rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-base px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
+      </div>`;
+    }).join('');
+    el('sc-save').classList.remove('hidden');
+  }
+
+  async function scSave() {
+    const counts = [...document.querySelectorAll('#sc-rows input[data-l3]')]
+      .map(i => ({ l3: i.dataset.l3, bays: i.value }))
+      .filter(c => c.bays !== '');
+    if (!counts.length) { uiAlert('Enter at least one number.'); return; }
+    const btn = el('sc-save');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=shelf-count-save`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ store: el('sc-store').value, week_ending: el('sc-week').value, counts: counts.map(c => ({ l3: c.l3, bays: Number(c.bays) })) }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await uiAlert(`Saved ${j.saved} counts for week ending ${j.week_ending}.`);
+      scLoad();
+    } catch (e) {
+      uiAlert(`Save failed: ${e.message}`);
+    } finally {
+      btn.disabled = false; btn.textContent = 'Save count';
+    }
+  }
+  window.scSave = scSave;
+
   // ═══════════════════════════════════════════════════════════════
   //  SIDEBAR
   // ═══════════════════════════════════════════════════════════════
@@ -16104,6 +17501,17 @@
           }).join('')}
         </tbody></table>`;
       }
+      // The L2 dropdown on this form used to double as a GLOBAL, all-store
+      // category re-mapping — pick the wrong one once and an entire category
+      // moved bucket at every store, silently. The worker now refuses to shadow
+      // a built-in mapping; say so, rather than letting the admin believe the
+      // L2 they chose is the one that will be used.
+      if (data.l3MapSkipped) {
+        rb.innerHTML = `<div class="mb-3 text-sm text-yellow-700 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded px-3 py-2">
+          <span class="font-semibold">Category mapping unchanged</span> — ${escapeHtml(data.l3MapSkipped)}
+        </div>` + rb.innerHTML;
+      }
+
       el('inv-results').classList.remove('hidden');
 
       if (anyOk) {
@@ -17340,23 +18748,705 @@
   // worker refuses the data regardless — and a nav item silently vanishing is a
   // far worse failure here than one showing up where it does not belong.
   // navBusinessAudit() below turns an unmapped id into a test failure instead.
+  // ══ Labor page ═══════════════════════════════════════════════════════════
+  // 🔑 Every figure on this page is hours x $15.00, and ALL of the arithmetic
+  // lives in the worker (?action=labor-plan). This file renders what comes back
+  // and computes nothing — deliberately, so the number on screen is the same
+  // number the worker's tests pin. The one thing done here is formatting.
+  const LABOR_NAMES = {
+    BL1: ['Coliseum', 'BL1/6'], BL2: ['South Bend', 'BL2/7'], BL4: ['Dupont', 'BL4/5'],
+    BL14: ['Battle Creek', 'BL14/15'], BL16: ['Indy East', 'BL16/17'],
+  };
+  const laborState = { week: null, store: 'all', tab: 'plan', grain: 'w',
+                       data: null, busy: false, actData: null, actBusy: false };
+
+  const laborEsc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const laborNum = (n) => (n == null ? '—' : Number(n).toLocaleString('en-US'));
+  const laborMoney = (n) => (n == null ? '—' : '$' + Math.round(Number(n)).toLocaleString('en-US'));
+  const laborPct = (n) => (n == null ? '—' : Number(n).toFixed(2) + '%');
+  const laborSigned = (n) => (n == null ? '—' : (n > 0 ? '+' : '') + Number(n).toLocaleString('en-US'));
+
+  // The week we plan is the NEXT full one — a schedule is written before the
+  // week it covers, so on any day of this week we are scheduling the next.
+  function laborUpcomingSaturday(fromISO) {
+    const d = fromISO ? new Date(fromISO + 'T00:00:00Z') : new Date();
+    const u = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    u.setUTCDate(u.getUTCDate() + ((6 - u.getUTCDay() + 7) % 7) + 7);
+    return u.toISOString().slice(0, 10);
+  }
+  function laborWeekLabel(satISO) {
+    const end = new Date(satISO + 'T00:00:00Z');
+    const start = new Date(end); start.setUTCDate(start.getUTCDate() - 6);
+    const f = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    return `${f(start)} – ${f(end)}`;
+  }
+  function laborShiftWeek(n) {
+    const d = new Date((laborState.week || laborUpcomingSaturday()) + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + n * 7);
+    laborState.week = d.toISOString().slice(0, 10);
+    laborState.data = null; laborState.actData = null;
+    initLabor(true);
+    if (laborState.tab === 'act') laborLoadActuals(true);
+  }
+  function laborSetStore(v) {
+    laborState.store = v;
+    laborState.data = null; laborState.actData = null;
+    initLabor(true);
+    if (laborState.tab === 'act') laborLoadActuals(true);
+  }
+  function laborSetGrain(g) { laborState.grain = g; laborState.actData = null; laborLoadActuals(true); }
+
+  // ── Budget vs Actual ─────────────────────────────────────────────────────
+  // Anchored on the CURRENT week, not the one being planned: this tab reports
+  // what happened, the Planning tab forecasts what should. They deliberately
+  // move together when you change weeks, so the two never describe different
+  // moments in time.
+  function laborActRange() {
+    const cur = new Date((laborState.week || laborUpcomingSaturday()) + 'T00:00:00Z');
+    cur.setUTCDate(cur.getUTCDate() - 7);                 // the week that just ran
+    const to = cur.toISOString().slice(0, 10);
+    const from = new Date(cur);
+    if (laborState.grain === 'd') from.setUTCDate(from.getUTCDate() - 13);
+    else if (laborState.grain === 'w') from.setUTCDate(from.getUTCDate() - 7 * 7 - 6);
+    else from.setUTCFullYear(from.getUTCFullYear(), 0, 1);
+    return { from: from.toISOString().slice(0, 10), to };
+  }
+  function laborPeriodLabel(key, grain) {
+    if (grain === 'm') {
+      const d = new Date(key + '-01T00:00:00Z');
+      return d.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+    }
+    const d = new Date(key + 'T00:00:00Z');
+    return grain === 'd'
+      ? d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+      : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  }
+
+  async function laborLoadActuals(force) {
+    ['d', 'w', 'm'].forEach(g => {
+      const b = el('labor-grain-' + g); if (!b) return;
+      const on = g === laborState.grain;
+      b.classList.toggle('bg-accent-green', on);
+      b.classList.toggle('text-[#0b1220]', on);
+      b.classList.toggle('text-opl-inkDim', !on);
+      b.classList.toggle('dark:text-op-inkDim', !on);
+    });
+    const body = el('labor-act-body');
+    if (laborState.actData && !force) { laborActRender(); return; }
+    if (laborState.actBusy) return;
+    laborState.actBusy = true;
+    if (body) body.innerHTML = '<div class="text-[13px] font-medium text-opl-inkDim dark:text-op-inkDim px-1 py-6">Loading…</div>';
+    try {
+      const { from, to } = laborActRange();
+      const qs = `?action=labor&grain=${laborState.grain}&from=${from}&to=${to}` +
+                 (laborState.store !== 'all' ? `&store=${encodeURIComponent(laborState.store)}` : '');
+      const res = await fetch(WORKER_BASE + qs, { credentials: 'include' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      laborState.actData = await res.json();
+      laborActRender();
+    } catch (e) {
+      if (body) body.innerHTML = `<div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 text-[13px] text-op-bad">Could not load budget vs actual — ${laborEsc(e && e.message)}</div>`;
+    } finally { laborState.actBusy = false; }
+  }
+
+  function laborActRender() {
+    const d = laborState.actData, body = el('labor-act-body'), tiles = el('labor-act-tiles');
+    if (!d || !body) return;
+    const g = d.grain;
+    const title = el('labor-act-title');
+    if (title) {
+      title.textContent = laborState.store !== 'all'
+        ? `${(LABOR_NAMES[laborState.store] || [laborState.store])[0]} · ${(LABOR_NAMES[laborState.store] || ['', ''])[1]}`
+        : `Chain · ${(d.stores || []).length} store${(d.stores || []).length === 1 ? '' : 's'}`;
+    }
+
+    // Totals cover COMPLETE periods only. Folding a part-entered period into a
+    // total understates hours while looking like a finished number.
+    const done = (d.periods || []).filter(p => p.complete);
+    const sum = (k) => done.reduce((a, p) => a + (p[k] || 0), 0);
+    const tbh = sum('budgetHours'), tah = sum('actualHours');
+    const tbs = sum('budgetSales'), tas = sum('actualSales');
+    const bp = tbs > 0 ? tbh * d.rate / tbs * 100 : null;
+    const ap = tas > 0 ? tah * d.rate / tas * 100 : null;
+    const over = tah - tbh;
+
+    const tile = (k, v, n, cls) => `
+      <div class="bg-opl-panel dark:bg-op-panel p-4">
+        <div class="text-[10.5px] font-extrabold tracking-[0.07em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer mb-1">${k}</div>
+        <div class="text-2xl font-extrabold tabular-nums ${cls || ''}">${v}</div>
+        <div class="text-[11.5px] font-semibold text-opl-inkDim dark:text-op-inkDim mt-0.5">${n}</div>
+      </div>`;
+    if (tiles) {
+      tiles.innerHTML =
+        tile('Budget hours', laborNum(Math.round(tbh)), bp == null ? 'no complete periods' : `at ${bp.toFixed(2)}% of budget sales`) +
+        tile('Actual hours', laborNum(Math.round(tah)), ap == null ? '—' : `at ${ap.toFixed(2)}% of actual sales`) +
+        tile('Over / under', laborSigned(Math.round(over)), over > 0 ? 'hours over budget' : 'hours under budget',
+             over > 0 ? 'text-op-bad' : 'text-op-good') +
+        tile('Labor % gap', (bp == null || ap == null) ? '—' : ((ap - bp > 0 ? '+' : '') + (ap - bp).toFixed(2) + ' pts'),
+             'actual vs budget', (bp != null && ap != null && ap - bp > 0) ? 'text-op-bad' : 'text-op-good');
+    }
+
+    const rows = (d.periods || []).map(p => {
+      const label = laborPeriodLabel(p.key, g);
+      if (!p.complete) {
+        // Never a labour % on a part-entered period — 57 chain hours against
+        // $43k reads as 2%, which looks like the best week on record.
+        return `<tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border text-opl-inkDimmer dark:text-op-inkDimmer">
+          <td class="py-3 px-3">${laborEsc(label)}</td>
+          <td class="py-3 px-3 text-right tabular-nums">${laborMoney(p.budgetSales)}</td>
+          <td class="py-3 px-3 text-right tabular-nums">${laborMoney(p.actualSales)}</td>
+          <td class="py-3 px-3 text-right tabular-nums">${laborNum(Math.round(p.budgetHours))}</td>
+          <td class="py-3 px-3 text-right" colspan="4"><span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)]">hours pending${p.hoursMissingDays ? ` · ${p.hoursMissingDays} day${p.hoursMissingDays === 1 ? '' : 's'}` : ''}</span></td></tr>`;
+      }
+      const dh = Math.round(p.actualHours - p.budgetHours);
+      return `<tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+        <td class="py-3 px-3">${laborEsc(label)}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborMoney(p.budgetSales)}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborMoney(p.actualSales)}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborNum(Math.round(p.budgetHours))}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborNum(Math.round(p.actualHours))}</td>
+        <td class="py-3 px-3 text-right tabular-nums ${dh > 0 ? 'text-op-bad' : 'text-op-good'}">${laborSigned(dh)}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborPct(p.budgetLaborPct)}</td>
+        <td class="py-3 px-3 text-right tabular-nums font-extrabold text-[15px] ${p.actualLaborPct > p.budgetLaborPct ? 'text-op-bad' : 'text-op-good'}">${laborPct(p.actualLaborPct)}</td></tr>`;
+    }).join('');
+
+    const totalRow = done.length ? `
+      <tr class="border-t border-[rgba(20,16,8,0.12)] dark:border-op-borderHi bg-opl-panelHi dark:bg-op-panelHi font-extrabold">
+        <td class="py-3 px-3">Total · ${done.length} complete</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborMoney(tbs)}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborMoney(tas)}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborNum(Math.round(tbh))}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${laborNum(Math.round(tah))}</td>
+        <td class="py-3 px-3 text-right tabular-nums ${over > 0 ? 'text-op-bad' : 'text-op-good'}">${laborSigned(Math.round(over))}</td>
+        <td class="py-3 px-3 text-right tabular-nums">${bp == null ? '—' : bp.toFixed(2) + '%'}</td>
+        <td class="py-3 px-3 text-right tabular-nums text-[15px] ${(ap != null && bp != null && ap > bp) ? 'text-op-bad' : 'text-op-good'}">${ap == null ? '—' : ap.toFixed(2) + '%'}</td></tr>` : '';
+
+    const pending = (d.periods || []).filter(p => !p.complete).length;
+    const note = pending
+      ? `${pending} period${pending === 1 ? '' : 's'} still awaiting hours — those rows and the totals exclude them.`
+      : 'Every period in range has its hours entered.';
+    const invalid = d.invalidDateRows
+      ? ` <b class="text-op-warn">${d.invalidDateRows} row${d.invalidDateRows === 1 ? '' : 's'} carried an impossible date and were excluded.</b>`
+      : '';
+
+    body.innerHTML = `
+      <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors">
+        <div class="overflow-x-auto"><table class="w-full text-[13px] font-semibold min-w-[860px]">
+          <thead><tr class="text-[10.5px] font-extrabold tracking-[0.06em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+            <th class="py-2.5 px-3 text-left">${g === 'd' ? 'Day' : g === 'w' ? 'Week ending' : 'Month'}</th>
+            <th class="py-2.5 px-3 text-right">Budget sales</th><th class="py-2.5 px-3 text-right">Actual sales</th>
+            <th class="py-2.5 px-3 text-right">Budget hrs</th><th class="py-2.5 px-3 text-right">Actual hrs</th>
+            <th class="py-2.5 px-3 text-right">Over / under</th>
+            <th class="py-2.5 px-3 text-right">Budget labor %</th><th class="py-2.5 px-3 text-right">Actual labor %</th>
+          </tr></thead><tbody>${rows || '<tr><td class="py-6 px-3 text-opl-inkDim dark:text-op-inkDim" colspan="8">No data in this range.</td></tr>'}${totalRow}</tbody>
+        </table></div>
+        <div class="text-[11.5px] font-medium text-opl-inkDimmer dark:text-op-inkDimmer px-5 py-3">
+          Over / under is actual minus budget, so positive is <b>over</b> — the opposite sign to the Δ on Planning, which is room. ${laborEsc(note)}${invalid}
+        </div>
+      </section>`;
+  }
+
+  function laborSetTab(t) {
+    laborState.tab = t;
+    ['plan', 'act', 'hours'].forEach(x => {
+      const pane = el('labor-pane-' + x), tab = el('labor-tab-' + x);
+      if (pane) pane.classList.toggle('hidden', x !== t);
+      if (tab) {
+        tab.classList.toggle('border-accent-green', x === t);
+        tab.classList.toggle('text-opl-ink', x === t);
+        tab.classList.toggle('dark:text-op-ink', x === t);
+        tab.classList.toggle('border-transparent', x !== t);
+        tab.classList.toggle('text-opl-inkDim', x !== t);
+        tab.classList.toggle('dark:text-op-inkDim', x !== t);
+      }
+    });
+    // Budget vs Actual is its own endpoint — fetched on first open, not at
+    // page load, so landing on Planning costs one request rather than two.
+    if (t === 'act') { try { laborLoadActuals(); } catch (_) {} }
+    if (t === 'hours') { try { laborHoursLoad(); } catch (_) {} }
+  }
+
+  // Admin or superuser. The save posts an HOURS-ONLY payload, which
+  // manual-override widens to admin for exactly that shape (Brian,
+  // 2026-08-14); a payload carrying sales still needs a superuser. Keep this
+  // in step with the server — scripts/test-labor-plan.mjs pins both ends.
+  //
+  // A manager gets Planning and Budget vs Actual for their own store and no
+  // Hours tab at all: entry here is chain-wide.
+  function laborApplyRole() {
+    const role = currentUser && currentUser.role;
+    const canEnter = role === 'superuser' || role === 'admin';
+    const hoursTab = el('labor-tab-hours');
+    if (hoursTab) hoursTab.classList.toggle('hidden', !canEnter);
+    if (!canEnter && laborState.tab === 'hours') laborSetTab('plan');
+  }
+
+  async function initLabor(force) {
+    if (!laborState.week) laborState.week = laborUpcomingSaturday();
+    laborApplyRole();
+    laborSetTab(laborState.tab);
+    const lbl = el('labor-week-label');
+    if (lbl) lbl.textContent = laborWeekLabel(laborState.week);
+    if (laborState.busy) return;
+    if (laborState.data && !force) { laborRender(); return; }
+
+    const body = el('labor-plan-body');
+    laborState.busy = true;
+    if (body) body.innerHTML = '<div class="text-[13px] font-medium text-opl-inkDim dark:text-op-inkDim px-1 py-6">Loading…</div>';
+    try {
+      const qs = `?action=labor-plan&week=${encodeURIComponent(laborState.week)}` +
+                 (laborState.store !== 'all' ? `&store=${encodeURIComponent(laborState.store)}` : '');
+      const res = await fetch(WORKER_BASE + qs, { credentials: 'include' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      laborState.data = await res.json();
+      laborRender();
+    } catch (e) {
+      if (body) body.innerHTML = `<div class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 text-[13px] text-op-bad">Could not load labor — ${laborEsc(e && e.message)}</div>`;
+    } finally { laborState.busy = false; }
+  }
+
+  function laborRender() {
+    const d = laborState.data, body = el('labor-plan-body');
+    if (!d || !body) return;
+
+    // Store picker: only worth showing to somebody with more than one store.
+    const sel = el('labor-store');
+    if (sel) {
+      const multi = (d.stores || []).length > 1 || laborState.store !== 'all';
+      sel.classList.toggle('hidden', !multi);
+      if (multi && sel.dataset.built !== String((d.stores || []).join(','))) {
+        const all = laborState.store === 'all' ? (d.stores || []) : null;
+        const list = all || Object.keys(LABOR_NAMES);
+        sel.innerHTML = ['<option value="all">All stores</option>']
+          .concat(list.map(s => `<option value="${laborEsc(s)}">${laborEsc((LABOR_NAMES[s] || [s])[0])}</option>`)).join('');
+        sel.dataset.built = (d.stores || []).join(',');
+      }
+      sel.value = laborState.store;
+    }
+
+    const fresh = el('labor-fresh');
+    const single = laborState.store !== 'all' ? d.byStore[laborState.store] : null;
+    const used = single ? single.weeksUsed : (Object.values(d.byStore).find(p => p.basis === 'trend') || {}).weeksUsed;
+    if (fresh) {
+      fresh.textContent = (used && used.length)
+        ? `Trailing 4 wks · thru ${laborWeekLabel(used[used.length - 1].weekEnd).split('– ')[1]}`
+        : 'No usable history';
+    }
+
+    const chain = d.chain;
+    const hero = single || null;
+    const tile = (k, v, n, cls) => `
+      <div class="bg-opl-panel dark:bg-op-panel p-4">
+        <div class="text-[10.5px] font-extrabold tracking-[0.07em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer mb-1">${k}</div>
+        <div class="text-2xl font-extrabold tabular-nums ${cls || ''}">${v}</div>
+        <div class="text-[11.5px] font-semibold text-opl-inkDim dark:text-op-inkDim mt-0.5">${n}</div>
+      </div>`;
+
+    let tiles = '';
+    if (hero && hero.basis === 'budget-only') {
+      tiles = tile('Recommended hours', laborNum(hero.recommendedHours), 'budget only, no trend')
+            + tile('Trending hours', '—', 'needs 4 usable weeks', 'text-opl-inkDimmer dark:text-op-inkDimmer')
+            + tile('Difference', '—', '', 'text-opl-inkDimmer dark:text-op-inkDimmer')
+            + tile('Budget labor %', laborPct(hero.budgetLaborPct), 'no projection applied');
+    } else {
+      const rec = hero ? hero.recommendedHours : (chain && chain.recommendedHours);
+      const tr = hero ? hero.trendingHours : (chain && chain.trendingHours);
+      const dl = hero ? hero.deltaHours : (chain && chain.deltaHours);
+      const ps = hero ? hero.projectedSales : (chain && chain.projectedSales);
+      const bs = hero ? null : (chain && chain.budgetSales);
+      tiles = tile('Recommended hours', laborNum(rec), 'to hold budgeted labor %')
+            + tile('Trending hours', laborNum(tr), 'if recent behaviour holds')
+            + tile('Difference', laborSigned(dl), dl == null ? '' : (dl > 0 ? 'room' : 'over'),
+                   dl == null ? '' : (dl > 0 ? 'text-op-good' : 'text-op-bad'))
+            + tile('Projected sales', laborMoney(ps), bs ? `vs ${laborMoney(bs)} budget` : 'from the weighted trend');
+    }
+
+    const scopeLabel = hero
+      ? `${(LABOR_NAMES[laborState.store] || [laborState.store])[0]} · ${(LABOR_NAMES[laborState.store] || ['', ''])[1]}`
+      : (chain ? `${chain.storesTrended} store${chain.storesTrended === 1 ? '' : 's'} trended` : 'No stores trended');
+
+    let html = `
+      <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 transition-colors">
+        <div class="flex items-start gap-3 flex-wrap">
+          <div>
+            <div class="text-[10.5px] font-extrabold tracking-[0.09em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer">Recommended schedule</div>
+            <h2 class="text-[15px] font-extrabold mt-0.5">Week of ${laborWeekLabel(d.week)} · ${laborEsc(scopeLabel)}</h2>
+            <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim">Labor valued at $${Number(d.rate).toFixed(2)}/hr · ${d.asmHours} ASM hrs per store included</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-px bg-[rgba(20,16,8,0.08)] dark:bg-op-border rounded-[12px] overflow-hidden mt-4">${tiles}</div>
+      </section>`;
+
+    // By-store table — only when looking at everything.
+    if (!hero) {
+      const rows = (d.stores || []).map(s => {
+        const p = d.byStore[s]; if (!p) return '';
+        const nm = LABOR_NAMES[s] || [s, ''];
+        if (p.basis === 'budget-only') {
+          return `<tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border cursor-pointer hover:bg-[rgba(20,16,8,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)]" onclick="laborSetStore('${laborEsc(s)}')">
+            <td class="py-3 px-3"><span class="font-extrabold text-[13.5px]">${laborEsc(nm[0])}</span><br><span class="text-[11px] font-bold text-opl-inkDimmer dark:text-op-inkDimmer">${laborEsc(nm[1])}</span></td>
+            <td class="py-3 px-3 text-right tabular-nums text-op-warn">${laborEsc(p.reason || 'not enough history')}</td>
+            <td class="py-3 px-3 text-right tabular-nums">—</td>
+            <td class="py-3 px-3 text-right tabular-nums">${laborPct(p.budgetLaborPct)}</td>
+            <td class="py-3 px-3 text-right tabular-nums font-extrabold text-[15px]">${laborNum(p.recommendedHours)}</td>
+            <td class="py-3 px-3 text-right tabular-nums">—</td>
+            <td class="py-3 px-3 text-right tabular-nums">—</td>
+            <td class="py-3 px-3 text-right"><span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-[rgba(245,158,11,0.14)] text-op-warn">Budget only</span></td></tr>`;
+        }
+        const dl = p.deltaHours;
+        const act = Math.abs(dl) <= 3 ? '<span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim">On plan</span>'
+          : dl < 0 ? `<span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-[rgba(239,68,68,0.14)] text-op-bad">Cut ${Math.abs(dl)} hrs</span>`
+                   : `<span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-[rgba(34,197,94,0.14)] text-op-good">Room +${dl}</span>`;
+        return `<tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border cursor-pointer hover:bg-[rgba(20,16,8,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)]" onclick="laborSetStore('${laborEsc(s)}')">
+          <td class="py-3 px-3"><span class="font-extrabold text-[13.5px]">${laborEsc(nm[0])}</span><br><span class="text-[11px] font-bold text-opl-inkDimmer dark:text-op-inkDimmer">${laborEsc(nm[1])}</span></td>
+          <td class="py-3 px-3 text-right tabular-nums ${p.weightedVariancePct > 0 ? 'text-op-good' : 'text-op-bad'}">${p.weightedVariancePct > 0 ? '+' : ''}${laborPct(p.weightedVariancePct)}</td>
+          <td class="py-3 px-3 text-right tabular-nums">${laborMoney(p.projectedSales)}</td>
+          <td class="py-3 px-3 text-right tabular-nums">${laborPct(p.budgetLaborPct)}</td>
+          <td class="py-3 px-3 text-right tabular-nums font-extrabold text-[15px]">${laborNum(p.recommendedHours)}</td>
+          <td class="py-3 px-3 text-right tabular-nums">${laborNum(p.trendingHours)}</td>
+          <td class="py-3 px-3 text-right tabular-nums ${dl > 0 ? 'text-op-good' : 'text-op-bad'}">${laborSigned(dl)}</td>
+          <td class="py-3 px-3 text-right">${act}</td></tr>`;
+      }).join('');
+
+      html += `
+      <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden mt-4 transition-colors">
+        <div class="p-5 pb-2">
+          <h2 class="text-[15px] font-extrabold">By store</h2>
+          <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim">Recommended holds the budgeted labor %. Trending is the 4-week weighted pace. Pick a row to drill in.</div>
+        </div>
+        <div class="overflow-x-auto"><table class="w-full text-[13px] font-semibold min-w-[820px]">
+          <thead><tr class="text-[10.5px] font-extrabold tracking-[0.06em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer border-b border-[rgba(20,16,8,0.08)] dark:border-op-border">
+            <th class="py-2.5 px-3 text-left">Store</th><th class="py-2.5 px-3 text-right">Sales trend</th>
+            <th class="py-2.5 px-3 text-right">Projected sales</th><th class="py-2.5 px-3 text-right">Budget labor %</th>
+            <th class="py-2.5 px-3 text-right">Recommended</th><th class="py-2.5 px-3 text-right">Trending</th>
+            <th class="py-2.5 px-3 text-right">Δ</th><th class="py-2.5 px-3 text-right">Action</th>
+          </tr></thead><tbody>${rows}</tbody>
+        </table></div>
+      </section>`;
+    }
+
+    // Trailing weeks — the four the recommendation actually used.
+    if (hero) {
+      const cards = (hero.weeksUsed || []).map(w => `
+        <div class="bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-[11px] p-3">
+          <div class="text-[11.5px] font-extrabold text-opl-inkDim dark:text-op-inkDim">${laborWeekLabel(w.weekEnd).split(' – ')[1]}
+            <span class="float-right text-[10px] font-extrabold px-1.5 rounded-full bg-[rgba(34,197,94,0.14)] text-op-good">${w.weight}%</span></div>
+          <div class="flex justify-between text-[12px] mt-1.5"><span class="text-opl-inkDim dark:text-op-inkDim">Sales</span><span class="tabular-nums">${laborMoney(w.actualSales)}</span></div>
+          <div class="flex justify-between text-[12px] mt-1.5"><span class="text-opl-inkDim dark:text-op-inkDim">vs budget</span><span class="tabular-nums ${w.variancePct > 0 ? 'text-op-good' : 'text-op-bad'}">${w.variancePct > 0 ? '+' : ''}${laborPct(w.variancePct)}</span></div>
+          <div class="flex justify-between text-[12px] mt-1.5"><span class="text-opl-inkDim dark:text-op-inkDim">Hours</span><span class="tabular-nums">${laborNum(Math.round(w.actualHours))}</span></div>
+          <div class="flex justify-between text-[12px] mt-1.5"><span class="text-opl-inkDim dark:text-op-inkDim">Labor %</span><span class="tabular-nums">${laborPct(w.laborPct)}</span></div>
+        </div>`).join('');
+      html += `
+      <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 mt-4 transition-colors">
+        <div class="flex items-start gap-3 flex-wrap">
+          <div>
+            <div class="text-[10.5px] font-extrabold tracking-[0.09em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer">Store detail</div>
+            <h2 class="text-[15px] font-extrabold mt-0.5">${laborEsc(scopeLabel)}</h2>
+            <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim">The weeks behind the recommendation, oldest to newest.</div>
+          </div>
+          <button type="button" onclick="laborSetStore('all')" class="ml-auto text-[12px] font-bold text-accent-green">← All stores</button>
+        </div>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 mt-3.5">${cards || '<div class="text-[12px] text-opl-inkDim dark:text-op-inkDim">No usable weeks.</div>'}</div>
+      </section>`;
+    }
+
+    // Anything quoting a plain budget says so, in words, where it is visible.
+    const flagged = (d.stores || []).filter(s => d.byStore[s] && d.byStore[s].basis === 'budget-only');
+    if (flagged.length) {
+      html += `
+      <section class="bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card p-5 mt-4 transition-colors">
+        <div class="text-[10.5px] font-extrabold tracking-[0.09em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer mb-2.5">Needs attention</div>
+        ${flagged.map(s => `<div class="rounded-[12px] p-3 border text-[12.5px] leading-relaxed" style="background:rgba(245,158,11,.07);border-color:rgba(245,158,11,.30)">
+          <b class="font-extrabold">${laborEsc((LABOR_NAMES[s] || [s])[0])}</b> is on its plain budget — ${laborEsc(d.byStore[s].reason)}.
+          It shows ${laborNum(d.byStore[s].recommendedHours)} hours and no trend until four usable weeks exist.
+        </div>`).join('')}
+      </section>`;
+    }
+
+    body.innerHTML = html;
+  }
+
+  // ── Hours entry ──────────────────────────────────────────────────────────
+  // Stores down, the seven days of the entered week across. Reuses
+  // ?action=labor&grain=d, which already returns budget hours, actual hours and
+  // actual sales per store per day — everything a cell needs.
+  //
+  // The week entered is the one that just RAN, matching Budget vs Actual, so
+  // Planning forecasts week W while these two report and fill week W-1.
+  const laborHours = { week: null, days: [], stores: [], base: {}, cur: {}, budget: {}, sales: {}, busy: false };
+  const hKey = (s, d) => s + '|' + d;
+
+  function laborHoursWeek() {
+    const d = new Date((laborState.week || laborUpcomingSaturday()) + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - 7);
+    return d.toISOString().slice(0, 10);
+  }
+  function laborHoursNum(v) {
+    const s = String(v == null ? '' : v).trim();
+    if (s === '') return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  async function laborHoursLoad(force) {
+    const wkEnd = laborHoursWeek();
+    if (laborHours.week === wkEnd && !force) { laborHoursRender(); return; }
+    if (laborHours.busy) return;
+    laborHours.busy = true;
+    const grid = el('labor-hours-grid');
+    if (grid) grid.innerHTML = '<div class="text-[13px] font-medium text-opl-inkDim dark:text-op-inkDim py-6">Loading…</div>';
+    try {
+      const start = new Date(wkEnd + 'T00:00:00Z'); start.setUTCDate(start.getUTCDate() - 6);
+      const from = start.toISOString().slice(0, 10);
+      const res = await fetch(`${WORKER_BASE}?action=labor&grain=d&from=${from}&to=${wkEnd}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const d = await res.json();
+
+      laborHours.week = wkEnd;
+      laborHours.stores = d.stores || [];
+      laborHours.days = [];
+      for (let i = 0; i < 7; i++) {
+        const dt = new Date(start); dt.setUTCDate(dt.getUTCDate() + i);
+        laborHours.days.push(dt.toISOString().slice(0, 10));
+      }
+      laborHours.base = {}; laborHours.cur = {}; laborHours.budget = {}; laborHours.sales = {};
+      for (const p of (d.periods || [])) {
+        for (const s of laborHours.stores) {
+          const cell = p.byStore && p.byStore[s]; if (!cell) continue;
+          const k = hKey(s, p.key);
+          laborHours.base[k] = cell.actualHours > 0 ? cell.actualHours : null;
+          laborHours.cur[k] = laborHours.base[k];
+          laborHours.budget[k] = cell.budgetHours || 0;
+          laborHours.sales[k] = cell.actualSales || 0;
+        }
+      }
+      laborHoursRender();
+    } catch (e) {
+      if (grid) grid.innerHTML = `<div class="text-[13px] text-op-bad py-6">Could not load hours — ${laborEsc(e && e.message)}</div>`;
+    } finally { laborHours.busy = false; }
+  }
+
+  // A cell wildly out of line with its own budget is almost always a typo or a
+  // mis-aligned paste. 3,127 hours really is sitting in the source sheet for one
+  // Coliseum week; this is the gate that would have stopped it.
+  function laborHoursFlagged(k) {
+    const v = laborHours.cur[k], b = laborHours.budget[k];
+    return v != null && b > 0 && (v > b * 2.5 || v < b * 0.25);
+  }
+  const LH_INPUT_BASE = 'w-full min-w-[62px] h-9 rounded-[9px] border text-center text-[13.5px] font-bold tabular-nums text-opl-ink dark:text-op-ink px-1 focus:outline-none focus:border-accent-green ';
+  function laborHoursCellCls(k) {
+    if (laborHours.cur[k] == null) return 'bg-[rgba(245,158,11,0.10)] border-[rgba(245,158,11,0.34)]';
+    if (laborHoursFlagged(k)) return 'border-op-bad ring-2 ring-[rgba(239,68,68,0.18)]';
+    return 'bg-[rgba(20,16,8,0.03)] dark:bg-[rgba(255,255,255,0.05)] border-[rgba(20,16,8,0.08)] dark:border-op-border';
+  }
+  const laborLpCls = (p) => p == null ? 'text-opl-inkDimmer dark:text-op-inkDimmer'
+    : (p > 18 ? 'text-op-bad' : p < 10 ? 'text-op-warn' : 'text-op-good');
+
+  // Recompute every total in place. Called on each keystroke — a full re-render
+  // would take the caret with it, and this page is one long typing session.
+  function laborHoursTotals() {
+    let cTot = 0, cNum = 0, cDen = 0, cAny = false;
+    for (const s of laborHours.stores) {
+      let tot = 0, has = false, sales = 0;
+      for (const d of laborHours.days) {
+        const k = hKey(s, d), v = laborHours.cur[k];
+        if (v != null) { tot += v; has = true; sales += (laborHours.sales[k] || 0); }
+      }
+      const lp = (has && sales > 0) ? (tot * 15 / sales * 100) : null;
+      if (has) { cTot += tot; cNum += tot; cDen += sales; cAny = true; }
+      const tEl = el('lh-tot-' + s), lEl = el('lh-lp-' + s);
+      if (tEl) tEl.textContent = has ? laborNum(Math.round(tot * 10) / 10) : '—';
+      if (lEl) { lEl.textContent = lp == null ? '—' : lp.toFixed(2) + '%'; lEl.className = 'text-[11.5px] font-bold tabular-nums ' + laborLpCls(lp); }
+    }
+    for (const d of laborHours.days) {
+      let t = 0, any = false;
+      for (const s of laborHours.stores) { const v = laborHours.cur[hKey(s, d)]; if (v != null) { t += v; any = true; } }
+      const e = el('lh-cd-' + d);
+      if (e) { e.textContent = any ? String(Math.round(t * 10) / 10) : '—'; e.className = 'block text-[13px] font-extrabold tabular-nums ' + (any ? '' : 'text-opl-inkDimmer dark:text-op-inkDimmer'); }
+    }
+    const clp = (cAny && cDen > 0) ? (cNum * 15 / cDen * 100) : null;
+    const ct = el('lh-tot-chain'), cl = el('lh-lp-chain');
+    if (ct) ct.textContent = cAny ? laborNum(Math.round(cTot * 10) / 10) : '—';
+    if (cl) { cl.textContent = clp == null ? '—' : clp.toFixed(2) + '%'; cl.className = 'text-[11.5px] font-bold tabular-nums ' + laborLpCls(clp); }
+  }
+
+  function laborHoursRender() {
+    const grid = el('labor-hours-grid'); if (!grid) return;
+    const title = el('labor-hours-title');
+    if (title) title.textContent = 'Week of ' + laborWeekLabel(laborHours.week);
+    const dayLabel = (d) => new Date(d + 'T00:00:00Z')
+      .toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', timeZone: 'UTC' });
+
+    let head = '<th class="text-left py-2 px-1 min-w-[140px]">Store</th>';
+    laborHours.days.forEach(d => { head += `<th class="py-2 px-1 text-center whitespace-nowrap">${laborEsc(dayLabel(d))}</th>`; });
+    head += '<th class="py-2 px-1 text-center">Week</th><th class="py-2 px-1 text-center">Labor %</th>';
+
+    let rows = '', cTot = 0, cNum = 0, cDen = 0, cAny = false;
+    for (const s of laborHours.stores) {
+      const nm = LABOR_NAMES[s] || [s, ''];
+      let cells = '', tot = 0, has = false, sales = 0;
+      for (const d of laborHours.days) {
+        const k = hKey(s, d), v = laborHours.cur[k], b = laborHours.budget[k] || 0;
+        if (v != null) { tot += v; has = true; sales += (laborHours.sales[k] || 0); }
+        cells += `<td class="py-1 px-1 align-top text-center">
+          <input inputmode="decimal" data-hk="${laborEsc(k)}" value="${v == null ? '' : v}"
+            class="${LH_INPUT_BASE}${laborHoursCellCls(k)}">
+          <span class="block text-[10px] font-bold tabular-nums text-opl-inkDimmer dark:text-op-inkDimmer mt-0.5">bud ${Math.round(b)}</span></td>`;
+      }
+      const lp = (has && sales > 0) ? (tot * 15 / sales * 100) : null;
+      if (has) { cTot += tot; cNum += tot; cDen += sales; cAny = true; }
+      rows += `<tr>
+        <td class="py-2 px-1 align-top"><span class="block font-extrabold text-[13.5px]">${laborEsc(nm[0])}</span><span class="text-[11px] font-bold text-opl-inkDimmer dark:text-op-inkDimmer">${laborEsc(nm[1])}</span></td>
+        ${cells}
+        <td class="py-2 px-1 text-center align-top"><span id="lh-tot-${laborEsc(s)}" class="text-[15px] font-extrabold tabular-nums">${has ? laborNum(Math.round(tot * 10) / 10) : '—'}</span></td>
+        <td class="py-2 px-1 text-center align-top"><span id="lh-lp-${laborEsc(s)}" class="text-[11.5px] font-bold tabular-nums ${laborLpCls(lp)}">${lp == null ? '—' : lp.toFixed(2) + '%'}</span></td>
+      </tr>`;
+    }
+    const chainLp = (cAny && cDen > 0) ? (cNum * 15 / cDen * 100) : null;
+    let chainCells = '';
+    for (const d of laborHours.days) {
+      let t = 0, any = false, bud = 0;
+      for (const s of laborHours.stores) {
+        const k = hKey(s, d); bud += laborHours.budget[k] || 0;
+        if (laborHours.cur[k] != null) { t += laborHours.cur[k]; any = true; }
+      }
+      chainCells += `<td class="py-2 px-1 text-center align-top"><span id="lh-cd-${laborEsc(d)}" class="block text-[13px] font-extrabold tabular-nums ${any ? '' : 'text-opl-inkDimmer dark:text-op-inkDimmer'}">${any ? Math.round(t * 10) / 10 : '—'}</span><span class="block text-[10px] font-bold tabular-nums text-opl-inkDimmer dark:text-op-inkDimmer">bud ${Math.round(bud)}</span></td>`;
+    }
+    rows += `<tr class="border-t border-[rgba(20,16,8,0.12)] dark:border-op-borderHi">
+      <td class="py-2 px-1"><span class="block font-extrabold text-[13px]">Chain</span><span class="text-[11px] font-bold text-opl-inkDimmer dark:text-op-inkDimmer">${laborHours.stores.length} stores</span></td>
+      ${chainCells}
+      <td class="py-2 px-1 text-center"><span id="lh-tot-chain" class="text-[15px] font-extrabold tabular-nums">${cAny ? laborNum(Math.round(cTot * 10) / 10) : '—'}</span></td>
+      <td class="py-2 px-1 text-center"><span id="lh-lp-chain" class="text-[11.5px] font-bold tabular-nums ${laborLpCls(chainLp)}">${chainLp == null ? '—' : chainLp.toFixed(2) + '%'}</span></td></tr>`;
+
+    grid.innerHTML = `<table class="w-full min-w-[900px] border-separate" style="border-spacing:0 2px">
+      <thead><tr class="text-[10.5px] font-extrabold tracking-[0.05em] uppercase text-opl-inkDimmer dark:text-op-inkDimmer">${head}</tr></thead>
+      <tbody>${rows}</tbody></table>`;
+
+    grid.querySelectorAll('input[data-hk]').forEach(inp => {
+      inp.addEventListener('input', (e) => {
+        const k = e.target.dataset.hk;
+        laborHours.cur[k] = laborHoursNum(e.target.value);
+        e.target.className = LH_INPUT_BASE + laborHoursCellCls(k);
+        laborHoursTotals();
+        laborHoursStatus();
+      });
+      inp.addEventListener('paste', laborHoursPaste);
+    });
+    laborHoursStatus();
+  }
+
+  // Paste a block straight out of Paylocity or Excel: fills right and down from
+  // the focused cell. A single value is left to the browser.
+  function laborHoursPaste(e) {
+    const txt = (e.clipboardData || window.clipboardData).getData('text') || '';
+    if (txt.indexOf('\t') < 0 && txt.indexOf('\n') < 0) return;
+    e.preventDefault();
+    const [s0, d0] = String(e.target.dataset.hk).split('|');
+    const si = laborHours.stores.indexOf(s0), di = laborHours.days.indexOf(d0);
+    txt.replace(/\r/g, '').split('\n').forEach((line, r) => {
+      if (!line.trim()) return;
+      line.split('\t').forEach((cell, c) => {
+        const s = laborHours.stores[si + r], d = laborHours.days[di + c];
+        if (s && d) laborHours.cur[hKey(s, d)] = laborHoursNum(cell);
+      });
+    });
+    laborHoursRender();
+  }
+
+  function laborHoursChanged() {
+    return Object.keys(laborHours.cur).filter(k => laborHours.cur[k] !== laborHours.base[k]);
+  }
+  function laborHoursStatus() {
+    const changed = laborHoursChanged();
+    const flagged = Object.keys(laborHours.cur).filter(laborHoursFlagged);
+    const blank = Object.keys(laborHours.cur).filter(k => laborHours.cur[k] == null).length;
+    const st = el('labor-hours-status'), btn = el('labor-hours-save'), warn = el('labor-hours-warn');
+    if (st) st.textContent = changed.length
+      ? `${changed.length} cell${changed.length === 1 ? '' : 's'} changed · ${blank} still blank`
+      : `${blank} of ${Object.keys(laborHours.cur).length} cells blank`;
+    if (btn) { btn.disabled = changed.length === 0; btn.textContent = flagged.length ? 'Review & save' : 'Save week'; }
+    if (warn) {
+      warn.classList.toggle('hidden', flagged.length === 0);
+      if (flagged.length) {
+        const names = flagged.slice(0, 3).map(k => {
+          const [s, d] = k.split('|');
+          return `${(LABOR_NAMES[s] || [s])[0]} ${new Date(d + 'T00:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })}`;
+        });
+        warn.innerHTML = `<b class="font-extrabold">${flagged.length} value${flagged.length === 1 ? '' : 's'} outside 25–250% of budget</b> — ${laborEsc(names.join(', '))}${flagged.length > 3 ? ' and others' : ''}. Check before saving.`;
+      }
+    }
+  }
+  function laborHoursReset() {
+    laborHours.cur = Object.assign({}, laborHours.base);
+    laborHoursRender();
+  }
+
+  async function laborHoursSave() {
+    const changed = laborHoursChanged();
+    if (!changed.length) return;
+    const flagged = Object.keys(laborHours.cur).filter(laborHoursFlagged);
+    if (flagged.length) {
+      const okGo = await uiConfirm(
+        `${flagged.length} value${flagged.length === 1 ? '' : 's'} sit outside 25–250% of that day's budget. Save anyway?`,
+        { okText: 'Save anyway', title: 'Check these hours', danger: true });
+      if (!okGo) return;
+    }
+    const btn = el('labor-hours-save');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      const entries = changed.map(k => {
+        const [store, date] = k.split('|');
+        return { store, date, labor_hours: laborHours.cur[k] };
+      });
+      // 🔑 markOverride:false — is_manual_override freezes the WHOLE row against
+      // the sheet import, and budget hours still come from there.
+      const res = await fetch(`${WORKER_BASE}?action=manual-override`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ markOverride: false, entries }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const out = await res.json();
+      const bad = (out.results || []).filter(r => r.error);
+      if (bad.length) throw new Error(`${bad.length} of ${entries.length} rejected — ${bad[0].error}`);
+      changed.forEach(k => { laborHours.base[k] = laborHours.cur[k]; });
+      // Hours moved, so the trend and the actuals both did.
+      laborState.data = null; laborState.actData = null;
+      laborHoursRender();
+      const st = el('labor-hours-status');
+      if (st) st.textContent = `Saved ${entries.length} cell${entries.length === 1 ? '' : 's'}.`;
+    } catch (e) {
+      await uiAlert(`Could not save hours — ${(e && e.message) || e}`, { title: 'Save failed' });
+      laborHoursStatus();
+    }
+  }
+
   const NAV_BUSINESS = {
     // 🔑 The first non-'bl' entry. Until this, every item was Bargain Lane's and
     // applyBusinessNav had nothing to keep out of anyone's way in the other
     // direction — inside E-Commerce the whole sidebar simply emptied.
     'nav-ebay-cases': 'ecom',
     'nav-inventory': 'bl',
+    'nav-labor': 'bl',
     'nav-supply-request': 'bl',
     'nav-users': 'bl',
     'nav-admin-settings': 'bl',
     'nav-marketing': 'bl',
     'nav-marketing-group': 'bl',
     'nav-marketing-ads': 'bl',
+    'nav-comments': 'bl',
     'nav-marketing-sub': 'bl',
     'nav-marketing-chev': 'bl',
     'nav-flow-calendar': 'bl',
     'nav-content': 'bl',
     'nav-submit-photos': 'bl',
+    'nav-merch-group': 'bl',
+    'nav-merch': 'bl',
+    'nav-merch-chev': 'bl',
+    'nav-merch-sub': 'bl',
+    'nav-merch-criteria': 'bl',
+    'nav-merch-shelf-count': 'bl',
     // Hub-level, not owned by any one business.
     'nav-settings': null,
     'nav-switch-business': null,
@@ -17748,6 +19838,19 @@
     // Marketing dropdown: the GROUP is visible to every authenticated user so
     // all users can reach Submit Photos. Ad Reporting + Flow Calendar stay
     // admin/superuser-only (gated individually below).
+    // Labor: anyone who may see money may see it — a manager needs their own
+    // store's recommendation. The HOURS tab inside it is admin-only and is
+    // gated separately (laborApplyRole), because entry is chain-wide.
+    const navLabor = el('nav-labor');
+    if (navLabor) navLabor.classList.toggle('hidden', !seesMoney);
+
+    // Merchandising: the GROUP is visible to anyone who may enter Shelf Count, so a
+    // store manager can reach the form; Buy Criteria is gated to admins beneath it.
+    // Same shape as Marketing directly below.
+    const merchRoles = ['superuser', 'admin', 'district_manager', 'manager'];
+    el('nav-merch-group').classList.toggle('hidden', !merchRoles.includes(user.role));
+    el('nav-merch-criteria').classList.toggle('hidden', !isAdmin);
+
     el('nav-marketing-group').classList.remove('hidden');
     el('nav-marketing-ads').classList.toggle('hidden', !isAdmin);     // Ad Reporting: admin/superuser
     el('nav-flow-calendar').classList.toggle('hidden', !isAdmin);     // Flow Calendar: admin/superuser
@@ -17758,6 +19861,13 @@
     const fcEd = el('fc-edit-toggle'); if (fcEd) fcEd.classList.toggle('hidden', !isAdmin);
     // Photo upload alerts toggle (Settings › Notifications): admin/superuser only.
     const uaRow = el('notif-upload-alerts-row'); if (uaRow) uaRow.classList.toggle('hidden', !isAdmin);
+    // Weekly digest is still a CHAIN-WIDE body, so chainWideRecipients() sends it
+    // to admins and superusers only. Same principle as the eBay row below: a
+    // manager left looking at a checked box that can never fire is how the daily
+    // email went unnoticed for a week after the Aug 4 scoping fix. The daily
+    // toggle stays visible to everyone because the daily email is now built
+    // per-recipient (dispatchScopedDailySummaries) and does reach managers.
+    const wdRow = el('notif-weekly-digest-row'); if (wdRow) wdRow.classList.toggle('hidden', !isAdmin);
     // Same gate as nav-ebay-cases: holding the business, not a role. Showing this
     // to someone who cannot receive the alerts would be a setting that does nothing.
     const ebRow = el('notif-ebay-alerts-row');
@@ -19194,7 +21304,7 @@
       // active tab
       // 'ebay-cases' has no bar tab of its own, so without it here every tab
       // sits dim while you are standing on the page.
-      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1 };
+      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1 };
       if (!mgrBar) morePages['submit-photos'] = 1; // no center button → page lives under More
       if (isAdminBar) { morePages['inventory'] = 1; morePages['supply-request'] = 1; } // admin: both under More
       else { morePages['flow-calendar'] = 1; morePages['content'] = 1; }               // no bar tab for these

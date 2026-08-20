@@ -1,0 +1,56 @@
+{
+  "generatedAt": "2026-08-11T19:44:07.620Z",
+  "salesDate": "2026-08-11",
+  "asOf": "2026-08-11T15:44:07-04:00",
+  "currency": "USD",
+  "stores": [
+    {
+      "storeId": "BL1",
+      "name": "Coliseum",
+      "salesSoFarToday": 175,
+      "todayBudget": 9332,
+      "transactions": 3,
+      "reportingStatus": "reported"
+    },
+    {
+      "storeId": "BL2",
+      "name": "South Bend",
+      "salesSoFarToday": 0,
+      "todayBudget": 4841,
+      "transactions": 0,
+      "reportingStatus": "reported"
+    },
+    {
+      "storeId": "BL4",
+      "name": "Dupont",
+      "salesSoFarToday": 150,
+      "todayBudget": 3534,
+      "transactions": 1,
+      "reportingStatus": "reported"
+    },
+    {
+      "storeId": "BL8",
+      "name": "Holland",
+      "salesSoFarToday": null,
+      "todayBudget": 4421,
+      "transactions": null,
+      "reportingStatus": "no_data"
+    },
+    {
+      "storeId": "BL14",
+      "name": "Battle Creek",
+      "salesSoFarToday": 280,
+      "todayBudget": 4188,
+      "transactions": 1,
+      "reportingStatus": "reported"
+    },
+    {
+      "storeId": "BL16",
+      "name": "Indy East",
+      "salesSoFarToday": null,
+      "todayBudget": 4162,
+      "transactions": null,
+      "reportingStatus": "no_data"
+    }
+  ]
+}

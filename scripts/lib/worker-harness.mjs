@@ -37,7 +37,13 @@ function d1(db) {
           catch (e) { if (/^\s*(INSERT|UPDATE|DELETE|CREATE|DROP)/i.test(sql)) { db.prepare(sql).run(...params); return { results: [], success: true }; } throw e; }
         },
         first: async () => { const r = db.prepare(sql).all(...params); return r.length ? r[0] : null; },
-        run: async () => { db.prepare(sql).run(...params); return { success: true, meta: {} }; },
+        // Real D1 reports meta.changes / meta.last_row_id, and a guarded write
+        // ("UPDATE ... WHERE published_at IS NULL") is only checkable through it.
+        // Returning a bare {} made every such check read as "nothing changed".
+        run: async () => {
+          const r = db.prepare(sql).run(...params);
+          return { success: true, meta: { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) } };
+        },
       });
       return mk([]);
     },

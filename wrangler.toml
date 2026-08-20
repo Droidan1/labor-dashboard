@@ -13,6 +13,11 @@ compatibility_date = "2024-01-01"
 #                     cron day-of-week is 1-7 where 1=Sunday, 7=Saturday (NOT POSIX
 #                     0=Sun). "0" is rejected as invalid. Must match the handler's
 #                     exact string "0 11 * * 1".
+#
+# NOTE: bin-photo auto-drafting is deliberately NOT a cron. It hangs off the
+# photo-upload request itself (ensureAutoDraftForPhotos), so a draft appears as
+# soon as a manager submits rather than at a fixed hour — and it needs no
+# day-of-week arithmetic, no DST handling, and no Flow Calendar coverage.
 [triggers]
 crons = ["55 3 * * *", "* * * * *", "0 12 * * *", "0 11 * * 1", "0 * * * *", "30 10 * * *"]
 

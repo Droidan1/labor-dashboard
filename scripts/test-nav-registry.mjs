@@ -98,20 +98,56 @@ ok(missingTargets.length === 0,
    `every gate() target exists in the markup; missing: [${missingTargets.map(g => g.target)}]`);
 
 // ── Every page a business can be sent to must exist ────────────────────────
-// dashboardPageFor is the front door; navigateToPage's `pages` array is what
-// actually un-hides a div. A business whose front door is absent from that array
-// would enter, hide every other page, and show a blank shell.
+// dashboardPageFor is the front door; showOnlyPage is what actually un-hides a
+// div. That used to be a hardcoded `pages` array and a front door missing from it
+// would enter, hide every other page, and show a blank shell — which is exactly
+// what Marketing > Comments shipped as. The switcher is now DOM-derived, so the
+// membership check below reduces to "the section exists"; the block at the end of
+// this file pins that it STAYS derived.
 const dpf = html.match(/function dashboardPageFor\(businessId\) \{([\s\S]*?)\n  \}/);
 ok(!!dpf, 'dashboardPageFor is present');
 const frontDoors = [...(dpf ? dpf[1] : '').matchAll(/return '([\w-]+)'/g)].map(m => m[1])
   .filter(p => p !== 'landing');
 ok(frontDoors.length >= 2, `front doors found: [${frontDoors}]`);
-const pagesArr = html.match(/const pages = \[([\s\S]*?)\];/);
-const pageList = [...(pagesArr ? pagesArr[1] : '').matchAll(/'([\w-]+)'/g)].map(m => m[1]);
 for (const p of frontDoors) {
-  ok(pageList.includes(p), `front door '${p}' is registered in navigateToPage's pages array`);
+  ok(new RegExp(`id="page-${p}"`).test(html),
+     `front door '${p}' is reachable by the DOM-derived switcher (a #page-${p} section exists)`);
   ok(new RegExp(`id="page-${p}"`).test(html), `front door '${p}' has a #page-${p} element`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
+
+// ── Page switcher reachability ────────────────────────────────────────
+// Added after Marketing > Comments shipped as a BLANK SCREEN: navigateToPage
+// held a hardcoded list of page ids, 'comments' was not in it, so the new
+// section never un-hid AND every other section got hidden. The nav item lit up
+// correctly, which made it look like a rendering bug rather than a registry one.
+//
+// The fix was to derive the list from the DOM. This pins that it stays derived —
+// a future hardcoded list would reintroduce exactly the same failure.
+{
+  const src = fs.readFileSync(path.join(REPO, 'index.html'), 'utf8');
+
+  const domPages = [...new Set([...src.matchAll(/id="page-([a-z-]+)"/g)].map(m => m[1]))].sort();
+  ok(domPages.length > 10, `found ${domPages.length} page sections in the DOM`);
+
+  // Every page section must be reachable through the shared switcher.
+  ok(/function showOnlyPage\(name\)/.test(src), 'showOnlyPage() exists as the single page switcher');
+  ok(/document\.querySelectorAll\('\[id\^="page-"\]'\)/.test(src),
+     'showOnlyPage derives its list from the DOM, not a hardcoded array');
+
+  // No caller may go back to hand-rolling the list.
+  const hardcoded = [...src.matchAll(/const pages = \[[^\]]*'dashboard'[^\]]*\]/g)];
+  ok(hardcoded.length === 0,
+     `no hardcoded page-id array remains (found ${hardcoded.length}) — that is what blanked the screen`);
+
+  // Both switch points must call it.
+  const calls = (src.match(/showOnlyPage\(/g) || []).length;
+  ok(calls >= 3, `showOnlyPage is defined and called at every switch point (${calls} references)`);
+
+  // And the page the nav points at must actually exist as a section.
+  const navPages = [...new Set([...src.matchAll(/data-page="([a-z-]+)"/g)].map(m => m[1]))];
+  const missing = navPages.filter(p => !domPages.includes(p));
+  ok(missing.length === 0, `every nav data-page has a matching page- section (missing: ${missing.join(', ') || 'none'})`);
+}
