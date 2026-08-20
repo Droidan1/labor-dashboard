@@ -17319,7 +17319,8 @@
     el('mf-pill').textContent = j.map_source === 'template' ? 'Mapped from template' : 'Check the mapping';
     mfSay(j.note || `${j.rows} lines. Confirm the columns below.`);
     const FIELDS = [['identifier','Identifier (UPC/model)'],['description','Description'],['qty','Qty'],
-                    ['uom','Unit'],['cost','Cost'],['msrp','MSRP'],['vendor_claimed_retail','Vendor comp']];
+                    ['units_per_case','Case pack (per line)'],['uom','Unit'],['cost','Cost'],
+                    ['msrp','MSRP'],['vendor_claimed_retail','Vendor comp']];
     const opts = (sel) => `<option value="">—</option>` +
       j.headers.map(h => `<option value="${mfEsc(h)}" ${h === sel ? 'selected' : ''}>${mfEsc(h)}</option>`).join('');
     el('mf-view').innerHTML = `<div class="mf-panel">
@@ -17329,8 +17330,9 @@
             <option value="each" ${j.sell_as === 'each' ? 'selected' : ''}>each</option>
             <option value="case" ${j.sell_as === 'case' ? 'selected' : ''}>case</option>
           </select></label>
-        <label class="mf-row" style="gap:6px;font-size:13px">Units per case
+        <label class="mf-row" style="gap:6px;font-size:13px" title="Only used for lines where the sheet gives no case pack of its own">Units per case
           <input id="mf-upc" class="mf-in" style="width:70px" value="${j.units_per_case}"></label>
+        <span style="font-size:11.5px;color:#6b6453">used only where the sheet has no pack column</span>
         <button class="mf-btn" style="margin-left:auto" onclick="mfConfirmMap()">Use this mapping</button>
       </div>
       <div class="mf-body">
@@ -17347,7 +17349,7 @@
 
   async function mfConfirmMap() {
     const map = {};
-    for (const f of ['identifier','description','qty','uom','cost','msrp','vendor_claimed_retail']) {
+    for (const f of ['identifier','description','qty','units_per_case','uom','cost','msrp','vendor_claimed_retail']) {
       const v = el(`mf-map-${f}`).value; if (v) map[f] = v;
     }
     for (const need of ['description','qty','cost']) {
@@ -17404,7 +17406,12 @@
         <td class="mf-l">${mfEsc(l.description || '(no description)')}
           ${(l.flags || []).map(f => `<span class="mf-flag">${mfEsc(f)}</span>`).join('')}</td>
         <td class="mf-l">${mfEsc(l.l3 ? l.l3.split(' - ').pop() : '—')}</td>
-        <td>${mfNum(l.qty)}</td><td>${mfMoney(l.cost)}</td>
+        <td>${l.pack_used > 1 ? `${l.pack_used}<div style="font-size:10px;color:#6b6453">${mfEsc(l.pack_source || '')}</div>` : '—'}</td>
+        <td>${mfNum(l.qty)}</td>
+        <td>${mfMoney(l.cost)}</td>
+        <td>${mfMoney(l.std_cost_l3)}</td>
+        <td>${l.cost_vs_std === null || l.cost_vs_std === undefined ? '—'
+            : `<span style="color:${l.cost_vs_std <= 100 ? '#22c55e' : '#f59e0b'}">${l.cost_vs_std}%</span>`}</td>
         <td>${l.retail_price ? `${mfMoney(l.retail_price)}<div style="font-size:10px;color:#6b6453">${mfEsc(mfBasis(l))}</div>` : '—'}</td>
         <td>${mfMoney(l.asp_l3)}</td>
         <td>${mfPct(sc.basisPct)}<div style="font-size:10px;color:#6b6453">${mfEsc(sc.basisName || '')}</div></td>
@@ -17453,7 +17460,8 @@
         <div class="mf-bar"><span class="mf-barlbl">Lines</span>
           <span style="font-size:12px;color:#6b6453">${mfNum(j.lines.length)} rows</span></div>
         <div class="mf-scroll" style="max-height:60vh"><table class="mf-tbl"><thead><tr>
-          <th class="mf-l">Item</th><th class="mf-l">Category</th><th>Qty</th><th>Cost</th><th>Retail</th>
+          <th class="mf-l">Item</th><th class="mf-l">Category</th><th>Pack</th><th>Qty</th>
+          <th>Vendor cost</th><th>Our std cost</th><th>vs std</th><th>Retail</th>
           <th>Our ASP</th><th>Cost of</th><th>Suggested</th><th>Per store</th><th>Days to clear</th><th class="mf-l"></th>
         </tr></thead><tbody>${lines}</tbody></table></div>
       </div>`;

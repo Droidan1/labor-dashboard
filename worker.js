@@ -7674,7 +7674,7 @@ async function retailRunManifest(env, manifestId, opts = {}) {
 // ─── Manifest Scorer ──────────────────────────────────────────────────────────
 
 // The canonical shape every vendor's columns are mapped onto.
-const MANIFEST_FIELDS = ["identifier", "identifier_type", "description", "qty", "uom", "cost", "msrp", "vendor_claimed_retail"];
+const MANIFEST_FIELDS = ["identifier", "identifier_type", "description", "qty", "uom", "cost", "msrp", "vendor_claimed_retail", "units_per_case"];
 const MANIFEST_REQUIRED = ["description", "qty", "cost"];
 
 // RFC-4180 enough for vendor exports: quoted fields, doubled quotes inside them, commas
@@ -7766,7 +7766,11 @@ const MANIFEST_HINTS = {
   identifier: [/^upc\b/i, /^gtin\b/i, /barcode/i, /^item\s*#/i, /^item\s*(code|no)\b/i, /^sku\b/i, /model/i],
   description: [/desc/i, /^item\s*name/i, /^product\s*name/i, /^product$/i, /^title$/i, /^name$/i, /^style\s*name/i],
   qty: [/^qty\b/i, /^quantity\b/i, /^avail/i, /^units\b/i, /^cases?\b/i, /^pack\s*qty/i, /^count$/i, /^pcs$/i, /^pieces$/i],
-  uom: [/^uom$/i, /^unit$/i, /^pack$/i, /^pack\s*size/i, /^case\s*pack/i],
+  // The vendor's OWN pack figure, per line. Claimed before `uom` so a sheet with a
+  // "Case pack" column gives us the number rather than a decorative string.
+  units_per_case: [/^case\s*pack/i, /^pack\s*size/i, /units?\s*(?:per|\/)\s*case/i, /^inner\s*pack/i,
+                   /^case\s*qty/i, /^pack\s*qty/i, /^ct\s*\/?\s*case/i],
+  uom: [/^uom$/i, /^unit$/i, /^pack$/i],
   cost: [/unit\s*cost/i, /your\s*cost/i, /^cost\b/i, /^ea\s*cost/i, /^wholesale/i, /^wsl/i, /^price$/i],
   msrp: [/^msrp\b/i, /^list\b/i, /retail\s*price/i, /^srp\b/i, /^orig(inal)?\s*retail/i],
   vendor_claimed_retail: [/retail\s*comp/i, /^comp$/i, /^claimed/i],
@@ -7853,6 +7857,7 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
       description: String(at("description") ?? "").trim().slice(0, 400) || null,
       ...(() => { const q = manifestQty(at("qty")); return { qty: q.value, qtyApprox: q.approx }; })(),
       uom: String(at("uom") ?? "").trim() || null,
+      units_per_case: (() => { const n = manifestNum(at("units_per_case")); return n && n > 0 ? Math.round(n) : null; })(),
       cost: manifestNum(at("cost")), msrp: manifestNum(at("msrp")),
       vendor_claimed_retail: manifestNum(at("vendor_claimed_retail")),
     };
@@ -7870,8 +7875,8 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
 
   const ins = env.DB.prepare(
     `INSERT INTO manifest_lines (manifest_id, row_no, identifier, identifier_type, description,
-       qty, uom, cost, msrp, vendor_claimed_retail, l2, l3, l3_source, flags)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+       qty, uom, cost, msrp, vendor_claimed_retail, units_per_case, l2, l3, l3_source, flags)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   // Batched in chunks: one batch of several thousand statements is a way to discover a
   // subrequest limit in production rather than in a test.
   for (let i = 0; i < parsed.length; i += 200) {
@@ -7882,8 +7887,15 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
       if (l.qty === null) flags.push("no qty");
       if (l.qtyApprox) flags.push("qty is a minimum");
       if (l.cost === null) flags.push("no cost");
+      // The vendor's pack and the description's pack are two claims about the same
+      // thing. On the Kind file three lines say "6 ct" in the text while the Case pack
+      // column says 5. Neither is silently preferred without saying so.
+      const descPack = retailPackSize(l.description);
+      if (l.units_per_case && descPack > 1 && l.units_per_case !== descPack) {
+        flags.push(`pack mismatch: sheet ${l.units_per_case}, description ${descPack}`);
+      }
       return ins.bind(manifestId, l.row_no, l.identifier, l.identifier_type, l.description,
-        l.qty, l.uom, l.cost, l.msrp, l.vendor_claimed_retail,
+        l.qty, l.uom, l.cost, l.msrp, l.vendor_claimed_retail, l.units_per_case,
         hit?.l2 ?? null, hit?.l3 ?? null, hit ? "cache" : null, JSON.stringify(flags));
     }));
   }
@@ -15611,13 +15623,24 @@ export default {
         // Everything downstream is evaluated in the unit the buyer is thinking in.
         const factor = m.sell_as === "case" ? (m.units_per_case || 12) : 1;
         const av = await manifestAspVelocity(env);
+        // What WE book as the cost of anything in that category — the same figure the
+        // costing engine uses, read from the same place, so the scorer can never quote a
+        // standard cost the rest of the Hub disagrees with.
+        const stdCosts = ((await env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json")) || {}).costs || {};
         const { live } = await merchVersions(env);
         const resolved = live ? await merchResolve(env, live.version) : null;
 
         const lines = (rawLines || []).map(l => {
-          const upc = Number(l.units_per_case) || factor;
-          const units = (Number(l.qty) || 0) * (m.sell_as === "case" ? upc : 1);
-          const costPerUnit = l.cost === null ? null : roundCents(Number(l.cost) / (m.sell_as === "case" ? upc : 1));
+          // 🔑 A pack the VENDOR stated on the line beats the manifest-wide toggle. That
+          // toggle is one number for the whole file, which cannot describe a sheet like
+          // Kind's where the pack is 5 on some lines and 6 on others. The toggle stays as
+          // the fallback for files that give us nothing.
+          const linePack = Number(l.units_per_case) || null;
+          const upc = linePack || factor;
+          const asCase = linePack ? linePack > 1 : m.sell_as === "case";
+          const units = (Number(l.qty) || 0) * (asCase ? upc : 1);
+          const costPerUnit = l.cost === null ? null : roundCents(Number(l.cost) / (asCase ? upc : 1));
+          const stdCost = l.l3 && stdCosts[l.l3] !== undefined ? roundCents(Number(stdCosts[l.l3])) : null;
           const stats = l.l3 ? av[l.l3] : null;
           const rounding = resolved && l.l3
             ? (resolved.categories.flatMap(c => [c, ...(c.children || [])]).find(c => c.key === l.l3)?.fields?.rounding?.value
@@ -15631,6 +15654,12 @@ export default {
           if (!l.l3) flags.push("no category");
           if (asp === null && l.l3) flags.push("no ASP");
           return { ...l, units, cost: costPerUnit, qty: units, asp_l3: asp,
+                   std_cost_l3: stdCost,
+                   // Vendor cost against what we normally pay for that category. Under
+                   // 100% is a better buy than our own book cost; over it is not.
+                   cost_vs_std: stdCost && costPerUnit !== null && stdCost > 0
+                     ? +((costPerUnit / stdCost) * 100).toFixed(0) : null,
+                   pack_used: upc, pack_source: linePack ? "sheet" : (m.sell_as === "case" ? "toggle" : null),
                    velocity_l3: stats?.velocity ?? null,
                    suggested_price: suggested,
                    suggested_source: l.suggested_price !== null && l.suggested_price !== undefined ? "manual" : "rule",

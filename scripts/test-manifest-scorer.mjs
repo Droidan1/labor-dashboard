@@ -60,6 +60,11 @@ const ORAL   = 'FG BL CONSUMABLES - HBA - ORAL';
 {
   const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
     .format(new Date(Date.now() - 86400e3));
+  // What WE book as the cost of a unit in each category — prod keeps this in KV under
+  // category-costs:global, and the scorer reads it from there.
+  env.SALES_SNAPSHOTS.put('category-costs:global', JSON.stringify({
+    costs: { [SNACKS]: 0.81, [ORAL]: 0.55 }, importedAt: '2026-08-19T19:03:28.323Z', count: 2,
+  }));
   env.SALES_SNAPSHOTS.put(`items:bl1:${day}`, JSON.stringify({
     orderCount: 40,
     categories: [
@@ -74,16 +79,16 @@ const ORAL   = 'FG BL CONSUMABLES - HBA - ORAL';
 // A vendor file with the awkward bits real ones have: a quoted comma, a doubled quote,
 // a $-and-comma price, a parenthesised negative, and a blank padding line.
 const CSV = [
-  'UPC,Item Description,Qty,Unit Cost,MSRP',
-  '012345678905,"Chips, sour cream & onion 8oz",480,"$0.42","$2.49"',
-  '012345678912,"Toothpaste 4.6oz ""whitening""",240,0.63,1.99',
-  '012345678929,Mystery widget,10,"(1.50)",',
+  'UPC,Item Description,Case pack,Qty,Unit Cost,MSRP',
+  '012345678905,"Chips, sour cream & onion 8oz",6,480,"$0.42","$2.49"',
+  '012345678912,"Toothpaste 4.6oz ""whitening"" - 6 ct",5,240,0.63,1.99',
+  '012345678929,Mystery widget,,10,"(1.50)",',
   // The Kind list's real fourth row: qty and cost, nothing else. Nothing about it can be
   // judged, and that must not read as a pass.
-  ',,815,1.45,',
+  ',,,815,1.45,',
   // Alliance caps availability at "1k+" on 279 of 331 lines. It is a FLOOR, not a count.
-  '012345678930,Widget in bulk,1k+,0.80,',
-  '012345678931,Widget also bulk,500+,0.80,',
+  '012345678930,Widget in bulk,,1k+,0.80,',
+  '012345678931,Widget also bulk,,500+,0.80,',
   '',
 ].join('\n');
 
@@ -99,18 +104,43 @@ let mid;
   eq(r.body.column_map.identifier, 'UPC', 'UPC column found');
   eq(r.body.column_map.cost, 'Unit Cost', 'cost column found');
   eq(r.body.column_map.qty, 'Qty', 'qty column found');
+  eq(r.body.column_map.units_per_case, 'Case pack', "the vendor's own case pack is picked up automatically");
   eq(r.body.missing.length, 0, 'nothing required is unmapped');
   eq(r.body.rows, 6, 'the blank padding line is not a row, but the description-less one is');
 
   const lines = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(mid);
   eq(lines.length, 6, 'six lines written');
   eq(lines[0].description, 'Chips, sour cream & onion 8oz', 'a quoted comma survives');
-  eq(lines[1].description, 'Toothpaste 4.6oz "whitening"', 'a doubled quote survives');
+  eq(lines[1].description, 'Toothpaste 4.6oz "whitening" - 6 ct', 'a doubled quote survives');
   near(lines[0].cost, 0.42, '"$0.42" parses');
   near(lines[0].msrp, 2.49, 'MSRP parses');
   near(lines[2].cost, -1.5, 'a parenthesised negative parses as negative');
   eq(lines[0].identifier_type, 'upc', '12 digits reads as a UPC');
 }
+
+// The sheet's own pack beats the file-wide toggle.
+// That toggle is ONE number for a whole file and cannot describe Kind's sheet, where the
+// pack is 5 on some lines and 6 on others. A pack the vendor states per line wins — and
+// where it contradicts the description, the line SAYS so rather than one being silently
+// preferred.
+{
+  const rows = db.prepare(`SELECT row_no, units_per_case, flags FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(mid);
+  eq(rows[0].units_per_case, 6, "the sheet's pack is stored per line");
+  eq(rows[1].units_per_case, 5, '...per line, not once per file');
+  ok(JSON.parse(rows[1].flags).some(f => /pack mismatch/.test(f)),
+     'sheet 5 against description 6 ct is flagged, not silently resolved');
+  ok(!JSON.parse(rows[0].flags).some(f => /pack mismatch/.test(f)),
+     '...and an agreeing line carries no flag');
+  eq(rows[2].units_per_case, null, 'a line with no pack value gets none');
+
+  const r = await get(`manifest&id=${mid}`);
+  const l1 = r.body.lines.find(x => x.row_no === 1);
+  eq(l1.pack_used, 6, 'the pack applied is the one the sheet gave');
+  eq(l1.pack_source, 'sheet', '...and the page can say where it came from');
+  eq(l1.qty, 480 * 6, 'units expand by that line own pack');
+  near(l1.cost, 0.42 / 6, '...and cost divides by it');
+}
+
 
 // ── 🔑 A capped quantity parses, and says it is a floor ────────────────────
 // Alliance writes "1k+" rather than a count. Leaving it null made 84% of their file
@@ -182,6 +212,17 @@ let mid;
   const after = db.prepare(`SELECT l3_source, l3 FROM item_cache WHERE identifier='012345678929'`).get();
   eq(after.l3_source, 'manual', "🔑 the model does not overwrite a human's category");
   eq(after.l3, SNACKS, '...and the human value stands');
+}
+
+// Our standard cost sits beside the vendor's.
+{
+  const r = await get(`manifest&id=${mid}`);
+  const priced = r.body.lines.find(l => l.std_cost_l3 !== null);
+  ok(priced, 'a classified line carries our standard cost for its category');
+  ok(priced.cost_vs_std !== null, '...and the vendor cost as a share of it');
+  const unclassified = r.body.lines.find(l => !l.l3);
+  eq(unclassified.std_cost_l3, null, 'an unclassified line has no standard cost to show');
+  eq(unclassified.cost_vs_std, null, '...and no ratio invented for it');
 }
 
 // ── Case vs each carries through every per-unit number ──────────────────────
