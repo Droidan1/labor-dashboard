@@ -375,6 +375,44 @@ let mid;
   await post('manifest-delete', { id: r.body.id });
 }
 
+// The dollar-store ceiling holds the suggested price down.
+// It is a standing fact about the competition, not a lookup: you cannot price above the
+// shop down the road and expect to sell, whatever our own ASP says.
+{
+  // Snacks ASP is $1.33 in this fixture. Put the ceiling below it.
+  await post('merch-criteria-draft', { cells: [{ category: 'Consumable Food', field: 'dollar_ceiling', value: '1.25' }] });
+  await post('merch-criteria-publish', { note: 'dollar-store ceiling on food' });
+  const r = await get(`manifest&id=${mid}`);
+  const line = r.body.lines.find(l => l.l3 === SNACKS);
+  ok(line, 'the snacks line is present');
+  eq(line.dollar_ceiling, 1.25, 'the ceiling resolves onto the line');
+  ok(line.suggested_price <= 1.25, `suggested is held at or under the ceiling (got ${line.suggested_price})`);
+  ok(line.ceiling_bound, 'the line records that the ceiling bit');
+  ok((line.flags || []).some(f => /dollar-store ceiling/.test(f)),
+     'and says so in words — a price below our own ASP needs a visible reason');
+
+  // 🔑 Rounding must not push it back over. A .99 rule on a $1.25 ceiling would round to
+  // $0.99 or $1.99; the second would breach the very ceiling it was just held under.
+  await post('merch-criteria-draft', { cells: [{ category: 'Consumable Food', field: 'rounding', value: '.99' }] });
+  await post('merch-criteria-publish', { note: 'round to .99' });
+  const r2 = await get(`manifest&id=${mid}`);
+  const l2 = r2.body.lines.find(l => l.l3 === SNACKS);
+  ok(l2.suggested_price <= 1.25, `rounding never breaches the ceiling (got ${l2.suggested_price})`);
+
+  // A category with no ceiling set is unaffected.
+  const oral = r2.body.lines.find(l => l.l3 === ORAL);
+  eq(oral.dollar_ceiling, null, 'a category with no ceiling has none');
+  eq(oral.ceiling_bound, false, '...and nothing is held down');
+
+  // 🛑 A price somebody typed is a decision, not a suggestion.
+  const target = db.prepare(`SELECT id FROM manifest_lines WHERE manifest_id=? AND l3=?`).get(mid, SNACKS);
+  await post('manifest-line', { id: mid, line_id: target.id, suggested_price: 3.49 });
+  const r3 = await get(`manifest&id=${mid}`);
+  const manual = r3.body.lines.find(l => l.id === target.id);
+  eq(manual.suggested_price, 3.49, '🛑 a manual price is never pulled down by the ceiling');
+  eq(manual.suggested_source, 'manual', '...and is marked as a decision');
+}
+
 // ── Access ──────────────────────────────────────────────────────────────────
 {
   eq((await get('manifests', 'u-admin')).status, 200, 'an admin may use the scorer');

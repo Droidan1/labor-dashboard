@@ -8277,6 +8277,11 @@ function manifestScore(lines, resolved, opts = {}) {
 
 const MERCH_FIELDS = new Set([
   "core", "max_cost_pct_retail", "min_margin_per_unit", "price_cap_pct_retail",
+  // What a dollar store charges for a comparable item in this category. Not a lookup —
+  // a standing fact about the competition, set once per category and rarely moved.
+  // It is a CEILING: you cannot price above the shop down the road and expect to sell,
+  // whatever our ASP or a national retailer's shelf price says.
+  "dollar_ceiling",
   "rounding", "max_breakeven_sellthru", "max_per_store", "cash_back_days", "note",
 ]);
 
@@ -15740,11 +15745,37 @@ export default {
                ?? resolved.defaults?.rounding?.value)
             : null;
           const asp = stats?.asp ?? null;
-          const suggested = l.suggested_price !== null && l.suggested_price !== undefined
-            ? Number(l.suggested_price) : manifestRound(asp, rounding);
+          // The same three-level walk the rounding rule uses: the L3's own value, else
+          // its L2's, else the chain default.
+          const critAt = (field) => resolved && l.l3
+            ? (resolved.categories.flatMap(c => [c, ...(c.children || [])]).find(c => c.key === l.l3)?.fields?.[field]?.value
+               ?? resolved.categories.find(c => c.key === l.l2)?.fields?.[field]?.value
+               ?? resolved.defaults?.[field]?.value)
+            : (resolved?.defaults?.[field]?.value ?? null);
+          const ceilingRaw = Number(critAt("dollar_ceiling"));
+          const ceiling = Number.isFinite(ceilingRaw) && ceilingRaw > 0 ? ceilingRaw : null;
+
+          // 🔑 A manual price is a decision and is never overridden. The ceiling only
+          // shapes the price we SUGGEST — capping first, then rounding, so the rounding
+          // rule cannot push the answer back above the ceiling it was just held under.
+          let suggested;
+          let ceilingBound = false;
+          if (l.suggested_price !== null && l.suggested_price !== undefined) {
+            suggested = Number(l.suggested_price);
+          } else if (asp === null) {
+            suggested = null;
+          } else {
+            const capped = ceiling !== null ? Math.min(asp, ceiling) : asp;
+            suggested = manifestRound(capped, rounding);
+            if (ceiling !== null && suggested !== null && suggested > ceiling) suggested = roundCents(ceiling);
+            ceilingBound = ceiling !== null && asp > ceiling;
+          }
           const flags = (() => { try { return JSON.parse(l.flags || "[]"); } catch { return []; } })();
           if (!l.l3) flags.push("no category");
           if (asp === null && l.l3) flags.push("no ASP");
+          // Say when the ceiling actually bit. A suggested price that is lower than our
+          // own ASP needs a reason visible on the line, or it reads as a mistake.
+          if (ceilingBound) flags.push(`held to the $${ceiling.toFixed(2)} dollar-store ceiling`);
           return { ...l, units, cost: costPerUnit, qty: units, asp_l3: asp,
                    std_cost_l3: stdCost,
                    // Vendor cost against what we normally pay for that category. Under
@@ -15752,6 +15783,7 @@ export default {
                    cost_vs_std: stdCost && costPerUnit !== null && stdCost > 0
                      ? +((costPerUnit / stdCost) * 100).toFixed(0) : null,
                    // What the pack IS, and separately whether it was used to convert.
+                   dollar_ceiling: ceiling, ceiling_bound: ceilingBound,
                    pack_used: linePack || (asCase ? factor : null),
                    pack_source: linePack ? "sheet" : (asCase ? "toggle" : null),
                    pack_converted: asCase,
