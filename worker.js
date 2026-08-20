@@ -8305,10 +8305,32 @@ async function retailDrainQueue(env) {
   const m = await env.DB.prepare(
     `SELECT id, vendor FROM manifests
       WHERE auto_retail = 1 AND status IN ('draft','scored')
-      ORDER BY uploaded_at LIMIT 1`).first();
+        AND (retail_lock_until IS NULL OR retail_lock_until < ?)
+      ORDER BY uploaded_at LIMIT 1`).bind(new Date().toISOString()).first();
   if (!m) return { idle: true };
 
-  const out = await retailRunManifest(env, m.id, { batch: 10 });
+  // 🔑 CLAIM IT ATOMICALLY. A batch of ten takes longer than the minute between ticks, so
+  // the next tick would otherwise query for pending lines, get the same set — the first
+  // run has not written its results yet — and do all of it again. Measured live at 44
+  // searches for 34 lines. Mostly that wastes free calls, but two runs can also both
+  // escalate the same line to Firecrawl, which spends real credits twice for one answer.
+  //
+  // The WHERE clause re-checks the lock, so of two ticks racing here exactly one wins.
+  const until = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const claim = await env.DB.prepare(
+    `UPDATE manifests SET retail_lock_until = ?
+      WHERE id = ? AND (retail_lock_until IS NULL OR retail_lock_until < ?)`
+  ).bind(until, m.id, new Date().toISOString()).run();
+  if (!claim?.meta?.changes) return { skipped: "already running" };
+
+  let out;
+  try {
+    out = await retailRunManifest(env, m.id, { batch: 10 });
+  } finally {
+    // Released either way. A lock that outlives a crash stalls the queue for its full
+    // five minutes, which is a slower failure but still a failure.
+    await env.DB.prepare(`UPDATE manifests SET retail_lock_until = NULL WHERE id = ?`).bind(m.id).run();
+  }
   // Clear the flag the moment there is nothing left, so a finished manifest stops being
   // picked up and the queue drains to empty rather than spinning on it.
   if (!out.remaining) {

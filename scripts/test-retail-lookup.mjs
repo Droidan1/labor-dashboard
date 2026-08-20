@@ -30,7 +30,7 @@ const near = (a, b, m) => ok(a !== null && Math.abs(a - b) < 0.02, `${m} (got ${
 
 const worker = await loadWorker(repo);
 const { db, env } = makeEnv(repo);
-for (const m of ['migration-041.sql','migration-042.sql','migration-043.sql','migration-044.sql','migration-045.sql'])
+for (const m of ['migration-041.sql','migration-042.sql','migration-043.sql','migration-044.sql','migration-045.sql','migration-046.sql'])
   db.exec(fs.readFileSync(path.join(repo, m), 'utf8'));
 applyMigrationAlters(db, repo);
 env.TINYFISH_API_KEY = 'tf-test';
@@ -472,6 +472,48 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   ok(/ZZQ/.test(decodeURIComponent(searches[0])),
      '🛑 with no expansion the original text is searched, not a guessed one');
   near(s2.line.retail_price, 2.00, 'and it still works');
+}
+
+// 🛑 Two ticks cannot process the same manifest at once.
+// A batch of ten takes longer than the minute between ticks, so without a claim the next
+// tick queries for pending lines, gets the same set, and does the work twice. Measured
+// live at 44 searches for 34 lines — and two runs escalating the same line to Firecrawl
+// spend real credits twice for one answer.
+{
+  const id = 'lock1';
+  db.prepare(`INSERT INTO manifests (id,vendor,uploaded_at,sell_as,units_per_case,status,auto_retail) VALUES (?,?,?,'each',1,'draft',1)`)
+    .run(id, 'Locked', '2026-08-20T00:00:00Z');
+  const ins = db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,flags) VALUES (?,?,?,'upc',?,1,1,'[]')`);
+  for (let i = 1; i <= 20; i++) ins.run(id, i, `660000000${String(i).padStart(3,'0')}`, `Thing ${i}`);
+  searchResults = []; snippetPrices = []; normalizeReply = [];
+
+  // Two ticks fired together, exactly as the cron does when a batch overruns.
+  const held = [];
+  const ctx2 = { waitUntil: (pr) => held.push(Promise.resolve(pr).catch(() => {})), passThroughOnException: () => {} };
+  await Promise.all([
+    worker.scheduled({ cron: '* * * * *' }, env, ctx2),
+    worker.scheduled({ cron: '* * * * *' }, env, ctx2),
+  ]);
+  await Promise.all(held);
+
+  const touched = db.prepare(`SELECT COUNT(*) n FROM manifest_lines WHERE manifest_id=? AND flags <> '[]'`).get(id).n;
+  ok(touched <= 10, `🛑 two simultaneous ticks advance ONE batch, not two (${touched} lines touched)`);
+  eq(db.prepare(`SELECT retail_lock_until l FROM manifests WHERE id=?`).get(id).l, null,
+     'and the claim is released afterwards, so the queue is not stalled');
+}
+
+// A stale claim does not wedge the queue forever.
+{
+  const id = 'lock2';
+  db.prepare(`INSERT INTO manifests (id,vendor,uploaded_at,sell_as,units_per_case,status,auto_retail,retail_lock_until) VALUES (?,?,?,'each',1,'draft',1,?)`)
+    .run(id, 'Stale', '2026-08-19T00:00:00Z', '2026-08-19T00:00:00Z');   // expired yesterday
+  db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,flags) VALUES (?,1,'660000000999','upc','Thing',1,1,'[]')`).run(id);
+  const held = [];
+  await worker.scheduled({ cron: '* * * * *' }, env,
+    { waitUntil: (pr) => held.push(Promise.resolve(pr).catch(() => {})), passThroughOnException: () => {} });
+  await Promise.all(held);
+  ok(db.prepare(`SELECT flags f FROM manifest_lines WHERE manifest_id=?`).get(id).f !== '[]',
+     'an expired claim is taken over rather than blocking the manifest forever');
 }
 
 // ── Access + a decided manifest is not re-priced underneath its decision ───
