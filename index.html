@@ -720,6 +720,10 @@
             <span id="nav-merch-chev" class="nav-chev nav-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
           </div>
           <div id="nav-merch-sub" class="nav-sub hidden">
+            <div id="nav-merch-coverage" class="nav-item nav-subitem" data-page="merch-coverage" onclick="navigateToPage('merch-coverage')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
+              <span class="nav-label">Coverage</span>
+            </div>
             <div id="nav-merch-criteria" class="nav-item nav-subitem" data-page="merch-criteria" onclick="navigateToPage('merch-criteria')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 15 11 17 15 12"/></svg></span>
               <span class="nav-label">Buy Criteria</span>
@@ -1993,6 +1997,108 @@
         <div class="flex gap-1 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border mb-4" id="fbc-status-tabs"></div>
         <div id="fbc-status" class="hidden text-sm mb-3"></div>
         <div id="fbc-list" class="space-y-3"></div>
+      </div>
+    </div>
+
+    <!-- ── Merchandising: Coverage scorecard ───────────────────────────────────
+         "Is core covered?" answered two ways — what the shelf gives a category and
+         what customers buy from it — with the gap as the buy/cut signal. Follows the
+         table pattern in DESIGN.md §4.8. -->
+    <div id="page-merch-coverage" class="hidden">
+      <style>
+        /* Colour is set on the PANEL, not just the table. §4.8 says never let a colour be
+           inherited, and this panel holds a hero and action rows as well as a table — set
+           it on the table alone and everything outside the table inherits body's black,
+           which measures 1.18:1 here. Both themes, always. */
+        #cv-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;
+          overflow:hidden;color:#14110a}
+        .dark #cv-panel{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3}
+        #cv-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;
+          background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #cv-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        #cv-bar .cv-barlbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
+        .dark #cv-bar .cv-barlbl{color:#8893a7}
+        .cv-seg{display:inline-flex;border:1px solid rgba(20,16,8,.18);border-radius:9px;overflow:hidden}
+        .dark .cv-seg{border-color:rgba(255,255,255,.16)}
+        .cv-seg button{background:transparent;border:none;padding:6px 13px;font-size:12.5px;font-weight:600;
+          cursor:pointer;color:#6b6453}
+        .dark .cv-seg button{color:#8893a7}
+        .cv-seg button.on{background:#22c55e;color:#06210f}
+        #cv-scroll{overflow-x:auto}
+        #cv-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;color:#14110a;
+          font-variant-numeric:tabular-nums}
+        .dark #cv-tbl{color:#e7ecf3}
+        #cv-tbl th,#cv-tbl td{text-align:right;padding:0 10px;height:46px;white-space:nowrap;
+          border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #cv-tbl th,.dark #cv-tbl td{border-bottom-color:rgba(255,255,255,.09)}
+        #cv-tbl th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;height:34px;
+          color:#6b6453;background:#fafaf6;position:sticky;top:0;z-index:3}
+        .dark #cv-tbl th{color:#8893a7;background:#16203a}
+        #cv-tbl th.cv-cat,#cv-tbl td.cv-cat{text-align:left;position:sticky;left:0;z-index:2;white-space:normal;
+          min-width:210px;background:#ffffff;font-weight:600}
+        .dark #cv-tbl th.cv-cat,.dark #cv-tbl td.cv-cat{background:#101826}
+        #cv-tbl th.cv-cat{z-index:4;background:#fafaf6}
+        .dark #cv-tbl th.cv-cat{background:#16203a}
+        #cv-tbl tr.cv-total td{font-weight:700;background:#fafaf6}
+        .dark #cv-tbl tr.cv-total td{background:#16203a}
+        #cv-tbl tr.cv-rest td.cv-cat{font-weight:500;color:#6b6453}
+        .dark #cv-tbl tr.cv-rest td.cv-cat{color:#8893a7}
+        /* Each cell carries TWO numbers — sales share over shelf share — because the
+           whole point of the page is the gap between them. The tint encodes the ratio;
+           the numbers say why, so the colour never has to be trusted on its own. */
+        .cv-cell{display:flex;flex-direction:column;align-items:flex-end;gap:1px;line-height:1.15}
+        .cv-sales{font-weight:600}
+        .cv-shelf{font-size:11px;color:#6b6453}
+        .dark .cv-shelf{color:#8893a7}
+        .cv-pad{display:block;border-radius:7px;padding:5px 8px;margin:0 -2px}
+        .cv-starved{background:rgba(34,197,94,.16);box-shadow:inset 0 0 0 1px rgba(34,197,94,.42)}
+        .cv-dead{background:rgba(239,68,68,.14);box-shadow:inset 0 0 0 1px rgba(239,68,68,.40)}
+        .cv-none{background:rgba(245,158,11,.14);box-shadow:inset 0 0 0 1px rgba(245,158,11,.45)}
+        .cv-under{color:#ef4444}
+        .cv-hero{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end;padding:18px}
+        .cv-big{font-size:38px;font-weight:700;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+        .cv-cap{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453;margin-bottom:5px}
+        .dark .cv-cap{color:#8893a7}
+        .cv-act{display:flex;align-items:baseline;gap:10px;padding:9px 18px;border-top:1px solid rgba(20,16,8,.10);font-size:13px}
+        .dark .cv-act{border-top-color:rgba(255,255,255,.09)}
+        .cv-kind{font-size:9.5px;font-weight:700;letter-spacing:.08em;border-radius:4px;padding:2px 6px;flex:none}
+        .cv-BUY{color:#06210f;background:#22c55e}
+        .cv-FLOOR{color:#3b2400;background:#f59e0b}
+        .cv-CUT{color:#fff;background:#ef4444}
+        .cv-why{color:#6b6453}
+        .dark .cv-why{color:#8893a7}
+        #cv-legend{display:flex;gap:20px;flex-wrap:wrap;padding:12px 18px;font-size:12px;color:#6b6453;
+          border-top:1px solid rgba(20,16,8,.10)}
+        .dark #cv-legend{color:#8893a7;border-top-color:rgba(255,255,255,.09)}
+        #cv-legend span{display:flex;align-items:center;gap:7px}
+        #cv-legend i{width:22px;height:14px;border-radius:4px;display:inline-block}
+      </style>
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-[1500px] mx-auto">
+          <div class="flex items-center gap-2.5 flex-wrap">
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Coverage</h1>
+            <span id="cv-window-pill" class="text-[11px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded-md px-2 py-0.5"></span>
+          </div>
+          <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">What each category gets of the floor, against what it sells. The gap is the buy or the cut.</p>
+        </div>
+      </div>
+      <div class="max-w-[1500px] mx-auto px-4 sm:px-6 pt-4 pb-10 space-y-4">
+        <div id="cv-panel">
+          <div id="cv-bar">
+            <span class="cv-barlbl">Core coverage</span>
+            <span class="cv-seg">
+              <button id="cv-w7" onclick="cvSetWindow(7)">7 days</button>
+              <button id="cv-w28" onclick="cvSetWindow(28)">28 days</button>
+            </span>
+            <span id="cv-reporting" class="text-xs text-opl-inkDim dark:text-op-inkDim ml-auto"></span>
+          </div>
+          <div id="cv-hero" class="cv-hero"></div>
+          <div id="cv-actions"></div>
+        </div>
+        <!-- Kept OUTSIDE #cv-table-panel: cvRenderTable replaces that container wholesale,
+             so anything living inside it does not survive a refresh. -->
+        <div id="cv-status" class="text-sm text-opl-inkDim dark:text-op-inkDim">Loading…</div>
+        <div id="cv-table-panel"></div>
       </div>
     </div>
 
@@ -7839,7 +7945,7 @@
     if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)) return;
 
     // Guard admin-only pages
-    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria'];
+    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria', 'merch-coverage'];
     if (adminOnly.includes(page)) {
       const role = currentUser && currentUser.role;
       if (role !== 'superuser' && role !== 'admin') return;
@@ -7952,6 +8058,9 @@
     if (page === 'content') {
       if (typeof initContent === 'function') initContent();
     }
+    if (page === 'merch-coverage') {
+      if (typeof initMerchCoverage === 'function') initMerchCoverage();
+    }
     if (page === 'merch-criteria') {
       if (typeof initMerchCriteria === 'function') initMerchCriteria();
     }
@@ -7959,7 +8068,7 @@
       if (typeof initShelfCount === 'function') initShelfCount();
     }
     // Keep the Merchandising dropdown expanded while on any of its pages.
-    if ((page === 'merch-criteria' || page === 'merch-shelf-count') && typeof toggleMerchMenu === 'function') {
+    if ((page === 'merch-coverage' || page === 'merch-criteria' || page === 'merch-shelf-count') && typeof toggleMerchMenu === 'function') {
       toggleMerchMenu(true);
     }
 
@@ -17033,6 +17142,144 @@
   }
   window.toggleMerchMenu = toggleMerchMenu;
 
+  // ── Coverage scorecard ────────────────────────────────────────────────────
+  let cvData = null, cvWindow = 7;
+
+  const cvStatus = (t) => { const n = el('cv-status'); if (n) n.textContent = t; };
+
+  async function initMerchCoverage() {
+    cvStatus('Loading…');
+    el('cv-hero').innerHTML = ''; el('cv-actions').innerHTML = '';
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=merch-coverage&window=${cvWindow}`, { credentials: 'include' });
+      cvData = await r.json();
+      if (!r.ok) throw new Error(cvData.error || `HTTP ${r.status}`);
+      cvRender();
+    } catch (e) {
+      cvStatus(`Could not load coverage: ${e.message}`);
+    }
+  }
+  window.initMerchCoverage = initMerchCoverage;
+
+  function cvSetWindow(n) { cvWindow = n; initMerchCoverage(); }
+  window.cvSetWindow = cvSetWindow;
+
+  const cvEsc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  // A null share is "we don't know", which must never render as 0%.
+  const cvPct = (v) => v === null || v === undefined ? '—' : `${v.toFixed(v < 10 ? 1 : 0)}%`;
+
+  function cvRender() {
+    const d = cvData;
+    el('cv-w7').classList.toggle('on', cvWindow === 7);
+    el('cv-w28').classList.toggle('on', cvWindow === 28);
+    el('cv-window-pill').textContent = `Last ${d.window} days`;
+
+    if (!d.categories?.length) {
+      el('cv-window-pill').textContent = 'No core yet';
+      el('cv-reporting').textContent = '';
+      el('cv-hero').innerHTML = `<div style="max-width:60ch"><div class="cv-cap">Nothing to measure</div>
+        <p class="text-sm text-opl-inkDim dark:text-op-inkDim">Core has not been defined yet. Tick what counts as core on Buy Criteria and publish v1 — this page fills in from the sales already in the Hub the moment you do.</p></div>`;
+      el('cv-actions').innerHTML = '';
+      el('cv-table-panel').innerHTML = '';
+      return;
+    }
+
+    const ch = d.chain;
+    el('cv-reporting').textContent =
+      `${ch.storesReporting}/${ch.storesTotal} stores reporting sales · ${ch.storesCounted}/${ch.storesTotal} counted this week`;
+
+    // The hero answers Ryan's question in two numbers and one sentence.
+    const floorClass = ch.underFloor ? ' class="cv-under"' : '';
+    el('cv-hero').innerHTML = `
+      <div>
+        <div class="cv-cap">Core share of sales</div>
+        <div class="cv-big">${cvPct(ch.coreSalesPct)}</div>
+      </div>
+      <div>
+        <div class="cv-cap">Core share of floor</div>
+        <div class="cv-big"${floorClass}>${cvPct(ch.coreShelfPct)}</div>
+      </div>
+      <div>
+        <div class="cv-cap">Floor</div>
+        <div class="cv-big" style="opacity:.45">${d.floorPct}%</div>
+      </div>
+      <div style="flex:1;min-width:260px;max-width:56ch">
+        <p class="text-sm text-opl-inkDim dark:text-op-inkDim">${cvEsc(cvReading(d))}</p>
+      </div>`;
+
+    el('cv-actions').innerHTML = (d.actions || []).length
+      ? (d.actions || []).map(a => `<div class="cv-act">
+          <span class="cv-kind cv-${a.kind}">${a.kind}</span>
+          <span><strong>${cvEsc(a.label)}</strong> <span class="cv-why">— ${cvEsc(a.why)}</span></span>
+        </div>`).join('') + (d.actionsTruncated
+          ? `<div class="cv-act"><span class="cv-why">${d.actionsTruncated} more not shown — the six above are the ones worth the call.</span></div>` : '')
+      : `<div class="cv-act"><span class="cv-why">Nothing to act on this week.</span></div>`;
+
+    cvStatus('');
+    cvRenderTable(d);
+  }
+
+  // The one-line reading. It says what is actually knowable — with no shelf counts in
+  // yet, claiming anything about the floor would be inventing it.
+  function cvReading(d) {
+    const ch = d.chain;
+    if (!ch.storesReporting) return 'No sales snapshots in this window yet.';
+    if (ch.coreShelfPct === null) {
+      return `Core is ${cvPct(ch.coreSalesPct)} of everything sold in the last ${d.window} days. `
+        + `No store has entered a shelf count yet, so there is nothing to compare it against — `
+        + `the floor number and the buy/cut calls appear once counts start coming in.`;
+    }
+    const gap = ch.coreShelfPct - d.floorPct;
+    return ch.underFloor
+      ? `Core holds ${cvPct(ch.coreShelfPct)} of the floor against a ${d.floorPct}% mark — `
+        + `${Math.abs(gap).toFixed(0)} points short — while doing ${cvPct(ch.coreSalesPct)} of the units.`
+      : `Core holds ${cvPct(ch.coreShelfPct)} of the floor, ${gap.toFixed(0)} points clear of the `
+        + `${d.floorPct}% mark, and does ${cvPct(ch.coreSalesPct)} of the units.`;
+  }
+
+  function cvRenderTable(d) {
+    const stores = d.stores || [];
+    const cell = (c) => {
+      if (!c) return '<span class="cv-pad">—</span>';
+      const cls = c.state === 'starved' ? ' cv-starved' : c.state === 'dead' ? ' cv-dead'
+        : c.state === 'none' ? ' cv-none' : '';
+      const title = c.ratio !== null ? `sells ${c.ratio}× its shelf share` : 'no shelf count yet';
+      return `<span class="cv-pad${cls}" title="${title}"><span class="cv-cell">
+        <span class="cv-sales">${cvPct(c.salesPct)}</span>
+        <span class="cv-shelf">${c.bays === null ? 'no count' : cvPct(c.shelfPct)}</span></span></span>`;
+    };
+    const head = `<thead><tr><th class="cv-cat">Category</th><th>Chain</th>${
+      stores.map(st => `<th title="${cvEsc(st.label)}">${cvEsc(st.label)}</th>`).join('')}</tr></thead>`;
+    const rows = (d.categories || []).map(c => {
+      const rest = c.level === 'rest';
+      return `<tr class="${rest ? 'cv-rest' : ''}"><td class="cv-cat" title="${cvEsc(c.key)}">${cvEsc(c.label)}</td>
+        <td>${cell(d.chain.cells[c.key])}</td>${
+        stores.map(st => `<td>${cell(st.cells[c.key])}</td>`).join('')}</tr>`;
+    }).join('');
+    // The core total is the row Ryan actually reads, so it is pinned at the bottom and
+    // flags any store under the floor regardless of how its individual cells look.
+    const totals = `<tr class="cv-total"><td class="cv-cat">Core total</td>
+      <td><span class="cv-pad"><span class="cv-cell">
+        <span class="cv-sales">${cvPct(d.chain.coreSalesPct)}</span>
+        <span class="cv-shelf${d.chain.underFloor ? ' cv-under' : ''}">${d.chain.coreShelfPct === null ? 'no count' : cvPct(d.chain.coreShelfPct)}</span>
+      </span></span></td>${stores.map(st => `<td><span class="cv-pad"><span class="cv-cell">
+        <span class="cv-sales">${st.reporting ? cvPct(st.coreSalesPct) : '—'}</span>
+        <span class="cv-shelf${st.underFloor ? ' cv-under' : ''}">${st.hasShelf ? cvPct(st.coreShelfPct) : 'no count'}</span>
+      </span></span></td>`).join('')}</tr>`;
+
+    el('cv-table-panel').innerHTML = `<div id="cv-panel">
+      <div id="cv-bar"><span class="cv-barlbl">Store × category</span>
+        <span class="text-xs text-opl-inkDim dark:text-op-inkDim">${cvEsc(d.start)} → ${cvEsc(d.end)}</span></div>
+      <div id="cv-scroll"><table id="cv-tbl">${head}<tbody>${rows}${totals}</tbody></table></div>
+      <div id="cv-legend">
+        <span>Each cell: <strong>sales %</strong> over shelf %</span>
+        <span><i class="cv-starved"></i> Sells above its shelf — buy</span>
+        <span><i class="cv-dead"></i> Holds shelf it isn't earning — cut</span>
+        <span><i class="cv-none"></i> On the list, not on the shelf</span>
+      </div>
+    </div>`;
+  }
+
   // ── Buy Criteria ──────────────────────────────────────────────────────────
   const MC_COLS = [
     ['core',                   'Core',         'check'],
@@ -19520,6 +19767,7 @@
     'nav-merch': 'bl',
     'nav-merch-chev': 'bl',
     'nav-merch-sub': 'bl',
+    'nav-merch-coverage': 'bl',
     'nav-merch-criteria': 'bl',
     'nav-merch-shelf-count': 'bl',
     // Hub-level, not owned by any one business.
@@ -19924,6 +20172,7 @@
     // Same shape as Marketing directly below.
     const merchRoles = ['superuser', 'admin', 'district_manager', 'manager'];
     el('nav-merch-group').classList.toggle('hidden', !merchRoles.includes(user.role));
+    el('nav-merch-coverage').classList.toggle('hidden', !isAdmin);
     el('nav-merch-criteria').classList.toggle('hidden', !isAdmin);
 
     el('nav-marketing-group').classList.remove('hidden');

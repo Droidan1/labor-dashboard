@@ -282,16 +282,19 @@ await post('merch-criteria-publish', 'u-su', { note: 'core = food, for the shelf
   await post('merch-criteria-draft', 'u-su', { cells: [{ category: FOOD, field: 'core', value: '1' }] });
   await post('merch-criteria-publish', 'u-su', { note: 'core = food' });
   let cats = (await get('shelf-counts', 'u-mgr1', '&store=BL1')).body.categories || [];
-  eq(cats.length, 1, 'one row for a core L2 with no core children');
-  eq(cats[0].key, FOOD, '...and it is the L2 itself');
+  eq(cats.length, 2, 'a core L2 with no core children, plus the non-core denominator');
+  eq(cats[0].key, FOOD, '...the L2 itself');
   eq(cats[0].level, 'l2', '...counted at L2 level');
+  // Without this the floor has no denominator — you would be measuring core as a
+  // share of itself. It has to be collected from the first week, not bolted on later.
+  eq(cats[1].key, '__non_core__', '🔑 and a bucket for everything not core');
 
   // Flag an L3 under it → that L3 is counted separately, and the remainder gets a row
   // so the L2's share still adds up instead of being double-counted.
   await post('merch-criteria-draft', 'u-su', { cells: [{ category: COFFEE, field: 'core', value: '1' }] });
   await post('merch-criteria-publish', 'u-su', { note: 'coffee counted on its own' });
   cats = (await get('shelf-counts', 'u-mgr1', '&store=BL1')).body.categories || [];
-  eq(cats.length, 2, 'the core L3 plus an "other" remainder');
+  eq(cats.length, 3, 'the core L3, an "other" remainder, and the non-core bucket');
   ok(cats.some(c => c.key === COFFEE && c.level === 'l3'), 'the core L3 is counted on its own');
   const other = cats.find(c => c.level === 'other');
   ok(other, 'the remainder of the L2 still gets a row');

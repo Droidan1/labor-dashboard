@@ -333,9 +333,9 @@ to no-op (card no longer has a click handler).
 
 ### 4.8 Dense editable data table (Merchandising)
 
-Built for Buy Criteria (`#page-merch-criteria`); the pattern is meant to be
-reused by every later Merchandising surface — the Coverage scorecard heatmap,
-the Manifest Scorer's line table and L2 rollup. **Follow it rather than
+Built for Buy Criteria (`#page-merch-criteria`) and reused by the Coverage
+scorecard (`#page-merch-coverage`); the pattern is meant to carry the rest of
+Merchandising too — the Manifest Scorer's line table and its rollup. **Follow it rather than
 re-deriving one.** The shape came out of a preview Brian approved, and the
 point of writing it down is that the next table looks like this one.
 
@@ -405,9 +405,13 @@ Every one of these shipped broken first. Check them on the next table.
    cell renders as a browser-default white box in both themes.
 2. **A `position: sticky` column needs its own opaque background**, or the
    cells scroll underneath it.
-3. **State a colour for BOTH themes, every time.** A `<style>` block cannot use
-   the Tailwind token classes, so duplicate the token's literal value and say
-   in a comment that it is a token. Never let a colour be inherited.
+3. **State a colour for BOTH themes, every time, ON THE PANEL — not just the
+   table.** A `<style>` block cannot use the Tailwind token classes, so
+   duplicate the token's literal value and say in a comment that it is a token.
+   Never let a colour be inherited. Coverage hit this a second time: colour was
+   set on `#cv-tbl`, so the table read fine while the hero numbers and action
+   rows in the same panel inherited body's black at **1.18:1** on the dark
+   ground. The panel owns more than a table — colour it at the panel.
 4. **`accent-color` only paints a CHECKED checkbox.** The unchecked box is
    UA-drawn and follows `color-scheme`, which this app never sets — so it comes
    out white on a dark panel. Set `color-scheme: dark` scoped to the table, not
@@ -415,7 +419,35 @@ Every one of these shipped broken first. Check them on the next table.
 5. **`inkDimmer` fails AA on `opl-bg`** (2.71:1). Use `inkDim` (5.29:1) for
    muted-but-readable text; keep `inkDimmer` for borders and badges.
 6. **Measure, don't eyeball.** Compute contrast against the real background in
-   both themes and require ≥ 4.5:1. This table runs 5.21–18.85.
+   both themes and require ≥ 4.5:1. Buy Criteria runs 5.21–18.85; Coverage
+   5.74–18.85.
+7. **A container you replace wholesale must not hold anything else.** Coverage's
+   status line lived inside the div its render function overwrites, so it
+   vanished on first paint and every later refresh threw on it — the 7/28-day
+   toggle was dead on arrival. Render targets hold ONLY what that render owns.
+8. **Exercise the SECOND render, not just the first.** Both of the bugs above
+   were invisible on initial load and only appeared on a refresh. Toggle the
+   control, reload the data, and check it still works.
+
+**Scorecard variant (Coverage)**
+
+Same panel, different payload — a hero, an action list and a heatmap instead of
+editable cells:
+
+- **Hero**: two or three big tabular numbers with small uppercase captions, then
+  ONE plain-English sentence reading the numbers back. The sentence says only
+  what is knowable — with no shelf counts in, it says so instead of printing a
+  floor figure.
+- **Action rows**: a coloured `BUY` / `FLOOR` / `CUT` chip, the subject in
+  medium, and the reason in `inkDim` — always with the numbers that produced it,
+  so a call is never "trust the colour".
+- **Heatmap cells** carry TWO numbers stacked (the measure over its comparator),
+  tinted by state. The tint is `background` + `inset` ring, never text colour.
+  A missing input reads **"no count"** — never `0%`. Zero is a real reading that
+  means "cut this", and printing it for absent data is how a scorecard tells you
+  to cut a category nobody has measured.
+- **Totals row** pinned at the bottom, flagging any column past its threshold
+  regardless of how the individual cells look.
 
 **Token literals for `<style>` blocks**
 
