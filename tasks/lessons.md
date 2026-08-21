@@ -1,3 +1,46 @@
+## A backgrounded `git merge` finished AFTER I changed branches, and silently overwrote the tree (2026-08-21)
+
+**Context:** `git merge main` into `staging` kept timing out (this repo's `index.html` is
+1.3 MB and `worker.js` 836 KB, and the merge spans 25+36 commits). I relaunched it as a
+background job so a timeout could not kill it, then — believing it dead because HEAD had
+not moved and no `MERGE_HEAD` existed — switched to `main` and carried on working.
+
+The job was still alive. It completed minutes later and wrote **staging's** content into a
+working tree that was checked out to **main**. Every git command still reported
+`branch: main`, `HEAD: 86b44e0`, clean-ish status. Only `grep -c merch-velocity worker.js`
+returning `0` — for code I had verified as present twenty minutes earlier — exposed it.
+
+**Root cause:** a background git process holds no lock across its whole run and does not
+re-check the branch before writing. Branch state is read at start and applied at the end.
+Anything that moves HEAD in between produces a tree belonging to neither branch, with no
+marker anywhere saying so.
+
+**What made it recoverable:** the work was already committed and pushed. `origin/main`
+still had `86b44e0`, so `git restore --source=HEAD --staged --worktree .` rebuilt the tree
+exactly. Had the work been uncommitted it would simply have been gone.
+
+**Rules:**
+1. **Never background a git command that writes the working tree or index** (`merge`,
+   `rebase`, `checkout`, `stash`, `pull`). Background reads (`log`, `fetch`, `fsck`) only.
+   If a merge is too slow to run in the foreground, that is a signal to make it smaller,
+   not to detach it.
+2. **Absence of `MERGE_HEAD` does not mean the merge is dead.** Check for a live process
+   (`pgrep -fl "git merge"`) before concluding anything, and before touching the branch.
+3. **After any interrupted git operation, verify by CONTENT, not by branch name.** Grep the
+   working tree for a symbol unique to the branch you expect. `git status` said "main" for
+   twenty minutes while the tree was staging's.
+4. **Commit and push before starting a long merge.** It converts "lost work" into "one
+   restore command".
+
+**Also seen in the same session, and worth knowing:**
+- An interrupted merge leaves debris in *two* forms: modified tracked files AND newly
+  created untracked ones. `git restore` fixes the first; the second silently blocks the
+  next `git checkout` with "untracked working tree files would be overwritten". Move those
+  aside rather than deleting — they may be a branch's real content.
+- `git merge` failed once with a bare `fatal: stash failed` and succeeded on a plain retry.
+  Do not build a theory on a single transient git failure; retry once first.
+- `timeout` does not exist on macOS. `gtimeout` (coreutils) or a `perl -e 'select'` loop.
+
 # Lessons
 
 ## Deploying main's worker to a named env SILENTLY REVERTS whatever only lives on that env's branch (2026-08-19)
