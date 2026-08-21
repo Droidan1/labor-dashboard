@@ -486,5 +486,188 @@ let mid;
      'a negative defect rate is refused');
 }
 
+// ── The header is FOUND, not assumed to be row 1 ───────────────────────────
+// Vendors put letterheads, load numbers, contact lines and blank rows above the real
+// header. Taking rows[0] on faith does not misparse — it fails totally, because the
+// header found is ["Alliance Wholesale","",""] and nothing maps to anything.
+{
+  const CSV = [
+    'ALLIANCE WHOLESALE LIQUIDATION,,,',        // letterhead
+    'Load #88213 — Fort Wayne,,,',              // load reference
+    ',,,',                                      // blank
+    'Questions? sales@alliance.example,,,',     // contact line
+    'UPC,Item Description,Qty,Unit Cost',       // ← the real header, row 5
+    '012345678990,Bar soap 3 oz,100,1.00',
+    '012345678991,Shampoo 12 oz,50,2.00', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'PreambleCo', csv: CSV });
+  eq(r.status, 200, 'a manifest with a four-line preamble uploads');
+  // csvParse drops the blank line first, so the header is parsed-row 4 even though it is
+  // line 5 of the file. `skipped` is the number that means something to a person.
+  eq(r.body.header_row, 4, '🔑 the header is FOUND, not assumed to be row 1');
+  eq(r.body.header_skipped, 3, '...and it reports the preamble rows it stepped over');
+  eq(r.body.rows, 2, 'two data lines, not six');
+  eq(r.body.missing.length, 0, 'and the columns map, which row 1 could never have done');
+  eq(r.body.column_map.identifier, 'UPC', 'UPC found under the preamble');
+  eq(r.body.column_map.cost, 'Unit Cost', 'cost found too');
+}
+
+// ── A data row that looks header-ish does not beat the real header above it ──
+{
+  const CSV = [
+    'UPC,Item Description,Qty,Unit Cost',
+    // "Pack" and "Cost" both hit hint patterns; this row must NOT win.
+    '012345678992,Pack of 6 Cost Cutter wipes,10,1.00',
+    '012345678993,Plain soap,10,1.00', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'DecoyCo', csv: CSV });
+  eq(r.body.header_row, 1, '🔑 a real header outscores a data row that merely looks like one');
+  eq(r.body.rows, 2, 'both data lines are kept');
+}
+
+// ── A header with nothing under it is refused, not scored as an empty manifest ──
+{
+  const CSV = ['ACME LIQUIDATORS,,,', 'Load #1,,,', 'UPC,Item Description,Qty,Unit Cost', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'EmptyCo', csv: CSV });
+  eq(r.status, 400, '🛑 a header with no lines under it is refused');
+  ok(/no lines under it/i.test(r.body.error || ''), '...and says exactly that');
+}
+
+// ── The score is reported, so a weak guess is visible rather than silent ────
+{
+  const CSV = ['Widget,Thing,Blah', 'a,b,c', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'NoHeaderCo', csv: CSV });
+  // Nothing here looks like a manifest column. It still picks row 1 — it has to pick
+  // something — but the score says "do not trust this", and `missing` proves it.
+  ok((r.body.header_score ?? 0) <= 1, 'a sheet with no recognisable header scores low');
+  ok(r.body.missing.length > 0, '...and the required columns come back unmapped, as they should');
+}
+
+// ── Remap re-reads the SAME file and must find the SAME header ─────────────
+// If upload skipped a preamble and remap did not, a corrected mapping would be applied
+// against a different set of columns than the one the user was shown.
+{
+  const CSV = [
+    'VENDOR SHEET,,,', ',,,',
+    'UPC,Item Description,Qty,Unit Cost',
+    '012345678994,Soap,10,1.00', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'RemapCo', csv: CSV });
+  eq(up.body.header_skipped, 1, 'upload steps over the preamble (the blank is dropped first)');
+  const re = await post('manifest-remap', { id: up.body.id, csv: CSV,
+    column_map: { identifier: 'UPC', description: 'Item Description', qty: 'Qty', cost: 'Unit Cost' } });
+  eq(re.status, 200, 'remap accepts the same file');
+  eq(re.body.rows, 1, '🔑 remap reads ONE data line, not three — it skipped the preamble too');
+}
+
+// ── .xlsx goes through the SAME door as CSV ────────────────────────────────
+// The fixture is a real ZIP built by scripts/fixtures/make-xlsx.py, and it carries every
+// trap the reader has to survive at once: a two-line vendor preamble, shared strings, a
+// row that SKIPS column B, a blank row, an inline string split across two <t> runs, and a
+// decoy sheet that is first on disk but second in workbook order.
+{
+  const buf = fs.readFileSync(path.join(repo, 'scripts/fixtures/manifest-sample.xlsx'));
+  const b64 = buf.toString('base64');
+  const r = await post('manifest-upload', { vendor: 'XlsxCo', filename: 'aug.xlsx', format: 'xlsx', file_b64: b64 });
+  eq(r.status, 200, '🔑 an .xlsx uploads without being exported to CSV first');
+  eq(r.body.column_map.identifier, 'UPC', 'columns map out of the workbook');
+  eq(r.body.column_map.cost, 'Unit Cost', '...including cost');
+  eq(r.body.header_skipped, 2, 'the two preamble rows are stepped over');
+  eq(r.body.rows, 3, 'three data lines — the blank row is not one of them');
+
+  const lines = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(r.body.id);
+  eq(lines.length, 3, 'three lines written');
+  eq(lines[0].identifier, '012345678990', 'the UPC survives as text, not as 1.234e+10');
+  // 🔑 The sparse row: it has A, C and D but no B. If the reader indexed by encounter
+  // order instead of by the cell's own r="C4", qty would land in the description column
+  // and every number after it would shift one place left — silently.
+  eq(lines[0].description, null, 'the SKIPPED column B stays empty…');
+  near(lines[0].qty, 100, '…and qty is still qty, not shifted left into it');
+  near(lines[0].cost, 1.5, '…and cost is still cost');
+  eq(lines[1].description, 'Shampoo 12 oz', 'a shared string resolves');
+  eq(lines[2].description, 'Inline String Item', 'an inline string split across runs is rejoined');
+}
+
+// ── A file that is not a workbook is refused as the user's problem, not a 500 ──
+{
+  const r = await post('manifest-upload', { vendor: 'BadZip', format: 'xlsx', file_b64: btoa('this is not a zip') });
+  eq(r.status, 400, '🛑 a non-workbook is a 400, not a server error');
+  ok(/valid \.xlsx/i.test(r.body.error || ''), '...and says what is wrong with it');
+}
+
+// ── .pdf is READ by the model, and every failure mode is the user's, not a 500 ──
+// This is the only ingest path that costs money, and the only one whose output is a
+// reading rather than a parse. The model call is stubbed throughout — a test must never
+// reach the real API — and what is asserted is that the extraction lands in the SAME
+// mapping-confirmation flow as a CSV, so a misread row is caught by the screen that
+// already catches a misguessed column.
+{
+  modelReply = JSON.stringify({ rows: [
+    ['UPC', 'Item Description', 'Qty', 'Unit Cost'],
+    ['012345678995', 'Bar soap 3 oz', '100', '1.00'],
+    ['012345678996', 'Shampoo 12 oz', '50', '2.00'],
+  ]});
+  modelCalls = [];
+  const r = await post('manifest-upload', { vendor: 'PdfCo', filename: 'load.pdf', format: 'pdf', file_b64: btoa('%PDF-1.4 fake') });
+  eq(r.status, 200, '🔑 a PDF uploads and lands in the same pipeline as a CSV');
+  eq(r.body.rows, 2, 'two line items extracted');
+  eq(r.body.column_map.identifier, 'UPC', '…and the columns map exactly as a CSV would');
+  eq(r.body.missing.length, 0, 'nothing is left unmapped');
+
+  // The PDF has to actually be SENT as a document block, not pasted in as text.
+  const call = modelCalls[modelCalls.length - 1];
+  const content = call.messages[0].content;
+  ok(Array.isArray(content), 'the request uses a content-block array');
+  const doc = content.find(c => c.type === 'document');
+  ok(doc, '🔑 the PDF rides as a document block');
+  eq(doc.source.media_type, 'application/pdf', '…declared as a PDF');
+  eq(doc.source.type, 'base64', '…sent as base64');
+  ok(/verbatim/i.test(call.system || ''), 'the prompt tells it to copy values verbatim');
+  ok(/leading zero/i.test(call.system || ''), '…and to keep UPC leading zeros');
+}
+
+// ── A truncated read is refused: half a manifest scored whole LOOKS complete ──
+{
+  modelReply = JSON.stringify({ rows: [['UPC', 'Qty'], ['012345678997', '5']] });
+  // Force the truncation signal rather than the content.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    if (String(u).includes('api.anthropic.com')) {
+      return new Response(JSON.stringify({
+        content: [{ type: 'text', text: modelReply }], stop_reason: 'max_tokens',
+      }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+  const r = await post('manifest-upload', { vendor: 'TruncCo', format: 'pdf', file_b64: btoa('%PDF') });
+  globalThis.fetch = realFetch;
+  eq(r.status, 400, '🛑 a truncated extraction is refused, not scored as a whole manifest');
+  ok(/split it/i.test(r.body.error || ''), '...and says what to do about it');
+}
+
+// ── No table found says so, rather than writing an empty manifest ───────────
+{
+  modelReply = JSON.stringify({ rows: [] });
+  const r = await post('manifest-upload', { vendor: 'NoTableCo', format: 'pdf', file_b64: btoa('%PDF') });
+  eq(r.status, 400, '🛑 a PDF with no line-item table is refused');
+  ok(/no line-item table/i.test(r.body.error || ''), '...in words');
+}
+
+// ── With no key configured it SAYS so, rather than silently doing nothing ───
+{
+  const saved = env.ANTHROPIC_API_KEY; delete env.ANTHROPIC_API_KEY;
+  const r = await post('manifest-upload', { vendor: 'NoKeyCo', format: 'pdf', file_b64: btoa('%PDF') });
+  env.ANTHROPIC_API_KEY = saved;
+  eq(r.status, 400, 'without a key the PDF path refuses');
+  ok(/not configured/i.test(r.body.error || ''), '...and names the reason');
+}
+
+// ── 💰 The paid path NEVER fires for a format that parses on its own ────────
+{
+  modelCalls = [];
+  const CSV = ['UPC,Item Description,Qty,Unit Cost', '012345678998,Soap,10,1.00', ''].join('\n');
+  await post('manifest-upload', { vendor: 'FreeCo', csv: CSV });
+  const pdfCalls = modelCalls.filter(c =>
+    (c.messages?.[0]?.content || []).some?.(x => x.type === 'document'));
+  eq(pdfCalls.length, 0, '🔑 a CSV never reaches the billed PDF reader');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

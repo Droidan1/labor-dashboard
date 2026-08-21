@@ -8110,6 +8110,270 @@ const MANIFEST_HINTS = {
   msrp: [/^msrp\b/i, /^list\b/i, /retail\s*price/i, /^srp\b/i, /^orig(inal)?\s*retail/i],
   vendor_claimed_retail: [/retail\s*comp/i, /^comp$/i, /^claimed/i],
 };
+// ─── .xlsx → rows ────────────────────────────────────────────────────────────
+//
+// An .xlsx is a ZIP of XML. Workers ship DecompressionStream("deflate-raw"), so this needs
+// no dependency — which matters: SheetJS is ~800 KB on top of an already 836 KB worker,
+// against a 1 MB compressed limit, and we need a small, well-understood subset of it.
+//
+// Read the ZIP's central directory (not a linear scan of local headers — those carry
+// zero-length fields when the writer streamed the archive, and Excel does stream it).
+async function zipEntries(buf) {
+  const dv = new DataView(buf);
+  const u8 = new Uint8Array(buf);
+  // End of Central Directory: signature 0x06054b50, within the last 64 KB.
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= Math.max(0, u8.length - 65558); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error("Not a valid .xlsx file (no ZIP directory found)");
+  const count = dv.getUint16(eocd + 10, true);
+  let off = dv.getUint32(eocd + 16, true);
+
+  const out = {};
+  for (let n = 0; n < count; n++) {
+    if (dv.getUint32(off, true) !== 0x02014b50) break;
+    const method   = dv.getUint16(off + 10, true);
+    const compSize = dv.getUint32(off + 20, true);
+    const nameLen  = dv.getUint16(off + 28, true);
+    const extraLen = dv.getUint16(off + 30, true);
+    const cmtLen   = dv.getUint16(off + 32, true);
+    const localOff = dv.getUint32(off + 42, true);
+    const name     = new TextDecoder().decode(u8.subarray(off + 46, off + 46 + nameLen));
+    off += 46 + nameLen + extraLen + cmtLen;
+
+    // The LOCAL header's own name/extra lengths decide where the bytes start; they differ
+    // from the central directory's, and using the wrong pair reads garbage.
+    const lNameLen  = dv.getUint16(localOff + 26, true);
+    const lExtraLen = dv.getUint16(localOff + 28, true);
+    const start = localOff + 30 + lNameLen + lExtraLen;
+    out[name] = { method, bytes: u8.subarray(start, start + compSize) };
+  }
+  return out;
+}
+
+async function zipRead(entry) {
+  if (!entry) return "";
+  if (entry.method === 0) return new TextDecoder().decode(entry.bytes);   // stored
+  const ds = new DecompressionStream("deflate-raw");
+  const stream = new Blob([entry.bytes]).stream().pipeThrough(ds);
+  return new TextDecoder().decode(await new Response(stream).arrayBuffer());
+}
+
+const XLSX_ENT = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'" };
+function xlsxText(x) {
+  return String(x || "")
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&(amp|lt|gt|quot|apos);/g, m => XLSX_ENT[m]);
+}
+
+// "A" → 0, "Z" → 25, "AA" → 26. Cells are SPARSE: a row may jump A→D, and indexing by
+// encounter order instead of by this shifts every later cell left, silently misaligning
+// the whole mapping rather than failing.
+function xlsxCol(ref) {
+  const letters = String(ref || "").match(/^[A-Z]+/);
+  if (!letters) return 0;
+  let n = 0;
+  for (const ch of letters[0]) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+async function xlsxRows(buf) {
+  const files = await zipEntries(buf);
+
+  // Shared strings: most text in a sheet is an index into this table, not inline.
+  const sharedXml = await zipRead(files["xl/sharedStrings.xml"]);
+  const shared = [];
+  for (const m of sharedXml.matchAll(/<si>([\s\S]*?)<\/si>/g)) {
+    // A styled cell splits its text across several <t> runs; concatenate or the value
+    // arrives truncated at the first formatting change.
+    shared.push([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(t => xlsxText(t[1])).join(""));
+  }
+
+  // The FIRST sheet by workbook order, which is not always sheet1.xml on disk.
+  const wb = await zipRead(files["xl/workbook.xml"]);
+  const rels = await zipRead(files["xl/_rels/workbook.xml.rels"]);
+  const firstId = (wb.match(/<sheet[^>]*r:id="([^"]+)"/) || [])[1];
+  let target = "xl/worksheets/sheet1.xml";
+  if (firstId) {
+    const rel = rels.match(new RegExp(`<Relationship[^>]*Id="${firstId}"[^>]*Target="([^"]+)"`));
+    if (rel) target = "xl/" + rel[1].replace(/^\/?xl\//, "").replace(/^\//, "");
+  }
+  const sheet = await zipRead(files[target] || files["xl/worksheets/sheet1.xml"]);
+  if (!sheet) throw new Error("That .xlsx has no readable worksheet");
+
+  const rows = [];
+  for (const rm of sheet.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {
+    const cells = [];
+    for (const cm of rm[1].matchAll(/<c([^>]*)>([\s\S]*?)<\/c>/g)) {
+      const attrs = cm[1], inner = cm[2];
+      const idx = xlsxCol((attrs.match(/r="([A-Z]+)\d+"/) || [])[1]);
+      const type = (attrs.match(/t="([^"]+)"/) || [])[1] || "n";
+      let val = "";
+      if (type === "s") {
+        const i = Number((inner.match(/<v>([\s\S]*?)<\/v>/) || [])[1]);
+        val = shared[i] ?? "";
+      } else if (type === "inlineStr") {
+        val = [...inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(t => xlsxText(t[1])).join("");
+      } else {
+        val = xlsxText((inner.match(/<v>([\s\S]*?)<\/v>/) || [])[1] || "");
+      }
+      while (cells.length < idx) cells.push("");   // honour the gap
+      cells[idx] = val;
+    }
+    // Match csvParse, which drops blank lines: an all-empty row is spacing, not data, and
+    // leaving it in would let it win the header scan's "at least two cells" test later.
+    if (cells.some(c => String(c).trim() !== "")) rows.push(cells);
+  }
+  return rows;
+}
+
+// ─── .pdf → rows, via Claude ─────────────────────────────────────────────────
+//
+// Salvage vendors send PDFs, and a PDF has no columns — only text at coordinates. Claude
+// reads PDFs natively (document content block), and this worker already calls the Messages
+// API in three places, so this is a new content block rather than a new integration.
+//
+// 💰 THE ONLY INGEST PATH THAT COSTS MONEY. CSV and .xlsx are deterministic parses; this
+// one is billed per page against the same key the morning brief uses, and that key has run
+// out of credit once already. So: it fires ONLY for PDFs, never as a fallback for a format
+// that parses on its own, and it is capped.
+//
+// ⚠️ THE RESULT IS A READING, NOT A PARSE. A model reading a table is a good guess, not a
+// deterministic extraction. That is survivable here only because the Scorer already makes
+// every upload pass through the mapping-confirmation screen before anything is stored —
+// the same screen that catches a wrongly-guessed CSV column catches a misread PDF row.
+// Never route PDF rows around that screen.
+const MANIFEST_PDF_MAX_B64 = 20_000_000;   // ~15 MB; the API's own ceiling is 32 MB of request
+async function pdfRows(env, b64) {
+  if (!env.ANTHROPIC_API_KEY) {
+    throw new Error("PDF reading is not configured on this environment");
+  }
+  if (b64.length > MANIFEST_PDF_MAX_B64) {
+    throw new Error("That PDF is too large to read; send the pages with the line items on them");
+  }
+  const system =
+    "You are reading a wholesale liquidation manifest that arrived as a PDF, and converting " +
+    "its line-item table into rows. " +
+    "Return ONLY JSON: {\"rows\":[[\"cell\",\"cell\"],...]}. " +
+    "The FIRST row must be the column headers exactly as printed. Every later row is one " +
+    "line item, with the same number of cells in the same order as the headers. " +
+    "Copy values verbatim — do not reformat numbers, do not strip currency symbols, do not " +
+    "expand abbreviations, do not fix apparent typos. A UPC is a string of digits and must " +
+    "keep every leading zero. " +
+    "Ignore page headers, footers, page numbers and totals rows; they are not line items. " +
+    "If the table continues across pages, continue the rows — do not repeat the header. " +
+    "If you cannot find a line-item table at all, return {\"rows\":[]}.";
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 16000,
+      thinking: { type: "disabled" },
+      system,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } },
+          { type: "text", text: "Extract the line-item table as JSON rows." },
+        ],
+      }],
+    }),
+  });
+  if (!res.ok) {
+    // The body carries the real reason — an exhausted credit balance reads as a generic
+    // 400 without it, which cost a whole debugging round once already.
+    const err = await res.text().catch(() => "");
+    console.error(`PDF read API ${res.status}: ${err.slice(0, 300)}`);
+    throw new Error(`Could not read that PDF (${res.status}). ${err.slice(0, 160)}`);
+  }
+  const json = await res.json();
+  if (json.stop_reason === "refusal") throw new Error("The PDF reader declined that file");
+  const text = (json.content || []).filter(c => c.type === "text").map(c => c.text).join("");
+  // A truncated answer is half a manifest, and half a manifest scored as a whole one is
+  // worse than no answer: it looks complete.
+  if (json.stop_reason === "max_tokens") {
+    throw new Error("That PDF has more lines than can be read in one pass; split it and try again");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse((text.match(/\{[\s\S]*\}/) || [text])[0]);
+  } catch {
+    throw new Error("The PDF reader did not return a table");
+  }
+  const rows = Array.isArray(parsed?.rows) ? parsed.rows : [];
+  if (!rows.length) throw new Error("No line-item table was found in that PDF");
+  return rows.map(r => (Array.isArray(r) ? r.map(c => String(c ?? "")) : []));
+}
+
+// One door for every format. Upload and remap both call this, so a file that parses on
+// the way in cannot parse differently on the way back through — which would apply a
+// corrected mapping against a different set of columns than the user was shown.
+const MANIFEST_MAX_B64 = 8_000_000;   // ~6 MB of file; a manifest larger than that is a catalogue
+async function manifestRows(env, body) {
+  const fmt = String(body?.format || "csv").toLowerCase();
+  if (fmt === "pdf") {
+    const b64 = String(body?.file_b64 || "");
+    if (!b64) throw new Error("No file content received");
+    return await pdfRows(env, b64);
+  }
+  if (fmt === "xlsx") {
+    const b64 = String(body?.file_b64 || "");
+    if (!b64) throw new Error("No file content received");
+    if (b64.length > MANIFEST_MAX_B64) throw new Error("That file is too large; export the sheet as CSV");
+    const bin = atob(b64);
+    const buf = new ArrayBuffer(bin.length);
+    const u8 = new Uint8Array(buf);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return await xlsxRows(buf);
+  }
+  return csvParse(String(body?.csv || ""));
+}
+
+// Which row is the header?
+//
+// The parser used to take rows[0] on faith. A sheet with the vendor's letterhead, a load
+// number and a blank line above the real header does not misparse — it fails outright,
+// because the header it finds is ["Alliance Wholesale", "", "", ""] and nothing maps.
+//
+// Scored, not pattern-matched: each candidate row is worth the number of DISTINCT manifest
+// fields its cells look like. That reuses MANIFEST_HINTS, so a layout the mapper can read
+// is by construction a layout this can find, and the two cannot drift apart.
+//
+// 🔑 Returns the score as well as the row. A caller that only takes the index cannot tell
+// "found the header" from "found nothing and fell back to row 0", and silently mapping a
+// letterhead is exactly the failure this exists to prevent.
+const MANIFEST_HEADER_SCAN = 15;   // rows deep to look; a preamble longer than this is a
+                                   // different kind of document, not a manifest with a header
+// ⚠️ The index returned is over the PARSED rows. csvParse drops blank lines before this
+// runs, so a sheet with a blank row in its preamble reports a lower number than the row
+// the user sees in Excel. `skipped` is the honest figure to show a human.
+function manifestFindHeader(rows) {
+  let best = { headerRow: 0, score: 0 };
+  const limit = Math.min(rows.length, MANIFEST_HEADER_SCAN);
+  for (let i = 0; i < limit; i++) {
+    const cells = (rows[i] || []).map(c => String(c ?? "").trim()).filter(Boolean);
+    if (cells.length < 2) continue;          // a title line is one cell, never a header
+    const fields = new Set();
+    for (const cell of cells) {
+      for (const [field, pats] of Object.entries(MANIFEST_HINTS)) {
+        if (pats.some(re => re.test(cell))) { fields.add(field); break; }
+      }
+    }
+    // A tie goes to the EARLIER row. A data row can score by accident — a product called
+    // "Pack of 6 Cost Cutter" hits two patterns — but it cannot outscore the real header
+    // above it, and preferring the later row on a tie would pick the accident.
+    if (fields.size > best.score) best = { headerRow: i, score: fields.size };
+  }
+  return { headerRow: best.headerRow, score: best.score, skipped: best.headerRow };
+}
+
 function manifestGuessMap(headers) {
   const map = {}, taken = new Set();
   for (const field of Object.keys(MANIFEST_HINTS)) {
@@ -15977,12 +16241,26 @@ export default {
         if (csv.length > 4_000_000) {
           return new Response(JSON.stringify({ error: "That file is too big to process in one go (4 MB of CSV max)" }), { status: 400, headers: corsJson });
         }
-        const rows = csvParse(csv);
+        let rows;
+        try {
+          rows = await manifestRows(env, body);
+        } catch (e) {
+          // A malformed workbook is the user's file being wrong, not our server failing.
+          return new Response(JSON.stringify({ error: e.message }), { status: 400, headers: corsJson });
+        }
         if (rows.length < 2) {
           return new Response(JSON.stringify({ error: "Need a header row and at least one line" }), { status: 400, headers: corsJson });
         }
-        const headers = rows[0].map(h => String(h).trim());
-        const dataRows = rows.slice(1);
+        // Not rows[0]: vendors put letterheads, load numbers and blank lines above the
+        // real header, and taking row 0 on faith maps the letterhead instead of failing.
+        const hdr = manifestFindHeader(rows);
+        const headers = (rows[hdr.headerRow] || []).map(h => String(h ?? "").trim());
+        const dataRows = rows.slice(hdr.headerRow + 1);
+        if (!dataRows.length) {
+          return new Response(JSON.stringify({
+            error: `The header looks like row ${hdr.headerRow + 1}, but there are no lines under it`,
+          }), { status: 400, headers: corsJson });
+        }
         if (dataRows.length > 5000) {
           return new Response(JSON.stringify({ error: `That manifest has ${dataRows.length} lines; 5000 is the cap` }), { status: 400, headers: corsJson });
         }
@@ -16012,6 +16290,9 @@ export default {
         return new Response(JSON.stringify({
           ok: true, id, vendor, sell_as: sellAs, units_per_case: upc,
           headers, column_map: map, map_source: mapSource, missing,
+          // The page shows these: a skipped preamble the user did not expect, or a header
+          // that matched only one field, both mean "look at this before trusting it".
+          header_row: hdr.headerRow + 1, header_skipped: hdr.skipped, header_score: hdr.score,
           rows: dataRows.length,
           sample: dataRows.slice(0, 5),
           note: missing.length ? `Map ${missing.join(", ")} before this can be scored.` : null,
@@ -16035,9 +16316,15 @@ export default {
         if (m.status !== "draft" && m.status !== "scored") {
           return new Response(JSON.stringify({ error: "A decided manifest cannot be remapped" }), { status: 409, headers: corsJson });
         }
-        const rows = csvParse(String(body?.csv || ""));
+        let rows;
+        try {
+          rows = await manifestRows(env, body);
+        } catch (e) {
+          return new Response(JSON.stringify({ error: e.message }), { status: 400, headers: corsJson });
+        }
         if (rows.length < 2) return new Response(JSON.stringify({ error: "Re-send the file with the new mapping" }), { status: 400, headers: corsJson });
-        const headers = rows[0].map(h => String(h).trim());
+        const rehdr = manifestFindHeader(rows);
+        const headers = (rows[rehdr.headerRow] || []).map(h => String(h ?? "").trim());
         const map = body?.column_map || {};
         const missing = MANIFEST_REQUIRED.filter(f => !map[f] || !headers.includes(map[f]));
         if (missing.length) {
@@ -16048,7 +16335,7 @@ export default {
         await env.DB.prepare(`UPDATE manifests SET sell_as = ?, units_per_case = ? WHERE id = ?`)
           .bind(sellAs, upc, m.id).run();
         await env.DB.prepare(`DELETE FROM manifest_lines WHERE manifest_id = ?`).bind(m.id).run();
-        await manifestWriteLines(env, m.id, headers, rows.slice(1), map);
+        await manifestWriteLines(env, m.id, headers, rows.slice(rehdr.headerRow + 1), map);
 
         if (body?.save_template !== false) {
           const now = new Date().toISOString();
@@ -16061,7 +16348,11 @@ export default {
           ).bind(m.vendor, JSON.stringify(map), sellAs, upc,
                  currentUser?.email || currentUser?.name || null, now).run();
         }
-        return new Response(JSON.stringify({ ok: true, id: m.id, rows: rows.length - 1 }), { headers: corsJson });
+        return new Response(JSON.stringify({
+          ok: true, id: m.id,
+          rows: rows.length - 1 - rehdr.headerRow,
+          header_row: rehdr.headerRow + 1, header_skipped: rehdr.skipped,
+        }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }

@@ -17317,7 +17317,7 @@
   // ── Manifest Scorer ───────────────────────────────────────────────────────
   // The CSV is held in memory only: a remap re-reads the same text rather than the
   // server storing a vendor's price file it has no reason to keep.
-  let mfCsv = null, mfPending = null, mfOpenId = null, mfManifests = [];
+  let mfFile = null, mfPending = null, mfOpenId = null, mfManifests = [];
 
   const mfEsc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
   const mfMoney = (n) => n === null || n === undefined ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n);
@@ -17364,11 +17364,12 @@
           <div class="mf-body">
             <div class="mf-row" style="margin-bottom:12px">
               <input id="mf-vendor" class="mf-in" placeholder="Vendor name" style="min-width:200px">
-              <input id="mf-file" type="file" accept=".csv,text/csv" class="mf-in" onchange="mfPick(this)">
+              <input id="mf-file" type="file" accept=".csv,.xlsx,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="mf-in" onchange="mfPick(this)">
               <button class="mf-btn" onclick="mfUpload()">Read file</button>
             </div>
-            <div class="mf-drop">Save the vendor's sheet as CSV first — xlsx isn't read yet.
-              Nothing is stored until you've checked the column mapping.</div>
+            <div class="mf-drop">CSV, .xlsx or .pdf. A vendor letterhead above the header is
+              stepped over automatically. A PDF has no columns, so it is read rather than parsed —
+              always check its rows. Nothing is stored until you've confirmed the mapping.</div>
           </div>
         </div>
         <div class="mf-panel" style="margin-top:16px">
@@ -17385,10 +17386,32 @@
   function mfPick(input) {
     const f = input.files && input.files[0];
     if (!f) return;
+    const isXlsx = /\.xlsx$/i.test(f.name);
+    const isPdf  = /\.pdf$/i.test(f.name);
     const rd = new FileReader();
-    rd.onload = () => { mfCsv = String(rd.result); mfSay(`${f.name} read — ${mfCsv.split(/\r?\n/).length - 1} rows.`); };
     rd.onerror = () => mfSay('Could not read that file.');
-    rd.readAsText(f);
+    if (isXlsx || isPdf) {
+      rd.onload = () => {
+        // btoa on a huge string blows the call stack via spread/apply, so chunk it.
+        const bytes = new Uint8Array(rd.result);
+        let bin = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        }
+        mfFile = { format: isPdf ? 'pdf' : 'xlsx', file_b64: btoa(bin) };
+        mfSay(isPdf
+          ? `${f.name} — ${(bytes.length / 1024).toFixed(0)} KB. A PDF has no columns, so this one is READ rather than parsed; check the rows carefully before saving.`
+          : `${f.name} read — ${(bytes.length / 1024).toFixed(0)} KB workbook.`);
+      };
+      rd.readAsArrayBuffer(f);
+    } else {
+      rd.onload = () => {
+        const text = String(rd.result);
+        mfFile = { format: 'csv', csv: text };
+        mfSay(`${f.name} read — ${text.split(/\r?\n/).length - 1} rows.`);
+      };
+      rd.readAsText(f);
+    }
     if (!el('mf-vendor').value) el('mf-vendor').value = f.name.replace(/\.[^.]+$/, '');
   }
   window.mfPick = mfPick;
@@ -17396,10 +17419,10 @@
   async function mfUpload() {
     const vendor = el('mf-vendor').value.trim();
     if (!vendor) { uiAlert('Give the vendor a name first.'); return; }
-    if (!mfCsv) { uiAlert('Choose a CSV file first.'); return; }
+    if (!mfFile) { uiAlert('Choose a file first.'); return; }
     mfSay('Reading…');
     try {
-      const j = await mfApi('manifest-upload', { vendor, filename: el('mf-file').files?.[0]?.name, csv: mfCsv });
+      const j = await mfApi('manifest-upload', { vendor, filename: el('mf-file').files?.[0]?.name, ...mfFile });
       mfPending = j;
       mfShowMapping(j);
     } catch (e) { mfSay(`Upload failed: ${e.message}`); }
@@ -17452,7 +17475,7 @@
     }
     mfSay('Applying…');
     try {
-      await mfApi('manifest-remap', { id: mfPending.id, csv: mfCsv, column_map: map,
+      await mfApi('manifest-remap', { id: mfPending.id, ...mfFile, column_map: map,
         sell_as: el('mf-sellas').value, units_per_case: Number(el('mf-upc').value) || 12 });
       mfSay('Categorising…');
       await mfApi('manifest-classify', { id: mfPending.id });
