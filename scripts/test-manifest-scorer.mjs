@@ -669,5 +669,102 @@ let mid;
   eq(pdfCalls.length, 0, '🔑 a CSV never reaches the billed PDF reader');
 }
 
+// ── LOT BUYS: a load priced as a share of retail, with no per-line cost ────
+// Three of eight real manifests have no cost column: both BStock truckloads and
+// Manifest # 07002. They are not broken — you are quoted a percentage of retail for the
+// whole load. 07002's real numbers: $12,175.00 against $32,902.19 of extended retail.
+{
+  // Two real lines off Manifest # 07002. Retail is per unit; Qty Bundle is the count.
+  const CSV = ['Product Description,Retail,Qty Bundle',
+               'Angel Soft 12 = 48,8.92,96',
+               'Sparkle 10 = 20,14.35,704', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'LotCo', csv: CSV });
+  eq(up.status, 200, 'a manifest with no cost column still uploads');
+  eq(up.body.column_map.msrp, 'Retail', 'Retail maps as the reference, not as cost');
+  ok(!up.body.column_map.cost, '🔑 no cost column is found, because there is not one');
+
+  // Nothing entered yet: no cost anywhere.
+  const before = await get(`manifest&id=${up.body.id}`);
+  eq(before.body.lines[0].cost, null, 'before a rate is set, the line has no cost at all');
+
+  // The vendor quoted 37%.
+  eq((await post('manifest-costs', { id: up.body.id, freight_cost: 0, defect_pct: 0, retail_pct: 37 })).status,
+     200, 'the lot rate saves');
+  const after = await get(`manifest&id=${up.body.id}`);
+  near(after.body.lines[0].cost, 3.30, '🔑 $8.92 of retail at 37% is a $3.30 unit cost');
+  near(after.body.lines[1].cost, 5.31, '…and $14.35 at 37% is $5.31');
+  eq(after.body.lines[0].cost_from_lot, true, 'the line says the cost was DERIVED, not quoted');
+}
+
+// ── The same deal quoted as a lump sum lands on the same number ────────────
+{
+  const CSV = ['Product Description,Retail,Qty Bundle',
+               'Angel Soft 12 = 48,8.92,96',
+               'Sparkle 10 = 20,14.35,704', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'LumpCo', csv: CSV });
+  // Extended retail = 8.92*96 + 14.35*704 = 856.32 + 10102.40 = 10958.72.
+  // A vendor quoting 37% and one quoting $4,054.73 are describing the same load.
+  await post('manifest-costs', { id: up.body.id, freight_cost: 0, defect_pct: 0, lot_cost: 4054.73 });
+  const after = await get(`manifest&id=${up.body.id}`);
+  near(after.body.lines[0].cost, 3.30, '🔑 a lump sum derives the same unit cost as the rate did');
+  near(after.body.lines[1].cost, 5.31, '…on every line');
+}
+
+// ── 🔑 A real per-line cost is NEVER overwritten by a lot rate ──────────────
+// The dangerous case: a manifest that quotes costs AND has a rate set by accident.
+{
+  const CSV = ['UPC,Item Description,Qty,Unit Cost,Unit Retail',
+               '012345679001,Soap,10,1.00,9.00', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'RealCostCo', csv: CSV });
+  eq(up.body.column_map.cost, 'Unit Cost', 'the quoted cost is found');
+  await post('manifest-costs', { id: up.body.id, freight_cost: 0, defect_pct: 0, retail_pct: 37 });
+  const after = await get(`manifest&id=${up.body.id}`);
+  near(after.body.lines[0].cost, 1.00, '🔑 the vendor\'s own $1.00 stands — 37% of $9.00 does NOT replace it');
+  eq(after.body.lines[0].cost_from_lot, false, '…and the line does not claim to be derived');
+}
+
+// ── A nonsense rate is refused ──────────────────────────────────────────────
+{
+  const CSV = ['Product Description,Retail,Qty Bundle', 'Thing,5.00,10', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'BadRate', csv: CSV });
+  eq((await post('manifest-costs', { id: up.body.id, freight_cost: 0, defect_pct: 0, retail_pct: 140 })).status,
+     400, '🛑 over 100% of retail is refused');
+  eq((await post('manifest-costs', { id: up.body.id, freight_cost: 0, defect_pct: 0, retail_pct: -5 })).status,
+     400, '🛑 a negative rate is refused');
+}
+
+// ── The real vendor headers map correctly — measured, not assumed ───────────
+// Every set below is copied from an actual file in ~/Documents/Opportunity buys.
+{
+  const HEADERS = {
+    'WI/PA Food':   [['Item#','Description','OZ','Case Pack',' Unit Wholesale ','BIUB','Case/ PLT','Case Wt','UPC','Case QTY','Unit Price','Case Price'],
+                     { identifier:'UPC', qty:'Case QTY', units_per_case:'Case Pack', cost:'Unit Price' }],
+    'Clorox':       [['Container','Parent Container','Quantity','Consumer Quantity','Universal Id','Description','Expiration Date','Wholesale','Category','Sort','%','Sale Price'],
+                     { identifier:'Universal Id', qty:'Quantity', cost:'Sale Price' }],
+    'UPDATED FOOD': [['PRODUCT NAME','CASE COUNT','EXP DATE','PACKAGING','AVAIL QTY','CASE PRICE','WEIGHT (in ounces)'],
+                     { description:'PRODUCT NAME', qty:'AVAIL QTY', units_per_case:'CASE COUNT', cost:'CASE PRICE' }],
+    'BStock':       [['Item #','Seller Category','Item Description','Qty','Unit Retail','Ext. Retail','Brand','UPC','TCIN','Condition'],
+                     { identifier:'UPC', qty:'Qty', msrp:'Unit Retail' }],
+    'MIDWEST pdf':  [['#','Product or service','SKU','Description','Qty','Rate','Amount'],
+                     { identifier:'Product or service', qty:'Qty', cost:'Rate' }],
+    'Kind':         [['Picture','UPC','Item','Date','Case pack','Cases','Units','Price per unit','Note'],
+                     { identifier:'UPC', description:'Item', qty:'Units', units_per_case:'Case pack', cost:'Price per unit' }],
+  };
+  for (const [name, [hdrs, want]] of Object.entries(HEADERS)) {
+    const csv = [hdrs.join(','), hdrs.map(() => 'x').join(','), ''].join('\n');
+    const r = await post('manifest-upload', { vendor: 'HDR ' + name, csv });
+    for (const [field, col] of Object.entries(want)) {
+      eq(r.body.column_map[field], col, `${name}: ${field} → ${col}`);
+    }
+  }
+  // 🔑 And the one that was silently destroying the food lists: qty and units_per_case
+  // must not be each other. "Case QTY" is how many we can have; "Case Pack" is how many
+  // are in one. Swapped, 56 cases of 18 becomes 18 cases of 56.
+  const wi = HEADERS['WI/PA Food'][0];
+  const r = await post('manifest-upload', { vendor: 'SwapCheck', csv: [wi.join(','), wi.map(() => '1').join(','), ''].join('\n') });
+  ok(r.body.column_map.qty !== 'Case Pack', '🔑 qty is NOT the case pack');
+  ok(r.body.column_map.units_per_case !== 'Case QTY', '🔑 …and the pack is NOT the availability');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

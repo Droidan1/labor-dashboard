@@ -17508,12 +17508,19 @@
   // a blank cost basis is a choice the buyer should see, not a silent assumption.
   function mfCostBasisNote(m, s) {
     const f = Number(m.freight_cost) || 0, d = Number(m.defect_pct) || 0;
-    if (!f && !d) return 'not counted — the gates are running on invoice cost alone';
+    const rp = Number(m.retail_pct) || 0, lc = Number(m.lot_cost) || 0;
+    // A lot buy has no per-line cost, so saying "running on invoice cost" would be a lie —
+    // there are no invoice costs. Say which it is.
+    const lotBits = [];
+    if (lc > 0) lotBits.push(`${mfMoney(lc)} for the load`);
+    else if (rp > 0) lotBits.push(`${rp}% of retail`);
+    if (!f && !d && !lotBits.length) return 'not counted — the gates are running on invoice cost alone';
     const units = Number(s?.totals?.units) || 0;
     const per = units > 0 ? f / units : 0;
     const bits = [];
     if (f) bits.push(`${mfMoney(f)} freight ≈ ${mfMoney(per)}/unit`);
     if (d) bits.push(`${d}% unsellable`);
+    bits.push(...lotBits);
     return bits.join(' · ') + ' — folded into every cost test below';
   }
 
@@ -17521,7 +17528,9 @@
     const num = (id) => Number(String((el(id) || {}).value || '').replace(/[^0-9.]/g, '')) || 0;
     mfSay('Applying…');
     try {
-      await mfApi('manifest-costs', { id: mfOpenId, freight_cost: num('mf-freight'), defect_pct: num('mf-defect') });
+      await mfApi('manifest-costs', { id: mfOpenId,
+        freight_cost: num('mf-freight'), defect_pct: num('mf-defect'),
+        retail_pct: num('mf-retailpct'), lot_cost: num('mf-lotcost') });
       mfOpen(mfOpenId);
     } catch (e) { mfSay(`Could not apply: ${e.message}`); }
   }
@@ -17554,7 +17563,8 @@
           ? `${l.pack_used}<div style="font-size:10px;color:#6b6453">${mfEsc(l.pack_source || '')}${l.pack_converted ? ' · applied' : ''}</div>`
           : '—'}</td>
         <td>${mfNum(l.qty)}</td>
-        <td>${mfMoney(l.cost)}${l.effective_cost != null && Math.abs(l.effective_cost - l.cost) >= 0.01
+        <td>${mfMoney(l.cost)}${l.cost_from_lot ? '<div class="mf-sub">from the lot rate</div>' : ''}${
+            l.effective_cost != null && Math.abs(l.effective_cost - l.cost) >= 0.01
             ? `<div class="mf-sub">lands at ${mfMoney(l.effective_cost)}</div>` : ''}</td>
         <td>${mfMoney(l.std_cost_l3)}</td>
         <td>${l.cost_vs_std === null || l.cost_vs_std === undefined ? '—'
@@ -17585,6 +17595,12 @@
           <label class="mf-sub">Arrives unsellable %
             <input id="mf-defect" class="mf-in" type="text" inputmode="decimal" style="width:72px;margin-left:6px"
                    value="${Number(m.defect_pct) || 0}"></label>
+          <label class="mf-sub">% of retail
+            <input id="mf-retailpct" class="mf-in" type="text" inputmode="decimal" style="width:64px;margin-left:6px"
+                   value="${Number(m.retail_pct) || 0}"></label>
+          <label class="mf-sub">or load cost
+            <input id="mf-lotcost" class="mf-in" type="text" inputmode="decimal" style="width:96px;margin-left:6px"
+                   value="${Number(m.lot_cost) || 0}"></label>
           <button class="mf-btn ghost" onclick="mfSaveCosts()">Apply</button>
           <span class="mf-sub">${mfCostBasisNote(m, s)}</span>
         </div>

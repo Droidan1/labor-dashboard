@@ -8010,7 +8010,19 @@ async function retailRunManifest(env, manifestId, opts = {}) {
 
 // The canonical shape every vendor's columns are mapped onto.
 const MANIFEST_FIELDS = ["identifier", "identifier_type", "description", "qty", "uom", "cost", "msrp", "vendor_claimed_retail", "units_per_case"];
-const MANIFEST_REQUIRED = ["description", "qty", "cost"];
+// What a manifest actually needs before it can be scored.
+//
+// `cost` OR `msrp`, not cost outright: a LOT BUY quotes no per-line cost at all — both
+// BStock truckloads and Manifest # 07002 are like this — and what the negotiated rate is
+// applied to is the line's unit RETAIL. Demanding a cost column blocked those files at
+// upload, so their lines were never written and the manifest could not be looked at.
+// A sheet with neither is genuinely unpriceable and still says so.
+function manifestMissing(map, headers) {
+  const has = (f) => map[f] && headers.includes(map[f]);
+  const missing = ["description", "qty"].filter(f => !has(f));
+  if (!has("cost") && !has("msrp")) missing.push("cost");
+  return missing;
+}
 
 // RFC-4180 enough for vendor exports: quoted fields, doubled quotes inside them, commas
 // and newlines inside quotes, and a stray BOM from Excel. Hand-rolled because the worker
@@ -8098,16 +8110,36 @@ function manifestIdentType(v) {
 // sees any of them. Each field claims a column exclusively, so an earlier field cannot be
 // stolen by a later one.
 const MANIFEST_HINTS = {
-  identifier: [/^upc\b/i, /^gtin\b/i, /barcode/i, /^item\s*#/i, /^item\s*(code|no)\b/i, /^sku\b/i, /model/i],
-  description: [/desc/i, /^item\s*name/i, /^product\s*name/i, /^product$/i, /^title$/i, /^name$/i, /^style\s*name/i],
-  qty: [/^qty\b/i, /^quantity\b/i, /^avail/i, /^units\b/i, /^cases?\b/i, /^pack\s*qty/i, /^count$/i, /^pcs$/i, /^pieces$/i],
+  // Patterns are tried IN ORDER and the first match claims the column, so specificity has
+  // to come first. Verified against eight real vendor manifests — see tasks/manifest-formats.md.
+  identifier: [/^upc\b/i, /^gtin\b/i, /barcode/i, /^universal\s*id/i, /^product\s*or\s*service/i,
+               /^item\s*#/i, /^item\s*(code|no)\b/i, /^sku\b/i, /model/i],
+  // /^item$/ last: a sheet where "Item" is a part number has a real "Description"
+  // column, and /desc/ is tried first, so the specific header always wins the race.
+  description: [/desc/i, /^item\s*name/i, /^product\s*name/i, /^product$/i, /^title$/i, /^name$/i,
+                /^style\s*name/i, /^item$/i],
+  // 🔑 "Case QTY" is how many we can HAVE; "Case Pack" is how many are IN one. A bare
+  // /^cases?\b/ matches BOTH, and because qty is claimed before units_per_case it took
+  // "Case Pack" and left "Case QTY" to be read as the pack — exactly swapping them. On the
+  // WI list that turned 56 cases of 18 into 18 cases of 56. Anchor the qty forms instead.
+  qty: [/^qty\b/i, /^quantity\b/i, /^avail/i, /^units\b/i, /^case\s*qty/i, /^cases?$/i,
+        /^count$/i, /^pcs$/i, /^pieces$/i, /^on\s*hand/i],
   // The vendor's OWN pack figure, per line. Claimed before `uom` so a sheet with a
   // "Case pack" column gives us the number rather than a decorative string.
   units_per_case: [/^case\s*pack/i, /^pack\s*size/i, /units?\s*(?:per|\/)\s*case/i, /^inner\s*pack/i,
-                   /^case\s*qty/i, /^pack\s*qty/i, /^ct\s*\/?\s*case/i],
+                   /^case\s*count/i, /^pack\s*qty/i, /^ct\s*\/?\s*case/i],
   uom: [/^uom$/i, /^unit$/i, /^pack$/i],
-  cost: [/unit\s*cost/i, /your\s*cost/i, /^cost\b/i, /^ea\s*cost/i, /^wholesale/i, /^wsl/i, /^price$/i],
-  msrp: [/^msrp\b/i, /^list\b/i, /retail\s*price/i, /^srp\b/i, /^orig(inal)?\s*retail/i],
+  // 🔑 WHAT WE PAY, which is not the biggest number on the row. Clorox prints `Wholesale`
+  // ($1,668.38) beside `Sale Price` ($900.93) and only the second is ours; taking the
+  // first made a good buy look 85% dearer and it would have been rejected. The named
+  // deal-price columns therefore come FIRST and /^wholesale/ sits last, where it only
+  // wins if a sheet offers nothing better.
+  cost: [/^unit\s*price/i, /^sale\s*price/i, /^your\s*cost/i, /unit\s*cost/i, /^ea\s*cost/i,
+         /^price\s*per\s*unit/i, /^case\s*price/i, /^deal\s*price/i, /^rate$/i,
+         /^cost\b/i, /^price$/i, /^wholesale/i, /^wsl/i],
+  // The reference we are beating, never what we pay. Read as a sanity check only.
+  msrp: [/^msrp\b/i, /^list\b/i, /retail\s*price/i, /^srp\b/i, /^orig(inal)?\s*retail/i,
+         /^unit\s*retail/i, /^retail$/i, /^unit\s*wholesale/i],
   vendor_claimed_retail: [/retail\s*comp/i, /^comp$/i, /^claimed/i],
 };
 // ─── .xlsx → rows ────────────────────────────────────────────────────────────
@@ -16275,7 +16307,7 @@ export default {
           } catch (_) {}
         }
         if (!map) { map = manifestGuessMap(headers); mapSource = "guessed"; }
-        const missing = MANIFEST_REQUIRED.filter(f => !map[f] || !headers.includes(map[f]));
+        const missing = manifestMissing(map, headers);
         const sellAs = (body?.sell_as || tpl?.sell_as_default || "each") === "case" ? "case" : "each";
         const upc = Number(body?.units_per_case ?? tpl?.units_per_case_default ?? 12) || 12;
 
@@ -16295,7 +16327,11 @@ export default {
           header_row: hdr.headerRow + 1, header_skipped: hdr.skipped, header_score: hdr.score,
           rows: dataRows.length,
           sample: dataRows.slice(0, 5),
-          note: missing.length ? `Map ${missing.join(", ")} before this can be scored.` : null,
+          note: missing.length
+            ? `Map ${missing.join(", ")} before this can be scored.`
+            : (map.cost && headers.includes(map.cost)
+                ? null
+                : "No per-line cost on this sheet — set the % of retail (or the load cost) in the cost basis to price it."),
         }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
@@ -16326,7 +16362,7 @@ export default {
         const rehdr = manifestFindHeader(rows);
         const headers = (rows[rehdr.headerRow] || []).map(h => String(h ?? "").trim());
         const map = body?.column_map || {};
-        const missing = MANIFEST_REQUIRED.filter(f => !map[f] || !headers.includes(map[f]));
+        const missing = manifestMissing(map, headers);
         if (missing.length) {
           return new Response(JSON.stringify({ error: `Still unmapped: ${missing.join(", ")}` }), { status: 400, headers: corsJson });
         }
@@ -16422,6 +16458,16 @@ export default {
         // quietly mis-state every effective cost on the manifest.
         const unitsOf = (l) => (Number(l.qty) || 0) *
           (m.sell_as === "case" ? (Number(l.units_per_case) || factor) : 1);
+
+        // A lot buy is quoted as a share of retail, not per line. Manifest # 07002:
+        // $12,175 against $32,902 of extended retail — 37%. A vendor quoting the lump sum
+        // and one quoting the rate are saying the same thing, so both land on one figure.
+        const lotRetail = (rawLines || []).reduce(
+          (t, l) => t + (Number(l.msrp) || 0) * unitsOf(l), 0);
+        const lotCost = Number(m.lot_cost) || 0;
+        const retailPct = lotCost > 0 && lotRetail > 0
+          ? (lotCost / lotRetail) * 100
+          : (Number(m.retail_pct) || 0);
         const totalUnits = (rawLines || []).reduce((n, l) => n + unitsOf(l), 0);
         const freightPerUnit = totalUnits > 0 ? (Number(m.freight_cost) || 0) / totalUnits : 0;
 
@@ -16440,7 +16486,14 @@ export default {
           const asCase = m.sell_as === "case";
           const upc = asCase ? (linePack || factor) : 1;
           const units = (Number(l.qty) || 0) * (asCase ? upc : 1);
-          const costPerUnit = l.cost === null ? null : roundCents(Number(l.cost) / (asCase ? upc : 1));
+          let costPerUnit = l.cost === null ? null : roundCents(Number(l.cost) / (asCase ? upc : 1));
+          // 🔑 Only when the line has no cost of its own. A manifest that quotes real
+          // per-line costs must never have them overwritten by a lot rate.
+          let costFromLot = false;
+          if (costPerUnit === null && retailPct > 0 && Number(l.msrp) > 0) {
+            costPerUnit = roundCents((Number(l.msrp) * retailPct) / 100);
+            costFromLot = true;
+          }
           const stdCost = l.l3 && stdCosts[l.l3] !== undefined ? roundCents(Number(stdCosts[l.l3])) : null;
           const stats = l.l3 ? av[l.l3] : null;
           const rounding = resolved && l.l3
@@ -16483,6 +16536,7 @@ export default {
           return { ...l, units, cost: costPerUnit, qty: units, asp_l3: asp,
                    std_cost_l3: stdCost,
                    // Invoice cost stays on `cost`; what it really lands at rides beside it.
+                   cost_from_lot: costFromLot,
                    freight_per_unit: freightPerUnit ? roundCents(freightPerUnit) : 0,
                    effective_cost: manifestEffectiveCost(costPerUnit, freightPerUnit, m.defect_pct),
                    // Vendor cost against what we normally pay for that category. Under
@@ -16666,10 +16720,25 @@ export default {
           return new Response(JSON.stringify({ error: "Defect must be between 0 and 95 percent" }),
             { status: 400, headers: corsJson });
         }
-        await env.DB.prepare(`UPDATE manifests SET freight_cost = ?, defect_pct = ? WHERE id = ?`)
-          .bind(freight, defect, m.id).run();
-        return new Response(JSON.stringify({ ok: true, id: m.id, freight_cost: freight, defect_pct: defect }),
-          { headers: corsJson });
+        // A lot buy is quoted either way round. Accept both, store both, and let the
+        // scorer collapse them — a vendor saying "37%" and one saying "$12,175" are
+        // describing the same deal, and neither should have to do the other's arithmetic.
+        const pct = Number(body?.retail_pct ?? m.retail_pct ?? 0);
+        const lot = Number(body?.lot_cost ?? m.lot_cost ?? 0);
+        if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+          return new Response(JSON.stringify({ error: "Percent of retail must be between 0 and 100" }),
+            { status: 400, headers: corsJson });
+        }
+        if (!Number.isFinite(lot) || lot < 0) {
+          return new Response(JSON.stringify({ error: "Load cost must be zero or more" }), { status: 400, headers: corsJson });
+        }
+        await env.DB.prepare(
+          `UPDATE manifests SET freight_cost = ?, defect_pct = ?, retail_pct = ?, lot_cost = ? WHERE id = ?`
+        ).bind(freight, defect, pct, lot, m.id).run();
+        return new Response(JSON.stringify({
+          ok: true, id: m.id, freight_cost: freight, defect_pct: defect,
+          retail_pct: pct, lot_cost: lot,
+        }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
