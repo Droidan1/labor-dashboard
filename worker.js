@@ -8009,7 +8009,38 @@ async function retailRunManifest(env, manifestId, opts = {}) {
 // ─── Manifest Scorer ──────────────────────────────────────────────────────────
 
 // The canonical shape every vendor's columns are mapped onto.
-const MANIFEST_FIELDS = ["identifier", "identifier_type", "description", "qty", "uom", "cost", "msrp", "vendor_claimed_retail", "units_per_case"];
+const MANIFEST_FIELDS = ["identifier", "identifier_type", "description", "qty", "uom", "cost", "msrp", "vendor_claimed_retail", "units_per_case", "condition"];
+
+// Vendors do not share a vocabulary for condition. Clorox writes "Grade B/Each",
+// "Pristine Cases" and "Each"; BStock writes "USED_GOOD" and "NEW". Normalise only what is
+// unambiguous and keep the raw string either way, because the vendor's own words are the
+// one thing guaranteed not to be a lossy reading of their sheet.
+//
+// 🔑 Returns null, never "new", when nothing can be read. A vendor's silence is not a
+// claim that goods are pristine, and defaulting to the best grade is the expensive
+// direction to be wrong in.
+//
+// ⚠️ "Case" and "Each" alone are NOT graded. On the Clorox sheet their own legend says an
+// "Each" is repackaged and a "Case" is pristine — but on most manifests those words are
+// the unit of sale and mean nothing about condition. Reading one vendor's legend as a
+// universal rule would mislabel every other sheet.
+function manifestGrade(raw) {
+  // 🔑 Underscores become spaces first. `_` is a WORD character in JS regex, so /\bused\b/
+  // does not match "USED_GOOD" — and vendor codes are full of them (USED_GOOD, NEW_OTHER,
+  // OPEN_BOX). Without this the most common value on the BStock truckloads read as
+  // "not stated", which is the exact grade that must never be guessed.
+  const t = String(raw || "").toLowerCase().replace(/[_\-]+/g, " ");
+  if (!t.trim()) return null;
+  if (/\bgrade\s*[b-f]\b|\bb\s*grade\b/.test(t)) return "grade_b";
+  if (/\b(used|refurb\w*|pre\s?owned|salvage|open\s*box)\b/.test(t)) return "used";
+  if (/\b(damaged|broken|scratch\w*|dent\w*|as\s?is)\b/.test(t)) return "damaged";
+  if (/\b(repack\w*|re\s?pack\w*)\b/.test(t)) return "repack";
+  if (/\b(new|pristine|sealed|unopened)\b/.test(t)) return "new";
+  return null;
+}
+
+// Worst first: a load's headline grade should be the weakest thing in it, not the best.
+const MANIFEST_GRADES = ["damaged", "used", "grade_b", "repack", "new"];
 // What a manifest actually needs before it can be scored.
 //
 // `cost` OR `msrp`, not cost outright: a LOT BUY quotes no per-line cost at all — both
@@ -8141,6 +8172,9 @@ const MANIFEST_HINTS = {
   msrp: [/^msrp\b/i, /^list\b/i, /retail\s*price/i, /^srp\b/i, /^orig(inal)?\s*retail/i,
          /^unit\s*retail/i, /^retail$/i, /^unit\s*wholesale/i],
   vendor_claimed_retail: [/retail\s*comp/i, /^comp$/i, /^claimed/i],
+  // BStock calls it "Condition"; Clorox calls it "Sort". /^grade$/ last, because a sheet
+  // with both a "Grade" and a "Condition" column means the second one.
+  condition: [/^condition/i, /^sort$/i, /^cosmetic/i, /^grade$/i],
 };
 // ─── .xlsx → rows ────────────────────────────────────────────────────────────
 //
@@ -8505,8 +8539,52 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
   const col = {};
   for (const f of MANIFEST_FIELDS) if (map[f]) col[f] = headers.indexOf(map[f]);
 
+  // ── Rows that are not line items ───────────────────────────────────────────
+  //
+  // Two shapes turn up in real sheets and both used to become junk lines that inflated
+  // the load's totals:
+  //
+  //   A REPEATED HEADER. The WI food list restarts at row 28 with a "Price Reduced -
+  //   Closer Date" banner and prints the whole header again beneath it. Matched against
+  //   the header we already found, whitespace-insensitive, because the repeat is often
+  //   "Item #" where the original said "Item#".
+  //
+  //   A SUBTOTAL. Clorox interleaves per-container totals: no description, no identifier,
+  //   just figures. Counting them double-counts the money they summarise.
+  //
+  // 🔑 Both are REPORTED, not silently dropped. A line count that quietly shrinks is
+  // indistinguishable from a parser that lost rows.
+  const hdrKeys = new Set(headers.map(h => String(h ?? "").toLowerCase().replace(/\s+/g, "")).filter(Boolean));
+  const looksLikeHeader = (r) => {
+    const cells = r.map(c => String(c ?? "").toLowerCase().replace(/\s+/g, "")).filter(Boolean);
+    if (cells.length < 2) return false;
+    return cells.filter(c => hdrKeys.has(c)).length >= Math.max(2, Math.ceil(cells.length * 0.6));
+  };
+  const descIdx = map.description ? headers.indexOf(map.description) : -1;
+  const identIdx = map.identifier ? headers.indexOf(map.identifier) : -1;
+  const looksLikeSubtotal = (r) => {
+    // Only claimed when the sheet HAS both columns — otherwise "neither is filled" is
+    // just what every row on that sheet looks like.
+    if (descIdx < 0 || identIdx < 0) return false;
+    const hasDesc = String(r[descIdx] ?? "").trim() !== "";
+    const hasIdent = String(r[identIdx] ?? "").trim() !== "";
+    if (hasDesc || hasIdent) return false;
+    return r.some(c => String(c ?? "").trim() !== "");   // blank padding is not a subtotal
+  };
+
+  let skippedHeaders = 0, skippedSubtotals = 0;
+  // A repeated header is unambiguous and is dropped. A detail-less row is NOT: it is kept,
+  // flagged, and excluded from the load's money — visible, but never counted twice.
+  const kept = dataRows.filter(r => {
+    if (looksLikeHeader(r)) { skippedHeaders++; return false; }
+    if (looksLikeSubtotal(r)) skippedSubtotals++;
+    return true;
+  });
+  const noDetail = new Set();
+  kept.forEach((r, i) => { if (looksLikeSubtotal(r)) noDetail.add(i); });
+
   const idents = new Set();
-  const parsed = dataRows.map((r, i) => {
+  const parsed = kept.map((r, i) => {
     const at = f => (col[f] === undefined || col[f] < 0) ? null : (r[col[f]] ?? null);
     const identifier = String(at("identifier") ?? "").trim() || null;
     if (identifier) idents.add(identifier);
@@ -8519,6 +8597,8 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
       units_per_case: (() => { const n = manifestNum(at("units_per_case")); return n && n > 0 ? Math.round(n) : null; })(),
       cost: manifestNum(at("cost")), msrp: manifestNum(at("msrp")),
       vendor_claimed_retail: manifestNum(at("vendor_claimed_retail")),
+      condition_raw: String(at("condition") ?? "").trim().slice(0, 80) || null,
+      noDetail: noDetail.has(i),
     };
   });
 
@@ -8534,14 +8614,19 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
 
   const ins = env.DB.prepare(
     `INSERT INTO manifest_lines (manifest_id, row_no, identifier, identifier_type, description,
-       qty, uom, cost, msrp, vendor_claimed_retail, units_per_case, l2, l3, l3_source, flags)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+       qty, uom, cost, msrp, vendor_claimed_retail, units_per_case, l2, l3, l3_source, flags,
+       condition_raw, condition_grade)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   // Batched in chunks: one batch of several thousand statements is a way to discover a
   // subrequest limit in production rather than in a test.
   for (let i = 0; i < parsed.length; i += 200) {
     await env.DB.batch(parsed.slice(i, i + 200).map(l => {
       const hit = l.identifier ? cache[l.identifier] : null;
       const flags = [];
+      // Neither a description nor an identifier: a vendor subtotal, or a line too thin to
+      // value. Either way it must not add to the load's cost — Clorox interleaves
+      // per-container subtotals whose money is already counted in the rows above them.
+      if (l.noDetail) flags.push("no line detail");
       if (!l.identifier) flags.push("no identifier");
       if (l.qty === null) flags.push("no qty");
       if (l.qtyApprox) flags.push("qty is a minimum");
@@ -8553,12 +8638,16 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
       if (l.units_per_case && descPack > 1 && l.units_per_case !== descPack) {
         flags.push(`pack mismatch: sheet ${l.units_per_case}, description ${descPack}`);
       }
+      const grade = manifestGrade(l.condition_raw);
+      // Anything not pristine is worth seeing on the line without hunting for a column.
+      if (grade && grade !== "new") flags.push(`condition: ${grade.replace("_", " ")}`);
       return ins.bind(manifestId, l.row_no, l.identifier, l.identifier_type, l.description,
         l.qty, l.uom, l.cost, l.msrp, l.vendor_claimed_retail, l.units_per_case,
-        hit?.l2 ?? null, hit?.l3 ?? null, hit ? "cache" : null, JSON.stringify(flags));
+        hit?.l2 ?? null, hit?.l3 ?? null, hit ? "cache" : null, JSON.stringify(flags),
+        l.condition_raw, grade);
     }));
   }
-  return parsed.length;
+  return { written: parsed.length, skippedHeaders, skippedSubtotals };
 }
 
 // Ask Claude which of OUR categories a line belongs to. Batched, and only for lines the
@@ -8871,7 +8960,13 @@ function manifestScore(lines, resolved, opts = {}) {
 
   // Roll up to the level the CALL happens at — nobody argues line by line.
   const rollup = {};
+  // 🔑 A line with neither description nor identifier is a vendor SUBTOTAL or a fragment.
+  // Clorox interleaves per-container subtotals whose money is already counted in the rows
+  // above them, so adding them again inflates the load. Excluded from the rollup's money;
+  // still present on the line list, still counted below, never silently vanished.
+  const isNoDetail = (l) => (Array.isArray(l.flags) ? l.flags : []).includes("no line detail");
   lines.forEach((l, i) => {
+    if (isNoDetail(l)) return;
     const key = l.l2 || "Unclassified";
     const r = rollup[key] || (rollup[key] = { category: key, lines: 0, units: 0, cost: 0, aspValue: 0, aspLines: 0, warn: 0, fail: 0, unknown: 0 });
     const qty = Number(l.qty) || 0;
@@ -8889,6 +8984,9 @@ function manifestScore(lines, resolved, opts = {}) {
 
   const totalCost = roundCents(rows.reduce((t, r) => t + r.cost, 0));
   const totalAsp = roundCents(rows.reduce((t, r) => t + r.aspValue, 0));
+  // Lines carrying neither description nor identifier are summaries or fragments; their
+  // money is either already counted above them or cannot be attributed to anything.
+  const noDetailLines = lines.filter(isNoDetail).length;
   const warns = perLine.filter(l => l.verdict === "warn").length;
   const fails = perLine.filter(l => l.verdict === "fail").length;
   const unjudged = perLine.filter(l => l.verdict === "unknown").length;
@@ -8914,8 +9012,25 @@ function manifestScore(lines, resolved, opts = {}) {
       cost: totalCost, aspValue: totalAsp,
       costPctAsp: totalAsp > 0 ? +((totalCost / totalAsp) * 100).toFixed(1) : null,
       warns, fails, unjudged,
+      // Said out loud rather than quietly netted off: a total that shrinks with no
+      // explanation is indistinguishable from a parser that lost rows.
+      noDetailLines,
       linesPriced: lines.filter(l => l.asp_l3).length,
     },
+    // What condition this load actually is. On the Clorox sheet Grade B is priced at 25%
+    // of wholesale against 54% for pristine — a 2x swing on identical product — so "how
+    // much of this is Grade B" is a headline fact, not a detail.
+    grades: (() => {
+      const mix = {};
+      for (const l of lines) {
+        const g = l.condition_grade || null;
+        if (!g) continue;
+        const q = Number(l.qty) || 0;
+        const m = mix[g] || (mix[g] = { grade: g, lines: 0, units: 0 });
+        m.lines++; m.units += q;
+      }
+      return MANIFEST_GRADES.filter(g => mix[g]).map(g => mix[g]);
+    })(),
     verdict, verdictText: say + unjudgedNote,
     // Says what it actually is, per line count — a manifest half-priced from retail is
     // neither "scored against retail" nor "scored without it", and claiming either
@@ -16318,14 +16433,18 @@ export default {
            VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`
         ).bind(id, vendor, String(body?.filename || "").slice(0, 200) || null, who, now, sellAs, upc).run();
 
-        if (!missing.length) await manifestWriteLines(env, id, headers, dataRows, map);
+        const wrote = missing.length ? null : await manifestWriteLines(env, id, headers, dataRows, map);
         return new Response(JSON.stringify({
           ok: true, id, vendor, sell_as: sellAs, units_per_case: upc,
           headers, column_map: map, map_source: mapSource, missing,
           // The page shows these: a skipped preamble the user did not expect, or a header
           // that matched only one field, both mean "look at this before trusting it".
           header_row: hdr.headerRow + 1, header_skipped: hdr.skipped, header_score: hdr.score,
-          rows: dataRows.length,
+          // What was actually WRITTEN, not what was read. A repeated header or a subtotal
+          // is not a line item, and reporting the raw row count would overstate the load.
+          rows: wrote ? wrote.written : dataRows.length,
+          skipped_repeat_headers: wrote?.skippedHeaders ?? 0,
+          skipped_subtotals: wrote?.skippedSubtotals ?? 0,
           sample: dataRows.slice(0, 5),
           note: missing.length
             ? `Map ${missing.join(", ")} before this can be scored.`
@@ -16371,7 +16490,7 @@ export default {
         await env.DB.prepare(`UPDATE manifests SET sell_as = ?, units_per_case = ? WHERE id = ?`)
           .bind(sellAs, upc, m.id).run();
         await env.DB.prepare(`DELETE FROM manifest_lines WHERE manifest_id = ?`).bind(m.id).run();
-        await manifestWriteLines(env, m.id, headers, rows.slice(rehdr.headerRow + 1), map);
+        const rewrote = await manifestWriteLines(env, m.id, headers, rows.slice(rehdr.headerRow + 1), map);
 
         if (body?.save_template !== false) {
           const now = new Date().toISOString();
@@ -16386,8 +16505,9 @@ export default {
         }
         return new Response(JSON.stringify({
           ok: true, id: m.id,
-          rows: rows.length - 1 - rehdr.headerRow,
+          rows: rewrote.written,
           header_row: rehdr.headerRow + 1, header_skipped: rehdr.skipped,
+          skipped_repeat_headers: rewrote.skippedHeaders, skipped_subtotals: rewrote.skippedSubtotals,
         }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });

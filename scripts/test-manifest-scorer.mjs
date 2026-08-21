@@ -766,5 +766,88 @@ let mid;
   ok(r.body.column_map.units_per_case !== 'Case QTY', '🔑 …and the pack is NOT the availability');
 }
 
+// ── CONDITION GRADES ────────────────────────────────────────────────────────
+// Identical product at two grades is two different buys. Clorox prices Grade B at 25% of
+// wholesale against 54% for pristine; BStock's furniture is 208 USED_GOOD to 21 NEW.
+{
+  const CSV = ['UPC,Item Description,Qty,Unit Cost,Condition',
+               '012345679100,Dining chair,10,20.00,NEW',
+               '012345679101,Dining table,5,80.00,USED_GOOD',
+               '012345679102,Bar stool,4,15.00,Grade B/Each',
+               '012345679103,Side table,2,10.00,', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'GradeCo', csv: CSV });
+  eq(r.body.column_map.condition, 'Condition', 'the condition column is found');
+  const lines = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(r.body.id);
+  eq(lines[0].condition_grade, 'new', 'NEW normalises');
+  eq(lines[1].condition_grade, 'used', '🔑 USED_GOOD normalises — "_" is a word character, so /\\bused\\b/ alone would miss it');
+  eq(lines[2].condition_grade, 'grade_b', 'Grade B/Each normalises');
+  eq(lines[3].condition_grade, null, '🔑 a blank condition is NULL, never "new" — silence is not a claim of pristine');
+  eq(lines[1].condition_raw, 'USED_GOOD', "the vendor's own wording is kept verbatim");
+
+  const flags = JSON.parse(lines[2].flags || '[]');
+  ok(flags.some(f => /condition: grade b/i.test(f)), 'anything not pristine is flagged on the line');
+  ok(!JSON.parse(lines[0].flags || '[]').some(f => /condition/i.test(f)), '…and NEW is not flagged as a problem');
+
+  const sc = await get(`manifest&id=${r.body.id}`);
+  const mix = sc.body.score.grades;
+  eq(mix[0].grade, 'used', 'the grade mix leads with the WEAKEST grade in the load');
+  eq(mix.find(g => g.grade === 'grade_b').units, 4, '…and counts units per grade');
+}
+
+// ── Clorox's "Sort" is the same column under another name ──────────────────
+{
+  const CSV = ['Universal Id,Description,Quantity,Sale Price,Sort',
+               '1004460032243,CLX wipes,10,5.00,Case',
+               '4460008033,Clorox spray,5,3.00,Grade B/Each', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'CloroxSort', csv: CSV });
+  eq(r.body.column_map.condition, 'Sort', "Clorox's `Sort` maps as the condition column");
+  eq(r.body.column_map.identifier, 'Universal Id', '…and Universal Id as the identifier');
+  eq(r.body.column_map.cost, 'Sale Price', '…and Sale Price as the cost');
+  const lines = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(r.body.id);
+  eq(lines[0].condition_grade, null,
+     '🔑 a bare "Case" is NOT graded — on most sheets that word is the unit of sale, and reading one vendor\'s legend as universal would mislabel every other file');
+  eq(lines[1].condition_grade, 'grade_b', '…while Grade B is unambiguous anywhere');
+}
+
+// ── A REPEATED HEADER mid-file is dropped, and the drop is reported ─────────
+// The WI food list restarts at row 28 with a "Price Reduced - Closer Date" banner and
+// prints the whole header again beneath it.
+{
+  const CSV = ['Item#,Description,Case Pack,UPC,Case QTY,Unit Price',
+               '10720,GOLD MEDAL FLOUR,18,16000-10710-6,56,1.00',
+               '12610,GOLD MEDAL FLOUR 5LB,8,16000-10610-9,53,2.00',
+               ',Price Reduced - Closer Date,,,,',
+               'Item #,Description,OZ,Case Pack,Case QTY,Unit Price',
+               '20548,CHEX MIX ZESTY TACO,12,16000-20548-2,142,0.75', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'RepeatHdrCo', csv: CSV });
+  eq(r.body.skipped_repeat_headers, 1, '🔑 the repeated header is recognised and dropped');
+  eq(r.body.rows, 4, 'four rows written: three products plus the banner line');
+  const lines = db.prepare(`SELECT description FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(r.body.id);
+  ok(!lines.some(l => /^Description$/i.test(l.description || '')),
+     '…and no line has "Description" as its product name');
+  ok(lines.some(l => /CHEX MIX/.test(l.description || '')),
+     '🔑 the section BELOW the repeated header is still imported — dropping it would lose the close-dated deals');
+}
+
+// ── A SUBTOTAL row is kept and flagged, but never counted twice ─────────────
+// Clorox interleaves per-container subtotals: no description, no identifier, just money
+// that is ALREADY counted in the rows above it.
+{
+  const CSV = ['Universal Id,Description,Quantity,Sale Price',
+               '1004460032243,CLX wipes,100,5.00',
+               '1004460060530,Clorox mist,100,3.00',
+               ',,200,800.00', ''].join('\n');
+  const r = await post('manifest-upload', { vendor: 'SubtotalCo', csv: CSV });
+  eq(r.body.skipped_subtotals, 1, 'the subtotal row is recognised');
+  eq(r.body.rows, 3, '🔑 …but still WRITTEN — a row that vanishes is indistinguishable from a parse failure');
+
+  const sc = await get(`manifest&id=${r.body.id}`);
+  eq(sc.body.score.totals.noDetailLines, 1, 'the load says one line carries no detail');
+  // 100x$5 + 100x$3 = $800. The subtotal says $800 too; counting it makes the load $1,600.
+  near(sc.body.score.totals.cost, 800, '🔑 the load costs $800, not $1,600 — the subtotal is not added again');
+  const line = db.prepare(`SELECT flags FROM manifest_lines WHERE manifest_id=? ORDER BY row_no DESC LIMIT 1`).get(r.body.id);
+  ok(JSON.parse(line.flags || '[]').includes('no line detail'), '…and the row says why it was not counted');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

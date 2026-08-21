@@ -2022,6 +2022,16 @@
         .mf-sub{font-size:10px;color:#6b6453}
         .dark .mf-sub{color:#8893a7}
         .mf-ans{font-size:11px;font-style:italic}
+        .mf-grade{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.05em;
+          text-transform:uppercase;border-radius:4px;padding:2px 6px;margin-left:6px}
+        .mf-g-new{color:#06210f;background:#22c55e}
+        .mf-g-repack{color:#3b2400;background:#f59e0b}
+        .mf-g-grade_b{color:#3b2400;background:#f59e0b}
+        /* #dc2626, not the #ef4444 the older badges use: white on #ef4444 measures
+           3.76:1, which fails AA for text this small and bold. #dc2626 is 4.83:1.
+           The existing .cv-CUT / .mf-fail badges still carry the lighter red. */
+        .mf-g-used{color:#ffffff;background:#dc2626}
+        .mf-g-damaged{color:#ffffff;background:#dc2626}
         .mf-body{padding:18px}
         .mf-in{background:#ffffff;border:1px solid rgba(20,16,8,.18);border-radius:9px;padding:7px 11px;
           font-size:13px;color:#14110a}
@@ -17609,11 +17619,19 @@
           <div><div class="mf-cap">At our ASP</div><div class="mf-big">${mfMoney(s.totals.aspValue)}</div></div>
           <div><div class="mf-cap">Cost of ASP</div><div class="mf-big">${mfPct(s.totals.costPctAsp)}</div></div>
           <div><div class="mf-cap">Units</div><div class="mf-big">${mfNum(s.totals.units)}</div></div>
+          ${(s.grades || []).length ? `<div><div class="mf-cap">Condition</div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;min-height:34px">${
+              s.grades.map(g => `<span class="mf-grade mf-g-${g.grade}">${mfEsc(g.grade.replace('_',' '))} ${mfNum(g.units)}</span>`).join('')
+            }</div></div>` : ''}
           <div style="flex:1;min-width:280px;max-width:56ch">
             <div class="mf-cap">Verdict <span class="mf-v ${vClass}">${mfEsc(s.verdict.replace(/_/g,' '))}</span></div>
             <p style="font-size:13.5px;margin:0">${mfEsc(s.verdictText)}</p>
           </div>
         </div>
+        ${s.totals.noDetailLines ? `<div class="mf-note">${s.totals.noDetailLines} row${
+          s.totals.noDetailLines === 1 ? '' : 's'} carry neither a description nor an identifier —
+          vendor subtotals or fragments. They are listed but left out of the totals above, so
+          nothing is counted twice.</div>` : ''}
         <div class="mf-note">⚠️ ${mfEsc(s.basis)}
           ${j.criteriaNote ? `<br>${mfEsc(j.criteriaNote)}` : ` Scored under criteria v${j.criteriaVersion}.`}
           ${s.totals.linesPriced < s.totals.lines ? `<br>${s.totals.linesPriced} of ${s.totals.lines} lines have an ASP to compare against.` : ''}</div>
