@@ -175,7 +175,10 @@ await post('merch-criteria-publish', { note: 'v1 — core defined' });
   // the correct sum-weighted figure is 11/205 = 5.37%… so use a lopsided check:
   // chain coffee units must be the SUM, which a percentage average could never produce.
   eq(chain.cells[COFFEE].units, 11, 'chain units are summed across stores');
-  eq(chain.storesTotal, 6, 'all six live stores are listed');
+  // FIVE, not six: Holland (BL8) closed 2026-07-25 and Merchandising plans for trading
+  // stores only. Its budget still lands on the chain's financial rollups — that call was
+  // made deliberately on 2026-08-11 — but it has no shelves to cover.
+  eq(chain.storesTotal, 5, 'the five TRADING stores are listed; the closed one is not');
   eq(chain.storesReporting, 2, 'only the stores with snapshots count as reporting');
   eq(chain.storesCounted, 1, 'and only one has entered a shelf count');
 }

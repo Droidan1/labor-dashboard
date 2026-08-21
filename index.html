@@ -18235,7 +18235,11 @@
   // Supply Request's getUserStores/SR_LABELS live inside its own IIFE, so they are
   // deliberately re-stated here rather than reached into. Same rule, same roster.
   const SC_LABELS = { BL1: 'Coliseum', BL2: 'South Bend', BL4: 'Dupont', BL8: 'Holland', BL14: 'Battle Creek', BL16: 'Indy East' };
-  const SC_ALL_STORES = ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'];
+  // Holland (BL8) closed 2026-07-25. It still carries its budget into the chain's
+  // financial rollups on purpose, but it has no shelves to count — so it is absent from
+  // Merchandising surfaces only. The worker refuses a count for it either way; this keeps
+  // it out of the picker so nobody is offered a store they cannot count.
+  const SC_ALL_STORES = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
 
   function scStores() {
     if (!currentUser) return [];

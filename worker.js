@@ -4717,6 +4717,24 @@ const STORE_CLOSED_FROM = {
   BL8: '2026-07-25',
 };
 
+// The stores Merchandising plans for.
+//
+// A closed store deliberately KEEPS carrying its budget into the chain's financial
+// rollups — see the Holland note in STORE_CLOSED_FROM above; that shortfall is a real
+// miss and the chain is meant to feel it. But a closed store has no shelves to stock, no
+// coverage to measure, no velocity to read and no allocation to receive, so every
+// Merchandising surface reads THIS roster instead of ALL_STORES.
+//
+// Derived from STORE_CLOSED_FROM rather than listed by hand, so the next closure is one
+// entry in one map and not a hunt through the module for rosters that need editing.
+//
+// 🔑 A FUNCTION, not a const. STORE_CLOSED_FROM is declared thousands of lines below
+// ALL_STORES; a const up there referencing it would sit in the temporal dead zone and
+// throw at module load. Function declarations hoist, so this is safe to call anywhere.
+function merchStores() {
+  return ALL_STORES.filter(s => !STORE_CLOSED_FROM[s]);
+}
+
 // row may be undefined (no daily_sales row at all for that store-day).
 function classifyReportingStatus(row, store, dateStr) {
   const closedFrom = STORE_CLOSED_FROM[store];
@@ -8464,7 +8482,7 @@ function manifestEffectiveCost(costPerUnit, freightPerUnit = 0, defectPct = 0) {
 }
 
 function manifestScore(lines, resolved, opts = {}) {
-  const { storeCount = ALL_STORES.length, shelfState = {} } = opts;
+  const { storeCount = merchStores().length, shelfState = {} } = opts;
   const chain = resolved?.defaults || {};
   const byCat = {};
   for (const c of resolved?.categories || []) {
@@ -16197,7 +16215,7 @@ export default {
         // snapshot; a shelf-now column is not worth doubling this endpoint's KV reads.
         const shelfState = await merchShelfStates(env, av);
 
-        const score = manifestScore(lines, resolved, { storeCount: ALL_STORES.length, shelfState });
+        const score = manifestScore(lines, resolved, { storeCount: merchStores().length, shelfState });
         return new Response(JSON.stringify({
           ok: true, manifest: m, lines, score,
           criteriaVersion: live?.version ?? null,
@@ -16449,7 +16467,7 @@ export default {
         const tree = merchTree();
         const stores = [];
         const chain = { orderCount: 0, rows: {} };
-        for (const store of ALL_STORES) {
+        for (const store of merchStores()) {
           const lc = store.toLowerCase();
           const snaps = (await Promise.all(
             dates.map(d => env.SALES_SNAPSHOTS.get(`items:${lc}:${d}`, "json")))).filter(Boolean);
@@ -16549,7 +16567,7 @@ export default {
         }
 
         const stores = [];
-        for (const store of ALL_STORES) {
+        for (const store of merchStores()) {
           const lc = store.toLowerCase();
           const snaps = (await Promise.all(
             dates.map(d => env.SALES_SNAPSHOTS.get(`items:${lc}:${d}`, "json"))
@@ -16642,6 +16660,14 @@ export default {
         }
         if (!canAccessStore(currentUser, store)) {
           return new Response(JSON.stringify({ error: "Store not permitted" }), { status: 403, headers: corsJson });
+        }
+        // canAccessStore answers "may this user touch it", never "does it still trade".
+        // A closed store has no shelves, so a count against one is meaningless data that
+        // would then skew every per-section rate that divides by it.
+        if (STORE_CLOSED_FROM[store]) {
+          return new Response(JSON.stringify({
+            error: `${STORE_LABELS[store] || store} closed on ${STORE_CLOSED_FROM[store]} — there are no shelves to count`,
+          }), { status: 409, headers: corsJson });
         }
         if (counts.length > 100) {
           return new Response(JSON.stringify({ error: "Too many counts in one request (max 100)" }), { status: 400, headers: corsJson });

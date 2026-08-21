@@ -164,11 +164,13 @@ console.log('Merchandising — velocity & penetration');
 // ── 🔑 Today is not in the window ────────────────────────────────────────────
 {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
-  snap('BL8', today, { orderCount: 9999, l3s: { [SNACKS]: 9999 },
-                       l2Baskets: 9999, l3Baskets: { [SNACKS]: 9999 } });
+  // Seeded on a TRADING store: BL8 is closed and off this page's roster entirely, so it
+  // could not prove anything about the window.
+  snap('BL16', today, { orderCount: 9999, l3s: { [SNACKS]: 9999 },
+                        l2Baskets: 9999, l3Baskets: { [SNACKS]: 9999 } });
   const { body } = await get('merch-velocity&window=7');
-  const bl8 = body.stores.find(s => s.store === 'BL8');
-  eq(bl8.orderCount, 0, "🔑 today's partial snapshot is excluded from the window");
+  const bl16 = body.stores.find(s => s.store === 'BL16');
+  eq(bl16.orderCount, 0, "🔑 today's partial snapshot is excluded from the window");
 }
 
 // ── The window is validated, not trusted ─────────────────────────────────────
@@ -185,6 +187,27 @@ console.log('Merchandising — velocity & penetration');
   ok(!keys.includes('Refund'), 'Refund is not a merchandise category');
   ok(!keys.includes('Bin Products'), 'Bin Products is not one either');
   ok(keys.includes(FOOD), '…but Consumable Food is');
+}
+
+// ── A CLOSED store is absent from Merchandising, but NOT from the finances ──
+// Holland (BL8) closed 2026-07-25. Brian's call on 2026-08-11 was that its budget stays
+// in the chain's rollups, because the company plan was never revised and the shortfall is
+// a genuine miss. So the exclusion is Merchandising-only: no shelves, no coverage, no
+// velocity, no allocation — but the money still lands on the chain.
+{
+  const { body } = await get('merch-velocity&window=7');
+  const codes = body.stores.map(s => s.store);
+  ok(!codes.includes('BL8'), '🔑 a closed store is not a column on the velocity page');
+  ok(codes.includes('BL1') && codes.includes('BL16'), '…while the trading stores all are');
+  eq(codes.length, 5, 'five operating stores, not six');
+}
+{
+  // The guard is derived from STORE_CLOSED_FROM, so a count for a closed store is refused
+  // rather than quietly stored and then divided by.
+  const r = await post('shelf-count-save',
+    { store: 'BL8', week_ending: '2026-08-16', counts: [{ category: SNACKS, bays: 4 }] });
+  eq(r.status, 409, '🛑 a shelf count for a closed store is refused');
+  ok(/no shelves to count/i.test(r.body.error || ''), '…and says why in words');
 }
 
 // ── Staff cannot read it ─────────────────────────────────────────────────────
