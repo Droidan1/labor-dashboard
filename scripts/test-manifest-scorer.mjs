@@ -420,5 +420,71 @@ let mid;
   eq((await post('manifest-upload', { vendor: 'X', csv: CSV }, 'u-mgr1')).status, 403, '🛑 nor upload');
 }
 
+// ── Freight and defect: the cost gate stops quoting the invoice ─────────────
+// `landed_cost` was literally SUM(cost * qty). For salvage that understates true cost by
+// 15-25%: freight on a truckload is real money, and a returns load always contains a
+// share that is unsellable on arrival. Every gate was optimistic by exactly the amount
+// nobody was counting, and the page said nothing about it.
+{
+  const CSV2 = ['UPC,Item Description,Qty,Unit Cost',
+                '012345678960,Bar soap 3 oz,100,1.00',
+                '012345678961,Bar soap lavender 3 oz,100,1.00', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'FreightCo', csv: CSV2 });
+  eq(up.status, 200, 'freight scenario uploads');
+  const fid = up.body.id;
+
+  const before = await get(`manifest&id=${fid}`);
+  const l0 = before.body.lines[0];
+  near(l0.cost, 1.00, 'invoice cost is a dollar');
+  near(l0.effective_cost, 1.00, 'with nothing entered, effective cost EQUALS invoice cost');
+  eq(l0.freight_per_unit, 0, '...and no freight is amortised');
+
+  // $40 of freight over 200 units is $0.20 a unit. 10% of them arrive unsellable, so the
+  // $1.20 has to be earned back by the 90 that sell: 1.20 / 0.9 = $1.333.
+  const set = await post('manifest-costs', { id: fid, freight_cost: 40, defect_pct: 10 });
+  eq(set.status, 200, 'freight and defect save');
+
+  const after = await get(`manifest&id=${fid}`);
+  const a0 = after.body.lines[0];
+  near(a0.freight_per_unit, 0.20, '$40 over 200 units is 20c of freight a unit');
+  near(a0.effective_cost, 1.33, '🔑 ($1.00 + $0.20) grossed up for 10% trash is $1.33');
+  near(a0.cost, 1.00, '...and the invoice figure is still shown beside it, not overwritten');
+
+  // The whole point: a gate that passed at the invoice figure must now see the real one.
+  const sc = (after.body.score.lines || []).find(x => x.id === a0.id);
+  ok(sc, 'the line is scored');
+  ok(String(sc.tests?.cost?.note || '').length > 0, '...and the cost test reports a basis');
+
+  // Load-level landed cost carries the freight; defect removes units, not cash.
+  const list = await get('manifests');
+  const row = (list.body.manifests || []).find(x => x.id === fid);
+  near(row.landed_cost, 240, '🔑 landed cost is $200 of goods PLUS $40 freight, not $200');
+}
+
+// ── The cost basis is frozen once a manifest is decided ─────────────────────
+// Moving the basis under a recorded verdict rewrites history: the manifest would show a
+// decision that the numbers on screen no longer support.
+{
+  const CSV3 = ['UPC,Item Description,Qty,Unit Cost', '012345678970,Soap,10,1.00', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'FrozenCo', csv: CSV3 });
+  const did = up.body.id;
+  await post('manifest-decide', { id: did, status: 'passed', note: 'no thanks' });
+  const late = await post('manifest-costs', { id: did, freight_cost: 10, defect_pct: 0 });
+  eq(late.status, 409, '🛑 a decided manifest refuses a change to its cost basis');
+}
+
+// ── Bad input is refused, not clamped behind the buyer's back ───────────────
+{
+  const CSV4 = ['UPC,Item Description,Qty,Unit Cost', '012345678980,Soap,10,1.00', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'BadInput', csv: CSV4 });
+  const bid = up.body.id;
+  eq((await post('manifest-costs', { id: bid, freight_cost: -5, defect_pct: 0 })).status, 400,
+     'negative freight is refused');
+  eq((await post('manifest-costs', { id: bid, freight_cost: 0, defect_pct: 99 })).status, 400,
+     'a defect rate above 95% is refused rather than silently clamped');
+  eq((await post('manifest-costs', { id: bid, freight_cost: 0, defect_pct: -1 })).status, 400,
+     'a negative defect rate is refused');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

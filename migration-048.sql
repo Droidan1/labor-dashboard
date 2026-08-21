@@ -1,0 +1,33 @@
+-- migration-048: freight and defect allowance, so the cost gate stops lying.
+--
+-- Every criteria gate in this module compares a vendor's cost against retail or ASP, and
+-- until now "cost" meant the invoice figure alone: `landed_cost` was literally
+-- SUM(cost * qty). For salvage that is not what the goods actually cost us. Freight on a
+-- truckload is real money, and a returns load always contains a share that is unsellable
+-- on arrival. Together they run 15-25% of true cost in this business.
+--
+-- The consequence was silent and one-directional: a criteria rule reading "buy under 30%
+-- of retail" passed lines that actually land at 36%. Every gate was optimistic by the
+-- amount we were not counting, and nothing on the page said so.
+--
+--   effective_cost = (invoice_cost + freight_per_unit) / (1 - defect_pct/100)
+--
+-- freight_cost  — total freight for the LOAD, entered once per manifest. Amortised per
+--                 unit (qty is on every line). Freight is really driven by cube, not by
+--                 piece count; once item dimensions are captured during the retail fetch
+--                 this should amortise by volume instead. Per-unit is the honest
+--                 approximation available today, and it beats counting zero.
+-- defect_pct    — share of units expected to arrive unsellable, 0-100. Raises the cost of
+--                 the units that ARE sellable, which is where the money actually goes.
+--                 Per-vendor history should eventually default this; today it is entered.
+--
+-- Both default to 0, so every existing manifest scores exactly as it does now until
+-- someone fills them in. No backfill, no re-score, no change to stored verdicts.
+--
+-- Additive. A re-run reports "duplicate column name" and changes nothing.
+-- Apply staging then prod:
+--   npx wrangler d1 execute labor-dashboard-db-staging --remote --file=migration-048.sql
+--   npx wrangler d1 execute labor-dashboard-db         --remote --file=migration-048.sql
+
+ALTER TABLE manifests ADD COLUMN freight_cost REAL NOT NULL DEFAULT 0;
+ALTER TABLE manifests ADD COLUMN defect_pct   REAL NOT NULL DEFAULT 0;

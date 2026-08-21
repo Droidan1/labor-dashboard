@@ -3870,6 +3870,7 @@ const ACTION_BUSINESS = new Map([
   ["merch-criteria-discard", "bl"],
   ["merch-criteria-log", "bl"],
   ["merch-coverage", "bl"],
+  ["merch-velocity", "bl"],
   ["manifest-upload", "bl"],
   ["manifest-remap", "bl"],
   ["manifest-classify", "bl"],
@@ -3879,6 +3880,7 @@ const ACTION_BUSINESS = new Map([
   ["manifest-delete", "bl"],
   ["manifest-retail", "bl"],
   ["manifest-decide", "bl"],
+  ["manifest-costs", "bl"],
   ["shelf-counts", "bl"],
   ["shelf-count-save", "bl"],
   ["draft-save", "bl"],
@@ -7338,6 +7340,23 @@ function retailPackSize(text) {
 // A listing selling a CASE rather than a shelf unit. When one carries no readable count
 // there is nothing to divide by, so it cannot be turned into a shelf price and is dropped
 // rather than used whole.
+// Every reason a line can end up without a retail price. Ordered most→least
+// informative. "not at big box" is a real answer for a discounter: nothing to
+// undercut, and no evidence anyone wants it — price off our own ASP and carry the risk.
+const RETAIL_MISS_FLAGS = ["not at big box", "marketplace only", "no price found",
+                           "lookup failed", "no description", "not looked up", "no retail"];
+// Everything the retail run SETS, and therefore everything it must CLEAR before a
+// re-run. Kept as one list beside RETAIL_MISS_FLAGS because the stripper used to carry
+// its own hardcoded copy: any flag added to one and not the other sticks to the line
+// forever, so a successful re-run still shows the old failure.
+// A miss is SETTLED when asking again cannot change the answer, and the drainer must
+// stop offering the line. Only a budget skip is unsettled — that line was never asked.
+// A search failure settles DELIBERATELY: retrying it inside the drainer spins the queue
+// forever instead of draining, which is the behaviour the old single-flag check had.
+const RETAIL_UNSETTLED_FLAGS = ["not looked up"];
+const RETAIL_SETTLED_FLAGS = RETAIL_MISS_FLAGS.filter(f => !RETAIL_UNSETTLED_FLAGS.includes(f));
+const RETAIL_OWNED_FLAGS = [...RETAIL_MISS_FLAGS, "price conflict", "size mismatch",
+                            "comp overstated", "msrp above street", "needs agent", "fetch blocked"];
 const RETAIL_BULK_TITLE = /\b(bulk|wholesale|case\s*of|pallet|carton\s*of|foodservice|food\s*service)\b/i;
 
 // Size in ounces, for R5's per-oz scaling of an import with no exact US SKU.
@@ -7507,13 +7526,25 @@ function retailDecide(line, cands, domains = [], opts = {}) {
   const targetOz = retailOunces(line.description);
 
   // R3 — a marketplace listing is never a retail price, whatever domain it sits on.
+  // Which rejection actually happened decides which of the three answers we give.
+  // sawApproved = the item IS carried by a retailer we compare against, so a missing
+  // price is our failure to read it. sawMarketplace = it is on their domain but sold by
+  // someone else, which is a real and different signal for a buyer.
+  // Seeded from the SEARCH results, not just the parsed candidates: an approved
+  // retailer's page appearing in search is itself evidence the item is carried there,
+  // even when the parser reads no price off it. Deciding from candidates alone reported
+  // "not at big box" for items Walmart plainly stocks — a false negative, and the worst
+  // kind here, because it tells a buyer there is no competition when there is.
+  let sawApproved = (opts.resultUrls || []).some(u => retailHostAllowed(u, domains));
+  let sawMarketplace = false;
   const firstParty = cands.filter(c => {
     // 🔑 The allowlist is checked HERE too, not only on the search results. What comes
     // back from the parser is model output carrying a URL, and the only safe assumption
     // about model output is that it might be anything.
     if (domains.length && !retailHostAllowed(c.url, domains)) return false;
-    if (RETAIL_MARKETPLACE.test(String(c.url || ""))) return false;
-    if (c.sold_by && RETAIL_MARKETPLACE.test(String(c.sold_by))) return false;
+    sawApproved = true;
+    if (RETAIL_MARKETPLACE.test(String(c.url || ""))) { sawMarketplace = true; return false; }
+    if (c.sold_by && RETAIL_MARKETPLACE.test(String(c.sold_by))) { sawMarketplace = true; return false; }
     // "sold and shipped by" naming anyone other than the retailer itself.
     if (c.sold_by) {
       // The brand is the registrable domain's label ("kroger" in shop.kroger.com), NOT
@@ -7525,7 +7556,7 @@ function retailDecide(line, cands, domains = [], opts = {}) {
       // physical shelf. Walmart and Target both host marketplace sellers on their own
       // domain at multiples of real retail; something a store actually stocks is by
       // definition carried by that retailer, whoever fulfils the online order.
-      if (brand && !String(c.sold_by).toLowerCase().includes(brand) && c.in_store !== true) return false;
+      if (brand && !String(c.sold_by).toLowerCase().includes(brand) && c.in_store !== true) { sawMarketplace = true; return false; }
     }
     // A listing that is plainly selling a case, with no count to divide by, is not a
     // shelf price and cannot be made into one.
@@ -7533,7 +7564,14 @@ function retailDecide(line, cands, domains = [], opts = {}) {
     return true;
   });
   if (!firstParty.length) {
-    if (cands.length) flags.push("marketplace only");
+    // Three outcomes hide behind "we have no price", and only ONE of them is an answer.
+    // A discounter needs to know an item is NOT CARRIED at big box — no competitor price
+    // to beat, but no proof of demand either — as distinct from the tool failing to read
+    // a page it did find. Rendering both as a blank cell reads as failure and throws away
+    // the more useful of the two.
+    if (sawMarketplace) flags.push("marketplace only");
+    else if (sawApproved) flags.push("no price found");
+    else flags.push("not at big box");
     return { retail_price: null, retail_basis: null, retail_confidence: null,
              retail_in_stock: null, retail_source: null, retail_url: null, flags };
   }
@@ -7558,8 +7596,11 @@ function retailDecide(line, cands, domains = [], opts = {}) {
     }
     return { ...c, unit: roundCents(unit), pack, basis };
   }).filter(c => c.unit > 0);
-  if (!priced.length) return { retail_price: null, retail_basis: null, retail_confidence: null,
-                               retail_in_stock: null, retail_source: null, retail_url: null, flags };
+  if (!priced.length) {
+    flags.push("no price found");
+    return { retail_price: null, retail_basis: null, retail_confidence: null,
+             retail_in_stock: null, retail_source: null, retail_url: null, flags };
+  }
 
   // R4 — in stock beats listed, and a wide spread is a conflict rather than a pick.
   //
@@ -7765,7 +7806,10 @@ async function retailPriceLine(env, line, budget, ctx, searchName) {
   const query = (searchName || line.description).slice(0, 180);
   const results = await retailSearch(env, query, domains, ctx);
   if (results === null) return { skipped: "search failed" };
-  if (!results.length) return { decided: retailDecide(line, [], domains) };
+  // Zero results across every allowed domain lands on "not at big box" via retailDecide.
+  if (!results.length) return { decided: retailDecide(line, [], domains, { resultUrls: [] }) };
+
+  const resultUrls = results.map(r => r.url).filter(Boolean);
 
   // R1 step one: the snippets, which are free and already in hand.
   let cands = await retailParsePrices(env, item, results.slice(0, 8), ctx);
@@ -7793,7 +7837,7 @@ async function retailPriceLine(env, line, budget, ctx, searchName) {
             [{ url: urls[0], title: scraped?.metadata?.title, text: scraped.markdown }], ctx);
           if (parsed.length) cands = parsed;
         } else if (!cands.length) {
-          const d = retailDecide(line, cands, domains);
+          const d = retailDecide(line, cands, domains, { resultUrls });
           // Two separate facts, and collapsing them loses one. WHAT stopped us —
           // a refused request or a page that rendered to nothing — and, for big-ticket,
           // that a heavier tool is required (R8). "no first-party stockist" is a third
@@ -7809,7 +7853,7 @@ async function retailPriceLine(env, line, budget, ctx, searchName) {
       }
     }
   }
-  return { decided: retailDecide(line, cands, domains) };
+  return { decided: retailDecide(line, cands, domains, { resultUrls }) };
 }
 
 // Run the lookup across a manifest.
@@ -7843,7 +7887,9 @@ async function retailRunManifest(env, manifestId, opts = {}) {
   // none to find. Anything else has not been asked yet.
   const isDone = (l) => {
     if (l.retail_price !== null && l.retail_price !== undefined) return true;
-    try { return JSON.parse(l.flags || "[]").includes("no retail"); } catch { return false; }
+    try {
+      return JSON.parse(l.flags || "[]").some(f => RETAIL_SETTLED_FLAGS.includes(f));
+    } catch { return false; }
   };
   const pending = allLines.filter(l => !isDone(l));
   const lines = pending.slice(0, batch);
@@ -7887,8 +7933,7 @@ async function retailRunManifest(env, manifestId, opts = {}) {
   for (const line of lines) {
     const key = line.identifier ? `${line.identifier}|${line.identifier_type}` : null;
     const baseFlags = (() => { try { return JSON.parse(line.flags || "[]"); } catch { return []; } })()
-      .filter(f => !["no retail", "price conflict", "size mismatch", "comp overstated",
-                     "msrp above street", "marketplace only", "needs agent", "fetch blocked"].includes(f));
+      .filter(f => !RETAIL_OWNED_FLAGS.includes(f));
 
     let d = null, from = null;
     if (key && cache.has(key)) {
@@ -7907,8 +7952,12 @@ async function retailRunManifest(env, manifestId, opts = {}) {
       if (r.skipped) {
         skipped++;
         if (r.skipped === "budget") partial = true;
+        const skipFlag = r.skipped === "budget" ? "not looked up"
+          : r.skipped === "no description" ? "no description"
+          : r.skipped === "search failed" ? "lookup failed"
+          : "no retail";
         await env.DB.prepare(`UPDATE manifest_lines SET flags=? WHERE id=?`)
-          .bind(JSON.stringify([...baseFlags, r.skipped === "budget" ? "not looked up" : "no retail"]), line.id).run();
+          .bind(JSON.stringify([...baseFlags, skipFlag]), line.id).run();
         continue;
       }
       d = r.decided; from = "lookup";
@@ -7916,8 +7965,11 @@ async function retailRunManifest(env, manifestId, opts = {}) {
     }
 
     const flags = [...baseFlags, ...(d.flags || [])];
-    if (d.retail_price === null || d.retail_price === undefined) flags.push("no retail");
-    else priced++;
+    if (d.retail_price === null || d.retail_price === undefined) {
+      // Only fall back to the vague flag when retailDecide did not already say WHY.
+      // "not at big box" is a finding; overwriting it with "no retail" throws it away.
+      if (!flags.some(f => RETAIL_MISS_FLAGS.includes(f))) flags.push("no retail");
+    } else priced++;
     await env.DB.batch([
       upLine.bind(d.retail_price ?? null, d.retail_source ?? null, d.retail_basis ?? null,
         d.retail_confidence ?? null, d.retail_in_stock ?? null, d.retail_in_store ?? null,
@@ -8393,6 +8445,24 @@ async function retailDrainQueue(env) {
 //
 // §5.3's verdict logic, kept literally: the % test alone can only WARN. A hard fail
 // needs cost over the cap AND margin under the floor AND the category dead on the shelf.
+// What the goods ACTUALLY cost us on the shelf, as opposed to what the invoice says.
+//
+//   freight — amortised across every unit on the load. Really driven by cube rather than
+//             piece count; once item dimensions are captured during the retail fetch this
+//             should amortise by volume. Per-unit is the honest approximation available
+//             today, and it beats counting freight as zero.
+//   defect  — the unsellable share does not vanish, it loads onto the units that DO sell.
+//             100 units at $1.00 with 10% trash is 90 sellable units at $1.11 each.
+//
+// Clamped at 95% so a fat-fingered defect figure cannot divide by zero. Both inputs
+// default to 0, so a manifest with neither entered scores exactly as it did before.
+function manifestEffectiveCost(costPerUnit, freightPerUnit = 0, defectPct = 0) {
+  if (costPerUnit === null || costPerUnit === undefined) return null;
+  const d = Math.min(Math.max(Number(defectPct) || 0, 0), 95) / 100;
+  const f = Number(freightPerUnit) || 0;
+  return roundCents((Number(costPerUnit) + f) / (1 - d));
+}
+
 function manifestScore(lines, resolved, opts = {}) {
   const { storeCount = ALL_STORES.length, shelfState = {} } = opts;
   const chain = resolved?.defaults || {};
@@ -8412,7 +8482,9 @@ function manifestScore(lines, resolved, opts = {}) {
   const num = v => { const n = Number(v); return Number.isFinite(n) ? n : null; };
 
   const perLine = lines.map(l => {
-    const cost = Number(l.cost) || 0;
+    // Every gate runs on what the goods actually cost us. Falls back to the invoice
+    // figure when a manifest carries no freight or defect, so nothing already scored moves.
+    const cost = Number(l.effective_cost ?? l.cost) || 0;
     const asp = l.asp_l3 === null || l.asp_l3 === undefined ? null : Number(l.asp_l3);
     const suggested = l.suggested_price === null || l.suggested_price === undefined ? null : Number(l.suggested_price);
     const capPct = num(critFor(l, "max_cost_pct_retail"));
@@ -8428,14 +8500,25 @@ function manifestScore(lines, resolved, opts = {}) {
     const retail = l.retail_price === null || l.retail_price === undefined ? null : Number(l.retail_price);
     const costPctRetail = retail && retail > 0 ? +((cost / retail) * 100).toFixed(1) : null;
     const basisPct = costPctRetail ?? costPctAsp;
-    const basisName = costPctRetail !== null ? "street retail" : "our ASP";
+    // WHY we fell back to ASP is itself information. "Not carried at big box" means there
+    // is no competitor price to undercut — but also no evidence anyone wants it. That is a
+    // finding a buyer should see, not a silent substitution.
+    const lineFlags = Array.isArray(l.flags) ? l.flags : [];
+    const notCarried = lineFlags.includes("not at big box");
+    const basisName = costPctRetail !== null ? "street retail"
+      : notCarried ? "our ASP (not sold at big box)"
+      : "our ASP";
     const marginPerUnit = suggested !== null ? roundCents(suggested - cost) : null;
     // Break-even sell-through: what share of the units has to sell to return the cash.
     const breakeven = suggested && suggested > 0 ? +((cost / suggested) * 100).toFixed(1) : null;
 
     const tests = {};
     tests.cost = basisPct === null || capPct === null
-      ? { verdict: "unknown", note: basisPct === null ? "nothing to compare the cost against" : "no cost cap set" }
+      ? { verdict: "unknown", note: basisPct === null
+            ? (notCarried
+                ? "not sold at big box, and no ASP history for this category yet"
+                : "nothing to compare the cost against")
+            : "no cost cap set" }
       : basisPct <= capPct
         ? { verdict: "pass", note: `${basisPct}% of ${basisName}` }
         : minMargin !== null && marginPerUnit !== null && marginPerUnit >= minMargin
@@ -8844,6 +8927,41 @@ function merchCoverageMath(universe, stores) {
 // definition falls to the non-core bucket. Fallback-resolved L3s — rows whose name is an
 // item name rather than a Clover category — have no row of their own and correctly land
 // in their L2's bucket.
+// Units sold and BASKET REACH for every merchandise category, from one merged bundle.
+//
+// Separate from merchBucketSales, which folds everything outside the CORE universe into a
+// single bucket — precisely the categories this view exists to interrogate. Here we want
+// the whole tree, core or not, because "which categories are not working" is the question.
+//
+// ⚠️ TWO KEY SPACES, and mixing them fails silently. `l3Rows` carries the RAW Clover L3
+// ("[Name match] SNACKS"); `l3Orders` is keyed by normalizeL3Key. Joining without
+// normalising first yields units with no baskets and baskets with no units — every ratio
+// wrong, nothing thrown. The aggregator documents the same trap where it builds l3Orders.
+function merchVelocityRows(merged) {
+  const tree = merchTree();
+  const l3Orders = merged.l3Orders || {};
+  const l2Orders = merged.l2Orders || {};
+  const rows = {};
+  const at = (k) => rows[k] || (rows[k] = { units: 0, baskets: 0 });
+
+  for (const cat of merged.categories || []) {
+    const l2 = cat.category;
+    if (!tree[l2]) continue;                  // Refund, Gift Cards, Bin Products, …
+    for (const row of cat.l3Rows || []) {
+      const l3 = normalizeL3Key(row.l3);
+      const qty = Number(row.qty) || 0;
+      at(l3).units += qty;
+      at(l2).units += qty;
+    }
+    for (const [l3, n] of Object.entries(l3Orders[l2] || {})) at(l3).baskets += Number(n) || 0;
+    // An L2's basket count is NOT the sum of its L3s': one basket touching three L3s in
+    // the same L2 is one basket for the L2 and three for the children. Summing would
+    // report penetration above 100%.
+    at(l2).baskets += Number(l2Orders[l2]) || 0;
+  }
+  return rows;
+}
+
 function merchBucketSales(merged, universe) {
   const out = {};
   for (const c of universe) out[c.key] = 0;
@@ -15955,7 +16073,8 @@ export default {
       try {
         const { results } = await env.DB.prepare(
           `SELECT m.*, (SELECT COUNT(*) FROM manifest_lines l WHERE l.manifest_id = m.id) AS line_count,
-                  (SELECT ROUND(SUM(l.cost * l.qty), 2) FROM manifest_lines l WHERE l.manifest_id = m.id) AS landed_cost
+                  (SELECT ROUND(SUM(l.cost * l.qty), 2) FROM manifest_lines l WHERE l.manifest_id = m.id)
+                    + COALESCE(m.freight_cost, 0) AS landed_cost
              FROM manifests m ORDER BY m.uploaded_at DESC LIMIT 50`
         ).all();
         return new Response(JSON.stringify({ ok: true, manifests: results || [] }), { headers: corsJson });
@@ -15987,6 +16106,15 @@ export default {
         const stdCosts = ((await env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json")) || {}).costs || {};
         const { live } = await merchVersions(env);
         const resolved = live ? await merchResolve(env, live.version) : null;
+
+        // Freight is a LOAD-level figure and has to be spread before any line is judged.
+        // The unit formula here must stay identical to the one inside the map below —
+        // amortising over a different denominator than the lines are priced in would
+        // quietly mis-state every effective cost on the manifest.
+        const unitsOf = (l) => (Number(l.qty) || 0) *
+          (m.sell_as === "case" ? (Number(l.units_per_case) || factor) : 1);
+        const totalUnits = (rawLines || []).reduce((n, l) => n + unitsOf(l), 0);
+        const freightPerUnit = totalUnits > 0 ? (Number(m.freight_cost) || 0) / totalUnits : 0;
 
         const lines = (rawLines || []).map(l => {
           // 🔑 TWO DIFFERENT QUESTIONS, and conflating them cost a wrong answer.
@@ -16045,6 +16173,9 @@ export default {
           if (ceilingBound) flags.push(`held to the $${ceiling.toFixed(2)} dollar-store ceiling`);
           return { ...l, units, cost: costPerUnit, qty: units, asp_l3: asp,
                    std_cost_l3: stdCost,
+                   // Invoice cost stays on `cost`; what it really lands at rides beside it.
+                   freight_per_unit: freightPerUnit ? roundCents(freightPerUnit) : 0,
+                   effective_cost: manifestEffectiveCost(costPerUnit, freightPerUnit, m.defect_pct),
                    // Vendor cost against what we normally pay for that category. Under
                    // 100% is a better buy than our own book cost; over it is not.
                    cost_vs_std: stdCost && costPerUnit !== null && stdCost > 0
@@ -16200,6 +16331,41 @@ export default {
     // POST ?action=manifest-decide { id, status, note }
     // Records the call AND the criteria version it was taken under, because "we approved
     // this" is only meaningful alongside what it was measured against.
+    // POST ?action=manifest-costs { id, freight_cost, defect_pct } — the two load-level
+    // figures that turn an invoice price into what the goods actually cost us.
+    // Editable while a manifest is still open; a decided one is frozen like any other
+    // input, because moving the cost basis under a recorded verdict rewrites history.
+    if (url.searchParams.get("action") === "manifest-costs" && request.method === "POST") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      try {
+        const body = await request.json();
+        const m = await env.DB.prepare(`SELECT * FROM manifests WHERE id = ?`).bind(body?.id).first();
+        if (!m) return new Response(JSON.stringify({ error: "No such manifest" }), { status: 404, headers: corsJson });
+        if (m.status !== "draft" && m.status !== "scored") {
+          return new Response(JSON.stringify({ error: "A decided manifest's cost basis cannot be changed" }),
+            { status: 409, headers: corsJson });
+        }
+        const freight = Number(body?.freight_cost);
+        const defect = Number(body?.defect_pct);
+        if (!Number.isFinite(freight) || freight < 0) {
+          return new Response(JSON.stringify({ error: "Freight must be zero or more" }), { status: 400, headers: corsJson });
+        }
+        // 95 is the clamp manifestEffectiveCost enforces anyway; refusing here means a
+        // typo is a visible error rather than a silently clamped number.
+        if (!Number.isFinite(defect) || defect < 0 || defect > 95) {
+          return new Response(JSON.stringify({ error: "Defect must be between 0 and 95 percent" }),
+            { status: 400, headers: corsJson });
+        }
+        await env.DB.prepare(`UPDATE manifests SET freight_cost = ?, defect_pct = ? WHERE id = ?`)
+          .bind(freight, defect, m.id).run();
+        return new Response(JSON.stringify({ ok: true, id: m.id, freight_cost: freight, defect_pct: defect }),
+          { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     if (url.searchParams.get("action") === "manifest-decide" && request.method === "POST") {
       const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
       if (unauth) return unauth;
@@ -16236,6 +16402,112 @@ export default {
     // Item Sales reconciliation uses; no Clover call is made here. Shelf comes from the
     // latest week a store actually entered. A store with no count is NEVER treated as
     // zero bays — it is excluded from the shelf side and says so.
+    // GET ?action=merch-velocity[&window=28] — units and basket reach per store per
+    // category, against the chain.
+    //
+    // Raw units cannot answer "wrong product or wrong customer": a store doing 400
+    // transactions a week and one doing 2,000 will always look different regardless of
+    // assortment. Three numbers separate them — units per 1,000 transactions, basket
+    // penetration, and each measured against the chain. One store low against the chain
+    // is an assortment problem at that store. The category weak EVERYWHERE, per shelf
+    // section, is a category that does not work for our customer.
+    //
+    // Same read path as coverage: nightly items:<store>:<date> snapshots, no Clover call.
+    if (url.searchParams.get("action") === "merch-velocity" && request.method === "GET") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB || !env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "DB or KV not configured" }), { status: 500, headers: corsJson });
+      }
+      try {
+        const ALLOWED = [7, 28, 91, 364];
+        const asked = Number(url.searchParams.get("window"));
+        const win = ALLOWED.includes(asked) ? asked : 28;
+        const weeks = win / 7;
+
+        // Ends YESTERDAY: today's snapshot is not written until the nightly cron, and
+        // counting a partial day as a whole one understates every rate on the page.
+        const et = d => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
+        const endD = new Date(Date.now() - 24 * 3600 * 1000);
+        const dates = [];
+        for (let i = 0; i < win; i++) dates.push(et(new Date(endD.getTime() - i * 24 * 3600 * 1000)));
+        const start = dates[dates.length - 1], end = dates[0];
+
+        // Latest entered week per store. A store that has never counted is NOT zero bays —
+        // it has no shelf figure, and every per-section rate for it must read as unknown
+        // rather than as infinity.
+        const { results: shelfRows } = await env.DB.prepare(
+          `SELECT store, week_ending, category, bays, id FROM shelf_counts ORDER BY id DESC`).all();
+        const latestWeek = {}, shelfByStore = {};
+        for (const r of shelfRows || []) {
+          if (!latestWeek[r.store]) latestWeek[r.store] = r.week_ending;
+          if (r.week_ending !== latestWeek[r.store]) continue;
+          const b = shelfByStore[r.store] || (shelfByStore[r.store] = {});
+          if (b[r.category] === undefined) b[r.category] = r.bays;
+        }
+
+        const tree = merchTree();
+        const stores = [];
+        const chain = { orderCount: 0, rows: {} };
+        for (const store of ALL_STORES) {
+          const lc = store.toLowerCase();
+          const snaps = (await Promise.all(
+            dates.map(d => env.SALES_SNAPSHOTS.get(`items:${lc}:${d}`, "json")))).filter(Boolean);
+          const merged = mergeItemSnapshots(snaps);
+          const rows = merchVelocityRows(merged);
+          const orders = Number(merged.orderCount) || 0;
+          chain.orderCount += orders;
+          for (const [k, v] of Object.entries(rows)) {
+            const c = chain.rows[k] || (chain.rows[k] = { units: 0, baskets: 0 });
+            c.units += v.units; c.baskets += v.baskets;
+          }
+          stores.push({ store, label: STORE_LABELS[store] || store, daysWithData: snaps.length,
+                        orderCount: orders, shelfWeek: latestWeek[store] || null,
+                        rows, shelf: shelfByStore[store] || null });
+        }
+
+        // Rates are computed here rather than in the page so every surface that reads this
+        // endpoint divides the same way.
+        const rate = (v, orders, bays) => ({
+          units: Math.round(v.units),
+          baskets: Math.round(v.baskets),
+          per1000: orders > 0 ? +((v.units / orders) * 1000).toFixed(1) : null,
+          penetration: orders > 0 ? +((v.baskets / orders) * 100).toFixed(2) : null,
+          unitsPerBayWeek: bays > 0 ? +(v.units / bays / weeks).toFixed(1) : null,
+        });
+        const EMPTY = { units: 0, baskets: 0 };
+        const categories = [];
+        for (const l2 of Object.keys(tree)) {
+          const kids = tree[l2].filter(l3 => chain.rows[l3]);
+          categories.push({
+            key: l2, level: "l2", label: merchLabel(l2),
+            children: kids.map(l3 => ({ key: l3, level: "l3", label: merchLabel(l3) })),
+          });
+        }
+        const shaped = stores.map(st => ({
+          store: st.store, label: st.label, daysWithData: st.daysWithData,
+          orderCount: st.orderCount, shelfWeek: st.shelfWeek,
+          cells: Object.fromEntries(
+            [...categories, ...categories.flatMap(c => c.children)].map(c =>
+              [c.key, rate(st.rows[c.key] || EMPTY, st.orderCount, st.shelf ? st.shelf[c.key] : 0)])),
+        }));
+        const chainCells = Object.fromEntries(
+          [...categories, ...categories.flatMap(c => c.children)].map(c =>
+            [c.key, rate(chain.rows[c.key] || EMPTY, chain.orderCount, 0)]));
+
+        return new Response(JSON.stringify({
+          ok: true, window: win, weeks, start, end,
+          categories, stores: shaped,
+          chain: { orderCount: chain.orderCount, cells: chainCells },
+          note: chain.orderCount === 0
+            ? "No item snapshots in this window, so nothing can be measured yet."
+            : null,
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     if (url.searchParams.get("action") === "merch-coverage" && request.method === "GET") {
       const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
       if (unauth) return unauth;

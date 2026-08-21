@@ -133,7 +133,11 @@ console.log('Retail lookup (R1–R8)');
     ]});
   // Only the cvs.com row survives the host filter, and it carries no price.
   eq(s.line.retail_price, null, '🛑 a price from an unapproved domain is never used');
-  ok(s.flags.includes('no retail'), '...the line reads as unpriced rather than cheaply priced');
+  // cvs.com IS approved and DID appear in the results, so the item is carried — we just
+  // could not read a price off it. Reporting "not at big box" here would be a false
+  // negative telling the buyer there is no competition when CVS stocks it.
+  ok(s.flags.includes('no price found'),
+     '...and says WHY: carried, but no readable first-party price');
   const sent = searches[0] || '';
   ok(sent.includes('include_domains'), 'the allowlist is still sent as a query hint');
   ok(!/familydollar/.test(JSON.stringify(s.line)), 'nothing from the leaked domain reaches the row');
@@ -165,6 +169,38 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   ok(!s.flags.includes('no retail'), 'not flagged as unpriced');
 }
 
+// ── A MISS NAMES ITSELF: three outcomes, three different answers ───────────
+// For a discounter "we found no price" is not one fact. Whether the item is absent from
+// big box, present but sold by a third party, or present with a price we failed to read
+// changes the buy decision, so each gets its own verdict rather than a shared blank.
+{
+  const s = await scenario({ desc: 'Obscure import wafer', upc: '8901234567890',
+    results: [], snippets: [] });
+  eq(s.line.retail_price, null, 'nothing found anywhere leaves no price');
+  ok(s.flags.includes('not at big box'),
+     '🔑 an item no approved retailer carries is ANSWERED, not left blank');
+  ok(!s.flags.includes('no retail'),
+     '...and the specific answer is not overwritten by the vague one');
+}
+{
+  // Walmart carries it and the page is first-party — we simply could not read a price.
+  // That is our failure, and must not be reported as the item being absent from retail.
+  const s = await scenario({ desc: 'Readable at Walmart', upc: '012345678999',
+    results: RES('https://www.walmart.com/ip/thing'), snippets: [] });
+  eq(s.line.retail_price, null, 'an unreadable page still leaves no price');
+  ok(s.flags.includes('no price found'), '...but that is OUR failure, and says so');
+  ok(!s.flags.includes('not at big box'),
+     '🔑 …and is never reported as absent from big box, which would be a false negative');
+}
+{
+  // A settled miss must leave the queue. The drainer used to look for one literal flag,
+  // so a line settled under any NEW reason was re-offered forever.
+  const s = await scenario({ desc: 'Another obscure import', upc: '8901234567891',
+    results: [], snippets: [] });
+  const again = await post('manifest-retail', { id: s.id });
+  eq(again.body.remaining, 0, '🔑 a line settled as "not at big box" drains, it does not respin');
+}
+
 // ── R2 — a multipack is divided down, and the basis says so ────────────────
 {
   const s = await scenario({ desc: 'Soap bar 4 ct', upc: '012345678906',
@@ -185,7 +221,9 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
                  sold_by:'BargainBinSellers LLC' }] });
   eq(s.line.retail_price, null, '🛑 R3 — a third-party seller on a first-party domain is refused');
   ok(s.flags.includes('marketplace only'), '...and the line says why');
-  ok(s.flags.includes('no retail'), '...and reads as unpriced rather than cheap');
+  // …and specifically NOT "not at big box": Walmart DOES carry it, the seller is the
+  // problem. Collapsing these two would tell a buyer the item has no retail presence.
+  ok(!s.flags.includes('not at big box'), '...but is NOT reported as absent from big box');
 }
 
 // ── R4 — in stock beats listed, and a wide spread is a conflict ────────────
