@@ -720,6 +720,18 @@
             <span id="nav-merch-chev" class="nav-chev nav-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
           </div>
           <div id="nav-merch-sub" class="nav-sub hidden">
+            <div id="nav-merch-coverage" class="nav-item nav-subitem" data-page="merch-coverage" onclick="navigateToPage('merch-coverage')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
+              <span class="nav-label">Coverage</span>
+            </div>
+            <div id="nav-merch-velocity" class="nav-item nav-subitem" data-page="merch-velocity" onclick="navigateToPage('merch-velocity')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg></span>
+              <span class="nav-label">Velocity</span>
+            </div>
+            <div id="nav-merch-manifests" class="nav-item nav-subitem" data-page="merch-manifests" onclick="navigateToPage('merch-manifests')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></span>
+              <span class="nav-label">Manifests</span>
+            </div>
             <div id="nav-merch-criteria" class="nav-item nav-subitem" data-page="merch-criteria" onclick="navigateToPage('merch-criteria')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 15 11 17 15 12"/></svg></span>
               <span class="nav-label">Buy Criteria</span>
@@ -1996,6 +2008,266 @@
       </div>
     </div>
 
+    <!-- ── Merchandising: Manifest Scorer ──────────────────────────────────────
+         A vendor spreadsheet in, a decision out. Follows DESIGN.md §4.8. -->
+    <div id="page-merch-manifests" class="hidden">
+      <style>
+        .mf-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;overflow:hidden;color:#14110a}
+        .dark .mf-panel{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3}
+        .mf-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;
+          background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark .mf-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        .mf-barlbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
+        .dark .mf-barlbl{color:#8893a7}
+        .mf-sub{font-size:10px;color:#6b6453}
+        .dark .mf-sub{color:#8893a7}
+        .mf-ans{font-size:11px;font-style:italic}
+        .mf-body{padding:18px}
+        .mf-in{background:#ffffff;border:1px solid rgba(20,16,8,.18);border-radius:9px;padding:7px 11px;
+          font-size:13px;color:#14110a}
+        .dark .mf-in{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .mf-btn{background:#22c55e;color:#06210f;border:none;border-radius:9px;padding:7px 14px;
+          font-size:13px;font-weight:700;cursor:pointer}
+        .mf-btn:disabled{opacity:.42;cursor:not-allowed}
+        .mf-btn.ghost{background:transparent;color:#6b6453;border:1px solid rgba(20,16,8,.18);font-weight:600}
+        .dark .mf-btn.ghost{color:#8893a7;border-color:rgba(255,255,255,.16)}
+        .mf-scroll{overflow-x:auto}
+        .mf-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+        .mf-tbl th,.mf-tbl td{text-align:right;padding:0 10px;height:40px;white-space:nowrap;
+          border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark .mf-tbl th,.dark .mf-tbl td{border-bottom-color:rgba(255,255,255,.09)}
+        .mf-tbl th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;height:34px;
+          color:#6b6453;background:#fafaf6;position:sticky;top:0;z-index:3}
+        .dark .mf-tbl th{color:#8893a7;background:#16203a}
+        .mf-tbl th.mf-l,.mf-tbl td.mf-l{text-align:left;white-space:normal;min-width:230px}
+        .mf-tbl tr.mf-tot td{font-weight:700;background:#fafaf6}
+        .dark .mf-tbl tr.mf-tot td{background:#16203a}
+        .mf-kpi{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end;padding:18px}
+        .mf-big{font-size:30px;font-weight:700;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+        .mf-cap{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453;margin-bottom:5px}
+        .dark .mf-cap{color:#8893a7}
+        .mf-v{font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;border-radius:4px;padding:2px 6px}
+        .mf-pass{background:rgba(34,197,94,.18);color:#15803d}
+        .dark .mf-pass{color:#4ade80}
+        .mf-warn{background:rgba(245,158,11,.18);color:#92600b}
+        .dark .mf-warn{color:#fbbf24}
+        .mf-fail{background:rgba(239,68,68,.18);color:#b91c1c}
+        /* Neutral on purpose: an unjudged line is not a soft warning, it is an absence
+           of information, and colouring it amber would read as a mild problem. */
+        .mf-unknown{background:rgba(20,16,8,.10);color:#6b6453}
+        .dark .mf-unknown{background:rgba(255,255,255,.10);color:#8893a7}
+        .dark .mf-fail{color:#f87171}
+        .mf-flag{display:inline-block;font-size:10px;border-radius:4px;padding:1px 5px;margin-left:5px;
+          background:rgba(20,16,8,.07);color:#6b6453}
+        .dark .mf-flag{background:rgba(255,255,255,.08);color:#8893a7}
+        /* Quiet until you look for it: destructive, so it should not compete with the
+           row itself, but it must be findable without opening the manifest first. */
+        .mf-x{background:none;border:none;color:#9c9484;cursor:pointer;font-size:17px;line-height:1;
+          padding:2px 7px;border-radius:6px}
+        .dark .mf-x{color:#5a6478}
+        .mf-x:hover{color:#b91c1c;background:rgba(239,68,68,.12)}
+        .mf-note{padding:12px 18px;font-size:12.5px;color:#6b6453;border-top:1px solid rgba(20,16,8,.10)}
+        .dark .mf-note{color:#8893a7;border-top-color:rgba(255,255,255,.09)}
+        .mf-row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+        .mf-drop{border:1px dashed rgba(20,16,8,.24);border-radius:11px;padding:22px;text-align:center;font-size:13px;color:#6b6453}
+        .dark .mf-drop{border-color:rgba(255,255,255,.20);color:#8893a7}
+      </style>
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-[1500px] mx-auto flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <div class="flex items-center gap-2.5 flex-wrap">
+              <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Manifests</h1>
+              <span id="mf-pill" class="text-[11px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded-md px-2 py-0.5"></span>
+            </div>
+            <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">A vendor's spreadsheet, scored against your criteria before the call.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="mf-back" onclick="mfList()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim active:scale-95 transition">All manifests</button>
+          </div>
+        </div>
+      </div>
+      <div class="max-w-[1500px] mx-auto px-4 sm:px-6 pt-4 pb-10 space-y-4">
+        <div id="mf-status" class="text-sm text-opl-inkDim dark:text-op-inkDim"></div>
+        <div id="mf-view"></div>
+      </div>
+    </div>
+
+    <!-- ── Merchandising: Coverage scorecard ───────────────────────────────────
+         "Is core covered?" answered two ways — what the shelf gives a category and
+         what customers buy from it — with the gap as the buy/cut signal. Follows the
+         table pattern in DESIGN.md §4.8. -->
+    <div id="page-merch-coverage" class="hidden">
+      <style>
+        /* Colour is set on the PANEL, not just the table. §4.8 says never let a colour be
+           inherited, and this panel holds a hero and action rows as well as a table — set
+           it on the table alone and everything outside the table inherits body's black,
+           which measures 1.18:1 here. Both themes, always. */
+        #cv-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;
+          overflow:hidden;color:#14110a}
+        .dark #cv-panel{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3}
+        #cv-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;
+          background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #cv-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        #cv-bar .cv-barlbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
+        .dark #cv-bar .cv-barlbl{color:#8893a7}
+        .cv-seg{display:inline-flex;border:1px solid rgba(20,16,8,.18);border-radius:9px;overflow:hidden}
+        .dark .cv-seg{border-color:rgba(255,255,255,.16)}
+        .cv-seg button{background:transparent;border:none;padding:6px 13px;font-size:12.5px;font-weight:600;
+          cursor:pointer;color:#6b6453}
+        .dark .cv-seg button{color:#8893a7}
+        .cv-seg button.on{background:#22c55e;color:#06210f}
+        #cv-scroll{overflow-x:auto}
+        #cv-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;color:#14110a;
+          font-variant-numeric:tabular-nums}
+        .dark #cv-tbl{color:#e7ecf3}
+        #cv-tbl th,#cv-tbl td{text-align:right;padding:0 10px;height:46px;white-space:nowrap;
+          border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #cv-tbl th,.dark #cv-tbl td{border-bottom-color:rgba(255,255,255,.09)}
+        #cv-tbl th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;height:34px;
+          color:#6b6453;background:#fafaf6;position:sticky;top:0;z-index:3}
+        .dark #cv-tbl th{color:#8893a7;background:#16203a}
+        #cv-tbl th.cv-cat,#cv-tbl td.cv-cat{text-align:left;position:sticky;left:0;z-index:2;white-space:normal;
+          min-width:210px;background:#ffffff;font-weight:600}
+        .dark #cv-tbl th.cv-cat,.dark #cv-tbl td.cv-cat{background:#101826}
+        #cv-tbl th.cv-cat{z-index:4;background:#fafaf6}
+        .dark #cv-tbl th.cv-cat{background:#16203a}
+        #cv-tbl tr.cv-total td{font-weight:700;background:#fafaf6}
+        .dark #cv-tbl tr.cv-total td{background:#16203a}
+        #cv-tbl tr.cv-rest td.cv-cat{font-weight:500;color:#6b6453}
+        .dark #cv-tbl tr.cv-rest td.cv-cat{color:#8893a7}
+        /* Each cell carries TWO numbers — sales share over shelf share — because the
+           whole point of the page is the gap between them. The tint encodes the ratio;
+           the numbers say why, so the colour never has to be trusted on its own. */
+        .cv-cell{display:flex;flex-direction:column;align-items:flex-end;gap:1px;line-height:1.15}
+        .cv-sales{font-weight:600}
+        .cv-shelf{font-size:11px;color:#6b6453}
+        .dark .cv-shelf{color:#8893a7}
+        .cv-pad{display:block;border-radius:7px;padding:5px 8px;margin:0 -2px}
+        .cv-starved{background:rgba(34,197,94,.16);box-shadow:inset 0 0 0 1px rgba(34,197,94,.42)}
+        .cv-dead{background:rgba(239,68,68,.14);box-shadow:inset 0 0 0 1px rgba(239,68,68,.40)}
+        .cv-none{background:rgba(245,158,11,.14);box-shadow:inset 0 0 0 1px rgba(245,158,11,.45)}
+        .cv-under{color:#ef4444}
+        .cv-hero{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end;padding:18px}
+        .cv-big{font-size:38px;font-weight:700;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+        .cv-cap{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453;margin-bottom:5px}
+        .dark .cv-cap{color:#8893a7}
+        .cv-act{display:flex;align-items:baseline;gap:10px;padding:9px 18px;border-top:1px solid rgba(20,16,8,.10);font-size:13px}
+        .dark .cv-act{border-top-color:rgba(255,255,255,.09)}
+        .cv-kind{font-size:9.5px;font-weight:700;letter-spacing:.08em;border-radius:4px;padding:2px 6px;flex:none}
+        .cv-BUY{color:#06210f;background:#22c55e}
+        .cv-FLOOR{color:#3b2400;background:#f59e0b}
+        .cv-CUT{color:#fff;background:#ef4444}
+        .cv-why{color:#6b6453}
+        .dark .cv-why{color:#8893a7}
+        #cv-legend{display:flex;gap:20px;flex-wrap:wrap;padding:12px 18px;font-size:12px;color:#6b6453;
+          border-top:1px solid rgba(20,16,8,.10)}
+        .dark #cv-legend{color:#8893a7;border-top-color:rgba(255,255,255,.09)}
+        #cv-legend span{display:flex;align-items:center;gap:7px}
+        #cv-legend i{width:22px;height:14px;border-radius:4px;display:inline-block}
+      </style>
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-[1500px] mx-auto">
+          <div class="flex items-center gap-2.5 flex-wrap">
+            <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Coverage</h1>
+            <span id="cv-window-pill" class="text-[11px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded-md px-2 py-0.5"></span>
+          </div>
+          <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">What each category gets of the floor, against what it sells. The gap is the buy or the cut.</p>
+        </div>
+      </div>
+      <div class="max-w-[1500px] mx-auto px-4 sm:px-6 pt-4 pb-10 space-y-4">
+        <div id="cv-panel">
+          <div id="cv-bar">
+            <span class="cv-barlbl">Core coverage</span>
+            <span class="cv-seg">
+              <button id="cv-w7" onclick="cvSetWindow(7)">7 days</button>
+              <button id="cv-w28" onclick="cvSetWindow(28)">28 days</button>
+            </span>
+            <span id="cv-reporting" class="text-xs text-opl-inkDim dark:text-op-inkDim ml-auto"></span>
+          </div>
+          <div id="cv-hero" class="cv-hero"></div>
+          <div id="cv-actions"></div>
+        </div>
+        <!-- Kept OUTSIDE #cv-table-panel: cvRenderTable replaces that container wholesale,
+             so anything living inside it does not survive a refresh. -->
+        <div id="cv-status" class="text-sm text-opl-inkDim dark:text-op-inkDim">Loading…</div>
+        <div id="cv-table-panel"></div>
+      </div>
+    </div>
+
+    <!-- ── Merchandising: Velocity & Reach ─────────────────────────────────────
+         Units alone cannot say whether a slow category is the wrong PRODUCT or the wrong
+         CUSTOMER — store size confounds it. Rates per transaction, basket reach, and both
+         measured against the chain separate the two. §4.8: the panel owns bar + table +
+         legend, and colour is set on the PANEL, never on the table alone. -->
+    <div id="page-merch-velocity" class="hidden">
+      <style>
+        #vl-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;
+          overflow:hidden;color:#14110a}
+        .dark #vl-panel{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3}
+        #vl-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;
+          background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #vl-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        #vl-bar .vl-barlbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
+        .dark #vl-bar .vl-barlbl{color:#8893a7}
+        .vl-seg{display:inline-flex;border:1px solid rgba(20,16,8,.18);border-radius:9px;overflow:hidden}
+        .dark .vl-seg{border-color:rgba(255,255,255,.16)}
+        .vl-seg button{background:transparent;border:none;padding:6px 13px;font-size:12.5px;font-weight:600;
+          cursor:pointer;color:#6b6453}
+        .dark .vl-seg button{color:#8893a7}
+        .vl-seg button.on{background:#22c55e;color:#06210f}
+        #vl-scroll{overflow-x:auto}
+        #vl-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;color:#14110a;
+          font-variant-numeric:tabular-nums}
+        .dark #vl-tbl{color:#e7ecf3}
+        #vl-tbl th,#vl-tbl td{text-align:right;padding:0 10px;height:44px;white-space:nowrap;
+          border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #vl-tbl th,.dark #vl-tbl td{border-bottom-color:rgba(255,255,255,.09)}
+        #vl-tbl th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;height:34px;
+          color:#6b6453;background:#fafaf6;position:sticky;top:0;z-index:3}
+        .dark #vl-tbl th{color:#8893a7;background:#16203a}
+        /* A sticky column MUST carry its own background in both themes, or the scrolled
+           rows show straight through it. §4.8 trap 2. */
+        #vl-tbl th.vl-cat,#vl-tbl td.vl-cat{text-align:left;position:sticky;left:0;z-index:2;white-space:normal;
+          min-width:230px;background:#ffffff;font-weight:600}
+        .dark #vl-tbl th.vl-cat,.dark #vl-tbl td.vl-cat{background:#101826}
+        #vl-tbl th.vl-cat{z-index:4;background:#fafaf6}
+        .dark #vl-tbl th.vl-cat{background:#16203a}
+        #vl-tbl tr.vl-kid td.vl-cat{font-weight:500;padding-left:30px}
+        #vl-tbl td.vl-chain{font-weight:700;background:#fafaf6}
+        .dark #vl-tbl td.vl-chain{background:#16203a}
+        .vl-tw{cursor:pointer;user-select:none}
+        .vl-chev{display:inline-block;width:14px;font-size:12px;opacity:.75}
+        .vl-pad{display:block;border-radius:7px;padding:5px 8px;margin:0 -2px}
+        .vl-ahead{background:rgba(34,197,94,.16);box-shadow:inset 0 0 0 1px rgba(34,197,94,.42)}
+        .vl-behind{background:rgba(239,68,68,.14);box-shadow:inset 0 0 0 1px rgba(239,68,68,.40)}
+        /* .vl-pad is display:block so a tinted cell fills its column. In the LEGEND the
+           same class must sit inline, or every swatch pushes its own caption onto a new
+           line. Same class, two contexts — the table's needs win, the legend overrides. */
+        #vl-legend .vl-pad{display:inline-block;margin:0}
+        .vl-nodata{color:#6b6453}
+        .dark .vl-nodata{color:#8893a7}
+        .vl-hero{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end;padding:18px}
+        .vl-big{font-size:34px;font-weight:700;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+        .vl-cap{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453;margin-bottom:5px}
+        .dark .vl-cap{color:#8893a7}
+        #vl-legend{display:flex;gap:20px;flex-wrap:wrap;padding:12px 18px;font-size:12px;color:#6b6453;
+          border-top:1px solid rgba(20,16,8,.10)}
+        .dark #vl-legend{color:#8893a7;border-top-color:rgba(255,255,255,.09)}
+      </style>
+      <div class="max-w-[1500px] mx-auto px-4 py-6 space-y-4">
+        <div>
+          <h1 class="text-2xl font-bold text-opl-ink dark:text-op-ink">Velocity &amp; Reach</h1>
+          <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-1">
+            What each category actually does per transaction, by store and against the chain.
+          </p>
+        </div>
+        <!-- OUTSIDE the render target: vlRender replaces #vl-view wholesale, so anything
+             inside it does not survive the second render. §4.8 trap 7. -->
+        <div id="vl-status" class="text-sm text-opl-inkDim dark:text-op-inkDim">Loading…</div>
+        <div id="vl-view"></div>
+      </div>
+    </div>
+
     <!-- ── Merchandising: Buy Criteria ─────────────────────────────────────────
          The versioned thresholds a buy is scored against, and the definition of
          "core" everything downstream reads. Edits accumulate in a draft; nothing
@@ -2003,33 +2275,98 @@
     <div id="page-merch-criteria" class="hidden">
       <style>
         /* Colour comes from the V1 palette in tailwind.config.js, stated for BOTH themes.
-           Nothing here may rely on an inherited colour: this table sits on op-bg in dark
+           Nothing here may rely on an inherited colour: this panel sits on op-bg in dark
            and opl-bg in light, and a value that is only correct in one of them is a bug
-           you cannot see unless you look in the other. ink/inkDim/inkDimmer below are
-           literal token values (op.* dark, opl.* light) — a <style> block cannot use the
-           Tailwind class names, so the values are duplicated on purpose. */
-        #mc-tbl{border-collapse:separate;border-spacing:0;font-size:12px;color:#14110a}
+           you cannot see unless you look in the other. The ink/inkDim/inkDimmer values
+           below are the tokens' literals — a <style> block cannot use the Tailwind class
+           names, so they are duplicated on purpose. */
+        #mc-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;overflow:hidden}
+        .dark #mc-panel{background:#101826;border-color:rgba(255,255,255,.09)}
+        /* The controls belong to the table, so they sit on it rather than floating above
+           the page — the bar is what makes the picker read as "add a row to THIS". */
+        #mc-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;
+          background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #mc-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        #mc-bar .mc-barlbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
+        .dark #mc-bar .mc-barlbl{color:#8893a7}
+        #mc-add{background:#ffffff;border:1px solid rgba(20,16,8,.18);border-radius:9px;padding:7px 11px;
+          font-size:13px;color:#14110a;max-width:330px}
+        .dark #mc-add{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        #mc-add-btn{background:#22c55e;color:#06210f;border:none;border-radius:9px;padding:7px 14px;
+          font-size:13px;font-weight:700;cursor:pointer}
+        #mc-add-btn:disabled{opacity:.42;cursor:not-allowed}
+        #mc-scroll{overflow-x:auto}
+
+        #mc-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;color:#14110a;
+          font-variant-numeric:tabular-nums}
         .dark #mc-tbl{color:#e7ecf3}
-        #mc-tbl th,#mc-tbl td{border-bottom:.5px solid rgba(20,16,8,.10);padding:5px 8px;text-align:left;white-space:nowrap}
+        #mc-tbl th,#mc-tbl td{text-align:left;padding:0 10px;height:42px;white-space:nowrap;
+          border-bottom:1px solid rgba(20,16,8,.10)}
         .dark #mc-tbl th,.dark #mc-tbl td{border-bottom-color:rgba(255,255,255,.09)}
-        #mc-tbl th{font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#6b6453}
-        .dark #mc-tbl th{color:#8893a7}
-        #mc-tbl .mc-cat{position:sticky;left:0;z-index:2;white-space:normal;min-width:190px;font-weight:500}
-        #mc-tbl tr.mc-group td{font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;padding-top:12px;color:#6b6453}
-        .dark #mc-tbl tr.mc-group td{color:#8893a7}
-        #mc-tbl tr.mc-default td{font-weight:600}
-        #mc-tbl input{width:76px;border-radius:6px;padding:2px 6px;font-size:12px;border:1px solid transparent;background:transparent;color:inherit}
-        #mc-tbl input:focus{outline:none;border-color:#639922;background:rgba(99,153,34,.06)}
-        /* Inherited vs override vs changed-in-draft — the three states the PRD asks
-           the table to show at a glance, so nobody has to guess where a number came from. */
-        /* inkDim, not inkDimmer. inkDimmer (#9c9484) reads as "inherited" but measures
-           2.71:1 on opl-bg — under AA. inkDim is 5.29:1 and still unmistakably muted
-           against an override, which is near-black at 16.96:1. */
+        #mc-tbl th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+          height:34px;color:#6b6453;background:#fafaf6;position:sticky;top:0;z-index:3}
+        .dark #mc-tbl th{color:#8893a7;background:#16203a}
+        /* The category column pins while the thresholds scroll sideways, so it needs an
+           opaque background of its own or the cells slide under it. */
+        #mc-tbl th.mc-cat,#mc-tbl td.mc-cat{position:sticky;left:0;z-index:2;white-space:normal;
+          min-width:230px;background:#ffffff}
+        .dark #mc-tbl th.mc-cat,.dark #mc-tbl td.mc-cat{background:#101826}
+        #mc-tbl th.mc-cat{z-index:4;background:#fafaf6}
+        .dark #mc-tbl th.mc-cat{background:#16203a}
+        #mc-tbl tr.mc-chain td{font-weight:600;background:#fafaf6}
+        .dark #mc-tbl tr.mc-chain td{background:#16203a}
+        #mc-tbl tr.mc-l2 td.mc-cat{font-weight:600}
+        /* An L3 sits under its parent, indented, with a rule drawn back up to it — the
+           inheritance is the point, so it is shown structurally rather than labelled. */
+        #mc-tbl tr.mc-l3 td.mc-cat{padding-left:34px}
+        #mc-tbl tr.mc-l3 td.mc-cat::before{content:"";position:absolute;left:18px;top:0;bottom:50%;width:9px;
+          border-left:1px solid rgba(20,16,8,.18);border-bottom:1px solid rgba(20,16,8,.18);border-bottom-left-radius:5px}
+        .dark #mc-tbl tr.mc-l3 td.mc-cat::before{border-color:rgba(255,255,255,.16)}
+        .mc-lvl{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+          border:1px solid rgba(20,16,8,.18);border-radius:4px;padding:2px 5px;margin-right:9px;color:#9c9484;
+          vertical-align:1px}
+        .dark .mc-lvl{border-color:rgba(255,255,255,.16);color:#5a6478}
+        #mc-tbl tr.mc-l3 .mc-lvl{color:#22c55e;border-color:rgba(34,197,94,.4)}
+        .mc-rm{background:none;border:none;color:#9c9484;cursor:pointer;font-size:15px;line-height:1;
+          padding:2px 5px;margin-left:8px;border-radius:5px}
+        .dark .mc-rm{color:#5a6478}
+        .mc-rm:hover{color:#14110a;background:rgba(20,16,8,.08)}
+        .dark .mc-rm:hover{color:#e7ecf3;background:rgba(255,255,255,.10)}
+
+        #mc-tbl input[type=text]{width:82px;border-radius:6px;padding:3px 7px;font-size:13px;
+          border:1px solid transparent;background:transparent;color:inherit;text-align:right;
+          font-variant-numeric:tabular-nums}
+        #mc-tbl input[type=text]:hover{border-color:rgba(20,16,8,.18)}
+        .dark #mc-tbl input[type=text]:hover{border-color:rgba(255,255,255,.16)}
+        #mc-tbl input[type=text]:focus{outline:none;border-color:#22c55e;background:rgba(34,197,94,.07)}
+        /* accent-color paints the CHECKED box; the unchecked one is UA-drawn and follows
+           color-scheme, which this app never sets — so in dark mode it came out white.
+           Scoped to this table rather than the root: setting it app-wide would restyle
+           every native control on every page, which is not what was asked for. */
+        #mc-tbl input[type=checkbox]{accent-color:#22c55e;width:15px;height:15px}
+        .dark #mc-tbl input[type=checkbox]{color-scheme:dark}
+        /* Inherited vs set-here vs changed-in-draft — the three states the table has to
+           show at a glance, so nobody has to guess where a number came from.
+           inkDim, not inkDimmer: inkDimmer (#9c9484) reads as "inherited" but measures
+           2.71:1 on opl-bg, under AA. inkDim is 5.29:1 and still unmistakably muted
+           against a value set here, which is near-black at 16.96:1. */
         #mc-tbl input.mc-inherit{color:#6b6453}
         .dark #mc-tbl input.mc-inherit{color:#8893a7}
-        #mc-tbl input.mc-override{color:inherit;border-color:rgba(20,16,8,.14)}
-        .dark #mc-tbl input.mc-override{border-color:rgba(255,255,255,.16)}
-        #mc-tbl input.mc-dirty{background:rgba(234,179,8,.16);border-color:rgba(234,179,8,.55)}
+        #mc-tbl input.mc-override{border-color:rgba(20,16,8,.18);background:#fafaf6}
+        .dark #mc-tbl input.mc-override{border-color:rgba(255,255,255,.16);background:#16203a}
+        #mc-tbl input.mc-dirty{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.55)}
+        .dark #mc-tbl input.mc-dirty{background:rgba(245,158,11,.16)}
+
+        #mc-legend{display:flex;gap:20px;flex-wrap:wrap;padding:12px 18px;font-size:12px;color:#6b6453;
+          border-top:1px solid rgba(20,16,8,.10)}
+        .dark #mc-legend{color:#8893a7;border-top-color:rgba(255,255,255,.09)}
+        #mc-legend span{display:flex;align-items:center;gap:7px}
+        #mc-legend i{width:22px;height:14px;border-radius:4px;display:inline-block;border:1px solid transparent}
+        .mc-sw-inherit{background:transparent;border-color:rgba(20,16,8,.10)!important}
+        .dark .mc-sw-inherit{border-color:rgba(255,255,255,.09)!important}
+        .mc-sw-own{background:#fafaf6;border-color:rgba(20,16,8,.18)!important}
+        .dark .mc-sw-own{background:#16203a;border-color:rgba(255,255,255,.16)!important}
+        .mc-sw-dirty{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.55)!important}
       </style>
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-[1500px] mx-auto">
@@ -2039,12 +2376,9 @@
                 <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Buy Criteria</h1>
                 <span id="mc-version" class="text-[11px] font-bold uppercase tracking-wide text-accent-green bg-accent-green/10 border border-accent-green/40 rounded-md px-2 py-0.5"></span>
               </div>
-              <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">What a buy has to pass, and what counts as core. Published versions never move.</p>
+              <p class="text-sm text-gray-400 dark:text-gray-500 mt-0.5">What a buy has to pass, and what counts as core. Set it per category; add a specific one only when it needs to differ. <strong>Dollar $</strong> is what a dollar store charges for a comparable item — a ceiling our suggested price is held under. Published versions never move.</p>
             </div>
-            <div class="flex items-center gap-2">
-              <label class="flex items-center gap-1.5 text-xs font-semibold text-opl-inkDim dark:text-op-inkDim cursor-pointer">
-                <input type="checkbox" id="mc-only-overrides" onchange="mcRender()" class="accent-accent-green"> Only overrides
-              </label>
+            <div class="flex items-center gap-2 flex-wrap">
               <button id="mc-discard" onclick="mcDiscard()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim active:scale-95 transition">Discard draft</button>
               <button id="mc-publish" onclick="mcPublish()" class="hidden text-xs font-semibold px-3 py-1.5 rounded-lg bg-accent-green text-white active:scale-95 transition">Publish…</button>
             </div>
@@ -2052,8 +2386,23 @@
         </div>
       </div>
       <div class="max-w-[1500px] mx-auto px-4 sm:px-6 pt-4 pb-10">
-        <div id="mc-status" class="text-sm text-opl-inkDim dark:text-op-inkDim mb-3">Loading…</div>
-        <div class="overflow-x-auto"><table id="mc-tbl"></table></div>
+        <div id="mc-panel">
+          <div id="mc-bar">
+            <span class="mc-barlbl">Criteria</span>
+            <select id="mc-add" aria-label="Add criteria for a specific category"></select>
+            <button id="mc-add-btn" onclick="mcAddOverride()">Add override</button>
+            <label class="flex items-center gap-1.5 text-xs font-semibold text-opl-inkDim dark:text-op-inkDim cursor-pointer ml-auto">
+              <input type="checkbox" id="mc-only-overrides" onchange="mcRender()" class="accent-accent-green"> Only overrides
+            </label>
+          </div>
+          <div id="mc-status" class="text-sm text-opl-inkDim dark:text-op-inkDim px-[18px] py-3">Loading…</div>
+          <div id="mc-scroll"><table id="mc-tbl"></table></div>
+          <div id="mc-legend">
+            <span><i class="mc-sw-inherit"></i> Inherited from above</span>
+            <span><i class="mc-sw-own"></i> Set on this row</span>
+            <span><i class="mc-sw-dirty"></i> Changed in this draft</span>
+          </div>
+        </div>
         <div class="mt-8">
           <button onclick="mcToggleLog()" class="flex items-center gap-1.5 text-sm font-semibold text-opl-inkDim dark:text-op-inkDim">
             <span id="mc-log-chev" class="inline-block transition-transform">▸</span> Change log
@@ -7762,7 +8111,7 @@
     if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)) return;
 
     // Guard admin-only pages
-    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria'];
+    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria', 'merch-coverage', 'merch-manifests', 'merch-velocity'];
     if (adminOnly.includes(page)) {
       const role = currentUser && currentUser.role;
       if (role !== 'superuser' && role !== 'admin') return;
@@ -7875,6 +8224,15 @@
     if (page === 'content') {
       if (typeof initContent === 'function') initContent();
     }
+    if (page === 'merch-coverage') {
+      if (typeof initMerchCoverage === 'function') initMerchCoverage();
+    }
+    if (page === 'merch-velocity') {
+      if (typeof initMerchVelocity === 'function') initMerchVelocity();
+    }
+    if (page === 'merch-manifests') {
+      if (typeof initManifests === 'function') initManifests();
+    }
     if (page === 'merch-criteria') {
       if (typeof initMerchCriteria === 'function') initMerchCriteria();
     }
@@ -7882,7 +8240,7 @@
       if (typeof initShelfCount === 'function') initShelfCount();
     }
     // Keep the Merchandising dropdown expanded while on any of its pages.
-    if ((page === 'merch-criteria' || page === 'merch-shelf-count') && typeof toggleMerchMenu === 'function') {
+    if ((page === 'merch-coverage' || page === 'merch-velocity' || page === 'merch-manifests' || page === 'merch-criteria' || page === 'merch-shelf-count') && typeof toggleMerchMenu === 'function') {
       toggleMerchMenu(true);
     }
 
@@ -17030,21 +17388,658 @@
   }
   window.toggleMerchMenu = toggleMerchMenu;
 
+  // ── Manifest Scorer ───────────────────────────────────────────────────────
+  // The CSV is held in memory only: a remap re-reads the same text rather than the
+  // server storing a vendor's price file it has no reason to keep.
+  let mfCsv = null, mfPending = null, mfOpenId = null, mfManifests = [];
+
+  const mfEsc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+  const mfMoney = (n) => n === null || n === undefined ? '—' : new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n);
+  const mfPct = (n) => n === null || n === undefined ? '—' : `${n.toFixed(n < 10 ? 1 : 0)}%`;
+  const mfNum = (n) => n === null || n === undefined ? '—' : Math.round(n).toLocaleString('en-US');
+  const mfSay = (t) => { const n = el('mf-status'); if (n) n.textContent = t; };
+
+  function initManifests() { mfOpenId = null; mfList(); }
+  window.initManifests = initManifests;
+
+  async function mfApi(action, opts) {
+    const r = await fetch(`${WORKER_BASE}?action=${action}`, {
+      credentials: 'include',
+      ...(opts ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opts) } : {}),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    return j;
+  }
+
+  async function mfList() {
+    mfOpenId = null; mfPending = null;
+    el('mf-back').classList.add('hidden');
+    el('mf-pill').textContent = '';
+    mfSay('Loading…');
+    try {
+      const j = await mfApi('manifests');
+      mfManifests = j.manifests || [];
+      const rows = (j.manifests || []).map(m => `<tr onclick="mfOpen('${mfEsc(m.id)}')" style="cursor:pointer">
+        <td class="mf-l"><strong>${mfEsc(m.vendor)}</strong>${m.filename ? ` <span class="mf-flag">${mfEsc(m.filename)}</span>` : ''}</td>
+        <td class="mf-l">${mfEsc((m.uploaded_at || '').slice(0,10))}</td>
+        <td>${mfNum(m.line_count)}</td>
+        <td>${mfMoney(m.landed_cost)}</td>
+        <td class="mf-l"><span class="mf-v ${m.status === 'passed' ? 'mf-fail' : m.status?.startsWith('approved') ? 'mf-pass' : 'mf-warn'}">${mfEsc((m.status||'').replace('_',' '))}</span></td>
+        <td class="mf-l">${['draft','scored'].includes(m.status)
+          ? `<button class="mf-x" title="Delete this upload" aria-label="Delete ${mfEsc(m.vendor)}"
+               onclick="event.stopPropagation();mfDelete('${mfEsc(m.id)}')">&times;</button>`
+          : ''}</td>
+      </tr>`).join('');
+      mfSay('');
+      el('mf-view').innerHTML = `
+        <div class="mf-panel">
+          <div class="mf-bar"><span class="mf-barlbl">New manifest</span></div>
+          <div class="mf-body">
+            <div class="mf-row" style="margin-bottom:12px">
+              <input id="mf-vendor" class="mf-in" placeholder="Vendor name" style="min-width:200px">
+              <input id="mf-file" type="file" accept=".csv,text/csv" class="mf-in" onchange="mfPick(this)">
+              <button class="mf-btn" onclick="mfUpload()">Read file</button>
+            </div>
+            <div class="mf-drop">Save the vendor's sheet as CSV first — xlsx isn't read yet.
+              Nothing is stored until you've checked the column mapping.</div>
+          </div>
+        </div>
+        <div class="mf-panel" style="margin-top:16px">
+          <div class="mf-bar"><span class="mf-barlbl">Recent</span></div>
+          ${rows ? `<div class="mf-scroll"><table class="mf-tbl"><thead><tr>
+              <th class="mf-l">Vendor</th><th class="mf-l">Uploaded</th><th>Lines</th><th>Landed cost</th><th class="mf-l">Status</th><th></th>
+            </tr></thead><tbody>${rows}</tbody></table></div>`
+            : `<div class="mf-body" style="color:#6b6453">Nothing uploaded yet.</div>`}
+        </div>`;
+    } catch (e) { mfSay(`Could not load manifests: ${e.message}`); }
+  }
+  window.mfList = mfList;
+
+  function mfPick(input) {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => { mfCsv = String(rd.result); mfSay(`${f.name} read — ${mfCsv.split(/\r?\n/).length - 1} rows.`); };
+    rd.onerror = () => mfSay('Could not read that file.');
+    rd.readAsText(f);
+    if (!el('mf-vendor').value) el('mf-vendor').value = f.name.replace(/\.[^.]+$/, '');
+  }
+  window.mfPick = mfPick;
+
+  async function mfUpload() {
+    const vendor = el('mf-vendor').value.trim();
+    if (!vendor) { uiAlert('Give the vendor a name first.'); return; }
+    if (!mfCsv) { uiAlert('Choose a CSV file first.'); return; }
+    mfSay('Reading…');
+    try {
+      const j = await mfApi('manifest-upload', { vendor, filename: el('mf-file').files?.[0]?.name, csv: mfCsv });
+      mfPending = j;
+      mfShowMapping(j);
+    } catch (e) { mfSay(`Upload failed: ${e.message}`); }
+  }
+  window.mfUpload = mfUpload;
+
+  // The mapping is always shown for confirmation, even when it was guessed correctly —
+  // a wrong column is silent everywhere downstream, and this is the one cheap moment to
+  // catch it.
+  function mfShowMapping(j) {
+    el('mf-back').classList.remove('hidden');
+    el('mf-pill').textContent = j.map_source === 'template' ? 'Mapped from template' : 'Check the mapping';
+    mfSay(j.note || `${j.rows} lines. Confirm the columns below.`);
+    const FIELDS = [['identifier','Identifier (UPC/model)'],['description','Description'],['qty','Qty'],
+                    ['units_per_case','Case pack (per line)'],['uom','Unit'],['cost','Cost'],
+                    ['msrp','MSRP'],['vendor_claimed_retail','Vendor comp']];
+    const opts = (sel) => `<option value="">—</option>` +
+      j.headers.map(h => `<option value="${mfEsc(h)}" ${h === sel ? 'selected' : ''}>${mfEsc(h)}</option>`).join('');
+    el('mf-view').innerHTML = `<div class="mf-panel">
+      <div class="mf-bar"><span class="mf-barlbl">Columns · ${mfEsc(j.vendor)}</span>
+        <label class="mf-row" style="gap:6px;font-size:13px">Sells as
+          <select id="mf-sellas" class="mf-in">
+            <option value="each" ${j.sell_as === 'each' ? 'selected' : ''}>each</option>
+            <option value="case" ${j.sell_as === 'case' ? 'selected' : ''}>case</option>
+          </select></label>
+        <label class="mf-row" style="gap:6px;font-size:13px" title="Only used for lines where the sheet gives no case pack of its own">Units per case
+          <input id="mf-upc" class="mf-in" style="width:70px" value="${j.units_per_case}"></label>
+        <span style="font-size:11.5px;color:#6b6453">only set this if Qty and Cost are per CASE — a pack column alone does not mean they are</span>
+        <button class="mf-btn" style="margin-left:auto" onclick="mfConfirmMap()">Use this mapping</button>
+      </div>
+      <div class="mf-body">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">
+          ${FIELDS.map(([f,label]) => `<label style="display:block;font-size:12px">
+            <span class="mf-cap" style="display:block">${label}${['description','qty','cost'].includes(f) ? ' *' : ''}</span>
+            <select id="mf-map-${f}" class="mf-in" style="width:100%">${opts(j.column_map[f])}</select>
+          </label>`).join('')}
+        </div>
+      </div>
+      <div class="mf-note">First five rows: ${(j.sample || []).slice(0,5).map(r => mfEsc(r.slice(0,4).join(' · '))).join(' <br> ')}</div>
+    </div>`;
+  }
+
+  async function mfConfirmMap() {
+    const map = {};
+    for (const f of ['identifier','description','qty','units_per_case','uom','cost','msrp','vendor_claimed_retail']) {
+      const v = el(`mf-map-${f}`).value; if (v) map[f] = v;
+    }
+    for (const need of ['description','qty','cost']) {
+      if (!map[need]) { uiAlert(`${need} has to be mapped — it is what the scoring is built on.`); return; }
+    }
+    mfSay('Applying…');
+    try {
+      await mfApi('manifest-remap', { id: mfPending.id, csv: mfCsv, column_map: map,
+        sell_as: el('mf-sellas').value, units_per_case: Number(el('mf-upc').value) || 12 });
+      mfSay('Categorising…');
+      await mfApi('manifest-classify', { id: mfPending.id });
+      mfOpen(mfPending.id);
+    } catch (e) { mfSay(`Could not apply: ${e.message}`); }
+  }
+  window.mfConfirmMap = mfConfirmMap;
+
+  async function mfOpen(id) {
+    mfOpenId = id;
+    el('mf-back').classList.remove('hidden');
+    mfSay('Scoring…');
+    try {
+      const j = await mfApi(`manifest&id=${encodeURIComponent(id)}`);
+      mfRenderScore(j);
+    } catch (e) { mfSay(`Could not open: ${e.message}`); }
+  }
+  window.mfOpen = mfOpen;
+
+  async function mfClassify() {
+    mfSay('Categorising…');
+    try { const j = await mfApi('manifest-classify', { id: mfOpenId });
+      mfSay(`${j.classified} categorised.`); mfOpen(mfOpenId);
+    } catch (e) { mfSay(`Could not categorise: ${e.message}`); }
+  }
+  window.mfClassify = mfClassify;
+
+  // Freight and an unsellable share are what turn an invoice price into what the goods
+  // actually cost us. Both default to zero, and the note says plainly when they are —
+  // a blank cost basis is a choice the buyer should see, not a silent assumption.
+  function mfCostBasisNote(m, s) {
+    const f = Number(m.freight_cost) || 0, d = Number(m.defect_pct) || 0;
+    if (!f && !d) return 'not counted — the gates are running on invoice cost alone';
+    const units = Number(s?.totals?.units) || 0;
+    const per = units > 0 ? f / units : 0;
+    const bits = [];
+    if (f) bits.push(`${mfMoney(f)} freight ≈ ${mfMoney(per)}/unit`);
+    if (d) bits.push(`${d}% unsellable`);
+    return bits.join(' · ') + ' — folded into every cost test below';
+  }
+
+  async function mfSaveCosts() {
+    const num = (id) => Number(String((el(id) || {}).value || '').replace(/[^0-9.]/g, '')) || 0;
+    mfSay('Applying…');
+    try {
+      await mfApi('manifest-costs', { id: mfOpenId, freight_cost: num('mf-freight'), defect_pct: num('mf-defect') });
+      mfOpen(mfOpenId);
+    } catch (e) { mfSay(`Could not apply: ${e.message}`); }
+  }
+  window.mfSaveCosts = mfSaveCosts;
+
+  let mfLast = null;
+  function mfRenderScore(j) {
+    mfLast = j;
+    const m = j.manifest, s = j.score;
+    el('mf-pill').textContent = m.status === 'draft' ? 'Not decided' : (m.status || '').replace('_',' ');
+    mfSay('');
+    const vClass = s.verdict === 'buy' ? 'mf-pass' : s.verdict === 'buy_with_edits' ? 'mf-warn' : 'mf-fail';
+
+    const rollup = s.rollup.map(r => `<tr>
+      <td class="mf-l">${mfEsc(r.category)}${r.shelfState === 'dead' ? '<span class="mf-flag">dead on the shelf</span>'
+        : r.shelfState === 'starved' ? '<span class="mf-flag">starved</span>' : ''}</td>
+      <td>${mfNum(r.lines)}</td><td>${mfNum(r.units)}</td><td>${mfMoney(r.cost)}</td>
+      <td>${mfMoney(r.aspValue)}</td><td>${mfPct(r.costPctAsp)}</td>
+      <td>${r.warn ? `<span class="mf-v mf-warn">${r.warn}</span>` : ''}${r.fail ? ` <span class="mf-v mf-fail">${r.fail}</span>` : ''}${r.unknown ? ` <span class="mf-v mf-unknown">${r.unknown} unjudged</span>` : ''}</td>
+    </tr>`).join('');
+
+    const byId = Object.fromEntries(s.lines.map(l => [l.id, l]));
+    const lines = j.lines.map(l => {
+      const sc = byId[l.id] || {};
+      return `<tr>
+        <td class="mf-l">${mfEsc(l.description || '(no description)')}
+          ${(l.flags || []).map(f => `<span class="mf-flag">${mfEsc(f)}</span>`).join('')}</td>
+        <td class="mf-l">${mfEsc(l.l3 ? l.l3.split(' - ').pop() : '—')}</td>
+        <td>${l.pack_used > 1
+          ? `${l.pack_used}<div style="font-size:10px;color:#6b6453">${mfEsc(l.pack_source || '')}${l.pack_converted ? ' · applied' : ''}</div>`
+          : '—'}</td>
+        <td>${mfNum(l.qty)}</td>
+        <td>${mfMoney(l.cost)}${l.effective_cost != null && Math.abs(l.effective_cost - l.cost) >= 0.01
+            ? `<div class="mf-sub">lands at ${mfMoney(l.effective_cost)}</div>` : ''}</td>
+        <td>${mfMoney(l.std_cost_l3)}</td>
+        <td>${l.cost_vs_std === null || l.cost_vs_std === undefined ? '—'
+            : `<span style="color:${l.cost_vs_std <= 100 ? '#22c55e' : '#f59e0b'}">${l.cost_vs_std}%</span>`}</td>
+        <td>${l.retail_price ? `${mfMoney(l.retail_price)}<div class="mf-sub">${mfEsc(mfBasis(l))}</div>` : mfMiss(l)}</td>
+        <td>${mfMoney(l.asp_l3)}</td>
+        <td>${mfPct(sc.basisPct)}<div style="font-size:10px;color:#6b6453">${mfEsc(sc.basisName || '')}</div></td>
+        <td>${mfMoney(l.suggested_price)}</td>
+        <td>${sc.perStore ?? '—'}</td><td>${sc.daysToClear ?? '—'}</td>
+        <td class="mf-l">${sc.verdict ? `<span class="mf-v mf-${sc.verdict === 'pass' ? 'pass' : sc.verdict}">${sc.verdict}</span>` : ''}</td>
+      </tr>`;
+    }).join('');
+
+    el('mf-view').innerHTML = `
+      <div class="mf-panel">
+        <div class="mf-bar"><span class="mf-barlbl">${mfEsc(m.vendor)}</span>
+          <span style="font-size:12px;color:#6b6453">${mfEsc(m.sell_as === 'case' ? `sold as cases of ${m.units_per_case}` : 'sold as each')}</span>
+          <button class="mf-btn ghost" style="margin-left:auto" onclick="mfClassify()">Categorise remaining</button>
+          <button class="mf-btn ghost" onclick="mfRetail()">Look up retail</button>
+          <button class="mf-btn ghost" onclick="mfDelete()">Delete</button>
+          <button class="mf-btn" onclick="mfDecide()">Record decision</button>
+        </div>
+        <div class="mf-bar">
+          <span class="mf-barlbl">Cost basis</span>
+          <label class="mf-sub">Freight for the load
+            <input id="mf-freight" class="mf-in" type="text" inputmode="decimal" style="width:96px;margin-left:6px"
+                   value="${Number(m.freight_cost) || 0}"></label>
+          <label class="mf-sub">Arrives unsellable %
+            <input id="mf-defect" class="mf-in" type="text" inputmode="decimal" style="width:72px;margin-left:6px"
+                   value="${Number(m.defect_pct) || 0}"></label>
+          <button class="mf-btn ghost" onclick="mfSaveCosts()">Apply</button>
+          <span class="mf-sub">${mfCostBasisNote(m, s)}</span>
+        </div>
+        <div class="mf-kpi">
+          <div><div class="mf-cap">Landed cost</div><div class="mf-big">${mfMoney(s.totals.cost)}</div></div>
+          <div><div class="mf-cap">At our ASP</div><div class="mf-big">${mfMoney(s.totals.aspValue)}</div></div>
+          <div><div class="mf-cap">Cost of ASP</div><div class="mf-big">${mfPct(s.totals.costPctAsp)}</div></div>
+          <div><div class="mf-cap">Units</div><div class="mf-big">${mfNum(s.totals.units)}</div></div>
+          <div style="flex:1;min-width:280px;max-width:56ch">
+            <div class="mf-cap">Verdict <span class="mf-v ${vClass}">${mfEsc(s.verdict.replace(/_/g,' '))}</span></div>
+            <p style="font-size:13.5px;margin:0">${mfEsc(s.verdictText)}</p>
+          </div>
+        </div>
+        <div class="mf-note">⚠️ ${mfEsc(s.basis)}
+          ${j.criteriaNote ? `<br>${mfEsc(j.criteriaNote)}` : ` Scored under criteria v${j.criteriaVersion}.`}
+          ${s.totals.linesPriced < s.totals.lines ? `<br>${s.totals.linesPriced} of ${s.totals.lines} lines have an ASP to compare against.` : ''}</div>
+      </div>
+
+      <div class="mf-panel" style="margin-top:16px">
+        <div class="mf-bar"><span class="mf-barlbl">By category</span>
+          <span style="font-size:12px;color:#6b6453">the level the call happens at</span></div>
+        <div class="mf-scroll"><table class="mf-tbl"><thead><tr>
+          <th class="mf-l">Category</th><th>Lines</th><th>Units</th><th>Cost</th><th>At ASP</th><th>Cost of ASP</th><th>Flagged</th>
+        </tr></thead><tbody>${rollup}
+          <tr class="mf-tot"><td class="mf-l">Total</td><td>${mfNum(s.totals.lines)}</td><td>${mfNum(s.totals.units)}</td>
+            <td>${mfMoney(s.totals.cost)}</td><td>${mfMoney(s.totals.aspValue)}</td><td>${mfPct(s.totals.costPctAsp)}</td>
+            <td>${s.totals.warns ? `<span class="mf-v mf-warn">${s.totals.warns}</span>` : ''}${s.totals.fails ? ` <span class="mf-v mf-fail">${s.totals.fails}</span>` : ''}${s.totals.unjudged ? ` <span class="mf-v mf-unknown">${s.totals.unjudged} unjudged</span>` : ''}</td></tr>
+        </tbody></table></div>
+      </div>
+
+      <div class="mf-panel" style="margin-top:16px">
+        <div class="mf-bar"><span class="mf-barlbl">Lines</span>
+          <span style="font-size:12px;color:#6b6453">${mfNum(j.lines.length)} rows</span></div>
+        <div class="mf-scroll" style="max-height:60vh"><table class="mf-tbl"><thead><tr>
+          <th class="mf-l">Item</th><th class="mf-l">Category</th><th>Pack</th><th>Qty</th>
+          <th>Vendor cost</th><th>Our std cost</th><th>vs std</th><th>Retail</th>
+          <th>Our ASP</th><th>Cost of</th><th>Suggested</th><th>Per store</th><th>Days to clear</th><th class="mf-l"></th>
+        </tr></thead><tbody>${lines}</tbody></table></div>
+      </div>`;
+  }
+
+  // A price is only as good as where it came from, so the basis and confidence ride
+  // with it in the cell rather than living in a tooltip nobody opens.
+  const MF_BASIS = { single:'single', multipack_div_n:'from a multipack', per_oz_scaled:'scaled by size',
+                     same_line:'same line', msrp:'MSRP' };
+  const mfBasis = (l) => [MF_BASIS[l.retail_basis] || l.retail_basis,
+                          l.retail_confidence && l.retail_confidence !== 'high' ? l.retail_confidence : null,
+                          l.retail_source].filter(Boolean).join(' · ');
+
+  // A line with no retail price is not automatically a failure. "Not at big box" is the
+  // one a discounter actually wants: no competitor price to undercut, but no proof of
+  // demand either. Rendering it as a blank em-dash threw that finding away.
+  // Ordered most→least informative; the first flag present wins.
+  const MF_MISS = [
+    ['not at big box',   'not at big box',   true],
+    ['marketplace only', 'marketplace only', false],
+    ['no price found',   'no price found',   false],
+    ['lookup failed',    'lookup failed',    false],
+    ['no description',   'no description',   false],
+    ['not looked up',    'not looked up',    false],
+    ['no retail',        'no retail',        false],
+  ];
+  function mfMiss(l) {
+    const fl = Array.isArray(l.flags) ? l.flags : [];
+    for (const [flag, label, isAnswer] of MF_MISS) {
+      if (fl.includes(flag)) {
+        return isAnswer ? `<span class="mf-ans">${mfEsc(label)}</span>`
+                        : `<span class="mf-sub">${mfEsc(label)}</span>`;
+      }
+    }
+    return '—';
+  }
+
+  async function mfRetail() {
+    if (!await uiConfirm('Look up street prices for this manifest? It searches first-party retailers only, and skips anything already priced in the last 90 days.')) return;
+    // Batched, because a long manifest cannot be priced in one request. The loop is here
+    // rather than hidden in the worker so progress is visible while it runs — a silent
+    // two-minute wait is indistinguishable from a hang.
+    let priced = 0, cached = 0, skipped = 0, rounds = 0;
+    try {
+      for (;;) {
+        const j = await mfApi('manifest-retail', { id: mfOpenId });
+        priced += j.priced; cached += j.cached; skipped += j.skipped; rounds++;
+        if (!j.remaining) {
+          mfSay(`${priced} priced, ${cached} from cache, ${skipped} with no first-party price.`);
+          break;
+        }
+        mfSay(`${priced} priced so far · ${j.remaining} lines to go…`);
+        if (rounds > 40) { mfSay(`Stopped after ${priced} priced — ${j.remaining} still to do, run it again to continue.`); break; }
+      }
+      mfOpen(mfOpenId);
+    } catch (e) {
+      // The one failure worth explaining rather than just reporting.
+      if (/not configured/i.test(e.message)) {
+        uiAlert('Retail lookup is not switched on yet — the worker needs a TinyFish API key.', { title: 'Not configured' });
+      } else uiAlert(`Lookup failed: ${e.message}`);
+      mfSay('');
+    }
+  }
+  window.mfRetail = mfRetail;
+
+  // Callable from a list row (with an explicit target) or from the open manifest.
+  // The confirm names the vendor and the line count, because "delete this item?" tells
+  // you nothing when two uploads of the same file are sitting next to each other.
+  async function mfDelete(id) {
+    const target = id || mfOpenId;
+    // Only an id crosses the HTML attribute boundary; everything human comes from data
+    // we already hold. A vendor name in an onclick attribute is a quoting bug waiting to
+    // happen — this one silently swallowed the click and opened the manifest instead.
+    const listed = (mfManifests || []).find(x => x.id === target);
+    const m = (mfLast && mfLast.manifest) || {};
+    const name = listed?.vendor || m.vendor || 'this manifest';
+    const n = listed?.line_count ?? mfLast?.lines?.length ?? null;
+    if (!target) return;
+    if (!await uiConfirm(
+      `Delete "${name}"${n === null ? '' : ` and its ${n} lines`}? Re-uploading the file starts it fresh.`,
+      { title: 'Delete manifest', danger: true, okText: 'Delete' })) return;
+    try {
+      const j = await mfApi('manifest-delete', { id: target });
+      await uiAlert(`Deleted — ${j.lines} lines removed. ${j.note}`);
+      mfList();
+    } catch (e) { uiAlert(`Could not delete: ${e.message}`); }
+  }
+  window.mfDelete = mfDelete;
+
+  async function mfDecide() {
+    const status = await uiPrompt('Record decision', 'approved, approved_edits or passed');
+    if (status === null) return;
+    if (!['approved','approved_edits','passed'].includes(String(status).trim())) {
+      uiAlert('Use one of: approved, approved_edits, passed.'); return;
+    }
+    const note = await uiPrompt('Why', 'One line — this is the record of the call.');
+    if (note === null) return;
+    try {
+      await mfApi('manifest-decide', { id: mfOpenId, status: String(status).trim(), note });
+      mfOpen(mfOpenId);
+    } catch (e) { uiAlert(`Could not record: ${e.message}`); }
+  }
+  window.mfDecide = mfDecide;
+
+  // ── Velocity & Reach ──────────────────────────────────────────────────────
+  // Separates "wrong product here" from "wrong customer for this category". Raw units
+  // cannot: a store doing 400 transactions and one doing 2,000 always look different.
+  let vlData = null, vlWindow = 28, vlMetric = 'per1000';
+  const vlOpen = new Set();          // which L2 rows are expanded
+
+  const vlStatus = (t) => { const n = el('vl-status'); if (n) n.textContent = t; };
+  const vlEsc = (v) => String(v ?? '').replace(/[&<>"']/g, c =>
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+  const VL_METRICS = {
+    units:           { label: 'Units',        fmt: v => v == null ? '—' : v.toLocaleString(),        compare: false },
+    per1000:         { label: 'Per 1,000',    fmt: v => v == null ? '—' : v.toFixed(1),              compare: true  },
+    penetration:     { label: 'Basket reach', fmt: v => v == null ? '—' : v.toFixed(2) + '%',        compare: true  },
+    unitsPerBayWeek: { label: 'Per section',  fmt: v => v == null ? '—' : v.toFixed(1),              compare: true  },
+  };
+  const VL_WINDOWS = [[7, 'Week'], [28, '4 weeks'], [91, 'Quarter'], [364, 'Year']];
+
+  async function initMerchVelocity() {
+    vlStatus('Loading…');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=merch-velocity&window=${vlWindow}`, { credentials: 'include' });
+      vlData = await r.json();
+      if (!r.ok) throw new Error(vlData.error || `HTTP ${r.status}`);
+      vlRender();
+    } catch (e) {
+      vlStatus(`Could not load velocity: ${e.message}`);
+    }
+  }
+  window.initMerchVelocity = initMerchVelocity;
+
+  function vlSetWindow(n) { vlWindow = n; initMerchVelocity(); }
+  function vlSetMetric(m) { vlMetric = m; vlRender(); }
+  function vlToggle(key) { vlOpen.has(key) ? vlOpen.delete(key) : vlOpen.add(key); vlRender(); }
+  window.vlSetWindow = vlSetWindow; window.vlSetMetric = vlSetMetric; window.vlToggle = vlToggle;
+
+  function vlRender() {
+    const d = vlData;
+    if (!d) return;
+    vlStatus(d.note || `${d.start} → ${d.end} · ${d.chain.orderCount.toLocaleString()} transactions`);
+    const met = VL_METRICS[vlMetric];
+    const stores = d.stores || [];
+
+    // A cell is only worth tinting when the comparison MEANS something. Raw units against
+    // the chain is not a comparison — the biggest store always wins — so units render
+    // untinted rather than painting store size as performance.
+    const cell = (v, chainV) => {
+      const txt = met.fmt(v);
+      if (!met.compare || v == null || chainV == null || chainV <= 0) {
+        return `<span class="${v == null ? 'vl-nodata' : ''}">${txt}</span>`;
+      }
+      const ratio = v / chainV;
+      const cls = ratio < 0.6 ? 'vl-behind' : ratio > 1.4 ? 'vl-ahead' : '';
+      return `<span class="vl-pad ${cls}">${txt}</span>`;
+    };
+
+    const rowFor = (c, isKid) => {
+      const chainV = (d.chain.cells[c.key] || {})[vlMetric];
+      const kids = (c.children || []).length;
+      const open = vlOpen.has(c.key);
+      const twist = !isKid && kids
+        ? `<span class="vl-chev">${open ? '▾' : '▸'}</span> ` : (isKid ? '' : '<span class="vl-chev"></span> ');
+      return `<tr class="${isKid ? 'vl-kid' : ''}">
+        <td class="vl-cat ${!isKid && kids ? 'vl-tw' : ''}"
+            ${!isKid && kids ? `onclick="vlToggle('${vlEsc(c.key).replace(/'/g, "\\'")}')"` : ''}
+            title="${vlEsc(c.key)}">${twist}${vlEsc(c.label)}</td>
+        ${stores.map(st => `<td>${cell((st.cells[c.key] || {})[vlMetric], chainV)}</td>`).join('')}
+        <td class="vl-chain">${met.fmt(chainV)}</td>
+      </tr>`;
+    };
+
+    const body = (d.categories || []).map(c =>
+      rowFor(c, false) + (vlOpen.has(c.key) ? (c.children || []).map(k => rowFor(k, true)).join('') : '')
+    ).join('');
+
+    el('vl-view').innerHTML = `
+      <div id="vl-panel">
+        <div id="vl-bar">
+          <span class="vl-barlbl">Window</span>
+          <span class="vl-seg">${VL_WINDOWS.map(([n, lbl]) =>
+            `<button class="${vlWindow === n ? 'on' : ''}" onclick="vlSetWindow(${n})">${lbl}</button>`).join('')}</span>
+          <span class="vl-barlbl">Measure</span>
+          <span class="vl-seg">${Object.entries(VL_METRICS).map(([k, m]) =>
+            `<button class="${vlMetric === k ? 'on' : ''}" onclick="vlSetMetric('${k}')">${m.label}</button>`).join('')}</span>
+        </div>
+        <div class="vl-hero">
+          <div><div class="vl-cap">Transactions</div><div class="vl-big">${d.chain.orderCount.toLocaleString()}</div></div>
+          <div><div class="vl-cap">Window</div><div class="vl-big">${d.weeks % 1 === 0 ? d.weeks : d.weeks.toFixed(1)}w</div></div>
+          <div style="flex:1;min-width:300px;max-width:64ch">
+            <div class="vl-cap">Reading this</div>
+            <p style="font-size:13.5px;margin:0">One store behind the chain on a category is an
+            assortment problem at that store. A category weak at <em>every</em> store — especially
+            per section — is a category this customer does not want, and the space is better spent.</p>
+          </div>
+        </div>
+        <div id="vl-scroll"><table id="vl-tbl"><thead><tr>
+          <th class="vl-cat">Category</th>
+          ${stores.map(st => `<th title="${vlEsc(st.label)}${st.daysWithData ? '' : ' · no data in window'}">${vlEsc(st.store)}</th>`).join('')}
+          <th>Chain</th>
+        </tr></thead><tbody>${body || `<tr><td class="vl-cat">Nothing to show</td>${
+          stores.map(() => '<td>—</td>').join('')}<td class="vl-chain">—</td></tr>`}</tbody></table></div>
+        <div id="vl-legend">
+          <span><span class="vl-pad vl-behind">below</span> under 60% of chain</span>
+          <span><span class="vl-pad vl-ahead">above</span> over 140% of chain</span>
+          <span>Units are never tinted — the biggest store always sells the most.</span>
+          <span>Per section needs a shelf count; “—” means none entered, not zero.</span>
+        </div>
+      </div>`;
+  }
+
+  // ── Coverage scorecard ────────────────────────────────────────────────────
+  let cvData = null, cvWindow = 7;
+
+  const cvStatus = (t) => { const n = el('cv-status'); if (n) n.textContent = t; };
+
+  async function initMerchCoverage() {
+    cvStatus('Loading…');
+    el('cv-hero').innerHTML = ''; el('cv-actions').innerHTML = '';
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=merch-coverage&window=${cvWindow}`, { credentials: 'include' });
+      cvData = await r.json();
+      if (!r.ok) throw new Error(cvData.error || `HTTP ${r.status}`);
+      cvRender();
+    } catch (e) {
+      cvStatus(`Could not load coverage: ${e.message}`);
+    }
+  }
+  window.initMerchCoverage = initMerchCoverage;
+
+  function cvSetWindow(n) { cvWindow = n; initMerchCoverage(); }
+  window.cvSetWindow = cvSetWindow;
+
+  const cvEsc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  // A null share is "we don't know", which must never render as 0%.
+  const cvPct = (v) => v === null || v === undefined ? '—' : `${v.toFixed(v < 10 ? 1 : 0)}%`;
+
+  function cvRender() {
+    const d = cvData;
+    el('cv-w7').classList.toggle('on', cvWindow === 7);
+    el('cv-w28').classList.toggle('on', cvWindow === 28);
+    el('cv-window-pill').textContent = `Last ${d.window} days`;
+
+    if (!d.categories?.length) {
+      el('cv-window-pill').textContent = 'No core yet';
+      el('cv-reporting').textContent = '';
+      el('cv-hero').innerHTML = `<div style="max-width:60ch"><div class="cv-cap">Nothing to measure</div>
+        <p class="text-sm text-opl-inkDim dark:text-op-inkDim">Core has not been defined yet. Tick what counts as core on Buy Criteria and publish v1 — this page fills in from the sales already in the Hub the moment you do.</p></div>`;
+      el('cv-actions').innerHTML = '';
+      el('cv-table-panel').innerHTML = '';
+      return;
+    }
+
+    const ch = d.chain;
+    el('cv-reporting').textContent =
+      `${ch.storesReporting}/${ch.storesTotal} stores reporting sales · ${ch.storesCounted}/${ch.storesTotal} counted this week`;
+
+    // The hero answers Ryan's question in two numbers and one sentence.
+    const floorClass = ch.underFloor ? ' class="cv-under"' : '';
+    el('cv-hero').innerHTML = `
+      <div>
+        <div class="cv-cap">Core share of sales</div>
+        <div class="cv-big">${cvPct(ch.coreSalesPct)}</div>
+      </div>
+      <div>
+        <div class="cv-cap">Core share of floor</div>
+        <div class="cv-big"${floorClass}>${cvPct(ch.coreShelfPct)}</div>
+      </div>
+      <div>
+        <div class="cv-cap">Floor</div>
+        <div class="cv-big" style="opacity:.45">${d.floorPct}%</div>
+      </div>
+      <div style="flex:1;min-width:260px;max-width:56ch">
+        <p class="text-sm text-opl-inkDim dark:text-op-inkDim">${cvEsc(cvReading(d))}</p>
+      </div>`;
+
+    el('cv-actions').innerHTML = (d.actions || []).length
+      ? (d.actions || []).map(a => `<div class="cv-act">
+          <span class="cv-kind cv-${a.kind}">${a.kind}</span>
+          <span><strong>${cvEsc(a.label)}</strong> <span class="cv-why">— ${cvEsc(a.why)}</span></span>
+        </div>`).join('') + (d.actionsTruncated
+          ? `<div class="cv-act"><span class="cv-why">${d.actionsTruncated} more not shown — the six above are the ones worth the call.</span></div>` : '')
+      : `<div class="cv-act"><span class="cv-why">Nothing to act on this week.</span></div>`;
+
+    cvStatus('');
+    cvRenderTable(d);
+  }
+
+  // The one-line reading. It says what is actually knowable — with no shelf counts in
+  // yet, claiming anything about the floor would be inventing it.
+  function cvReading(d) {
+    const ch = d.chain;
+    if (!ch.storesReporting) return 'No sales snapshots in this window yet.';
+    if (ch.coreShelfPct === null) {
+      return `Core is ${cvPct(ch.coreSalesPct)} of everything sold in the last ${d.window} days. `
+        + `No store has entered a shelf count yet, so there is nothing to compare it against — `
+        + `the floor number and the buy/cut calls appear once counts start coming in.`;
+    }
+    const gap = ch.coreShelfPct - d.floorPct;
+    return ch.underFloor
+      ? `Core holds ${cvPct(ch.coreShelfPct)} of the floor against a ${d.floorPct}% mark — `
+        + `${Math.abs(gap).toFixed(0)} points short — while doing ${cvPct(ch.coreSalesPct)} of the units.`
+      : `Core holds ${cvPct(ch.coreShelfPct)} of the floor, ${gap.toFixed(0)} points clear of the `
+        + `${d.floorPct}% mark, and does ${cvPct(ch.coreSalesPct)} of the units.`;
+  }
+
+  function cvRenderTable(d) {
+    const stores = d.stores || [];
+    const cell = (c) => {
+      if (!c) return '<span class="cv-pad">—</span>';
+      const cls = c.state === 'starved' ? ' cv-starved' : c.state === 'dead' ? ' cv-dead'
+        : c.state === 'none' ? ' cv-none' : '';
+      const title = c.ratio !== null ? `sells ${c.ratio}× its shelf share` : 'no shelf count yet';
+      return `<span class="cv-pad${cls}" title="${title}"><span class="cv-cell">
+        <span class="cv-sales">${cvPct(c.salesPct)}</span>
+        <span class="cv-shelf">${c.bays === null ? 'no count' : cvPct(c.shelfPct)}</span></span></span>`;
+    };
+    const head = `<thead><tr><th class="cv-cat">Category</th><th>Chain</th>${
+      stores.map(st => `<th title="${cvEsc(st.label)}">${cvEsc(st.label)}</th>`).join('')}</tr></thead>`;
+    const rows = (d.categories || []).map(c => {
+      const rest = c.level === 'rest';
+      return `<tr class="${rest ? 'cv-rest' : ''}"><td class="cv-cat" title="${cvEsc(c.key)}">${cvEsc(c.label)}</td>
+        <td>${cell(d.chain.cells[c.key])}</td>${
+        stores.map(st => `<td>${cell(st.cells[c.key])}</td>`).join('')}</tr>`;
+    }).join('');
+    // The core total is the row Ryan actually reads, so it is pinned at the bottom and
+    // flags any store under the floor regardless of how its individual cells look.
+    const totals = `<tr class="cv-total"><td class="cv-cat">Core total</td>
+      <td><span class="cv-pad"><span class="cv-cell">
+        <span class="cv-sales">${cvPct(d.chain.coreSalesPct)}</span>
+        <span class="cv-shelf${d.chain.underFloor ? ' cv-under' : ''}">${d.chain.coreShelfPct === null ? 'no count' : cvPct(d.chain.coreShelfPct)}</span>
+      </span></span></td>${stores.map(st => `<td><span class="cv-pad"><span class="cv-cell">
+        <span class="cv-sales">${st.reporting ? cvPct(st.coreSalesPct) : '—'}</span>
+        <span class="cv-shelf${st.underFloor ? ' cv-under' : ''}">${st.hasShelf ? cvPct(st.coreShelfPct) : 'no count'}</span>
+      </span></span></td>`).join('')}</tr>`;
+
+    el('cv-table-panel').innerHTML = `<div id="cv-panel">
+      <div id="cv-bar"><span class="cv-barlbl">Store × category</span>
+        <span class="text-xs text-opl-inkDim dark:text-op-inkDim">${cvEsc(d.start)} → ${cvEsc(d.end)}</span></div>
+      <div id="cv-scroll"><table id="cv-tbl">${head}<tbody>${rows}${totals}</tbody></table></div>
+      <div id="cv-legend">
+        <span>Each cell: <strong>sales %</strong> over shelf %</span>
+        <span><i class="cv-starved"></i> Sells above its shelf — buy</span>
+        <span><i class="cv-dead"></i> Holds shelf it isn't earning — cut</span>
+        <span><i class="cv-none"></i> On the list, not on the shelf</span>
+      </div>
+    </div>`;
+  }
+
   // ── Buy Criteria ──────────────────────────────────────────────────────────
   const MC_COLS = [
-    ['core',                   'Core',        'check'],
-    ['max_cost_pct_retail',    'Max cost %',  'num'],
+    ['core',                   'Core',         'check'],
+    ['max_cost_pct_retail',    'Max cost %',   'num'],
     ['min_margin_per_unit',    'Min margin $', 'num'],
-    ['price_cap_pct_retail',   'Price cap %', 'num'],
-    ['rounding',               'Rounding',    'text'],
-    ['max_breakeven_sellthru', 'Max B/E %',   'num'],
-    ['max_per_store',          'Max/store',   'text'],
-    ['cash_back_days',         'Cash back d', 'num'],
+    ['price_cap_pct_retail',   'Price cap %',  'num'],
+    ['dollar_ceiling',         'Dollar $',     'num'],
+    ['rounding',               'Rounding',     'text'],
+    ['max_breakeven_sellthru', 'Max B/E %',    'num'],
+    ['max_per_store',          'Max/store',    'text'],
+    ['cash_back_days',         'Cash back d',  'num'],
   ];
   let mcData = null;
-  // Cells edited since the last save, keyed `l3|field` (empty l3 = chain default).
-  // Held here rather than written on every keystroke so a half-typed number never
-  // becomes a threshold.
+  // Cells edited since the last publish, keyed `category|field` (empty category = the
+  // chain default). Held here rather than written on every keystroke so a half-typed
+  // number never becomes a threshold.
   let mcDirty = new Map();
 
   async function initMerchCriteria() {
@@ -17056,20 +18051,92 @@
       mcData = await r.json();
       if (!r.ok) throw new Error(mcData.error || `HTTP ${r.status}`);
       mcRender();
+      mcFillPicker();
     } catch (e) {
       el('mc-status').textContent = `Could not load criteria: ${e.message}`;
     }
   }
   window.initMerchCriteria = initMerchCriteria;
 
-  function mcKey(l3, field) { return `${l3 || ''}|${field}`; }
+  const mcKey = (cat, field) => `${cat || ''}|${field}`;
+  const mcEsc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-  function mcCellValue(l3, field) {
-    const k = mcKey(l3, field);
+  // Every row currently on the table, flattened in display order: the chain default,
+  // then each L2 with whichever L3s hang off it.
+  function mcRows() {
+    const out = [{ key: null, level: 'chain', label: 'Chain default', fields: mcData.defaults || {} }];
+    for (const l2 of (mcData.categories || [])) {
+      out.push(l2);
+      for (const kid of (l2.children || [])) out.push(kid);
+    }
+    return out;
+  }
+
+  // The picker offers every L3, grouped by its L2, minus the ones already on the table.
+  function mcFillPicker() {
+    const sel = el('mc-add');
+    if (!sel) return;
+    const tree = mcData.tree || {};
+    const groups = Object.keys(tree).map(l2 => {
+      const kids = (tree[l2] || []).filter(c => !c.added);
+      if (!kids.length) return '';
+      return `<optgroup label="${mcEsc(l2)}">${
+        kids.map(c => `<option value="${mcEsc(c.key)}">${mcEsc(c.label)}</option>`).join('')}</optgroup>`;
+    }).join('');
+    sel.innerHTML = `<option value="">Add criteria for a specific category…</option>${groups}`;
+    el('mc-add-btn').disabled = !groups;
+  }
+
+  // Adding a row is a LOCAL act until something is typed into it: an empty L3 row would
+  // be indistinguishable from inheriting, so it is not worth a version of its own.
+  let mcPending = [];
+  function mcAddOverride() {
+    const sel = el('mc-add');
+    const key = sel.value;
+    if (!key) return;
+    const parent = Object.keys(mcData.tree || {}).find(l2 => (mcData.tree[l2] || []).some(c => c.key === key));
+    const l2 = (mcData.categories || []).find(c => c.key === parent);
+    if (!l2) return;
+    const entry = (mcData.tree[parent] || []).find(c => c.key === key);
+    entry.added = true;
+    mcPending.push(key);
+    // Inherit everything until told otherwise — same shape the server would return.
+    l2.children.push({
+      key, level: 'l3', parent, label: entry.label, core: l2.core,
+      fields: Object.fromEntries(MC_COLS.map(([f]) => [f, { value: l2.fields[f]?.value ?? null, inherited: true, from: parent }])),
+    });
+    l2.children.sort((a, b) => a.label.localeCompare(b.label));
+    mcRender(); mcFillPicker();
+  }
+  window.mcAddOverride = mcAddOverride;
+
+  function mcRemoveOverride(key) {
+    for (const l2 of (mcData.categories || [])) {
+      const i = (l2.children || []).findIndex(c => c.key === key);
+      if (i < 0) continue;
+      l2.children.splice(i, 1);
+      const entry = (mcData.tree[l2.key] || []).find(c => c.key === key);
+      if (entry) entry.added = false;
+      // Clearing every field is what actually removes the row server-side; a row with
+      // no values IS an inheriting category.
+      for (const [f] of MC_COLS) mcDirty.set(mcKey(key, f), '');
+      mcPending = mcPending.filter(k => k !== key);
+      break;
+    }
+    mcRender(); mcFillPicker();
+  }
+  window.mcRemoveOverride = mcRemoveOverride;
+
+  // What a cell shows: an unsaved edit if there is one, else the row's own value, else
+  // blank — because blank IS how "inherited" reads, with the parent's value as the
+  // placeholder behind it.
+  function mcCellValue(row, field) {
+    const k = mcKey(row.key, field);
     if (mcDirty.has(k)) return mcDirty.get(k);
-    if (!l3) return mcData.defaults?.[field]?.value ?? '';
-    const cell = mcData.categories.find(c => c.l3 === l3)?.fields?.[field];
-    return cell?.inherited ? '' : (cell?.value ?? '');
+    const cell = row.fields?.[field];
+    if (!cell) return '';
+    if (row.level === 'chain') return cell.value ?? '';
+    return cell.inherited ? '' : (cell.value ?? '');
   }
 
   function mcRender() {
@@ -17087,63 +18154,63 @@
       : hasDraft
         ? 'A draft is open. Nothing in it applies until it is published.'
         : mcData.version == null
-          ? 'Nothing published yet. Set the chain defaults and any core flags, then publish v1.'
-          : 'Blank cells inherit the chain default above.';
+          ? 'Nothing published yet. Set the chain defaults and tick what counts as core, then publish v1.'
+          : 'A blank cell inherits from the row above it — the L2, then the chain default.';
 
-    const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const inputFor = (row, field, type) => {
+      const k = mcKey(row.key, field);
+      const raw = mcCellValue(row, field);
+      const cell = row.fields?.[field] || {};
+      const isOwn = row.level === 'chain' || (mcDirty.has(k) ? raw !== '' : !cell.inherited);
+      const cls = mcDirty.has(k) ? 'mc-dirty' : isOwn ? 'mc-override' : 'mc-inherit';
+      const arg = row.key === null ? 'null' : `'${mcEsc(row.key).replace(/'/g, "\\'")}'`;
+      if (type === 'check') {
+        const on = mcDirty.has(k) ? raw === '1' : !!row.core;
+        return `<input type="checkbox" ${on ? 'checked' : ''} class="accent-accent-green ${mcDirty.has(k) ? 'mc-dirty' : ''}"
+                  onchange="mcEdit(${arg},'${field}',this.checked?'1':'0')">`;
+      }
+      // The placeholder is what this cell would inherit, so an empty box is never a
+      // mystery — you can read the value you are choosing not to override.
+      const ph = row.level === 'chain' ? '' : mcEsc(cell.value ?? '');
+      // type="text" is load-bearing, not decoration: the stylesheet selects on
+      // input[type=text], and CSS matches the ATTRIBUTE, not the default an input falls
+      // back to. Without it every threshold cell renders as a browser-default white box.
+      return `<input type="text" class="${cls}" value="${mcEsc(raw)}" placeholder="${ph}" inputmode="${type === 'num' ? 'decimal' : 'text'}"
+                title="${cell.inherited && cell.from ? 'Inherited from ' + mcEsc(cell.from === 'chain' ? 'the chain default' : cell.from) : ''}"
+                onchange="mcEdit(${arg},'${field}',this.value)">`;
+    };
+
     const head = `<thead><tr><th class="mc-cat">Category</th>${
       MC_COLS.map(([, label]) => `<th>${label}</th>`).join('')}</tr></thead>`;
 
-    const inputFor = (l3, field, type) => {
-      const k = mcKey(l3, field);
-      const raw = mcCellValue(l3, field);
-      const inherited = !l3 ? false : raw === '';
-      const cls = mcDirty.has(k) ? 'mc-dirty' : inherited ? 'mc-inherit' : 'mc-override';
-      if (type === 'check') {
-        const on = l3 ? (mcDirty.has(k) ? raw === '1' : mcData.categories.find(c => c.l3 === l3)?.core)
-                      : mcCellValue(null, field) === '1';
-        return `<input type="checkbox" ${on ? 'checked' : ''} class="accent-accent-green ${mcDirty.has(k) ? 'mc-dirty' : ''}"
-                  onchange="mcEdit(${l3 ? `'${esc(l3).replace(/'/g, "\\'")}'` : 'null'},'${field}',this.checked?'1':'0')">`;
-      }
-      const ph = l3 ? esc(mcData.defaults?.[field]?.value ?? '') : '';
-      return `<input class="${cls}" value="${esc(raw)}" placeholder="${ph}" inputmode="${type === 'num' ? 'decimal' : 'text'}"
-                onchange="mcEdit(${l3 ? `'${esc(l3).replace(/'/g, "\\'")}'` : 'null'},'${field}',this.value)">`;
+    const rowHtml = (row) => {
+      const badge = row.level === 'chain' ? 'Default' : row.level === 'l2' ? 'L2' : 'L3';
+      const rm = row.level === 'l3'
+        ? `<button class="mc-rm" title="Remove this override" aria-label="Remove override"
+             onclick="mcRemoveOverride('${mcEsc(row.key).replace(/'/g, "\\'")}')">&times;</button>` : '';
+      return `<tr class="mc-${row.level}"><td class="mc-cat" title="${mcEsc(row.key || '')}">
+          <span class="mc-lvl">${badge}</span>${mcEsc(row.label)}${rm}</td>${
+        MC_COLS.map(([f, , t]) => `<td>${inputFor(row, f, t)}</td>`).join('')}</tr>`;
     };
 
-    const rows = [`<tr class="mc-default"><td class="mc-cat">Chain default</td>${
-      MC_COLS.map(([f, , t]) => `<td>${inputFor(null, f, t)}</td>`).join('')}</tr>`];
-
-    let group = null;
-    for (const cat of (mcData.categories || [])) {
-      const overridden = MC_COLS.some(([f]) => !cat.fields[f].inherited) || mcDirty.has(mcKey(cat.l3, 'core'));
-      if (onlyOverrides && !overridden) continue;
-      if (cat.l2 !== group) {
-        group = cat.l2;
-        rows.push(`<tr class="mc-group"><td class="mc-cat" colspan="${MC_COLS.length + 1}">${esc(group)}</td></tr>`);
+    const rows = [];
+    for (const row of mcRows()) {
+      if (onlyOverrides && row.level !== 'chain') {
+        const touched = MC_COLS.some(([f]) => !row.fields?.[f]?.inherited || mcDirty.has(mcKey(row.key, f)));
+        if (!touched) continue;
       }
-      rows.push(`<tr><td class="mc-cat" title="${esc(cat.l3)}">${esc(mcLabel(cat.l3))}</td>${
-        MC_COLS.map(([f, , t]) => `<td>${inputFor(cat.l3, f, t)}</td>`).join('')}</tr>`);
+      rows.push(rowHtml(row));
     }
     el('mc-tbl').innerHTML = head + `<tbody>${rows.join('')}</tbody>`;
   }
   window.mcRender = mcRender;
 
-  // Same shortening the worker applies for the shelf-count form, so a category reads
-  // the same on both pages.
-  function mcLabel(l3) {
-    const tail = String(l3).split(' - ').pop();
-    return tail.replace(/[A-Za-z0-9&']+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase());
-  }
-
-  function mcEdit(l3, field, value) {
-    mcDirty.set(mcKey(l3, field), value);
+  function mcEdit(cat, field, value) {
+    mcDirty.set(mcKey(cat, field), value);
     mcRender();
   }
   window.mcEdit = mcEdit;
 
-  // Save + publish are ONE action from the user's side. Splitting them would leave a
-  // draft nobody remembers opening, and a draft that is never published is a threshold
-  // change that silently did not happen.
   async function mcPublish() {
     const note = await uiPrompt('Publish criteria', 'What changed, and why? (required)');
     if (note === null) return;
@@ -17152,8 +18219,8 @@
       if (mcDirty.size) {
         const cells = [...mcDirty.entries()].map(([k, value]) => {
           const i = k.indexOf('|');
-          const l3 = k.slice(0, i);
-          return { l3: l3 || null, field: k.slice(i + 1), value };
+          const category = k.slice(0, i);
+          return { category: category || null, field: k.slice(i + 1), value };
         });
         const d = await fetch(`${WORKER_BASE}?action=merch-criteria-draft`, {
           method: 'POST', credentials: 'include',
@@ -17213,7 +18280,7 @@
         return `<div class="border-l-2 border-accent-green/40 pl-3 py-1">
           <div class="font-semibold">v${v} · ${esc((first.published_at || '').slice(0, 10))} · ${esc(first.published_by)}</div>
           <div class="text-opl-inkDim dark:text-op-inkDim italic mb-1">${esc(first.note)}</div>
-          ${byVersion[v].map(e => `<div>${esc(e.l3 ? mcLabel(e.l3) : 'Chain default')} · ${esc(e.field)}: ${esc(e.from)} → ${esc(e.to)}</div>`).join('')}
+          ${byVersion[v].map(e => `<div><span class="mc-lvl">${esc((e.level || '').toUpperCase() || 'DEFAULT')}</span> ${esc(e.label)} · ${esc(e.field)}: ${esc(e.from)} → ${esc(e.to)}</div>`).join('')}
         </div>`;
       }).join('') : '<div class="text-opl-inkDim dark:text-op-inkDim">Nothing published yet.</div>';
     } catch (e) {
@@ -17242,7 +18309,11 @@
   // Supply Request's getUserStores/SR_LABELS live inside its own IIFE, so they are
   // deliberately re-stated here rather than reached into. Same rule, same roster.
   const SC_LABELS = { BL1: 'Coliseum', BL2: 'South Bend', BL4: 'Dupont', BL8: 'Holland', BL14: 'Battle Creek', BL16: 'Indy East' };
-  const SC_ALL_STORES = ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'];
+  // Holland (BL8) closed 2026-07-25. It still carries its budget into the chain's
+  // financial rollups on purpose, but it has no shelves to count — so it is absent from
+  // Merchandising surfaces only. The worker refuses a count for it either way; this keeps
+  // it out of the picker so nobody is offered a store they cannot count.
+  const SC_ALL_STORES = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
 
   function scStores() {
     if (!currentUser) return [];
@@ -17299,17 +18370,17 @@
       : `Week ending ${scData.week_ending}. An end cap counts as one bay.`;
     const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     el('sc-rows').innerHTML = cats.map(c => {
-      const now = scData.counts?.[c.l3]?.bays;
-      const prev = scData.previous?.[c.l3]?.bays;
+      const now = scData.counts?.[c.key]?.bays;
+      const prev = scData.previous?.[c.key]?.bays;
       // Prefilled from last week when this week is blank — the fastest correct answer
       // for a shelf that has not moved, and the PRD's two-minute target depends on it.
       const value = now != null ? now : (prev != null ? prev : '');
       return `<div class="flex items-center gap-3 bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl px-4 py-3">
         <div class="flex-1 min-w-0">
-          <div class="font-semibold text-sm truncate text-opl-ink dark:text-op-ink" title="${esc(c.l3)}">${esc(c.label)}</div>
+          <div class="font-semibold text-sm truncate text-opl-ink dark:text-op-ink" title="${esc(c.key)}">${esc(c.label)}</div>
           <div class="text-[11px] text-opl-inkDim dark:text-op-inkDim">${prev != null ? `Last week: ${prev}` : 'No count last week'}</div>
         </div>
-        <input data-l3="${esc(c.l3)}" type="number" min="0" max="999" step="0.5" inputmode="decimal" value="${value}"
+        <input data-cat="${esc(c.key)}" type="number" min="0" max="999" step="0.5" inputmode="decimal" value="${value}"
           class="w-20 text-right rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-base px-3 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green">
       </div>`;
     }).join('');
@@ -17317,8 +18388,8 @@
   }
 
   async function scSave() {
-    const counts = [...document.querySelectorAll('#sc-rows input[data-l3]')]
-      .map(i => ({ l3: i.dataset.l3, bays: i.value }))
+    const counts = [...document.querySelectorAll('#sc-rows input[data-cat]')]
+      .map(i => ({ category: i.dataset.cat, bays: i.value }))
       .filter(c => c.bays !== '');
     if (!counts.length) { uiAlert('Enter at least one number.'); return; }
     const btn = el('sc-save');
@@ -17327,7 +18398,7 @@
       const r = await fetch(`${WORKER_BASE}?action=shelf-count-save`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ store: el('sc-store').value, week_ending: el('sc-week').value, counts: counts.map(c => ({ l3: c.l3, bays: Number(c.bays) })) }),
+        body: JSON.stringify({ store: el('sc-store').value, week_ending: el('sc-week').value, counts: counts.map(c => ({ category: c.category, bays: Number(c.bays) })) }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
@@ -19445,6 +20516,9 @@
     'nav-merch': 'bl',
     'nav-merch-chev': 'bl',
     'nav-merch-sub': 'bl',
+    'nav-merch-coverage': 'bl',
+    'nav-merch-velocity': 'bl',
+    'nav-merch-manifests': 'bl',
     'nav-merch-criteria': 'bl',
     'nav-merch-shelf-count': 'bl',
     // Hub-level, not owned by any one business.
@@ -19849,6 +20923,9 @@
     // Same shape as Marketing directly below.
     const merchRoles = ['superuser', 'admin', 'district_manager', 'manager'];
     el('nav-merch-group').classList.toggle('hidden', !merchRoles.includes(user.role));
+    el('nav-merch-coverage').classList.toggle('hidden', !isAdmin);
+    el('nav-merch-velocity').classList.toggle('hidden', !isAdmin);
+    el('nav-merch-manifests').classList.toggle('hidden', !isAdmin);
     el('nav-merch-criteria').classList.toggle('hidden', !isAdmin);
 
     el('nav-marketing-group').classList.remove('hidden');

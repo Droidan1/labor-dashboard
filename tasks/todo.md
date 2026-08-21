@@ -1,134 +1,164 @@
-# Merchandising — Phase 1 (Buy Criteria + Shelf Counts)
+# Merchandising items 1–3 — Aug 20 2026
 
-Plan doc: `~/.claude/plans/clever-honking-finch.md`.
-Source PRD: `~/Downloads/PRD-hub-merchandising-module.md` (v3, Aug 19 2026).
+Order comes from the Aug 20 alignment conversation. See tasks/merch-space-model.md
+for the requirements record.
 
-The first surface of a new **Merchandising** section on the Bargain Lane side. Long term it
-holds buy decisions, store allocation and store layout; this pass ships the section shell plus
-the two things everything else depends on:
+## 1a. Criteria `core` is inverted in the live version  ⚠️ DB MUTATION — NEEDS CONFIRMATION
 
-1. **Buy Criteria** — the versioned table that *defines core*. Every later surface reads it.
-2. **Shelf Count** — weekly manager-entered bay counts. Ratios need ~2 weeks of history before
-   they mean anything, so the form ships now even though nothing reads it yet.
+Live version is **v4**. It reads:
+- chain default `core` = **1**  → everything inherits "core"
+- the nine food L3s explicitly `core` = **0**  → food reads as NOT core
+- Softline Apparel / Shoes = 1
 
-## The one thing to know before reading the code
+That is backwards. v2 had it right. Effect today: the 60% core floor on Coverage
+is unmeasurable and food — the actual core — is excluded from it.
 
-**The PRD's "L2" is this repo's `L3`.** `L3_TO_L2` (worker.js:160) has 15 coarse L2 buckets and
-89 L3s. The PRD's core list — snacks, candy, drinks, condiments, coffee & tea — is *entirely*
-L3, all inside the single L2 `Consumable Food`. Keying on the repo's L2 would collapse the core
-flag to one boolean over all food.
+- [x] Build v5 from v4: chain default 1→0, nine food L3s 0→1, Softline unchanged
+- [x] Get Brian's explicit confirmation on the exact diff (CLAUDE.md rule 7)
+- [x] Publish v5 with a note
+- [x] Verify Coverage now shows a measurable core share
 
-So: **PRD "L2" → code `l3`**, **PRD "group" → code `l2`**. Confirmed with Brian this session.
+## 1b. "Not sold at big box" is a real answer, not a blank
 
-## Build
+`retailPriceLine` already separates "not looked up" (budget) from "no retail", but
+"no retail" conflates two very different outcomes:
+  - search found nothing at any allowed retailer  → genuinely NOT CARRIED at big box
+  - retailer pages existed but no price survived   → the tool could not read it
 
-- [x] `migration-041.sql` — `merch_criteria`, `merch_criteria_versions`, `shelf_counts`
-- [x] Worker: criteria read/draft/publish/discard/log
-- [x] Worker: shelf-count save + read
-- [x] Register the 7 new actions in `ACTION_BUSINESS` (worker's fail-closed gate — caught by the test)
-- [x] `index.html`: Merchandising nav group + `NAV_BUSINESS` registration
-- [x] `index.html`: Buy Criteria page
-- [x] `index.html`: Shelf Count page (mobile-first)
-- [x] `scripts/test-merch-criteria.mjs` — 55 assertions
-- [x] `node scripts/test-nav-registry.mjs` green
-- [x] `bash scripts/test.sh` green — 1615 assertions, 44 suites
+Only the first is an answer. Today both render as an empty cell reading as failure.
 
-## Deploy — PRODUCTION, 2026-08-19
+- [x] Split the miss into `not at big box` vs `no price found`
+- [x] Surface as an explicit verdict, not a blank
+- [x] Cost test note says the basis is our ASP *because* nothing is carried at big box
+- [x] Test coverage in scripts/test-retail-lookup.mjs
 
-Brian: "run the migration on prod, we will run and push everything straight to
-production. and update staging later." Prod-first, deliberately.
+## 2. Freight and defect are missing from the cost basis
 
-- [x] **migration-041 → PROD** (`labor-dashboard-db`). Was a true create: none of the
-      three tables existed. 3 tables + 5 indexes, all empty; prod went 38 → 39 tables.
-      Nothing overwritten, so nothing to back up.
-- [x] **Worker → prod**, version `a932dc15-8fb6-4c16-b9ae-79c431a0c8b6`, 100% of traffic.
-      Bindings read back per the deploy lesson: SALES_SNAPSHOTS, DB=labor-dashboard-db,
-      MEDIA=bl-marketing-media, BL1/2/4/8/12/14/16 merchant ids, all 6 crons.
-- [x] **Frontend → main** (`21d1117`), Pages build green. All 8 markers present in the
-      deployed index.html; `max-w-2xl` and `accent-accent-green` present in the
-      CI-rebuilt tailwind.css.
-- [x] **Service worker bumped v89 → v90** (`5fd3236`) — missed on the first commit, which
-      would have left installed PWAs on the old shell with no Merchandising section.
+`landed_cost` is literally `SUM(cost * qty)` — invoice cost. Zero freight handling
+in the worker. For salvage, freight + unsellable share runs 15–25% of true cost,
+so every criteria gate is currently passing lines it should not.
 
-### Not verified, and why
+    effective_cost = (cost + freight_per_unit) / (1 - defect_pct)
 
-The new endpoints all sit below the auth gate, so an unauthenticated probe returns
-`401 NO_SESSION` on both old and new code — there is no way to functionally confirm them
-from outside without a session. What was confirmed: the new version is at 100% on the
-control plane, the API is alive, and the auth gate is intact. **The first real functional
-check is Brian logging in and opening Buy Criteria.** Nothing calls these endpoints until
-someone does, so the blast radius until then is zero.
+Freight amortises **per unit** for now (qty is on every line). Upgrade path once
+item dimensions land: amortise by cubic volume, which is what actually drives
+freight.
 
-### Still to do
+- [x] migration-048: `freight_cost`, `defect_pct` on manifests
+- [x] `manifestEffectiveCost()` helper
+- [x] manifestScore uses effective cost for the cost + margin + breakeven tests
+- [x] landed_cost query reflects freight
+- [x] UI inputs on the manifest page, and show effective vs invoice cost
+- [x] Tests
 
-- [ ] **Staging**: `migration-041` → `labor-dashboard-db-staging`, and deploy the staging
-      worker. Prod is ahead of staging until this happens.
-- [ ] **Publish criteria v1** — the tables are live but empty, so Shelf Count currently
-      shows "core categories have not been published yet" for every store. That is the
-      correct state, not a bug: v1 has to name the core before anyone can count it.
-      ⚠️ Set `min_margin_per_unit` for oral care with Brandon BEFORE publishing (open
-      question 2a), or the % test governs alone and warns on staples you would buy.
+## 3. Velocity and penetration by store and L3
 
-## Out of scope this pass
+Data already exists: item snapshots are per store-day, `mergeItemSnapshots` returns
+`qty` by L3 plus `l3Orders` (basket-touch counts) and `orderCount`.
 
-Coverage scorecard/heatmap · Manifest Scorer · TinyFish · UPC database · Claude classification ·
-suggested pricing · vendor coverage · buy-tracker handoff.
+Raw units cannot separate "wrong product" from "wrong customer" — store size
+confounds it. Three numbers do:
+  - units per 1,000 transactions   (controls for store size)
+  - basket penetration %           (share of baskets containing the L3)
+  - store vs chain on both         ← the actual diagnostic
 
-## Review
+Read: one store low vs chain → assortment. ALL stores low → the category does not
+work for our customer; take the feet away.
 
-**Shipped (uncommitted, not deployed).** Backend + both pages, verified in a browser.
+⚠️ Basket-touch counts sum to MORE than orderCount (one basket touches several
+categories). Penetration is a share of baskets, NOT a mix that totals 100%.
 
-| File | What |
-|---|---|
-| `migration-041.sql` | `merch_criteria`, `merch_criteria_versions`, `shelf_counts` (new) |
-| `worker.js` | +7 actions, merch helpers, 7 entries in `ACTION_BUSINESS` |
-| `index.html` | Merchandising nav group, 2 pages, `uiPrompt`, 6 `NAV_BUSINESS` entries |
-| `scripts/test-merch-criteria.mjs` | 69 assertions (new) |
-| `scripts/lib/worker-harness.mjs` | D1 shim now reports `run().meta.changes` |
+- [x] `merch-velocity` action, per store per L3, window selectable
+- [x] Page + nav id, registered in NAV_BUSINESS (fail-closed gate)
+- [x] Follow DESIGN.md §4.8 — panel owns bar + table + legend
+- [x] Tests
 
-**Two design calls worth remembering:**
+## Verification gates (every item)
+- [x] `bash scripts/test.sh` green
+- [x] `node scripts/test-nav-registry.mjs` for any new nav id
+- [x] Grep worker.js/index.html to confirm each edit ACTUALLY landed (patches have
+      silently failed before — verify the artifact, never a paraphrase)
+- [x] Bump sw.js CACHE_NAME on any frontend commit
+- [ ] Worker deploys before frontend
 
-1. **Copy-on-draft.** Opening a draft copies the whole live version forward, so every
-   version is a self-contained snapshot. That is what makes "scored under v7" true a year
-   later without replaying history, and it means immutability is *structural* — the draft
-   endpoint has no version parameter, so it cannot target a published version at all.
-2. **The change log is a diff, not a table.** Derived by comparing consecutive published
-   versions. A stored log can drift out of sync with the values it describes; a derived
-   one cannot.
+---
 
-**Found while building, folded back into the PRD:**
-- The PRD's "L2" is the Hub's L3 (the reason the whole feature is keyed on `l3`).
-- 6 stores, not 7. Wyoming is closed; the acceptance sample now uses Holland.
-- Energy drinks is already its own L3, so open question 4 is partly answered by the data.
-- **Cereal and laundry have no L3 to attach to** — cereal's nearest is `FOOD - BREAKFAST`;
-  Tide lands in `CHEMICALS`/`HOUSEKEEPING`. Both need a decision before v1 covers them.
-- Open question 2a is re-marked **blocking for v1**: publish with `min_margin_per_unit`
-  blank and the % test governs alone, so the first manifest warns on staples you'd buy.
+## Review — Aug 20 2026
 
-**Access — settled by role, not by person (Brian, this session):**
+**Suite: 1963 assertions across 48 suites, all passing** (was 1915/47).
 
-> "Any admin and superuser can read criteria — let's not worry about who, just focus on
-> the superuser and admin role."
+### 1b — a retail miss now names itself
+Three outcomes used to collapse into one blank cell:
+- `not at big box` — no approved retailer carries it. A real answer: nothing to undercut,
+  but no proof of demand either, so the cost test falls back to our ASP and says so.
+- `no price found` — an approved retailer DOES carry it, we failed to read a price. Our
+  failure, and must never be reported as absence from retail.
+- `marketplace only` — on their domain, sold by a third party. Distinct and actionable.
 
-| Role | Read criteria | Write / publish | Shelf Count |
-|---|---|---|---|
-| superuser | ✅ | ✅ | ✅ |
-| admin | ✅ | ✅ | ✅ |
-| district_manager | ❌ | ❌ | ✅ |
-| manager | ❌ | ❌ | ✅ |
-| executive | ❌ | ❌ | — |
-| staff | ❌ | ❌ | — |
+`sawApproved` is seeded from the SEARCH results, not the parsed candidates: a Walmart page
+appearing in search is itself evidence the item is carried, even when the parser reads no
+price off it. Deciding from candidates alone produced false "not at big box" for items
+Walmart plainly stocks — the worst error available here, since it tells a buyer there is
+no competition when there is.
 
-This is what the code already did; what changed is that it is now stated as a role rule in
-the comments and pinned per role in the tests, rather than justified by who holds which
-account. `executive` is deliberately not special-cased — no read-only Merchandising surface
-exists yet, and Coverage is where that question actually lands.
+**Two bugs the suite caught during the change, both real:**
+1. `isDone` matched only the literal `"no retail"`. Lines settled under any new reason were
+   re-offered forever — the drainer spun instead of draining. Fixed with
+   `RETAIL_SETTLED_FLAGS`, which deliberately excludes `not looked up` (never asked) and
+   deliberately includes `lookup failed` (retrying inside the drainer never terminates).
+2. The re-run flag stripper carried its own hardcoded copy of the flag list. Any flag the
+   run can SET but not CLEAR sticks forever, so a later successful run still shows the old
+   failure. Replaced with `RETAIL_OWNED_FLAGS`.
 
-Managers keep the Merchandising group in the nav solely so they can reach Shelf Count; Buy
-Criteria is hidden from them and refused by both the router and the worker.
+### 2 — freight and defect in the cost basis
+`effective_cost = (invoice + freight_per_unit) / (1 - defect/100)`, clamped at 95%.
+Freight amortises per unit over the SAME denominator the lines are priced in — a different
+denominator would mis-state every effective cost silently. Both default to 0, so nothing
+already scored moves. Load-level `landed_cost` now carries freight; defect removes sellable
+units rather than adding cash, so it is priced per unit, not there.
 
-**Left alone deliberately:** the committed root `tailwind.css` is stale relative to
-`tailwind.config.js` (it renders `accent-green` as `#3BB54A`; a fresh build gives
-`#22c55e`). Not regenerated here — `build.sh` writes `dist/tailwind.css` at deploy time, so
-production is unaffected, and committing a rebuild would be a 13KB colour diff across the
-whole app that has nothing to do with this change.
+Frozen once a manifest is decided — moving the basis under a recorded verdict rewrites
+history. Bad input is refused (400), never silently clamped.
+
+### 3 — velocity and basket reach
+`merch-velocity`, per store per category, windows 7/28/91/364. Rates computed server-side
+so every surface divides the same way.
+
+⚠️ **Two key spaces.** `l3Rows` carries the RAW Clover L3, `l3Orders` is normalised. Joined
+unnormalised it yields units with no baskets and baskets with no units — every ratio wrong,
+nothing thrown. `merchVelocityRows` normalises before joining.
+
+⚠️ **An L2's baskets are its own, never the sum of its children's.** One basket touching
+three L3s in the same L2 is ONE basket for the L2. Summing reports penetration over 100%.
+
+Units are never tinted against the chain: the biggest store always sells the most, and
+painting store size as performance is the exact confusion the page exists to remove.
+
+### Intentionally left alone
+- `cost_vs_std` still compares INVOICE cost to category standard cost. Whether our book
+  cost already includes freight is unknown, so making it effective could double-count.
+- The inline `color:#6b6453` sub-labels elsewhere in the manifest table measure **3.03:1**
+  on the dark panel — below AA. Fixed only in the cell that was already being edited
+  (`.mf-sub`, 5.88:1 light / 5.75:1 dark). ~43 other instances remain; orthogonal cleanup.
+- A NON-core category can never have a shelf count, so it can never have a per-section
+  rate. Fine today; the capacity plan in tasks/merch-space-model.md should cover everything.
+
+### 1a — criteria v5 PUBLISHED to prod, 2026-08-21T00:02Z
+Authorised by Brian in session. Backed up first (60 rows, verified non-empty before any
+write — rule 2). Built as a new version copying v4, exactly as merchEnsureDraft +
+merch-criteria-draft + merch-criteria-publish would; **v4 left completely intact**, so
+rollback is `DELETE FROM merch_criteria(_versions) WHERE version=5` and v4 becomes live
+again on its own (live = highest PUBLISHED version).
+
+**11 cells changed, 7 untouched, verified by diffing v4 against v5:**
+- chain default `core` 1 → 0
+- nine food L3s `core` 0 → 1
+- chain default `min_margin_per_unit` 30 → 0.30
+
+Downstream, confirmed rather than assumed: BL1's two shelf counts (Breakfast 7, Canned
+Goods 14) were ORPHANED under v4 because those categories read as non-core. Both are core
+under v5, so the counts now count.
+
+### Not done
+- Nothing deployed. Order: migration-048 → worker → frontend (sw v109).
+- Staging is many deploys behind: migrations 042–048 all unapplied there.

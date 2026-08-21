@@ -5,9 +5,10 @@ direction, tokens, components, and interaction patterns built into
 `index.html`. Goal: anyone touching the dashboard later can extend it
 consistently without re-deriving choices from screenshots.
 
-The redesign currently lives on the `staging` branch and is served at
-`https://staging.retjghub.com`. Production (`www.retjghub.com`) is still
-the pre-redesign app on GitHub Pages until a deliberate cutover.
+The redesign IS production — `https://www.retjghub.com`, built from `main`
+by the GitHub Pages action. `https://staging.retjghub.com` builds from the
+`staging` branch and runs behind it. (This paragraph said the opposite until
+2026-08-19; the cutover happened long before.)
 
 ---
 
@@ -327,6 +328,143 @@ vertical guide + dot + small chip "`8 AM · $1,234`" on hover/scrub.
 `touch-action: pan-y` so a horizontal swipe scrubs the tooltip
 while vertical scroll still works. Tap-without-scrub falls through
 to no-op (card no longer has a click handler).
+
+---
+
+### 4.8 Dense editable data table (Merchandising)
+
+Built for Buy Criteria (`#page-merch-criteria`) and reused by the Coverage
+scorecard (`#page-merch-coverage`); the pattern is meant to carry the rest of
+Merchandising too — the Manifest Scorer's line table and its rollup. **Follow it rather than
+re-deriving one.** The shape came out of a preview Brian approved, and the
+point of writing it down is that the next table looks like this one.
+
+**The anatomy**
+
+
+One PANEL owns the whole thing — controls, table, and legend — rather than a
+bare table with controls floating over the page:
+
+```
+┌─ #mc-panel ────────────────────────────────────┐
+│ #mc-bar     label · control · control    right │  ← panelHi, bottom border
+│ status line                                    │  ← one sentence, inkDim
+│ ┌ #mc-scroll (overflow-x:auto) ──────────────┐ │
+│ │ sticky header row (panelHi)               │ │
+│ │ sticky first column (panel bg)            │ │
+│ └───────────────────────────────────────────┘ │
+│ legend: what the cell states mean              │  ← top border
+└────────────────────────────────────────────────┘
+```
+
+- **Panel**: `background: panel`, `1px` border, `border-radius: 14px`,
+  `overflow: hidden`.
+- **Bar**: `panelHi` background, bottom border, `padding: 13px 18px`,
+  `gap: 14px`, `flex-wrap`. Opens with a small uppercase label naming the
+  table. Controls that ACT ON THE TABLE live here — not in the page header.
+  Page-level actions (Publish, Discard) stay in the page header.
+- **Rows**: `height: 42px`, `padding: 0 10px`, 1px bottom border. Header row
+  `34px`, `10.5px` uppercase, `letter-spacing: .05em`, on `panelHi`.
+- **Numbers**: right-aligned, `font-variant-numeric: tabular-nums` on the
+  table so columns line up.
+- **Legend**: every visual state the table uses gets a row in it. If a colour
+  or weight means something, say what — do not make the reader infer it.
+
+**Hierarchy in a table**
+
+
+Rows at different levels of a hierarchy are distinguished STRUCTURALLY, not by
+a heading row that scrolls away:
+
+- A small bordered level badge (`.mc-lvl`) opens the row's first cell —
+  `DEFAULT` / `L2` / `L3`. The deepest level takes the accent colour and an
+  accent border; the rest are `inkDimmer`.
+- A child row indents (`padding-left: 34px`) and draws a rule back up to its
+  parent with a `::before` corner. Inheritance is the information, so it is
+  drawn rather than labelled.
+
+**The three cell states**
+
+
+Any table where a value can come from somewhere else needs all three, and
+needs the legend:
+
+| State | Treatment |
+|---|---|
+| Inherited from above | value as plain `inkDim` text, transparent border; the inherited value is also the `placeholder`, so an empty box is never a mystery |
+| Set on this row | `panelHi` background, visible border |
+| Changed in this draft | amber wash `rgba(245,158,11,.14)`, amber border |
+
+**The traps this table already hit**
+
+
+Every one of these shipped broken first. Check them on the next table.
+
+1. **`<input>` needs an explicit `type="text"`.** CSS `input[type=text]`
+   matches the ATTRIBUTE, not the type an input defaults to. Without it every
+   cell renders as a browser-default white box in both themes.
+2. **A `position: sticky` column needs its own opaque background**, or the
+   cells scroll underneath it.
+3. **State a colour for BOTH themes, every time, ON THE PANEL — not just the
+   table.** A `<style>` block cannot use the Tailwind token classes, so
+   duplicate the token's literal value and say in a comment that it is a token.
+   Never let a colour be inherited. Coverage hit this a second time: colour was
+   set on `#cv-tbl`, so the table read fine while the hero numbers and action
+   rows in the same panel inherited body's black at **1.18:1** on the dark
+   ground. The panel owns more than a table — colour it at the panel.
+4. **`accent-color` only paints a CHECKED checkbox.** The unchecked box is
+   UA-drawn and follows `color-scheme`, which this app never sets — so it comes
+   out white on a dark panel. Set `color-scheme: dark` scoped to the table, not
+   at the root.
+5. **`inkDimmer` fails AA on `opl-bg`** (2.71:1). Use `inkDim` (5.29:1) for
+   muted-but-readable text; keep `inkDimmer` for borders and badges.
+6. **Measure, don't eyeball.** Compute contrast against the real background in
+   both themes and require ≥ 4.5:1. Buy Criteria runs 5.21–18.85; Coverage
+   5.74–18.85.
+7. **A container you replace wholesale must not hold anything else.** Coverage's
+   status line lived inside the div its render function overwrites, so it
+   vanished on first paint and every later refresh threw on it — the 7/28-day
+   toggle was dead on arrival. Render targets hold ONLY what that render owns.
+8. **Exercise the SECOND render, not just the first.** Both of the bugs above
+   were invisible on initial load and only appeared on a refresh. Toggle the
+   control, reload the data, and check it still works.
+
+**Scorecard variant (Coverage)**
+
+Same panel, different payload — a hero, an action list and a heatmap instead of
+editable cells:
+
+- **Hero**: two or three big tabular numbers with small uppercase captions, then
+  ONE plain-English sentence reading the numbers back. The sentence says only
+  what is knowable — with no shelf counts in, it says so instead of printing a
+  floor figure.
+- **Action rows**: a coloured `BUY` / `FLOOR` / `CUT` chip, the subject in
+  medium, and the reason in `inkDim` — always with the numbers that produced it,
+  so a call is never "trust the colour".
+- **Heatmap cells** carry TWO numbers stacked (the measure over its comparator),
+  tinted by state. The tint is `background` + `inset` ring, never text colour.
+  A missing input reads **"no count"** — never `0%`. Zero is a real reading that
+  means "cut this", and printing it for absent data is how a scorecard tells you
+  to cut a category nobody has measured.
+- **Totals row** pinned at the bottom, flagging any column past its threshold
+  regardless of how the individual cells look.
+
+**Token literals for `<style>` blocks**
+
+
+| Role | Light (`opl`) | Dark (`op`) |
+|---|---|---|
+| ground | `#f4f3ee` | `#0a0f1a` |
+| panel | `#ffffff` | `#101826` |
+| panelHi | `#fafaf6` | `#16203a` |
+| ink | `#14110a` | `#e7ecf3` |
+| inkDim | `#6b6453` | `#8893a7` |
+| inkDimmer | `#9c9484` | `#5a6478` |
+| hairline | `rgba(20,16,8,.10)` | `rgba(255,255,255,.09)` |
+| border | `rgba(20,16,8,.18)` | `rgba(255,255,255,.16)` |
+
+Accent `#22c55e` on `#06210f` text for a primary button; amber `#f59e0b` for
+draft/dirty.
 
 ---
 
