@@ -8024,6 +8024,36 @@ const MANIFEST_FIELDS = ["identifier", "identifier_type", "description", "qty", 
 // "Each" is repackaged and a "Case" is pristine — but on most manifests those words are
 // the unit of sale and mean nothing about condition. Reading one vendor's legend as a
 // universal rule would mislabel every other sheet.
+// What WE book as the cost of a unit in a given L3.
+//
+// TWO SOURCES, and the better one was not being used. `category-costs:global` carries a
+// blanket figure per L2-ish group — every food category reads $0.81. The IM master
+// carries a cost per LOAD TYPE, and 76 of its entries are named exactly after an L3
+// category, so it gives a per-category figure for 75 of the 89 L3s against the category
+// map's 60. Where both exist they agree on 49 of 53; the four that differ are all cases
+// where the blanket figure is simply wrong:
+//
+//   ENERGY DRINKS     IM $2.00   blanket $0.81
+//   MIXED BAG CANDY   IM $1.00   blanket $0.81
+//   CONDIMENTS        IM $0.25   blanket $0.81
+//   SINGLES           IM $0.25   blanket $0.81
+//
+// 🔑 This matters far more now than it did. Cost used to be a display column; it is now
+// the FLOOR under every suggested price. Pricing energy drinks off $0.81 when they cost
+// us $2.00 produces a price that clears the margin floor on screen and loses money in
+// the till.
+function l3UnitCost(l3, imCosts, catCosts) {
+  if (!l3) return null;
+  const key = String(l3).trim().toUpperCase();
+  for (const v of Object.values(imCosts || {})) {
+    if (String(v?.desc || "").trim().toUpperCase() !== key) continue;
+    const c = Number(v?.cost);
+    if (Number.isFinite(c) && c > 0) return roundCents(c);
+  }
+  const c = Number((catCosts || {})[l3]);
+  return Number.isFinite(c) && c > 0 ? roundCents(c) : null;
+}
+
 function manifestGrade(raw) {
   // 🔑 Underscores become spaces first. `_` is a WORD character in JS regex, so /\bused\b/
   // does not match "USED_GOOD" — and vendor codes are full of them (USED_GOOD, NEW_OTHER,
@@ -9061,6 +9091,13 @@ const MERCH_FIELDS = new Set([
   // It is a CEILING: you cannot price above the shop down the road and expect to sell,
   // whatever our ASP or a national retailer's shelf price says.
   "dollar_ceiling",
+  // The MINIMUM gross profit a price has to make, as a percent OF THE PRICE.
+  //
+  // ⚠️ NOT the same 30 as max_cost_pct_retail, and confusing the two silently breaks
+  // both. That one is a BUYING rule — cost must be under 30% of retail, i.e. 70% GP.
+  // This is a PRICING floor — the price we put on the item must keep 30% of itself.
+  // An item can pass one and fail the other, which is exactly the case worth seeing.
+  "min_gross_margin_pct",
   "rounding", "max_breakeven_sellthru", "max_per_store", "cash_back_days", "note",
 ]);
 
@@ -9071,6 +9108,7 @@ const MERCH_DEFAULTS = {
   core: "0",
   max_cost_pct_retail: "30",
   price_cap_pct_retail: "50",
+  min_gross_margin_pct: "30",
   rounding: ".99",
   max_breakeven_sellthru: "50",
   cash_back_days: "40",
@@ -16568,7 +16606,14 @@ export default {
         // What WE book as the cost of anything in that category — the same figure the
         // costing engine uses, read from the same place, so the scorer can never quote a
         // standard cost the rest of the Hub disagrees with.
-        const stdCosts = ((await env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json")) || {}).costs || {};
+        // Both cost sources; l3UnitCost prefers the per-category IM figure and falls back
+        // to the blanket category map. See the note on l3UnitCost for why that order.
+        const [catCostBlob, imCostBlob] = await Promise.all([
+          env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json"),
+          env.SALES_SNAPSHOTS.get(ITEM_COSTS_KEY, "json"),
+        ]);
+        const stdCosts = (catCostBlob || {}).costs || {};
+        const imCosts = (imCostBlob || {}).items || {};
         const { live } = await merchVersions(env);
         const resolved = live ? await merchResolve(env, live.version) : null;
 
@@ -16614,7 +16659,7 @@ export default {
             costPerUnit = roundCents((Number(l.msrp) * retailPct) / 100);
             costFromLot = true;
           }
-          const stdCost = l.l3 && stdCosts[l.l3] !== undefined ? roundCents(Number(stdCosts[l.l3])) : null;
+          const stdCost = l3UnitCost(l.l3, imCosts, stdCosts);
           const stats = l.l3 ? av[l.l3] : null;
           const rounding = resolved && l.l3
             ? (resolved.categories.flatMap(c => [c, ...(c.children || [])]).find(c => c.key === l.l3)?.fields?.rounding?.value
@@ -16635,17 +16680,80 @@ export default {
           // 🔑 A manual price is a decision and is never overridden. The ceiling only
           // shapes the price we SUGGEST — capping first, then rounding, so the rounding
           // rule cannot push the answer back above the ceiling it was just held under.
+          // ── The price ladder ────────────────────────────────────────────────
+          //
+          // Retail is the PROMISE (half of what the big box charges); ASP is what the
+          // category really sells for here; the GP floor is what makes it worth doing.
+          //
+          //   1. try street retail x price_cap_pct_retail  — the discount proposition
+          //   2. if that will not clear the GP floor, step UP to our own ASP
+          //   3. if ASP will not clear it either, price at ASP anyway AND SAY SO
+          //
+          // Step 3 is deliberate. An item bought at 70% of retail cannot be priced at a
+          // 30% margin without charging full retail, and it is already in the building.
+          // The worker needs a number to put on it; what they must never get is a number
+          // that looks fine when it is not. The flag is also the buying feedback loop —
+          // a whole load pricing below the floor is a load we should not have bought.
+          // `num` lives inside manifestScore, NOT here — a bare reference parses fine and
+          // throws at runtime, which no syntax check catches. Local coercion instead.
+          const asNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+          const gpFloorPct = asNum(critAt("min_gross_margin_pct"));
+          // 🔑 What we ACTUALLY pay beats a category average whenever we know it. On a
+          // manifest the vendor quotes a cost for this exact line, freight and defect
+          // included; the L3 figure is a blended average across a whole load type. The
+          // fallback matters for the scan tool, where an item in the warehouse has no
+          // vendor line at all and the L3 cost is the only cost there is.
+          const effCost = manifestEffectiveCost(costPerUnit, freightPerUnit, m.defect_pct);
+          const unitCost = effCost !== null ? effCost : stdCost;
+          const clearsFloor = (price) => {
+            if (price === null || gpFloorPct === null || unitCost === null) return true;
+            if (price <= 0) return false;
+            return ((price - unitCost) / price) * 100 >= gpFloorPct;
+          };
+          // NOT `retailPct` — that name is already the LOT rate in this scope, and reusing
+          // it put the outer binding in a temporal dead zone, silently killing lot-buy
+          // cost derivation. This one is the price cap.
+          const priceCapPct = asNum(critAt("price_cap_pct_retail"));
+          const streetRetail = l.retail_price === null || l.retail_price === undefined
+            ? null : Number(l.retail_price);
+          const retailCandidate = streetRetail !== null && streetRetail > 0 && priceCapPct !== null
+            ? roundCents((streetRetail * priceCapPct) / 100) : null;
+
           let suggested;
           let ceilingBound = false;
+          let belowFloor = false;
+          let priceBasis = null;
           if (l.suggested_price !== null && l.suggested_price !== undefined) {
             suggested = Number(l.suggested_price);
-          } else if (asp === null) {
+            priceBasis = "manual";
+          } else if (retailCandidate === null && asp === null) {
             suggested = null;
           } else {
-            const capped = ceiling !== null ? Math.min(asp, ceiling) : asp;
+            let base;
+            if (retailCandidate !== null && clearsFloor(retailCandidate)) {
+              base = retailCandidate; priceBasis = "street retail";
+            } else if (asp !== null && retailCandidate !== null) {
+              // 🔑 Step UP, never down. The rule is "if the discount price will not make
+              // the margin, fall back to what the category really sells for" — but if ASP
+              // is BELOW the retail-derived price, moving to it takes less money for the
+              // same item and recovers nothing. Take whichever is higher.
+              base = Math.max(asp, retailCandidate);
+              priceBasis = base === asp ? "our ASP" : "street retail";
+              belowFloor = !clearsFloor(base);
+            } else {
+              base = asp !== null ? asp : retailCandidate;
+              priceBasis = asp !== null ? "our ASP" : "street retail";
+              belowFloor = !clearsFloor(base);
+            }
+            // 🔑 Cap BEFORE rounding, then clamp again: rounding .99 upward could
+            // otherwise push the answer back above the ceiling it was just held under.
+            const capped = ceiling !== null ? Math.min(base, ceiling) : base;
             suggested = manifestRound(capped, rounding);
             if (ceiling !== null && suggested !== null && suggested > ceiling) suggested = roundCents(ceiling);
-            ceilingBound = ceiling !== null && asp > ceiling;
+            ceilingBound = ceiling !== null && base > ceiling;
+            // Re-test the price we ACTUALLY landed on. The ceiling and the rounding can
+            // both move it below a floor the base figure cleared.
+            if (suggested !== null && !clearsFloor(suggested)) belowFloor = true;
           }
           const flags = (() => { try { return JSON.parse(l.flags || "[]"); } catch { return []; } })();
           if (!l.l3) flags.push("no category");
@@ -16653,12 +16761,16 @@ export default {
           // Say when the ceiling actually bit. A suggested price that is lower than our
           // own ASP needs a reason visible on the line, or it reads as a mistake.
           if (ceilingBound) flags.push(`held to the $${ceiling.toFixed(2)} dollar-store ceiling`);
+          if (belowFloor && suggested !== null && unitCost !== null) {
+            const gp = ((suggested - unitCost) / suggested) * 100;
+            flags.push(`${gp.toFixed(0)}% GP at $${suggested.toFixed(2)} — under the ${gpFloorPct}% floor`);
+          }
           return { ...l, units, cost: costPerUnit, qty: units, asp_l3: asp,
                    std_cost_l3: stdCost,
                    // Invoice cost stays on `cost`; what it really lands at rides beside it.
                    cost_from_lot: costFromLot,
                    freight_per_unit: freightPerUnit ? roundCents(freightPerUnit) : 0,
-                   effective_cost: manifestEffectiveCost(costPerUnit, freightPerUnit, m.defect_pct),
+                   effective_cost: effCost,
                    // Vendor cost against what we normally pay for that category. Under
                    // 100% is a better buy than our own book cost; over it is not.
                    cost_vs_std: stdCost && costPerUnit !== null && stdCost > 0
@@ -16670,6 +16782,9 @@ export default {
                    pack_converted: asCase,
                    velocity_l3: stats?.velocity ?? null,
                    suggested_price: suggested,
+                   price_basis: priceBasis, below_gp_floor: belowFloor,
+                   gp_pct: suggested && unitCost !== null && suggested > 0
+                     ? +(((suggested - unitCost) / suggested) * 100).toFixed(1) : null,
                    suggested_source: l.suggested_price !== null && l.suggested_price !== undefined ? "manual" : "rule",
                    flags };
         });

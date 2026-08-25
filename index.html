@@ -17582,7 +17582,9 @@
         <td>${l.retail_price ? `${mfMoney(l.retail_price)}<div class="mf-sub">${mfEsc(mfBasis(l))}</div>` : mfMiss(l)}</td>
         <td>${mfMoney(l.asp_l3)}</td>
         <td>${mfPct(sc.basisPct)}<div style="font-size:10px;color:#6b6453">${mfEsc(sc.basisName || '')}</div></td>
-        <td>${mfMoney(l.suggested_price)}</td>
+        <td>${mfMoney(l.suggested_price)}${l.suggested_price == null ? '' : `<div class="${
+            l.below_gp_floor ? 'mf-ans' : 'mf-sub'}">${
+            l.below_gp_floor ? `${l.gp_pct}% GP — under the floor` : mfEsc(l.price_basis || '')}</div>`}</td>
         <td>${sc.perStore ?? '—'}</td><td>${sc.daysToClear ?? '—'}</td>
         <td class="mf-l">${sc.verdict ? `<span class="mf-v mf-${sc.verdict === 'pass' ? 'pass' : sc.verdict}">${sc.verdict}</span>` : ''}</td>
       </tr>`;
@@ -18013,6 +18015,7 @@
     ['max_cost_pct_retail',    'Max cost %',   'num'],
     ['min_margin_per_unit',    'Min margin $', 'num'],
     ['price_cap_pct_retail',   'Price cap %',  'num'],
+    ['min_gross_margin_pct',   'Min GP %',     'num'],
     ['dollar_ceiling',         'Dollar $',     'num'],
     ['rounding',               'Rounding',     'text'],
     ['max_breakeven_sellthru', 'Max B/E %',    'num'],

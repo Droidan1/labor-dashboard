@@ -849,5 +849,90 @@ let mid;
   ok(JSON.parse(line.flags || '[]').includes('no line detail'), '…and the row says why it was not counted');
 }
 
+// ── THE PRICE LADDER ────────────────────────────────────────────────────────
+// Brian's rule, in his own numbers: street retail $4.00, category ASP $3.00, price cap
+// 50% → a $2.00 candidate. At $0.81 cost the $2.00 works. At $2.79 it does not, so we
+// step up to ASP — and $3.00 makes only 7% GP, so it prices there ANYWAY and says so.
+// The worker needs a number; what they must never get is a number that looks fine.
+{
+  // Set at the L3, not the chain: an earlier block in this file publishes
+  // rounding '.99' on the Consumable Food L2, which beats a chain default. A test that
+  // depends on what a previous test happened to leave behind is not a test.
+  await post('merch-criteria-draft', { cells: [
+    { category: SNACKS, field: 'price_cap_pct_retail', value: '50' },
+    { category: SNACKS, field: 'min_gross_margin_pct', value: '30' },
+    { category: SNACKS, field: 'rounding', value: '.00' },
+    // Explicitly high, NOT null: an earlier block sets a $1.25 ceiling on the
+    // Consumable Food L2, and clearing the L3 row just re-inherits it.
+    { category: SNACKS, field: 'dollar_ceiling', value: '999' },
+    { category: SNACKS, field: 'core', value: '1' },
+  ]});
+  await post('merch-criteria-publish', { note: 'price ladder test' });
+
+  const mk = async (vendor, cost, retail) => {
+    const CSV = ['UPC,Item Description,Qty,Unit Cost',
+                 `01234567${String(Math.abs(cost * 100) | 0).padStart(4, '0')},Chips snack bag,10,${cost}`, ''].join('\n');
+    const up = await post('manifest-upload', { vendor, csv: CSV });
+    eq(up.status, 200, `${vendor} uploads`);
+    // Pin the line to SNACKS and give it a street retail, so both inputs are known.
+    const n = db.prepare(`UPDATE manifest_lines SET l2=?, l3=?, retail_price=? WHERE manifest_id=?`)
+      .run('Consumable Food', SNACKS, retail, up.body.id);
+    eq(Number(n.changes), 1, `${vendor}: exactly one line pinned`);
+    return (await get(`manifest&id=${up.body.id}`)).body;
+  };
+
+  const cheap = await mk('LadderCheap', 0.81, 4.00);
+  const l1 = cheap.lines[0];
+  eq(l1.price_basis, 'street retail', '🔑 a cheap item prices off STREET RETAIL — the discount promise');
+  near(l1.suggested_price, 2.00, '…$4.00 x 50% = $2.00');
+  eq(l1.below_gp_floor, false, '…and it clears the 30% floor comfortably');
+  ok(l1.gp_pct > 55, `…at ~59% GP (got ${l1.gp_pct}%)`);
+
+  const dear = await mk('LadderDear', 2.79, 4.00);
+  const l2 = dear.lines[0];
+  ok(['our ASP', 'street retail'].includes(l2.price_basis), 'a basis is stated');
+  ok(l2.suggested_price >= 2.00,
+     `🔑 it steps UP, never down — a fallback that took LESS money would recover nothing (got $${l2.suggested_price})`);
+  eq(l2.below_gp_floor, true, '🔑 …and it STILL says the floor is not met, rather than looking fine');
+  const fl = JSON.parse(db.prepare(`SELECT flags FROM manifest_lines WHERE manifest_id=?`).get(dear.manifest.id).flags || '[]');
+  ok(true, 'flags read');
+  ok(l2.gp_pct !== null && l2.gp_pct < 30, `…GP is under 30% and stated (got ${l2.gp_pct}%)`);
+}
+
+// ── The floor is re-tested on the price we ACTUALLY land on ────────────────
+// The dollar-store ceiling and the rounding rule can each drag a price below a floor
+// that the base figure cleared. Testing the base only would pass a losing price.
+{
+  await post('merch-criteria-draft', { cells: [
+    { category: SNACKS, field: 'price_cap_pct_retail', value: '50' },
+    { category: SNACKS, field: 'min_gross_margin_pct', value: '30' },
+    { category: SNACKS, field: 'rounding', value: '.00' },
+    { category: SNACKS, field: 'dollar_ceiling', value: '1.25' },
+  ]});
+  await post('merch-criteria-publish', { note: 'ceiling drags below the floor' });
+  const CSV = ['UPC,Item Description,Qty,Unit Cost', '012345679500,Chips snack bag,10,1.00', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'CeilingFloor', csv: CSV });
+  db.prepare(`UPDATE manifest_lines SET l2=?, l3=?, retail_price=? WHERE manifest_id=?`)
+    .run('Consumable Food', SNACKS, 10.00, up.body.id);
+  const b = (await get(`manifest&id=${up.body.id}`)).body;
+  const l = b.lines[0];
+  // $10 x 50% = $5.00 clears the floor easily, but the $1.25 ceiling drags it to $1.25,
+  // where $1.00 of cost leaves 20% GP.
+  ok(l.suggested_price <= 1.25, `the ceiling holds the price (got $${l.suggested_price})`);
+  eq(l.below_gp_floor, true, '🔑 the floor is judged on the FINAL price, not the base figure');
+}
+
+// ── With no cost known, the floor cannot be judged and does not pretend to ──
+{
+  const CSV = ['UPC,Item Description,Qty,Unit Cost', '012345679501,Mystery thing,10,1.00', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'NoCostCat', csv: CSV });
+  // No vendor cost AND a category with no standard cost: nothing to judge a floor with.
+  db.prepare(`UPDATE manifest_lines SET l2=?, l3=?, retail_price=?, cost=NULL WHERE manifest_id=?`)
+    .run('Consumable Food', 'FG BL CONSUMABLES - FOOD - FROZEN', 4.00, up.body.id);
+  const b = (await get(`manifest&id=${up.body.id}`)).body;
+  eq(b.lines[0].below_gp_floor, false,
+     '🔑 an unknown category cost is not a floor breach — absence of evidence is not evidence');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
