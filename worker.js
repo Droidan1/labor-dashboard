@@ -8026,32 +8026,37 @@ const MANIFEST_FIELDS = ["identifier", "identifier_type", "description", "qty", 
 // universal rule would mislabel every other sheet.
 // What WE book as the cost of a unit in a given L3.
 //
-// TWO SOURCES, and the better one was not being used. `category-costs:global` carries a
-// blanket figure per L2-ish group — every food category reads $0.81. The IM master
-// carries a cost per LOAD TYPE, and 76 of its entries are named exactly after an L3
-// category, so it gives a per-category figure for 75 of the 89 L3s against the category
-// map's 60. Where both exist they agree on 49 of 53; the four that differ are all cases
-// where the blanket figure is simply wrong:
+// TWO SOURCES, and the ORDER IS THE WHOLE POINT.
 //
-//   ENERGY DRINKS     IM $2.00   blanket $0.81
-//   MIXED BAG CANDY   IM $1.00   blanket $0.81
-//   CONDIMENTS        IM $0.25   blanket $0.81
-//   SINGLES           IM $0.25   blanket $0.81
+//   1. category-costs:global  — what the L3 Category Costs card in Admin Tools writes.
+//                               A person deliberately typed this. It always wins.
+//   2. the IM master          — a file import, named per L3. Covers 22 categories the
+//                               card does not, so it FILLS GAPS rather than overriding.
 //
-// 🔑 This matters far more now than it did. Cost used to be a display column; it is now
-// the FLOOR under every suggested price. Pricing energy drinks off $0.81 when they cost
-// us $2.00 produces a price that clears the margin floor on screen and loses money in
-// the till.
+// 🛑 This order was briefly the other way round, and it silently broke the admin card:
+// an edit there would have been ignored on all 53 categories the IM file also names, with
+// nothing on screen to say so. That is the same "override that does not override" shape
+// as the l3Map incident and the stale vendor template — a human decision must never lose
+// to an import. If the card's figure looks wrong, the fix is to edit the card, not to
+// rank the import above it.
+//
+// Where the two disagree today the card carries a blanket $0.81 across all food while the
+// IM file is specific (ENERGY DRINKS $2.00, MIXED BAG CANDY $1.00, CONDIMENTS and SINGLES
+// $0.25). Those are the card's to correct — surfaced, not silently overruled.
+//
+// 🔑 Cost is now the FLOOR under every suggested price, not just a display column, so
+// getting this precedence wrong prices goods below what they cost us.
 function l3UnitCost(l3, imCosts, catCosts) {
   if (!l3) return null;
+  const typed = Number((catCosts || {})[l3]);
+  if (Number.isFinite(typed) && typed > 0) return roundCents(typed);
   const key = String(l3).trim().toUpperCase();
   for (const v of Object.values(imCosts || {})) {
     if (String(v?.desc || "").trim().toUpperCase() !== key) continue;
     const c = Number(v?.cost);
     if (Number.isFinite(c) && c > 0) return roundCents(c);
   }
-  const c = Number((catCosts || {})[l3]);
-  return Number.isFinite(c) && c > 0 ? roundCents(c) : null;
+  return null;
 }
 
 function manifestGrade(raw) {

@@ -934,5 +934,38 @@ let mid;
      '🔑 an unknown category cost is not a floor breach — absence of evidence is not evidence');
 }
 
+// ── 🛑 A HUMAN EDIT NEVER LOSES TO A FILE IMPORT ────────────────────────────
+// The L3 Category Costs card in Admin Tools writes category-costs:global. The IM master
+// is a file import. Ranking the import above the card silently ignored every edit made
+// there on the 53 categories both name — the same shape as the l3Map override incident
+// and the stale vendor template. Cost is now the FLOOR under every suggested price, so
+// getting this backwards prices goods below what they cost us.
+{
+  env.SALES_SNAPSHOTS.put('category-costs:global', JSON.stringify({
+    costs: { [SNACKS]: 0.81 },            // typed into the admin card
+  }));
+  env.SALES_SNAPSHOTS.put('item-costs:global', JSON.stringify({
+    items: {
+      '10001': { desc: SNACKS, cost: 2.00 },   // the import disagrees
+      '10002': { desc: ORAL,   cost: 1.40 },   // …and covers one the card does not
+    },
+  }));
+
+  const CSV = ['UPC,Item Description,Qty,Unit Cost',
+               '012345679600,Chips snack bag,10,0.50',
+               '012345679601,Toothpaste tube,10,0.50', ''].join('\n');
+  const up = await post('manifest-upload', { vendor: 'CostPrecedence', csv: CSV });
+  db.prepare(`UPDATE manifest_lines SET l2='Consumable Food', l3=? WHERE manifest_id=? AND row_no=1`)
+    .run(SNACKS, up.body.id);
+  db.prepare(`UPDATE manifest_lines SET l2='Consumable HBA', l3=? WHERE manifest_id=? AND row_no=2`)
+    .run(ORAL, up.body.id);
+
+  const b = (await get(`manifest&id=${up.body.id}`)).body;
+  near(b.lines[0].std_cost_l3, 0.81,
+       "🛑 the card's typed 0.81 WINS over the import's 2.00 — a person decided that");
+  near(b.lines[1].std_cost_l3, 1.40,
+       '🔑 …and the import still fills a category the card has nothing for');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
