@@ -8550,6 +8550,11 @@ async function manifestAspVelocity(env, days = 28) {
 
 // Round to the L2/L3's rounding rule. ".99" means "land on the next .99 at or below",
 // which is how the stores actually price rather than a naive round.
+// The step size of each money rule, for snapping a price DOWN under a ceiling. Kept
+// adjacent to manifestRound on purpose: a rule added there without an entry here silently
+// falls back to taking the ceiling exactly, which is off-convention rather than wrong.
+const MANIFEST_ROUND_STEP = { "$0.50": 0.5, "$1": 1, "$10": 10, "$100": 100 };
+
 function manifestRound(price, rule) {
   if (price === null || price === undefined || !Number.isFinite(price)) return null;
   const p = Number(price);
@@ -8569,10 +8574,19 @@ function manifestRound(price, rule) {
     // 🔑 The epsilon is load-bearing. Math.ceil(2.50 * 2) / 2 is $2.50 in exact arithmetic,
     // but a price arrived at by multiplication can be 2.5000000001, and ceil would push a
     // genuine $2.50 to $3.00 — a 20% error, on the most common price on the shelf.
+    // Every money-step rule rounds UP to the next step. A shelf never shows $2.14, and a
+    // set where $0.50 rounds up while $1 rounds to nearest would be a trap for whoever
+    // sets it next. None of $1/$10/$100 had ever been used in a published version, so
+    // changing them costs nothing and makes the set mean one thing.
+    //
+    // 🔑 The epsilon guards a price that is already exactly on a step. Every price here is
+    // reached by multiplication (retail x a cap percentage), so an exact $2.50 can arrive
+    // as 2.5000000001 — and a bare ceil would push it to $3.00, a 20% error that looks
+    // like a pricing decision rather than a float bug.
     case "$0.50": return roundCents(Math.max(0.5, Math.ceil((p * 2) - 1e-9) / 2));
-    case "$1":  return Math.max(1, Math.round(p));
-    case "$10": return Math.max(10, Math.round(p / 10) * 10);
-    case "$100":return Math.max(100, Math.round(p / 100) * 100);
+    case "$1":  return Math.max(1, Math.ceil(p - 1e-9));
+    case "$10": return Math.max(10, Math.ceil((p / 10) - 1e-9) * 10);
+    case "$100":return Math.max(100, Math.ceil((p / 100) - 1e-9) * 100);
     default:    return roundCents(p);
   }
 }
@@ -8909,6 +8923,100 @@ function manifestEffectiveCost(costPerUnit, freightPerUnit = 0, defectPct = 0) {
   const d = Math.min(Math.max(Number(defectPct) || 0, 0), 95) / 100;
   const f = Number(freightPerUnit) || 0;
   return roundCents((Number(costPerUnit) + f) / (1 - d));
+}
+
+// THE PRICE LADDER, in one place.
+//
+// Extracted so the Manifest Scorer and the warehouse Price Scan cannot drift apart. Two
+// screens quoting different prices for the same item is the failure this exists to stop —
+// a buyer would score a load at one number and the floor would price it at another.
+//
+//   1. street retail x price_cap_pct_retail  — the discount proposition
+//   2. if that will not clear the GP floor, step UP
+//   3. if nothing clears it, price anyway AND SAY SO
+//
+// Step 3 is deliberate. An item bought at 70% of retail cannot make a 30% margin without
+// charging full retail, and it is already in the building. Whoever is holding it needs a
+// number; what they must never get is a number that looks fine when it is not.
+//
+// crit: { priceCapPct, gpFloorPct, ceiling, rounding } — already resolved through the
+// chain → L2 → L3 walk by the caller, because only the caller knows the category.
+function merchPriceLadder({ retail, asp, cost, crit }) {
+  // 🛑 Number(null) is 0, and Number("") is 0, and both are finite. A naive
+  // Number-then-isFinite check therefore turns "no dollar ceiling set" into "a ceiling of
+  // zero" — which clamped every price to $0.00 on the majority of categories, since most
+  // have no ceiling. Absence has to be checked BEFORE coercion, never after.
+  const n = (v) => {
+    if (v === null || v === undefined || v === "") return null;
+    const x = Number(v);
+    return Number.isFinite(x) ? x : null;
+  };
+  const priceCapPct = n(crit?.priceCapPct);
+  const gpFloorPct = n(crit?.gpFloorPct);
+  // A ceiling of zero is not a rule, it is a missing value that survived coercion. Treated
+  // as no ceiling — otherwise Math.min clamps every price to $0.00. The manifest endpoint
+  // already guards this on its side; the ladder must be safe on its own because Price Scan
+  // calls it too, and a shared function cannot rely on one caller's hygiene.
+  const ceilingRaw = n(crit?.ceiling);
+  const ceiling = ceilingRaw !== null && ceilingRaw > 0 ? ceilingRaw : null;
+  const unitCost = n(cost);
+  const aspN = n(asp);
+  const retailN = n(retail);
+
+  const clearsFloor = (price) => {
+    if (price === null || gpFloorPct === null || unitCost === null) return true;
+    if (price <= 0) return false;
+    return ((price - unitCost) / price) * 100 >= gpFloorPct;
+  };
+  const retailCandidate = retailN !== null && retailN > 0 && priceCapPct !== null
+    ? roundCents((retailN * priceCapPct) / 100) : null;
+
+  // Nothing to price from. A zero ASP is not a cheap category, it is a category with no
+  // sales, and $0.00 is never an answer — it would print a free price tag.
+  const haveRetail = retailCandidate !== null && retailCandidate > 0;
+  const haveAsp = aspN !== null && aspN > 0;
+  if (!haveRetail && !haveAsp) {
+    return { price: null, basis: null, belowFloor: false, ceilingBound: false, gpPct: null };
+  }
+
+  let base, basis, belowFloor = false;
+  if (haveRetail && clearsFloor(retailCandidate)) {
+    base = retailCandidate; basis = "street retail";
+  } else if (haveAsp && haveRetail) {
+    // 🔑 Step UP, never down. If ASP sits BELOW the retail-derived price, moving to it
+    // takes less money for the same item and recovers nothing. Whichever is higher.
+    base = Math.max(aspN, retailCandidate);
+    basis = base === aspN ? "our ASP" : "street retail";
+    belowFloor = !clearsFloor(base);
+  } else {
+    base = haveAsp ? aspN : retailCandidate;
+    basis = haveAsp ? "our ASP" : "street retail";
+    belowFloor = !clearsFloor(base);
+  }
+
+  // 🔑 Cap BEFORE rounding, then clamp again — rounding UP could otherwise push the
+  // answer back above the ceiling it was just held under.
+  const capped = ceiling !== null ? Math.min(base, ceiling) : base;
+  let price = manifestRound(capped, crit?.rounding);
+  // Rounding UP can push the price back over the ceiling it was just held under. Snapping
+  // to the ceiling exactly would land off-convention — a $1.25 ceiling on a half-dollar
+  // rule would print $1.25 — so take the largest STEP at or below it instead.
+  if (ceiling !== null && price !== null && price > ceiling) {
+    const step = MANIFEST_ROUND_STEP[String(crit?.rounding || "").trim()];
+    price = step
+      ? roundCents(Math.max(step, Math.floor((ceiling / step) + 1e-9) * step))
+      : roundCents(ceiling);
+  }
+  // Re-test what we ACTUALLY landed on: the ceiling and the rounding can each move a
+  // price below a floor the base figure cleared.
+  if (price !== null && !clearsFloor(price)) belowFloor = true;
+
+  return {
+    price, basis, belowFloor,
+    ceilingBound: ceiling !== null && base > ceiling,
+    gpPct: price && unitCost !== null && price > 0
+      ? +(((price - unitCost) / price) * 100).toFixed(1) : null,
+  };
 }
 
 function manifestScore(lines, resolved, opts = {}) {
@@ -16695,81 +16803,34 @@ export default {
           // 🔑 A manual price is a decision and is never overridden. The ceiling only
           // shapes the price we SUGGEST — capping first, then rounding, so the rounding
           // rule cannot push the answer back above the ceiling it was just held under.
-          // ── The price ladder ────────────────────────────────────────────────
-          //
-          // Retail is the PROMISE (half of what the big box charges); ASP is what the
-          // category really sells for here; the GP floor is what makes it worth doing.
-          //
-          //   1. try street retail x price_cap_pct_retail  — the discount proposition
-          //   2. if that will not clear the GP floor, step UP to our own ASP
-          //   3. if ASP will not clear it either, price at ASP anyway AND SAY SO
-          //
-          // Step 3 is deliberate. An item bought at 70% of retail cannot be priced at a
-          // 30% margin without charging full retail, and it is already in the building.
-          // The worker needs a number to put on it; what they must never get is a number
-          // that looks fine when it is not. The flag is also the buying feedback loop —
-          // a whole load pricing below the floor is a load we should not have bought.
-          // `num` lives inside manifestScore, NOT here — a bare reference parses fine and
-          // throws at runtime, which no syntax check catches. Local coercion instead.
+          // One implementation, shared with Price Scan — see merchPriceLadder.
           const asNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
-          const gpFloorPct = asNum(critAt("min_gross_margin_pct"));
           // 🔑 What we ACTUALLY pay beats a category average whenever we know it. On a
           // manifest the vendor quotes a cost for this exact line, freight and defect
           // included; the L3 figure is a blended average across a whole load type. The
-          // fallback matters for the scan tool, where an item in the warehouse has no
-          // vendor line at all and the L3 cost is the only cost there is.
+          // fallback is what Price Scan runs on, where a warehouse item has no vendor line.
           const effCost = manifestEffectiveCost(costPerUnit, freightPerUnit, m.defect_pct);
           const unitCost = effCost !== null ? effCost : stdCost;
-          const clearsFloor = (price) => {
-            if (price === null || gpFloorPct === null || unitCost === null) return true;
-            if (price <= 0) return false;
-            return ((price - unitCost) / price) * 100 >= gpFloorPct;
-          };
-          // NOT `retailPct` — that name is already the LOT rate in this scope, and reusing
-          // it put the outer binding in a temporal dead zone, silently killing lot-buy
-          // cost derivation. This one is the price cap.
-          const priceCapPct = asNum(critAt("price_cap_pct_retail"));
-          const streetRetail = l.retail_price === null || l.retail_price === undefined
-            ? null : Number(l.retail_price);
-          const retailCandidate = streetRetail !== null && streetRetail > 0 && priceCapPct !== null
-            ? roundCents((streetRetail * priceCapPct) / 100) : null;
+          const gpFloorPct = asNum(critAt("min_gross_margin_pct"));
 
-          let suggested;
-          let ceilingBound = false;
-          let belowFloor = false;
-          let priceBasis = null;
+          let suggested, priceBasis = null, belowFloor = false, ceilingBound = false;
           if (l.suggested_price !== null && l.suggested_price !== undefined) {
+            // A manual price is a decision and is never recomputed.
             suggested = Number(l.suggested_price);
             priceBasis = "manual";
-          } else if (retailCandidate === null && asp === null) {
-            suggested = null;
-          } else {
-            let base;
-            if (retailCandidate !== null && clearsFloor(retailCandidate)) {
-              base = retailCandidate; priceBasis = "street retail";
-            } else if (asp !== null && retailCandidate !== null) {
-              // 🔑 Step UP, never down. The rule is "if the discount price will not make
-              // the margin, fall back to what the category really sells for" — but if ASP
-              // is BELOW the retail-derived price, moving to it takes less money for the
-              // same item and recovers nothing. Take whichever is higher.
-              base = Math.max(asp, retailCandidate);
-              priceBasis = base === asp ? "our ASP" : "street retail";
-              belowFloor = !clearsFloor(base);
-            } else {
-              base = asp !== null ? asp : retailCandidate;
-              priceBasis = asp !== null ? "our ASP" : "street retail";
-              belowFloor = !clearsFloor(base);
+            if (gpFloorPct !== null && unitCost !== null && suggested > 0) {
+              belowFloor = ((suggested - unitCost) / suggested) * 100 < gpFloorPct;
             }
-            // 🔑 Cap BEFORE rounding, then clamp again: rounding .99 upward could
-            // otherwise push the answer back above the ceiling it was just held under.
-            const capped = ceiling !== null ? Math.min(base, ceiling) : base;
-            suggested = manifestRound(capped, rounding);
-            if (ceiling !== null && suggested !== null && suggested > ceiling) suggested = roundCents(ceiling);
-            ceilingBound = ceiling !== null && base > ceiling;
-            // Re-test the price we ACTUALLY landed on. The ceiling and the rounding can
-            // both move it below a floor the base figure cleared.
-            if (suggested !== null && !clearsFloor(suggested)) belowFloor = true;
+          } else {
+            const lad = merchPriceLadder({
+              retail: l.retail_price, asp, cost: unitCost,
+              crit: { priceCapPct: asNum(critAt("price_cap_pct_retail")), gpFloorPct,
+                      ceiling, rounding },
+            });
+            suggested = lad.price; priceBasis = lad.basis;
+            belowFloor = lad.belowFloor; ceilingBound = lad.ceilingBound;
           }
+
           const flags = (() => { try { return JSON.parse(l.flags || "[]"); } catch { return []; } })();
           if (!l.l3) flags.push("no category");
           if (asp === null && l.l3) flags.push("no ASP");

@@ -1007,5 +1007,61 @@ let mid;
   }
 }
 
+// ── THE PRICE LADDER, as properties ────────────────────────────────────────
+// The ladder is now shared by the Manifest Scorer and Price Scan, so a caller passing a
+// missing value in a shape the other never produces is a live risk. These are properties
+// that must hold for EVERY combination, not examples.
+//
+// 🛑 This found a real one: Number(null) is 0 and Number("") is 0, and both are finite.
+// A Number-then-isFinite coercion therefore turned "no dollar ceiling set" into "a ceiling
+// of zero", and Math.min clamped the price to $0.00 — on the majority of categories, since
+// most have no ceiling. It would have printed free price tags.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const grab = (sig) => { const i = src.indexOf(sig); const j = src.indexOf('\n}', i); return src.slice(i, j + 2); };
+  // MANIFEST_ROUND_STEP is a const object, so it ends at '};' rather than the '\n}' the
+  // function grabber looks for — pulled out separately or the sandbox throws on it.
+  const stepConst = src.slice(src.indexOf('const MANIFEST_ROUND_STEP'),
+                             src.indexOf('};', src.indexOf('const MANIFEST_ROUND_STEP')) + 2);
+  const { merchPriceLadder } = new Function(
+    'const roundCents=(n)=>Math.round(n*100)/100;' + stepConst +
+    grab('function manifestRound(') + grab('function merchPriceLadder(') +
+    '; return { merchPriceLadder };')();
+
+  const EMPTY  = [null, undefined, ''];
+  const money  = [...EMPTY, 0, -1, '4.28', 4.28, 10];
+  const asps   = [...EMPTY, 0, 2.08];
+  const costs  = [...EMPTY, 0.81, 2.79];
+  const caps   = [...EMPTY, '50', 50];
+  const floors = [...EMPTY, 30];
+  const ceils  = [...EMPTY, 0, -2, 1.25];
+  const rules  = ['$0.50', '$1', '.00', null];
+
+  let n = 0, zero = 0, neg = 0, nan = 0, phantomCeiling = 0, offStep = 0;
+  for (const retail of money) for (const asp of asps) for (const cost of costs)
+  for (const cap of caps) for (const gp of floors) for (const ceiling of ceils) for (const rounding of rules) {
+    const r = merchPriceLadder({ retail, asp, cost, crit: { priceCapPct: cap, gpFloorPct: gp, ceiling, rounding } });
+    n++;
+    if (r.price === 0) zero++;
+    if (r.price !== null && r.price < 0) neg++;
+    if (r.price !== null && !Number.isFinite(r.price)) nan++;
+    const noCeiling = ceiling === null || ceiling === undefined || ceiling === '' || Number(ceiling) <= 0;
+    if (r.ceilingBound && noCeiling) phantomCeiling++;
+    // On a half-dollar rule every price must land on a half-dollar step.
+    // Including when a ceiling binds: snapping to the ceiling exactly would print $1.25
+    // on a half-dollar rule, so the ladder takes the largest step at or below it.
+    if (rounding === '$0.50' && r.price !== null && Math.abs(r.price * 2 - Math.round(r.price * 2)) > 0.001) offStep++;
+    if (rounding === '$1' && r.price !== null && Math.abs(r.price - Math.round(r.price)) > 0.001) offStep++;
+  }
+
+  ok(n > 50000, `the ladder was exercised across ${n.toLocaleString()} input combinations`);
+  eq(zero, 0, '🛑 NEVER prices at $0.00 — a free price tag is not a valid answer');
+  eq(neg, 0, 'never prices below zero');
+  eq(nan, 0, 'never returns NaN or Infinity');
+  eq(phantomCeiling, 0,
+     '🛑 never reports a ceiling as binding when none is set — that crashed on ceiling.toFixed()');
+  eq(offStep, 0, 'on a $0.50 rule every price lands on a whole or half dollar');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
