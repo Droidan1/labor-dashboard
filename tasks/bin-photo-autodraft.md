@@ -112,8 +112,27 @@ proves too thin a sample, the follow-up is to fill from the every-minute tick on
 `updated_at` has been quiet for ~2 minutes — the photo sync bumps `updated_at`, so
 "the batch has settled" needs no new column, and it would retry a failed caption too.
 
-### 🔑 Not code: which bin cover
-Thumbnail 7 "Doubledip" is tagged `post_type='bin_preview'` and is now the newest active one,
-so it is what the next auto-draft picks. Code can only tell which folder a cover was filed in,
-not whether the graphic is a bin cover or that week's promo — retag or deactivate it if it is
-the latter. A per-cover "use this one for auto-drafts" flag is the durable answer.
+### Which bin cover — now pinned, not guessed (2026-08-26, same day)
+"Newest active `bin_preview`" is a guess, and a promo graphic filed under Bin Preview wins it
+purely by being new — thumbnail 7 "Doubledip" was about to. Asked to fix that **without deleting
+the cover**, so the pick became explicit:
+
+- **`content_settings.auto_draft_cover_id`** holds the pinned cover. No migration — that table
+  is already a key/value store (it holds `brand_guide`), and this is one account-wide choice,
+  not a property of each cover.
+- **Order:** pinned cover (if still active) → newest active `bin_preview` → none. A stale pin
+  logs and falls through to the guess: a coverless post is worse than an older cover, and
+  falling back *within* the bin folder is not the cross-type surprise this all started with.
+- **A pin may name any active cover, any `post_type`.** The guess stays bin-only. The
+  difference is that a pin is a choice and "newest" is not.
+- **Validated when SET, not when used** — `?action=content-setting` refuses a pin naming a
+  cover that does not exist or was removed. A pin resolved lazily would surface as a coverless
+  post on a Thursday, with nothing to point at.
+- **UI:** an `AUTO` badge on each tile in the Content page's Thumbnails tab, mirroring the
+  delete badge already there. Tapping it moves the pin; tapping the pinned one clears it.
+
+Nothing is deleted and nothing is retagged: "Doubledip" stays exactly where it is, usable in
+the composer, and simply stops being chosen by default.
+
+⚠️ **Deploy order: worker FIRST.** The new UI POSTs a settings key the old worker rejects as
+"Unknown setting"; a worker that accepts the key before any UI can set it is harmless.

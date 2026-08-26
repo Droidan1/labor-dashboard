@@ -6405,15 +6405,30 @@ async function ensureAutoDraftForPhotos(env, store, now) {
   const week = autoWeekOf(now);
   const weekEnd = new Date(new Date(week + "T00:00:00Z").getTime() + 7 * 24 * 3600 * 1000).toISOString().slice(0, 10);
 
-  // Newest active bin_preview cover — or none. 🛑 No cross-type fallback: a
-  // weekly-promo or event cover on a bin post is not just wrong on the card,
-  // it becomes the post's SUBJECT, because a cover is what the caption model is
-  // shown. A captionless, coverless draft full of bin photos is still useful;
-  // a bin post captioned off this week's promo graphic is not.
-  const cover = await env.DB.prepare(
-    "SELECT id FROM marketing_thumbnails WHERE active = 1 AND post_type = 'bin_preview' ORDER BY created_at DESC LIMIT 1"
+  // Cover: the pinned one if there is one, else the newest active bin_preview,
+  // else none. "Newest in the folder" is a guess, and a promo graphic filed
+  // under Bin Preview wins it purely by being new — the pin is how an operator
+  // says which cover this actually is, without having to delete the other one.
+  // 🛑 Still no cross-type fallback on the guess: a weekly-promo or event cover
+  // on a bin post is not just wrong on the card, it becomes the post's SUBJECT,
+  // because the cover is what the caption model is shown. A pin may name any
+  // active cover — that one is a deliberate choice, not a guess.
+  let coverId = null;
+  const pin = await env.DB.prepare(
+    "SELECT value FROM content_settings WHERE key = 'auto_draft_cover_id'"
   ).first().catch(() => null);
-  const coverId = cover ? cover.id : null;
+  const pinnedId = pin && pin.value ? parseInt(pin.value, 10) : NaN;
+  if (Number.isInteger(pinnedId)) {
+    const p = await env.DB.prepare("SELECT id FROM marketing_thumbnails WHERE id = ? AND active = 1").bind(pinnedId).first().catch(() => null);
+    if (p) coverId = p.id;
+    else console.log("auto-draft cover pin is stale:", pinnedId);
+  }
+  if (!coverId) {
+    const cover = await env.DB.prepare(
+      "SELECT id FROM marketing_thumbnails WHERE active = 1 AND post_type = 'bin_preview' ORDER BY created_at DESC LIMIT 1"
+    ).first().catch(() => null);
+    coverId = cover ? cover.id : null;
+  }
 
   let createdNow = false;
   try {
@@ -12547,7 +12562,14 @@ export default {
         "SELECT id, name, content_type, bytes, uploaded_by, post_type, created_at FROM marketing_thumbnails WHERE active = 1 ORDER BY created_at DESC"
       ).all();
       const thumbnails = (results || []).map(t => ({ ...t, url: `?action=thumbnail&id=${t.id}` }));
-      return new Response(JSON.stringify({ ok: true, thumbnails }), { headers: corsJson });
+      const pinRow = await env.DB.prepare(
+        "SELECT value FROM content_settings WHERE key = 'auto_draft_cover_id'"
+      ).first().catch(() => null);
+      const pinned = pinRow && pinRow.value ? parseInt(pinRow.value, 10) : NaN;
+      return new Response(JSON.stringify({
+        ok: true, thumbnails,
+        auto_draft_cover_id: Number.isInteger(pinned) ? pinned : null,
+      }), { headers: corsJson });
     }
 
     // Serve a thumbnail from R2 (admin). GET ?action=thumbnail&id=123
@@ -12589,7 +12611,10 @@ export default {
       const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
       if (denied) return denied;
       if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { status: 500, headers: corsJson });
-      const ALLOWED = ["brand_guide"];
+      // auto_draft_cover_id: which cover the bin-photo auto-draft uses. Kept here
+      // rather than as a column on marketing_thumbnails — it is one account-wide
+      // choice, not a property of each cover.
+      const ALLOWED = ["brand_guide", "auto_draft_cover_id"];
       try {
         if (request.method === "GET") {
           const key = String(url.searchParams.get("key") || "");
@@ -12601,7 +12626,21 @@ export default {
           const b = await request.json();
           const key = String(b.key || "");
           if (!ALLOWED.includes(key)) return new Response(JSON.stringify({ error: "Unknown setting" }), { status: 400, headers: corsJson });
-          const value = b.value == null ? "" : String(b.value);
+          let value = b.value == null ? "" : String(b.value).trim();
+          // Resolve the pin NOW, not on the Thursday it is next needed: a pin
+          // naming a missing or removed cover would surface days later as a
+          // coverless post, with nothing to point at.
+          if (key === "auto_draft_cover_id" && value !== "") {
+            const coverId = parseInt(value, 10);
+            if (!Number.isInteger(coverId) || coverId <= 0) {
+              return new Response(JSON.stringify({ error: "Invalid cover id" }), { status: 400, headers: corsJson });
+            }
+            const th = await env.DB.prepare("SELECT id FROM marketing_thumbnails WHERE id = ? AND active = 1").bind(coverId).first().catch(() => null);
+            if (!th) {
+              return new Response(JSON.stringify({ error: "That cover no longer exists" }), { status: 400, headers: corsJson });
+            }
+            value = String(coverId);
+          }
           await env.DB.prepare("INSERT INTO content_settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at")
             .bind(key, value, new Date().toISOString()).run();
           return new Response(JSON.stringify({ ok: true }), { headers: corsJson });

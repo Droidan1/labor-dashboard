@@ -36,7 +36,7 @@ const worker = (await import(pathToFileURL(tmp).href + `?v=${src.length}`)).defa
 
 // thumbs: [id, post_type, created_at] — the cover picker's whole input.
 function makeEnv({ apiKey = null, caption = 'A generated caption 🔥 #BargainLaneColiseum',
-                   thumbs = [[6, 'bin_preview', '2026-08-01T00:00:00Z']] } = {}) {
+                   thumbs = [[6, 'bin_preview', '2026-08-01T00:00:00Z']], pin = null } = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE marketing_photos (id INTEGER PRIMARY KEY AUTOINCREMENT, store TEXT, photo_type TEXT,
@@ -51,10 +51,15 @@ function makeEnv({ apiKey = null, caption = 'A generated caption 🔥 #BargainLa
       special_event TEXT, weekly_theme TEXT, product_focus TEXT, dd_loyalty TEXT);
     CREATE TABLE marketing_thumbnails (id INTEGER PRIMARY KEY, name TEXT, r2_key TEXT,
       content_type TEXT, post_type TEXT, active INTEGER DEFAULT 1, created_at TEXT);
+    CREATE TABLE content_settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
   `);
   for (const [id, type, at] of thumbs) {
     db.prepare(`INSERT INTO marketing_thumbnails (id,name,r2_key,post_type,active,created_at) VALUES (?,?,?,?,1,?)`)
       .run(id, `cover-${id}`, `k/${id}.png`, type, at);
+  }
+  if (pin != null) {
+    db.prepare(`INSERT INTO content_settings (key,value,updated_at) VALUES ('auto_draft_cover_id',?,?)`)
+      .run(String(pin), '2026-08-20T00:00:00Z');
   }
 
   const DB = {
@@ -273,6 +278,62 @@ console.log('bin-photo auto-draft (upload-triggered)');
   await upload(env, 'BL1', 'bins');
   eq(JSON.parse(drafts(db)[0].photo_ids).length, 9, 'all 9 photos are attached to the draft');
   eq(askedFor(sent).images.length, 4, 'but the caption request carries at most 4 images');
+}
+
+// 14 — a pinned cover beats "newest in the folder"
+{
+  const { env, db } = makeEnv({ pin: 5, thumbs: [
+    [5, 'bin_preview', '2026-07-01T00:00:00Z'],   // older, and the one Brian pinned
+    [7, 'bin_preview', '2026-08-20T00:00:00Z'],   // newest — a promo graphic filed here
+  ] });
+  await upload(env, 'BL1', 'bins');
+  eq(drafts(db)[0].thumbnail_id, 5, 'the pinned cover wins over a newer one in the same folder');
+}
+
+// 15 — a pin may name a cover from any folder: it is a choice, not a guess
+{
+  const { env, db } = makeEnv({ pin: 9, thumbs: [
+    [6, 'bin_preview', '2026-08-01T00:00:00Z'],
+    [9, 'event',       '2026-07-01T00:00:00Z'],
+  ] });
+  await upload(env, 'BL1', 'bins');
+  eq(drafts(db)[0].thumbnail_id, 9, 'an explicitly pinned cover is used whatever its post_type');
+}
+
+// 16 — a stale pin falls back to the guess, never to nothing
+{
+  const { env, db } = makeEnv({ pin: 99, thumbs: [[6, 'bin_preview', '2026-08-01T00:00:00Z']] });
+  await upload(env, 'BL1', 'bins');
+  eq(drafts(db)[0].thumbnail_id, 6, 'a pin naming a removed cover falls back to newest bin_preview');
+}
+
+// 17 — no pin behaves exactly as before
+{
+  const { env, db } = makeEnv({ thumbs: [
+    [6, 'bin_preview',  '2026-08-01T00:00:00Z'],
+    [8, 'weekly_promo', '2026-08-19T00:00:00Z'],
+  ] });
+  await upload(env, 'BL1', 'bins');
+  eq(drafts(db)[0].thumbnail_id, 6, 'unpinned: newest bin_preview, still no cross-type fallback');
+}
+
+// 18 — 🛑 the pin is validated when it is SET, not on the Thursday it is used
+{
+  const { env } = makeEnv({ thumbs: [[6, 'bin_preview', '2026-08-01T00:00:00Z']] });
+  const setPin = async value => {
+    const res = await worker.fetch(new Request('https://x/?action=content-setting', {
+      method: 'POST', body: JSON.stringify({ key: 'auto_draft_cover_id', value }),
+      headers: { 'X-Snapshot-Secret': SECRET, 'Content-Type': 'application/json' },
+    }), env, { waitUntil: () => {} });
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  };
+  eq((await setPin('404')).status, 400, '🛑 a pin naming a cover that does not exist is refused');
+  eq((await setPin('not-a-number')).status, 400, 'a non-numeric pin is refused');
+  const good = await setPin('6');
+  eq(good.status, 200, 'a pin naming a real active cover is accepted');
+  ok(good.body.ok, 'and reports ok');
+  const cleared = await setPin('');
+  eq(cleared.status, 200, 'and it can be cleared again');
 }
 
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".
