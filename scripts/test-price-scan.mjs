@@ -201,5 +201,50 @@ console.log('Price Scan');
      '…an admin may');
 }
 
+// ── A PHOTO, because iPhones cannot read barcodes in the browser ────────────
+// Safari has no BarcodeDetector and 4 of the 6 installed devices are iPhones, so the
+// camera path reads the picture with Claude instead. That is strictly better than a
+// barcode API: it also works on the FRONT of a pack whose code is damaged or hidden.
+{
+  let visionReply = { upc: '024100113163', name: 'Cheez-It Original 12.4 oz' };
+  const realFetch = globalThis.fetch;
+  let sawImage = false;
+  globalThis.fetch = async (u, init) => {
+    if (String(u).includes('api.anthropic.com')) {
+      const b = JSON.parse(init.body);
+      const content = b.messages?.[0]?.content;
+      if (Array.isArray(content) && content.some(c => c.type === 'image')) {
+        sawImage = true;
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify(visionReply) }] }), { status: 200 });
+      }
+    }
+    return realFetch(u, init);
+  };
+
+  const r = await post('merch-scan', { image_b64: btoa('fake-jpeg-bytes'), media_type: 'image/jpeg' });
+  eq(r.status, 200, '🔑 a photo alone is enough to price an item');
+  eq(sawImage, true, '…and it really was sent as an image block');
+  eq(r.body.identifier, '024100113163', 'the barcode read off the photo is used');
+  eq(r.body.from_photo, true, '…and the answer says it came from a photo');
+  ok(r.body.price !== null, '…and it prices, exactly as a typed barcode would');
+
+  // 🔑 A barcode it cannot read must come back EMPTY, never guessed — a wrong barcode
+  // prices a different product entirely, and nothing downstream would catch it.
+  visionReply = { upc: '', name: 'Some unbranded jar of something' };
+  const r2 = await post('merch-scan', { image_b64: btoa('blurry'), media_type: 'image/jpeg' });
+  eq(r2.status, 200, 'an unreadable barcode still works from the product name');
+  eq(r2.body.identifier, null, '…with no identifier invented');
+
+  visionReply = { upc: '', name: '' };
+  const r3 = await post('merch-scan', { image_b64: btoa('a photo of the floor'), media_type: 'image/jpeg' });
+  eq(r3.status, 422, '🛑 a photo with no product in it is refused, not priced');
+  ok(/could not make out/i.test(r3.body.error || ''), '…and says what to do about it');
+
+  const big = await post('merch-scan', { image_b64: 'A'.repeat(8_000_001), media_type: 'image/jpeg' });
+  eq(big.status, 400, 'an oversized photo is refused before it is sent anywhere');
+
+  globalThis.fetch = realFetch;
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

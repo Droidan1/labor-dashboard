@@ -2290,7 +2290,8 @@
         .dark .ps-pm{color:#8893a7}
         .ps-pp{font-weight:700;font-size:19px;font-variant-numeric:tabular-nums}
       </style>
-      <div id="ps-wrap" class="px-4 py-6 space-y-4">
+      <div id="ps-wrap" class="px-4 space-y-4 pt-[calc(env(safe-area-inset-top)+1.5rem)]"
+           style="padding-bottom:calc(104px + env(safe-area-inset-bottom))">
         <div>
           <h1 class="text-2xl font-bold text-opl-ink dark:text-op-ink">Price Scan</h1>
           <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-1">
@@ -2308,10 +2309,12 @@
             <div class="ps-row">
               <input id="ps-input" class="ps-in" type="text" inputmode="numeric"
                      autocomplete="off" autocapitalize="off" spellcheck="false"
-                     placeholder="Barcode, or type the product"
+                     placeholder="Barcode or product"
                      onkeydown="if(event.key==='Enter'){event.preventDefault();psScan();}">
-              <button id="ps-camera" class="ps-btn ghost hidden" style="width:auto;flex:0 0 92px"
-                      onclick="psCamera()" type="button">Camera</button>
+              <button id="ps-camera" class="ps-btn ghost" style="width:auto;flex:0 0 92px"
+                      onclick="document.getElementById('ps-photo').click()" type="button">Photo</button>
+              <input id="ps-photo" type="file" accept="image/*" capture="environment"
+                     class="hidden" onchange="psPhoto(this)">
             </div>
             <button id="ps-go" class="ps-btn" onclick="psScan()" type="button">Look it up</button>
             <div id="ps-result"></div>
@@ -17908,10 +17911,10 @@
     psStatus('');
     el('ps-result').innerHTML = '';
     el('ps-input').value = '';
-    // Only offer the camera where it can actually work. Chrome on Android has it; Safari
-    // does not, and a button that silently fails is worse than no button.
-    const hasDetector = typeof window.BarcodeDetector === 'function';
-    el('ps-camera').classList.toggle('hidden', !hasDetector);
+    // The Photo button is always available: it is a file input with capture, which opens
+    // the camera on iOS and Android alike. The old BarcodeDetector button was hidden on
+    // every iPhone — 4 of the 6 installed devices — which is why it looked missing.
+    el('ps-photo').value = '';
     setTimeout(() => { try { el('ps-input').focus(); } catch (e) {} }, 60);
   }
   window.initPriceScan = initPriceScan;
@@ -17962,10 +17965,25 @@
     const noRetail = j.retail === null || j.retail === undefined;
     const priceTxt = j.price === null || j.price === undefined ? '—' : psMoney(j.price);
 
+    // What the retail lookup actually concluded. Ordered most → least informative, and
+    // matching the flags the worker sets, so the screen never invents a reason.
+    const MISS_WHY = {
+      'not at big box':   'No big-box price exists for this — nothing to undercut, and no proof of demand either.',
+      'marketplace only': 'Only third-party sellers list it. That is not a shelf price, so it was not used.',
+      'no price found':   'A retailer carries it, but no price could be read from the page.',
+      'lookup failed':    'The price lookup did not complete. Worth trying again.',
+      'no description':   'Not enough to search on — scan the barcode, or type the brand and size.',
+      'not looked up':    'Not looked up yet.',
+      'no retail':        'No street price found.',
+    };
+    const missFlag = (j.flags || []).find(f => MISS_WHY[f]);
+
     // Why the price is what it is, in the order it happened.
     let why;
     if (j.price === null || j.price === undefined) {
-      why = 'Nothing to price from — no street retail found, and no sales history for this category.';
+      why = missFlag
+        ? MISS_WHY[missFlag] + ' Set the retail price by hand and every future scan of this item is instant.'
+        : 'Nothing to price from — no street retail found, and no sales history for this category.';
     } else if (j.price_overridden) {
       why = 'Set by hand, so the rule was not applied.';
     } else if (bad) {
@@ -17996,7 +18014,7 @@
         <div id="ps-strip" class="${bad ? 'bad' : ''}">
           <div class="ps-cell"><div class="ps-k">Retail</div>
             <div class="ps-v">${psMoney(j.retail)}</div>
-            <div class="ps-s">${psEsc(noRetail ? 'not found' : (j.retail_source || ''))}</div></div>
+            <div class="ps-s">${psEsc(noRetail ? (missFlag || 'not found') : (j.retail_source || ''))}</div></div>
           <div class="ps-cell"><div class="ps-k">Our cost</div>
             <div class="ps-v">${psMoney(j.cost)}</div>
             <div class="ps-s">${psEsc(j.l3 ? 'category' : '—')}</div></div>
@@ -18015,7 +18033,10 @@
           ${psCanOverride() ? '<button class="ps-link" onclick="psOverride()" type="button">Change</button>' : ''}
         </div>
 
-        ${psCanOverride() ? `<button class="ps-btn ghost" onclick="psOverride()" type="button">Override price or retail</button>` : ''}
+        ${psCanOverride()
+          ? `<button class="ps-btn ${noRetail ? '' : 'ghost'}" onclick="psOverride()" type="button">${
+              noRetail ? 'Set the retail price' : 'Override price or retail'}</button>`
+          : ''}
 
         ${prev ? `<div id="ps-prev">
           <div><div class="ps-pn">${psEsc(prev.title || prev.identifier || 'Previous')}</div>
@@ -18062,42 +18083,59 @@
   }
   window.psOverride = psOverride;
 
-  // Chrome/Android only. Safari has no BarcodeDetector, which is why the text box — and a
-  // keyboard-emulating scanner — is the primary path rather than this.
-  async function psCamera() {
-    if (typeof window.BarcodeDetector !== 'function') {
-      uiAlert('This browser cannot read barcodes from the camera. Type the number, or use a handheld scanner.');
-      return;
-    }
-    let stream;
+  // A photo, read by Claude. Deliberately NOT BarcodeDetector: Safari does not have it,
+  // and most of the phones here are iPhones. Reading the picture also handles the case a
+  // barcode reader cannot — a damaged, hidden or shrink-wrapped code — by identifying the
+  // product from the front of the pack instead.
+  async function psPhoto(input) {
+    const f = input.files && input.files[0];
+    input.value = '';
+    if (!f) return;
+    if (psBusy) return;
+    psBusy = true; el('ps-go').disabled = true;
+    psStatus('Reading the photo…');
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      const b64 = await psShrink(f);
+      const r = await fetch(`${WORKER_BASE}?action=merch-scan`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_b64: b64, media_type: 'image/jpeg' }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      psCount++;
+      psRender(j);
     } catch (e) {
-      uiAlert('No camera available. Type the number instead.');
-      return;
+      psStatus(`Could not read that photo: ${e.message}`);
+    } finally {
+      psBusy = false; el('ps-go').disabled = false;
     }
-    const video = document.createElement('video');
-    video.srcObject = stream; video.setAttribute('playsinline', ''); await video.play();
-    const detector = new window.BarcodeDetector({ formats: ['upc_a', 'upc_e', 'ean_13', 'ean_8', 'code_128'] });
-    psStatus('Point the camera at the barcode…');
-    const started = Date.now();
-    const stop = () => stream.getTracks().forEach(t => t.stop());
-    const tick = async () => {
-      if (Date.now() - started > 20000) { stop(); psStatus('No barcode found — type the number instead.'); return; }
-      try {
-        const codes = await detector.detect(video);
-        if (codes && codes.length) {
-          stop();
-          el('ps-input').value = codes[0].rawValue;
-          psScan();
-          return;
-        }
-      } catch (e) { /* a frame that cannot be read is not an error */ }
-      requestAnimationFrame(tick);
-    };
-    tick();
   }
-  window.psCamera = psCamera;
+  window.psPhoto = psPhoto;
+
+  // A modern phone camera produces 3-6 MB, which is slow to upload on warehouse wifi and
+  // far more detail than reading a label needs. Downscaled to 1280px on the longest edge
+  // before it ever leaves the device.
+  function psShrink(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const max = 1280;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * scale);
+        c.height = Math.round(img.height * scale);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        const dataUrl = c.toDataURL('image/jpeg', 0.82);
+        resolve(dataUrl.slice(dataUrl.indexOf(',') + 1));
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('that image could not be opened')); };
+      img.src = url;
+    });
+  }
+
 
   // ── Velocity & Reach ──────────────────────────────────────────────────────
   // Separates "wrong product here" from "wrong customer for this category". Raw units

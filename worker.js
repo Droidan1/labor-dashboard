@@ -17225,8 +17225,68 @@ export default {
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       try {
         const body = await request.json();
-        const rawId = String(body?.identifier || "").trim();
-        const desc = String(body?.description || "").trim().slice(0, 400);
+        let rawId = String(body?.identifier || "").trim();
+        let desc = String(body?.description || "").trim().slice(0, 400);
+
+        // ── A PHOTO ────────────────────────────────────────────────────────────
+        // Safari has no BarcodeDetector and 4 of the 6 installed devices are iPhones,
+        // so the camera path cannot be a browser barcode API. Claude reads the picture
+        // instead — which is strictly better than a barcode reader, because it also
+        // works on the FRONT of a product whose barcode is damaged, hidden, or under
+        // shrink wrap. Costs one vision call, and only when someone takes a photo.
+        if (!rawId && !desc && body?.image_b64) {
+          if (!env.ANTHROPIC_API_KEY) {
+            return new Response(JSON.stringify({ error: "Photo lookup is not configured on this environment" }),
+              { status: 400, headers: corsJson });
+          }
+          const b64 = String(body.image_b64);
+          if (b64.length > 8_000_000) {
+            return new Response(JSON.stringify({ error: "That photo is too large — try again a little further back" }),
+              { status: 400, headers: corsJson });
+          }
+          const mt = ["image/jpeg", "image/png", "image/webp"].includes(body?.media_type)
+            ? body.media_type : "image/jpeg";
+          const vis = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01",
+                       "content-type": "application/json" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-6",
+              max_tokens: 300,
+              thinking: { type: "disabled" },
+              system:
+                "You are identifying ONE retail product from a photo taken in a warehouse. " +
+                'Return ONLY JSON: {"upc":"<digits or empty>","name":"<brand, product, size, or empty>"}. ' +
+                "If a barcode is legible, read its digits into upc — digits only, no spaces or dashes, " +
+                "and keep every leading zero. If you cannot read it confidently, leave upc empty rather " +
+                "than guessing: a wrong barcode prices the wrong item. " +
+                "Put the brand, product name and package size into name, exactly as printed. " +
+                "If the photo shows no identifiable retail product, return both fields empty.",
+              messages: [{ role: "user", content: [
+                { type: "image", source: { type: "base64", media_type: mt, data: b64 } },
+                { type: "text", text: "What is this product, and what is its barcode?" },
+              ]}],
+            }),
+          });
+          if (!vis.ok) {
+            const err = await vis.text().catch(() => "");
+            console.error(`Scan photo API ${vis.status}: ${err.slice(0, 200)}`);
+            return new Response(JSON.stringify({ error: `Could not read that photo (${vis.status})` }),
+              { status: 502, headers: corsJson });
+          }
+          const vj = await vis.json();
+          const txt = (vj.content || []).filter(c => c.type === "text").map(c => c.text).join("");
+          let got = {};
+          try { got = JSON.parse((txt.match(/\{[\s\S]*\}/) || ["{}"])[0]); } catch (_) {}
+          rawId = String(got.upc || "").replace(/\D/g, "").trim();
+          desc = String(got.name || "").trim().slice(0, 400);
+          if (!rawId && !desc) {
+            return new Response(JSON.stringify({
+              error: "Could not make out a product in that photo. Try filling more of the frame, or type what it is.",
+            }), { status: 422, headers: corsJson });
+          }
+        }
+
         if (!rawId && !desc) {
           return new Response(JSON.stringify({ error: "Scan a barcode or type what the item is" }),
             { status: 400, headers: corsJson });
@@ -17372,6 +17432,7 @@ export default {
           criteria_version: live?.version ?? null,
           from_cache: !looked && !!cached,
           looked_up: looked,
+          from_photo: !!body?.image_b64,
           flags: [...new Set(missFlags)],
         }), { headers: corsJson });
       } catch (e) {
