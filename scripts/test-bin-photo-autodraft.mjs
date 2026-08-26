@@ -34,7 +34,9 @@ const tmp = path.join(os.tmpdir(), `worker-upl-${src.length}.mjs`);
 fs.writeFileSync(tmp, src);
 const worker = (await import(pathToFileURL(tmp).href + `?v=${src.length}`)).default;
 
-function makeEnv({ apiKey = null, caption = 'A generated caption 🔥 #BargainLaneColiseum' } = {}) {
+// thumbs: [id, post_type, created_at] — the cover picker's whole input.
+function makeEnv({ apiKey = null, caption = 'A generated caption 🔥 #BargainLaneColiseum',
+                   thumbs = [[6, 'bin_preview', '2026-08-01T00:00:00Z']] } = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE marketing_photos (id INTEGER PRIMARY KEY AUTOINCREMENT, store TEXT, photo_type TEXT,
@@ -50,7 +52,10 @@ function makeEnv({ apiKey = null, caption = 'A generated caption 🔥 #BargainLa
     CREATE TABLE marketing_thumbnails (id INTEGER PRIMARY KEY, name TEXT, r2_key TEXT,
       content_type TEXT, post_type TEXT, active INTEGER DEFAULT 1, created_at TEXT);
   `);
-  db.prepare(`INSERT INTO marketing_thumbnails (id,name,r2_key,post_type,active,created_at) VALUES (6,'cover','k/6.png','bin_preview',1,'2026-08-01T00:00:00Z')`).run();
+  for (const [id, type, at] of thumbs) {
+    db.prepare(`INSERT INTO marketing_thumbnails (id,name,r2_key,post_type,active,created_at) VALUES (?,?,?,?,1,?)`)
+      .run(id, `cover-${id}`, `k/${id}.png`, type, at);
+  }
 
   const DB = {
     prepare(sql) {
@@ -66,12 +71,39 @@ function makeEnv({ apiKey = null, caption = 'A generated caption 🔥 #BargainLa
       return mk([]);
     },
   };
-  // Anthropic is the only network call in this path.
-  globalThis.fetch = async () => new Response(JSON.stringify({
-    stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: caption }],
-  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  // Anthropic is the only network call in this path. Keep every request body:
+  // WHAT the model was shown is the thing this feature gets wrong.
+  const sent = [];
+  globalThis.fetch = async (_url, init) => {
+    sent.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({
+      stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: caption }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
 
-  return { env: { DB, MEDIA: { put: async () => {}, get: async () => null }, SNAPSHOT_SECRET: SECRET, ANTHROPIC_API_KEY: apiKey }, db };
+  // R2 stands in as a Map so an uploaded photo can actually be read back and
+  // turned into an image block — a get() that always returns null would let a
+  // regression in the image path pass.
+  const media = new Map();
+  // Cover bytes exist too, so "the cover was sent instead" is a case the
+  // assertions can actually see rather than one that silently loads nothing.
+  for (const [id] of thumbs) media.set(`k/${id}.png`, new Uint8Array([1, 2, 3]).buffer);
+  const MEDIA = {
+    put: async (k, buf) => { media.set(k, buf); },
+    get: async k => (media.has(k) ? { arrayBuffer: async () => media.get(k) } : null),
+  };
+
+  return { env: { DB, MEDIA, SNAPSHOT_SECRET: SECRET, ANTHROPIC_API_KEY: apiKey }, db, sent, media };
+}
+
+// The images and the user text of the one caption request that was made.
+function askedFor(sent) {
+  const msg = sent[0].messages[0].content;
+  const parts = Array.isArray(msg) ? msg : [{ type: 'text', text: msg }];
+  return {
+    images: parts.filter(x => x.type === 'image'),
+    text: parts.filter(x => x.type === 'text').map(x => x.text).join(''),
+  };
 }
 
 async function upload(env, store, type, { at = PINNED } = {}) {
@@ -158,13 +190,22 @@ console.log('bin-photo auto-draft (upload-triggered)');
   }
 }
 
-// 7 — the caption is written asynchronously, once
+// 7 — the caption is written asynchronously, once, FROM THE BIN PHOTOS
 {
-  const { env, db } = makeEnv({ apiKey: 'sk-test' });
+  const { env, db, sent } = makeEnv({ apiKey: 'sk-test' });
   await upload(env, 'BL1', 'bins');
   const d = drafts(db)[0];
   ok(d.caption && d.caption.includes('#BargainLaneColiseum'), 'caption generated and stored');
   eq(d.caption_source, 'ai', 'marked as AI-sourced');
+  eq(sent.length, 1, 'exactly one model call');
+  const { images, text } = askedFor(sent);
+  // 🛑 The regression this suite exists to catch: shown the branded cover, the
+  // model writes about the cover's promo. Five live posts opened on a price
+  // ladder and none on the bins (2026-08-20).
+  eq(images.length, 1, 'the uploaded bin photo is what the model is shown');
+  ok(text.includes("just took of THIS week's bins"), 'the photos are named as the subject');
+  ok(!text.includes('branded cover graphic'), '🛑 the cover is NOT sent as the subject');
+  ok(!/Customer Appreciation|Double Dip|weekly theme/i.test(text), '🛑 no Flow Calendar week in the prompt');
 }
 
 // 8 — an edited caption is never overwritten by a later upload
@@ -193,6 +234,45 @@ console.log('bin-photo auto-draft (upload-triggered)');
   db.prepare(`UPDATE marketing_drafts SET auto_week = '2026-08-09'`).run();   // pretend last week
   await upload(env, 'BL1', 'bins');
   eq(drafts(db).length, 2, 'a new week gets its own draft');
+}
+
+// 11 — 🛑 the cover never crosses post types, however new the other one is
+{
+  const { env, db } = makeEnv({ thumbs: [
+    [6, 'bin_preview',  '2026-08-01T00:00:00Z'],
+    [8, 'weekly_promo', '2026-08-19T00:00:00Z'],   // newer, and this week's promo
+    [9, 'event',        '2026-08-20T00:00:00Z'],   // newer still
+  ] });
+  await upload(env, 'BL1', 'bins');
+  eq(drafts(db)[0].thumbnail_id, 6, '🛑 the bin cover wins over a newer promo/event cover');
+}
+
+// 12 — no bin cover at all → no cover, NOT someone else's
+{
+  const { env, db, sent } = makeEnv({ apiKey: 'sk-test', thumbs: [
+    [8, 'weekly_promo', '2026-08-19T00:00:00Z'],
+    [9, 'event',        '2026-08-20T00:00:00Z'],
+  ] });
+  await upload(env, 'BL1', 'bins');
+  const d = drafts(db)[0];
+  eq(d.thumbnail_id, null, '🛑 no bin_preview cover → no cover, no cross-type fallback');
+  ok(d.caption, 'the draft is still captioned from its photos');
+  eq(askedFor(sent).images.length, 1, 'and still written from the photo, not a promo cover');
+}
+
+// 13 — the model is shown a sample, not the whole batch (request size is real)
+{
+  const { env, db, sent, media } = makeEnv({ apiKey: 'sk-test' });
+  // Photos already on the floor when this week's first upload lands.
+  for (let i = 1; i <= 8; i++) {
+    const key = `marketing/BL1/bins/2026-08/seed-${i}.jpg`;
+    media.set(key, new Uint8Array([1, 2, 3]).buffer);
+    db.prepare(`INSERT INTO marketing_photos (store,photo_type,r2_key,content_type,bytes,status,created_at)
+                VALUES ('BL1','bins',?,'image/jpeg',3,'new','2026-08-18T10:00:00.000Z')`).run(key);
+  }
+  await upload(env, 'BL1', 'bins');
+  eq(JSON.parse(drafts(db)[0].photo_ids).length, 9, 'all 9 photos are attached to the draft');
+  eq(askedFor(sent).images.length, 4, 'but the caption request carries at most 4 images');
 }
 
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".

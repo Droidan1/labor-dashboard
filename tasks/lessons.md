@@ -764,3 +764,33 @@ is systematically the worst price source we have, and it fails in the expensive 
 
 ⚠️ **The manifest scorer has the same defect.** It matters more there, not less: a manifest
 is nothing but discontinued items, and an inflated retail makes a bad buy look good.
+
+## A prompt gate you can read is not the only way context gets in (2026-08-26)
+
+**Correction:** "the text and thumbnail still looks at the flow calendar and doesn't ignore it
+and use bin thumbnail with bin text."
+
+`buildCaption` already refused the Flow Calendar for `bin_preview` —
+`MARKETING_FLOW_POST_TYPES` is `weekly_promo` + `event`, the `marketing_flow` query is skipped,
+and the gate is commented with the New Arrivals post that caused it. Reading the function, the
+week is provably absent. Every live auto-draft still came back about the week's promo: five
+stores, five captions opening "Six days, six prices", reciting a $10 → 50¢ ladder and tagging
+#DollarDays — which is `marketing_flow.dd_loyalty`, the calendar's own **DD / loyalty** column.
+
+The promo did not come through the query. It came through the **picture**. The auto-draft
+attaches a branded cover and the prompt says *"Match the caption to what it actually promotes —
+its theme, headline, and any recurring schedule, day-by-day pricing, or offer printed on it."*
+The model did exactly as told. The bin photos the manager had just uploaded were never sent.
+
+<rules>
+1. **When you gate a context source, enumerate every channel that carries it.** An image is an
+   input. So is a filename, a topic string, and a list of "recent published captions". Grepping
+   for the table name finds one of four.
+2. **The model's subject is whatever it can SEE, not what the text calls the subject.** `topic:
+   "this week's bin photos"` lost to an attached graphic every single time.
+3. **A "graceful" fallback can change the subject.** `bin_preview cover, else any active one`
+   reads like degrading to a worse picture; it actually hands a bin post the week's promo and
+   captions it accordingly. Prefer no cover to someone else's cover.
+4. **Read the produced artefacts, not the code, when asked whether a rule holds.** Five captions
+   in D1 settled in one query what re-reading the gate would have confirmed forever.
+</rules>

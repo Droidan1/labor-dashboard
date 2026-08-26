@@ -1,164 +1,94 @@
-# Merchandising items 1–3 — Aug 20 2026
+# Bin-photo auto-draft: bin cover + bin text (2026-08-26)
 
-Order comes from the Aug 20 alignment conversation. See tasks/merch-space-model.md
-for the requirements record.
+> **Carried over from the Aug 20 Merchandising plan** (the only item there still open):
+> `- [ ] Worker deploys before frontend`. Still open, and it matters here — worker deploys
+> are manual (`npx wrangler deploy`, no CI), and nothing in this change reaches production
+> until one runs.
 
-## 1a. Criteria `core` is inverted in the live version  ⚠️ DB MUTATION — NEEDS CONFIRMATION
+**Reported:** "the text and thumbnail still looks at the flow calendar and doesn't ignore it
+and use bin thumbnail with bin text."
 
-Live version is **v4**. It reads:
-- chain default `core` = **1**  → everything inherits "core"
-- the nine food L3s explicitly `core` = **0**  → food reads as NOT core
-- Softline Apparel / Shoes = 1
+## What production actually shows (prod D1, read-only)
+The five auto-drafts of 2026-08-20 (`created_by='auto:bin-photos'`, BL14/BL16/BL2/BL4/BL1):
+- every one got `thumbnail_id = 3` — the "Dig for Deals" Dollar-Days price-ladder cover
+  (same byte count as thumbnail 1, uploaded 2026-07-09);
+- every caption is a description of **that graphic**, not of the bins: all five open
+  "Six days, six prices…" and recite $10 → $6 → $3 → $2 → $1 → 50¢, and tag #DollarDays.
 
-That is backwards. v2 had it right. Effect today: the 60% core floor on Coverage
-is unmeasurable and food — the actual core — is excluded from it.
+"Dollar Days" / "Double Dip" is Flow Calendar vocabulary — `marketing_flow.dd_loyalty`,
+rendered in the calendar as the **DD / loyalty** column. So the promo really is driving both
+the picture and the words.
 
-- [x] Build v5 from v4: chain default 1→0, nine food L3s 0→1, Softline unchanged
-- [x] Get Brian's explicit confirmation on the exact diff (CLAUDE.md rule 7)
-- [x] Publish v5 with a note
-- [x] Verify Coverage now shows a measurable core share
+## Root cause — the cover is the vector, not the `marketing_flow` query
+`buildCaption` already refuses the Flow week for `bin_preview` (`MARKETING_FLOW_POST_TYPES`
+is `weekly_promo` + `event` only). The promo gets in **through the picture**: the auto-draft
+attaches a branded cover and the prompt says *"Match the caption to what it actually
+promotes — its theme, headline, and any recurring schedule, day-by-day pricing, or offer
+printed on it."* The model does exactly that. The bin photos the manager just uploaded are
+never shown to it at all.
 
-## 1b. "Not sold at big box" is a real answer, not a blank
+Second, smaller defect: the cover pick falls back to the newest active thumbnail **of any
+post type** when no `bin_preview` cover exists — so a weekly-promo or event cover can become
+a bin post's cover, and then its subject. `tasks/bin-photo-autodraft.md` specifies
+"auto-pick newest active `bin_preview` thumbnail"; the fallback is not in the spec.
 
-`retailPriceLine` already separates "not looked up" (budget) from "no retail", but
-"no retail" conflates two very different outcomes:
-  - search found nothing at any allowed retailer  → genuinely NOT CARRIED at big box
-  - retailer pages existed but no price survived   → the tool could not read it
+## Plan
+- [x] Cover: newest active `bin_preview` only — drop the any-post-type fallback.
+- [x] `buildCaption`: take `photoIds`; when given, attach those photos (small thumbs first,
+      ≤4, ≤5 MB, PNG/JPEG/GIF/WebP) as the post's subject and do **not** attach the cover.
+- [x] Prompt: say the attached images are this week's bins, a sample of a larger batch;
+      write about the mix; nothing is printed on a bin photo, so state no price/day/offer.
+- [x] Shared system prompt: say "images" rather than "cover graphic" so the authority rule
+      is true for both callers (the manual composer still only ever sends a cover).
+- [x] `fillAutoDraftCaption`: pass the draft's `photo_ids`, not `thumbnail_id`.
+- [x] Extract `r2ImageBlock()` — the cover loader duplicated for photos otherwise.
+- [x] Tests: cover never crosses post types; the caption request carries the photos and no
+      cover; existing burst/idempotency assertions still hold.
 
-Only the first is an answer. Today both render as an empty cell reading as failure.
+## Known consequence (unchanged trigger)
+The caption is still written by the **upload that creates the draft**, so the model usually
+sees the batch's **first** photo (a Thursday batch is ~30 separate requests). That is by
+design — Brian chose upload-triggered over a cron. Follow-up if the sample proves too thin:
+fill the caption from the every-minute tick once the batch has settled (no new photo for
+~2 min), which would show it the whole batch and also retry a failed caption.
 
-- [x] Split the miss into `not at big box` vs `no price found`
-- [x] Surface as an explicit verdict, not a blank
-- [x] Cost test note says the basis is our ASP *because* nothing is carried at big box
-- [x] Test coverage in scripts/test-retail-lookup.mjs
+## Not code
+Thumbnail 7 "Doubledip" is tagged `post_type='bin_preview'` and is now the newest active one,
+so it is what the next auto-draft will pick up as its cover. If that is a Double Dip promo
+graphic rather than a bin cover, retag or deactivate it — code cannot tell a promo graphic
+from a bin cover, only which folder it was filed in.
 
-## 2. Freight and defect are missing from the cost basis
+## Verification gates
+- [x] `bash scripts/test.sh` green — **2263 assertions across 49 suites**, run again after
+      the rebase onto `origin/main` (11 of those are new here: 30 -> 41 in this suite).
+- [x] `node scripts/test-bin-photo-autodraft.mjs .` — 41 assertions (was 30).
+- [x] Mutation-tested one site at a time (lessons.md rule): restoring the cover fallback
+      fails 1 assertion; captioning from the cover again fails 4 *different* ones.
+- [x] `node --check` on worker.js as a module (it is ESM — plain `node --check` lies).
+- [ ] **Worker deploy** — `npx wrangler deploy`. No frontend change, so nothing to sequence
+      against and no `sw.js` bump needed; the worker goes out alone.
+- [ ] Verify on the next real bins upload: the draft's cover comes from the Bin Preview
+      folder, and the caption talks about what is in the photos.
 
-`landed_cost` is literally `SUM(cost * qty)` — invoice cost. Zero freight handling
-in the worker. For salvage, freight + unsellable share runs 15–25% of true cost,
-so every criteria gate is currently passing lines it should not.
+## Review — Aug 26 2026
 
-    effective_cost = (cost + freight_per_unit) / (1 - defect_pct)
+**The Flow Calendar was never being queried.** `MARKETING_FLOW_POST_TYPES` already excludes
+`bin_preview`, so re-reading `buildCaption` would have confirmed the gate holds forever. The
+promo reached the caption **through the cover image** — the auto-draft attached a branded
+graphic and the prompt told the model to match the caption to the pricing printed on it. It
+did. The bin photos were never sent.
 
-Freight amortises **per unit** for now (qty is on every line). Upgrade path once
-item dimensions land: amortise by cubic volume, which is what actually drives
-freight.
+Three changes, each at a different site:
+1. **The cover can only be a bin cover.** The `else any active one` fallback is gone — it
+   could hand a bin post the week's promo cover, and a cover is not decoration here, it is
+   what the model is shown.
+2. **The photos are the subject.** `buildCaption` takes `photoIds`, sends the small thumbs
+   (≤4, ≤5 MB), and sends no cover when it has photos — gated on what the caller *asked for*,
+   so an unreadable photo degrades to no image rather than back to the promo.
+3. **The shared prompt tells the truth.** "Cover graphic" → "images" in the order-of-authority
+   rule, since one caller now attaches photos. The manual composer's behaviour is unchanged:
+   it sends no `photoIds`, so it takes the cover branch exactly as before.
 
-- [x] migration-048: `freight_cost`, `defect_pct` on manifests
-- [x] `manifestEffectiveCost()` helper
-- [x] manifestScore uses effective cost for the cost + margin + breakeven tests
-- [x] landed_cost query reflects freight
-- [x] UI inputs on the manifest page, and show effective vs invoice cost
-- [x] Tests
-
-## 3. Velocity and penetration by store and L3
-
-Data already exists: item snapshots are per store-day, `mergeItemSnapshots` returns
-`qty` by L3 plus `l3Orders` (basket-touch counts) and `orderCount`.
-
-Raw units cannot separate "wrong product" from "wrong customer" — store size
-confounds it. Three numbers do:
-  - units per 1,000 transactions   (controls for store size)
-  - basket penetration %           (share of baskets containing the L3)
-  - store vs chain on both         ← the actual diagnostic
-
-Read: one store low vs chain → assortment. ALL stores low → the category does not
-work for our customer; take the feet away.
-
-⚠️ Basket-touch counts sum to MORE than orderCount (one basket touches several
-categories). Penetration is a share of baskets, NOT a mix that totals 100%.
-
-- [x] `merch-velocity` action, per store per L3, window selectable
-- [x] Page + nav id, registered in NAV_BUSINESS (fail-closed gate)
-- [x] Follow DESIGN.md §4.8 — panel owns bar + table + legend
-- [x] Tests
-
-## Verification gates (every item)
-- [x] `bash scripts/test.sh` green
-- [x] `node scripts/test-nav-registry.mjs` for any new nav id
-- [x] Grep worker.js/index.html to confirm each edit ACTUALLY landed (patches have
-      silently failed before — verify the artifact, never a paraphrase)
-- [x] Bump sw.js CACHE_NAME on any frontend commit
-- [ ] Worker deploys before frontend
-
----
-
-## Review — Aug 20 2026
-
-**Suite: 1963 assertions across 48 suites, all passing** (was 1915/47).
-
-### 1b — a retail miss now names itself
-Three outcomes used to collapse into one blank cell:
-- `not at big box` — no approved retailer carries it. A real answer: nothing to undercut,
-  but no proof of demand either, so the cost test falls back to our ASP and says so.
-- `no price found` — an approved retailer DOES carry it, we failed to read a price. Our
-  failure, and must never be reported as absence from retail.
-- `marketplace only` — on their domain, sold by a third party. Distinct and actionable.
-
-`sawApproved` is seeded from the SEARCH results, not the parsed candidates: a Walmart page
-appearing in search is itself evidence the item is carried, even when the parser reads no
-price off it. Deciding from candidates alone produced false "not at big box" for items
-Walmart plainly stocks — the worst error available here, since it tells a buyer there is
-no competition when there is.
-
-**Two bugs the suite caught during the change, both real:**
-1. `isDone` matched only the literal `"no retail"`. Lines settled under any new reason were
-   re-offered forever — the drainer spun instead of draining. Fixed with
-   `RETAIL_SETTLED_FLAGS`, which deliberately excludes `not looked up` (never asked) and
-   deliberately includes `lookup failed` (retrying inside the drainer never terminates).
-2. The re-run flag stripper carried its own hardcoded copy of the flag list. Any flag the
-   run can SET but not CLEAR sticks forever, so a later successful run still shows the old
-   failure. Replaced with `RETAIL_OWNED_FLAGS`.
-
-### 2 — freight and defect in the cost basis
-`effective_cost = (invoice + freight_per_unit) / (1 - defect/100)`, clamped at 95%.
-Freight amortises per unit over the SAME denominator the lines are priced in — a different
-denominator would mis-state every effective cost silently. Both default to 0, so nothing
-already scored moves. Load-level `landed_cost` now carries freight; defect removes sellable
-units rather than adding cash, so it is priced per unit, not there.
-
-Frozen once a manifest is decided — moving the basis under a recorded verdict rewrites
-history. Bad input is refused (400), never silently clamped.
-
-### 3 — velocity and basket reach
-`merch-velocity`, per store per category, windows 7/28/91/364. Rates computed server-side
-so every surface divides the same way.
-
-⚠️ **Two key spaces.** `l3Rows` carries the RAW Clover L3, `l3Orders` is normalised. Joined
-unnormalised it yields units with no baskets and baskets with no units — every ratio wrong,
-nothing thrown. `merchVelocityRows` normalises before joining.
-
-⚠️ **An L2's baskets are its own, never the sum of its children's.** One basket touching
-three L3s in the same L2 is ONE basket for the L2. Summing reports penetration over 100%.
-
-Units are never tinted against the chain: the biggest store always sells the most, and
-painting store size as performance is the exact confusion the page exists to remove.
-
-### Intentionally left alone
-- `cost_vs_std` still compares INVOICE cost to category standard cost. Whether our book
-  cost already includes freight is unknown, so making it effective could double-count.
-- The inline `color:#6b6453` sub-labels elsewhere in the manifest table measure **3.03:1**
-  on the dark panel — below AA. Fixed only in the cell that was already being edited
-  (`.mf-sub`, 5.88:1 light / 5.75:1 dark). ~43 other instances remain; orthogonal cleanup.
-- A NON-core category can never have a shelf count, so it can never have a per-section
-  rate. Fine today; the capacity plan in tasks/merch-space-model.md should cover everything.
-
-### 1a — criteria v5 PUBLISHED to prod, 2026-08-21T00:02Z
-Authorised by Brian in session. Backed up first (60 rows, verified non-empty before any
-write — rule 2). Built as a new version copying v4, exactly as merchEnsureDraft +
-merch-criteria-draft + merch-criteria-publish would; **v4 left completely intact**, so
-rollback is `DELETE FROM merch_criteria(_versions) WHERE version=5` and v4 becomes live
-again on its own (live = highest PUBLISHED version).
-
-**11 cells changed, 7 untouched, verified by diffing v4 against v5:**
-- chain default `core` 1 → 0
-- nine food L3s `core` 0 → 1
-- chain default `min_margin_per_unit` 30 → 0.30
-
-Downstream, confirmed rather than assumed: BL1's two shelf counts (Breakfast 7, Canned
-Goods 14) were ORPHANED under v4 because those categories read as non-core. Both are core
-under v5, so the counts now count.
-
-### Not done
-- Nothing deployed. Order: migration-048 → worker → frontend (sw v109).
-- Staging is many deploys behind: migrations 042–048 all unapplied there.
+Two things this does **not** fix, both flagged in `tasks/bin-photo-autodraft.md`: the caption
+still sees the batch's first photo (upload-triggered by design), and no code can tell whether
+a cover filed under Bin Preview is a bin cover or that week's promo graphic.
