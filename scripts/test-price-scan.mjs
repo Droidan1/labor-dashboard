@@ -85,6 +85,23 @@ await post('merch-criteria-draft', { cells: [
 await post('merch-criteria-publish', { note: 'scan test criteria' });
 env.SALES_SNAPSHOTS.put('category-costs:global', JSON.stringify({ costs: { [SNACKS]: 0.81 } }));
 
+// Real sales history, so ASP exists. Without it a scan of something no retailer carries
+// has genuinely nothing to price from — which is correct behaviour, but not the case
+// Bargain Lane is ever in: they have four years of till data for snacks.
+{
+  const etDay = (back) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
+    .format(new Date(Date.now() - (back + 1) * 86400e3));
+  for (let d = 0; d < 10; d++) {
+    for (const st of ['bl1', 'bl2']) {
+      env.SALES_SNAPSHOTS.put(`items:${st}:${etDay(d)}`, JSON.stringify({
+        orderCount: 100,
+        categories: [{ category: 'Consumable Food', qty: 40, netSales: 83.2,
+                       l3Rows: [{ l3: SNACKS, qty: 40, netSales: 83.2 }] }],
+      }));
+    }
+  }
+}
+
 console.log('Price Scan');
 
 // ── An unknown item is looked up once, then remembered ──────────────────────
@@ -437,6 +454,66 @@ console.log('Price Scan');
   const again = await post('merch-scan', { identifier: '038000138416' });
   eq(searchCalls, before, '💰 a repeat scan resolves nothing and searches nothing');
   eq(again.body.brand, 'Pringles', '…and still knows the brand');
+
+  globalThis.fetch = realFetch;
+}
+
+// ── A LIMITED EDITION NO BIG BOX CARRIES ────────────────────────────────────
+// UPC 038000293122 is Pringles Everything Bagel 5.5oz. Walmart, Target and Kroger return
+// NOTHING for it — and that is not an outage, it is the business: closeout inventory is
+// by definition what big box stopped carrying. Identity therefore searches a wider net
+// than pricing does, or the products we most need to identify are the ones we cannot.
+{
+  const realFetch = globalThis.fetch;
+  let idQuery = null, priceQuery = null;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      const q = decodeURIComponent(url);
+      if (/038000293122/.test(q)) {
+        idQuery = q;
+        // Only a product database knows it. No first-party retailer lists it at all.
+        return new Response(JSON.stringify({ results: [
+          { position: 1, url: 'https://world.openfoodfacts.org/product/0038000293122/pringles-everything-bagel',
+            title: 'Pringles Everything Bagel – 5.5oz', snippet: 'Quantity: 5.5oz Brands: Pringles' },
+          { position: 2, url: 'https://www.cub.com/store/cub/products/32917510-pringles',
+            title: 'Pringles Everything Bagel Potato Crisps, 5.5 oz', snippet: '$0.54/oz' },
+        ] }), { status: 200 });
+      }
+      priceQuery = q;
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });   // nobody sells it
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls++;
+      const b = JSON.parse(init.body); const sys = b.system || '';
+      if (/expand abbreviated/i.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          items: [{ row: 1, brand: 'Pringles', title: 'Pringles Everything Bagel Potato Crisps', size: '5.5 oz' }] }) }] }), { status: 200 });
+      }
+      if (/category/i.test(sys) && /rows/.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          rows: [{ row: 1, category: SNACKS, confidence: 'high' }] }) }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: '{"prices":[]}' }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const r = await post('merch-scan', { identifier: '038000293122' });
+  eq(r.status, 200, 'a limited-edition item still answers');
+  eq(r.body.brand, 'Pringles', '🔑 the brand is found — from a product database, not a shelf');
+  eq(r.body.size, '5.5 oz', '…and the size');
+  eq(r.body.l3, SNACKS, '🔑 …so it CATEGORISES, which is what unlocks ASP and cost');
+  ok(r.body.price !== null, '🔑 …and it gets a price, off our own ASP');
+  eq(r.body.retail, null, '…with no street retail, because genuinely nobody sells it');
+
+  // 🛑 The identity sources must never leak into the PRICE. openfoodfacts and cub.com
+  // said "$0.54/oz"; that is not a shelf price we compete with and must not be used.
+  eq(r.body.retail_source, null, '🛑 no price is taken from an identity-only source');
+  ok(/openfoodfacts|cub\.com/.test(idQuery || ''), 'the identity search reached the wider net…');
+  ok(priceQuery !== null && !/openfoodfacts/.test(priceQuery),
+     '…while the price search stayed on the first-party list');
 
   globalThis.fetch = realFetch;
 }

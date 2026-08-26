@@ -7332,6 +7332,13 @@ function randomHex(bytes) {
 const RETAIL_CPG_DOMAINS = ["walmart.com", "target.com", "walgreens.com", "cvs.com",
                             "kroger.com", "meijer.com", "heb.com"];
 const RETAIL_BIG_DOMAINS = ["bestbuy.com", "lowes.com", "homedepot.com"];
+// 🔑 Sources trusted to say what a barcode IS, and NEVER what it costs. A product
+// database or a regional grocer can name a discontinued item that no national retailer
+// lists any more — which is most of what a closeout buyer actually handles. Their prices
+// are not shelf prices we compete with, so they are excluded from every pricing path.
+const RETAIL_ID_DOMAINS = ["openfoodfacts.org", "world.openfoodfacts.org", "upcitemdb.com",
+                           "barcodelookup.com", "go-upc.com", "cub.com", "meijer.com",
+                           "heb.com", "publix.com", "wegmans.com", "albertsons.com"];
 
 // 🛑 NOT dollargeneral.com, dollartree.com or familydollar.com, though on price point they
 // are the closest comparator this business has. Checked twice against the live API, most
@@ -7878,14 +7885,30 @@ async function manifestNormalize(env, lines) {
 // a bare barcode scan silently produced no category at all.
 async function retailIdentify(env, identifier, ctx) {
   if (!identifier) return null;
-  const domains = [...RETAIL_CPG_DOMAINS, ...RETAIL_BIG_DOMAINS];
-  const results = await retailSearch(env, String(identifier), domains, ctx);
+
+  // 🔑 IDENTITY IS NOT PRICE, so it is not restricted to the retailers we price against.
+  //
+  // Measured live: UPC 038000293122 is Pringles Everything Bagel 5.5oz, a LIMITED EDITION.
+  // Walmart, Target and Kroger return nothing for it — and that is not an outage, it is
+  // the business we are in. Closeout inventory is by definition what big box stopped
+  // carrying, so the products we most need to identify are precisely the ones a
+  // first-party search cannot find. Restricting identity to those five domains threw the
+  // answer away: no name, therefore no category, therefore no ASP, therefore no price.
+  //
+  // A product database, a wholesaler listing or a regional grocer can all say what a
+  // barcode IS. None of them may say what it COSTS — the price step below is unchanged
+  // and still first-party only.
+  const priceDomains = [...RETAIL_CPG_DOMAINS, ...RETAIL_BIG_DOMAINS];
+  const idDomains = [...priceDomains, ...RETAIL_ID_DOMAINS];
+  const results = await retailSearch(env, String(identifier), idDomains, ctx);
   if (!results || !results.length) return null;
 
-  // Only a first-party page is trusted to say what a barcode IS — a marketplace listing
-  // will happily label a 12-pack with a single can's barcode.
-  const titles = results
-    .filter(r => retailHostAllowed(r.url, domains) && !RETAIL_MARKETPLACE.test(String(r.url || "")))
+  // A first-party title is preferred where one exists — it is the least likely to be a
+  // multipack mislabelled with a single unit's barcode — but any credible source beats
+  // knowing nothing at all.
+  const usable = results.filter(r => !RETAIL_MARKETPLACE.test(String(r.url || "")));
+  const firstParty = usable.filter(r => retailHostAllowed(r.url, priceDomains));
+  const titles = (firstParty.length ? firstParty : usable)
     .map(r => retailCleanText(`${r.title || ""} ${r.snippet || ""}`, 220))
     .filter(Boolean);
   if (!titles.length) return null;
