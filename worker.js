@@ -7637,7 +7637,26 @@ function retailDecide(line, cands, domains = [], opts = {}) {
   // store actually carries is the closest thing to the price a customer walks up and pays.
   const inStore = priced.filter(c => c.in_store === true);
   const inStock = priced.filter(c => c.in_stock === true);
-  const pool = inStore.length ? inStore : inStock.length ? inStock : priced;
+  let pool = inStore.length ? inStore : inStock.length ? inStock : priced;
+
+  // 🛑 CHEAPEST-WINS IS A TRAP. Taking the lowest unit price sounds conservative, but it
+  // hands the answer to whichever listing was parsed WRONG: a "Pack Of 3 … 12 ct" read as
+  // a 12-pack divides a $2.00 price down to $0.17, and 17c then beats every honest
+  // candidate. Measured live — a can of Pringles priced at 17 cents.
+  //
+  // So outliers are dropped against the MEDIAN before the cheapest is taken. The median is
+  // hard to move: it takes more bad parses than good ones to shift it, which is exactly
+  // the opposite of a minimum. The conservative bias is kept — the lowest SURVIVOR still
+  // wins — but a lone nonsense figure can no longer be the survivor.
+  if (pool.length >= 3) {
+    const sorted = pool.map(c => c.unit).sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const kept = pool.filter(c => c.unit >= median / 2.5 && c.unit <= median * 2.5);
+    if (kept.length) {
+      if (kept.length < pool.length) flags.push("outlier prices ignored");
+      pool = kept;
+    }
+  }
   const pick = pool.reduce((a, b) => (a.unit <= b.unit ? a : b));
 
   // Confidence is capped by the WEAKEST thing about the number, never by the best.
@@ -8802,7 +8821,11 @@ async function manifestClassify(env, lines) {
         cache.bind(u.identifier, u.identifier_type, u.l2, u.l3, now)));
     }
   }
-  return { classified, skipped: lines.length - classified };
+  // 🔑 The resolved rows are RETURNED, not only written to item_cache. The cache is keyed
+  // by identifier, so a scan of a TYPED product name — no barcode — had nowhere to read
+  // its own answer back from and silently showed no category at all. Measured live: every
+  // typed lookup came back uncategorised while the same item scanned by barcode worked.
+  return { classified, skipped: lines.length - classified, rows: updates };
 }
 
 // What the floor is currently doing with each category: starved / balanced / dead, keyed
@@ -17337,14 +17360,13 @@ export default {
           // manifestClassify reports counts and writes what it learned into item_cache; it
           // does not hand the category back. Read it from the cache it just populated —
           // that is also what makes the NEXT scan of this UPC free.
-          await manifestClassify(env, [{ id: null, row_no: 1, description: title,
-                                         identifier, identifier_type: identType }]);
-          if (identifier) {
-            const back = await env.DB.prepare(
-              `SELECT l2, l3, l3_source FROM item_cache WHERE identifier = ? AND identifier_type = ?`
-            ).bind(identifier, identType).first();
-            if (back?.l3) { l3 = back.l3; l3Source = back.l3_source || "claude"; }
-          }
+          const got = await manifestClassify(env, [{ id: null, row_no: 1, description: title,
+                                                     identifier, identifier_type: identType }]);
+          const hit = (got?.rows || [])[0];
+          if (hit?.l3) { l3 = hit.l3; l3Source = "claude"; }
+          // A barcode ALSO gets the answer written to item_cache by manifestClassify, so
+          // the next scan of it is free. A typed name has nothing to key on, and is
+          // looked up fresh each time — correct, but worth knowing.
         }
         const l2 = l3 ? (L3_TO_L2[l3] || merchParentOf(l3) || null) : null;
 

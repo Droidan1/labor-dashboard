@@ -319,5 +319,56 @@ console.log('Price Scan');
   ok(corrupted > 0, `…it is refused instead (${corrupted} of 60 rejected outright)`);
 }
 
+// ── 🛑 CHEAPEST-WINS HANDS THE ANSWER TO THE WORST PARSE ────────────────────
+// Real failure, from the live search results for "Pringles Original 5.5 oz". Among the
+// honest listings sits "Pack Of 3 … 12 ct" at $2.00, whose pack was read as 12 — dividing
+// it to $0.17 a can. Taking the lowest unit price then made 17 CENTS the street price of
+// a can of Pringles, and everything downstream priced off that.
+//
+// Outliers are now dropped against the MEDIAN first. A median takes more bad parses than
+// good ones to move; a minimum takes exactly one.
+{
+  searchResults = [
+    { position: 1, url: 'https://www.walmart.com/ip/pringles-sc/1', title: 'Pringles Sour Cream and Onion 5.5 oz', snippet: '$6.19' },
+    { position: 2, url: 'https://www.target.com/p/pringles-sc/-/A-2',  title: 'Pringles Sour Cream & Onion 5.5oz', snippet: '$2.49' },
+    { position: 3, url: 'https://www.walmart.com/ip/pringles-bbq/3',   title: 'Pringles BBQ 5.5 oz Canister', snippet: '$2.27' },
+    { position: 4, url: 'https://www.walmart.com/ip/pack-of-3/4',      title: 'Pack Of 3 Pringles Snack Stacks, 12 ct Package', snippet: '$2.00' },
+  ];
+  snippetPrices = [
+    { url: 'https://www.walmart.com/ip/pringles-sc/1', price: 6.19, title: 'Pringles Sour Cream and Onion 5.5 oz', pack: 1, in_stock: true, sold_by: 'Walmart.com' },
+    { url: 'https://www.target.com/p/pringles-sc/-/A-2', price: 2.49, title: 'Pringles Sour Cream & Onion 5.5oz', pack: 1, in_stock: true, sold_by: 'Target' },
+    { url: 'https://www.walmart.com/ip/pringles-bbq/3', price: 2.27, title: 'Pringles BBQ 5.5 oz Canister', pack: 1, in_stock: true, sold_by: 'Walmart.com' },
+    // the poisoned one: a $2.00 listing divided by a misread pack of 12
+    { url: 'https://www.walmart.com/ip/pack-of-3/4', price: 2.00, title: 'Pack Of 3 Pringles Snack Stacks, 12 ct Package', pack: 12, in_stock: true, sold_by: 'Walmart.com' },
+  ];
+  classifyL3 = SNACKS;
+
+  const r = await post('merch-scan', { description: 'Pringles Original 5.5 oz' });
+  ok(r.body.retail > 1.50,
+     `🛑 a can of Pringles is not 17 cents — the misparsed 12-pack no longer wins (got $${r.body.retail})`);
+  near(r.body.retail, 2.27, '…the cheapest HONEST first-party price is taken instead');
+  ok((r.body.flags || []).includes('outlier prices ignored'),
+     '…and the line says an outlier was discarded rather than hiding it');
+}
+
+// ── 🔑 A TYPED PRODUCT NAME GETS A CATEGORY TOO ─────────────────────────────
+// manifestClassify writes what it learns into item_cache, which is keyed by identifier.
+// A scan of a typed name has no barcode, so it had nowhere to read its own answer back
+// from and silently showed no category at all — while the same item scanned by barcode
+// worked. It now returns the resolved rows rather than only caching them.
+{
+  classifyL3 = SNACKS;
+  const typed = await post('merch-scan', { description: 'Wonderful Pistachios No Shells 5.5oz' });
+  eq(typed.body.l3, SNACKS, '🔑 a typed name is categorised');
+  eq(typed.body.l3_label, 'Snacks', '…with a readable label');
+  ok(typed.body.price !== null, '…and therefore prices, because ASP needs a category');
+
+  const scanned = await post('merch-scan', { identifier: '012345679900', description: 'Some snack bag' });
+  eq(scanned.body.l3, SNACKS, '…and a barcode still works exactly as before');
+  // The barcode path ALSO caches, so the next scan of it is free; a typed name cannot.
+  const row = db.prepare(`SELECT l3 FROM item_cache WHERE identifier='012345679900'`).get();
+  eq(row.l3, SNACKS, '…and only the barcode path leaves something behind for next time');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
