@@ -246,5 +246,78 @@ console.log('Price Scan');
   globalThis.fetch = realFetch;
 }
 
+// ── The barcode decoder that SHIPS, tested as shipped ──────────────────────
+// Safari has never supported BarcodeDetector — not through iOS 26 — and these are
+// iPhones, so the decoder is hand-written and lives inside index.html. It is extracted
+// from that file here rather than from a copy, so the bytes under test are the bytes
+// that run.
+//
+// 🛑 A WRONG BARCODE IS WORSE THAN NO BARCODE. It prices a different product and nothing
+// downstream would catch it, so the false-positive count must be exactly zero — not low.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const from = html.indexOf('  const L = [', html.indexOf('EAN-13 / UPC-A decoder'));
+  const to = html.indexOf('  // Live scan. Samples several rows');
+  ok(from > 0 && to > from, 'the decoder is found in index.html');
+  const { decodeEanRow } = new Function(html.slice(from, to) + '; return { decodeEanRow };')();
+
+  // Encode a real EAN-13 the way a printed barcode is laid out, so the test exercises the
+  // actual symbology rather than a shape the decoder happens to like.
+  const L = ['0001101','0011001','0010011','0111101','0100011','0110001','0101111','0111011','0110111','0001011'];
+  const G = L.map(p2 => [...p2].reverse().map(b => b === '1' ? '0' : '1').join(''));
+  const R2 = L.map(p2 => [...p2].map(b => b === '1' ? '0' : '1').join(''));
+  const PAR = ['000000','001011','001101','001110','010011','011001','011100','010101','010110','011010'];
+  const encode = (code, mod = 3) => {
+    const d = [...code].map(Number);
+    let bits = '101';
+    for (let k = 0; k < 6; k++) bits += (PAR[d[0]][k] === '0' ? L : G)[d[k + 1]];
+    bits += '01010';
+    for (let k = 0; k < 6; k++) bits += R2[d[k + 7]];
+    bits += '101';
+    const row = new Array(12).fill(225);
+    for (const b of bits) for (let k = 0; k < mod; k++) row.push(b === '1' ? 30 : 225);
+    for (let k = 0; k < 12; k++) row.push(225);
+    return row;
+  };
+
+  const codes = ['0038000293122', '0024100113163', '4006381333931', '0012345678905'];
+  let failures = 0;
+  for (const c of codes) for (const mod of [2, 3, 4, 7]) if (decodeEanRow(encode(c, mod)) !== c) failures++;
+  eq(failures, 0, 'every real barcode decodes exactly, at every module width');
+
+  // Camera conditions: sensor noise, soft focus, and a light gradient across the label.
+  const jitter = (r, a) => r.map(v => Math.max(0, Math.min(255, v + (Math.random() * 2 - 1) * a)));
+  const blur = (r, k) => r.map((_, i) => { let s2 = 0, n = 0; for (let j = -k; j <= k; j++) { const x = r[i + j]; if (x !== undefined) { s2 += x; n++; } } return s2 / n; });
+  const grad = (r, a) => r.map((v, i) => Math.max(0, Math.min(255, v + a * (i / r.length - 0.5) * 2)));
+  let readable = 0;
+  for (let i = 0; i < 120; i++) {
+    if (decodeEanRow(jitter(blur(encode('0038000293122', 4), 1), 30)) === '0038000293122') readable++;
+    if (decodeEanRow(grad(encode('0038000293122', 3), 90)) === '0038000293122') readable++;
+  }
+  eq(readable, 240, 'noise, blur and a lighting gradient are all still readable');
+
+  // 🛑 Nothing that is not a barcode may EVER decode.
+  let falsePositives = 0;
+  for (let i = 0; i < 600; i++) {
+    if (decodeEanRow(Array.from({ length: 400 }, () => Math.random() * 255))) falsePositives++;
+    if (decodeEanRow(Array.from({ length: 400 }, () => Math.random() < 0.5 ? 30 : 225))) falsePositives++;
+  }
+  if (decodeEanRow(new Array(400).fill(128))) falsePositives++;
+  eq(falsePositives, 0, '🛑 ZERO false positives across 1,200 frames of noise and random stripes');
+
+  // A single flipped module must break the check digit and be refused, not returned wrong.
+  const good = encode('0038000293122', 4);
+  let corrupted = 0, wrongCode = 0;
+  for (let i = 0; i < 60; i++) {
+    const bad2 = good.slice();
+    const at = 20 + Math.floor(Math.random() * (bad2.length - 40));
+    for (let k = 0; k < 4; k++) bad2[at + k] = bad2[at + k] > 128 ? 30 : 225;
+    const got = decodeEanRow(bad2);
+    if (got === null) corrupted++; else if (got !== '0038000293122') wrongCode++;
+  }
+  eq(wrongCode, 0, '🛑 a damaged symbol never decodes to a DIFFERENT product');
+  ok(corrupted > 0, `…it is refused instead (${corrupted} of 60 rejected outright)`);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

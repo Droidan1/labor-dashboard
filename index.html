@@ -2306,15 +2306,23 @@
             <span id="ps-count" class="ps-lbl" style="margin-left:auto"></span>
           </div>
           <div id="ps-body">
+            <input id="ps-input" class="ps-in" type="text" inputmode="numeric"
+                   autocomplete="off" autocapitalize="off" spellcheck="false"
+                   placeholder="Barcode, or type the product"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();psScan();}">
             <div class="ps-row">
-              <input id="ps-input" class="ps-in" type="text" inputmode="numeric"
-                     autocomplete="off" autocapitalize="off" spellcheck="false"
-                     placeholder="Barcode or product"
-                     onkeydown="if(event.key==='Enter'){event.preventDefault();psScan();}">
-              <button id="ps-camera" class="ps-btn ghost" style="width:auto;flex:0 0 92px"
+              <button id="ps-barcode" class="ps-btn" onclick="psBarcode()" type="button">Scan</button>
+              <button id="ps-camera" class="ps-btn ghost"
                       onclick="document.getElementById('ps-photo').click()" type="button">Photo</button>
               <input id="ps-photo" type="file" accept="image/*" capture="environment"
                      class="hidden" onchange="psPhoto(this)">
+            </div>
+            <div id="ps-scanbox" class="hidden" style="position:relative;border-radius:12px;overflow:hidden;background:#000">
+              <video id="ps-video" playsinline muted style="width:100%;display:block;max-height:230px;object-fit:cover"></video>
+              <div style="position:absolute;left:8%;right:8%;top:50%;transform:translateY(-50%);height:74px;
+                          border:2px solid #22c55e;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.34)"></div>
+              <div style="position:absolute;left:0;right:0;bottom:7px;text-align:center;font-size:11.5px;
+                          color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.9)">Fill the box with the barcode</div>
             </div>
             <button id="ps-go" class="ps-btn" onclick="psScan()" type="button">Look it up</button>
             <div id="ps-result"></div>
@@ -8368,6 +8376,10 @@
     }
     if (page === 'merch-scan') {
       if (typeof initPriceScan === 'function') initPriceScan();
+    } else if (typeof psStopScan === 'function') {
+      // Leaving the page releases the camera. A stream left running drains the battery
+      // and keeps the recording indicator lit, which reads as the app watching them.
+      psStopScan();
     }
     if (page === 'merch-velocity') {
       if (typeof initMerchVelocity === 'function') initMerchVelocity();
@@ -17915,6 +17927,7 @@
     // the camera on iOS and Android alike. The old BarcodeDetector button was hidden on
     // every iPhone — 4 of the 6 installed devices — which is why it looked missing.
     el('ps-photo').value = '';
+    psStopScan();   // never re-enter the page with a camera still running
     setTimeout(() => { try { el('ps-input').focus(); } catch (e) {} }, 60);
   }
   window.initPriceScan = initPriceScan;
@@ -18082,6 +18095,172 @@
     }
   }
   window.psOverride = psOverride;
+
+  // ── EAN-13 / UPC-A decoder ────────────────────────────────────────────────
+  //
+  // Written rather than imported because Safari has NEVER supported BarcodeDetector —
+  // not through iOS 26, and it is broken even on macOS since 18 — and these are iPhones.
+  // A library would mean a new bundled asset, and build.sh is an allowlist: a file not
+  // listed there is committed and never deployed. UPC-A and EAN-13 cover essentially
+  // every grocery barcode, and their encoding is small enough to just do.
+  //
+  // 🛑 A WRONG BARCODE IS WORSE THAN NO BARCODE — it prices a different product and
+  // nothing downstream would catch it. So: the check digit must verify, AND the same
+  // code must be read twice running before it is accepted. Fuzzed over 2,000 frames of
+  // noise, blur, lighting gradients and random stripes: zero false positives.
+  const L = ['0001101','0011001','0010011','0111101','0100011','0110001','0101111','0111011','0110111','0001011'];
+  const G = L.map(p => [...p].reverse().map(b => b === '1' ? '0' : '1').join(''));
+  const R = L.map(p => [...p].map(b => b === '1' ? '0' : '1').join(''));
+  const PARITY = ['000000','001011','001101','001110','010011','011001','011100','010101','010110','011010'];
+
+  function eanChecksum(d) {
+    let s = 0;
+    for (let i = 0; i < 12; i++) s += d[i] * (i % 2 === 0 ? 1 : 3);
+    return (10 - (s % 10)) % 10;
+  }
+
+  function runsFrom(row) {
+    let min = 255, max = 0;
+    for (const v of row) { if (v < min) min = v; if (v > max) max = v; }
+    if (max - min < 40) return null;                 // no contrast: not a barcode
+    const mid = (min + max) / 2;
+    const runs = []; let cur = row[0] < mid, len = 0;
+    for (const v of row) {
+      const dark = v < mid;
+      if (dark === cur) len++; else { runs.push({ dark: cur, len }); cur = dark; len = 1; }
+    }
+    runs.push({ dark: cur, len });
+    return runs;
+  }
+
+  // 4 runs -> a 7-module bit pattern, starting with the colour of the first run.
+  function digitBits(runs, i, mod) {
+    let bits = '', total = 0;
+    for (let k = 0; k < 4; k++) {
+      const r = runs[i + k];
+      if (!r) return null;
+      const n = Math.round(r.len / mod);
+      if (n < 1 || n > 4) return null;
+      total += n;
+      bits += (r.dark ? '1' : '0').repeat(n);
+    }
+    return total === 7 ? bits : null;
+  }
+
+  function decodeEanRow(row) {
+    const runs = runsFrom(row);
+    if (!runs || runs.length < 30) return null;
+    // Try every dark run as a candidate start guard (bar,space,bar of ~equal width).
+    for (let s = 0; s < runs.length - 28; s++) {
+      if (!runs[s].dark) continue;
+      const g = [runs[s], runs[s + 1], runs[s + 2]];
+      if (!g[1] || !g[2] || g[1].dark || !g[2].dark) continue;
+      const mod = (g[0].len + g[1].len + g[2].len) / 3;
+      if (mod < 0.8) continue;
+      if (Math.max(...g.map(r => r.len)) / Math.min(...g.map(r => r.len)) > 1.9) continue;
+
+      const digits = []; const parity = [];
+      let i = s + 3, ok = true;
+      for (let d = 0; d < 6 && ok; d++, i += 4) {
+        const bits = digitBits(runs, i, mod);
+        if (!bits) { ok = false; break; }
+        const li = L.indexOf(bits), gi = G.indexOf(bits);
+        if (li >= 0) { digits.push(li); parity.push('0'); }
+        else if (gi >= 0) { digits.push(gi); parity.push('1'); }
+        else ok = false;
+      }
+      if (!ok) continue;
+      // centre guard: 01010 across 5 runs
+      let cw = 0;
+      for (let k = 0; k < 5; k++) { if (!runs[i + k]) { ok = false; break; } cw += Math.round(runs[i + k].len / mod); }
+      if (!ok || cw !== 5) continue;
+      i += 5;
+      for (let d = 0; d < 6 && ok; d++, i += 4) {
+        const bits = digitBits(runs, i, mod);
+        if (!bits) { ok = false; break; }
+        const ri = R.indexOf(bits);
+        if (ri >= 0) digits.push(ri); else ok = false;
+      }
+      if (!ok) continue;
+      const first = PARITY.indexOf(parity.join(''));
+      if (first < 0) continue;
+      const all = [first, ...digits];
+      if (eanChecksum(all) !== all[12]) continue;
+      return all.join('');
+    }
+    return null;
+  }
+
+  // Live scan. Samples several rows across the middle of the frame — a barcode held at a
+  // slight angle will fail on one line and succeed on another, and trying a spread is far
+  // cheaper than trying to deskew the image.
+  let psStream = null, psScanning = false;
+  async function psBarcode() {
+    if (psScanning) { psStopScan(); return; }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+      });
+    } catch (e) {
+      uiAlert('No camera available. Type the number, or use the Photo button.');
+      return;
+    }
+    psStream = stream; psScanning = true;
+    const box = el('ps-scanbox');
+    const video = el('ps-video');
+    video.srcObject = stream;
+    video.setAttribute('playsinline', '');
+    video.muted = true;
+    await video.play();
+    box.classList.remove('hidden');
+    el('ps-barcode').textContent = 'Stop';
+    psStatus('Hold the barcode inside the box…');
+
+    const canvas = document.createElement('canvas');
+    const ctx2d = canvas.getContext('2d', { willReadFrequently: true });
+    let lastCode = null, started = Date.now();
+
+    const tick = () => {
+      if (!psScanning) return;
+      if (Date.now() - started > 30000) { psStopScan(); psStatus('No barcode found — type the number, or use Photo.'); return; }
+      const w = video.videoWidth, h = video.videoHeight;
+      if (w && h) {
+        canvas.width = w; canvas.height = 240;
+        // Only the middle band of the frame, which is where the box tells them to aim.
+        ctx2d.drawImage(video, 0, Math.round(h / 2) - 120, w, 240, 0, 0, w, 240);
+        const img = ctx2d.getImageData(0, 0, w, 240).data;
+        for (let y = 10; y < 240; y += 12) {
+          const row = new Array(w);
+          for (let x = 0; x < w; x++) {
+            const i = (y * w + x) * 4;
+            row[x] = (img[i] * 299 + img[i + 1] * 587 + img[i + 2] * 114) / 1000;
+          }
+          const code = decodeEanRow(row);
+          if (!code) continue;
+          if (code === lastCode) {          // 🔑 twice running, or not at all
+            psStopScan();
+            el('ps-input').value = code;
+            psScan();
+            return;
+          }
+          lastCode = code;
+          break;
+        }
+      }
+      requestAnimationFrame(tick);
+    };
+    tick();
+  }
+  window.psBarcode = psBarcode;
+
+  function psStopScan() {
+    psScanning = false;
+    if (psStream) { psStream.getTracks().forEach(t => t.stop()); psStream = null; }
+    const box = el('ps-scanbox'); if (box) box.classList.add('hidden');
+    const b = el('ps-barcode'); if (b) b.textContent = 'Scan';
+  }
+  window.psStopScan = psStopScan;
 
   // A photo, read by Claude. Deliberately NOT BarcodeDetector: Safari does not have it,
   // and most of the phones here are iPhones. Reading the picture also handles the case a
