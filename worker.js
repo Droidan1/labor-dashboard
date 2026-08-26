@@ -8687,7 +8687,8 @@ async function manifestAspVelocity(env, days = 28) {
 // The step size of each money rule, for snapping a price DOWN under a ceiling. Kept
 // adjacent to manifestRound on purpose: a rule added there without an entry here silently
 // falls back to taking the ceiling exactly, which is off-convention rather than wrong.
-const MANIFEST_ROUND_STEP = { "$0.50": 0.5, "$1": 1, "$10": 10, "$100": 100 };
+const MANIFEST_ROUND_STEP = { "$0.50": 0.5, "$1": 1, "$10": 10, "$100": 100,
+                              "$0.50 down": 0.5, "$1 down": 1 };
 
 function manifestRound(price, rule) {
   if (price === null || price === undefined || !Number.isFinite(price)) return null;
@@ -8719,6 +8720,12 @@ function manifestRound(price, rule) {
     // like a pricing decision rather than a float bug.
     case "$0.50": return roundCents(Math.max(0.5, Math.ceil((p * 2) - 1e-9) / 2));
     case "$1":  return Math.max(1, Math.ceil(p - 1e-9));
+    // Rounding DOWN, for categories where the round number below matters more than the
+    // last few cents. On food at ~81c of cost the lower half dollar still earns well, and
+    // a price a shopper reads instantly is worth more than the margin given up.
+    // The epsilon works the other way here: it stops an exact $2.50 falling to $2.00.
+    case "$0.50 down": return roundCents(Math.max(0.5, Math.floor((p * 2) + 1e-9) / 2));
+    case "$1 down":    return Math.max(1, Math.floor(p + 1e-9));
     case "$10": return Math.max(10, Math.ceil((p / 10) - 1e-9) * 10);
     case "$100":return Math.max(100, Math.ceil((p / 100) - 1e-9) * 100);
     default:    return roundCents(p);
@@ -17446,8 +17453,18 @@ export default {
         if (retail === null || retail === undefined) {
           // Not seen before, so this is the one path that spends anything.
           const budget = { searches: 3, fetches: 3, credits: Number(body?.maxCredits) ?? 2 };
-          const line = { identifier, identifier_type: identType, description: title, qty: 1, cost: null };
-          const r = await retailPriceLine(env, line, budget, { scan: true }, title);
+          // 🔑 THE SIZE GOES INTO THE QUERY. It was resolved and then dropped, so the
+          // search asked "Pringles Everything Bagel Potato Crisps" and matched a 2-can
+          // multipack at $7.33 — for a can that sells around $2.50. Singles of a
+          // discontinued flavour often are not listed at all, so a query without a size
+          // lands on whatever bundle IS listed.
+          //
+          // It also switches on machinery that was already there and idle: retailDecide
+          // reads targetOz off the description, and with no size it could neither scale a
+          // different pack size nor flag a size mismatch. Both now work.
+          const named = [title, size].filter(Boolean).join(" ");
+          const line = { identifier, identifier_type: identType, description: named, qty: 1, cost: null };
+          const r = await retailPriceLine(env, line, budget, { scan: true }, named);
           looked = true;
           if (r?.decided) {
             retail = r.decided.retail_price ?? null;

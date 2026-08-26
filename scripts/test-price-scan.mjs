@@ -518,5 +518,69 @@ console.log('Price Scan');
   globalThis.fetch = realFetch;
 }
 
+// ── 🔑 THE SIZE GOES INTO THE PRICE QUERY ───────────────────────────────────
+// It was resolved and then dropped: the search asked "Pringles Everything Bagel Potato
+// Crisps" with no size, matched a 2-can multipack, and returned $7.33 for a can that
+// sells near $2.50. Singles of a discontinued flavour are often not listed at all, so a
+// query without a size lands on whatever bundle IS.
+{
+  const realFetch = globalThis.fetch;
+  let priceQuery = null;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      const q = decodeURIComponent(url);
+      if (/038000293100/.test(q)) {
+        return new Response(JSON.stringify({ results: [
+          { position: 1, url: 'https://world.openfoodfacts.org/product/x', title: 'Pringles Everything Bagel – 5.5oz', snippet: 'Pringles 5.5oz' },
+        ] }), { status: 200 });
+      }
+      priceQuery = q;
+      return new Response(JSON.stringify({ results: [
+        { position: 1, url: 'https://www.walmart.com/ip/pringles-eb/1', title: 'Pringles Everything Bagel 5.5 oz', snippet: '$2.48' },
+      ] }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls++;
+      const b = JSON.parse(init.body); const sys = b.system || '';
+      if (/expand abbreviated/i.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          items: [{ row: 1, brand: 'Pringles', title: 'Pringles Everything Bagel Potato Crisps', size: '5.5 oz' }] }) }] }), { status: 200 });
+      }
+      if (/category/i.test(sys) && /rows/.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          rows: [{ row: 1, category: SNACKS, confidence: 'high' }] }) }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ prices: [
+        { url: 'https://www.walmart.com/ip/pringles-eb/1', price: 2.48, title: 'Pringles Everything Bagel 5.5 oz', pack: 1, in_stock: true, sold_by: 'Walmart.com' },
+      ] }) }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const r = await post('merch-scan', { identifier: '038000293100' });
+  eq(r.body.size, '5.5 oz', 'the size is resolved');
+  ok(/5\.5/.test(priceQuery || ''),
+     '🔑 …and it is IN the price query, so a multipack cannot answer for a single can');
+  near(r.body.retail, 2.48, '…giving the single-can price, not a bundle');
+  globalThis.fetch = realFetch;
+}
+
+// ── Food rounds DOWN, and may sit below our own ASP ─────────────────────────
+// Brian's call: at ~81c of cost the lower half dollar still earns well, and a price a
+// shopper reads instantly is worth more than the few cents given up.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const i = src.indexOf('function manifestRound('); const j = src.indexOf('\n}', i);
+  const { manifestRound } = new Function('const roundCents=(n)=>Math.round(n*100)/100;' + src.slice(i, j + 2) + '; return { manifestRound };')();
+  near(manifestRound(3.665, '$0.50 down'), 3.50, '$3.665 rounds DOWN to $3.50, not up to $4.00');
+  near(manifestRound(2.49, '$0.50 down'), 2.00, '$2.49 rounds down to $2.00');
+  near(manifestRound(2.50, '$0.50 down'), 2.50, '🔑 an exact $2.50 STAYS — the epsilon guards the other direction now');
+  near(manifestRound(2.5000000001, '$0.50 down'), 2.50, '…including one reached by multiplication');
+  near(manifestRound(0.40, '$0.50 down'), 0.50, 'nothing rounds below 50c');
+  near(manifestRound(4.99, '$1 down'), 4.00, 'whole-dollar rounding down works too');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
