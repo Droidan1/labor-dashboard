@@ -720,6 +720,10 @@
             <span id="nav-merch-chev" class="nav-chev nav-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
           </div>
           <div id="nav-merch-sub" class="nav-sub hidden">
+            <div id="nav-merch-scan" class="nav-item nav-subitem" data-page="merch-scan" onclick="navigateToPage('merch-scan')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="10.5" y1="8" x2="10.5" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="17" y1="8" x2="17" y2="16"/></svg></span>
+              <span class="nav-label">Price Scan</span>
+            </div>
             <div id="nav-merch-coverage" class="nav-item nav-subitem" data-page="merch-coverage" onclick="navigateToPage('merch-coverage')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
               <span class="nav-label">Coverage</span>
@@ -2201,6 +2205,112 @@
              so anything living inside it does not survive a refresh. -->
         <div id="cv-status" class="text-sm text-opl-inkDim dark:text-op-inkDim">Loading…</div>
         <div id="cv-table-panel"></div>
+      </div>
+    </div>
+
+    <!-- ── Merchandising: Price Scan ───────────────────────────────────────────
+         The warehouse counterpart of the Manifest Scorer: one item in your hand rather
+         than a row on a sheet, priced by the SAME ladder. Answer first, with the three
+         numbers that produced it kept visible underneath rather than folded away —
+         roughly 40% of scans have no street retail behind them, and a price that cannot
+         be explained is a price nobody can argue with. -->
+    <div id="page-merch-scan" class="hidden">
+      <style>
+        #ps-wrap{max-width:520px;margin:0 auto}
+        #ps-card{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:16px;
+          overflow:hidden;color:#14110a}
+        .dark #ps-card{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3}
+        #ps-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;
+          background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #ps-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        .ps-lbl{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#6b6453}
+        .dark .ps-lbl{color:#8893a7}
+        #ps-body{padding:16px;display:flex;flex-direction:column;gap:14px}
+        .ps-in{width:100%;border:1px solid rgba(20,16,8,.18);border-radius:10px;padding:12px 13px;
+          font-size:16px;background:#fff;color:#14110a;font-variant-numeric:tabular-nums}
+        .dark .ps-in{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .ps-in:focus{outline:2px solid #22c55e;outline-offset:1px}
+        .ps-btn{background:#22c55e;color:#06210f;border:none;border-radius:11px;padding:13px;
+          font-weight:700;font-size:15px;cursor:pointer;width:100%}
+        .ps-btn.ghost{background:transparent;color:#1c7a33;box-shadow:inset 0 0 0 1px rgba(20,16,8,.20)}
+        .dark .ps-btn.ghost{color:#5fd170;box-shadow:inset 0 0 0 1px rgba(255,255,255,.20)}
+        .ps-btn:disabled{opacity:.5;cursor:default}
+        .ps-row{display:flex;gap:9px}
+        .ps-ident{text-align:center;display:flex;flex-direction:column;gap:3px}
+        .ps-nm{font-weight:600;font-size:15px;line-height:1.3}
+        .ps-up{font-size:12px;color:#6b6453;font-variant-numeric:tabular-nums}
+        .dark .ps-up{color:#8893a7}
+        .ps-hero{font-weight:700;font-size:68px;line-height:.94;letter-spacing:-.045em;
+          text-align:center;font-variant-numeric:tabular-nums}
+        .ps-hero.bad{color:#8a4b00}
+        .dark .ps-hero.bad{color:#f0a742}
+        .ps-chips{display:flex;justify-content:center;gap:6px;flex-wrap:wrap}
+        .ps-chip{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+          border-radius:5px;padding:4px 9px;background:rgba(34,197,94,.16);color:#1c7a33}
+        .dark .ps-chip{color:#5fd170}
+        .ps-chip.warn{background:rgba(245,158,11,.18);color:#8a4b00}
+        .dark .ps-chip.warn{color:#f0a742}
+        .ps-chip.flat{background:transparent;color:#6b6453;box-shadow:inset 0 0 0 1px rgba(20,16,8,.20)}
+        .dark .ps-chip.flat{color:#8893a7;box-shadow:inset 0 0 0 1px rgba(255,255,255,.20)}
+        /* A's reasoning, kept VISIBLE — the point of the hybrid */
+        #ps-strip{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid rgba(20,16,8,.12);
+          border-radius:12px;overflow:hidden;background:#fafaf6}
+        .dark #ps-strip{background:#16203a;border-color:rgba(255,255,255,.10)}
+        #ps-strip.bad{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.42)}
+        .ps-cell{padding:10px 6px;text-align:center;border-right:1px solid rgba(20,16,8,.12)}
+        .dark .ps-cell{border-right-color:rgba(255,255,255,.10)}
+        .ps-cell:last-child{border-right:none}
+        .ps-k{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#6b6453}
+        .dark .ps-k{color:#8893a7}
+        .ps-v{font-weight:700;font-size:17px;font-variant-numeric:tabular-nums;margin-top:1px}
+        .ps-s{font-size:10px;color:#6b6453}
+        .dark .ps-s{color:#8893a7}
+        .ps-why{text-align:center;font-size:12.5px;color:#6b6453;line-height:1.45}
+        .dark .ps-why{color:#8893a7}
+        .ps-why.bad{color:#8a4b00;font-weight:600}
+        .dark .ps-why.bad{color:#f0a742}
+        .ps-catrow{display:flex;align-items:center;justify-content:space-between;gap:10px}
+        .ps-l2{font-size:11px;color:#6b6453}
+        .dark .ps-l2{color:#8893a7}
+        .ps-l3{font-weight:600;font-size:14px}
+        .ps-link{font-size:12.5px;color:#1c7a33;font-weight:600;background:none;border:none;
+          cursor:pointer;padding:0}
+        .dark .ps-link{color:#5fd170}
+        #ps-prev{display:flex;align-items:center;justify-content:space-between;gap:10px;
+          padding-top:12px;border-top:1px solid rgba(20,16,8,.10)}
+        .dark #ps-prev{border-top-color:rgba(255,255,255,.09)}
+        .ps-pn{font-size:12.5px;font-weight:600}
+        .ps-pm{font-size:10.5px;color:#6b6453}
+        .dark .ps-pm{color:#8893a7}
+        .ps-pp{font-weight:700;font-size:19px;font-variant-numeric:tabular-nums}
+      </style>
+      <div id="ps-wrap" class="px-4 py-6 space-y-4">
+        <div>
+          <h1 class="text-2xl font-bold text-opl-ink dark:text-op-ink">Price Scan</h1>
+          <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-1">
+            Scan a barcode or type what it is. Prices from our criteria, our cost and our ASP.
+          </p>
+        </div>
+        <!-- OUTSIDE the render target: psRender replaces #ps-result wholesale. -->
+        <div id="ps-status" class="text-sm text-opl-inkDim dark:text-op-inkDim"></div>
+        <div id="ps-card">
+          <div id="ps-bar">
+            <span class="ps-lbl">Scan</span>
+            <span id="ps-count" class="ps-lbl" style="margin-left:auto"></span>
+          </div>
+          <div id="ps-body">
+            <div class="ps-row">
+              <input id="ps-input" class="ps-in" type="text" inputmode="numeric"
+                     autocomplete="off" autocapitalize="off" spellcheck="false"
+                     placeholder="Barcode, or type the product"
+                     onkeydown="if(event.key==='Enter'){event.preventDefault();psScan();}">
+              <button id="ps-camera" class="ps-btn ghost hidden" style="width:auto;flex:0 0 92px"
+                      onclick="psCamera()" type="button">Camera</button>
+            </div>
+            <button id="ps-go" class="ps-btn" onclick="psScan()" type="button">Look it up</button>
+            <div id="ps-result"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -8122,6 +8232,16 @@
 
     // Guard admin-only pages
     const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria', 'merch-coverage', 'merch-manifests', 'merch-velocity'];
+    // Price Scan is the one Merchandising page a MANAGER uses — they price items on the
+    // floor. Everything else there is a buying surface and stays admin-only.
+    const managerPages = ['merch-scan'];
+    if (managerPages.includes(page)) {
+      const role = currentUser && currentUser.role;
+      // Mirrors canSeeFinancials on the worker: this screen shows our cost and margin.
+      // Staff are excluded until the worker role exists — one entry, in both places.
+      const allowed = ['superuser', 'admin', 'executive', 'manager'];
+      if (!allowed.includes(role)) return;
+    }
     if (adminOnly.includes(page)) {
       const role = currentUser && currentUser.role;
       if (role !== 'superuser' && role !== 'admin') return;
@@ -8237,6 +8357,9 @@
     if (page === 'merch-coverage') {
       if (typeof initMerchCoverage === 'function') initMerchCoverage();
     }
+    if (page === 'merch-scan') {
+      if (typeof initPriceScan === 'function') initPriceScan();
+    }
     if (page === 'merch-velocity') {
       if (typeof initMerchVelocity === 'function') initMerchVelocity();
     }
@@ -8250,7 +8373,7 @@
       if (typeof initShelfCount === 'function') initShelfCount();
     }
     // Keep the Merchandising dropdown expanded while on any of its pages.
-    if ((page === 'merch-coverage' || page === 'merch-velocity' || page === 'merch-manifests' || page === 'merch-criteria' || page === 'merch-shelf-count') && typeof toggleMerchMenu === 'function') {
+    if ((page === 'merch-scan' || page === 'merch-coverage' || page === 'merch-velocity' || page === 'merch-manifests' || page === 'merch-criteria' || page === 'merch-shelf-count') && typeof toggleMerchMenu === 'function') {
       toggleMerchMenu(true);
     }
 
@@ -17761,6 +17884,215 @@
   }
   window.mfDecide = mfDecide;
 
+  // ── Price Scan ────────────────────────────────────────────────────────────
+  // One item, priced by the same ladder the Manifest Scorer uses.
+  //
+  // 🔑 The input is a plain text box that submits on Enter, and that is the PRIMARY
+  // interface, not a fallback. Warehouse barcode scanners emulate a keyboard: they type
+  // the digits and press Enter. So the fastest path on a real receiving bench needs no
+  // camera at all — and it is also the only path that works on iPhone, where Safari has
+  // no BarcodeDetector. The camera button appears only where the browser supports it.
+  let psLast = null, psCount = 0, psBusy = false;
+  const psStatus = (t) => { const n = el('ps-status'); if (n) n.textContent = t || ''; };
+  const psEsc = (v) => String(v ?? '').replace(/[&<>"']/g, c =>
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  const psMoney = (v) => (v === null || v === undefined || v === '') ? '—' : `$${Number(v).toFixed(2)}`;
+
+  function initPriceScan() {
+    psStatus('');
+    el('ps-result').innerHTML = '';
+    el('ps-input').value = '';
+    // Only offer the camera where it can actually work. Chrome on Android has it; Safari
+    // does not, and a button that silently fails is worse than no button.
+    const hasDetector = typeof window.BarcodeDetector === 'function';
+    el('ps-camera').classList.toggle('hidden', !hasDetector);
+    setTimeout(() => { try { el('ps-input').focus(); } catch (e) {} }, 60);
+  }
+  window.initPriceScan = initPriceScan;
+
+  async function psScan() {
+    if (psBusy) return;
+    const raw = el('ps-input').value.trim();
+    if (!raw) { el('ps-input').focus(); return; }
+    // A run of digits is a barcode; anything else is a description someone typed.
+    const isCode = /^[0-9]{6,14}$/.test(raw.replace(/[\s-]/g, ''));
+    const payload = isCode
+      ? { identifier: raw.replace(/[\s-]/g, '') }
+      : { description: raw };
+
+    psBusy = true;
+    el('ps-go').disabled = true;
+    psStatus('Looking it up…');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=merch-scan`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      psCount++;
+      psRender(j);
+      el('ps-input').value = '';
+      // Straight back to the box so the next scan just works — a receiving bench does
+      // fifty of these and should never need to touch the screen between them.
+      setTimeout(() => { try { el('ps-input').focus(); } catch (e) {} }, 40);
+    } catch (e) {
+      psStatus(`Could not price that: ${e.message}`);
+    } finally {
+      psBusy = false;
+      el('ps-go').disabled = false;
+    }
+  }
+  window.psScan = psScan;
+
+  function psRender(j) {
+    const prev = psLast;
+    psLast = j;
+    el('ps-count').textContent = psCount === 1 ? '1 priced' : `${psCount} priced`;
+    psStatus(j.looked_up ? 'Looked up just now.' : j.from_cache ? 'From what we already knew — no lookup needed.' : '');
+
+    const bad = !!j.below_gp_floor;
+    const noRetail = j.retail === null || j.retail === undefined;
+    const priceTxt = j.price === null || j.price === undefined ? '—' : psMoney(j.price);
+
+    // Why the price is what it is, in the order it happened.
+    let why;
+    if (j.price === null || j.price === undefined) {
+      why = 'Nothing to price from — no street retail found, and no sales history for this category.';
+    } else if (j.price_overridden) {
+      why = 'Set by hand, so the rule was not applied.';
+    } else if (bad) {
+      why = `Half of retail would not make the margin, so this steps up. It still keeps only ${j.gp_pct}% — under the ${j.gp_floor_pct}% floor.`;
+    } else if (j.price_basis === 'street retail') {
+      why = `${psMoney(j.retail)} at the price cap, rounded up.`;
+    } else {
+      why = noRetail
+        ? 'No big-box price to work from, so this uses what the category sells for here.'
+        : 'Priced from what the category sells for here.';
+    }
+
+    el('ps-result').innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:14px;margin-top:2px">
+        <div class="ps-ident">
+          <div class="ps-nm">${psEsc(j.title || 'Unidentified item')}</div>
+          ${j.identifier ? `<div class="ps-up">${psEsc(j.identifier)}</div>` : ''}
+        </div>
+
+        <div class="ps-hero ${bad ? 'bad' : ''}">${priceTxt}</div>
+        <div class="ps-chips">
+          ${j.gp_pct !== null && j.gp_pct !== undefined
+            ? `<span class="ps-chip ${bad ? 'warn' : ''}">${j.gp_pct}% GP${bad ? ' · under floor' : ''}</span>` : ''}
+          ${j.price_overridden ? '<span class="ps-chip flat">Set by hand</span>'
+            : j.price_basis ? `<span class="ps-chip flat">${psEsc(j.price_basis)}</span>` : ''}
+        </div>
+
+        <div id="ps-strip" class="${bad ? 'bad' : ''}">
+          <div class="ps-cell"><div class="ps-k">Retail</div>
+            <div class="ps-v">${psMoney(j.retail)}</div>
+            <div class="ps-s">${psEsc(noRetail ? 'not found' : (j.retail_source || ''))}</div></div>
+          <div class="ps-cell"><div class="ps-k">Our cost</div>
+            <div class="ps-v">${psMoney(j.cost)}</div>
+            <div class="ps-s">${psEsc(j.l3 ? 'category' : '—')}</div></div>
+          <div class="ps-cell"><div class="ps-k">ASP</div>
+            <div class="ps-v">${psMoney(j.asp)}</div>
+            <div class="ps-s">what we get</div></div>
+        </div>
+
+        <div class="ps-why ${bad ? 'bad' : ''}">${psEsc(why)}</div>
+
+        <div class="ps-catrow">
+          <div>
+            <div class="ps-l2">${psEsc(j.l2_label || j.l2 || 'No category yet')}</div>
+            <div class="ps-l3">${psEsc(j.l3_label || j.l3 || '—')}</div>
+          </div>
+          ${psCanOverride() ? '<button class="ps-link" onclick="psOverride()" type="button">Change</button>' : ''}
+        </div>
+
+        ${psCanOverride() ? `<button class="ps-btn ghost" onclick="psOverride()" type="button">Override price or retail</button>` : ''}
+
+        ${prev ? `<div id="ps-prev">
+          <div><div class="ps-pn">${psEsc(prev.title || prev.identifier || 'Previous')}</div>
+               <div class="ps-pm">Priced just before this</div></div>
+          <div class="ps-pp">${prev.price === null || prev.price === undefined ? '—' : psMoney(prev.price)}</div>
+        </div>` : ''}
+      </div>`;
+  }
+
+  // Scanning and overriding are different rights: a manager prices items all day, but only
+  // an admin may permanently change what an item is worth for every store. The worker
+  // enforces this; hiding the control keeps the screen honest about what it will accept.
+  function psCanOverride() {
+    return ['superuser', 'admin'].includes(currentUser && currentUser.role);
+  }
+
+  async function psOverride() {
+    const j = psLast;
+    if (!j) return;
+    if (!j.identifier) {
+      uiAlert('An override needs a barcode to attach to. Scan the item rather than typing its name.');
+      return;
+    }
+    const what = await uiPrompt('Set the STREET RETAIL price (leave empty to clear it and use the looked-up figure):',
+      j.retail_overridden && j.retail !== null ? String(j.retail) : '');
+    if (what === null) return;
+    const body = { identifier: j.identifier, retail_price: what.trim() === '' ? null : what.trim() };
+    psStatus('Saving…');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=merch-scan-save`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const res = await r.json();
+      if (!r.ok) throw new Error(res.error || `HTTP ${r.status}`);
+      // Re-scan so the screen shows the price the override actually produces, rather than
+      // us guessing at it here — the ladder lives on the worker for exactly this reason.
+      el('ps-input').value = j.identifier;
+      await psScan();
+    } catch (e) {
+      psStatus(`Could not save: ${e.message}`);
+    }
+  }
+  window.psOverride = psOverride;
+
+  // Chrome/Android only. Safari has no BarcodeDetector, which is why the text box — and a
+  // keyboard-emulating scanner — is the primary path rather than this.
+  async function psCamera() {
+    if (typeof window.BarcodeDetector !== 'function') {
+      uiAlert('This browser cannot read barcodes from the camera. Type the number, or use a handheld scanner.');
+      return;
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    } catch (e) {
+      uiAlert('No camera available. Type the number instead.');
+      return;
+    }
+    const video = document.createElement('video');
+    video.srcObject = stream; video.setAttribute('playsinline', ''); await video.play();
+    const detector = new window.BarcodeDetector({ formats: ['upc_a', 'upc_e', 'ean_13', 'ean_8', 'code_128'] });
+    psStatus('Point the camera at the barcode…');
+    const started = Date.now();
+    const stop = () => stream.getTracks().forEach(t => t.stop());
+    const tick = async () => {
+      if (Date.now() - started > 20000) { stop(); psStatus('No barcode found — type the number instead.'); return; }
+      try {
+        const codes = await detector.detect(video);
+        if (codes && codes.length) {
+          stop();
+          el('ps-input').value = codes[0].rawValue;
+          psScan();
+          return;
+        }
+      } catch (e) { /* a frame that cannot be read is not an error */ }
+      requestAnimationFrame(tick);
+    };
+    tick();
+  }
+  window.psCamera = psCamera;
+
   // ── Velocity & Reach ──────────────────────────────────────────────────────
   // Separates "wrong product here" from "wrong customer for this category". Raw units
   // cannot: a store doing 400 transactions and one doing 2,000 always look different.
@@ -20502,6 +20834,7 @@
     'nav-merch': 'bl',
     'nav-merch-chev': 'bl',
     'nav-merch-sub': 'bl',
+    'nav-merch-scan': 'bl',
     'nav-merch-coverage': 'bl',
     'nav-merch-velocity': 'bl',
     'nav-merch-manifests': 'bl',
@@ -20909,6 +21242,9 @@
     // Same shape as Marketing directly below.
     const merchRoles = ['superuser', 'admin', 'district_manager', 'manager'];
     el('nav-merch-group').classList.toggle('hidden', !merchRoles.includes(user.role));
+    // Managers see Price Scan; the rest of Merchandising stays admin-only.
+    const canScan = ['superuser', 'admin', 'executive', 'manager'].includes(currentUser?.role);
+    el('nav-merch-scan').classList.toggle('hidden', !canScan);
     el('nav-merch-coverage').classList.toggle('hidden', !isAdmin);
     el('nav-merch-velocity').classList.toggle('hidden', !isAdmin);
     el('nav-merch-manifests').classList.toggle('hidden', !isAdmin);

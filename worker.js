@@ -3871,6 +3871,8 @@ const ACTION_BUSINESS = new Map([
   ["merch-criteria-log", "bl"],
   ["merch-coverage", "bl"],
   ["merch-velocity", "bl"],
+  ["merch-scan", "bl"],
+  ["merch-scan-save", "bl"],
   ["manifest-upload", "bl"],
   ["manifest-remap", "bl"],
   ["manifest-classify", "bl"],
@@ -7816,12 +7818,16 @@ async function retailPriceLine(env, line, budget, ctx, searchName) {
   const item = [searchName || line.description,
                 line.identifier_type === "upc" ? `UPC ${line.identifier}` : line.identifier]
     .filter(Boolean).join(" · ");
-  if (!line.description) return { skipped: "no description" };
+  // A scan gives a UPC and NOTHING else, so a missing description is only fatal when
+  // there is no identifier either — searching a bare UPC usually resolves the product,
+  // and the expanded title it finds becomes the description from then on.
+  if (!line.description && !line.identifier) return { skipped: "no description" };
 
   if (budget.searches <= 0) return { skipped: "budget" };
   budget.searches--;
   // The expanded name if we have one, the raw shorthand only as a last resort.
-  const query = (searchName || line.description).slice(0, 180);
+  const query = String(searchName || line.description || line.identifier || "").slice(0, 180);
+  if (!query) return { skipped: "no description" };
   const results = await retailSearch(env, query, domains, ctx);
   if (results === null) return { skipped: "search failed" };
   // Zero results across every allowed domain lands on "not at big box" via retailDecide.
@@ -7916,7 +7922,13 @@ async function retailRunManifest(env, manifestId, opts = {}) {
 
   const cutoff = new Date(Date.now() - 90 * 86400e3).toISOString();
   const { results: cacheRows } = await env.DB.prepare(
-    `SELECT * FROM item_cache WHERE retail_price IS NOT NULL AND fetched_at > ?`).bind(cutoff).all();
+    // 🔑 An override is fetched regardless of the 90-day TTL and regardless of whether a
+    // lookup ever found anything. A price a person typed does not go stale, and an item
+    // whose ONLY price is that override would otherwise be missing from this map entirely
+    // — the correction would save, and then never be read back.
+    `SELECT * FROM item_cache
+      WHERE retail_price_override IS NOT NULL
+         OR (retail_price IS NOT NULL AND fetched_at > ?)`).bind(cutoff).all();
   const cache = new Map((cacheRows || []).map(c => [`${c.identifier}|${c.identifier_type}`, c]));
 
   // Expanded product names, cached separately from prices: a name stays true long after a
@@ -7956,8 +7968,15 @@ async function retailRunManifest(env, manifestId, opts = {}) {
     let d = null, from = null;
     if (key && cache.has(key)) {
       const c = cache.get(key);
-      d = { retail_price: c.retail_price, retail_source: c.retail_source, retail_basis: c.retail_basis,
-            retail_confidence: c.retail_confidence, retail_in_stock: c.retail_in_stock,
+      // 🔑 An override beats the looked-up figure everywhere it is read. The lookup's own
+      // value is still kept in retail_price, so a correction can be compared with what we
+      // actually found rather than erasing it.
+      const overridden = c.retail_price_override !== null && c.retail_price_override !== undefined;
+      d = { retail_price: overridden ? c.retail_price_override : c.retail_price,
+            retail_source: overridden ? "set by hand" : c.retail_source,
+            retail_basis: overridden ? "manual" : c.retail_basis,
+            retail_confidence: overridden ? "high" : c.retail_confidence,
+            retail_in_stock: c.retail_in_stock,
             retail_in_store: c.retail_in_store, retail_url: c.retail_url, flags: [] };
       from = "cache"; cached++;
     } else if (key && seen.has(key)) {
@@ -8772,7 +8791,12 @@ async function manifestClassify(env, lines) {
          WHERE item_cache.l3_source <> 'manual'`);   // 🔑 never overwrite a human's correction
     for (let i = 0; i < updates.length; i += 100) {
       const chunk = updates.slice(i, i + 100);
-      await env.DB.batch(chunk.map(u => up.bind(u.l2, u.l3, u.id)));
+      // 🔑 Only rows that ARE manifest lines get written back to manifest_lines. Price Scan
+      // classifies a single scanned item that has no line and no id — binding undefined
+      // there is a hard sqlite error, and inventing an id would UPDATE somebody else's row.
+      // The item_cache write below still happens, which is the part a scan needs.
+      const onLines = chunk.filter(u => u.id !== null && u.id !== undefined);
+      if (onLines.length) await env.DB.batch(onLines.map(u => up.bind(u.l2, u.l3, u.id)));
       const withIdent = chunk.filter(u => u.identifier);
       if (withIdent.length) await env.DB.batch(withIdent.map(u =>
         cache.bind(u.identifier, u.identifier_type, u.l2, u.l3, now)));
@@ -17102,6 +17126,259 @@ export default {
     // section, is a category that does not work for our customer.
     //
     // Same read path as coverage: nightly items:<store>:<date> snapshots, no Clover call.
+    // POST ?action=merch-scan-save { identifier, retail_price?, suggested_price?, l3? }
+    //
+    // A person's correction, kept where no lookup can reach it. This is the mechanism that
+    // makes the tool get BETTER with use: our retail coverage is roughly 40%, and every
+    // gap an admin fills is filled permanently, for every store, at no further cost.
+    //
+    // 🔑 Writes ONLY the override columns. The looked-up figures stay untouched beside
+    // them, so a correction can always be compared with what the machine actually found.
+    // Passing null clears an override and hands the item back to the lookup.
+    if (url.searchParams.get("action") === "merch-scan-save" && request.method === "POST") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson,
+        { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const identifier = String(body?.identifier || "").trim();
+        if (!identifier) {
+          return new Response(JSON.stringify({ error: "An override needs a barcode to attach to" }),
+            { status: 400, headers: corsJson });
+        }
+        const identType = manifestIdentType(identifier);
+        const money = (v) => {
+          if (v === undefined) return undefined;          // not sent — leave alone
+          if (v === null || v === "") return null;        // sent empty — clear it
+          const n = Number(v);
+          return Number.isFinite(n) && n > 0 && n < 100000 ? roundCents(n) : NaN;
+        };
+        const retail = money(body?.retail_price);
+        const price = money(body?.suggested_price);
+        if (Number.isNaN(retail) || Number.isNaN(price)) {
+          return new Response(JSON.stringify({ error: "A price must be a number above zero" }),
+            { status: 400, headers: corsJson });
+        }
+        const l3 = body?.l3 === undefined ? undefined : (body.l3 === null || body.l3 === "" ? null : String(body.l3));
+        if (l3 && !merchIsL3(l3) && !merchIsL2(l3)) {
+          return new Response(JSON.stringify({ error: `Not a category we use: ${l3}` }),
+            { status: 400, headers: corsJson });
+        }
+
+        const now = new Date().toISOString();
+        const who = currentUser?.email || currentUser?.name || null;
+        // The row may not exist yet — a scan that found nothing writes no cache entry.
+        await env.DB.prepare(
+          `INSERT INTO item_cache (identifier, identifier_type, updated_at)
+           VALUES (?,?,?) ON CONFLICT(identifier, identifier_type) DO NOTHING`
+        ).bind(identifier, identType, now).run();
+
+        const sets = [], binds = [];
+        if (retail !== undefined) {
+          sets.push("retail_price_override = ?", "retail_override_by = ?", "retail_override_at = ?");
+          binds.push(retail, retail === null ? null : who, retail === null ? null : now);
+        }
+        if (price !== undefined) { sets.push("suggested_price_override = ?"); binds.push(price); }
+        if (l3 !== undefined) {
+          // 'manual' is what stops the classifier replacing it on the next scan.
+          sets.push("l3 = ?", "l2 = ?", "l3_source = ?");
+          binds.push(l3, l3 ? (L3_TO_L2[l3] || merchParentOf(l3) || null) : null, l3 ? "manual" : null);
+        }
+        if (!sets.length) {
+          return new Response(JSON.stringify({ error: "Nothing to save" }), { status: 400, headers: corsJson });
+        }
+        sets.push("updated_by = ?", "updated_at = ?");
+        binds.push(who, now, identifier, identType);
+        const res = await env.DB.prepare(
+          `UPDATE item_cache SET ${sets.join(", ")} WHERE identifier = ? AND identifier_type = ?`
+        ).bind(...binds).run();
+        if (!res?.meta?.changes) {
+          return new Response(JSON.stringify({ error: "Could not save that override" }), { status: 500, headers: corsJson });
+        }
+        return new Response(JSON.stringify({ ok: true, identifier, saved_by: who, saved_at: now }),
+          { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=merch-scan { identifier?, identifier_type?, description? }
+    //
+    // One item, priced. The warehouse counterpart of the Manifest Scorer: same criteria,
+    // same ASP, same cost sources, the SAME price ladder — but for a thing in your hand
+    // rather than a row on a spreadsheet.
+    //
+    // 💰 CACHE FIRST, ALWAYS. A UPC we have seen answers instantly and for nothing, and an
+    // override answers instantly forever. Only a genuinely new item costs an API call, so
+    // the spend falls as the library grows instead of scaling with how much gets scanned.
+    if (url.searchParams.get("action") === "merch-scan" && request.method === "POST") {
+      // Managers use this on the floor, so it cannot be admin-only. canSeeFinancials is
+      // reused rather than a fresh list: the screen shows our COST and our margin, which
+      // is exactly the data that set already governs — superuser, admin, executive,
+      // manager, never staff. When the worker role arrives it is one entry, in one place,
+      // and every other money surface stays consistent with it.
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }),
+          { status: 403, headers: corsJson });
+      }
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const rawId = String(body?.identifier || "").trim();
+        const desc = String(body?.description || "").trim().slice(0, 400);
+        if (!rawId && !desc) {
+          return new Response(JSON.stringify({ error: "Scan a barcode or type what the item is" }),
+            { status: 400, headers: corsJson });
+        }
+        const identifier = rawId || null;
+        const identType = identifier ? manifestIdentType(identifier) : "none";
+
+        const cached = identifier
+          ? await env.DB.prepare(
+              `SELECT * FROM item_cache WHERE identifier = ? AND identifier_type = ?`
+            ).bind(identifier, identType).first()
+          : null;
+
+        // ── what it is ────────────────────────────────────────────────────────
+        let title = cached?.title || desc || null;
+        let l3 = cached?.l3 ?? null;
+        let l3Source = cached?.l3_source ?? null;
+        let looked = false;
+
+        // ── what it sells for elsewhere ───────────────────────────────────────
+        const overridden = cached?.retail_price_override !== null && cached?.retail_price_override !== undefined;
+        let retail = overridden ? Number(cached.retail_price_override) : (cached?.retail_price ?? null);
+        let retailSource = overridden ? "set by hand" : (cached?.retail_source ?? null);
+        let retailConf = overridden ? "high" : (cached?.retail_confidence ?? null);
+        const missFlags = [];
+
+        if (retail === null || retail === undefined) {
+          // Not seen before, so this is the one path that spends anything.
+          const budget = { searches: 3, fetches: 3, credits: Number(body?.maxCredits) ?? 2 };
+          const line = { identifier, identifier_type: identType, description: title, qty: 1, cost: null };
+          const r = await retailPriceLine(env, line, budget, { scan: true }, title);
+          looked = true;
+          if (r?.decided) {
+            retail = r.decided.retail_price ?? null;
+            retailSource = r.decided.retail_source || null;
+            retailConf = r.decided.retail_confidence || null;
+            missFlags.push(...(r.decided.flags || []));
+            // A search that resolved a real product NAME is worth as much as the price —
+            // it is what makes the next scan of this UPC instant.
+            if (!title && r.decided.title) title = r.decided.title;
+          } else if (r?.skipped) {
+            missFlags.push(r.skipped === "budget" ? "not looked up" : String(r.skipped));
+          }
+        }
+
+        // ── which of our categories ───────────────────────────────────────────
+        if (!l3 && title) {
+          // manifestClassify reports counts and writes what it learned into item_cache; it
+          // does not hand the category back. Read it from the cache it just populated —
+          // that is also what makes the NEXT scan of this UPC free.
+          await manifestClassify(env, [{ id: null, row_no: 1, description: title,
+                                         identifier, identifier_type: identType }]);
+          if (identifier) {
+            const back = await env.DB.prepare(
+              `SELECT l2, l3, l3_source FROM item_cache WHERE identifier = ? AND identifier_type = ?`
+            ).bind(identifier, identType).first();
+            if (back?.l3) { l3 = back.l3; l3Source = back.l3_source || "claude"; }
+          }
+        }
+        const l2 = l3 ? (L3_TO_L2[l3] || merchParentOf(l3) || null) : null;
+
+        // ── what WE sell it for, and what it costs us ─────────────────────────
+        const av = await manifestAspVelocity(env);
+        const asp = l3 && av[l3] ? (av[l3].asp ?? null) : null;
+        const [catBlob, imBlob] = await Promise.all([
+          env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json"),
+          env.SALES_SNAPSHOTS.get(ITEM_COSTS_KEY, "json"),
+        ]);
+        const cost = l3UnitCost(l3, (imBlob || {}).items || {}, (catBlob || {}).costs || {});
+
+        // ── the price ─────────────────────────────────────────────────────────
+        const { live } = await merchVersions(env);
+        const resolved = live ? await merchResolve(env, live.version) : null;
+        const critAt = (field) => {
+          if (!resolved) return null;
+          const kids = resolved.categories.flatMap(c => [c, ...(c.children || [])]);
+          return (l3 && kids.find(c => c.key === l3)?.fields?.[field]?.value)
+            ?? (l2 && resolved.categories.find(c => c.key === l2)?.fields?.[field]?.value)
+            ?? resolved.defaults?.[field]?.value ?? null;
+        };
+        const asNum = (v) => {
+          if (v === null || v === undefined || v === "") return null;
+          const n = Number(v); return Number.isFinite(n) ? n : null;
+        };
+
+        const manual = cached?.suggested_price_override ?? null;
+        const lad = merchPriceLadder({
+          retail, asp, cost,
+          crit: { priceCapPct: asNum(critAt("price_cap_pct_retail")),
+                  gpFloorPct: asNum(critAt("min_gross_margin_pct")),
+                  ceiling: asNum(critAt("dollar_ceiling")),
+                  rounding: critAt("rounding") },
+        });
+        const price = manual !== null ? Number(manual) : lad.price;
+        const gpFloorPct = asNum(critAt("min_gross_margin_pct"));
+        const gpPct = price && cost !== null && price > 0
+          ? +(((price - cost) / price) * 100).toFixed(1) : null;
+        const belowFloor = manual !== null
+          ? (gpFloorPct !== null && gpPct !== null && gpPct < gpFloorPct)
+          : lad.belowFloor;
+
+        // Remember what was learned, so the next scan of this UPC is instant and free.
+        // 🔑 Never writes the override columns — those belong to a person.
+        if (identifier && (title || l3 || retail !== null) && !overridden) {
+          const now = new Date().toISOString();
+          await env.DB.prepare(
+            `INSERT INTO item_cache (identifier, identifier_type, title, l2, l3, l3_source,
+               retail_price, retail_source, retail_confidence, fetched_at, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(identifier, identifier_type) DO UPDATE SET
+               title = COALESCE(excluded.title, item_cache.title),
+               l2 = COALESCE(excluded.l2, item_cache.l2),
+               -- A human's category is never replaced by a model's.
+               l3 = CASE WHEN item_cache.l3_source = 'manual' THEN item_cache.l3
+                         ELSE COALESCE(excluded.l3, item_cache.l3) END,
+               l3_source = CASE WHEN item_cache.l3_source = 'manual' THEN 'manual'
+                                ELSE COALESCE(excluded.l3_source, item_cache.l3_source) END,
+               retail_price = COALESCE(excluded.retail_price, item_cache.retail_price),
+               retail_source = COALESCE(excluded.retail_source, item_cache.retail_source),
+               retail_confidence = COALESCE(excluded.retail_confidence, item_cache.retail_confidence),
+               fetched_at = COALESCE(excluded.fetched_at, item_cache.fetched_at),
+               updated_at = excluded.updated_at`
+          // 🔑 undefined is not bindable — sqlite takes null, and a `?.` on a missing cache
+          // row yields undefined, not null. Coerced at the boundary rather than trusting
+          // every expression above to have produced the right kind of empty.
+          ).bind(...[identifier, identType, title, l2, l3, l3Source,
+                     retail, retailSource, retailConf, retail !== null && retail !== undefined ? now : null, now]
+                    .map(v => v === undefined ? null : v)).run();
+        }
+
+        return new Response(JSON.stringify({
+          ok: true,
+          identifier, identifier_type: identType, title,
+          l2, l3, l3_label: l3 ? merchLabel(l3) : null, l2_label: l2 ? merchLabel(l2) : null,
+          l3_source: l3Source,
+          retail, retail_source: retailSource, retail_confidence: retailConf,
+          retail_overridden: !!overridden,
+          asp, cost,
+          price, price_basis: manual !== null ? "set by hand" : lad.basis,
+          price_overridden: manual !== null,
+          gp_pct: gpPct, below_gp_floor: belowFloor, gp_floor_pct: gpFloorPct,
+          ceiling_bound: lad.ceilingBound,
+          criteria_version: live?.version ?? null,
+          from_cache: !looked && !!cached,
+          looked_up: looked,
+          flags: [...new Set(missFlags)],
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     if (url.searchParams.get("action") === "merch-velocity" && request.method === "GET") {
       const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
       if (unauth) return unauth;
