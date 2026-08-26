@@ -138,9 +138,33 @@ console.log('Retail lookup (R1–R8)');
   // negative telling the buyer there is no competition when CVS stocks it.
   ok(s.flags.includes('no price found'),
      '...and says WHY: carried, but no readable first-party price');
-  const sent = searches[0] || '';
-  ok(sent.includes('include_domains'), 'the allowlist is still sent as a query hint');
+  const sent0 = searches[0] || '';
+  ok(sent0.includes('include_domains'), 'the allowlist is still sent as a query hint');
   ok(!/familydollar/.test(JSON.stringify(s.line)), 'nothing from the leaked domain reaches the row');
+}
+
+// ── The allowlist is EARNED by publishing a real shelf price ────────────────
+// Checked live twice. Meijer quotes "$2.39" and a sale price and is in our own markets;
+// H-E-B quotes "$2.27 each". Dollar General's product page publishes nothing at all —
+// and its search snippets carry "$20.35" for a can Meijer sells at $2.39, which our
+// parser would take as gospel and turn into a $10.50 shelf price. A confidently wrong
+// number is worse than a missing one, so it stays out however good a comparator it
+// looks on paper.
+{
+  const s2 = await scenario({ desc: 'Pringles Original 5.5 oz', upc: '038000138416',
+    results: RES('https://www.meijer.com/shopping/product/pringles/3800013897.html'),
+    snippets: [{ url:'https://www.meijer.com/shopping/product/pringles/3800013897.html',
+                 price:2.39, title:'Pringles Potato Crisps 5.5 oz', pack:1, in_stock:true, sold_by:'Meijer' }] });
+  near(s2.line.retail_price, 2.39, '🔑 Meijer is accepted — it publishes a real shelf price, in our markets');
+}
+{
+  const s3 = await scenario({ desc: 'Pringles Original 5.5 oz', upc: '038000138417',
+    results: RES('https://www.dollargeneral.com/p/pringles/38000138430'),
+    snippets: [{ url:'https://www.dollargeneral.com/p/pringles/38000138430',
+                 price:20.35, title:'Pringles Potato Crisps 5.5 oz', pack:1, in_stock:true }] });
+  eq(s3.line.retail_price, null,
+     "🛑 Dollar General's $20.35 for a $2.39 can never becomes our retail — the domain is not allowed");
+  ok(s3.flags.includes('not at big box'), '...and it reads as no comparison found, not as a price');
 }
 
 // ── A subdomain of an approved retailer IS approved ────────────────────────

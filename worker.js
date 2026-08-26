@@ -7324,8 +7324,38 @@ function randomHex(bytes) {
 //
 // If Dollar Tree's fixed price point is wanted as a ceiling for a size band, that is a
 // different feature from a retail lookup and should not borrow this one's plumbing.
-const RETAIL_CPG_DOMAINS = ["walmart.com", "target.com", "walgreens.com", "cvs.com", "kroger.com"];
+// Retailers that publish a real single-unit SHELF price. Membership is earned by
+// checking, not by being a plausible competitor — see the dollar-store note below.
+// meijer.com is the closest of these to our actual markets (Indiana and Michigan) and
+// quotes both list and sale price; heb.com quotes a clean "$2.27 each ($0.41/oz)" and
+// corroborates the national packaged-goods price even though its stores are in Texas.
+const RETAIL_CPG_DOMAINS = ["walmart.com", "target.com", "walgreens.com", "cvs.com",
+                            "kroger.com", "meijer.com", "heb.com"];
 const RETAIL_BIG_DOMAINS = ["bestbuy.com", "lowes.com", "homedepot.com"];
+
+// 🛑 NOT dollargeneral.com, dollartree.com or familydollar.com, though on price point they
+// are the closest comparator this business has. Checked twice against the live API, most
+// recently 2026-08-26, and rejected both times:
+//
+//   dollargeneral.com  — the product page publishes NO price. It says "Available" and
+//                        "Instore"; pricing is per store. Worse, its SEARCH SNIPPETS now
+//                        carry a figure that is not the shelf price: five separate
+//                        Pringles listings all read "$20.35" for a 5.5 oz can that Meijer
+//                        sells at $2.39. Our parser would take that happily, and a 50%
+//                        price cap would then suggest we sell the can for $10.50.
+//                        A confidently wrong number is worse than no number.
+//   dollartree.com     — no prices, and JS-walled: a fetch returns navigation chrome.
+//   familydollar.com   — product pages carry no price either.
+//   sameday.* / shop.* — sameday.familydollar.com and shop.aldi.us DO quote prices, and
+//                        that is the trap: same-day delivery prices marked up over the
+//                        shelf. Aldi's $3.29 against Meijer's $2.39 is the markup, not a
+//                        better comparator. An inflated retail makes every cost-of-retail
+//                        look better than it is — the same direction of error R7 exists to
+//                        stop a vendor's claimed comp from making.
+//
+// What serves the intent instead is `dollar_ceiling`, a per-category criteria field: what
+// a dollar store actually charges, set by hand from someone walking in and looking. It
+// caps the suggested price directly, which is the decision the comparison was for.
 // Never a price from any of these, whatever the domain filter let through.
 const RETAIL_MARKETPLACE = /(amazon|ebay|aliexpress|alibaba|poshmark|mercari|etsy|wish|temu|walmart\.com\/(?:ip\/)?seller|marketplace)/i;
 
