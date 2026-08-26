@@ -302,6 +302,78 @@ console.log('Price Scan');
   for (const c of codes) for (const mod of [2, 3, 4, 7]) if (decodeEanRow(encode(c, mod)) !== c) failures++;
   eq(failures, 0, 'every real barcode decodes exactly, at every module width');
 
+  // ── 🔑 UPC-E: THE SMALL PACKAGES, WHICH ARE THE ONES WE SCAN MOST ─────────
+  // A single can, a bar of soap, a travel-size shampoo. Anything without room for a
+  // 95-module EAN-13 carries the 51-module compressed form, and until now the scanner
+  // simply could not read it and gave no reason why.
+  const encodeE = (ns, x, check, mod = 3) => {
+    const P = ['111000','110100','110010','110001','101100','100110','100011','101010','101001','100101'];
+    const pat = ns === 0 ? P[check] : [...P[check]].map(b => b === '1' ? '0' : '1').join('');
+    let bits = '101';
+    for (let k = 0; k < 6; k++) bits += (pat[k] === '1' ? G : L)[x[k]];
+    bits += '010101';
+    const row = new Array(14).fill(225);
+    for (const b of bits) for (let k = 0; k < mod; k++) row.push(b === '1' ? 30 : 225);
+    for (let k = 0; k < 14; k++) row.push(225);
+    return row;
+  };
+  const chk12 = (a) => { let t = 0; for (let k = 0; k < 12; k++) t += a[k] * (k % 2 === 0 ? 1 : 3); return (10 - (t % 10)) % 10; };
+  const expand = (ns, x) => {
+    const [a, b, c, d, e, f] = x;
+    const body = f <= 2 ? [ns, a, b, f, 0, 0, 0, 0, c, d, e]
+      : f === 3 ? [ns, a, b, c, 0, 0, 0, 0, 0, d, e]
+      : f === 4 ? [ns, a, b, c, d, 0, 0, 0, 0, 0, e]
+      : [ns, a, b, c, d, e, 0, 0, 0, 0, f];
+    const full = [0, ...body];
+    return full.join('') + String(chk12(full));
+  };
+  // 🔑 EVERY expansion branch. Which zeros come back is chosen by the LAST digit, and
+  // getting one branch wrong yields a valid-looking barcode for a different product.
+  let eFail = 0, eSeen = 0;
+  for (const [ns, x] of [[0,[1,2,3,4,5,0]], [0,[1,2,3,4,5,1]], [0,[1,2,3,4,5,2]],
+                         [0,[1,2,3,4,5,3]], [0,[1,2,3,4,5,4]], [0,[1,2,3,4,5,6]],
+                         [0,[9,8,7,6,5,9]], [1,[1,2,3,4,5,6]], [1,[0,0,0,0,0,0]]]) {
+    const want = expand(ns, x);
+    const check = Number(want[12]);
+    for (const mod of [2, 3, 4, 7]) { eSeen++; if (decodeEanRow(encodeE(ns, x, check, mod)) !== want) eFail++; }
+  }
+  eq(eFail, 0, `🔑 every UPC-E expansion branch decodes exactly (${eSeen} encodings)`);
+  // The hand-checked reference: UPC-E 01234565 is UPC-A 012345000065.
+  eq(decodeEanRow(encodeE(0, [1,2,3,4,5,6], 5)), '0012345000065',
+     '🔑 …and matches the published worked example');
+  // A UPC-E is barely half the modules of an EAN-13, so it is likelier to appear in
+  // noise. It must not.
+  let eFalse = 0;
+  for (let i = 0; i < 800; i++) {
+    eFalse += decodeEanRow(Array.from({ length: 300 }, () => Math.random() < 0.5 ? 30 : 225)) ? 1 : 0;
+    eFalse += decodeEanRow(Array.from({ length: 300 }, (_, k) => Math.sin(k / (1 + Math.random() * 6)) > 0 ? 40 : 215)) ? 1 : 0;
+  }
+  eq(eFalse, 0, '🛑 the shorter symbol does not make false positives — still exactly zero');
+
+  // ── 🛑 BOTH PATHS MUST KEY THE SAME PRODUCT IDENTICALLY ───────────────────
+  // Android Chrome has a native BarcodeDetector and Safari does not, so the same can of
+  // beans is read by different code on different phones. Verified live in Chromium: the
+  // native detector returns a UPC-E as its printed 8 digits ("01234565"), while our own
+  // decoder returns the expanded 13 ("0012345000065"). item_cache is keyed on that
+  // string — left unnormalised, one product would occupy two rows, be looked up twice,
+  // and answer differently depending on who scanned it.
+  {
+    const glue = html.slice(from, html.indexOf('  async function psBarcode()'));
+    const { psNormalizeCode } = new Function(glue + '; return { psNormalizeCode };')();
+    eq(psNormalizeCode('01234565', 'upc_e'), '0012345000065',
+       '🔑 a native UPC-E lands on the SAME 13 digits our own decoder produces');
+    eq(psNormalizeCode('012345000065', 'upc_a'), '0012345000065',
+       '…and so does a UPC-A, which is an EAN-13 with a leading zero');
+    eq(psNormalizeCode('0038000293122', 'ean_13'), '0038000293122', '…and an EAN-13 passes through');
+    eq(psNormalizeCode('038000293122', 'ean_13'), '0038000293122',
+       '🔑 Chromium reports UPC-A as ean_13, so the 12-digit case cannot depend on the label');
+    // 🛑 An 8-digit code that is NOT a UPC-E must never be run through the expansion —
+    // it would invent a different product's number. EAN-8 is deliberately not requested.
+    eq(psNormalizeCode('12345670', 'ean_8'), '12345670',
+       '🛑 an EAN-8 is left alone rather than expanded into someone else\'s UPC');
+    eq(psNormalizeCode('', 'upc_e'), null, 'nothing in, nothing out');
+  }
+
   // Camera conditions: sensor noise, soft focus, and a light gradient across the label.
   const jitter = (r, a) => r.map(v => Math.max(0, Math.min(255, v + (Math.random() * 2 - 1) * a)));
   const blur = (r, k) => r.map((_, i) => { let s2 = 0, n = 0; for (let j = -k; j <= k; j++) { const x = r[i + j]; if (x !== undefined) { s2 += x; n++; } } return s2 / n; });
