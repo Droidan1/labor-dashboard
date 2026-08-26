@@ -580,6 +580,51 @@ console.log('Price Scan');
   near(manifestRound(2.5000000001, '$0.50 down'), 2.50, '…including one reached by multiplication');
   near(manifestRound(0.40, '$0.50 down'), 0.50, 'nothing rounds below 50c');
   near(manifestRound(4.99, '$1 down'), 4.00, 'whole-dollar rounding down works too');
+
+  // ── Quarters ──────────────────────────────────────────────────────────────
+  near(manifestRound(0.845, '$0.25 down'), 0.75, 'a quarter rung rounds down to $0.75');
+  near(manifestRound(1.157, '$0.25'), 1.25, '…and up to $1.25');
+  near(manifestRound(2.50, '$0.25 down'), 2.50, '🔑 an exact rung STAYS — the epsilon guards it here too');
+  near(manifestRound(2.5000000001, '$0.25 down'), 2.50, '…including one reached by multiplication');
+  near(manifestRound(0.10, '$0.25 down'), 0.25, 'nothing rounds below a quarter');
+  // 🔑 The ceiling snap reads this map. A rule missing from it does NOT error — it
+  // silently snaps a ceiling-bound price to the ceiling exactly, landing off-convention.
+  const map = src.slice(src.indexOf('const MANIFEST_ROUND_STEP'),
+                        src.indexOf('};', src.indexOf('const MANIFEST_ROUND_STEP')) + 2);
+  const STEPS = new Function(map + '; return MANIFEST_ROUND_STEP;')();
+  eq(STEPS['$0.25'], 0.25, '🔑 the quarter rule is in the step map, or the ceiling snap goes off-convention');
+  eq(STEPS['$0.25 down'], 0.25, '…both directions');
+}
+
+// ── 🔑 A FINER RUNG TRACKS THE TARGET IN BOTH DIRECTIONS ────────────────────
+// Brian: "my last scan gave a suggested price of $1.50 but the retail is $1.69 so that's
+// not a deal for the customer." Good & Gather refried beans, 16oz, $1.69 at Target
+// against 81c of category cost. Half of $1.69 is 85c, which loses money, so the floor
+// lifts — and on half-dollar rungs the first one that clears is $1.50. Nineteen cents
+// off is no reason to drive anywhere.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const grab = (sig) => { const i = src.indexOf(sig); return src.slice(i, src.indexOf('\n}', i) + 2); };
+  const stepMap = src.slice(src.indexOf('const MANIFEST_ROUND_STEP'),
+                            src.indexOf('};', src.indexOf('const MANIFEST_ROUND_STEP')) + 2);
+  const { merchPriceLadder } = new Function(
+    'const roundCents=(n)=>Math.round(n*100)/100;' + stepMap + '\n' +
+    grab('function manifestRound(') + '\n' + grab('function merchPriceLadder(') +
+    '; return { merchPriceLadder };')();
+  const at = (retail, rounding) => merchPriceLadder({ retail, asp: 2.00, cost: 0.81,
+    crit: { priceCapPct: 50, gpFloorPct: 30, ceiling: null, rounding } });
+
+  const beans = at(1.69, '$0.25 down');
+  near(beans.price, 1.25, '🔑 $1.69 street prices at $1.25 on quarters, not $1.50');
+  ok(!beans.belowFloor, '…still clears the 30% floor');
+  ok(((beans.price - 0.81) / beans.price) * 100 > 34, '…at ~35% GP');
+  ok((1.69 - beans.price) / 1.69 > 0.20, '🔑 …and it is a real discount — over 20% off the street');
+  near(at(1.69, '$0.50 down').price, 1.50, '…where half-dollar rungs could only reach $1.50');
+
+  // 🔑 NOT just "cheaper". A finer rung lands HIGHER wherever the price is falling to the
+  // cap rather than being lifted off it — which is the same fact, not a second rule.
+  near(at(3.60, '$0.25 down').price, 1.75, '🔑 a $3.60 street lands HIGHER on quarters — $1.75, not $1.50');
+  near(at(7.33, '$0.25 down').price, 3.50, '…and where the cap already sits on a rung, nothing moves');
 }
 
 // ── 🛑 THE EXACT SKU IS THE WORST PRICE SOURCE A CLOSEOUT BUYER HAS ─────────

@@ -8834,8 +8834,8 @@ async function manifestAspVelocity(env, days = 28) {
 // The step size of each money rule, for snapping a price DOWN under a ceiling. Kept
 // adjacent to manifestRound on purpose: a rule added there without an entry here silently
 // falls back to taking the ceiling exactly, which is off-convention rather than wrong.
-const MANIFEST_ROUND_STEP = { "$0.50": 0.5, "$1": 1, "$10": 10, "$100": 100,
-                              "$0.50 down": 0.5, "$1 down": 1 };
+const MANIFEST_ROUND_STEP = { "$0.25": 0.25, "$0.50": 0.5, "$1": 1, "$10": 10, "$100": 100,
+                              "$0.25 down": 0.25, "$0.50 down": 0.5, "$1 down": 1 };
 
 function manifestRound(price, rule) {
   if (price === null || price === undefined || !Number.isFinite(price)) return null;
@@ -8865,12 +8865,22 @@ function manifestRound(price, rule) {
     // reached by multiplication (retail x a cap percentage), so an exact $2.50 can arrive
     // as 2.5000000001 — and a bare ceil would push it to $3.00, a 20% error that looks
     // like a pricing decision rather than a float bug.
+    case "$0.25": return roundCents(Math.max(0.25, Math.ceil((p * 4) - 1e-9) / 4));
     case "$0.50": return roundCents(Math.max(0.5, Math.ceil((p * 2) - 1e-9) / 2));
     case "$1":  return Math.max(1, Math.ceil(p - 1e-9));
     // Rounding DOWN, for categories where the round number below matters more than the
     // last few cents. On food at ~81c of cost the lower half dollar still earns well, and
     // a price a shopper reads instantly is worth more than the margin given up.
     // The epsilon works the other way here: it stops an exact $2.50 falling to $2.00.
+    //
+    // 🔑 A QUARTER IS NOT JUST A SMALLER STEP, IT TRACKS THE TARGET IN BOTH DIRECTIONS.
+    // Where the price is falling to the cap a finer rung lands HIGHER ($1.80 capped →
+    // $1.75 rather than $1.50); where the margin floor is lifting it off the cap it lands
+    // LOWER ($1.157 needed → $1.25 rather than $1.50). Both are closer to the number the
+    // criteria actually asked for. Measured on Good & Gather refried beans: $1.69 street
+    // priced at $1.50, which is 19c off and no reason to drive anywhere. At quarters it
+    // is $1.25 — 26% off, still 35% GP.
+    case "$0.25 down": return roundCents(Math.max(0.25, Math.floor((p * 4) + 1e-9) / 4));
     case "$0.50 down": return roundCents(Math.max(0.5, Math.floor((p * 2) + 1e-9) / 2));
     case "$1 down":    return Math.max(1, Math.floor(p + 1e-9));
     case "$10": return Math.max(10, Math.ceil((p / 10) - 1e-9) * 10);
