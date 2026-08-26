@@ -721,5 +721,49 @@ console.log('Price Scan');
   ok('rounding' in r.body, '🔑 the rounding rule is returned, so the strip cannot guess wrong');
 }
 
+// ── 🛑 ROUNDING DOWN MUST NOT ROUND THROUGH THE MARGIN FLOOR ────────────────
+// The floor was tested on the BASE, but the ROUNDED price is what ships. Rounding up
+// could only ever move margin the right way, so this never had to be checked before.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const grab = (sig) => { const i = src.indexOf(sig); return src.slice(i, src.indexOf('\n}', i) + 2); };
+  const stepMap = src.slice(src.indexOf('const MANIFEST_ROUND_STEP'),
+                            src.indexOf('};', src.indexOf('const MANIFEST_ROUND_STEP')) + 2);
+  const { merchPriceLadder } = new Function(
+    'const roundCents=(n)=>Math.round(n*100)/100;' + stepMap + '\n' +
+    grab('function manifestRound(') + '\n' + grab('function merchPriceLadder(') +
+    '; return { merchPriceLadder };')();
+
+  // The live shape: chain cap 50%, chain floor 30%, Consumable Food rounds down,
+  // Snacks ASP $2.00 against 81c of category cost.
+  const DOWN = { priceCapPct: 50, gpFloorPct: 30, ceiling: null, rounding: '$0.50 down' };
+  const at = (retail, crit = DOWN) => merchPriceLadder({ retail, asp: 2.00, cost: 0.81, crit });
+
+  const mid = at(2.49);
+  near(mid.price, 2.00, '🔑 a $2.49 can does NOT price at $1.00 — that is 19% against 81c');
+  ok(!mid.belowFloor, '…and what ships clears the 30% floor');
+  ok(((mid.price - 0.81) / mid.price) * 100 >= 30, '…measured on the shipped price, not the base');
+
+  // 🛑 It was not merely low, it was NON-MONOTONIC: a lower retail paid more, because
+  // only one of the two reached the rounding step still holding a floor-clearing number.
+  const prices = [2.27, 2.39, 2.49, 2.89].map(r => at(r).price);
+  ok(prices.every((p, i) => i === 0 || p >= prices[i - 1]),
+     '🔑 a HIGHER street retail can never produce a LOWER price');
+
+  // Round-down still does its job wherever the margin allows it.
+  near(at(7.33).price, 3.50, 'round-down still applies where it is safe — $3.665 → $3.50');
+  eq(at(7.33).basis, 'street retail', '…still priced off the street, not stepped up');
+
+  // Non-consumables round UP and must be untouched by any of this.
+  const up = at(7.33, { ...DOWN, rounding: '$1' });
+  near(up.price, 4.00, 'the round-UP path is unchanged');
+  ok(!up.belowFloor, '…and still clears');
+
+  // With no ASP to step to there is nothing to repair, and the answer must SAY so
+  // rather than quietly printing a price that misses the floor.
+  const stuck = merchPriceLadder({ retail: 2.49, asp: null, cost: 0.81, crit: DOWN });
+  ok(stuck.belowFloor, '🔑 with no ASP to step to, a below-floor price is FLAGGED, not hidden');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

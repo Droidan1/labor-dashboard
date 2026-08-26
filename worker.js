@@ -9187,20 +9187,42 @@ function merchPriceLadder({ retail, asp, cost, crit }) {
 
   // 🔑 Cap BEFORE rounding, then clamp again — rounding UP could otherwise push the
   // answer back above the ceiling it was just held under.
-  const capped = ceiling !== null ? Math.min(base, ceiling) : base;
-  let price = manifestRound(capped, crit?.rounding);
-  // Rounding UP can push the price back over the ceiling it was just held under. Snapping
-  // to the ceiling exactly would land off-convention — a $1.25 ceiling on a half-dollar
-  // rule would print $1.25 — so take the largest STEP at or below it instead.
-  if (ceiling !== null && price !== null && price > ceiling) {
-    const step = MANIFEST_ROUND_STEP[String(crit?.rounding || "").trim()];
-    price = step
-      ? roundCents(Math.max(step, Math.floor((ceiling / step) + 1e-9) * step))
-      : roundCents(ceiling);
+  const settle = (b) => {
+    let p = manifestRound(ceiling !== null ? Math.min(b, ceiling) : b, crit?.rounding);
+    // Snapping to the ceiling exactly would land off-convention — a $1.25 ceiling on a
+    // half-dollar rule would print $1.25 — so take the largest STEP at or below it.
+    if (ceiling !== null && p !== null && p > ceiling) {
+      const step = MANIFEST_ROUND_STEP[String(crit?.rounding || "").trim()];
+      p = step ? roundCents(Math.max(step, Math.floor((ceiling / step) + 1e-9) * step))
+               : roundCents(ceiling);
+    }
+    return p;
+  };
+  let price = settle(base);
+
+  // 🛑 THE FLOOR WAS TESTED ON THE BASE, BUT THE ROUNDED PRICE IS WHAT SHIPS.
+  //
+  // Rounding DOWN can take a figure that cleared 30% and leave it under. Measured: a
+  // $2.49 can capped to $1.245 clears the floor at 34.9%, rounds down to $1.00, and
+  // against 81c of cost that is 19%. Worse, it was NOT monotonic — a $2.27 retail
+  // produced $2.00 while a HIGHER $2.49 produced $1.00, because only one of them
+  // reached the rounding step still holding a floor-clearing number.
+  //
+  // The old round-up rule could only ever move margin the right way, which is why this
+  // check never had to exist. The repair is the one the branch above already uses: if the
+  // retail-derived price cannot make the margin, step up to what the category actually
+  // sells for. Rounding does not get a special rule of its own.
+  if (price !== null && !clearsFloor(price) && haveAsp && base !== aspN) {
+    const stepped = Math.max(aspN, base);
+    const alt = settle(stepped);
+    if (alt !== null && clearsFloor(alt)) {
+      base = stepped;
+      price = alt;
+      basis = stepped === aspN ? "our ASP" : basis;
+    }
   }
-  // Re-test what we ACTUALLY landed on: the ceiling and the rounding can each move a
-  // price below a floor the base figure cleared.
-  if (price !== null && !clearsFloor(price)) belowFloor = true;
+  // belowFloor describes the price that SHIPS, never the figure it was derived from.
+  belowFloor = price !== null && !clearsFloor(price);
 
   return {
     price, basis, belowFloor,
