@@ -360,13 +360,20 @@ console.log('Price Scan');
   {
     const glue = html.slice(from, html.indexOf('  async function psBarcode()'));
     const { psNormalizeCode } = new Function(glue + '; return { psNormalizeCode };')();
-    eq(psNormalizeCode('01234565', 'upc_e'), '0012345000065',
-       '🔑 a native UPC-E lands on the SAME 13 digits our own decoder produces');
-    eq(psNormalizeCode('012345000065', 'upc_a'), '0012345000065',
-       '…and so does a UPC-A, which is an EAN-13 with a leading zero');
-    eq(psNormalizeCode('0038000293122', 'ean_13'), '0038000293122', '…and an EAN-13 passes through');
-    eq(psNormalizeCode('038000293122', 'ean_13'), '0038000293122',
-       '🔑 Chromium reports UPC-A as ean_13, so the 12-digit case cannot depend on the label');
+    // 🛑 TWELVE DIGITS, THE WAY IT IS PRINTED. A UPC-A is encoded as an EAN-13 with a
+    // leading zero. Measured live: 085239098745 found the beans and their cached row;
+    // 0085239098745 was a cache MISS and returned ZERO search results.
+    eq(psNormalizeCode('01234565', 'upc_e'), '012345000065',
+       '🔑 a native UPC-E expands and then loses the encoding zero');
+    eq(psNormalizeCode('012345000065', 'upc_a'), '012345000065', '…a UPC-A is already canonical');
+    eq(psNormalizeCode('0012345000065', 'ean_13'), '012345000065',
+       '🔑 …and the 13-digit spelling of the SAME code lands on it too');
+    eq(psNormalizeCode('0085239098745', null), '085239098745',
+       '🛑 the exact code that found nothing now matches the row that was already there');
+    eq(psNormalizeCode('4006381333931', 'ean_13'), '4006381333931',
+       '🔑 a TRUE EAN-13 never starts with a zero and is left alone');
+    eq(psNormalizeCode('0038000293122', null), '038000293122',
+       'what the pixel decoder returns is canonicalised by the same door');
     // 🛑 An 8-digit code that is NOT a UPC-E must never be run through the expansion —
     // it would invent a different product's number. EAN-8 is deliberately not requested.
     eq(psNormalizeCode('12345670', 'ean_8'), '12345670',
@@ -907,6 +914,80 @@ console.log('Price Scan');
                                    crit: { ...DOWN, ceiling: 1.00 } });
   ok(stuck.belowFloor, '🔑 a ceiling below the floor is FLAGGED, not hidden');
   ok(stuck.price <= 1.00, '…and the hard ceiling still holds');
+}
+
+// ── 🛑 ONE BARCODE, ONE KEY ─────────────────────────────────────────────────
+// Reported from the floor: "I scanned 0085239098745 and no data was found." Everything
+// about that item — brand, size, category, a $1.69 street price — was already in
+// item_cache under 085239098745, one leading zero away. A UPC-A is printed as twelve
+// digits and ENCODED as an EAN-13 with a zero in front, so the decoder returns thirteen
+// while the package, the typed entry and every retailer's index say twelve.
+{
+  const realFetch = globalThis.fetch;
+  db.prepare(`INSERT INTO item_cache (identifier, identifier_type, brand, title, size, l2, l3, l3_source,
+                retail_price, retail_source, retail_confidence, fetched_at, updated_at)
+              VALUES ('085239098745','upc','Good & Gather','Good & Gather Organic Refried Black Beans',
+                      '16oz','Consumable Food',?,'claude',1.69,'target.com','medium',?,?)`)
+    .run(SNACKS, new Date().toISOString(), new Date().toISOString());
+
+  const before = searchCalls;
+  globalThis.fetch = async (u, init) => {
+    if (String(u).startsWith('https://api.search.tinyfish.ai')) searchCalls++;
+    return realFetch(u, init);
+  };
+  const r = await post('merch-scan', { identifier: '0085239098745' });
+  eq(r.status, 200, 'the 13-digit spelling answers');
+  eq(searchCalls, before, '🔑 …from the cache, spending NOTHING — it is the same barcode');
+  eq(r.body.title, 'Good & Gather Organic Refried Black Beans', '🔑 …with everything we already knew');
+  near(r.body.retail, 1.69, '…including the street price');
+  eq(r.body.identifier, '085239098745', '🔑 …and it answers under the printed 12 digits');
+  eq(r.body.from_cache, true, 'reported as a cache hit, not a fresh lookup');
+  globalThis.fetch = realFetch;
+}
+
+// 🔑 A barcode has more than one legal spelling and they do NOT index alike — the
+// twelve-digit form found the beans where the thirteen-digit form returned ZERO results.
+// Rather than pick a winner and be wrong half the time, ask the other way on a miss.
+{
+  const realFetch = globalThis.fetch;
+  const asked = [];
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      const q = decodeURIComponent(url).split('&')[0];
+      asked.push(q);
+      // The canonical 12-digit form finds nothing here; the 13-digit one does. Which way
+      // round does not matter — what matters is that ONE empty answer is not the end.
+      if (/query=012345000065\b/.test(q)) return new Response(JSON.stringify({ results: [] }), { status: 200 });
+      if (/0012345000065/.test(q)) {
+        return new Response(JSON.stringify({ results: [
+          { position: 1, url: 'https://world.openfoodfacts.org/product/z', title: 'Test Beans 16oz', snippet: 'Brands: Testco' },
+        ] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls++;
+      const b = JSON.parse(init.body); const sys = b.system || '';
+      if (/expand abbreviated/i.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          items: [{ row: 1, brand: 'Testco', title: 'Testco Beans', size: '16 oz' }] }) }] }), { status: 200 });
+      }
+      if (/category/i.test(sys) && /rows/.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          rows: [{ row: 1, category: SNACKS, confidence: 'high' }] }) }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: '{"prices":[]}' }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const r = await post('merch-scan', { identifier: '0012345000065' });
+  eq(r.body.brand, 'Testco', '🔑 an identity miss on one spelling retries the other');
+  ok(asked.some(q => /query=012345000065\b/.test(q)), '…the canonical form is asked FIRST');
+  ok(asked.some(q => /0012345000065/.test(q)), '…and the other spelling is the fallback, not the default');
+  globalThis.fetch = realFetch;
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

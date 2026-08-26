@@ -7965,6 +7965,34 @@ async function manifestNormalize(env, lines) {
 //
 // It also fixes categorisation for free: without a name there is nothing to classify, so
 // a bare barcode scan silently produced no category at all.
+// 🛑 THE SAME CAN MUST NOT KEY TWO WAYS. A UPC-A is printed as twelve digits and
+// ENCODED as an EAN-13 with a leading zero, so our decoder returns thirteen while the
+// package, the typed entry and every retailer's index say twelve. Measured live on Good
+// & Gather refried beans:
+//
+//   085239098745   → the product, and a cached row with brand, size, category and price
+//   0085239098745  → a cache MISS, and a search returning ZERO results
+//
+// Everything we already knew about that item was sitting one leading zero away. So the
+// twelve-digit form is canonical wherever a thirteen-digit code begins with a zero, and a
+// true EAN-13 — which never does — is left exactly alone.
+function merchCanonicalUpc(raw) {
+  const d = String(raw || "").replace(/\D/g, "");
+  if (d.length === 14 && d.startsWith("00")) return d.slice(2);   // GTIN-14 of a UPC-A
+  if (d.length === 13 && d.startsWith("0")) return d.slice(1);
+  return d;
+}
+
+// Every spelling of one barcode, canonical first. Used to read the cache, so rows written
+// before this existed are still found rather than silently looked up again.
+function merchIdForms(raw) {
+  const c = merchCanonicalUpc(raw);
+  if (!c) return [];
+  const forms = [c];
+  if (c.length === 12) forms.push("0" + c);
+  return forms;
+}
+
 async function retailIdentify(env, identifier, ctx) {
   if (!identifier) return null;
 
@@ -7982,7 +8010,15 @@ async function retailIdentify(env, identifier, ctx) {
   // and still first-party only.
   const priceDomains = [...RETAIL_CPG_DOMAINS, ...RETAIL_BIG_DOMAINS];
   const idDomains = [...priceDomains, ...RETAIL_ID_DOMAINS];
-  const results = await retailSearch(env, String(identifier), idDomains, ctx);
+  // 🔑 A barcode has more than one legal spelling and they do NOT index alike — the
+  // twelve-digit form found the beans where the thirteen-digit form returned nothing at
+  // all. Rather than pick a winner and be wrong half the time, ask the other way round
+  // when the first comes back empty. Costs a second free search only on a miss.
+  let results = null;
+  for (const form of merchIdForms(identifier)) {
+    results = await retailSearch(env, form, idDomains, ctx);
+    if (results && results.length) break;
+  }
   if (!results || !results.length) return null;
 
   // A first-party title is preferred where one exists — it is the least likely to be a
@@ -17708,14 +17744,22 @@ export default {
           return new Response(JSON.stringify({ error: "Scan a barcode or type what the item is" }),
             { status: 400, headers: corsJson });
         }
-        const identifier = rawId || null;
+        // Canonicalised HERE, at the one door every scan comes through — typed, decoded,
+        // read off a photo, or handed over by a native detector. Downstream there is only
+        // ever one spelling, so nothing further along has to remember this.
+        const identifier = rawId ? (merchCanonicalUpc(rawId) || rawId) : null;
         const identType = identifier ? manifestIdentType(identifier) : "none";
 
-        const cached = identifier
-          ? await env.DB.prepare(
-              `SELECT * FROM item_cache WHERE identifier = ? AND identifier_type = ?`
-            ).bind(identifier, identType).first()
-          : null;
+        // Read every spelling: rows written before canonicalisation existed are still
+        // ours, and looking one up again would cost a lookup to learn what we knew.
+        const forms = identifier ? merchIdForms(identifier) : [];
+        let cached = null;
+        for (const form of forms) {
+          cached = await env.DB.prepare(
+            `SELECT * FROM item_cache WHERE identifier = ? AND identifier_type = ?`
+          ).bind(form, manifestIdentType(form)).first();
+          if (cached) break;
+        }
 
         // ── what it is ────────────────────────────────────────────────────────
         let title = cached?.title || desc || null;

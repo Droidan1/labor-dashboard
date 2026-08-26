@@ -18350,17 +18350,25 @@
   // rather than in five places that would each have to remember.
   function psNormalizeCode(raw, format) {
     const d = String(raw || '').replace(/\D/g, '');
+    if (!d) return null;
+    let full = d;
     if (format === 'upc_e' && d.length === 8) {
       // Re-encode through our own expansion so a UPC-E from any source lands on exactly
-      // the same 13 digits as one we decoded ourselves.
+      // the same digits as one we decoded ourselves.
       const ns = Number(d[0]), x = [...d.slice(1, 7)].map(Number), check = Number(d[7]);
-      const full = upcaFromUpce(ns, x, check);
-      if (full) return full;
+      full = upcaFromUpce(ns, x, check) || d;
     }
-    if (d.length === 12) return '0' + d;
-    if (d.length === 13) return d;
-    return d || null;
+    // 🔑 TWELVE DIGITS, THE WAY IT IS PRINTED. A UPC-A is ENCODED as an EAN-13 with a
+    // leading zero, so both our decoder and the expansion above return thirteen — and
+    // that zero is not cosmetic. Measured live on Good & Gather refried beans:
+    // 085239098745 found the product and its cached row; 0085239098745 was a cache MISS
+    // and returned ZERO search results. A true EAN-13 never starts with a zero, so this
+    // cannot touch one. The worker canonicalises too; this keeps the box honest.
+    if (full.length === 14 && full.startsWith('00')) return full.slice(2);
+    if (full.length === 13 && full[0] === '0') return full.slice(1);
+    return full;
   }
+
 
   async function psBarcode() {
     if (psScanning) { psStopScan(); return; }
@@ -18403,7 +18411,9 @@
     const ctx2d = canvas.getContext('2d', { willReadFrequently: true });
     let lastCode = null, started = Date.now(), hinted = false;
 
-    const accept = (code) => {
+    const accept = (raw) => {
+      const code = psNormalizeCode(raw, null);
+      if (!code) return false;
       // 🛑 TWICE RUNNING, OR NOT AT ALL. A wrong barcode prices a different product and
       // nothing downstream would catch it, so one confident read is never enough.
       if (code !== lastCode) { lastCode = code; return false; }
@@ -18435,7 +18445,7 @@
           try {
             const found = await detector.detect(video);
             for (const b of found || []) {
-              const code = psNormalizeCode(b.rawValue, b.format);
+                  const code = psNormalizeCode(b.rawValue, b.format);
               if (code && code.length >= 12 && accept(code)) return;
             }
           } catch (e) { /* fall through to our own decoder */ }
