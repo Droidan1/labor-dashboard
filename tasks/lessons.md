@@ -794,3 +794,23 @@ The model did exactly as told. The bin photos the manager had just uploaded were
 4. **Read the produced artefacts, not the code, when asked whether a rule holds.** Five captions
    in D1 settled in one query what re-reading the gate would have confirmed forever.
 </rules>
+
+## Gate the deploy on the push, not on your intention (2026-08-26)
+
+Twice in one session a teammate's PR merged into `worker.js` between my last fetch and my
+deploy, and both times I deployed a build that did not contain it. The second time I had
+already written "pushing first would have caught it" — and then put the push and the
+deploy in the same command separated by newlines, so the deploy ran anyway when the push
+was rejected.
+
+<rules>
+1. **`git push && wrangler deploy`** — never on separate lines, never `;`. The push is the
+   thing that discovers the remote has moved; a deploy that does not depend on it learns
+   nothing.
+2. **After rebasing onto someone else's worker.js change, assert their ADDED LINES are
+   present in your tree** before redeploying. `git diff <base>..origin/main -- worker.js`,
+   collect the `+` lines, check every one is in the file. A clean `git status` proves
+   nothing — it is relative to HEAD, and HEAD was the problem.
+3. **Then assert `HEAD == origin/main`** and `git diff HEAD -- worker.js` is empty, so the
+   bytes deployed are the bytes on main.
+</rules>
