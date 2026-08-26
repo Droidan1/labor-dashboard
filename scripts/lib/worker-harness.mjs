@@ -192,3 +192,33 @@ export function req(url, { user, method = 'GET', body, secret } = {}) {
 export function storesIn(text) {
   return [...new Set((text.match(/BL\d+/g) || []))].sort();
 }
+
+// ─── The price ladder, as a callable ──────────────────────────────────────────
+//
+// merchPriceLadder is a pure function, so it is worth exercising directly — a fuzz over
+// 96,000 criteria combinations is what found the `Number(null) === 0` bug that clamped
+// every price to $0.00, and no end-to-end test would have swept that space.
+//
+// 🛑 But hand-slicing it out of worker.js is fragile in a specific way: it captures the
+// function and NOT the module constants it closes over. Three separate test files each
+// cut their own slice, and adding one const (MANIFEST_RUNGS) broke all three at once with
+// a ReferenceError that pointed at the test rather than at the missing piece. The list of
+// dependencies belongs in ONE place, here, so the next one is a single line.
+export function loadLadder(repo) {
+  const src = fs.readFileSync(path.join(repo, "worker.js"), "utf8");
+  const fn = (sig) => { const i = src.indexOf(sig); return src.slice(i, src.indexOf("\n}", i) + 2); };
+  const obj = (name) => {
+    const i = src.indexOf(`const ${name}`);
+    if (i < 0) throw new Error(`loadLadder: ${name} not found in worker.js`);
+    return src.slice(i, src.indexOf("};", i) + 2);
+  };
+  const body = [
+    "const roundCents=(n)=>Math.round(n*100)/100;",
+    obj("MANIFEST_ROUND_STEP"),
+    obj("MANIFEST_RUNGS"),
+    fn("function manifestRound("),
+    fn("function merchPriceLadder("),
+    "return { manifestRound, merchPriceLadder, MANIFEST_ROUND_STEP, MANIFEST_RUNGS };",
+  ].join("\n");
+  return new Function(body)();
+}

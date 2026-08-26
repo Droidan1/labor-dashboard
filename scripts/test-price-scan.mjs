@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadWorker, makeEnv, applyMigrationAlters, ctx, req } from './lib/worker-harness.mjs';
+import { loadWorker, makeEnv, applyMigrationAlters, ctx, req, loadLadder } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -571,9 +571,7 @@ console.log('Price Scan');
 // Brian's call: at ~81c of cost the lower half dollar still earns well, and a price a
 // shopper reads instantly is worth more than the few cents given up.
 {
-  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
-  const i = src.indexOf('function manifestRound('); const j = src.indexOf('\n}', i);
-  const { manifestRound } = new Function('const roundCents=(n)=>Math.round(n*100)/100;' + src.slice(i, j + 2) + '; return { manifestRound };')();
+  const { manifestRound } = loadLadder(repo);
   near(manifestRound(3.665, '$0.50 down'), 3.50, '$3.665 rounds DOWN to $3.50, not up to $4.00');
   near(manifestRound(2.49, '$0.50 down'), 2.00, '$2.49 rounds down to $2.00');
   near(manifestRound(2.50, '$0.50 down'), 2.50, '🔑 an exact $2.50 STAYS — the epsilon guards the other direction now');
@@ -589,9 +587,7 @@ console.log('Price Scan');
   near(manifestRound(0.10, '$0.25 down'), 0.25, 'nothing rounds below a quarter');
   // 🔑 The ceiling snap reads this map. A rule missing from it does NOT error — it
   // silently snaps a ceiling-bound price to the ceiling exactly, landing off-convention.
-  const map = src.slice(src.indexOf('const MANIFEST_ROUND_STEP'),
-                        src.indexOf('};', src.indexOf('const MANIFEST_ROUND_STEP')) + 2);
-  const STEPS = new Function(map + '; return MANIFEST_ROUND_STEP;')();
+  const STEPS = loadLadder(repo).MANIFEST_ROUND_STEP;
   eq(STEPS['$0.25'], 0.25, '🔑 the quarter rule is in the step map, or the ceiling snap goes off-convention');
   eq(STEPS['$0.25 down'], 0.25, '…both directions');
 }
@@ -603,14 +599,7 @@ console.log('Price Scan');
 // lifts — and on half-dollar rungs the first one that clears is $1.50. Nineteen cents
 // off is no reason to drive anywhere.
 {
-  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
-  const grab = (sig) => { const i = src.indexOf(sig); return src.slice(i, src.indexOf('\n}', i) + 2); };
-  const stepMap = src.slice(src.indexOf('const MANIFEST_ROUND_STEP'),
-                            src.indexOf('};', src.indexOf('const MANIFEST_ROUND_STEP')) + 2);
-  const { merchPriceLadder } = new Function(
-    'const roundCents=(n)=>Math.round(n*100)/100;' + stepMap + '\n' +
-    grab('function manifestRound(') + '\n' + grab('function merchPriceLadder(') +
-    '; return { merchPriceLadder };')();
+  const { merchPriceLadder } = loadLadder(repo);
   const at = (retail, rounding) => merchPriceLadder({ retail, asp: 2.00, cost: 0.81,
     crit: { priceCapPct: 50, gpFloorPct: 30, ceiling: null, rounding } });
 
@@ -619,7 +608,11 @@ console.log('Price Scan');
   ok(!beans.belowFloor, '…still clears the 30% floor');
   ok(((beans.price - 0.81) / beans.price) * 100 > 34, '…at ~35% GP');
   ok((1.69 - beans.price) / 1.69 > 0.20, '🔑 …and it is a real discount — over 20% off the street');
-  near(at(1.69, '$0.50 down').price, 1.50, '…where half-dollar rungs could only reach $1.50');
+  // 🔑 Asking for half dollars now GETS $1.25 too — the rung is a preference, and the
+  // ladder steps down when the round price stops being a deal. $1.50 is 11% off $1.69.
+  near(at(1.69, '$0.50 down').price, 1.25, "the half-dollar rule steps DOWN to a quarter when $1.50 is not a deal");
+  eq(at(1.69, '$0.50 down').rounding, '$0.25 down', '…and reports the rung it actually used');
+  eq(at(2.27, '$0.50 down').rounding, '$0.50 down', '…while a $2.27 street keeps the round price at 34% off');
 
   // 🔑 NOT just "cheaper". A finer rung lands HIGHER wherever the price is falling to the
   // cap rather than being lifted off it — which is the same fact, not a second rule.
@@ -770,14 +763,7 @@ console.log('Price Scan');
 // The floor was tested on the BASE, but the ROUNDED price is what ships. Rounding up
 // could only ever move margin the right way, so this never had to be checked before.
 {
-  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
-  const grab = (sig) => { const i = src.indexOf(sig); return src.slice(i, src.indexOf('\n}', i) + 2); };
-  const stepMap = src.slice(src.indexOf('const MANIFEST_ROUND_STEP'),
-                            src.indexOf('};', src.indexOf('const MANIFEST_ROUND_STEP')) + 2);
-  const { merchPriceLadder } = new Function(
-    'const roundCents=(n)=>Math.round(n*100)/100;' + stepMap + '\n' +
-    grab('function manifestRound(') + '\n' + grab('function merchPriceLadder(') +
-    '; return { merchPriceLadder };')();
+  const { merchPriceLadder } = loadLadder(repo);
 
   // The live shape: chain cap 50%, chain floor 30%, Consumable Food rounds down,
   // Snacks ASP $2.00 against 81c of category cost.
@@ -840,8 +826,8 @@ console.log('Price Scan');
 
   // 🛑 A cliff found by sweeping rather than by reasoning: an earlier bound let $2.00
   // street lift to $1.50 while $1.80 street collapsed to $0.50 — a LOSS on 81c of cost.
-  near(at(1.80).price, 1.50, '🔑 $1.80 street still lifts to $1.50, not down to a loss');
-  ok(at(1.80).price > 0.81, '…never a tag below what the thing cost us');
+  near(at(1.80).price, 1.25, '🔑 $1.80 street steps to a quarter — $1.50 is only 17% off');
+  ok(at(1.80).price > 0.81, '…and never a tag below what the thing cost us');
 
   // A ceiling can make the floor genuinely unreachable. That must be FLAGGED, never
   // quietly printed as if the criteria agreed.

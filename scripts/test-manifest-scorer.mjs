@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadWorker, makeEnv, applyMigrationAlters, ctx, req } from './lib/worker-harness.mjs';
+import { loadWorker, makeEnv, applyMigrationAlters, ctx, req, loadLadder } from './lib/worker-harness.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -1000,12 +1000,14 @@ let mid;
   near(await at(1.48), 1.00, 'a 74c figure rounds up to a dollar');
   near(await at(3.78), 2.00, '$1.89 rounds up to $2.00');
   // A 50c price on a 50c cost makes 0% GP, so the FLOOR correctly steps it up — the
-  // rounding rule does not get the last word. What must always hold is the shape of the
-  // number: every suggested price lands on a whole or half dollar.
+  // rounding rule does not get the last word, and neither does the RUNG: a half-dollar
+  // price that is not far enough under the street steps down to a quarter. What must
+  // always hold is the shape of the number — every suggested price lands on a rung the
+  // rule's own ladder declares, and never on an arbitrary figure like $2.14.
   for (const r of [0.40, 1.48, 3.78, 4.28, 5.00, 9.95]) {
     const px = await at(r);
-    ok(px !== null && Math.abs(px * 2 - Math.round(px * 2)) < 0.001,
-       `$${px} is a whole or half dollar (from $${r} retail)`);
+    ok(px !== null && Math.abs(px * 4 - Math.round(px * 4)) < 0.001,
+       `$${px} lands on a declared rung (from $${r} retail)`);
   }
 }
 
@@ -1019,16 +1021,8 @@ let mid;
 // of zero", and Math.min clamped the price to $0.00 — on the majority of categories, since
 // most have no ceiling. It would have printed free price tags.
 {
-  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
-  const grab = (sig) => { const i = src.indexOf(sig); const j = src.indexOf('\n}', i); return src.slice(i, j + 2); };
-  // MANIFEST_ROUND_STEP is a const object, so it ends at '};' rather than the '\n}' the
-  // function grabber looks for — pulled out separately or the sandbox throws on it.
-  const stepConst = src.slice(src.indexOf('const MANIFEST_ROUND_STEP'),
-                             src.indexOf('};', src.indexOf('const MANIFEST_ROUND_STEP')) + 2);
-  const { merchPriceLadder } = new Function(
-    'const roundCents=(n)=>Math.round(n*100)/100;' + stepConst +
-    grab('function manifestRound(') + grab('function merchPriceLadder(') +
-    '; return { merchPriceLadder };')();
+  // The ladder and every module const it closes over, from ONE place — see loadLadder.
+  const { merchPriceLadder, MANIFEST_RUNGS, MANIFEST_ROUND_STEP } = loadLadder(repo);
 
   const EMPTY  = [null, undefined, ''];
   const money  = [...EMPTY, 0, -1, '4.28', 4.28, 10];
@@ -1049,11 +1043,20 @@ let mid;
     if (r.price !== null && !Number.isFinite(r.price)) nan++;
     const noCeiling = ceiling === null || ceiling === undefined || ceiling === '' || Number(ceiling) <= 0;
     if (r.ceilingBound && noCeiling) phantomCeiling++;
-    // On a half-dollar rule every price must land on a half-dollar step.
-    // Including when a ceiling binds: snapping to the ceiling exactly would print $1.25
-    // on a half-dollar rule, so the ladder takes the largest step at or below it.
-    if (rounding === '$0.50' && r.price !== null && Math.abs(r.price * 2 - Math.round(r.price * 2)) > 0.001) offStep++;
-    if (rounding === '$1' && r.price !== null && Math.abs(r.price - Math.round(r.price)) > 0.001) offStep++;
+    // 🔑 Every price must land on a rung the RULE'S OWN LADDER declares — never on an
+    // arbitrary figure. A '$0.50' rule may descend to '$0.25' when the half dollar is
+    // not far enough under the street, so the invariant is membership in that ladder,
+    // not "a multiple of 50c". It still bites: $2.14 is on neither rung.
+    // Including when a ceiling binds — snapping to the ceiling exactly would print an
+    // off-rung price, so the ladder takes the largest step at or below it.
+    const ladder = MANIFEST_RUNGS[rounding];
+    if (ladder && r.price !== null) {
+      const onSomeRung = ladder.some(rg => {
+        const st = MANIFEST_ROUND_STEP[rg];
+        return Math.abs(r.price / st - Math.round(r.price / st)) < 0.001;
+      });
+      if (!onSomeRung) offStep++;
+    }
   }
 
   ok(n > 50000, `the ladder was exercised across ${n.toLocaleString()} input combinations`);
@@ -1062,7 +1065,7 @@ let mid;
   eq(nan, 0, 'never returns NaN or Infinity');
   eq(phantomCeiling, 0,
      '🛑 never reports a ceiling as binding when none is set — that crashed on ceiling.toFixed()');
-  eq(offStep, 0, 'on a $0.50 rule every price lands on a whole or half dollar');
+  eq(offStep, 0, '🔑 every price lands on a rung its own rule declares — never on an arbitrary $2.14');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

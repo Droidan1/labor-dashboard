@@ -8837,6 +8837,21 @@ async function manifestAspVelocity(env, days = 28) {
 const MANIFEST_ROUND_STEP = { "$0.25": 0.25, "$0.50": 0.5, "$1": 1, "$10": 10, "$100": 100,
                               "$0.25 down": 0.25, "$0.50 down": 0.5, "$1 down": 1 };
 
+// 🔑 THE RUNG IS A PREFERENCE, NOT A COMMITMENT. A round price is worth something, but
+// only while the price is still a deal — and a coarse rung overshoots hardest exactly
+// where the margin floor is lifting a price off the cap. Measured on Good & Gather
+// refried beans: $1.69 street, half-dollar rungs, first rung clearing 30% on 81c is
+// $1.50. Eleven cents off. Nobody drives anywhere for that; on quarters it is $1.25.
+//
+// So each rule names the ladder it may descend, coarsest first. The category's own rule
+// is always the first rung — this only ever offers finer alternatives, never coarser.
+const MANIFEST_RUNGS = {
+  "$1":          ["$1", "$0.50", "$0.25"],
+  "$0.50":       ["$0.50", "$0.25"],
+  "$1 down":     ["$1 down", "$0.50 down", "$0.25 down"],
+  "$0.50 down":  ["$0.50 down", "$0.25 down"],
+};
+
 function manifestRound(price, rule) {
   if (price === null || price === undefined || !Number.isFinite(price)) return null;
   const p = Number(price);
@@ -9299,63 +9314,99 @@ function merchPriceLadder({ retail, asp, cost, crit }) {
 
   // 🔑 Cap BEFORE rounding, then clamp again — rounding UP could otherwise push the
   // answer back above the ceiling it was just held under.
-  const settle = (b) => {
-    let p = manifestRound(ceiling !== null ? Math.min(b, ceiling) : b, crit?.rounding);
+  // One rung, priced end to end: cap, round, re-clamp, then lift for the margin floor.
+  // Parameterised by the RULE so the same code prices every rung on the ladder — two
+  // copies of this would drift, and the second copy is where the epsilon gets forgotten.
+  const onRung = (rule) => {
+    let p = manifestRound(ceiling !== null ? Math.min(base, ceiling) : base, rule);
     // Snapping to the ceiling exactly would land off-convention — a $1.25 ceiling on a
     // half-dollar rule would print $1.25 — so take the largest STEP at or below it.
     if (ceiling !== null && p !== null && p > ceiling) {
-      const step = MANIFEST_ROUND_STEP[String(crit?.rounding || "").trim()];
-      p = step ? roundCents(Math.max(step, Math.floor((ceiling / step) + 1e-9) * step))
-               : roundCents(ceiling);
+      const st = MANIFEST_ROUND_STEP[String(rule || "").trim()];
+      p = st ? roundCents(Math.max(st, Math.floor((ceiling / st) + 1e-9) * st))
+             : roundCents(ceiling);
     }
-    return p;
+    let lifted = false;
+
+    // 🛑 THE FLOOR LIFTS THE PRICE BY THE SMALLEST STEP THAT CLEARS IT, AND NOTHING MORE.
+    //
+    // Two separate things go wrong without this. The floor is tested on the BASE while
+    // the ROUNDED price is what ships, and rounding DOWN moves margin the wrong way: a
+    // $2.49 can capped to $1.245 clears at 34.9%, rounds to $1.00, and against 81c of
+    // cost that is 19%. Rounding UP could only ever help, which is why this never had to
+    // exist. And the lift has to be MINIMAL — stepping up to ASP instead overshot to
+    // $2.00 on a $2.27 street price, throwing away the discount that is the whole reason
+    // a customer came in.
+    //
+    // 81c / (1 - 0.30) is the exact break-even for the floor; round that UP to this
+    // rung, whichever direction the rung normally rounds.
+    if (p !== null && !clearsFloor(p) && gpFloorPct !== null && unitCost !== null
+        && gpFloorPct < 100) {
+      const need = unitCost / (1 - gpFloorPct / 100);
+      // No known increment means no known price ladder, so there is no "one step up" to
+      // take. Better to leave the price at the cap and flag it than to invent a rung.
+      const st = MANIFEST_ROUND_STEP[String(rule || "").trim()];
+      const up = st ? roundCents(Math.max(st, Math.ceil((need / st) - 1e-9) * st)) : null;
+
+      // 🛑 AND THE LIFT STOPS BELOW THE STREET PRICE. Caught by the manifest suite: a
+      // chip line costing $2.79 against a $4.00 street needs $3.99 to make 30%, and an
+      // unbounded lift printed a $3.99 tag on something big box sells for $4.00. A
+      // one-cent discount is not a discount — that is a bad BUY wearing a price, and the
+      // honest output is the flag, not a number.
+      if (up !== null && up > p && (!haveRetail || up < retailN) && clearsFloor(up)
+          && (ceiling === null || up <= ceiling)) {
+        p = up;
+        lifted = true;
+      }
+    }
+    return { price: p, floorLifted: lifted, rung: rule,
+             ok: p !== null && clearsFloor(p) };
   };
-  let price = settle(base);
-  let floorLifted = false;
 
-  // 🛑 THE FLOOR LIFTS THE PRICE BY THE SMALLEST STEP THAT CLEARS IT, AND NOTHING MORE.
+  // ── WHICH RUNG ─────────────────────────────────────────────────────────────
   //
-  // Two separate things go wrong without this. The floor is tested on the BASE while the
-  // ROUNDED price is what ships, and rounding DOWN moves margin the wrong way: a $2.49
-  // can capped to $1.245 clears at 34.9%, rounds to $1.00, and against 81c of cost that
-  // is 19%. Rounding UP could only ever help, which is why this never had to exist.
+  // Brian's rule: keep the round price while it is still a real discount, and drop to a
+  // finer rung when it is not. $1.69 street on half dollars is $1.50 — eleven cents off,
+  // and no reason to drive anywhere; on quarters it is $1.25, which is 26% off. But a
+  // $2.27 street at $1.50 is already 34% off, and there the round number is worth having.
   //
-  // And the lift has to be MINIMAL. Stepping up to ASP instead overshot to $2.00 on a
-  // $2.27 street price — a larger breach of the cap than the floor actually required,
-  // and it threw away the discount that is the whole reason a customer came in.
+  // 🔑 The threshold is HALF THE INTENDED DISCOUNT, derived from the cap rather than
+  // picked: the cap aims at 50% off, so the discount may fall to 25% before we give up
+  // the rounder price. Change the cap and this follows it.
   //
-  //   half of $2.27 = $1.14 → 19% → the least that clears 30% on 81c is $1.157 → $1.50
-  //
-  // 81c / (1 - 0.30) is the exact break-even for the floor; round that UP to the
-  // category's own increment, whichever direction the category normally rounds.
-  if (price !== null && !clearsFloor(price) && gpFloorPct !== null && unitCost !== null
-      && gpFloorPct < 100) {
-    const need = unitCost / (1 - gpFloorPct / 100);
-    // No known increment means no known price ladder, so there is no "one step up" to
-    // take. Better to leave the price at the cap and flag it than to invent a rung.
-    const step = MANIFEST_ROUND_STEP[String(crit?.rounding || "").trim()];
-    const upTo = (v) => roundCents(Math.max(step, Math.ceil((v / step) - 1e-9) * step));
-    const lifted = step ? upTo(need) : null;
+  // 🛑 ONLY RUNGS THAT CLEAR THE MARGIN FLOOR MAY ENTER THE COMPARISON. At $1.29 street
+  // the half-dollar price is $0.50, which reads as "61% off" and is a 31c LOSS. A
+  // discount test that sees losing prices will always prefer them — they look like the
+  // best deals on the board.
+  const rungs = MANIFEST_RUNGS[String(crit?.rounding || "").trim()] || [crit?.rounding];
+  const tried = rungs.map(onRung);
+  const valid = tried.filter(t => t.ok);
+  const minOff = haveRetail && priceCapPct !== null ? priceCapPct / 2 : null;
+  const discount = (p) => ((retailN - p) / retailN) * 100;
 
-    // 🛑 AND THE LIFT STOPS BELOW THE STREET PRICE. Caught by the manifest suite: a chip
-    // line costing $2.79 against a $4.00 street needs $3.99 to make 30%, and an unbounded
-    // lift printed a $3.99 tag on something big box sells for $4.00. A one-cent discount
-    // is not a discount — that is a bad BUY wearing a price, and the honest output is the
-    // flag, not a number. Where the cap and the floor cannot BOTH be met under the street
-    // price they genuinely conflict, the cap stands, and the line says the floor is
-    // missed — which is the signal a buyer actually needs.
-    if (lifted !== null && lifted > price && (!haveRetail || lifted < retailN)
-        && clearsFloor(lifted)
-        && (ceiling === null || lifted <= ceiling)) {
-      price = lifted;
-      floorLifted = true;
-    }
+  let chosen, thinDeal = false;
+  if (!valid.length) {
+    chosen = tried[0];                       // nothing clears the floor; flagged below
+  } else if (minOff === null) {
+    chosen = valid[0];                       // no street price to be a discount off
+  } else {
+    // Coarsest rung that is still a deal…
+    chosen = valid.find(t => discount(t.price) >= minOff)
+      // …and when NO rung reaches it, the cheapest one that at least earns the margin,
+      // said out loud. A price nobody will pay is not a price, and on a manifest it is
+      // the line saying "this was never a buy" — which is worth more than a number.
+      ?? valid.reduce((a, b) => (a.price <= b.price ? a : b));
+    thinDeal = discount(chosen.price) < minOff;
   }
+  let price = chosen.price;
+  const floorLifted = chosen.floorLifted;
+
   // belowFloor describes the price that SHIPS, never the figure it was derived from.
   belowFloor = price !== null && !clearsFloor(price);
 
   return {
-    price, basis, belowFloor, floorLifted,
+    price, basis, belowFloor, floorLifted, thinDeal,
+    rounding: chosen.rung ?? null,
     ceilingBound: ceiling !== null && base > ceiling,
     gpPct: price && unitCost !== null && price > 0
       ? +(((price - unitCost) / price) * 100).toFixed(1) : null,
@@ -17156,7 +17207,7 @@ export default {
           const unitCost = effCost !== null ? effCost : stdCost;
           const gpFloorPct = asNum(critAt("min_gross_margin_pct"));
 
-          let suggested, priceBasis = null, belowFloor = false, ceilingBound = false;
+          let suggested, priceBasis = null, belowFloor = false, ceilingBound = false, thinDeal = false;
           if (l.suggested_price !== null && l.suggested_price !== undefined) {
             // A manual price is a decision and is never recomputed.
             suggested = Number(l.suggested_price);
@@ -17172,6 +17223,7 @@ export default {
             });
             suggested = lad.price; priceBasis = lad.basis;
             belowFloor = lad.belowFloor; ceilingBound = lad.ceilingBound;
+            thinDeal = lad.thinDeal;
           }
 
           const flags = (() => { try { return JSON.parse(l.flags || "[]"); } catch { return []; } })();
@@ -17180,6 +17232,10 @@ export default {
           // Say when the ceiling actually bit. A suggested price that is lower than our
           // own ASP needs a reason visible on the line, or it reads as a mistake.
           if (ceilingBound) flags.push(`held to the $${ceiling.toFixed(2)} dollar-store ceiling`);
+          // Not a pricing failure — a BUYING one. Every rung that earns the margin is
+          // still too close to the street, so there is no price a customer walks over
+          // for. Worth more on a buy sheet than the number it sits beside.
+          if (thinDeal) flags.push("thin discount");
           if (belowFloor && suggested !== null && unitCost !== null) {
             const gp = ((suggested - unitCost) / suggested) * 100;
             flags.push(`${gp.toFixed(0)}% GP at $${suggested.toFixed(2)} — under the ${gpFloorPct}% floor`);
@@ -17775,9 +17831,11 @@ export default {
           gp_pct: gpPct, below_gp_floor: belowFloor, gp_floor_pct: gpFloorPct,
           ceiling_bound: lad.ceilingBound,
           floor_lifted: manual !== null ? false : !!lad.floorLifted,
-          // The screen used to say "rounded up" unconditionally. Consumables round DOWN
-          // since criteria v9, so the rule has to travel with the answer.
-          rounding: critAt("rounding"),
+          // The RUNG ACTUALLY USED, not the category's preferred one — the ladder may
+          // have stepped down to a finer rung to keep the price a deal, and a screen
+          // that reports the preference would describe a price it did not print.
+          rounding: lad.rounding ?? critAt("rounding"),
+          thin_deal: manual !== null ? false : !!lad.thinDeal,
           criteria_version: live?.version ?? null,
           from_cache: !looked && !!cached,
           looked_up: looked,

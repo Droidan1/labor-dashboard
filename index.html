@@ -18001,11 +18001,15 @@
       why = 'Set by hand, so the rule was not applied.';
     } else if (bad) {
       why = `Even the most we can charge keeps only ${j.gp_pct}% — under the ${j.gp_floor_pct}% floor. Worth a second look before this is priced.`;
+    } else if (j.thin_deal) {
+      // Not a pricing failure — a buying one. No rung that earns the margin is far
+      // enough under the street for anyone to cross the road for.
+      why = `Nothing we can charge and still make ${j.gp_floor_pct}% is far enough under ${psMoney(j.retail)} to be a deal. Priced as low as the margin allows.`;
     } else if (j.floor_lifted) {
       // Being cheaper than the street is the offer, so when the cap and the margin floor
       // disagree the screen has to say the floor won — otherwise the price just looks
       // like the cap was ignored.
-      why = `Half of ${psMoney(j.retail)} could not make ${j.gp_floor_pct}% on our cost, so this lifts to the first price that does.`;
+      why = `Half of ${psMoney(j.retail)} could not make ${j.gp_floor_pct}% on our cost, so this lifts to the first ${/0\.25/.test(j.rounding || '') ? 'quarter' : /0\.50/.test(j.rounding || '') ? 'half dollar' : 'price'} that does.`;
     } else if (j.price_basis === 'street retail') {
       // The direction comes from the criteria, never from a guess here — consumables
       // round DOWN since v9 and the strip said "rounded up" while showing $3.50.
