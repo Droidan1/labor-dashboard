@@ -732,3 +732,35 @@ prior read of that table.
 5. **`L3_TO_L2` is mirrored client-side as `ISR_L3_TO_L2` (index.html).** It
    drifts — it was 17 keys behind. Any change to one needs the other, and the
    diff is worth running as a check, not a read.
+
+## The exact SKU is the worst price source a closeout buyer has (2026-08-26)
+
+**Correction:** "When I scanned the Pringles UPC it found it for $7.27 at walmart.com and
+priced at $4.00 but when I looked up an average 5.5oz Pringles can they go for $2.39 at
+Krogers."
+
+I fixed the wrong thing twice before finding it. First the size was missing from the price
+query — real, but not this. Then I assumed a parse error and started reading the decider.
+There was no parse error. Walmart genuinely lists that can: single $9.49, 2-pack $16.00,
+3-pack $22.00. $22.00 / 3 = $7.33. Every rule fired correctly and the arithmetic was right.
+
+**The premise was wrong.** It is a limited edition big box no longer stocks, so everyone
+still listing it is a reseller. That is not an edge case in this business — it is the
+definition of the inventory. Closeout is *what big box stopped carrying*, so the exact SKU
+is systematically the worst price source we have, and it fails in the expensive direction.
+
+<rules>
+1. **When every rule fired correctly and the answer is still wrong, stop debugging the
+   rules.** Check the premise. Two fixes went into the pipeline before I asked whether
+   $9.49 might simply be what that listing says.
+2. **Reproduce against the live source before theorising.** One free search settled in
+   seconds what an hour of reading retailDecide would not have: the listings were real.
+3. **Price the shelf equivalent, not the SKU.** Brand + size, variant dropped, is what a
+   customer's actual alternative costs — and it corroborates across retailers where a
+   discontinued SKU has one inflated listing.
+4. **A substituted number must say it was substituted.** A retail that looks found but was
+   derived is worse than no retail, because nobody re-checks it.
+</rules>
+
+⚠️ **The manifest scorer has the same defect.** It matters more there, not less: a manifest
+is nothing but discontinued items, and an inflated retail makes a bad buy look good.
