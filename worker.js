@@ -8560,6 +8560,16 @@ function manifestRound(price, rule) {
   switch (String(rule || "").trim()) {
     case ".99": return roundCents(nearestEndingIn(0.99));
     case ".49": return roundCents(nearestEndingIn(0.49));
+    // Bargain Lane prices consumables in whole and half dollars, and rounds UP: a shelf
+    // never shows $2.14. Up rather than nearest is deliberate — Brian's call — so a price
+    // may land slightly ABOVE the 50%-of-retail cap. That cap governs what we will pay,
+    // not what a customer is promised; the dollar-store ceiling is what stops us being
+    // expensive, and it is applied after this.
+    //
+    // 🔑 The epsilon is load-bearing. Math.ceil(2.50 * 2) / 2 is $2.50 in exact arithmetic,
+    // but a price arrived at by multiplication can be 2.5000000001, and ceil would push a
+    // genuine $2.50 to $3.00 — a 20% error, on the most common price on the shelf.
+    case "$0.50": return roundCents(Math.max(0.5, Math.ceil((p * 2) - 1e-9) / 2));
     case "$1":  return Math.max(1, Math.round(p));
     case "$10": return Math.max(10, Math.round(p / 10) * 10);
     case "$100":return Math.max(100, Math.round(p / 100) * 100);

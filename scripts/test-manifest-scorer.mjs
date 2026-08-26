@@ -967,5 +967,45 @@ let mid;
        '🔑 …and the import still fills a category the card has nothing for');
 }
 
+// ── ROUNDING: whole and half dollars, always UP ─────────────────────────────
+// Bargain Lane does not price in cents. Until now the rule offered .99, .49, $1, $10 and
+// $100 — no half-dollar step at all — and the live setting was '.00', which is not a
+// rounding rule: it falls through to plain cents. That is why the Scorer had been
+// suggesting shelf prices like $2.14 and $0.74.
+{
+  const CSV = ['UPC,Item Description,Qty,Unit Cost', '012345679700,Chips snack bag,10,0.50', ''].join('\n');
+  await post('merch-criteria-draft', { cells: [
+    { category: SNACKS, field: 'rounding', value: '$0.50' },
+    { category: SNACKS, field: 'price_cap_pct_retail', value: '50' },
+    { category: SNACKS, field: 'min_gross_margin_pct', value: '30' },
+    { category: SNACKS, field: 'dollar_ceiling', value: '999' },
+  ]});
+  await post('merch-criteria-publish', { note: 'half-dollar rounding' });
+
+  const at = async (retail) => {
+    const up = await post('manifest-upload', { vendor: `Round${String(retail).replace('.','')}`, csv: CSV });
+    db.prepare(`UPDATE manifest_lines SET l2='Consumable Food', l3=?, retail_price=? WHERE manifest_id=?`)
+      .run(SNACKS, retail, up.body.id);
+    return (await get(`manifest&id=${up.body.id}`)).body.lines[0].suggested_price;
+  };
+
+  // $4.28 retail → 50% is $2.14 → UP to the next half dollar.
+  near(await at(4.28), 2.50, '🔑 $2.14 rounds UP to $2.50 — never $2.14, and never down to $2.00');
+  // An exact half dollar must stay put. ceil(2.50 * 2) / 2 is $2.50 in exact arithmetic,
+  // but a price reached by multiplication can be 2.5000000001, and without the epsilon
+  // guard a genuine $2.50 becomes $3.00 — a 20% error on the commonest price on the shelf.
+  near(await at(5.00), 2.50, '🔑 an exact $2.50 stays $2.50 — the float guard holds');
+  near(await at(1.48), 1.00, 'a 74c figure rounds up to a dollar');
+  near(await at(3.78), 2.00, '$1.89 rounds up to $2.00');
+  // A 50c price on a 50c cost makes 0% GP, so the FLOOR correctly steps it up — the
+  // rounding rule does not get the last word. What must always hold is the shape of the
+  // number: every suggested price lands on a whole or half dollar.
+  for (const r of [0.40, 1.48, 3.78, 4.28, 5.00, 9.95]) {
+    const px = await at(r);
+    ok(px !== null && Math.abs(px * 2 - Math.round(px * 2)) < 0.001,
+       `$${px} is a whole or half dollar (from $${r} retail)`);
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
