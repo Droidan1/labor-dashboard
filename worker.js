@@ -7861,6 +7861,49 @@ async function manifestNormalize(env, lines) {
 // Price one line. Snippet-first (R1): search, read the snippets, and only fetch a page
 // when the snippets carry no price or disagree. The Aug 19 test priced 16 of 20 lines
 // from snippets alone, so a fetch is the exception rather than the plan.
+// WHAT IS THIS? — resolve a barcode to a brand, a product and a size, before asking
+// anyone what it costs.
+//
+// 🔑 A barcode is a superb IDENTITY lookup and a terrible PRICE lookup, and we were using
+// it for the second. Measured live: searching "038000138416" returns ONE result carrying
+// no price at all. Searching "Pringles Original Potato Crisps 5.2oz" returns ten, with
+// prices, from five retailers. Same product.
+//
+// One result means no corroboration and nothing for the outlier filter to work against,
+// so whatever single listing turns up wins — which is how a can of Pringles came back at
+// $7.27 from a Walmart multipack. Resolving the NAME first turns one uncheckable number
+// into a cluster that can be sanity-checked against itself.
+//
+// It also fixes categorisation for free: without a name there is nothing to classify, so
+// a bare barcode scan silently produced no category at all.
+async function retailIdentify(env, identifier, ctx) {
+  if (!identifier) return null;
+  const domains = [...RETAIL_CPG_DOMAINS, ...RETAIL_BIG_DOMAINS];
+  const results = await retailSearch(env, String(identifier), domains, ctx);
+  if (!results || !results.length) return null;
+
+  // Only a first-party page is trusted to say what a barcode IS — a marketplace listing
+  // will happily label a 12-pack with a single can's barcode.
+  const titles = results
+    .filter(r => retailHostAllowed(r.url, domains) && !RETAIL_MARKETPLACE.test(String(r.url || "")))
+    .map(r => retailCleanText(`${r.title || ""} ${r.snippet || ""}`, 220))
+    .filter(Boolean);
+  if (!titles.length) return null;
+
+  // Reuse the manifest normaliser: it already turns a raw product string into
+  // { brand, title, size } and is prompted never to invent a variant that is not there.
+  // 🔑 manifestNormalize keys its result map by line.id, NOT row_no — passing only a
+  // row_no files every answer under `undefined` and the map reads back empty, which looks
+  // exactly like the model declining to normalise. Both are supplied.
+  const norm = await manifestNormalize(env, titles.slice(0, 3)
+    .map((t, i) => ({ id: i + 1, row_no: i + 1, description: t })));
+  const first = norm.get(1) || norm.get(2) || norm.get(3) || null;
+  if (first?.title) return { brand: first.brand || null, title: first.title, size: first.size || null };
+
+  // Normalisation failed but a first-party title is still better than a bare number.
+  return { brand: null, title: titles[0].slice(0, 200), size: null };
+}
+
 async function retailPriceLine(env, line, budget, ctx, searchName) {
   const bigTicket = retailIsBigTicket(line);
   const domains = bigTicket ? RETAIL_BIG_DOMAINS : RETAIL_CPG_DOMAINS;
@@ -17366,6 +17409,17 @@ export default {
         let retailConf = overridden ? "high" : (cached?.retail_confidence ?? null);
         const missFlags = [];
 
+        // ── STEP 1: WHAT IS IT? ───────────────────────────────────────────────
+        // A barcode alone is not searchable for a price — one uncorroborated result, often
+        // a multipack. Resolve it to a brand, product and size first, and price THAT.
+        let brand = cached?.brand ?? null;
+        let size = cached?.size ?? null;
+        if (identifier && !title) {
+          const who = await retailIdentify(env, identifier, { scan: true });
+          if (who) { title = who.title; brand = who.brand; size = who.size; looked = true; }
+        }
+
+        // ── STEP 2: WHAT DOES IT COST ELSEWHERE? ─────────────────────────────
         if (retail === null || retail === undefined) {
           // Not seen before, so this is the one path that spends anything.
           const budget = { searches: 3, fetches: 3, credits: Number(body?.maxCredits) ?? 2 };
@@ -17445,11 +17499,13 @@ export default {
         if (identifier && (title || l3 || retail !== null) && !overridden) {
           const now = new Date().toISOString();
           await env.DB.prepare(
-            `INSERT INTO item_cache (identifier, identifier_type, title, l2, l3, l3_source,
+            `INSERT INTO item_cache (identifier, identifier_type, title, brand, size, l2, l3, l3_source,
                retail_price, retail_source, retail_confidence, fetched_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(identifier, identifier_type) DO UPDATE SET
                title = COALESCE(excluded.title, item_cache.title),
+               brand = COALESCE(excluded.brand, item_cache.brand),
+               size = COALESCE(excluded.size, item_cache.size),
                l2 = COALESCE(excluded.l2, item_cache.l2),
                -- A human's category is never replaced by a model's.
                l3 = CASE WHEN item_cache.l3_source = 'manual' THEN item_cache.l3
@@ -17464,14 +17520,14 @@ export default {
           // 🔑 undefined is not bindable — sqlite takes null, and a `?.` on a missing cache
           // row yields undefined, not null. Coerced at the boundary rather than trusting
           // every expression above to have produced the right kind of empty.
-          ).bind(...[identifier, identType, title, l2, l3, l3Source,
+          ).bind(...[identifier, identType, title, brand, size, l2, l3, l3Source,
                      retail, retailSource, retailConf, retail !== null && retail !== undefined ? now : null, now]
                     .map(v => v === undefined ? null : v)).run();
         }
 
         return new Response(JSON.stringify({
           ok: true,
-          identifier, identifier_type: identType, title,
+          identifier, identifier_type: identType, title, brand, size,
           l2, l3, l3_label: l3 ? merchLabel(l3) : null, l2_label: l2 ? merchLabel(l2) : null,
           l3_source: l3Source,
           retail, retail_source: retailSource, retail_confidence: retailConf,

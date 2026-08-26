@@ -370,5 +370,76 @@ console.log('Price Scan');
   eq(row.l3, SNACKS, '…and only the barcode path leaves something behind for next time');
 }
 
+// ── 🔑 IDENTIFY FIRST, THEN PRICE ──────────────────────────────────────────
+// A barcode is a superb IDENTITY lookup and a terrible PRICE lookup, and it was being
+// used for the second. Measured live: searching "038000138416" returns ONE result with
+// no price; searching "Pringles Original Potato Crisps 5.2oz" returns ten with prices
+// from five retailers. One result means no corroboration and nothing for the outlier
+// filter to bite on, which is how a can of Pringles came back at $7.27 off a multipack.
+{
+  let searchQueries = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      searchQueries.push(decodeURIComponent(url));
+      // The BARE UPC returns one priceless result; the NAME returns a real cluster.
+      const isUpc = /038000138416/.test(url);
+      return new Response(JSON.stringify({ results: isUpc
+        ? [{ position: 1, url: 'https://www.target.com/p/pringles-original/-/A-13053936',
+             title: 'Pringles Original Flavored Potato Crisps Chips - 5.2oz', snippet: 'UPC: 038000138416' }]
+        : [{ position: 1, url: 'https://www.meijer.com/p/pringles/1', title: 'Pringles Original 5.2oz', snippet: '$2.39' },
+           { position: 2, url: 'https://www.target.com/p/pringles/2', title: 'Pringles Original 5.2oz', snippet: '$2.49' },
+           { position: 3, url: 'https://www.walmart.com/ip/pringles/3', title: 'Pringles Original 5.2oz', snippet: '$2.27' }],
+      }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls++;
+      const b = JSON.parse(init.body); const sys = b.system || '';
+      if (/expand abbreviated/i.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          items: [{ row: 1, brand: 'Pringles', title: 'Pringles Original Potato Crisps', size: '5.2 oz' }] }) }] }), { status: 200 });
+      }
+      if (/category/i.test(sys) && /rows/.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          rows: [{ row: 1, category: SNACKS, confidence: 'high' }] }) }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ prices: [
+        { url: 'https://www.meijer.com/p/pringles/1', price: 2.39, title: 'Pringles Original 5.2oz', pack: 1, in_stock: true, sold_by: 'Meijer' },
+        { url: 'https://www.target.com/p/pringles/2', price: 2.49, title: 'Pringles Original 5.2oz', pack: 1, in_stock: true, sold_by: 'Target' },
+        { url: 'https://www.walmart.com/ip/pringles/3', price: 2.27, title: 'Pringles Original 5.2oz', pack: 1, in_stock: true, sold_by: 'Walmart.com' },
+      ] }) }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const r = await post('merch-scan', { identifier: '038000138416' });
+  eq(r.status, 200, 'a bare barcode scan answers');
+  eq(r.body.brand, 'Pringles', '🔑 the BRAND is resolved from the barcode');
+  eq(r.body.size, '5.2 oz', '🔑 …and the SIZE');
+  eq(r.body.title, 'Pringles Original Potato Crisps', '…and a searchable product name');
+  near(r.body.retail, 2.27, '🔑 priced from a CLUSTER of real prices, not one uncorroborated listing');
+  eq(r.body.l3, SNACKS, '🔑 …and it categorises, which a nameless barcode never could');
+
+  // The price search must have run on the NAME, not the number.
+  const priceSearches = searchQueries.filter(q => !/038000138416/.test(q));
+  ok(priceSearches.length > 0, '…because a second search ran on the resolved name');
+  ok(priceSearches.some(q => /Pringles/i.test(q)), '…carrying the brand into the query');
+
+  // And all of it is remembered, so the next scan of this barcode costs nothing.
+  const row = db.prepare(`SELECT brand, size, title, l3 FROM item_cache WHERE identifier='038000138416'`).get();
+  eq(row.brand, 'Pringles', 'the brand is kept');
+  eq(row.size, '5.2 oz', '…and the size');
+  eq(row.l3, SNACKS, '…and the category');
+
+  const before = searchCalls;
+  const again = await post('merch-scan', { identifier: '038000138416' });
+  eq(searchCalls, before, '💰 a repeat scan resolves nothing and searches nothing');
+  eq(again.body.brand, 'Pringles', '…and still knows the brand');
+
+  globalThis.fetch = realFetch;
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

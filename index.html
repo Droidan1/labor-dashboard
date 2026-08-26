@@ -18012,8 +18012,9 @@
     el('ps-result').innerHTML = `
       <div style="display:flex;flex-direction:column;gap:14px;margin-top:2px">
         <div class="ps-ident">
+          ${j.brand ? `<div class="ps-up" style="font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:10.5px">${psEsc(j.brand)}</div>` : ''}
           <div class="ps-nm">${psEsc(j.title || 'Unidentified item')}</div>
-          ${j.identifier ? `<div class="ps-up">${psEsc(j.identifier)}</div>` : ''}
+          <div class="ps-up">${[j.size, j.identifier].filter(Boolean).map(psEsc).join(' &middot; ') || ''}</div>
         </div>
 
         <div class="ps-hero ${bad ? 'bad' : ''}">${priceTxt}</div>
