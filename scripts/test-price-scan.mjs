@@ -582,5 +582,144 @@ console.log('Price Scan');
   near(manifestRound(4.99, '$1 down'), 4.00, 'whole-dollar rounding down works too');
 }
 
+// ── 🛑 THE EXACT SKU IS THE WORST PRICE SOURCE A CLOSEOUT BUYER HAS ─────────
+// Pringles Everything Bagel 5.5oz is a limited edition big box no longer stocks, so the
+// only listings left for it are resellers': $9.49 a can, $22.00 a three-pack. The
+// pipeline read the three-pack, divided by three and returned $7.33 — every rule firing
+// correctly on a premise that was wrong. Brand + size is asked as its own question and
+// corroborates at $2.27/$2.49/$2.39, which is what a customer's real alternative costs.
+{
+  const realFetch = globalThis.fetch;
+  let skuQuery = null, classQuery = null;
+  const SKU_URL = 'https://www.walmart.com/ip/pringles-everything-bagel-3pk/2';
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      const q = decodeURIComponent(url);
+      if (/038000293122/.test(q)) {
+        return new Response(JSON.stringify({ results: [
+          { position: 1, url: 'https://world.openfoodfacts.org/product/0038000293122/x',
+            title: 'Pringles Everything Bagel – 5.5oz', snippet: 'Quantity: 5.5oz Brands: Pringles' },
+        ] }), { status: 200 });
+      }
+      if (/Everything Bagel/.test(q)) {
+        skuQuery = q;
+        return new Response(JSON.stringify({ results: [
+          { position: 1, url: SKU_URL, title: '(3 pack) Pringles Everything Bagel Potato Crisps, 5.5 oz Canister',
+            snippet: 'Single. $9.49 ; 2 Pack. $16.00 ; 3 Pack. $22.00' },
+        ] }), { status: 200 });
+      }
+      classQuery = q;
+      return new Response(JSON.stringify({ results: [
+        { position: 1, url: 'https://www.walmart.com/ip/pringles-sv/3', title: 'Pringles Salt and Vinegar Potato Crisps, 5.5 oz Canister', snippet: '$2.27' },
+        { position: 2, url: 'https://www.target.com/p/pringles-cheddar/4', title: 'Pringles Cheddar Cheese Potato Crisps Chips - 5.5oz', snippet: '$2.49' },
+        { position: 3, url: 'https://www.meijer.com/shopping/product/pringles-sco/5', title: 'Pringles Potato Crisps Chips Sour Cream, 5.5 oz', snippet: '$2.39' },
+      ] }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls++;
+      const b = JSON.parse(init.body); const sys = b.system || '';
+      if (/expand abbreviated/i.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          items: [{ row: 1, brand: 'Pringles', title: 'Pringles Everything Bagel Potato Crisps', size: '5.5 oz' }] }) }] }), { status: 200 });
+      }
+      if (/category/i.test(sys) && /rows/.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          rows: [{ row: 1, category: SNACKS, confidence: 'high' }] }) }] }), { status: 200 });
+      }
+      const asked = JSON.stringify(b.messages || '');
+      const prices = /everything-bagel/.test(asked)
+        // The reseller's three-pack, read exactly right and divided down exactly right.
+        ? [{ url: SKU_URL, price: 22.00, title: '(3 pack) Pringles Everything Bagel Potato Crisps, 5.5 oz Canister', pack: 3, in_stock: true, sold_by: 'Walmart.com' }]
+        : [{ url: 'https://www.walmart.com/ip/pringles-sv/3', price: 2.27, title: 'Pringles Salt and Vinegar Potato Crisps, 5.5 oz Canister', pack: 1, in_stock: true, sold_by: 'Walmart.com' },
+           { url: 'https://www.target.com/p/pringles-cheddar/4', price: 2.49, title: 'Pringles Cheddar Cheese Potato Crisps Chips - 5.5oz', pack: 1, in_stock: true, sold_by: 'Target' },
+           { url: 'https://www.meijer.com/shopping/product/pringles-sco/5', price: 2.39, title: 'Pringles Potato Crisps Chips Sour Cream, 5.5 oz', pack: 1, in_stock: true, sold_by: 'Meijer' }];
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ prices }) }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const r = await post('merch-scan', { identifier: '0038000293122' });
+  near(r.body.retail, 2.27, '🔑 $22.00/3 = $7.33 is rejected for what the shelf equivalent costs');
+  ok((r.body.flags || []).includes('priced as brand + size'),
+     '🔑 …and it SAYS so — a substituted retail that looks like a found one is a lie');
+  ok(classQuery !== null && !/Everything Bagel/.test(classQuery),
+     '🔑 the class query drops the variant — the flavour is what makes the SKU unfindable');
+  ok(/Pringles/.test(classQuery) && /5\.5/.test(classQuery), '…and keeps the brand and the size');
+  ok(/Everything Bagel/.test(skuQuery || ''), 'the SKU query is still asked first');
+  ok(r.body.retail_confidence !== 'high',
+     'a class price is a weaker claim than a price for this exact can, and reads as one');
+  globalThis.fetch = realFetch;
+}
+
+// A SKU price close to its class is the ordinary case and must be left ALONE — the
+// substitution is for resale inflation, not a general preference for the cheaper number.
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      const q = decodeURIComponent(url);
+      if (/038000293133/.test(q)) {
+        return new Response(JSON.stringify({ results: [
+          { position: 1, url: 'https://world.openfoodfacts.org/product/y', title: 'Pringles Ranch – 5.5oz', snippet: 'Pringles 5.5oz' },
+        ] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ results: [
+        { position: 1, url: /Ranch/.test(q) ? 'https://www.walmart.com/ip/pringles-ranch/6' : 'https://www.walmart.com/ip/pringles-sv/3',
+          title: 'Pringles 5.5 oz Canister', snippet: '$2.68' },
+      ] }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls++;
+      const b = JSON.parse(init.body); const sys = b.system || '';
+      if (/expand abbreviated/i.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          items: [{ row: 1, brand: 'Pringles', title: 'Pringles Ranch Potato Crisps', size: '5.5 oz' }] }) }] }), { status: 200 });
+      }
+      if (/category/i.test(sys) && /rows/.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          rows: [{ row: 1, category: SNACKS, confidence: 'high' }] }) }] }), { status: 200 });
+      }
+      const ranch = /pringles-ranch/.test(JSON.stringify(b.messages || ''));
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ prices: [
+        { url: ranch ? 'https://www.walmart.com/ip/pringles-ranch/6' : 'https://www.walmart.com/ip/pringles-sv/3',
+          price: ranch ? 2.68 : 2.27, title: 'Pringles 5.5 oz Canister', pack: 1, in_stock: true, sold_by: 'Walmart.com' },
+      ] }) }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const r = await post('merch-scan', { identifier: '0038000293133' });
+  near(r.body.retail, 2.68, '🔑 a normal SKU price stands — $2.68 is not resale inflation');
+  ok(!(r.body.flags || []).includes('priced as brand + size'), '…and nothing claims a substitution');
+  globalThis.fetch = realFetch;
+}
+
+// A cached price already went through all of this. Re-asking on every scan of a known
+// item would spend a search to reach the same answer.
+{
+  const realFetch = globalThis.fetch;
+  const before = searchCalls;
+  globalThis.fetch = async (u, init) => {
+    if (String(u).startsWith('https://api.search.tinyfish.ai')) searchCalls++;
+    return realFetch(u, init);
+  };
+  const r = await post('merch-scan', { identifier: '0038000293122' });
+  eq(searchCalls, before, '🔑 a second scan of a priced item spends NOTHING');
+  near(r.body.retail, 2.27, '…and answers with what was learned');
+  eq(r.body.from_cache, true, '…from the cache');
+  globalThis.fetch = realFetch;
+}
+
+// The screen used to print "rounded up" unconditionally. Consumables round DOWN since
+// criteria v9, so the rule has to travel with the answer or the strip contradicts it.
+{
+  const r = await post('merch-scan', { identifier: '0038000293122' });
+  ok('rounding' in r.body, '🔑 the rounding rule is returned, so the strip cannot guess wrong');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -7927,6 +7927,47 @@ async function retailIdentify(env, identifier, ctx) {
   return { brand: null, title: titles[0].slice(0, 200), size: null };
 }
 
+// ─── The class price: what the SHELF equivalent costs, not what a reseller wants ──
+//
+// 🛑 FOR A CLOSEOUT BUYER THE EXACT SKU IS THE WORST PRICE SOURCE THERE IS, and that is
+// structural, not a parsing bug. Measured live on UPC 0038000293122 — Pringles Everything
+// Bagel 5.5oz, a limited edition big box no longer stocks. Every listing still standing
+// for it is a reseller: $9.49 for the single can, $22.00 for a three-pack. The pipeline
+// read the three-pack, divided by three, and returned $7.33. Every rule fired correctly
+// and the arithmetic was right. The PREMISE was wrong.
+//
+// Closeout inventory is by definition what big box stopped carrying, so the items we
+// handle are precisely the ones whose only surviving listings are resale. And the
+// comparison a customer actually makes is not against a discontinued flavour nobody
+// stocks — it is against the can of Pringles on the shelf next door, at $2.27.
+//
+// So brand + size is asked as its own question, with the variant deliberately dropped,
+// and it corroborates across retailers: $2.27 Walmart, $2.49 Target, $2.39 Meijer. One
+// free search. It is also exactly what Brian described — find the brand, find the size,
+// and let THAT get the price from stores.
+//
+// ⚠️ The manifest scorer has the same defect and does not yet do this. It matters more
+// there, not less: a manifest is nothing BUT discontinued items, and an inflated retail
+// makes a bad buy look good.
+const RETAIL_CLASS_TRIP = 1.5;   // same spread that retailDecide already calls a conflict
+
+async function retailClassPrice(env, brand, size, budget, ctx = {}) {
+  if (!brand || !size) return null;
+  if (!budget || budget.searches <= 0) return null;
+  budget.searches--;
+  const item = `${brand} ${size}`.trim();
+  const results = await retailSearch(env, `${item} price`.slice(0, 180), RETAIL_CPG_DOMAINS, ctx);
+  if (!results || !results.length) return null;
+  const cands = await retailParsePrices(env, item, results.slice(0, 8), ctx);
+  if (!cands.length) return null;
+  // The SAME decider, so multipack division, per-ounce scaling, the marketplace rejection
+  // and the median outlier guard all apply here too. A class price reached by weaker rules
+  // than the SKU price would be the wrong thing to trust over it.
+  const d = retailDecide({ description: item, identifier: null }, cands, RETAIL_CPG_DOMAINS,
+                         { resultUrls: results.map(r => r.url).filter(Boolean) });
+  return d.retail_price > 0 ? d : null;
+}
+
 async function retailPriceLine(env, line, budget, ctx, searchName) {
   const bigTicket = retailIsBigTicket(line);
   const domains = bigTicket ? RETAIL_BIG_DOMAINS : RETAIL_CPG_DOMAINS;
@@ -17450,9 +17491,11 @@ export default {
         }
 
         // ── STEP 2: WHAT DOES IT COST ELSEWHERE? ─────────────────────────────
+        // One budget for the whole scan, because the class check below shares it. Four
+        // searches, not three: the SKU query, the class query, and slack for a retry.
+        const budget = { searches: 4, fetches: 3, credits: Number(body?.maxCredits) ?? 2 };
         if (retail === null || retail === undefined) {
           // Not seen before, so this is the one path that spends anything.
-          const budget = { searches: 3, fetches: 3, credits: Number(body?.maxCredits) ?? 2 };
           // 🔑 THE SIZE GOES INTO THE QUERY. It was resolved and then dropped, so the
           // search asked "Pringles Everything Bagel Potato Crisps" and matched a 2-can
           // multipack at $7.33 — for a can that sells around $2.50. Singles of a
@@ -17476,6 +17519,21 @@ export default {
             if (!title && r.decided.title) title = r.decided.title;
           } else if (r?.skipped) {
             missFlags.push(r.skipped === "budget" ? "not looked up" : String(r.skipped));
+          }
+
+          // ── STEP 2b: IS THAT A SHELF PRICE, OR A RESELLER'S? ───────────────
+          // Only on a fresh lookup — a cached price already went through this, and
+          // re-asking on every scan of a known item would spend a search for nothing.
+          if (retail !== null && retail > 0 && brand && size) {
+            const cls = await retailClassPrice(env, brand, size, budget, { scan: true });
+            if (cls && retail > cls.retail_price * RETAIL_CLASS_TRIP) {
+              retail = cls.retail_price;
+              retailSource = cls.retail_source;
+              // Never "high": this is the right price for the CLASS, which is a
+              // deliberately weaker claim than the right price for this exact can.
+              retailConf = cls.retail_confidence === "high" ? "medium" : cls.retail_confidence;
+              missFlags.push("priced as brand + size");
+            }
           }
         }
 
@@ -17577,6 +17635,9 @@ export default {
           price_overridden: manual !== null,
           gp_pct: gpPct, below_gp_floor: belowFloor, gp_floor_pct: gpFloorPct,
           ceiling_bound: lad.ceilingBound,
+          // The screen used to say "rounded up" unconditionally. Consumables round DOWN
+          // since criteria v9, so the rule has to travel with the answer.
+          rounding: critAt("rounding"),
           criteria_version: live?.version ?? null,
           from_cache: !looked && !!cached,
           looked_up: looked,

@@ -18002,11 +18002,19 @@
     } else if (bad) {
       why = `Half of retail would not make the margin, so this steps up. It still keeps only ${j.gp_pct}% — under the ${j.gp_floor_pct}% floor.`;
     } else if (j.price_basis === 'street retail') {
-      why = `${psMoney(j.retail)} at the price cap, rounded up.`;
+      // The direction comes from the criteria, never from a guess here — consumables
+      // round DOWN since v9 and the strip said "rounded up" while showing $3.50.
+      const dir = /down/i.test(j.rounding || '') ? 'down' : 'up';
+      why = `${psMoney(j.retail)} at the price cap, rounded ${dir}.`;
     } else {
       why = noRetail
         ? 'No big-box price to work from, so this uses what the category sells for here.'
         : 'Priced from what the category sells for here.';
+    }
+
+    if ((j.flags || []).includes('priced as brand + size') && why) {
+      why += ' The exact item is discontinued and only resellers still list it, so this is'
+           + ' what the same brand and size sells for on a shelf.';
     }
 
     el('ps-result').innerHTML = `
