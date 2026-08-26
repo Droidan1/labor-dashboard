@@ -740,9 +740,24 @@ console.log('Price Scan');
   const at = (retail, crit = DOWN) => merchPriceLadder({ retail, asp: 2.00, cost: 0.81, crit });
 
   const mid = at(2.49);
-  near(mid.price, 2.00, '🔑 a $2.49 can does NOT price at $1.00 — that is 19% against 81c');
+  near(mid.price, 1.50, '🔑 a $2.49 can does NOT price at $1.00 — that is 19% against 81c');
   ok(!mid.belowFloor, '…and what ships clears the 30% floor');
   ok(((mid.price - 0.81) / mid.price) * 100 >= 30, '…measured on the shipped price, not the base');
+
+  // 🔑 THE LIFT IS MINIMAL. Stepping up to ASP instead overshot to $2.00 on a $2.27
+  // street price — 27c under the street, which is not a discount anyone drives for.
+  const lift = at(2.27);
+  near(lift.price, 1.50, '🔑 $2.27 street lifts to $1.50, NOT to the $2.00 ASP');
+  eq(lift.basis, 'street retail', '…and it is still a street-derived price, not an ASP one');
+  ok(lift.floorLifted, '…flagged as lifted, so the screen can say why it beat the cap');
+  ok(lift.price < 2.00, '🛑 ASP must never pull a price UP when we have a street price');
+  // The smallest increment that clears: 81c / 0.70 = $1.157, so $1.50 and never $2.00.
+  const step = 0.5;
+  ok(lift.price - step < 0.81 / 0.70, '…and it is the FIRST clearing step, not a later one');
+
+  // A category we have never sold still has to price off something.
+  const noAsp = merchPriceLadder({ retail: null, asp: 2.00, cost: 0.81, crit: DOWN });
+  eq(noAsp.basis, 'our ASP', 'with no street price, ASP is still the fallback');
 
   // 🛑 It was not merely low, it was NON-MONOTONIC: a lower retail paid more, because
   // only one of the two reached the rounding step still holding a floor-clearing number.
@@ -759,10 +774,36 @@ console.log('Price Scan');
   near(up.price, 4.00, 'the round-UP path is unchanged');
   ok(!up.belowFloor, '…and still clears');
 
-  // With no ASP to step to there is nothing to repair, and the answer must SAY so
-  // rather than quietly printing a price that misses the floor.
-  const stuck = merchPriceLadder({ retail: 2.49, asp: null, cost: 0.81, crit: DOWN });
-  ok(stuck.belowFloor, '🔑 with no ASP to step to, a below-floor price is FLAGGED, not hidden');
+  // 🛑 THE LIFT STOPS BELOW THE STREET PRICE. $2.79 of cost against a $4.00 street needs
+  // $3.99 to make 30%, and a $3.99 tag on a $4.00 item is not a discount — it is a bad
+  // buy wearing a price. The honest output there is the flag, not a number.
+  const badBuy = merchPriceLadder({ retail: 4.00, asp: 2.00, cost: 2.79, crit: DOWN });
+  ok(!badBuy.floorLifted, '🔑 the lift is refused when it would reach the street price');
+  ok(badBuy.belowFloor, '…and the line SAYS the floor is missed rather than looking fine');
+  ok(badBuy.price < 4.00 * 0.9, '…so nothing prints a near-street tag');
+
+  // …but a lift that lands on a real discount is taken. This one clears at $2.50.
+  const fine = merchPriceLadder({ retail: 4.00, asp: 2.00, cost: 1.50, crit: DOWN });
+  near(fine.price, 2.50, 'a reachable floor still lifts — $2.50 on a $4.00 street');
+  ok(fine.floorLifted && !fine.belowFloor, '…and reads as lifted, not as a miss');
+
+  // Every price that clears the floor has to be a real discount, at every retail.
+  for (const [retail, cost] of [[7.33, 0.81], [2.89, 0.81], [2.27, 0.81], [1.80, 0.81], [4.00, 1.50]]) {
+    const r = merchPriceLadder({ retail, asp: 2.00, cost, crit: DOWN });
+    ok(r.price < retail, `$${retail} street never prices at or above the street ($${r.price})`);
+  }
+
+  // 🛑 A cliff found by sweeping rather than by reasoning: an earlier bound let $2.00
+  // street lift to $1.50 while $1.80 street collapsed to $0.50 — a LOSS on 81c of cost.
+  near(at(1.80).price, 1.50, '🔑 $1.80 street still lifts to $1.50, not down to a loss');
+  ok(at(1.80).price > 0.81, '…never a tag below what the thing cost us');
+
+  // A ceiling can make the floor genuinely unreachable. That must be FLAGGED, never
+  // quietly printed as if the criteria agreed.
+  const stuck = merchPriceLadder({ retail: 2.49, asp: null, cost: 0.81,
+                                   crit: { ...DOWN, ceiling: 1.00 } });
+  ok(stuck.belowFloor, '🔑 a ceiling below the floor is FLAGGED, not hidden');
+  ok(stuck.price <= 1.00, '…and the hard ceiling still holds');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

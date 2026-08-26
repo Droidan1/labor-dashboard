@@ -892,8 +892,10 @@ let mid;
   const l2 = dear.lines[0];
   ok(['our ASP', 'street retail'].includes(l2.price_basis), 'a basis is stated');
   ok(l2.suggested_price >= 2.00,
-     `🔑 it steps UP, never down — a fallback that took LESS money would recover nothing (got $${l2.suggested_price})`);
-  eq(l2.below_gp_floor, true, '🔑 …and it STILL says the floor is not met, rather than looking fine');
+     `🔑 it never prices BELOW the cap to chase a margin it cannot reach (got $${l2.suggested_price})`);
+  ok(l2.suggested_price < 4.00,
+     '🛑 …and never AT the street price — $2.79 of cost needs $3.99 to make 30%, and a $4.00 tag on a $4.00 item is a bad buy wearing a price');
+  eq(l2.below_gp_floor, true, '🔑 …so it STILL says the floor is not met, rather than looking fine');
   const fl = JSON.parse(db.prepare(`SELECT flags FROM manifest_lines WHERE manifest_id=?`).get(dear.manifest.id).flags || '[]');
   ok(true, 'flags read');
   ok(l2.gp_pct !== null && l2.gp_pct < 30, `…GP is under 30% and stated (got ${l2.gp_pct}%)`);

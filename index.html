@@ -18000,7 +18000,12 @@
     } else if (j.price_overridden) {
       why = 'Set by hand, so the rule was not applied.';
     } else if (bad) {
-      why = `Half of retail would not make the margin, so this steps up. It still keeps only ${j.gp_pct}% — under the ${j.gp_floor_pct}% floor.`;
+      why = `Even the most we can charge keeps only ${j.gp_pct}% — under the ${j.gp_floor_pct}% floor. Worth a second look before this is priced.`;
+    } else if (j.floor_lifted) {
+      // Being cheaper than the street is the offer, so when the cap and the margin floor
+      // disagree the screen has to say the floor won — otherwise the price just looks
+      // like the cap was ignored.
+      why = `Half of ${psMoney(j.retail)} could not make ${j.gp_floor_pct}% on our cost, so this lifts to the first price that does.`;
     } else if (j.price_basis === 'street retail') {
       // The direction comes from the criteria, never from a guess here — consumables
       // round DOWN since v9 and the strip said "rounded up" while showing $3.50.

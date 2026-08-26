@@ -9170,20 +9170,16 @@ function merchPriceLadder({ retail, asp, cost, crit }) {
     return { price: null, basis: null, belowFloor: false, ceilingBound: false, gpPct: null };
   }
 
-  let base, basis, belowFloor = false;
-  if (haveRetail && clearsFloor(retailCandidate)) {
-    base = retailCandidate; basis = "street retail";
-  } else if (haveAsp && haveRetail) {
-    // 🔑 Step UP, never down. If ASP sits BELOW the retail-derived price, moving to it
-    // takes less money for the same item and recovers nothing. Whichever is higher.
-    base = Math.max(aspN, retailCandidate);
-    basis = base === aspN ? "our ASP" : "street retail";
-    belowFloor = !clearsFloor(base);
-  } else {
-    base = haveAsp ? aspN : retailCandidate;
-    basis = haveAsp ? "our ASP" : "street retail";
-    belowFloor = !clearsFloor(base);
-  }
+  // 🔑 THE STREET PRICE GOVERNS WHENEVER WE HAVE ONE.
+  //
+  // Being visibly cheaper than big box IS the offer, and the cap is what encodes it. This
+  // used to step up to ASP whenever half of retail could not make the margin, and Brian
+  // rejected the result: a $2.27 can priced at our $2.00 ASP is 27c under the street, and
+  // nobody drives to a discounter for 27c off. ASP is the fallback for having NO street
+  // price — never a reason to charge more than the cap when we do have one.
+  let base = haveRetail ? retailCandidate : aspN;
+  let basis = haveRetail ? "street retail" : "our ASP";
+  let belowFloor = false;
 
   // 🔑 Cap BEFORE rounding, then clamp again — rounding UP could otherwise push the
   // answer back above the ceiling it was just held under.
@@ -9199,33 +9195,51 @@ function merchPriceLadder({ retail, asp, cost, crit }) {
     return p;
   };
   let price = settle(base);
+  let floorLifted = false;
 
-  // 🛑 THE FLOOR WAS TESTED ON THE BASE, BUT THE ROUNDED PRICE IS WHAT SHIPS.
+  // 🛑 THE FLOOR LIFTS THE PRICE BY THE SMALLEST STEP THAT CLEARS IT, AND NOTHING MORE.
   //
-  // Rounding DOWN can take a figure that cleared 30% and leave it under. Measured: a
-  // $2.49 can capped to $1.245 clears the floor at 34.9%, rounds down to $1.00, and
-  // against 81c of cost that is 19%. Worse, it was NOT monotonic — a $2.27 retail
-  // produced $2.00 while a HIGHER $2.49 produced $1.00, because only one of them
-  // reached the rounding step still holding a floor-clearing number.
+  // Two separate things go wrong without this. The floor is tested on the BASE while the
+  // ROUNDED price is what ships, and rounding DOWN moves margin the wrong way: a $2.49
+  // can capped to $1.245 clears at 34.9%, rounds to $1.00, and against 81c of cost that
+  // is 19%. Rounding UP could only ever help, which is why this never had to exist.
   //
-  // The old round-up rule could only ever move margin the right way, which is why this
-  // check never had to exist. The repair is the one the branch above already uses: if the
-  // retail-derived price cannot make the margin, step up to what the category actually
-  // sells for. Rounding does not get a special rule of its own.
-  if (price !== null && !clearsFloor(price) && haveAsp && base !== aspN) {
-    const stepped = Math.max(aspN, base);
-    const alt = settle(stepped);
-    if (alt !== null && clearsFloor(alt)) {
-      base = stepped;
-      price = alt;
-      basis = stepped === aspN ? "our ASP" : basis;
+  // And the lift has to be MINIMAL. Stepping up to ASP instead overshot to $2.00 on a
+  // $2.27 street price — a larger breach of the cap than the floor actually required,
+  // and it threw away the discount that is the whole reason a customer came in.
+  //
+  //   half of $2.27 = $1.14 → 19% → the least that clears 30% on 81c is $1.157 → $1.50
+  //
+  // 81c / (1 - 0.30) is the exact break-even for the floor; round that UP to the
+  // category's own increment, whichever direction the category normally rounds.
+  if (price !== null && !clearsFloor(price) && gpFloorPct !== null && unitCost !== null
+      && gpFloorPct < 100) {
+    const need = unitCost / (1 - gpFloorPct / 100);
+    // No known increment means no known price ladder, so there is no "one step up" to
+    // take. Better to leave the price at the cap and flag it than to invent a rung.
+    const step = MANIFEST_ROUND_STEP[String(crit?.rounding || "").trim()];
+    const upTo = (v) => roundCents(Math.max(step, Math.ceil((v / step) - 1e-9) * step));
+    const lifted = step ? upTo(need) : null;
+
+    // 🛑 AND THE LIFT STOPS BELOW THE STREET PRICE. Caught by the manifest suite: a chip
+    // line costing $2.79 against a $4.00 street needs $3.99 to make 30%, and an unbounded
+    // lift printed a $3.99 tag on something big box sells for $4.00. A one-cent discount
+    // is not a discount — that is a bad BUY wearing a price, and the honest output is the
+    // flag, not a number. Where the cap and the floor cannot BOTH be met under the street
+    // price they genuinely conflict, the cap stands, and the line says the floor is
+    // missed — which is the signal a buyer actually needs.
+    if (lifted !== null && lifted > price && (!haveRetail || lifted < retailN)
+        && clearsFloor(lifted)
+        && (ceiling === null || lifted <= ceiling)) {
+      price = lifted;
+      floorLifted = true;
     }
   }
   // belowFloor describes the price that SHIPS, never the figure it was derived from.
   belowFloor = price !== null && !clearsFloor(price);
 
   return {
-    price, basis, belowFloor,
+    price, basis, belowFloor, floorLifted,
     ceilingBound: ceiling !== null && base > ceiling,
     gpPct: price && unitCost !== null && price > 0
       ? +(((price - unitCost) / price) * 100).toFixed(1) : null,
@@ -17657,6 +17671,7 @@ export default {
           price_overridden: manual !== null,
           gp_pct: gpPct, below_gp_floor: belowFloor, gp_floor_pct: gpFloorPct,
           ceiling_bound: lad.ceilingBound,
+          floor_lifted: manual !== null ? false : !!lad.floorLifted,
           // The screen used to say "rounded up" unconditionally. Consumables round DOWN
           // since criteria v9, so the rule has to travel with the answer.
           rounding: critAt("rounding"),
