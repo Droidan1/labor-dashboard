@@ -642,5 +642,104 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   eq((await post('manifest-retail', { id: pricedId })).status, 409, '🛑 a decided manifest is not re-priced');
 }
 
+// ── 🛑 A MANIFEST IS NOTHING BUT DISCONTINUED ITEMS ─────────────────────────
+// Which is exactly why the exact SKU is the worst price source on this screen. Everyone
+// still listing a closeout item is a reseller, and an inflated retail makes a bad buy
+// look good — the expensive direction to be wrong in, on the surface where money is
+// actually committed.
+{
+  const realFetch = globalThis.fetch;
+  const mk = (id, upc, desc, cost) => {
+    db.prepare(`INSERT INTO manifests (id,vendor,uploaded_at,sell_as,units_per_case,status) VALUES (?,?,?,'each',1,'draft')`)
+      .run(id, 'ClassCheck', '2026-08-20T00:00:00Z');
+    db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,flags)
+                VALUES (?,1,?,'upc',?,10,?,'[]')`).run(id, upc, desc, cost);
+  };
+  const seenQueries = [];
+  const stub = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      const q = decodeURIComponent(url).split('&')[0];
+      seenQueries.push(q);
+      return new Response(JSON.stringify({ results: /Deluxe/.test(q)
+        ? [{ position: 1, url: 'https://www.walmart.com/ip/widget-deluxe-3pk/1', title: '(3 pack) Widget Deluxe 5.5 oz', snippet: '3 Pack. $22.00' }]
+        : [{ position: 1, url: 'https://www.walmart.com/ip/widget-plain/2', title: 'Widget Plain 5.5 oz', snippet: '$2.27' },
+           { position: 2, url: 'https://www.target.com/p/widget-mild/3', title: 'Widget Mild 5.5 oz', snippet: '$2.49' },
+           { position: 3, url: 'https://www.meijer.com/shopping/product/widget-hot/4', title: 'Widget Hot 5.5 oz', snippet: '$2.39' }],
+      }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      const b = JSON.parse(init.body);
+      if (/expand abbreviated/i.test(b.system || '')) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          items: [{ row: 1, brand: 'Widget', title: 'Widget Deluxe', size: '5.5 oz' }] }) }] }), { status: 200 });
+      }
+      const asked = JSON.stringify(b.messages || '');
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ prices: /widget-deluxe/.test(asked)
+        ? [{ url: 'https://www.walmart.com/ip/widget-deluxe-3pk/1', price: 22.00, title: '(3 pack) Widget Deluxe 5.5 oz', pack: 3, in_stock: true, sold_by: 'Walmart.com' }]
+        : [{ url: 'https://www.walmart.com/ip/widget-plain/2', price: 2.27, title: 'Widget Plain 5.5 oz', pack: 1, in_stock: true, sold_by: 'Walmart.com' },
+           { url: 'https://www.target.com/p/widget-mild/3', price: 2.49, title: 'Widget Mild 5.5 oz', pack: 1, in_stock: true, sold_by: 'Target' },
+           { url: 'https://www.meijer.com/shopping/product/widget-hot/4', price: 2.39, title: 'Widget Hot 5.5 oz', pack: 1, in_stock: true, sold_by: 'Meijer' }],
+      }) }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  // ── a line whose name is resolved in THIS batch ──
+  globalThis.fetch = stub;
+  mk('cls1', '0038000900001', 'WIDGET DLX 5.5', 0.81);
+  const r1 = await post('manifest-retail', { id: 'cls1', batch: 1, max_searches: 5 });
+  const l1 = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id='cls1'`).get();
+  near(l1.retail_price, 2.27, '🔑 $22.00/3 = $7.33 is rejected for what the shelf equivalent costs');
+  ok(JSON.parse(l1.flags || '[]').includes('priced as brand + size'),
+     '🔑 …and the LINE says so — a substituted retail that looks found is a lie on a buy sheet');
+  ok(seenQueries.some(q => /Deluxe/.test(q) && /5\.5/.test(q)),
+     '🔑 the size goes into the SKU query here too, not just on a scan');
+  ok(seenQueries.some(q => /Widget/.test(q) && !/Deluxe/.test(q)),
+     '🔑 …and the class query drops the variant');
+
+  // 🛑 THE CLASS SEARCH MUST NOT EAT THE LINE BUDGET. On one shared counter a 25-line
+  // batch prices twelve and reports the rest "not looked up" — a partial run that reads
+  // as a complete one, which is the exact failure this function was written to avoid.
+  eq(r1.body.searchesLeft, 4, '🔑 one line spent ONE line-search, not two');
+
+  // ── a line whose name was resolved on an EARLIER run ──
+  // This is the case that was silently broken: the read asked item_cache for `title`
+  // alone, so every already-named line reached pricing with no brand and no size.
+  seenQueries.length = 0;
+  db.prepare(`INSERT INTO item_cache (identifier, identifier_type, title, brand, size, updated_at)
+              VALUES ('0038000900002','upc','Widget Deluxe','Widget','5.5 oz','2026-08-20T00:00:00Z')`).run();
+  mk('cls2', '0038000900002', 'WIDGET DLX 5.5', 0.81);
+  await post('manifest-retail', { id: 'cls2', batch: 1, max_searches: 5 });
+  const l2 = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id='cls2'`).get();
+  near(l2.retail_price, 2.27, '🔑 a line named on an EARLIER run gets the class check too');
+  ok(seenQueries.some(q => /Widget/.test(q) && !/Deluxe/.test(q)),
+     '…because brand and size are read back, not just the title');
+
+  // The substitution is written to the shared cache, so the scan screen and the scorer
+  // cannot disagree about what this item competes with.
+  const c = db.prepare(`SELECT * FROM item_cache WHERE identifier='0038000900002'`).get();
+  near(c.retail_price, 2.27, 'and the corrected price is what gets cached');
+
+  // ── with no allowance, the check is skipped rather than starving the run ──
+  seenQueries.length = 0;
+  mk('cls3', '0038000900003', 'WIDGET DLX 5.5', 0.81);
+  const r3 = await post('manifest-retail', { id: 'cls3', batch: 1, max_searches: 5, max_class_searches: 0 });
+  const l3 = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id='cls3'`).get();
+  near(l3.retail_price, 7.33, 'with the class allowance at zero the SKU price stands…');
+  eq(r3.body.searchesLeft, 4, '…and the line budget is untouched either way');
+
+  // 🛑 THE PAID BUDGET WAS NEVER A BUDGET. `Number(undefined) ?? 10` is NaN, `??` does
+  // not catch NaN, and every comparison against NaN is false — so Firecrawl, the one
+  // API here that bills, ran uncapped on every production run. The tell was sitting in
+  // the response as `creditsSpent: null`, because JSON renders NaN as null.
+  mk('cls4', '0038000900004', 'WIDGET DLX 5.5', 0.81);
+  globalThis.fetch = stub;
+  const r4 = await post('manifest-retail', { id: 'cls4', batch: 1, max_searches: 5 });
+  ok(Number.isFinite(r4.body.creditsSpent),
+     `🔑 the credit spend is a NUMBER, not NaN-rendered-as-null (got ${JSON.stringify(r4.body.creditsSpent)})`);
+  globalThis.fetch = realFetch;
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

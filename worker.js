@@ -7458,7 +7458,29 @@ const RETAIL_MISS_FLAGS = ["not at big box", "marketplace only", "no price found
 const RETAIL_UNSETTLED_FLAGS = ["not looked up"];
 const RETAIL_SETTLED_FLAGS = RETAIL_MISS_FLAGS.filter(f => !RETAIL_UNSETTLED_FLAGS.includes(f));
 const RETAIL_OWNED_FLAGS = [...RETAIL_MISS_FLAGS, "price conflict", "size mismatch",
-                            "comp overstated", "msrp above street", "needs agent", "fetch blocked"];
+                            "comp overstated", "msrp above street", "needs agent", "fetch blocked",
+                            "priced as brand + size"];
+// 🛑 `Number(x) ?? fallback` DOES NOT FALL BACK. `??` catches null and undefined; Number
+// turns both of those into NaN, which is neither — so the fallback is skipped and NaN is
+// kept. Every comparison against NaN is then false, which means a BUDGET built this way
+// is not a loose cap, it is NO cap:
+//
+//   Number(undefined) ?? 10   →  NaN
+//   NaN <= 0                  →  false   → "credits remain", forever
+//   NaN--                     →  NaN     → spending never counts down
+//
+// Measured, not theorised: `manifest-retail` never forwarded maxCredits, so the Firecrawl
+// budget has been NaN on every production run since it was added — an uncapped paid API
+// on a 1,000/month free tier. The tell was in the response the whole time, as
+// `creditsSpent: null`, because JSON renders NaN as null.
+//
+// Related to the ceiling bug in merchPriceLadder, where Number(null) === 0 turned "no
+// ceiling" into "a ceiling of zero". Same root: coercing before checking for absence.
+const budgetNum = (v, fallback) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+
 const RETAIL_BULK_TITLE = /\b(bulk|wholesale|case\s*of|pallet|carton\s*of|foodservice|food\s*service)\b/i;
 
 // Size in ounces, for R5's per-oz scaling of an import with no exact US SKU.
@@ -7996,24 +8018,45 @@ async function retailIdentify(env, identifier, ctx) {
 // makes a bad buy look good.
 const RETAIL_CLASS_TRIP = 1.5;   // same spread that retailDecide already calls a conflict
 
-async function retailClassPrice(env, brand, size, budget, ctx = {}) {
+async function retailClassPrice(env, line, brand, size, budget, ctx = {}) {
   if (!brand || !size) return null;
-  if (!budget || budget.searches <= 0) return null;
-  budget.searches--;
+  // Its OWN allowance, never the line budget. Sharing one counter meant a 25-line batch
+  // priced twelve lines and reported the rest "not looked up" — the sanity check quietly
+  // eating the work it exists to check.
+  if (!budget || !(budget.classSearches > 0)) return null;
+  budget.classSearches--;
   const item = `${brand} ${size}`.trim();
   const results = await retailSearch(env, `${item} price`.slice(0, 180), RETAIL_CPG_DOMAINS, ctx);
   if (!results || !results.length) return null;
   const cands = await retailParsePrices(env, item, results.slice(0, 8), ctx);
   if (!cands.length) return null;
-  // The SAME decider, so multipack division, per-ounce scaling, the marketplace rejection
-  // and the median outlier guard all apply here too. A class price reached by weaker rules
-  // than the SKU price would be the wrong thing to trust over it.
-  const d = retailDecide({ description: item, identifier: null }, cands, RETAIL_CPG_DOMAINS,
+  // 🔑 The SAME decider, against the SAME line. Only the QUERY differs. So multipack
+  // division and per-ounce scaling still work off the pack and size WE are buying, the
+  // marketplace rejection and the median outlier guard still apply, and the manifest's
+  // own msrp-above-street and comp-overstated checks still fire. A class price reached
+  // by weaker rules than the SKU price would be the wrong thing to trust over it.
+  const d = retailDecide(line, cands, RETAIL_CPG_DOMAINS,
                          { resultUrls: results.map(r => r.url).filter(Boolean) });
   return d.retail_price > 0 ? d : null;
 }
 
-async function retailPriceLine(env, line, budget, ctx, searchName) {
+// Is the price we just found a shelf price, or a reseller's? One place, so the Manifest
+// Scorer and Price Scan can never drift on the question.
+async function retailClassCheck(env, decided, line, ident, budget, ctx) {
+  if (!decided || !(decided.retail_price > 0)) return decided;
+  if (!ident?.brand || !ident?.size) return decided;
+  const cls = await retailClassPrice(env, line, ident.brand, ident.size, budget, ctx);
+  if (!cls || !(decided.retail_price > cls.retail_price * RETAIL_CLASS_TRIP)) return decided;
+  return {
+    ...cls,
+    // Never "high": this is the right price for the CLASS, which is a deliberately
+    // weaker claim than the right price for this exact item.
+    retail_confidence: cls.retail_confidence === "high" ? "medium" : cls.retail_confidence,
+    flags: [...new Set([...(cls.flags || []), "priced as brand + size"])],
+  };
+}
+
+async function retailPriceLine(env, line, budget, ctx, searchName, ident = null) {
   const bigTicket = retailIsBigTicket(line);
   const domains = bigTicket ? RETAIL_BIG_DOMAINS : RETAIL_CPG_DOMAINS;
   const item = [searchName || line.description,
@@ -8078,7 +8121,8 @@ async function retailPriceLine(env, line, budget, ctx, searchName) {
       }
     }
   }
-  return { decided: retailDecide(line, cands, domains, { resultUrls }) };
+  const decided = retailDecide(line, cands, domains, { resultUrls });
+  return { decided: await retailClassCheck(env, decided, line, ident, budget, ctx) };
 }
 
 // Run the lookup across a manifest.
@@ -8102,8 +8146,14 @@ async function retailRunManifest(env, manifestId, opts = {}) {
   // Credits are the only line here that costs money, so it gets its own small allowance
   // rather than riding on the free budgets. Ten a batch keeps a 331-line manifest inside
   // Firecrawl's free monthly tier even if every escalation fires.
+  // The class check gets its OWN allowance rather than sharing the line budget. On one
+  // counter a 25-line batch would price twelve lines and report the rest "not looked up",
+  // and a partial run that LOOKS complete is the failure mode this whole function was
+  // written to avoid. Free either way, and one extra search per line still sits inside
+  // TinyFish's 30/min at the ~2.6s a search actually takes.
   const budget = { searches: maxSearches, fetches: Number(opts.maxFetches) || maxSearches,
-                   credits: Number(opts.maxCredits) ?? 10 };
+                   classSearches: budgetNum(opts.maxClassSearches, maxSearches),
+                   credits: budgetNum(opts.maxCredits, 10) };
   const { results: allLines } = await env.DB.prepare(
     `SELECT * FROM manifest_lines WHERE manifest_id = ? ORDER BY row_no`).bind(manifestId).all();
   if (!allLines?.length) return { priced: 0, cached: 0, skipped: 0, partial: false, remaining: 0 };
@@ -8134,9 +8184,14 @@ async function retailRunManifest(env, manifestId, opts = {}) {
 
   // Expanded product names, cached separately from prices: a name stays true long after a
   // price stops being current, so it has no TTL.
+  // 🔑 Brand and size come back too. manifestNormalize has ALWAYS written all three to
+  // item_cache and this read asked for one of them, so every line whose name was already
+  // known reached the price step with no brand and no size — which is exactly the set the
+  // class check needs, and it silently could not run for them.
   const { results: titleRows } = await env.DB.prepare(
-    `SELECT identifier, identifier_type, title FROM item_cache WHERE title IS NOT NULL`).all();
-  const titles = new Map((titleRows || []).map(c => [`${c.identifier}|${c.identifier_type}`, c.title]));
+    `SELECT identifier, identifier_type, title, brand, size FROM item_cache
+      WHERE title IS NOT NULL`).all();
+  const titles = new Map((titleRows || []).map(c => [`${c.identifier}|${c.identifier_type}`, c]));
 
   // Expand anything in this batch we have not seen before, in one batched call rather
   // than one per line.
@@ -8183,10 +8238,16 @@ async function retailRunManifest(env, manifestId, opts = {}) {
     } else if (key && seen.has(key)) {
       d = seen.get(key); from = "dedupe"; cached++;
     } else {
-      const searchName = fresh.get(line.id)?.title
-        ?? (key ? titles.get(key) : null)
-        ?? null;
-      const r = await retailPriceLine(env, line, budget, { manifest_id: manifestId, line_id: line.id }, searchName);
+      const known = fresh.get(line.id) || (key ? titles.get(key) : null) || null;
+      // 🔑 THE SIZE GOES INTO THE QUERY, same as on a scan. Without it the search asks
+      // for a product with no size and matches whatever bundle is listed — which for a
+      // discontinued item is usually a reseller's multipack.
+      const searchName = known?.title
+        ? [known.title, known.size].filter(Boolean).join(" ")
+        : null;
+      const r = await retailPriceLine(env, line, budget,
+        { manifest_id: manifestId, line_id: line.id }, searchName,
+        known ? { brand: known.brand, size: known.size } : null);
       if (r.skipped) {
         skipped++;
         if (r.skipped === "budget") partial = true;
@@ -8220,7 +8281,7 @@ async function retailRunManifest(env, manifestId, opts = {}) {
     }
   }
   return { priced, cached, skipped, partial,
-           creditsSpent: Math.max(0, (Number(opts.maxCredits) ?? 10) - budget.credits),
+           creditsSpent: Math.max(0, budgetNum(opts.maxCredits, 10) - budget.credits),
            remaining: Math.max(0, pending.length - lines.length),
            lookedAt: lines.length, total: allLines.length,
            searchesLeft: budget.searches };
@@ -17261,6 +17322,9 @@ export default {
         const out = await retailRunManifest(env, m.id, {
           batch: Number(body?.batch) || 25,
           maxSearches: body?.max_searches ? Math.min(Number(body.max_searches), 60) : undefined,
+          maxClassSearches: body?.max_class_searches !== undefined
+            ? Math.min(Number(body.max_class_searches), 60) : undefined,
+          maxCredits: body?.max_credits !== undefined ? Number(body.max_credits) : undefined,
         });
         if (!out.remaining) {
           await env.DB.prepare(`UPDATE manifests SET auto_retail = 0 WHERE id = ?`).bind(m.id).run();
@@ -17572,9 +17636,8 @@ export default {
         }
 
         // ── STEP 2: WHAT DOES IT COST ELSEWHERE? ─────────────────────────────
-        // One budget for the whole scan, because the class check below shares it. Four
-        // searches, not three: the SKU query, the class query, and slack for a retry.
-        const budget = { searches: 4, fetches: 3, credits: Number(body?.maxCredits) ?? 2 };
+        const budget = { searches: 3, fetches: 3, classSearches: 1,
+                         credits: budgetNum(body?.maxCredits, 2) };
         if (retail === null || retail === undefined) {
           // Not seen before, so this is the one path that spends anything.
           // 🔑 THE SIZE GOES INTO THE QUERY. It was resolved and then dropped, so the
@@ -17588,7 +17651,7 @@ export default {
           // different pack size nor flag a size mismatch. Both now work.
           const named = [title, size].filter(Boolean).join(" ");
           const line = { identifier, identifier_type: identType, description: named, qty: 1, cost: null };
-          const r = await retailPriceLine(env, line, budget, { scan: true }, named);
+          const r = await retailPriceLine(env, line, budget, { scan: true }, named, { brand, size });
           looked = true;
           if (r?.decided) {
             retail = r.decided.retail_price ?? null;
@@ -17600,21 +17663,6 @@ export default {
             if (!title && r.decided.title) title = r.decided.title;
           } else if (r?.skipped) {
             missFlags.push(r.skipped === "budget" ? "not looked up" : String(r.skipped));
-          }
-
-          // ── STEP 2b: IS THAT A SHELF PRICE, OR A RESELLER'S? ───────────────
-          // Only on a fresh lookup — a cached price already went through this, and
-          // re-asking on every scan of a known item would spend a search for nothing.
-          if (retail !== null && retail > 0 && brand && size) {
-            const cls = await retailClassPrice(env, brand, size, budget, { scan: true });
-            if (cls && retail > cls.retail_price * RETAIL_CLASS_TRIP) {
-              retail = cls.retail_price;
-              retailSource = cls.retail_source;
-              // Never "high": this is the right price for the CLASS, which is a
-              // deliberately weaker claim than the right price for this exact can.
-              retailConf = cls.retail_confidence === "high" ? "medium" : cls.retail_confidence;
-              missFlags.push("priced as brand + size");
-            }
           }
         }
 
