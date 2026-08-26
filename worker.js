@@ -6205,6 +6205,27 @@ async function alertJobFailure(env, job, detail) {
 // Wrap a cron dispatch so neither a throw nor a quietly-reported problem can
 // pass unnoticed. Returns a promise that NEVER rejects — it is handed straight
 // to ctx.waitUntil, where a rejection would be swallowed by the runtime anyway.
+
+// How many photos a caption is written from. Four is enough to describe the
+// week's mix; every one is another multi-hundred-KB image on the request.
+const CAPTION_PHOTO_LIMIT = 4;
+
+// One R2 object as a Claude image block, or null for anything the API will not
+// take — a missing object, a media type it does not accept, or a file over the
+// 5 MB limit. Callers filter; a missing image is never worth failing a caption.
+async function r2ImageBlock(env, key, contentType) {
+  if (!env.MEDIA || !key) return null;
+  const obj = await env.MEDIA.get(key).catch(() => null);
+  if (!obj) return null;
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  let mt = String(contentType || "image/png").toLowerCase();
+  if (mt === "image/jpg") mt = "image/jpeg";
+  if (!/^image\/(png|jpeg|gif|webp)$/.test(mt) || bytes.length > 5 * 1024 * 1024) return null;
+  let bin = ""; const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  return { type: "image", source: { type: "base64", media_type: mt, data: btoa(bin) } };
+}
+
 // Build a Facebook caption for one post. Extracted from the draft-generate-caption
 // handler so the Thursday auto-draft cron runs the SAME implementation — a cron has
 // no session, so it must not reach through the request path to get one.
@@ -6214,23 +6235,37 @@ async function buildCaption(env, opts) {
           const store = String(opts.store || "").trim().toUpperCase();
   const fy = String(opts.fiscalYear || "F26").trim();
   const topic = String(opts.topic || "").trim() || "our weekly bin preview — fresh bargain finds just put out in the bins";
+  // What the model LOOKS at is what the caption ends up being about, so a post
+  // whose subject is photos the store just took gets the PHOTOS — not the
+  // branded cover. Handing it the cover instead is what made every auto-draft
+  // of 2026-08-20 open on the cover's Dollar Days price ladder instead of on
+  // the bins. Where there are no photos the cover IS the subject: it carries
+  // the theme, the day-by-day pricing, "new inventory Friday".
+  const photoIds = (Array.isArray(opts.photoIds) ? opts.photoIds : [])
+    .map(n => parseInt(n, 10)).filter(Number.isInteger).slice(0, CAPTION_PHOTO_LIMIT);
+  const photoImgs = [];
+  if (env.DB && env.MEDIA && photoIds.length) {
+    const rows = await env.DB.prepare(
+      `SELECT r2_key, content_type FROM marketing_photos WHERE id IN (${photoIds.map(() => "?").join(",")})`
+    ).bind(...photoIds).all().catch(() => null);
+    for (const p of (rows && rows.results) || []) {
+      // Prefer the small derivative: a phone original is routinely over the
+      // API's 5 MB cap, and the thumb is plenty to see what is in a bin.
+      const img = await r2ImageBlock(env, thumbKeyOf(p.r2_key), "image/jpeg")
+               || await r2ImageBlock(env, p.r2_key, p.content_type);
+      if (img) photoImgs.push(img);
+    }
+  }
   // Load the selected cover thumbnail so the model can SEE what the post
   // promotes (theme, day-by-day pricing, "new inventory Friday", etc.).
+  // Skipped when the caller named photos — gated on what it ASKED for, not on
+  // how many images actually loaded, so an unreadable photo degrades to no
+  // image rather than to a caption about the cover's promo.
   let coverImg = null;
   const thumbId = (opts.thumbnailId != null && opts.thumbnailId !== "") ? parseInt(opts.thumbnailId, 10) : null;
-  if (env.DB && env.MEDIA && Number.isInteger(thumbId)) {
+  if (env.DB && !photoIds.length && Number.isInteger(thumbId)) {
     const th = await env.DB.prepare("SELECT r2_key, content_type FROM marketing_thumbnails WHERE id = ?").bind(thumbId).first().catch(() => null);
-    const obj = th && th.r2_key ? await env.MEDIA.get(th.r2_key) : null;
-    if (obj) {
-      const bytes = new Uint8Array(await obj.arrayBuffer());
-      let mt = (th.content_type || "image/png").toLowerCase();
-      if (mt === "image/jpg") mt = "image/jpeg";
-      if (/^image\/(png|jpeg|gif|webp)$/.test(mt) && bytes.length <= 5 * 1024 * 1024) {
-        let bin = ""; const chunk = 0x8000;
-        for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-        coverImg = { type: "image", source: { type: "base64", media_type: mt, data: btoa(bin) } };
-      }
-    }
+    if (th) coverImg = await r2ImageBlock(env, th.r2_key, th.content_type);
   }
   const label = (typeof STORE_LABELS !== "undefined" && STORE_LABELS[store]) ? STORE_LABELS[store] : (store || "the store");
   const postType = MARKETING_POST_TYPES.includes(String(opts.postType)) ? String(opts.postType) : null;
@@ -6269,6 +6304,7 @@ async function buildCaption(env, opts) {
     `Store: Bargain Lane ${label}.`,
     postType ? `Post type: ${MARKETING_POST_TYPE_LABELS[postType] || postType}.` : "",
     `This post is about: ${topic}.`,
+    photoImgs.length ? `The attached ${photoImgs.length === 1 ? "image is a photo" : photoImgs.length + " images are photos"} the store team just took of THIS week's bins, and ${photoImgs.length === 1 ? "it is" : "they are"} a sample of a larger batch. They are the subject of this post: write about what is actually in them — the kinds of items, the variety, what is worth digging for. Keep it about the mix rather than hanging the whole caption on one item, and describe only what you can see. No price, day, discount, or offer is printed on a bin photo, so do not state one.` : "",
     coverImg ? "The attached image is THIS post's branded cover graphic. Match the caption to what it actually promotes — its theme, headline, and any recurring schedule, day-by-day pricing, or offer printed on it. You MAY reference prices, days, or offers that are clearly printed on the cover; do NOT invent any that are not shown." : "",
     bg ? `This week's chain-wide plan: ${bg}. This post type is about the week's plan, so this is directly relevant — work in what fits naturally. The cover graphic and the description above still set the specifics: do not contradict them, and do not state a price, date, or offer that is not printed on the cover or given in the description. If a part of the plan does not fit this post, leave it out rather than listing it.` : "",
     recent.length ? [
@@ -6285,7 +6321,8 @@ async function buildCaption(env, opts) {
     ].join("\n") : "",
     "Write the caption.",
   ].filter(Boolean).join("\n");
-  const content = coverImg ? [coverImg, { type: "text", text: userText }] : userText;
+  const imgs = photoImgs.length ? photoImgs : (coverImg ? [coverImg] : []);
+  const content = imgs.length ? [...imgs, { type: "text", text: userText }] : userText;
   const system = [
     "You write Facebook post captions for Bargain Lane, a chain of discount bin stores.",
     "Voice: friendly, exciting, community-minded, a little playful — a neighbor telling you what just landed, not an ad agency.",
@@ -6300,9 +6337,9 @@ async function buildCaption(env, opts) {
     "",
     "Aim for 50-80 words before the hashtags. Facebook hides anything past roughly 80 words behind a 'See more' link, so stay under that.",
     "",
-    "Write for THIS post, not a generic promo. The user says what it is about and may attach the post's cover graphic — match the caption to what that cover actually promotes.",
-    "When the inputs disagree, this is the order of authority. The cover graphic and the post type define what this post IS. The operator's description refines that. Anything you are told about the week's wider store plan is supporting context — use it where it genuinely belongs, but never let it displace what the cover shows. Your first sentence must be about this post's own subject: if the cover says NEW ARRIVALS, the caption opens on new arrivals, whatever else is running that week.",
-    "Only reference prices, discounts, dates, schedules, offers, or claims that are printed on the attached cover image or given to you in the text. Never invent, guess, or embellish beyond what you were given: a made-up price is a promise the store has to honor at the register.",
+    "Write for THIS post, not a generic promo. The user says what it is about and may attach images — the post's branded cover graphic, or photos the store just took. Match the caption to what those images actually show.",
+    "When the inputs disagree, this is the order of authority. The attached images and the post type define what this post IS. The operator's description refines that. Anything you are told about the week's wider store plan is supporting context — use it where it genuinely belongs, but never let it displace what the images show. Your first sentence must be about this post's own subject: if the cover says NEW ARRIVALS, the caption opens on new arrivals; if you were given the store's own bin photos, it opens on what is in the bins — whatever else is running that week.",
+    "Only reference prices, discounts, dates, schedules, offers, or claims that are printed on an attached cover graphic or given to you in the text. Never invent, guess, or embellish beyond what you were given: a made-up price is a promise the store has to honor at the register.",
     "Vary the opening and the structure from one caption to the next — do not reuse the same hook shape every time.",
     "Do not use the store's internal code (BL1, BL4, and so on).",
     "",
@@ -6368,12 +6405,13 @@ async function ensureAutoDraftForPhotos(env, store, now) {
   const week = autoWeekOf(now);
   const weekEnd = new Date(new Date(week + "T00:00:00Z").getTime() + 7 * 24 * 3600 * 1000).toISOString().slice(0, 10);
 
-  // Newest active bin_preview cover, else any active one.
+  // Newest active bin_preview cover — or none. 🛑 No cross-type fallback: a
+  // weekly-promo or event cover on a bin post is not just wrong on the card,
+  // it becomes the post's SUBJECT, because a cover is what the caption model is
+  // shown. A captionless, coverless draft full of bin photos is still useful;
+  // a bin post captioned off this week's promo graphic is not.
   const cover = await env.DB.prepare(
     "SELECT id FROM marketing_thumbnails WHERE active = 1 AND post_type = 'bin_preview' ORDER BY created_at DESC LIMIT 1"
-  ).first().catch(() => null)
-    || await env.DB.prepare(
-    "SELECT id FROM marketing_thumbnails WHERE active = 1 ORDER BY created_at DESC LIMIT 1"
   ).first().catch(() => null);
   const coverId = cover ? cover.id : null;
 
@@ -6410,11 +6448,18 @@ async function fillAutoDraftCaption(env, store, week) {
   try {
     if (!env.ANTHROPIC_API_KEY) return;
     const row = await env.DB.prepare(
-      "SELECT id, thumbnail_id FROM marketing_drafts WHERE store = ? AND origin = 'photos' AND auto_week = ? LIMIT 1"
+      "SELECT id, photo_ids FROM marketing_drafts WHERE store = ? AND origin = 'photos' AND auto_week = ? LIMIT 1"
     ).bind(store, week).first().catch(() => null);
     if (!row) return;
+    // The photos are the post. Deliberately NOT the cover: the cover is a
+    // branded promo graphic, and handing it over instead is what produced five
+    // captions about a price ladder and none about the bins (2026-08-20).
+    // Whatever has landed by now is a sample — this fires on the upload that
+    // created the draft, and a Thursday batch arrives as ~30 more requests.
+    let photoIds = [];
+    try { photoIds = JSON.parse(row.photo_ids || "[]"); } catch (_) { /* keep it captionable */ }
     const r = await buildCaption(env, {
-      store, postType: "bin_preview", thumbnailId: row.thumbnail_id,
+      store, postType: "bin_preview", photoIds,
       topic: "this week's bin photos — fresh finds just put out in the bins",
     });
     if (!r || !r.ok || !r.caption) { console.log("auto-draft caption skipped:", store, (r && r.error) || "no caption"); return; }

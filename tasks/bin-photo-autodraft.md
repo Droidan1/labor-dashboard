@@ -6,7 +6,7 @@ Brian only edits and posts.
 ## Decisions (Brian, 2026-08-18)
 - Caption: **auto-generated** (same Opus 5 pipeline as the AI button).
 - Grouping: **`photo_type='bins'` only** — retail photos never auto-draft.
-- Cover: **auto-pick** newest active `bin_preview` thumbnail.
+- Cover: **auto-pick** newest active `bin_preview` thumbnail — and *only* that (see 2026-08-26).
 - Trigger: **on upload, NOT a cron.** ("can this not run a schedule but when a manager
   uploads bin photos?")
 
@@ -72,3 +72,48 @@ column has to exist first. The migration is inert without the worker.
 - 🔑 A bins photo uploaded *after* that week's post is published is orphaned: the sync skips
   published posts and the unique index blocks a second draft for the week. Correct, but worth
   knowing.
+
+
+## Fix — bin cover, bin text (2026-08-26)
+
+**Reported:** the auto-drafts' text and cover were still the Flow Calendar's, not the bins'.
+
+**What live drafts showed.** All five auto-drafts of 2026-08-20 carried cover 3 (the
+"Dig for Deals" Dollar Days price-ladder graphic) and captions describing *that graphic* —
+every one opened "Six days, six prices", recited $10 → $6 → $3 → $2 → $1 → 50¢ and tagged
+#DollarDays. "Dollar Days"/"Double Dip" is `marketing_flow.dd_loyalty`, the calendar's
+**DD / loyalty** column.
+
+**Root cause.** Not the `marketing_flow` query — that is already gated off for `bin_preview`.
+The promo arrived **through the cover image**: `buildCaption` attaches the cover and instructs
+the model to match the caption to what it promotes, "day-by-day pricing" included. The bin
+photos were never sent to the model at all.
+
+**Changed**
+- `ensureAutoDraftForPhotos` — cover is the newest active `bin_preview` **or none**. The
+  any-post-type fallback is gone: it could hand a bin post a weekly-promo/event cover, which
+  then became the post's subject.
+- `buildCaption` — takes `photoIds`. Given photos it sends *those* (small thumb first, ≤4,
+  ≤5 MB, PNG/JPEG/GIF/WebP) and **no cover**, and tells the model they are this week's bins,
+  a sample of a larger batch, with no price/day/offer printed on them. Given none, the cover is
+  the subject exactly as before — the manual composer path is unchanged in behaviour.
+- `r2ImageBlock()` extracted; the shared system prompt now says "images" where it said "cover
+  graphic", so its order-of-authority rule is true for both callers.
+
+**Suite** 41 assertions (was 30). Mutation-tested one site at a time: restoring the cover
+fallback fails the no-fallback assertion; captioning from the cover again fails four
+prompt-content assertions. Full repo suite 2263/49 green.
+
+### ⚠️ Known: the caption still sees the batch's FIRST photo
+The fill fires on the upload that *creates* the draft, and a Thursday batch is ~30 more
+requests behind it, so the model usually gets one photo (capped at 4 when more have landed).
+That is the price of Brian's upload-triggered design and it is still bin text. If one photo
+proves too thin a sample, the follow-up is to fill from the every-minute tick once
+`updated_at` has been quiet for ~2 minutes — the photo sync bumps `updated_at`, so
+"the batch has settled" needs no new column, and it would retry a failed caption too.
+
+### 🔑 Not code: which bin cover
+Thumbnail 7 "Doubledip" is tagged `post_type='bin_preview'` and is now the newest active one,
+so it is what the next auto-draft picks. Code can only tell which folder a cover was filed in,
+not whether the graphic is a bin cover or that week's promo — retag or deactivate it if it is
+the latter. A per-cover "use this one for auto-drafts" flag is the durable answer.
