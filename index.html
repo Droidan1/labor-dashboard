@@ -1872,7 +1872,7 @@
           <div class="flex items-center justify-between gap-2 mb-3">
             <div>
               <h2 class="text-sm font-bold text-opl-ink dark:text-op-ink">Premade thumbnails</h2>
-              <p class="text-[12px] text-opl-inkDim dark:text-op-inkDim">Branded cover images used as the first image of a bin post.</p>
+              <p class="text-[12px] text-opl-inkDim dark:text-op-inkDim">Branded cover images used as the first image of a bin post. Tap <span class="font-black tracking-wide">AUTO</span> on one to make it the cover for bin-photo auto-posts — otherwise the newest Bin Preview cover is used.</p>
             </div>
             <div class="flex items-center gap-2 shrink-0">
               <select id="ct-thumb-type" aria-label="Cover post type" class="rounded-xl border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-800 dark:text-op-ink text-xs px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-accent-green"></select>
@@ -13749,6 +13749,7 @@
 
   // ── Content (Slice 1b): thumbnails + bin-post composer (admin) ──────
   let ctThumbs = [];
+  let ctAutoCover = null;      // cover pinned for bin-photo auto-posts (null = newest Bin Preview)
   let ctPhotos = [];
   let ctSelThumb = null;
   let ctSelPhotos = new Set();
@@ -14232,7 +14233,8 @@
       const r = await fetch(`${WORKER_BASE}?action=thumbnails`, { credentials: 'include' });
       const d = await r.json();
       ctThumbs = (d && d.thumbnails) || [];
-    } catch (_) { ctThumbs = []; }
+      ctAutoCover = (d && d.auto_draft_cover_id) || null;
+    } catch (_) { ctThumbs = []; ctAutoCover = null; }
     ctRenderThumbPicker();
     if (ctTab === 'thumbs') ctRenderThumbGrid();   // build the full grid only when its tab is showing
     ctUpdateCounts();
@@ -14245,6 +14247,7 @@
     wrap.innerHTML = ctThumbs.map(t => `
       <div class="relative rounded-xl overflow-hidden border border-[rgba(20,16,8,0.1)] dark:border-op-border bg-opl-panelHi dark:bg-op-panelHi">
         <img src="${WORKER_BASE}?action=thumbnail&id=${t.id}" class="w-full aspect-square object-cover" alt="${escapeHtml(t.name || '')}" loading="lazy">
+        <button type="button" onclick="ctPinAutoCover(${t.id})" aria-pressed="${ctAutoCover === t.id}" aria-label="${ctAutoCover === t.id ? 'Cover for bin-photo auto-posts — tap to unpin' : 'Use as the cover for bin-photo auto-posts'}" class="absolute top-1.5 left-1.5 h-7 px-2 rounded-full ${ctAutoCover === t.id ? 'bg-accent-green text-[#06210f]' : 'bg-black/60 text-white'} text-[10px] font-black tracking-wide leading-none flex items-center justify-center active:scale-90 transition">AUTO</button>
         <button type="button" onclick="ctDeleteThumb(${t.id})" aria-label="Remove thumbnail" class="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 text-white text-lg leading-none flex items-center justify-center active:scale-90 transition">&times;</button>
         ${t.name ? `<div class="px-2 py-1 text-[11px] font-medium text-opl-ink dark:text-op-ink truncate">${escapeHtml(t.name)}</div>` : ''}
       </div>`).join('');
@@ -14290,6 +14293,25 @@
     ctLoadThumbs();
   }
   window.ctUploadThumb = ctUploadThumb;
+
+  // Pin (or unpin) the cover the bin-photo auto-draft uses. One account-wide
+  // choice, so tapping AUTO on a second cover moves it rather than adding one.
+  async function ctPinAutoCover(id) {
+    const next = (ctAutoCover === id) ? '' : String(id);
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=content-setting`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'auto_draft_cover_id', value: next }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || (d && d.error)) throw new Error((d && d.error) || 'Could not save');
+      ctAutoCover = next ? id : null;
+      ctRenderThumbGrid();
+    } catch (e) {
+      uiAlert((e && e.message) || 'Could not save', { title: 'Auto-post cover' });
+    }
+  }
+  window.ctPinAutoCover = ctPinAutoCover;
 
   async function ctDeleteThumb(id) {
     const ok = await uiConfirm('Remove this thumbnail?', { danger: true, okText: 'Remove' });

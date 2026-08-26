@@ -92,3 +92,40 @@ Three changes, each at a different site:
 Two things this does **not** fix, both flagged in `tasks/bin-photo-autodraft.md`: the caption
 still sees the batch's first photo (upload-triggered by design), and no code can tell whether
 a cover filed under Bin Preview is a bin cover or that week's promo graphic.
+
+## Follow-up — pin the auto-draft cover (2026-08-26, same day)
+
+**Asked:** "Can you fix this without deleting the doubleDip thumbnail?"
+
+Yes — the problem was never that cover, it was that the pick was a *guess* ("newest active
+`bin_preview`"), so any promo graphic filed in that folder wins it by being new. Made the pick
+explicit instead, with no migration and no data touched:
+
+- [x] `content_settings.auto_draft_cover_id` — the existing key/value table, already holding
+      `brand_guide`. No schema change.
+- [x] `ensureAutoDraftForPhotos`: pinned cover (if still active) → newest active `bin_preview`
+      → none. A stale pin logs and falls through rather than posting coverless.
+- [x] Pin validated at `?action=content-setting` when set — a pin naming a missing or removed
+      cover is refused there, not discovered on a Thursday.
+- [x] `?action=thumbnails` returns `auto_draft_cover_id` so the UI can show which is pinned.
+- [x] `AUTO` badge per tile in the Thumbnails tab, mirroring the delete badge beside it.
+- [x] `sw.js` CACHE_NAME → **v122** (frontend commit). Rebasing onto main landed on v121,
+      which main's own frontend commit had already taken — same name, so an installed PWA
+      that cached v121 would never fetch the AUTO badge.
+- [x] Suite 41 → 50 assertions; mutation-tested: ignoring the pin fails 2 assertions,
+      dropping the set-time validation fails a different 1. Full suite **2283 / 49** green.
+- [x] `bash scripts/build.sh` after `npm ci` — every new utility (`left-1.5`, `h-7`, `px-2`,
+      `tracking-wide`, `font-black`) compiles into `dist/tailwind.css`.
+- [x] Contrast, computed not eyeballed: pinned `#06210f` on `#22c55e` = **7.5:1**. The
+      unpinned badge started as `text-white/80` on `bg-black/60`, which composites to
+      **4.34:1** over a light cover — under the gate — so it is plain `text-white` (**5.7:1**
+      worst case). Both badges carry their own background, so neither depends on the theme.
+
+### ⚠️ Deploy order — worker FIRST, then frontend
+The new UI POSTs a settings key the current worker rejects as "Unknown setting", so a frontend
+that lands first has a dead AUTO button. The worker is backward-compatible on its own: with no
+pin set it behaves exactly as it does today.
+
+### Then set it
+The pin starts empty, which means today's behaviour — newest active `bin_preview`, i.e.
+"Doubledip". It only changes once someone taps AUTO on the cover they actually want.
