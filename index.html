@@ -2328,6 +2328,14 @@
                           border:2px solid #22c55e;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.34)"></div>
               <div id="ps-scanhint" style="position:absolute;left:0;right:0;bottom:7px;text-align:center;font-size:11.5px;
                           color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.9)">Fill the box with the barcode</div>
+              <div id="ps-diag" style="position:absolute;top:8px;left:8px;font-size:10px;color:#cbd5e1;
+                          background:rgba(0,0,0,.5);padding:3px 7px;border-radius:6px;
+                          text-shadow:0 1px 2px rgba(0,0,0,.9)"></div>
+              <button id="ps-lens" type="button" onclick="psNextLens()" class="hidden"
+                      aria-label="Switch camera lens"
+                      style="position:absolute;top:8px;right:56px;height:40px;padding:0 12px;border-radius:20px;
+                             border:1px solid rgba(255,255,255,.45);background:rgba(0,0,0,.45);color:#fff;
+                             font-size:12px;font-weight:600;cursor:pointer">Lens</button>
               <button id="ps-torch" type="button" onclick="psTorch()" class="hidden"
                       aria-label="Toggle the camera light"
                       style="position:absolute;top:8px;right:8px;width:40px;height:40px;border-radius:20px;
@@ -18361,6 +18369,7 @@
   // slight angle will fail on one line and succeed on another, and trying a spread is far
   // cheaper than trying to deskew the image.
   let psStream = null, psScanning = false, psTorchOn = false;
+  let psLenses = [], psLensId = null;
   // 🔑 THE NATIVE DETECTOR WHERE THERE IS ONE, OURS WHERE THERE IS NOT. Safari still has
   // no BarcodeDetector and most of these phones are iPhones, which is why the decoder
   // above exists at all — but Android Chrome has had it since 83, and it reads a code at
@@ -18411,13 +18420,15 @@
     if (psScanning) { psStopScan(); return; }
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' },
-                 width: { ideal: 1280 }, height: { ideal: 720 },
-                 // Continuous autofocus is the single biggest difference on a barcode
-                 // held 15cm from the lens. Ignored where unsupported.
-                 advanced: [{ focusMode: 'continuous' }] },
-      });
+      // 🔑 1920 WIDE, NOT 1280. Since iOS 16.4 an `environment` request can land on a
+      // virtual camera whose field of view is the ULTRA-WIDE one (WebKit bug 253186), and
+      // on an ultra-wide frame a barcode occupies barely half the pixels it would on the
+      // standard lens. More pixels across the frame is the only thing that offsets that.
+      const video0 = { width: { ideal: 1920 }, height: { ideal: 1080 },
+                       advanced: [{ focusMode: 'continuous' }] };
+      if (psLensId) video0.deviceId = { exact: psLensId };
+      else video0.facingMode = { ideal: 'environment' };
+      stream = await navigator.mediaDevices.getUserMedia({ video: video0 });
     } catch (e) {
       uiAlert('No camera available. Type the number, or use the Photo button.');
       return;
@@ -18436,12 +18447,49 @@
     // A warehouse aisle is darker than the phone thinks it is, and a barcode is a
     // contrast problem. Offered only where the camera actually has a light.
     psTorchOn = false;
+    const track = psStream.getVideoTracks()[0];
     const torchBtn = el('ps-torch');
+    let caps = null;
+    try { caps = track?.getCapabilities?.() || null; } catch (e) { caps = null; }
+    if (caps && 'torch' in caps) torchBtn.classList.remove('hidden');
+    else torchBtn.classList.add('hidden');
+
+    // 🛑 THE IPHONE CANNOT FOCUS THAT CLOSE, AND NO DECODER FIXES THAT. On an iPhone 13
+    // Pro and later the standard rear lens has a minimum focus distance of roughly
+    // 10-20cm, which is closer than anyone naturally holds a can. Apple's own Camera app
+    // solves it by switching lenses for macro; getUserMedia does not, so the frame is
+    // simply blurred and the scan hunts for the one distance that happens to work.
+    //
+    // The remedy the WebKit engineers name in bug 253186 is exactly this: on the virtual
+    // camera, ZOOM. At ~2x the field of view matches the standard lens while the optics
+    // stay the macro-capable ones, so a barcode can be held close AND be sharp. iOS 17+.
     try {
-      const caps = psStream.getVideoTracks()[0]?.getCapabilities?.();
-      if (caps && 'torch' in caps) torchBtn.classList.remove('hidden');
-      else torchBtn.classList.add('hidden');
-    } catch (e) { torchBtn.classList.add('hidden'); }
+      if (caps && caps.zoom && Number(caps.zoom.max) > 1) {
+        const z = Math.min(2, Number(caps.zoom.max));
+        await track.applyConstraints({ advanced: [{ zoom: z }] });
+      }
+    } catch (e) { /* zoom is unsupported here; the lens button is the fallback */ }
+
+    // A lens switch is the escape hatch that works whatever iOS decides today. Which
+    // camera `environment` means has changed between releases and is not ours to predict.
+    try {
+      const devs = (await navigator.mediaDevices.enumerateDevices())
+        .filter(d => d.kind === 'videoinput');
+      psLenses = devs.map(d => d.deviceId);
+      el('ps-lens').classList.toggle('hidden', psLenses.length < 2);
+    } catch (e) { el('ps-lens').classList.add('hidden'); }
+
+    // 🔑 SAY WHAT THE CAMERA ACTUALLY GAVE US. Two rounds of this were spent reasoning
+    // about a phone nobody could see; the resolution, the zoom and the lens name settle
+    // in one glance what guessing could not.
+    try {
+      const st = track.getSettings?.() || {};
+      const lbl = (track.label || '').replace(/camera/i, '').trim();
+      el('ps-diag').textContent =
+        [`${st.width || '?'}\u00d7${st.height || '?'}`,
+         st.zoom ? `${Number(st.zoom).toFixed(1)}\u00d7` : null,
+         lbl || null].filter(Boolean).join(' \u00b7 ');
+    } catch (e) { el('ps-diag').textContent = ''; }
 
     const detector = await psDetector();
     const canvas = document.createElement('canvas');
@@ -18470,7 +18518,8 @@
       if (age > 12000 && !hinted) {
         hinted = true;
         const hint = el('ps-scanhint');
-        if (hint) hint.textContent = 'Try moving closer, or further back';
+        // 🔑 BACK, not closer. Too close is the failure these lenses actually have.
+        if (hint) hint.textContent = 'Move it further away \u2014 about 20cm \u2014 or tap Lens';
       }
       const w = video.videoWidth, h = video.videoHeight;
       if (w && h) {
@@ -18540,6 +18589,18 @@
     tick();
   }
 
+  // Which camera `facingMode: environment` means has changed between iOS releases and is
+  // not ours to predict — so offer the choice rather than guessing on the user's behalf.
+  async function psNextLens() {
+    if (!psLenses.length) return;
+    const cur = psStream?.getVideoTracks?.()[0]?.getSettings?.().deviceId || psLensId;
+    const i = psLenses.indexOf(cur);
+    psLensId = psLenses[(i + 1) % psLenses.length];
+    psStopScan();
+    await psBarcode();
+  }
+  window.psNextLens = psNextLens;
+
   // The camera light, where the camera has one.
   async function psTorch() {
     if (!psStream) return;
@@ -18565,6 +18626,8 @@
     psTorchOn = false;
     const box = el('ps-scanbox'); if (box) box.classList.add('hidden');
     const t = el('ps-torch'); if (t) { t.classList.add('hidden'); t.style.background = 'rgba(0,0,0,.45)'; t.style.color = '#fff'; }
+    const ln = el('ps-lens'); if (ln) ln.classList.add('hidden');
+    const dg = el('ps-diag'); if (dg) dg.textContent = '';
     const hint = el('ps-scanhint'); if (hint) hint.textContent = 'Fill the box with the barcode';
     const b = el('ps-barcode'); if (b) b.textContent = 'Scan';
   }
