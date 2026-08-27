@@ -73,8 +73,10 @@ const call = async (url, opts) => {
   return { status: r.status, body };
 };
 const post = (action, body, user = 'u-su') => call(`/?action=${action}`, { user, method: 'POST', body });
+const get  = (action, user = 'u-su') => call(`/?action=${action}`, { user });
 
 const SNACKS = 'FG BL CONSUMABLES - FOOD - SNACKS';
+const CANNED = 'FG BL CONSUMABLES - FOOD - CANNED GOODS';
 
 // Criteria the scan prices against: half dollars, 50% cap, 30% floor.
 await post('merch-criteria-draft', { cells: [
@@ -1133,6 +1135,87 @@ console.log('Price Scan');
     // Every earlier step, by contrast, does finish.
     for (let i = 0; i < 5; i++) eq(nodes['ps-st' + i].className, 'ps-step done', `step ${i + 1} completes`);
   }
+}
+
+// ── Merchandising › Products ────────────────────────────────────────────────
+// item_cache is not a scan log — it is the shared library BOTH the Price Scan screen and
+// the Manifest Scorer read and write, which is exactly why it is worth a page you can
+// search and correct.
+{
+  const now = new Date().toISOString();
+  const add = (id, title, brand) => db.prepare(
+    `INSERT OR REPLACE INTO item_cache (identifier, identifier_type, brand, title, size, l2, l3,
+       l3_source, retail_price, retail_source, updated_at)
+     VALUES (?,'upc',?,?, '12oz','Consumable Food',?, 'claude', 3.49,'target.com',?)`)
+    .run(id, brand, title, SNACKS, now);
+  add('090000000011', 'Bench Scanned Crisps', 'Benchco');
+  add('090000000022', 'Manifest Only Beans', 'Loadco');
+  // The ONLY thing that makes a row "from a manifest" is a manifest line pointing at it.
+  db.prepare(`INSERT INTO manifests (id,vendor,uploaded_at,sell_as,units_per_case,status)
+              VALUES ('pmf','V','2026-08-20T00:00:00Z','each',1,'draft')`).run();
+  db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,flags)
+              VALUES ('pmf',1,'090000000022','upc','MANIFEST BEANS',10,1.0,'[]')`).run();
+
+  // ── who may look ──
+  eq((await get('merch-products', 'u-mgr1')).status, 403,
+     '🛑 a manager may not browse the library — this is an admin repair surface');
+  const asAdmin = await get('merch-products&tab=scanned', 'u-admin');
+  eq(asAdmin.status, 200, 'an admin may');
+
+  // ── 🔑 THE TABS, DERIVED WITH NO MIGRATION ──
+  // item_cache carries no provenance column. Manifest membership is derivable exactly,
+  // and retroactively, from the manifest lines themselves; "scanned" is everything else,
+  // which is sound because those two are the only writers.
+  const ids = (b) => (b.rows || []).map(r => r.identifier);
+  ok(ids(asAdmin.body).includes('090000000011'), '🔑 a bench-scanned item is under Scanned');
+  ok(!ids(asAdmin.body).includes('090000000022'), '…and a manifest item is NOT');
+  const mf = await get('merch-products&tab=manifest', 'u-admin');
+  ok(ids(mf.body).includes('090000000022'), '🔑 …while it IS under Manifests');
+  ok(!ids(mf.body).includes('090000000011'), '…and the bench item is not');
+  ok(asAdmin.body.counts.scanned > 0 && mf.body.counts.manifest > 0, 'both tabs carry a count');
+
+  // Search reaches the barcode as well as the words, because that is what is on the box.
+  ok(ids((await get('merch-products&tab=scanned&q=Benchco', 'u-admin')).body).includes('090000000011'), 'search finds a brand');
+  ok(ids((await get('merch-products&tab=scanned&q=090000000011', 'u-admin')).body).includes('090000000011'), '…and a barcode');
+  eq(((await get('merch-products&tab=scanned&q=zzzznope', 'u-admin')).body.rows || []).length, 0, '…and finds nothing when there is nothing');
+
+  // ── editing ──
+  eq((await post('merch-product-save', { identifier: '090000000011', title: 'X' }, 'u-mgr1')).status, 403,
+     '🛑 a manager may not edit');
+  const saved = await post('merch-product-save',
+    { identifier: '090000000011', title: 'Bench Crisps, Salted', l3: CANNED, retail_price_override: '2.25' }, 'u-admin');
+  eq(saved.status, 200, 'an admin may');
+  eq(saved.body.row.title, 'Bench Crisps, Salted', 'the name is written');
+  eq(saved.body.row.l3, CANNED, 'the category is written');
+  near(saved.body.row.retail_price_override, 2.25, 'the override is written');
+  ok(saved.body.row.retail_override_by, '…with who set it');
+
+  // 🔑 THE PROPERTY THAT MAKES EDITING WORTH ANYTHING. 'manual' is what stops the next
+  // lookup replacing a person's category with the model's — an edit that the next scan
+  // silently undid would be worse than no edit at all.
+  eq(saved.body.row.l3_source, 'manual', "🔑 …and marked 'manual', so a re-scan cannot overwrite it");
+
+  // ── blank clears, absent leaves alone ──
+  // Collapsing those two would make an override impossible to REMOVE once set.
+  const cleared = await post('merch-product-save',
+    { identifier: '090000000011', retail_price_override: '' }, 'u-admin');
+  eq(cleared.body.row.retail_price_override, null, '🔑 a blank price CLEARS the override');
+  eq(cleared.body.row.title, 'Bench Crisps, Salted', '…and a field not sent is left alone');
+  eq(cleared.body.row.retail_override_by, null, '…and the attribution goes with it');
+
+  // ── refusals ──
+  eq((await post('merch-product-save', { identifier: '090000000011', l3: 'NOT A REAL CATEGORY' }, 'u-admin')).status, 400,
+     '🛑 a category we do not use is refused, not stored');
+  eq((await post('merch-product-save', { identifier: '090000000011', retail_price_override: 'abc' }, 'u-admin')).status, 400,
+     '🛑 …and so is a price that is not a number');
+  eq((await post('merch-product-save', { identifier: '099999999999', title: 'ghost' }, 'u-admin')).status, 404,
+     'editing a product we have never seen is a 404, not a silent insert');
+
+  // 🔑 The 13-digit spelling of a barcode edits the SAME row as the 12 — the canonical
+  // form is applied here too, or an edit would create a phantom that nothing reads.
+  const viaLong = await post('merch-product-save', { identifier: '0090000000011', size: '14oz' }, 'u-admin');
+  eq(viaLong.status, 200, '🔑 a 13-digit spelling reaches the row stored under 12');
+  eq(viaLong.body.row.size, '14oz', '…and edits it');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

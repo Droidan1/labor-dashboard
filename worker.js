@@ -3871,6 +3871,8 @@ const ACTION_BUSINESS = new Map([
   ["merch-criteria-log", "bl"],
   ["merch-coverage", "bl"],
   ["merch-velocity", "bl"],
+  ["merch-products", "bl"],
+  ["merch-product-save", "bl"],
   ["merch-scan", "bl"],
   ["merch-scan-save", "bl"],
   ["manifest-upload", "bl"],
@@ -17568,6 +17570,148 @@ export default {
     // Item Sales reconciliation uses; no Clover call is made here. Shelf comes from the
     // latest week a store actually entered. A store with no count is NEVER treated as
     // zero bays — it is excluded from the shelf side and says so.
+    // GET ?action=merch-products[&tab=scanned|manifest][&q=][&limit=][&offset=]
+    //
+    // Everything we know about a product, in one place. item_cache is not a scan log — it
+    // is the shared library that BOTH the Price Scan screen and the Manifest Scorer read
+    // and write, so a wrong category or a bad street price on one row is wrong on both
+    // surfaces. Which is exactly why it is worth a page you can search and correct.
+    if (url.searchParams.get("action") === "merch-products" && request.method === "GET") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const tab = url.searchParams.get("tab") === "manifest" ? "manifest" : "scanned";
+        const q = String(url.searchParams.get("q") || "").trim().slice(0, 80);
+        const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 50, 1), 200);
+        const offset = Math.max(Number(url.searchParams.get("offset")) || 0, 0);
+
+        // 🔑 THE TABS NEED NO MIGRATION. item_cache carries no provenance column — a scan
+        // and a manifest lookup write the same rows — but manifest membership is derivable
+        // exactly, and retroactively, from the manifest lines themselves. "Scanned" is
+        // then everything else, which is sound because those two are the only writers.
+        //
+        // ⚠️ A product that arrived BOTH ways files under manifests. Making that exact
+        // needs a provenance column, and it could only be right from the day it landed —
+        // the rows already here carry no record of how they arrived.
+        const onManifest = `EXISTS (SELECT 1 FROM manifest_lines ml WHERE ml.identifier = c.identifier)`;
+        const where = [tab === "manifest" ? onManifest : `NOT ${onManifest}`];
+        const bind = [];
+        if (q) {
+          where.push(`(c.identifier LIKE ? OR lower(c.title) LIKE ? OR lower(c.brand) LIKE ?)`);
+          const like = `%${q.toLowerCase()}%`;
+          bind.push(`%${q}%`, like, like);
+        }
+        const clause = where.join(" AND ");
+
+        const { results } = await env.DB.prepare(
+          `SELECT c.identifier, c.identifier_type, c.brand, c.title, c.size, c.l2, c.l3, c.l3_source,
+                  c.retail_price, c.retail_source, c.retail_confidence, c.retail_price_override,
+                  c.retail_override_by, c.retail_override_at,
+                  c.suggested_price_override, c.updated_at, c.updated_by
+             FROM item_cache c
+            WHERE ${clause}
+            ORDER BY c.updated_at DESC
+            LIMIT ? OFFSET ?`).bind(...bind, limit, offset).all();
+
+        const counted = await env.DB.prepare(
+          `SELECT SUM(CASE WHEN ${onManifest} THEN 0 ELSE 1 END) scanned,
+                  SUM(CASE WHEN ${onManifest} THEN 1 ELSE 0 END) manifest
+             FROM item_cache c`).first();
+
+        // The same category tree the scan screen and the scorer use, so an edit here can
+        // only pick a category those two already understand. merchTree() is an OBJECT of
+        // l2 → [l3], not a list — reshaped here rather than at four call sites.
+        const tree = Object.entries(merchTree());
+        return new Response(JSON.stringify({
+          ok: true, tab, q, limit, offset,
+          counts: { scanned: Number(counted?.scanned) || 0, manifest: Number(counted?.manifest) || 0 },
+          rows: (results || []).map(r => ({
+            ...r,
+            l3_label: r.l3 ? merchLabel(r.l3) : null,
+            l2_label: r.l2 ? merchLabel(r.l2) : null,
+            on_manifest: tab === "manifest",
+          })),
+          categories: tree.map(([l2, l3s]) => ({
+            key: l2, label: merchLabel(l2),
+            children: l3s.map(k => ({ key: k, label: merchLabel(k) })),
+          })),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=merch-product-save { identifier, identifier_type, ... }
+    //
+    // 🔑 WRITES THE SAME OVERRIDE COLUMNS THE SCAN SCREEN WRITES, so a correction made
+    // here keeps beating the model's answer everywhere it is read — including the next
+    // manifest run. An edit that only fixed this page would be undone by the next lookup.
+    if (url.searchParams.get("action") === "merch-product-save" && request.method === "POST") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const identifier = merchCanonicalUpc(String(b?.identifier || "").trim()) || String(b?.identifier || "").trim();
+        if (!identifier) return new Response(JSON.stringify({ error: "Which product?" }), { status: 400, headers: corsJson });
+        const identType = String(b?.identifier_type || manifestIdentType(identifier));
+
+        // A blank field is "leave it alone"; an explicit null is "clear it". Collapsing
+        // those two would make it impossible to REMOVE an override once set.
+        const txt = (v) => v === undefined ? undefined : (v === null || String(v).trim() === "" ? null : String(v).trim().slice(0, 200));
+        const num = (v) => {
+          if (v === undefined) return undefined;
+          if (v === null || String(v).trim() === "") return null;
+          const n = Number(v);
+          if (!Number.isFinite(n) || n < 0) throw new Error("A price must be a number, or blank to clear it");
+          return roundCents(n);
+        };
+        const l3 = txt(b?.l3);
+        if (l3 && !L3_TO_L2[l3] && !merchParentOf(l3)) {
+          return new Response(JSON.stringify({ error: "That is not a category we use" }), { status: 400, headers: corsJson });
+        }
+
+        const sets = [], vals = [];
+        const put = (col, v) => { if (v !== undefined) { sets.push(`${col} = ?`); vals.push(v); } };
+        put("brand", txt(b?.brand));
+        put("title", txt(b?.title));
+        put("size", txt(b?.size));
+        put("retail_price_override", num(b?.retail_price_override));
+        put("suggested_price_override", num(b?.suggested_price_override));
+        if (l3 !== undefined) {
+          put("l3", l3);
+          put("l2", l3 ? (L3_TO_L2[l3] || merchParentOf(l3) || null) : null);
+          // 🔑 'manual' is what stops the next lookup overwriting it — the upsert in
+          // merch-scan explicitly refuses to replace a human's category with a model's.
+          put("l3_source", l3 ? "manual" : null);
+        }
+        if (!sets.length) return new Response(JSON.stringify({ error: "Nothing to change" }), { status: 400, headers: corsJson });
+
+        const who = currentUser?.email || "admin";
+        const now = new Date().toISOString();
+        if (b?.retail_price_override !== undefined) {
+          sets.push("retail_override_by = ?", "retail_override_at = ?");
+          vals.push(num(b?.retail_price_override) === null ? null : who,
+                    num(b?.retail_price_override) === null ? null : now);
+        }
+        sets.push("updated_by = ?", "updated_at = ?");
+        vals.push(who, now);
+
+        const r = await env.DB.prepare(
+          `UPDATE item_cache SET ${sets.join(", ")} WHERE identifier = ? AND identifier_type = ?`
+        ).bind(...vals, identifier, identType).run();
+        if (!r.meta?.changes) {
+          return new Response(JSON.stringify({ error: "No such product" }), { status: 404, headers: corsJson });
+        }
+        const row = await env.DB.prepare(
+          `SELECT * FROM item_cache WHERE identifier = ? AND identifier_type = ?`).bind(identifier, identType).first();
+        return new Response(JSON.stringify({ ok: true, row }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 400, headers: corsJson });
+      }
+    }
+
     // GET ?action=merch-velocity[&window=28] — units and basket reach per store per
     // category, against the chain.
     //

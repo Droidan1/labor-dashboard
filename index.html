@@ -728,6 +728,10 @@
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
               <span class="nav-label">Coverage</span>
             </div>
+            <div id="nav-merch-products" class="nav-item nav-subitem" data-page="merch-products" onclick="navigateToPage('merch-products')">
+              <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7 12 3 4 7v10l8 4 8-4z"/><path d="M4 7l8 4 8-4"/><path d="M12 11v10"/></svg></span>
+              <span class="nav-label">Products</span>
+            </div>
             <div id="nav-merch-velocity" class="nav-item nav-subitem" data-page="merch-velocity" onclick="navigateToPage('merch-velocity')">
               <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg></span>
               <span class="nav-label">Velocity</span>
@@ -2380,6 +2384,84 @@
          CUSTOMER — store size confounds it. Rates per transaction, basket reach, and both
          measured against the chain separate the two. §4.8: the panel owns bar + table +
          legend, and colour is set on the PANEL, never on the table alone. -->
+    <div id="page-merch-products" class="hidden">
+      <style>
+        /* §4.8 — panel + bar, the same shell as Buy Criteria and the Scorer. */
+        #pr-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;overflow:hidden}
+        .dark #pr-panel{background:#101826;border-color:rgba(255,255,255,.09)}
+        #pr-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;
+          background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #pr-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        .pr-tab{font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+          border-radius:8px;padding:7px 12px;cursor:pointer;border:none;background:transparent;
+          color:#6b6453;font-family:inherit}
+        .dark .pr-tab{color:#8893a7}
+        .pr-tab.on{background:rgba(34,197,94,.16);color:#1c7a33}
+        .dark .pr-tab.on{color:#5fd170}
+        .pr-tab .n{font-variant-numeric:tabular-nums;opacity:.72;margin-left:5px}
+        #pr-q{flex:1;min-width:150px;border:1px solid rgba(20,16,8,.18);border-radius:9px;
+          padding:8px 11px;font-size:15px;background:#fff;color:#14110a}
+        .dark #pr-q{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        #pr-q:focus{outline:2px solid #22c55e;outline-offset:1px}
+        .pr-row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;
+          padding:12px 14px;border-bottom:1px solid rgba(20,16,8,.08);cursor:pointer}
+        .dark .pr-row{border-bottom-color:rgba(255,255,255,.07)}
+        .pr-row:last-child{border-bottom:none}
+        .pr-nm{font-weight:600;font-size:14.5px;line-height:1.3}
+        .pr-meta{font-size:11.5px;color:#6b6453;font-variant-numeric:tabular-nums;margin-top:2px}
+        .dark .pr-meta{color:#8893a7}
+        .pr-cat{font-size:11px;color:#9c9484;margin-top:2px}
+        .dark .pr-cat{color:#5a6478}
+        .pr-px{text-align:right;font-weight:700;font-size:16px;font-variant-numeric:tabular-nums}
+        .pr-px .sub{display:block;font-weight:600;font-size:10px;letter-spacing:.07em;
+          text-transform:uppercase;color:#1c7a33;margin-top:2px}
+        .dark .pr-px .sub{color:#5fd170}
+        .pr-empty{padding:34px 16px;text-align:center;color:#6b6453;font-size:14px}
+        .dark .pr-empty{color:#8893a7}
+        .pr-fld{display:flex;flex-direction:column;gap:5px}
+        .pr-fld label{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b6453}
+        .dark .pr-fld label{color:#8893a7}
+        .pr-fld input,.pr-fld select{border:1px solid rgba(20,16,8,.18);border-radius:9px;padding:10px 11px;
+          font-size:15px;background:#fff;color:#14110a;font-family:inherit;width:100%}
+        .dark .pr-fld input,.dark .pr-fld select{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .pr-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+        .pr-hint{font-size:11.5px;color:#6b6453;line-height:1.45}
+        .dark .pr-hint{color:#8893a7}
+        .pr-editor{display:flex;flex-direction:column;gap:11px;padding:4px 14px 16px;
+          border-bottom:1px solid rgba(20,16,8,.08);background:#fafaf6}
+        /* 🛑 SOURCE ORDER BEATS TAILWIND HERE. Both `.hidden` and `.pr-editor` are single
+           class selectors, so the later one wins — and this block is emitted after
+           tailwind.css. Without this the collapsed editors are display:flex with their
+           padding intact, leaving a grey strip between every row. */
+        .pr-editor.hidden{display:none}
+        .dark .pr-editor{background:#16203a;border-bottom-color:rgba(255,255,255,.07)}
+        .pr-save,.pr-cancel{border-radius:10px;padding:11px;font-weight:700;font-size:14.5px;
+          cursor:pointer;font-family:inherit;border:none}
+        .pr-save{background:#22c55e;color:#06210f}
+        .pr-cancel{background:transparent;color:#6b6453;box-shadow:inset 0 0 0 1px rgba(20,16,8,.20)}
+        .dark .pr-cancel{color:#8893a7;box-shadow:inset 0 0 0 1px rgba(255,255,255,.20)}
+      </style>
+      <div class="px-4 space-y-4 pt-[calc(env(safe-area-inset-top)+1.5rem)]"
+           style="padding-bottom:calc(104px + env(safe-area-inset-bottom))">
+        <div>
+          <h1 class="text-2xl font-bold text-opl-ink dark:text-op-ink">Products</h1>
+          <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-1">
+            Everything we know about a product. The Price Scan screen and the Manifest Scorer
+            both read these rows, so a correction here fixes both.
+          </p>
+        </div>
+        <div id="pr-status" class="text-sm text-opl-inkDim dark:text-op-inkDim"></div>
+        <div id="pr-panel">
+          <div id="pr-bar">
+            <button class="pr-tab on" id="pr-tab-scanned" type="button" onclick="prTab('scanned')">Scanned<span class="n" id="pr-n-scanned"></span></button>
+            <button class="pr-tab" id="pr-tab-manifest" type="button" onclick="prTab('manifest')">Manifests<span class="n" id="pr-n-manifest"></span></button>
+            <input id="pr-q" type="search" placeholder="Search name, brand or barcode"
+                   autocomplete="off" oninput="prSearch()">
+          </div>
+          <div id="pr-list"></div>
+        </div>
+      </div>
+    </div>
     <div id="page-merch-velocity" class="hidden">
       <style>
         #vl-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;
@@ -8292,7 +8374,7 @@
     if (FINANCIAL_PAGES.includes(page) && !canSeeFinancials(currentUser)) return;
 
     // Guard admin-only pages
-    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria', 'merch-coverage', 'merch-manifests', 'merch-velocity'];
+    const adminOnly = ['inventory', 'users', 'marketing', 'flow-calendar', 'content', 'comments', 'merch-criteria', 'merch-coverage', 'merch-manifests', 'merch-velocity', 'merch-products'];
     // Price Scan is the one Merchandising page a MANAGER uses — they price items on the
     // floor. Everything else there is a buying surface and stays admin-only.
     const managerPages = ['merch-scan'];
@@ -8425,6 +8507,9 @@
       // and keeps the recording indicator lit, which reads as the app watching them.
       psStopScan();
     }
+    if (page === 'merch-products') {
+      if (typeof initMerchProducts === 'function') initMerchProducts();
+    }
     if (page === 'merch-velocity') {
       if (typeof initMerchVelocity === 'function') initMerchVelocity();
     }
@@ -8438,7 +8523,7 @@
       if (typeof initShelfCount === 'function') initShelfCount();
     }
     // Keep the Merchandising dropdown expanded while on any of its pages.
-    if ((page === 'merch-scan' || page === 'merch-coverage' || page === 'merch-velocity' || page === 'merch-manifests' || page === 'merch-criteria' || page === 'merch-shelf-count') && typeof toggleMerchMenu === 'function') {
+    if ((page === 'merch-scan' || page === 'merch-coverage' || page === 'merch-velocity' || page === 'merch-manifests' || page === 'merch-criteria' || page === 'merch-shelf-count' || page === 'merch-products') && typeof toggleMerchMenu === 'function') {
       toggleMerchMenu(true);
     }
 
@@ -18109,6 +18194,160 @@
   }
   window.psScan = psScan;
 
+  // ─── Merchandising › Products ─────────────────────────────────────────────
+  //
+  // item_cache is not a scan log — it is the shared library BOTH the Price Scan screen and
+  // the Manifest Scorer read and write. So a wrong category or a bad street price is wrong
+  // on both surfaces, and correcting it here corrects it everywhere.
+  let prState = { tab: 'scanned', q: '', rows: [], cats: [], loaded: false };
+  let prTimer = null;
+  const prStatus = (t) => { const n = el('pr-status'); if (n) n.textContent = t || ''; };
+  const prMoney = (v) => (v === null || v === undefined || v === '') ? '—' : '$' + Number(v).toFixed(2);
+
+  function initMerchProducts() {
+    if (prState.loaded) return;
+    prState.loaded = true;
+    prLoad();
+  }
+  window.initMerchProducts = initMerchProducts;
+
+  function prTab(tab) {
+    if (prState.tab === tab) return;
+    prState.tab = tab;
+    el('pr-tab-scanned').className = 'pr-tab' + (tab === 'scanned' ? ' on' : '');
+    el('pr-tab-manifest').className = 'pr-tab' + (tab === 'manifest' ? ' on' : '');
+    prLoad();
+  }
+  window.prTab = prTab;
+
+  // Typing is not a reason to hit the database on every keystroke.
+  function prSearch() {
+    clearTimeout(prTimer);
+    prTimer = setTimeout(() => { prState.q = el('pr-q').value.trim(); prLoad(); }, 260);
+  }
+  window.prSearch = prSearch;
+
+  async function prLoad() {
+    prStatus('Loading…');
+    try {
+      const u = `${WORKER_BASE}?action=merch-products&tab=${encodeURIComponent(prState.tab)}`
+        + `&q=${encodeURIComponent(prState.q)}&limit=200`;
+      const r = await fetch(u, { credentials: 'include' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      prState.rows = j.rows || [];
+      prState.cats = j.categories || [];
+      el('pr-n-scanned').textContent = j.counts ? j.counts.scanned : '';
+      el('pr-n-manifest').textContent = j.counts ? j.counts.manifest : '';
+      prStatus('');
+      prRender();
+    } catch (e) {
+      prStatus(`Could not load products: ${e.message}`);
+    }
+  }
+
+  function prRender() {
+    const host = el('pr-list');
+    if (!prState.rows.length) {
+      host.innerHTML = `<div class="pr-empty">${prState.q
+        ? 'Nothing matches that.'
+        : prState.tab === 'scanned'
+          ? 'Nothing scanned yet. Items priced at the bench show up here.'
+          : 'No products from a manifest yet.'}</div>`;
+      return;
+    }
+    host.innerHTML = prState.rows.map((r, i) => {
+      // An override is the number that actually gets used, so it is the one shown.
+      const overridden = r.retail_price_override !== null && r.retail_price_override !== undefined;
+      const px = overridden ? r.retail_price_override : r.retail_price;
+      return `<div class="pr-row" onclick="prEdit(${i})">
+        <div>
+          <div class="pr-nm">${psEsc(r.title || r.identifier || 'Unnamed')}</div>
+          <div class="pr-meta">${[r.brand, r.size, r.identifier].filter(Boolean).map(psEsc).join(' &middot; ')}</div>
+          <div class="pr-cat">${psEsc(r.l3_label || r.l3 || 'No category')}${
+            r.l3_source === 'manual' ? ' &middot; set by hand' : ''}</div>
+        </div>
+        <div class="pr-px">${prMoney(px)}${overridden ? '<span class="sub">by hand</span>' : ''}</div>
+      </div>
+      <div class="pr-editor hidden" id="pr-ed${i}"></div>`;
+    }).join('');
+  }
+
+  // 🔑 EDITED IN PLACE, NOT IN A DIALOG. uiConfirm carries a single line of text and
+  // uiPrompt a single value, and this form has six fields — but the better reason is that
+  // this is a phone surface: an expanding row keeps the product you tapped on screen, and
+  // sidesteps dialogs entirely, which is what uiConfirm exists to work around in the first
+  // place (a native confirm() freezes the installed PWA).
+  function prEdit(i) {
+    const r = prState.rows[i];
+    const host = el('pr-ed' + i);
+    if (!r || !host) return;
+    if (!host.classList.contains('hidden')) { host.classList.add('hidden'); host.innerHTML = ''; return; }
+    // One open at a time — two half-filled forms is a way to save the wrong one.
+    prState.rows.forEach((_, k) => {
+      const n = el('pr-ed' + k);
+      if (n && k !== i) { n.classList.add('hidden'); n.innerHTML = ''; }
+    });
+
+    const opts = ['<option value="">— no category —</option>'].concat(
+      prState.cats.map(c => `<optgroup label="${psEsc(c.label)}">` +
+        (c.children || []).map(k =>
+          `<option value="${psEsc(k.key)}"${k.key === r.l3 ? ' selected' : ''}>${psEsc(k.label)}</option>`).join('') +
+        `</optgroup>`)).join('');
+
+    host.innerHTML = `
+      <div class="pr-fld"><label>Product</label><input id="pr-e-title" value="${psEsc(r.title || '')}"></div>
+      <div class="pr-two">
+        <div class="pr-fld"><label>Brand</label><input id="pr-e-brand" value="${psEsc(r.brand || '')}"></div>
+        <div class="pr-fld"><label>Size</label><input id="pr-e-size" value="${psEsc(r.size || '')}"></div>
+      </div>
+      <div class="pr-fld"><label>Category</label><select id="pr-e-l3">${opts}</select></div>
+      <div class="pr-two">
+        <div class="pr-fld"><label>Street retail</label>
+          <input id="pr-e-retail" inputmode="decimal" value="${r.retail_price_override ?? ''}"
+                 placeholder="${r.retail_price ?? 'none found'}"></div>
+        <div class="pr-fld"><label>Our price</label>
+          <input id="pr-e-price" inputmode="decimal" value="${r.suggested_price_override ?? ''}"
+                 placeholder="from criteria"></div>
+      </div>
+      <div class="pr-hint">Leave a price blank to go back to the calculated one.${
+        r.retail_price !== null && r.retail_price !== undefined
+          ? ` We found ${prMoney(r.retail_price)}${r.retail_source ? ' at ' + psEsc(r.retail_source) : ''}.` : ''}</div>
+      <div class="pr-two">
+        <button class="pr-save" type="button" onclick="prSave(${i})">Save</button>
+        <button class="pr-cancel" type="button" onclick="prEdit(${i})">Cancel</button>
+      </div>`;
+    host.classList.remove('hidden');
+  }
+  window.prEdit = prEdit;
+
+  async function prSave(i) {
+    const r = prState.rows[i];
+    if (!r) return;
+    const body = {
+      identifier: r.identifier, identifier_type: r.identifier_type,
+      title: el('pr-e-title').value, brand: el('pr-e-brand').value, size: el('pr-e-size').value,
+      l3: el('pr-e-l3').value,
+      retail_price_override: el('pr-e-retail').value,
+      suggested_price_override: el('pr-e-price').value,
+    };
+    prStatus('Saving…');
+    try {
+      const res = await fetch(`${WORKER_BASE}?action=merch-product-save`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+      prStatus('Saved.');
+      await prLoad();
+    } catch (e) {
+      prStatus(`Could not save: ${e.message}`);
+    }
+  }
+  window.prSave = prSave;
+
   function psRender(j) {
     const prev = psLast;
     psLast = j;
@@ -21578,6 +21817,7 @@
     'nav-merch-sub': 'bl',
     'nav-merch-scan': 'bl',
     'nav-merch-coverage': 'bl',
+    'nav-merch-products': 'bl',
     'nav-merch-velocity': 'bl',
     'nav-merch-manifests': 'bl',
     'nav-merch-criteria': 'bl',
@@ -21988,6 +22228,7 @@
     const canScan = ['superuser', 'admin', 'executive', 'manager'].includes(currentUser?.role);
     el('nav-merch-scan').classList.toggle('hidden', !canScan);
     el('nav-merch-coverage').classList.toggle('hidden', !isAdmin);
+    el('nav-merch-products').classList.toggle('hidden', !isAdmin);
     el('nav-merch-velocity').classList.toggle('hidden', !isAdmin);
     el('nav-merch-manifests').classList.toggle('hidden', !isAdmin);
     el('nav-merch-criteria').classList.toggle('hidden', !isAdmin);
