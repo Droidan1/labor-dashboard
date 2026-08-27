@@ -2372,7 +2372,7 @@
            style="padding-bottom:calc(104px + env(safe-area-inset-bottom))">
         <div>
           <h1 class="text-2xl font-bold text-opl-ink dark:text-op-ink">Price Scan</h1>
-          <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-1">
+          <p id="ps-sub" class="text-sm text-opl-inkDim dark:text-op-inkDim mt-1">
             Scan a barcode or type what it is. Prices from our criteria, our cost and our ASP.
           </p>
         </div>
@@ -2380,10 +2380,19 @@
         <div id="ps-status" class="text-sm text-opl-inkDim dark:text-op-inkDim"></div>
         <div id="ps-card">
           <div id="ps-bar">
-            <span class="ps-lbl">Scan</span>
+            <span id="ps-mode-lbl" class="ps-lbl">Scan</span>
             <span id="ps-count" class="ps-lbl" style="margin-left:auto"></span>
+            <!-- The mode switch belongs up here, not in the body. In the body it was the
+                 first thing on the screen, and the first thing should be the work. -->
+            <button id="ps-furniture" class="ps-link" onclick="fnOpen()" type="button">Furniture</button>
           </div>
           <div id="ps-body">
+            <!-- 🛑 ONE PLAIN DIV DOES THE HIDING. Toggling `hidden` on .ps-row does
+                 nothing: both are single class selectors and this style block comes after
+                 tailwind.css, so display:flex wins on source order and the barcode
+                 controls stayed on screen in furniture mode. A bare div has no competing
+                 rule, so this cannot happen again to whatever gets added inside it. -->
+            <div id="ps-barcode-mode" style="display:flex;flex-direction:column;gap:14px">
             <input id="ps-input" class="ps-in" type="text" inputmode="numeric"
                    autocomplete="off" autocapitalize="off" spellcheck="false"
                    placeholder="Barcode, or type the product"
@@ -2395,9 +2404,8 @@
               <input id="ps-photo" type="file" accept="image/*" capture="environment"
                      class="hidden" onchange="psPhoto(this)">
             </div>
-            <!-- Furniture has no barcode, so it does not belong behind the scanner. Its own
-                 button, on the screen managers are already standing on. -->
-            <button id="ps-furniture" class="ps-btn ghost" onclick="fnOpen()" type="button">Furniture</button>
+            <button id="ps-go" class="ps-btn" onclick="psScan()" type="button">Look it up</button>
+            </div><!-- /ps-barcode-mode -->
             <input id="fn-photo" type="file" accept="image/*" capture="environment"
                    class="hidden" onchange="fnShot(this)">
             <div id="ps-scanbox" class="hidden" style="position:relative;border-radius:12px;overflow:hidden;background:#000">
@@ -2431,7 +2439,6 @@
                              border:1px solid rgba(255,255,255,.45);background:rgba(0,0,0,.45);color:#fff;
                              font-size:18px;line-height:1;cursor:pointer">&#9728;</button>
             </div>
-            <button id="ps-go" class="ps-btn" onclick="psScan()" type="button">Look it up</button>
             <div id="ps-result"></div>
             <div id="fn-panel" class="hidden"></div>
           </div>
@@ -18286,10 +18293,19 @@
   // "Look it up" on an empty box does nothing, and Scan opens a camera for a code that
   // does not exist. One mode at a time.
   function fnChrome(on) {
-    for (const id of ['ps-input', 'ps-go']) el(id)?.classList.toggle('hidden', on);
-    el('ps-barcode')?.parentElement?.classList.toggle('hidden', on);
+    const m = el('ps-barcode-mode');
+    if (m) m.style.display = on ? 'none' : 'flex';
     const b = el('ps-furniture');
-    if (b) { b.textContent = on ? 'Back to barcodes' : 'Furniture'; b.className = on ? 'ps-btn' : 'ps-btn ghost'; }
+    if (b) b.textContent = on ? 'Barcodes' : 'Furniture';
+    const t = el('ps-mode-lbl');
+    if (t) t.textContent = on ? 'Furniture' : 'Scan';
+    // The blurb under the title describes barcodes, which is wrong the moment there is
+    // no barcode to read.
+    const sub = el('ps-sub');
+    if (sub) sub.textContent = on
+      ? 'Photograph the piece. If we have priced one before, it holds that price.'
+      : 'Scan a barcode or type what it is. Prices from our criteria, our cost and our ASP.';
+    if (on) el('ps-count').textContent = '';
   }
 
   async function fnOpen() {
