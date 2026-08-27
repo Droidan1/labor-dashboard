@@ -2289,6 +2289,26 @@
         .ps-pm{font-size:10.5px;color:#6b6453}
         .dark .ps-pm{color:#8893a7}
         .ps-pp{font-weight:700;font-size:19px;font-variant-numeric:tabular-nums}
+        .ps-steps{display:flex;flex-direction:column;gap:2px;padding:2px 0}
+        .ps-step{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13.5px;
+          color:#9c9484;transition:color .25s}
+        .dark .ps-step{color:#5a6478}
+        .ps-step.on{color:#14110a;font-weight:600}
+        .dark .ps-step.on{color:#e7ecf3}
+        .ps-step.done{color:#6b6453}
+        .dark .ps-step.done{color:#8893a7}
+        .ps-dot{flex:none;width:18px;height:18px;border-radius:9px;display:grid;place-items:center;
+          border:2px solid rgba(20,16,8,.18);transition:border-color .25s,background .25s}
+        .dark .ps-dot{border-color:rgba(255,255,255,.18)}
+        .ps-step.on .ps-dot{border-color:#22c55e;border-right-color:transparent;
+          animation:psSpin .7s linear infinite}
+        .ps-step.done .ps-dot{border-color:#22c55e;background:#22c55e;animation:none}
+        .ps-step.done .ps-dot::after{content:"";width:9px;height:5px;border-left:2px solid #06210f;
+          border-bottom:2px solid #06210f;transform:rotate(-45deg) translate(1px,-1px)}
+        @keyframes psSpin{to{transform:rotate(360deg)}}
+        .ps-el{margin-left:auto;font-size:11.5px;color:#9c9484;font-variant-numeric:tabular-nums}
+        .dark .ps-el{color:#5a6478}
+        @media (prefers-reduced-motion:reduce){ .ps-step.on .ps-dot{animation:none} }
       </style>
       <div id="ps-wrap" class="px-4 space-y-4 pt-[calc(env(safe-area-inset-top)+1.5rem)]"
            style="padding-bottom:calc(104px + env(safe-area-inset-bottom))">
@@ -17978,6 +17998,78 @@
   }
   window.initPriceScan = initPriceScan;
 
+  // ─── What the lookup is doing, while it does it ───────────────────────────
+  //
+  // A cold lookup is SIX server round trips and takes about seventeen seconds — measured,
+  // not estimated: barcode 3.1s, identify 2.6s, street search 1.3s, read prices 4.4s,
+  // brand-and-size 2.1s, price 5.6s. The screen used to say "Looking it up…" in small grey
+  // text for all of it, which on a warehouse floor reads as frozen.
+  //
+  // 🔑 EVERY LINE IS A REQUEST THE WORKER ACTUALLY MAKES, in the order it makes them, and
+  // which lines appear depends on how the scan started — a typed product name has no
+  // barcode to read and nothing to identify.
+  //
+  // 🛑 IT IS A SCHEDULE, NOT A FEED. All six steps happen inside ONE request, so the
+  // client cannot know where the server has got to. Two rules keep that from becoming a
+  // lie: the FINAL step never completes on a timer — it holds, spinning, until the answer
+  // actually lands — and a run that outlasts its schedule says so rather than sitting on
+  // six ticks with nothing to show.
+  const PS_STAGES = [
+    ['Finding street prices', 1300],
+    ['Reading what shops charge', 4400],
+    ['Checking brand and size', 2100],
+    ['Working out our price', 5600],
+  ];
+  function psStages(kind) {
+    const head = kind === 'photo' ? [['Reading the photo', 5000]]
+      : kind === 'barcode' ? [['Reading the barcode', 3100], ['Identifying the product', 2600]]
+      : [];
+    return [...head, ...PS_STAGES];
+  }
+
+  let psProg = null;
+  function psProgressStart(kind) {
+    psProgressStop();
+    const stages = psStages(kind);
+    const timers = [];
+    // 🔑 A CACHED ITEM ANSWERS IN A FEW HUNDRED MILLISECONDS, and flashing a six-step
+    // checklist for a quarter of a second is worse than showing nothing. Nothing is drawn
+    // until the lookup has already proved itself slow.
+    timers.push(setTimeout(() => {
+      const host = el('ps-result');
+      if (!host) return;
+      host.innerHTML = `<div class="ps-steps">` + stages.map((st, i) =>
+        `<div class="ps-step" id="ps-st${i}"><span class="ps-dot"></span>` +
+        `<span>${psEsc(st[0])}</span><span class="ps-el" id="ps-se${i}"></span></div>`).join('') +
+        `</div>`;
+      let t = 0;
+      stages.forEach((st, i) => {
+        const startAt = t; t += st[1];
+        timers.push(setTimeout(() => {
+          const n = el('ps-st' + i); if (n) n.className = 'ps-step on';
+        }, startAt));
+        // 🛑 The last one is deliberately never scheduled to finish. Only the response
+        // finishes it, because only the response knows.
+        if (i < stages.length - 1) {
+          timers.push(setTimeout(() => {
+            const n = el('ps-st' + i); if (n) n.className = 'ps-step done';
+            const e = el('ps-se' + i); if (e) e.textContent = (st[1] / 1000).toFixed(1) + 's';
+          }, t));
+        }
+      });
+      // Outlasting the schedule is a fact worth stating — a page fetch can take 30s.
+      timers.push(setTimeout(() => {
+        const e = el('ps-se' + (stages.length - 1));
+        if (e) e.textContent = 'still going';
+      }, t + 6000));
+    }, 350));
+    psProg = { timers };
+  }
+  function psProgressStop() {
+    if (psProg) psProg.timers.forEach(clearTimeout);
+    psProg = null;
+  }
+
   async function psScan() {
     if (psBusy) return;
     const raw = el('ps-input').value.trim();
@@ -17990,7 +18082,8 @@
 
     psBusy = true;
     el('ps-go').disabled = true;
-    psStatus('Looking it up…');
+    psStatus('');
+    psProgressStart(isCode ? 'barcode' : 'typed');
     try {
       const r = await fetch(`${WORKER_BASE}?action=merch-scan`, {
         method: 'POST', credentials: 'include',
@@ -18007,7 +18100,9 @@
       setTimeout(() => { try { el('ps-input').focus(); } catch (e) {} }, 40);
     } catch (e) {
       psStatus(`Could not price that: ${e.message}`);
+      el('ps-result').innerHTML = '';
     } finally {
+      psProgressStop();
       psBusy = false;
       el('ps-go').disabled = false;
     }
@@ -18691,7 +18786,10 @@
     if (!f) return;
     if (psBusy) return;
     psBusy = true; el('ps-go').disabled = true;
-    psStatus('Reading the photo…');
+    psStatus('');
+    // The photo path adds a vision call in front of the same six steps, so it gets its
+    // own first line rather than pretending a barcode was read.
+    psProgressStart('photo');
     try {
       const b64 = await psShrink(f);
       const r = await fetch(`${WORKER_BASE}?action=merch-scan`, {
@@ -18705,7 +18803,9 @@
       psRender(j);
     } catch (e) {
       psStatus(`Could not read that photo: ${e.message}`);
+      el('ps-result').innerHTML = '';
     } finally {
+      psProgressStop();
       psBusy = false; el('ps-go').disabled = false;
     }
   }

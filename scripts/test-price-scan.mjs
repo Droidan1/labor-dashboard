@@ -1062,5 +1062,78 @@ console.log('Price Scan');
   globalThis.fetch = realFetch;
 }
 
+// ── 🔑 THE LOOKUP SAYS WHAT IT IS DOING ─────────────────────────────────────
+// A cold lookup is six server round trips and about seventeen seconds. The screen used
+// to say "Looking it up…" in small grey text for all of it, which on a warehouse floor
+// reads as frozen. The steps are real and measured — but they run inside ONE request, so
+// the client is following a SCHEDULE, not a feed. These are the properties that keep
+// that from becoming a lie.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const from = html.indexOf('  const PS_STAGES = [');
+  const to = html.indexOf('  async function psScan()');
+  ok(from > 0 && to > from, 'the progress machine is found in index.html');
+
+  // A fake clock and a fake DOM, so the SCHEDULE itself can be inspected.
+  const mk = () => {
+    const scheduled = [];
+    const nodes = {};
+    const sandbox = `
+      const timers = [];
+      const setTimeout = (fn, ms) => { __sched.push({ fn, ms }); return __sched.length; };
+      const clearTimeout = () => {};
+      const psEsc = (t) => String(t);
+      const el = (id) => (__nodes[id] || (__nodes[id] = { id, className: '', innerHTML: '', textContent: '' }));
+    ` + html.slice(from, to) + `; return { psStages, psProgressStart, psProgressStop };`;
+    const api = new Function('__sched', '__nodes', sandbox)(scheduled, nodes);
+    return { api, scheduled, nodes };
+  };
+
+  const { api } = mk();
+  const names = (k) => api.psStages(k).map(s2 => s2[0]);
+
+  eq(names('barcode').length, 6, 'a barcode lookup shows all six steps');
+  eq(names('barcode')[0], 'Reading the barcode', '…starting with the barcode');
+  eq(names('barcode')[1], 'Identifying the product', '…then what it is');
+  eq(names('barcode')[5], 'Working out our price', '…ending on our own price');
+  eq(names('photo')[0], 'Reading the photo', '🔑 a photo says PHOTO, not barcode');
+  // 🔑 A typed product name has no barcode to read and nothing to identify from one.
+  // Listing steps the worker will not take would be inventing them.
+  eq(names('typed').length, 4, '🔑 a typed name shows four — no barcode, no identify');
+  ok(!names('typed').some(n => /barcode|Identifying/.test(n)),
+     '…and never claims to be reading a barcode that was never scanned');
+
+  // The measured total, so the schedule cannot drift from the thing it describes.
+  const total = api.psStages('barcode').reduce((n, s2) => n + s2[1], 0);
+  ok(total > 15000 && total < 22000, `the schedule adds up to the measured ~17s (${(total / 1000).toFixed(1)}s)`);
+
+  // ── the two honesty properties ──
+  {
+    const { api: a2, scheduled, nodes } = mk();
+    a2.psProgressStart('barcode');
+    // 🛑 NOTHING IS DRAWN IMMEDIATELY. A cached item answers in a few hundred
+    // milliseconds, and flashing a six-step checklist for a quarter second is worse
+    // than showing nothing at all.
+    eq(scheduled.length, 1, '🔑 one timer only — the list is not drawn yet');
+    ok(scheduled[0].ms >= 300, `…and it waits ${scheduled[0].ms}ms first, so a cache hit never flashes it`);
+    eq(nodes['ps-result'], undefined, '…nothing has touched the result area');
+
+    scheduled[0].fn();                       // the lookup has now proved itself slow
+    ok(/ps-steps/.test(nodes['ps-result'].innerHTML), 'once slow, the steps are drawn');
+
+    // 🛑 THE LAST STEP NEVER COMPLETES ON A TIMER. All six happen inside one request, so
+    // only the response knows when the last one is done. A schedule that ticked every box
+    // and then sat there would be claiming something it cannot know.
+    const later = scheduled.slice(1);
+    later.forEach(t => t.fn());
+    const last = nodes['ps-st5'];
+    eq(last.className, 'ps-step on', '🛑 the final step is still SPINNING when the schedule runs out');
+    ok(later.some(t => t.ms > total), '…and a run that outlasts the schedule says so');
+    eq(nodes['ps-se5'].textContent, 'still going', '…in those words');
+    // Every earlier step, by contrast, does finish.
+    for (let i = 0; i < 5; i++) eq(nodes['ps-st' + i].className, 'ps-step done', `step ${i + 1} completes`);
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
