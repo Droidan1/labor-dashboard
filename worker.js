@@ -17739,7 +17739,13 @@ export default {
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       try {
         const body = await request.json();
-        const identifier = String(body?.identifier || "").trim();
+        // 🛑 CANONICALISED HERE TOO. This was the THIRD place a barcode enters the system and
+        // the one I missed: merch-scan and merch-product-save both canonicalise, this did not.
+        // It fails silently and in the worst possible way — the INSERT ... DO NOTHING below
+        // creates a PHANTOM row under the other spelling, the UPDATE reports one change, and
+        // the caller is told the override saved while the row everything reads is untouched.
+        const raw = String(body?.identifier || "").trim();
+        const identifier = merchCanonicalUpc(raw) || raw;
         if (!identifier) {
           return new Response(JSON.stringify({ error: "An override needs a barcode to attach to" }),
             { status: 400, headers: corsJson });
@@ -18064,6 +18070,13 @@ export default {
           rounding: lad.rounding ?? critAt("rounding"),
           thin_deal: manual !== null ? false : !!lad.thinDeal,
           criteria_version: live?.version ?? null,
+          // The category tree travels WITH the answer. The scan screen needs it the
+          // moment someone taps Change, and a second round trip on warehouse wifi to
+          // fetch a list that never varies is a worse trade than a few KB per scan.
+          categories: Object.entries(merchTree()).map(([l2, l3s]) => ({
+            key: l2, label: merchLabel(l2),
+            children: l3s.map(k => ({ key: k, label: merchLabel(k) })),
+          })),
           from_cache: !looked && !!cached,
           looked_up: looked,
           from_photo: !!body?.image_b64,

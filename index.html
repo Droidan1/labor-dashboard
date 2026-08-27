@@ -2293,6 +2293,22 @@
         .ps-pm{font-size:10.5px;color:#6b6453}
         .dark .ps-pm{color:#8893a7}
         .ps-pp{font-weight:700;font-size:19px;font-variant-numeric:tabular-nums}
+        /* Deliberately the same control as the Products editor (.pr-fld). Two pages, two
+           style blocks in this file, one look — per DESIGN.md, the Merchandising surfaces
+           are meant to read as one thing, not as six different forms. */
+        .ps-fld{display:flex;flex-direction:column;gap:5px}
+        .ps-fld label{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b6453}
+        .dark .ps-fld label{color:#8893a7}
+        .ps-fld input,.ps-fld select{border:1px solid rgba(20,16,8,.18);border-radius:9px;padding:10px 11px;
+          font-size:16px;background:#fff;color:#14110a;font-family:inherit;width:100%}
+        .dark .ps-fld input,.dark .ps-fld select{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .ps-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+        #ps-edit{display:flex;flex-direction:column;gap:11px;padding:14px;border-radius:12px;
+          background:#fafaf6;border:1px solid rgba(20,16,8,.10)}
+        .dark #ps-edit{background:#16203a;border-color:rgba(255,255,255,.09)}
+        /* 🛑 Source order beats Tailwind — both are single class selectors and this block
+           comes after tailwind.css, so without this the collapsed editor still lays out. */
+        #ps-edit.hidden{display:none}
         .ps-steps{display:flex;flex-direction:column;gap:2px;padding:2px 0}
         .ps-step{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13.5px;
           color:#9c9484;transition:color .25s}
@@ -18455,7 +18471,8 @@
 
         ${psCanOverride()
           ? `<button class="ps-btn ${noRetail ? '' : 'ghost'}" onclick="psOverride()" type="button">${
-              noRetail ? 'Set the retail price' : 'Override price or retail'}</button>`
+              noRetail ? 'Set the retail price' : 'Override price or retail'}</button>
+             <div id="ps-edit" class="hidden"></div>`
           : ''}
 
         ${prev ? `<div id="ps-prev">
@@ -18473,17 +18490,66 @@
     return ['superuser', 'admin'].includes(currentUser && currentUser.role);
   }
 
-  async function psOverride() {
+  // 🔑 ONE FORM, OPENED STRAIGHT. This used to be a uiPrompt asking for the STREET
+  // RETAIL price — so an admin who wanted to fix the CATEGORY was made to answer a
+  // question about retail first, and the "Change" link beside the category opened that
+  // same retail prompt and could not change a category at all. Both controls now open
+  // the same editor, showing what is currently set.
+  //
+  // The same three fields merch-scan-save has always accepted. It is the client that only
+  // ever asked for one of them.
+  function psOverride() {
     const j = psLast;
     if (!j) return;
     if (!j.identifier) {
       uiAlert('An override needs a barcode to attach to. Scan the item rather than typing its name.');
       return;
     }
-    const what = await uiPrompt('Set the STREET RETAIL price (leave empty to clear it and use the looked-up figure):',
-      j.retail_overridden && j.retail !== null ? String(j.retail) : '');
-    if (what === null) return;
-    const body = { identifier: j.identifier, retail_price: what.trim() === '' ? null : what.trim() };
+    const host = el('ps-edit');
+    if (!host) return;
+    if (!host.classList.contains('hidden')) { host.classList.add('hidden'); host.innerHTML = ''; return; }
+
+    const cats = j.categories || [];
+    const opts = ['<option value="">— no category —</option>'].concat(
+      cats.map(c => `<optgroup label="${psEsc(c.label)}">` +
+        (c.children || []).map(k =>
+          `<option value="${psEsc(k.key)}"${k.key === j.l3 ? ' selected' : ''}>${psEsc(k.label)}</option>`).join('') +
+        `</optgroup>`)).join('');
+
+    host.innerHTML = `
+      <div class="ps-fld"><label>Category</label><select id="ps-e-l3">${opts}</select></div>
+      <div class="ps-two">
+        <div class="ps-fld"><label>Street retail</label>
+          <input id="ps-e-retail" inputmode="decimal"
+                 value="${j.retail_overridden && j.retail !== null ? j.retail : ''}"
+                 placeholder="${j.retail_overridden ? '' : (j.retail ?? 'none found')}"></div>
+        <div class="ps-fld"><label>Our price</label>
+          <input id="ps-e-price" inputmode="decimal"
+                 value="${j.price_overridden && j.price !== null ? j.price : ''}"
+                 placeholder="${j.price_overridden ? '' : 'from criteria'}"></div>
+      </div>
+      <div class="ps-up" style="text-align:left;line-height:1.45">Leave a price blank to go
+        back to the calculated one.${j.retail_source && !j.retail_overridden
+          ? ` We found ${psMoney(j.retail)} at ${psEsc(j.retail_source)}.` : ''}</div>
+      <div class="ps-two">
+        <button class="ps-btn" type="button" onclick="psOverrideSave()">Save</button>
+        <button class="ps-btn ghost" type="button" onclick="psOverride()">Cancel</button>
+      </div>`;
+    host.classList.remove('hidden');
+    host.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  window.psOverride = psOverride;
+
+  async function psOverrideSave() {
+    const j = psLast;
+    if (!j || !j.identifier) return;
+    const blank = (v) => v.trim() === '' ? null : v.trim();
+    const body = {
+      identifier: j.identifier,
+      l3: el('ps-e-l3').value,
+      retail_price: blank(el('ps-e-retail').value),
+      suggested_price: blank(el('ps-e-price').value),
+    };
     psStatus('Saving…');
     try {
       const r = await fetch(`${WORKER_BASE}?action=merch-scan-save`, {
@@ -18493,7 +18559,7 @@
       });
       const res = await r.json();
       if (!r.ok) throw new Error(res.error || `HTTP ${r.status}`);
-      // Re-scan so the screen shows the price the override actually produces, rather than
+      // Re-scan so the screen shows the price the override actually PRODUCES, rather than
       // us guessing at it here — the ladder lives on the worker for exactly this reason.
       el('ps-input').value = j.identifier;
       await psScan();
@@ -18501,7 +18567,7 @@
       psStatus(`Could not save: ${e.message}`);
     }
   }
-  window.psOverride = psOverride;
+  window.psOverrideSave = psOverrideSave;
 
   // ── EAN-13 / UPC-A decoder ────────────────────────────────────────────────
   //

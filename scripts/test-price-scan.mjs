@@ -1218,5 +1218,54 @@ console.log('Price Scan');
   eq(viaLong.body.row.size, '14oz', '…and edits it');
 }
 
+// ── 🔑 THE OVERRIDE OPENS AN EDITOR, NOT A QUESTION ABOUT RETAIL ────────────
+// Reported: "when trying to override a price it's asking to input the street price
+// first." An admin who wanted to fix the CATEGORY had to answer a question about retail
+// to get anywhere — and the "Change" link beside the category opened that same retail
+// prompt, so it could not change a category at all. Both controls now open one form.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const fn = html.slice(html.indexOf('  function psOverride() {'),
+                        html.indexOf('  window.psOverrideSave = psOverrideSave;'));
+  ok(fn.length > 200, 'the override editor is found in index.html');
+  ok(!/uiPrompt/.test(fn), '🔑 no prompt — the editor opens straight');
+  ok(/ps-e-l3/.test(fn) && /ps-e-retail/.test(fn) && /ps-e-price/.test(fn),
+     '🔑 category, street retail and our price are all on the one form');
+  // 🛑 The three fields merch-scan-save has ALWAYS accepted. The endpoint was never the
+  // limit; the client only ever asked for one of them.
+  ok(/l3: el\('ps-e-l3'\)/.test(fn) && /retail_price:/.test(fn) && /suggested_price:/.test(fn),
+     '…and all three are actually sent');
+  ok(/merch-scan-save/.test(fn), '…to the endpoint that already took them');
+  // Blank must CLEAR, not mean "unchanged" — otherwise an override cannot be removed.
+  ok(/trim\(\) === ''\s*\?\s*null/.test(fn), "🔑 a blank field sends null, so an override can be REMOVED");
+  // The screen must show the price the override PRODUCES, not one guessed on the client.
+  ok(/await psScan\(\)/.test(fn), '🔑 saving re-scans, so the ladder on the worker decides the price');
+
+  // The scan response has to carry the category list, or the form has nothing to offer.
+  const r = await post('merch-scan', { identifier: '0038000293122' });
+  ok(Array.isArray(r.body.categories) && r.body.categories.length > 0,
+     '🔑 the scan answer carries the category tree, so Change needs no second round trip');
+  ok(r.body.categories.some(c => (c.children || []).some(k => k.key === SNACKS)),
+     '…with the real L3s under their L2');
+
+  // And the endpoint genuinely takes a category on its own, with no retail alongside.
+  const only = await post('merch-scan-save', { identifier: '0038000293122', l3: CANNED }, 'u-admin');
+  eq(only.status, 200, '🔑 a category can be changed WITHOUT touching retail');
+  const after = await post('merch-scan', { identifier: '0038000293122' });
+  eq(after.body.l3, CANNED, '…and it sticks');
+  eq(after.body.l3_source, 'manual', "…marked 'manual', so the next lookup cannot undo it");
+
+  // 🛑 THE THIRD DOOR. merch-scan and merch-product-save canonicalise a barcode; this one
+  // did not, and it fails in the worst way available: the INSERT below creates a PHANTOM
+  // row under the other spelling, the UPDATE reports one change, and the caller is told
+  // the override saved while the row everything actually reads is untouched.
+  const long = await post('merch-scan-save', { identifier: '0038000293122', retail_price: '3.15' }, 'u-admin');
+  eq(long.status, 200, 'a 13-digit spelling saves');
+  const back = await post('merch-scan', { identifier: '038000293122' });
+  near(back.body.retail, 3.15, '🛑 …to the SAME row the 12-digit form reads, not a phantom');
+  const phantom = db.prepare(`SELECT COUNT(*) n FROM item_cache WHERE identifier = '0038000293122'`).get();
+  eq(Number(phantom.n), 0, '…and no phantom row is left behind');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
