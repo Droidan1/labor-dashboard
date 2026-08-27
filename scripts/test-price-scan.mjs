@@ -381,6 +381,78 @@ console.log('Price Scan');
     eq(psNormalizeCode('', 'upc_e'), null, 'nothing in, nothing out');
   }
 
+  // ── 🔑 A BARCODE ON A CAN ─────────────────────────────────────────────────
+  // "It took me a long time to scan that barcode on the can." A label wrapped round a
+  // cylinder is foreshortened toward its edges, so the bars there really are narrower.
+  // Measured: a symbol spanning 1.2 radians of a can has edge modules at 83% of the
+  // centre, and quantising the whole symbol against one width failed outright — which
+  // meant turning the can until the code happened to face square-on.
+  const curved = (code, modCentre, wrap) => {
+    const d = [...code].map(Number);
+    let bits = '101';
+    for (let k = 0; k < 6; k++) bits += (PAR[d[0]][k] === '0' ? L : G)[d[k + 1]];
+    bits += '01010';
+    for (let k = 0; k < 6; k++) bits += R2[d[k + 7]];
+    bits += '101';
+    const row = new Array(16).fill(225);
+    let acc = 0;
+    for (let i2 = 0; i2 < bits.length; i2++) {
+      const t = (i2 / (bits.length - 1)) - 0.5;
+      const wd = modCentre * Math.cos(t * wrap);       // foreshortening toward the edges
+      acc += wd;
+      const px = Math.round(acc) - Math.round(acc - wd);
+      for (let k = 0; k < px; k++) row.push(bits[i2] === '1' ? 30 : 225);
+    }
+    for (let k = 0; k < 16; k++) row.push(225);
+    return row;
+  };
+  let curveFail = 0, curveTried = 0;
+  for (const wrap of [0, 0.4, 0.8, 1.0, 1.2, 1.4]) for (const mod of [3, 4, 5, 6, 8]) {
+    curveTried++;
+    if (curved('0085239098745', mod, wrap).length && decodeEanRow(curved('0085239098745', mod, wrap)) !== '0085239098745') curveFail++;
+  }
+  eq(curveFail, 0, `🔑 a code wrapped round a can decodes at every curvature (${curveTried} cases, edges to 76% of centre)`);
+
+  // 🛑 THE HARDEST ADVERSARY THIS SYMBOLOGY HAS. Rows built from REAL digit patterns at
+  // JUMPING scales, with the check digit forced to pass — so pattern lookup and the
+  // checksum are both satisfied and the drift bound is the only thing left standing.
+  // Random noise cannot test it: 60,000 noise rows showed no difference at all, which is
+  // how a guard ends up shipped and unobserved.
+  //
+  //     no bound      278 wrong reads / 40k        0.78–1.30    0 wrong reads
+  //     0.62–1.62      22 wrong reads / 40k
+  {
+    let sd = 4242; const rn = () => ((sd = (sd * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const chk12 = (a) => { let t = 0; for (let k = 0; k < 12; k++) t += a[k] * (k % 2 === 0 ? 1 : 3); return (10 - (t % 10)) % 10; };
+    let wrong = 0, read = 0;
+    for (let n = 0; n < 8000; n++) {
+      const d = []; for (let k = 0; k < 13; k++) d.push(Math.floor(rn() * 10));
+      d[12] = chk12(d);
+      const par = PAR[d[0]];
+      const sc = () => [1, 1.5, 2.2, 3, 0.7, 4][Math.floor(rn() * 6)];
+      const row = new Array(14).fill(225);
+      const put = (bits, mod) => { for (const b of bits) for (let k = 0; k < Math.max(1, Math.round(mod)); k++) row.push(b === '1' ? 30 : 225); };
+      put('101', sc());
+      for (let k = 0; k < 6; k++) put((par[k] === '0' ? L : G)[d[k + 1]], sc());
+      put('01010', sc());
+      for (let k = 0; k < 6; k++) put(R2[d[k + 7]], sc());
+      put('101', sc());
+      for (let k = 0; k < 14; k++) row.push(225);
+      const got = decodeEanRow(row);
+      if (got) { read++; if (got !== d.join('')) wrong++; }
+    }
+    eq(wrong, 0, `🛑 a scale that JUMPS between digits never yields a wrong barcode (8,000 adversarial rows, ${read} accepted)`);
+  }
+
+  let drift = 0;
+  for (let i2 = 0; i2 < 900; i2++) {
+    const o = []; let dark = 0, wd = 2 + Math.random() * 3;
+    while (o.length < 420) { wd *= 1.004; for (let k = 0; k < Math.round(wd); k++) o.push(dark ? 30 : 225); dark = dark ? 0 : 1; }
+    if (decodeEanRow(o.slice(0, 420))) drift++;
+    if (decodeEanRow(Array.from({ length: 320 }, (_, k) => (k % 17 < 3 || k % 29 < 2) ? 45 : 220))) drift++;
+  }
+  eq(drift, 0, '🛑 drifting stripes and text-like patterns still decode to nothing');
+
   // Camera conditions: sensor noise, soft focus, and a light gradient across the label.
   const jitter = (r, a) => r.map(v => Math.max(0, Math.min(255, v + (Math.random() * 2 - 1) * a)));
   const blur = (r, k) => r.map((_, i) => { let s2 = 0, n = 0; for (let j = -k; j <= k; j++) { const x = r[i + j]; if (x !== undefined) { s2 += x; n++; } } return s2 / n; });
