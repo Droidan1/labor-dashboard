@@ -161,7 +161,37 @@ export function makeEnv(repo = '.') {
     env: {
       DB: d1(db),
       SALES_SNAPSHOTS: kv(),
-      MEDIA: { get: async () => null, put: async () => ({}), delete: async () => {} },
+      // 🛑 A REAL in-memory bucket, not a stub that swallows writes. The previous one
+      // returned null from get() no matter what had been put, so no test could ever
+      // assert that a photo was actually stored — the one thing worth asserting about
+      // an upload. Objects behave enough like R2's for the worker: body, arrayBuffer,
+      // text, and httpMetadata carried through.
+      MEDIA: (() => {
+        const store = new Map();
+        const obj = (v) => ({
+          key: v.key, size: v.bytes.length, httpMetadata: v.httpMetadata || {},
+          get body() { return new Blob([v.bytes]).stream(); },
+          arrayBuffer: async () => v.bytes.buffer.slice(v.bytes.byteOffset, v.bytes.byteOffset + v.bytes.byteLength),
+          text: async () => new TextDecoder().decode(v.bytes),
+        });
+        return {
+          _store: store,
+          get: async (k) => (store.has(k) ? obj(store.get(k)) : null),
+          put: async (k, body, opts = {}) => {
+            const bytes = body instanceof Uint8Array ? body
+              : body instanceof ArrayBuffer ? new Uint8Array(body)
+              : typeof body === 'string' ? new TextEncoder().encode(body)
+              : new Uint8Array(0);
+            store.set(k, { key: k, bytes, httpMetadata: opts.httpMetadata });
+            return { key: k, size: bytes.length };
+          },
+          delete: async (k) => { store.delete(k); },
+          list: async ({ prefix = '' } = {}) => ({
+            objects: [...store.keys()].filter(k => k.startsWith(prefix)).map(k => obj(store.get(k))),
+            truncated: false,
+          }),
+        };
+      })(),
       // Deliberately NOT the real secret — a request must not accidentally take
       // the isAdminSecret bypass and skip every check we are trying to observe.
       SNAPSHOT_SECRET: 'harness-secret-not-used',

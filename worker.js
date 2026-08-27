@@ -3871,6 +3871,11 @@ const ACTION_BUSINESS = new Map([
   ["merch-criteria-log", "bl"],
   ["merch-coverage", "bl"],
   ["merch-velocity", "bl"],
+  ["furniture-identify", "bl"],
+  ["furniture-save", "bl"],
+  ["furniture-photo", "bl"],
+  ["furniture-bands", "bl"],
+  ["furniture-bands-save", "bl"],
   ["merch-products", "bl"],
   ["merch-product-save", "bl"],
   ["merch-scan", "bl"],
@@ -9704,6 +9709,86 @@ const merchOtherParent = (key) =>
 // The taxonomy as a two-level tree: the 10 merchandise L2s, each with its L3s. Derived
 // from L3_TO_L2 rather than stored, so a new Clover category appears the moment the map
 // learns about it.
+// ─── Furniture ────────────────────────────────────────────────────────────────
+//
+// Deliberately a SHORT list. Brian named these two, and a category nobody has set bands
+// for would offer a manager an empty screen — so the surface only admits what has been
+// thought about. Adding one is a line here plus its bands.
+//
+// ⚠️ Two categories will not hold this for long. A dining chair and a bookcase are both
+// READY TO ASSEMBLE and they are not one price band; the finer item-type list is the
+// thing this really wants, and the ranges will feel wrong until it exists.
+const FURNITURE_L3S = [
+  "FG BL FURNITURE - READY TO ASSEMBLE",
+  "FG BL FURNITURE - UPHOLSTERY",
+];
+
+const FURNITURE_CONDITIONS = [
+  { key: "new",      label: "New in box",  hint: "Sealed, never opened" },
+  { key: "like_new", label: "Like new",    hint: "Opened, no wear" },
+  { key: "good",     label: "Good",        hint: "Light marks, all parts" },
+  { key: "fair",     label: "Fair",        hint: "Visible wear or scuffs" },
+  { key: "damaged",  label: "Damaged",     hint: "Parts missing or broken" },
+];
+
+// Whatever the model handed back, reduced to comparable tokens. Everything the match
+// depends on goes through here, so the photo we store and the photo we compare are
+// normalised by the same code — two spellings of "dark grey" must not be two attributes.
+function furnitureAttrs(v) {
+  const raw = Array.isArray(v) ? v : String(v || "").split(/[,\n]/);
+  const out = [];
+  for (const item of raw) {
+    const t = String(item || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+    if (t.length < 2 || t.length > 40) continue;
+    if (!out.includes(t)) out.push(t);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+// 🔑 SWEPT, NOT GUESSED. Against realistic vision output — the same armchair photographed
+// twice from different angles, the same model in another colour, a sofa, a bookcase and an
+// unrelated dining chair:
+//
+//   rule            finds the re-shot chair    offers something plainly wrong
+//   overlap>=3 .30           yes                yes — a grey armchair, for a photo of a SOFA
+//   overlap>=4 .45           yes                none
+//   overlap>=5 .60           yes                none
+//
+// 4 and 0.45. The tighter rules were clean here too, but they leave no room for a photo
+// described in fewer words than the one already stored, which is the ordinary case as
+// lighting and angle change.
+//
+// Jaccard rather than a raw count, so a piece described in fifteen attributes cannot beat
+// one described in eight simply for being wordier. At the chosen rule the re-shot chair
+// scores 0.60 and the SAME MODEL IN BLUE comes second at 0.455 — which is the behaviour
+// worth having: near-misses are shown, and a person tells them apart in a glance.
+const FURNITURE_MIN_OVERLAP = 4;
+const FURNITURE_MIN_SCORE = 0.45;
+
+function furnitureMatch(attrs, rows) {
+  const a = new Set(attrs);
+  if (a.size < FURNITURE_MIN_OVERLAP) return [];
+  const scored = [];
+  for (const r of rows || []) {
+    // 🛑 PIPE-SEPARATED, NOT SPACE. Attributes contain spaces — "wooden legs", "three
+    // seat" — so a space-joined column shreds every multi-word attribute into single
+    // words on the way back out, and nothing ever matched. furnitureAttrs strips
+    // everything but letters, digits and spaces, so a pipe cannot occur inside one.
+    const b = new Set(String(r.attributes || "").split("|").map(x => x.trim()).filter(Boolean));
+    if (!b.size) continue;
+    let overlap = 0;
+    for (const t of a) if (b.has(t)) overlap++;
+    if (overlap < FURNITURE_MIN_OVERLAP) continue;
+    const score = overlap / (a.size + b.size - overlap);
+    if (score < FURNITURE_MIN_SCORE) continue;
+    scored.push({ ...r, overlap, score: +score.toFixed(3) });
+  }
+  // Best first, and only a few — a manager comparing photographs is doing it by eye, and
+  // a list of ten is a list nobody reads to the end.
+  return scored.sort((x, y) => y.score - x.score).slice(0, 3);
+}
+
 function merchTree() {
   const tree = {};
   for (const [l3, l2] of Object.entries(L3_TO_L2)) {
@@ -17570,6 +17655,248 @@ export default {
     // Item Sales reconciliation uses; no Clover call is made here. Shelf comes from the
     // latest week a store actually entered. A store with no count is NEVER treated as
     // zero bays — it is excluded from the shelf side and says so.
+    // ═══ FURNITURE ═══════════════════════════════════════════════════════════
+    //
+    // Furniture arrives with no barcode, so there is no key to look anything up by and
+    // pricing it is guesswork that takes too long. The PICTURE becomes the key: what we
+    // charged for a piece is remembered against its photo, so the same piece arriving
+    // again — here or at another store — holds its price instead of being re-guessed.
+
+    // POST ?action=furniture-identify { image_b64, media_type, l3 }
+    //
+    // 🔑 THE MATCH IS OVER TEXT, NOT PIXELS. There is no cheap way to search images by
+    // likeness; there IS a cheap way to search what they ARE. One vision call writes the
+    // photo down as attributes, and those are compared against every piece we have priced
+    // in this category. Milliseconds, and free.
+    //
+    // 🛑 AND IT ONLY EVER SUGGESTS. The candidates come back for a person to confirm
+    // against the photo. A wrong match prices the wrong item and nothing downstream would
+    // catch it — the same reason the barcode scanner reads a code twice before believing.
+    if (url.searchParams.get("action") === "furniture-identify" && request.method === "POST") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      if (!env.ANTHROPIC_API_KEY) return new Response(JSON.stringify({ error: "Photo lookup is not configured on this environment" }), { status: 400, headers: corsJson });
+      try {
+        const body = await request.json();
+        const l3 = String(body?.l3 || "");
+        if (!FURNITURE_L3S.includes(l3)) {
+          return new Response(JSON.stringify({ error: "Pick a furniture category" }), { status: 400, headers: corsJson });
+        }
+        const b64 = String(body?.image_b64 || "");
+        if (!b64) return new Response(JSON.stringify({ error: "No photo" }), { status: 400, headers: corsJson });
+        if (b64.length > 8_000_000) {
+          return new Response(JSON.stringify({ error: "That photo is too large — try again a little further back" }), { status: 400, headers: corsJson });
+        }
+        const mt = ["image/jpeg", "image/png", "image/webp"].includes(body?.media_type) ? body.media_type : "image/jpeg";
+
+        const t0 = Date.now();
+        let ok = false, got = {};
+        try {
+          const vis = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-6",
+              max_tokens: 300,
+              thinking: { type: "disabled" },
+              system:
+                "You are cataloguing ONE piece of second-hand furniture from a photo, so that the " +
+                "same piece can be recognised if it turns up again at another store. " +
+                'Return ONLY JSON: {"descriptor":"<one short line a person would read>",' +
+                '"attributes":["<lowercase single words or short phrases>"]}. ' +
+                "descriptor names the piece plainly, e.g. 'grey fabric armchair with wooden legs'. " +
+                "attributes are the things that would still be true from a different angle in " +
+                "different light: the kind of item, material, colour, leg or frame style, number of " +
+                "seats or drawers, and any distinctive feature. 8 to 14 of them. " +
+                "Do NOT describe the room, the floor, the lighting or anything that is not the " +
+                "furniture. Do NOT guess a brand unless it is legible in the photo.",
+              messages: [{ role: "user", content: [
+                { type: "image", source: { type: "base64", media_type: mt, data: b64 } },
+                { type: "text", text: "What is this piece?" },
+              ]}],
+            }),
+          });
+          ok = vis.ok;
+          if (ok) {
+            const vj = await vis.json();
+            const txt = (vj.content || []).filter(c => c.type === "text").map(c => c.text).join("");
+            try { got = JSON.parse((txt.match(/\{[\s\S]*\}/) || ["{}"])[0]); } catch (_) { got = {}; }
+          }
+        } catch (_) { ok = false; }
+        await retailLog(env, { provider: "claude", detail: "furniture identify", ok, ms: Date.now() - t0 });
+        if (!ok) return new Response(JSON.stringify({ error: "Could not read that photo — try again" }), { status: 502, headers: corsJson });
+
+        const descriptor = String(got.descriptor || "").slice(0, 200) || null;
+        const attrs = furnitureAttrs(got.attributes);
+        if (!attrs.length && !descriptor) {
+          return new Response(JSON.stringify({ error: "Could not make out a piece of furniture there. Fill more of the frame." }), { status: 422, headers: corsJson });
+        }
+
+        // Store the photo now, so the manager is not made to upload it twice. An
+        // abandoned identify leaves an R2 object with no row — cheap, and preferable to
+        // sending the picture over warehouse wifi a second time.
+        const key = `furniture/${l3.replace(/[^A-Za-z0-9]+/g, "-").toLowerCase()}/${crypto.randomUUID()}.jpg`;
+        await env.MEDIA.put(key, Uint8Array.from(atob(b64), c => c.charCodeAt(0)), { httpMetadata: { contentType: mt } });
+
+        // Bounded by the index: the most recent 300 pieces in this category. Older than
+        // that and the price is not one we would want carried forward anyway.
+        const { results } = await env.DB.prepare(
+          `SELECT id, descriptor, attributes, condition, price, store, priced_at
+             FROM furniture_pieces WHERE l3 = ? ORDER BY priced_at DESC LIMIT 300`).bind(l3).all();
+        const candidates = furnitureMatch(attrs, results || []);
+
+        return new Response(JSON.stringify({
+          ok: true, r2_key: key, content_type: mt, l3, descriptor, attributes: attrs,
+          candidates: candidates.map(c => ({
+            id: c.id, descriptor: c.descriptor, price: c.price, store: c.store,
+            condition: c.condition, priced_at: c.priced_at, overlap: c.overlap, score: c.score,
+          })),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=furniture-save { r2_key, content_type, l3, descriptor, attributes,
+    //                               condition, price, matched_id? }
+    if (url.searchParams.get("action") === "furniture-save" && request.method === "POST") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const l3 = String(b?.l3 || "");
+        if (!FURNITURE_L3S.includes(l3)) {
+          return new Response(JSON.stringify({ error: "Pick a furniture category" }), { status: 400, headers: corsJson });
+        }
+        const price = Number(b?.price);
+        if (!Number.isFinite(price) || price <= 0) {
+          return new Response(JSON.stringify({ error: "A price must be a number above zero" }), { status: 400, headers: corsJson });
+        }
+        const cond = FURNITURE_CONDITIONS.some(c => c.key === b?.condition) ? String(b.condition) : null;
+        // A matched piece carries the earlier one's condition forward; a fresh one must
+        // say what condition it is in, because that is what chose the band.
+        if (!cond && !b?.matched_id) {
+          return new Response(JSON.stringify({ error: "Pick a condition" }), { status: 400, headers: corsJson });
+        }
+        const key = String(b?.r2_key || "");
+        if (!key.startsWith("furniture/")) {
+          return new Response(JSON.stringify({ error: "No photo to save" }), { status: 400, headers: corsJson });
+        }
+        // 🔑 The store comes from the SESSION, never the request. Which store priced a
+        // piece is what makes "another store already priced this" mean anything, and a
+        // caller-supplied value would let it be wrong.
+        const allow = currentUser ? allowedStores(currentUser) : null;
+        const store = (allow && allow.length === 1) ? allow[0] : (currentUser?.store || null);
+
+        const now = new Date().toISOString();
+        const res = await env.DB.prepare(
+          `INSERT INTO furniture_pieces (r2_key, content_type, l3, descriptor, attributes,
+             condition, price, store, matched_id, priced_by, priced_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+        ).bind(key, String(b?.content_type || "image/jpeg"), l3,
+               b?.descriptor ? String(b.descriptor).slice(0, 200) : null,
+               furnitureAttrs(b?.attributes).join("|") || null,
+               cond, roundCents(price), store,
+               Number.isInteger(Number(b?.matched_id)) ? Number(b.matched_id) : null,
+               currentUser?.email || null, now).run();
+
+        return new Response(JSON.stringify({ ok: true, id: res.meta?.last_row_id ?? null, price: roundCents(price), store }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=furniture-photo&id=N — the picture, for the confirm-it-is-the-same step.
+    if (url.searchParams.get("action") === "furniture-photo" && request.method === "GET") {
+      if (!currentUser && !isAdminSecret) return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+      if (!env.DB || !env.MEDIA) return new Response("Storage not configured", { status: 500, headers: corsHeaders });
+      const id = parseInt(url.searchParams.get("id") || "", 10);
+      if (!Number.isInteger(id)) return new Response("Invalid id", { status: 400, headers: corsHeaders });
+      const row = await env.DB.prepare(`SELECT r2_key, content_type FROM furniture_pieces WHERE id = ?`).bind(id).first();
+      if (!row) return new Response("Not found", { status: 404, headers: corsHeaders });
+      const obj = await env.MEDIA.get(row.r2_key);
+      if (!obj) return new Response("Gone", { status: 404, headers: corsHeaders });
+      const h = new Headers(corsHeaders);
+      h.set("Content-Type", row.content_type || "image/jpeg");
+      // A given id never changes its bytes → cache hard in the browser.
+      h.set("Cache-Control", "private, max-age=2592000, immutable");
+      return new Response(obj.body, { headers: h });
+    }
+
+    // GET ?action=furniture-bands — what an admin set, with the ASP and our cost beside it.
+    if (url.searchParams.get("action") === "furniture-bands" && request.method === "GET") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const { results } = await env.DB.prepare(`SELECT * FROM furniture_bands`).all();
+        const bands = {};
+        for (const r of results || []) (bands[r.l3] || (bands[r.l3] = {}))[r.condition] = { low: r.low, usual: r.usual, high: r.high };
+        const av = await manifestAspVelocity(env);
+        const [catBlob, imBlob] = await Promise.all([
+          env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json"),
+          env.SALES_SNAPSHOTS.get(ITEM_COSTS_KEY, "json"),
+        ]);
+        return new Response(JSON.stringify({
+          ok: true,
+          conditions: FURNITURE_CONDITIONS,
+          categories: FURNITURE_L3S.map(l3 => ({
+            key: l3, label: merchLabel(l3),
+            // 🔑 Said plainly when there is no history: both of these categories have
+            // almost none, so a screen that quoted an ASP anyway would be inventing the
+            // very number the bands are supposed to be checked against.
+            asp: av[l3]?.asp ?? null,
+            units: av[l3]?.units ?? 0,
+            cost: l3UnitCost(l3, (imBlob || {}).items || {}, (catBlob || {}).costs || {}),
+            bands: bands[l3] || {},
+          })),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=furniture-bands-save { l3, condition, low, usual, high } — admin only.
+    if (url.searchParams.get("action") === "furniture-bands-save" && request.method === "POST") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const b = await request.json();
+        const l3 = String(b?.l3 || "");
+        if (!FURNITURE_L3S.includes(l3)) return new Response(JSON.stringify({ error: "Not a furniture category" }), { status: 400, headers: corsJson });
+        if (!FURNITURE_CONDITIONS.some(c => c.key === b?.condition)) return new Response(JSON.stringify({ error: "Not a condition we use" }), { status: 400, headers: corsJson });
+        const n = (v) => {
+          if (v === null || v === undefined || String(v).trim() === "") return null;
+          const x = Number(v);
+          if (!Number.isFinite(x) || x < 0) throw new Error("A price must be a number, or blank to clear it");
+          return roundCents(x);
+        };
+        const low = n(b?.low), usual = n(b?.usual), high = n(b?.high);
+        // 🛑 Out of order is a typo, not a range. Caught here rather than shown to a
+        // manager as a "high" that is less than the "low".
+        if (low !== null && usual !== null && low > usual) return new Response(JSON.stringify({ error: "Low is above the usual price" }), { status: 400, headers: corsJson });
+        if (usual !== null && high !== null && usual > high) return new Response(JSON.stringify({ error: "The usual price is above the high" }), { status: 400, headers: corsJson });
+
+        const now = new Date().toISOString();
+        await env.DB.prepare(
+          `INSERT INTO furniture_bands (l3, condition, low, usual, high, updated_by, updated_at)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT(l3, condition) DO UPDATE SET
+             low = excluded.low, usual = excluded.usual, high = excluded.high,
+             updated_by = excluded.updated_by, updated_at = excluded.updated_at`
+        ).bind(l3, String(b.condition), low, usual, high, currentUser?.email || "admin", now).run();
+        return new Response(JSON.stringify({ ok: true, l3, condition: b.condition, low, usual, high }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 400, headers: corsJson });
+      }
+    }
+
     // GET ?action=merch-products[&tab=scanned|manifest][&q=][&limit=][&offset=]
     //
     // Everything we know about a product, in one place. item_cache is not a scan log — it

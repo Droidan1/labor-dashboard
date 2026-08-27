@@ -2309,6 +2309,44 @@
         /* 🛑 Source order beats Tailwind — both are single class selectors and this block
            comes after tailwind.css, so without this the collapsed editor still lays out. */
         #ps-edit.hidden{display:none}
+        #fn-panel{display:flex;flex-direction:column;gap:13px}
+        #fn-panel.hidden{display:none}
+        .fn-shot{border-radius:12px;display:grid;place-items:center;min-height:132px;gap:6px;
+          font-size:12.5px;text-align:center;color:#6b6453;background:rgba(20,16,8,.06);
+          border:1px dashed rgba(20,16,8,.18);cursor:pointer;overflow:hidden}
+        .dark .fn-shot{color:#8893a7;background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.18)}
+        .fn-shot img{width:100%;display:block;max-height:200px;object-fit:cover}
+        .fn-seg{display:flex;gap:6px}
+        .fn-seg button{flex:1;padding:10px 6px;border-radius:9px;border:1px solid rgba(20,16,8,.18);
+          background:transparent;color:#14110a;font-size:12.5px;font-family:inherit;cursor:pointer;line-height:1.25}
+        .dark .fn-seg button{color:#e7ecf3;border-color:rgba(255,255,255,.16)}
+        .fn-seg button.on{background:rgba(34,197,94,.16);border-color:transparent;color:#1c7a33;font-weight:700}
+        .dark .fn-seg button.on{color:#5fd170}
+        .fn-match{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+        .fn-cell{border-radius:11px;border:1px solid rgba(20,16,8,.12);overflow:hidden;text-align:center}
+        .dark .fn-cell{border-color:rgba(255,255,255,.10)}
+        .fn-cell img{width:100%;height:86px;object-fit:cover;display:block}
+        .fn-cell .cap{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+          color:#6b6453;padding:6px 4px 1px}
+        .dark .fn-cell .cap{color:#8893a7}
+        .fn-cell .val{font-size:17px;font-weight:700;padding-bottom:7px;font-variant-numeric:tabular-nums}
+        .fn-cond{display:flex;flex-direction:column;gap:6px}
+        .fn-cond button{display:block;width:100%;text-align:left;padding:11px;border-radius:10px;
+          border:1px solid rgba(20,16,8,.18);background:transparent;color:#14110a;font-family:inherit;cursor:pointer}
+        .dark .fn-cond button{color:#e7ecf3;border-color:rgba(255,255,255,.16)}
+        .fn-cond button.on{border-color:#22c55e;background:rgba(34,197,94,.16)}
+        .fn-cond .nm{font-weight:600;font-size:13.5px}
+        .fn-cond .ex{font-size:11.5px;color:#6b6453;line-height:1.3}
+        .dark .fn-cond .ex{color:#8893a7}
+        .fn-prices{display:flex;gap:7px}
+        .fn-prices button{flex:1;padding:13px 4px;border-radius:10px;border:1px solid rgba(20,16,8,.18);
+          background:transparent;cursor:pointer;font-family:inherit;text-align:center;color:#14110a}
+        .dark .fn-prices button{color:#e7ecf3;border-color:rgba(255,255,255,.16)}
+        .fn-prices button.on{border-color:#22c55e;background:rgba(34,197,94,.16);color:#1c7a33}
+        .dark .fn-prices button.on{color:#5fd170}
+        .fn-prices .v{font-weight:700;font-size:19px;font-variant-numeric:tabular-nums}
+        .fn-prices .t{font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#6b6453}
+        .dark .fn-prices .t{color:#8893a7}
         .ps-steps{display:flex;flex-direction:column;gap:2px;padding:2px 0}
         .ps-step{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13.5px;
           color:#9c9484;transition:color .25s}
@@ -2357,6 +2395,11 @@
               <input id="ps-photo" type="file" accept="image/*" capture="environment"
                      class="hidden" onchange="psPhoto(this)">
             </div>
+            <!-- Furniture has no barcode, so it does not belong behind the scanner. Its own
+                 button, on the screen managers are already standing on. -->
+            <button id="ps-furniture" class="ps-btn ghost" onclick="fnOpen()" type="button">Furniture</button>
+            <input id="fn-photo" type="file" accept="image/*" capture="environment"
+                   class="hidden" onchange="fnShot(this)">
             <div id="ps-scanbox" class="hidden" style="position:relative;border-radius:12px;overflow:hidden;background:#000">
               <!-- Taller on a phone: more pixels across the bars is the cheapest accuracy
                    there is, and 230px was leaving half the screen empty on a handset. -->
@@ -2390,6 +2433,7 @@
             </div>
             <button id="ps-go" class="ps-btn" onclick="psScan()" type="button">Look it up</button>
             <div id="ps-result"></div>
+            <div id="fn-panel" class="hidden"></div>
           </div>
         </div>
       </div>
@@ -18131,6 +18175,12 @@
     ['Working out our price', 5600],
   ];
   function psStages(kind) {
+    // Furniture is its own shape: a vision call, then a search of our OWN history. No
+    // street lookup at all — furniture has no SKU, so that number was always a guess.
+    if (kind === 'furniture') {
+      return [['Reading the photo', 3000], ['Working out what it is', 2600],
+              ['Checking what we priced before', 1200]];
+    }
     const head = kind === 'photo' ? [['Reading the photo', 5000]]
       : kind === 'barcode' ? [['Reading the barcode', 3100], ['Identifying the product', 2600]]
       : [];
@@ -18218,6 +18268,230 @@
     }
   }
   window.psScan = psScan;
+
+  // ─── Furniture ────────────────────────────────────────────────────────────
+  //
+  // No barcode, so the picture is the key. Photograph it, let the worker say what it is
+  // and whether we have priced one before, and only ask a question when it does not know.
+  let fn = { open:false, cat:null, cats:[], conds:[], busy:false, bands:false,
+             shot:null, ident:null, cond:null, price:null, rejected:false, saved:null };
+
+  function fnReset(keepCat) {
+    fn = { ...fn, shot:null, ident:null, cond:null, price:null, rejected:false, saved:null,
+           cat: keepCat ? fn.cat : null };
+    fnDraw();
+  }
+
+  // The barcode controls are not just irrelevant in furniture mode, they are misleading —
+  // "Look it up" on an empty box does nothing, and Scan opens a camera for a code that
+  // does not exist. One mode at a time.
+  function fnChrome(on) {
+    for (const id of ['ps-input', 'ps-go']) el(id)?.classList.toggle('hidden', on);
+    el('ps-barcode')?.parentElement?.classList.toggle('hidden', on);
+    const b = el('ps-furniture');
+    if (b) { b.textContent = on ? 'Back to barcodes' : 'Furniture'; b.className = on ? 'ps-btn' : 'ps-btn ghost'; }
+  }
+
+  async function fnOpen() {
+    if (fn.open) { fn.open = false; el('fn-panel').classList.add('hidden'); fnChrome(false); psStatus(''); return; }
+    fn.open = true;
+    el('ps-result').innerHTML = '';
+    el('fn-panel').classList.remove('hidden');
+    fnChrome(true);
+    fnDraw();
+    if (!fn.cats.length) {
+      try {
+        const r = await fetch(`${WORKER_BASE}?action=furniture-bands`, { credentials: 'include' });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        fn.cats = j.categories || []; fn.conds = j.conditions || [];
+        if (fn.cats.length === 1) fn.cat = fn.cats[0].key;
+      } catch (e) { psStatus(`Could not load the furniture ranges: ${e.message}`); }
+      fnDraw();
+    }
+  }
+  window.fnOpen = fnOpen;
+  window.fnCat = (k) => { fn.cat = k; fn.cond = null; fn.price = null; fnDraw(); };
+  window.fnPickCond = (k) => {
+    fn.cond = k;
+    const b = (fn.cats.find(c => c.key === fn.cat)?.bands || {})[k] || {};
+    fn.price = b.usual ?? b.low ?? b.high ?? null;
+    fnDraw();
+  };
+  window.fnPickPrice = (v) => { fn.price = v; fnDraw(); };
+  window.fnReject = () => { fn.rejected = true; fnDraw(); };
+  window.fnRetake = () => fnReset(true);
+
+  async function fnShot(input) {
+    const f = input.files && input.files[0];
+    input.value = '';
+    if (!f || fn.busy || !fn.cat) return;
+    fn.busy = true; fn.rejected = false; fn.ident = null; fn.cond = null; fn.price = null;
+    try {
+      const b64 = await psShrink(f);
+      fn.shot = `data:image/jpeg;base64,${b64}`;
+      fnDraw();
+      psStatus('');
+      psProgressStart('furniture');
+      const r = await fetch(`${WORKER_BASE}?action=furniture-identify`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_b64: b64, media_type: 'image/jpeg', l3: fn.cat }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      fn.ident = j;
+    } catch (e) {
+      psStatus(`Could not read that photo: ${e.message}`);
+      fn.shot = null;
+    } finally {
+      psProgressStop();
+      fn.busy = false;
+      fnDraw();
+    }
+  }
+  window.fnShot = fnShot;
+
+  async function fnSave(matchedId) {
+    if (!fn.ident || fn.busy) return;
+    const price = matchedId ? fn.ident.candidates.find(c => c.id === matchedId)?.price : fn.price;
+    if (!price) return;
+    fn.busy = true; psStatus('Saving…'); fnDraw();
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=furniture-save`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          r2_key: fn.ident.r2_key, content_type: fn.ident.content_type, l3: fn.cat,
+          descriptor: fn.ident.descriptor, attributes: fn.ident.attributes,
+          condition: matchedId ? null : fn.cond, price, matched_id: matchedId || null,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      psStatus('');
+      fn.saved = { price: j.price, matched: !!matchedId };
+    } catch (e) {
+      psStatus(`Could not save: ${e.message}`);
+    } finally { fn.busy = false; fnDraw(); }
+  }
+  window.fnSave = fnSave;
+
+  window.fnBands = () => { fn.bands = !fn.bands; fnDraw(); };
+  window.fnBandSave = async (cond) => {
+    const g = (k) => el(`fn-b-${cond}-${k}`).value;
+    psStatus('Saving…');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=furniture-bands-save`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ l3: fn.cat, condition: cond, low: g('low'), usual: g('usual'), high: g('high') }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const cat = fn.cats.find(c => c.key === fn.cat);
+      if (cat) (cat.bands || (cat.bands = {}))[cond] = { low: j.low, usual: j.usual, high: j.high };
+      psStatus('Saved.');
+      fnDraw();
+    } catch (e) { psStatus(`Could not save: ${e.message}`); }
+  };
+
+  function fnBandsHtml(cat) {
+    const b = cat?.bands || {};
+    return `<div class="ps-lbl">Ranges for ${psEsc(cat?.label || '')}</div>
+      <div class="ps-why" style="text-align:left">${cat?.asp
+        ? `The category averages ${psMoney(cat.asp)} a sale across ${cat.units} sold — worth checking your ranges against.`
+        : 'This category has no sales history, so there is no average to check these against. They are yours alone.'}
+        ${cat?.cost ? ` Our cost is ${psMoney(cat.cost)} a unit.` : ' We have no cost for it either, so no margin is shown.'}</div>
+      ${fn.conds.map(c => {
+        const v = b[c.key] || {};
+        return `<div class="ps-fld"><label>${psEsc(c.label)}</label>
+          <div class="fn-prices" style="gap:6px">
+            <input id="fn-b-${c.key}-low"   inputmode="decimal" placeholder="low"   value="${v.low ?? ''}">
+            <input id="fn-b-${c.key}-usual" inputmode="decimal" placeholder="usual" value="${v.usual ?? ''}">
+            <input id="fn-b-${c.key}-high"  inputmode="decimal" placeholder="high"  value="${v.high ?? ''}">
+            <button class="ps-btn" style="width:auto;padding:10px 14px" type="button"
+                    onclick="fnBandSave('${c.key}')">Save</button>
+          </div></div>`;
+      }).join('')}
+      <button class="ps-btn ghost" type="button" onclick="fnBands()">Done</button>`;
+  }
+
+  function fnDraw() {
+    const host = el('fn-panel');
+    if (!host || !fn.open) return;
+    const cat = fn.cats.find(c => c.key === fn.cat) || null;
+    let h = `<div class="fn-seg">${fn.cats.map(c =>
+      `<button class="${fn.cat === c.key ? 'on' : ''}" onclick="fnCat('${psEsc(c.key)}')">${psEsc(c.label)}</button>`
+      ).join('') || '<div class="ps-up">Loading…</div>'}</div>`;
+
+    if (fn.saved) {
+      h += `<div class="ps-hero">${psMoney(fn.saved.price)}</div>
+        <div class="ps-chips"><span class="ps-chip">${fn.saved.matched ? 'held from last time' : 'priced and saved'}</span></div>
+        <div class="ps-why" style="text-align:center">The photo is kept, so the next one of these is instant.</div>
+        <button class="ps-btn" onclick="fnRetake()" type="button">Price the next piece</button>`;
+      host.innerHTML = h; return;
+    }
+
+    // The admin control, where the context is. A manager sees the ranges applied; an
+    // admin sees them and can change them, without going to look for another screen.
+    if (fn.bands) { host.innerHTML = h + fnBandsHtml(cat); return; }
+    if (psCanOverride() && fn.cat) {
+      h += `<div style="text-align:right;margin-top:-4px"><button class="ps-link" type="button"
+              onclick="fnBands()">Set the ranges</button></div>`;
+    }
+
+    if (!fn.cat) { h += `<div class="ps-up" style="text-align:center">Pick a category to start.</div>`; host.innerHTML = h; return; }
+
+    h += fn.shot
+      ? `<div class="fn-shot" onclick="fnRetake()"><img src="${fn.shot}" alt="the piece"></div>`
+      : `<div class="fn-shot" onclick="document.getElementById('fn-photo').click()">
+           <div style="font-size:26px">📷</div><div>Photograph the piece</div></div>`;
+
+    if (!fn.shot) { host.innerHTML = h; return; }
+    if (!fn.ident) { host.innerHTML = h; return; }   // the step list is rendering in #ps-result
+
+    const cands = fn.rejected ? [] : (fn.ident.candidates || []);
+    if (cands.length) {
+      const c = cands[0];
+      h += `<div class="ps-lbl" style="text-align:center">Same piece?</div>
+        <div class="fn-match">
+          <div class="fn-cell"><img src="${fn.shot}" alt="now"><div class="cap">now</div><div class="val">?</div></div>
+          <div class="fn-cell"><img src="${WORKER_BASE}?action=furniture-photo&id=${c.id}" alt="priced before">
+            <div class="cap">${psEsc([c.store, (c.priced_at || '').slice(0, 10)].filter(Boolean).join(' · '))}</div>
+            <div class="val">${psMoney(c.price)}</div></div>
+        </div>
+        <div class="ps-why" style="text-align:left">${psEsc(fn.ident.descriptor || '')} — the closest
+          thing we have priced. <b>You decide, not the phone.</b></div>
+        <button class="ps-btn" onclick="fnSave(${c.id})" type="button">Yes — price it at ${psMoney(c.price)}</button>
+        <button class="ps-btn ghost" onclick="fnReject()" type="button">Not the same piece</button>`;
+      host.innerHTML = h; return;
+    }
+
+    h += `<div class="ps-up" style="text-align:center">${psEsc(fn.ident.descriptor || 'Nothing like it')}</div>
+      <div class="ps-lbl">What condition?</div>
+      <div class="fn-cond">${fn.conds.map(c =>
+        `<button class="${fn.cond === c.key ? 'on' : ''}" onclick="fnPickCond('${psEsc(c.key)}')">
+           <span class="nm">${psEsc(c.label)}</span><br><span class="ex">${psEsc(c.hint)}</span></button>`).join('')}</div>`;
+
+    if (fn.cond) {
+      const b = (cat?.bands || {})[fn.cond] || {};
+      const pts = [[b.low, 'low'], [b.usual, 'usual'], [b.high, 'high']].filter(([v]) => v !== null && v !== undefined);
+      h += pts.length
+        ? `<div class="ps-lbl">Your range</div>
+           <div class="fn-prices">${pts.map(([v, t]) =>
+             `<button class="${fn.price === v ? 'on' : ''}" onclick="fnPickPrice(${v})">
+                <div class="v">${psMoney(v)}</div><div class="t">${t}</div></button>`).join('')}</div>
+           <div class="ps-why" style="text-align:left">${cat?.asp
+             ? `The category averages ${psMoney(cat.asp)} a sale.`
+             : 'No sales history for this category yet, so the range is what an admin set — there is nothing to check it against.'}</div>`
+        // 🔑 Said plainly rather than falling back to a number nobody chose.
+        : `<div class="ps-why" style="text-align:left">No range set for this condition yet. An admin
+             sets them under Furniture ranges.</div>`;
+      if (fn.price) h += `<button class="ps-btn" onclick="fnSave(0)" type="button">Price at ${psMoney(fn.price)}</button>`;
+    }
+    host.innerHTML = h;
+  }
 
   // ─── Merchandising › Products ─────────────────────────────────────────────
   //
