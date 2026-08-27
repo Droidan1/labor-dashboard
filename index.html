@@ -2328,7 +2328,13 @@
                           border:2px solid #22c55e;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.34)"></div>
               <div id="ps-scanhint" style="position:absolute;left:0;right:0;bottom:7px;text-align:center;font-size:11.5px;
                           color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.9)">Fill the box with the barcode</div>
-              <div id="ps-diag" style="position:absolute;top:8px;left:8px;font-size:10px;color:#cbd5e1;
+              <input id="ps-zoom" type="range" class="hidden" oninput="psZoom(this.value)"
+                     aria-label="Camera zoom"
+                     style="position:absolute;left:12%;right:12%;bottom:30px;width:76%;accent-color:#22c55e">
+              <!-- Width-capped so it can never reach the controls: this line grows with the
+                   camera's answer, and at 4K it ran straight under the Lens button. -->
+              <div id="ps-diag" style="position:absolute;top:8px;left:8px;max-width:calc(100% - 130px);
+                          font-size:10px;line-height:1.45;color:#cbd5e1;
                           background:rgba(0,0,0,.5);padding:3px 7px;border-radius:6px;
                           text-shadow:0 1px 2px rgba(0,0,0,.9)"></div>
               <button id="ps-lens" type="button" onclick="psNextLens()" class="hidden"
@@ -18420,11 +18426,18 @@
     if (psScanning) { psStopScan(); return; }
     let stream;
     try {
-      // 🔑 1920 WIDE, NOT 1280. Since iOS 16.4 an `environment` request can land on a
-      // virtual camera whose field of view is the ULTRA-WIDE one (WebKit bug 253186), and
-      // on an ultra-wide frame a barcode occupies barely half the pixels it would on the
-      // standard lens. More pixels across the frame is the only thing that offsets that.
-      const video0 = { width: { ideal: 1920 }, height: { ideal: 1080 },
+      // 🔑 ASK FOR 4K, AND THE REASON IS ARITHMETIC. Reported from the floor: the phone
+      // gives 1080x1920 — PORTRAIT, so only 1,080 pixels lie across the bars, not the
+      // 1,920 the number looks like. A printed UPC is 3.7cm; through the standard lens
+      // (68 degrees) at a comfortable 25-30cm that is about 100 pixels for 95 modules.
+      // ONE PIXEL PER BAR. It could only ever read in a narrow band of distances, which
+      // is precisely the hunting this was reported as.
+      //
+      //   1080 across, 2x zoom, 30cm  →  2.1 px/module   (edge of readable)
+      //   2160 across, 2x zoom, 30cm  →  4.2 px/module   (comfortable)
+      //
+      // `ideal` degrades on its own where 4K is not offered, so this costs nothing to ask.
+      const video0 = { width: { ideal: 3840 }, height: { ideal: 2160 },
                        advanced: [{ focusMode: 'continuous' }] };
       if (psLensId) video0.deviceId = { exact: psLensId };
       else video0.facingMode = { ideal: 'environment' };
@@ -18463,12 +18476,23 @@
     // The remedy the WebKit engineers name in bug 253186 is exactly this: on the virtual
     // camera, ZOOM. At ~2x the field of view matches the standard lens while the optics
     // stay the macro-capable ones, so a barcode can be held close AND be sharp. iOS 17+.
-    try {
-      if (caps && caps.zoom && Number(caps.zoom.max) > 1) {
-        const z = Math.min(2, Number(caps.zoom.max));
-        await track.applyConstraints({ advanced: [{ zoom: z }] });
-      }
-    } catch (e) { /* zoom is unsupported here; the lens button is the fallback */ }
+    //
+    // 🔑 3x, NOT 2x — also arithmetic. At 2x on a 1080-wide frame a can held 30cm away
+    // gives 2.1 pixels per module, which is the edge of readable; 3x gives 3.1. And the
+    // slider exists because the right number depends on the phone, the light and how
+    // close that particular person holds things, none of which is knowable from here.
+    const zoomEl = el('ps-zoom');
+    if (caps && caps.zoom && Number(caps.zoom.max) > 1) {
+      const zmin = Math.max(1, Number(caps.zoom.min) || 1);
+      const zmax = Number(caps.zoom.max);
+      zoomEl.min = zmin; zoomEl.max = Math.min(zmax, 6);
+      zoomEl.step = Number(caps.zoom.step) || 0.1;
+      zoomEl.value = Math.min(3, zmax);
+      zoomEl.classList.remove('hidden');
+      try { await track.applyConstraints({ advanced: [{ zoom: Number(zoomEl.value) }] }); } catch (e) {}
+    } else {
+      zoomEl.classList.add('hidden');
+    }
 
     // A lens switch is the escape hatch that works whatever iOS decides today. Which
     // camera `environment` means has changed between releases and is not ours to predict.
@@ -18482,14 +18506,7 @@
     // 🔑 SAY WHAT THE CAMERA ACTUALLY GAVE US. Two rounds of this were spent reasoning
     // about a phone nobody could see; the resolution, the zoom and the lens name settle
     // in one glance what guessing could not.
-    try {
-      const st = track.getSettings?.() || {};
-      const lbl = (track.label || '').replace(/camera/i, '').trim();
-      el('ps-diag').textContent =
-        [`${st.width || '?'}\u00d7${st.height || '?'}`,
-         st.zoom ? `${Number(st.zoom).toFixed(1)}\u00d7` : null,
-         lbl || null].filter(Boolean).join(' \u00b7 ');
-    } catch (e) { el('ps-diag').textContent = ''; }
+    psDiag(track);
 
     const detector = await psDetector();
     const canvas = document.createElement('canvas');
@@ -18589,6 +18606,36 @@
     tick();
   }
 
+  // Zoom is what buys pixels across the bars, and the useful setting is per-phone.
+  async function psZoom(v) {
+    const track = psStream?.getVideoTracks?.()[0];
+    if (!track) return;
+    try {
+      await track.applyConstraints({ advanced: [{ zoom: Number(v) }] });
+      psDiag(track);
+    } catch (e) { /* the camera refused it; leave the slider where the user put it */ }
+  }
+  window.psZoom = psZoom;
+
+  // What the camera actually gave us, said out loud. Two rounds of this were spent
+  // reasoning about a phone nobody could see.
+  function psDiag(track) {
+    try {
+      const st = track.getSettings?.() || {};
+      const lbl = (track.label || '').replace(/camera/i, '').trim();
+      const across = Math.min(st.width || 0, st.height || 0);
+      el('ps-diag').textContent =
+        [`${st.width || '?'}\u00d7${st.height || '?'}`,
+         st.zoom ? `${Number(st.zoom).toFixed(1)}\u00d7` : null,
+         // The number that decides whether it can read AT ALL: pixels across one bar.
+         // 3.7cm of printed UPC through a 68-degree lens at 20cm, over 95 modules —
+         // which works out at 0.00144 per pixel of frame width per unit of zoom. Under
+         // about 2 it cannot read; over about 4 it is comfortable.
+         across ? `${(across * Number(st.zoom || 1) * 0.00144).toFixed(1)}px/bar@20cm` : null,
+         lbl || null].filter(Boolean).join(' \u00b7 ');
+    } catch (e) { el('ps-diag').textContent = ''; }
+  }
+
   // Which camera `facingMode: environment` means has changed between iOS releases and is
   // not ours to predict — so offer the choice rather than guessing on the user's behalf.
   async function psNextLens() {
@@ -18628,6 +18675,7 @@
     const t = el('ps-torch'); if (t) { t.classList.add('hidden'); t.style.background = 'rgba(0,0,0,.45)'; t.style.color = '#fff'; }
     const ln = el('ps-lens'); if (ln) ln.classList.add('hidden');
     const dg = el('ps-diag'); if (dg) dg.textContent = '';
+    const zm = el('ps-zoom'); if (zm) zm.classList.add('hidden');
     const hint = el('ps-scanhint'); if (hint) hint.textContent = 'Fill the box with the barcode';
     const b = el('ps-barcode'); if (b) b.textContent = 'Scan';
   }
