@@ -18505,14 +18505,26 @@
     if (fn.cond) {
       const b = (cat?.bands || {})[fn.cond] || {};
       const pts = [[b.low, 'low'], [b.usual, 'usual'], [b.high, 'high']].filter(([v]) => v !== null && v !== undefined);
+      // 🔑 THE MARGIN, ON EVERY POINT. The cost exists now, so showing a price without it
+      // would be hiding the one number that says whether the price is worth taking. A
+      // point that misses the floor is marked rather than quietly offered.
+      const gpOf = (v) => (cat?.cost && v > 0) ? ((v - cat.cost) / v) * 100 : null;
+      const chosenGp = gpOf(fn.price);
       h += pts.length
         ? `<div class="ps-lbl">Your range</div>
-           <div class="fn-prices">${pts.map(([v, t]) =>
-             `<button class="${fn.price === v ? 'on' : ''}" onclick="fnPickPrice(${v})">
-                <div class="v">${psMoney(v)}</div><div class="t">${t}</div></button>`).join('')}</div>
-           <div class="ps-why" style="text-align:left">${cat?.asp
+           <div class="fn-prices">${pts.map(([v, t]) => {
+             const g = gpOf(v);
+             return `<button class="${fn.price === v ? 'on' : ''}" onclick="fnPickPrice(${v})">
+                <div class="v">${psMoney(v)}</div><div class="t">${t}</div>${
+                g === null ? '' : `<div class="t" style="letter-spacing:0;text-transform:none${
+                  g < 30 ? ';color:#8a4b00' : ''}">${g.toFixed(0)}% GP</div>`}</button>`;
+           }).join('')}</div>
+           <div class="ps-why" style="text-align:left">${
+             chosenGp !== null && chosenGp < 30
+               ? `<b>${psMoney(fn.price)} keeps only ${chosenGp.toFixed(0)}%</b> against ${psMoney(cat.cost)} of cost — under the 30% floor. `
+               : ''}${cat?.asp
              ? `The category averages ${psMoney(cat.asp)} a sale.`
-             : 'No sales history for this category yet, so the range is what an admin set — there is nothing to check it against.'}</div>`
+             : 'No sales history for this category, so the range is what an admin set — there is nothing to check it against.'}</div>`
         // 🔑 Said plainly rather than falling back to a number nobody chose.
         : `<div class="ps-why" style="text-align:left">No range set for this condition yet. An admin
              sets them under Furniture ranges.</div>`;
