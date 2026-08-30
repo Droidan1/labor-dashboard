@@ -18280,12 +18280,12 @@
   //
   // No barcode, so the picture is the key. Photograph it, let the worker say what it is
   // and whether we have priced one before, and only ask a question when it does not know.
-  let fn = { open:false, cat:null, cats:[], conds:[], busy:false, bands:false,
+  let fn = { open:false, cat:null, cats:[], conds:[], busy:false, bands:false, store:null,
              shot:null, ident:null, cond:null, price:null, rejected:false, saved:null };
 
   function fnReset(keepCat) {
     fn = { ...fn, shot:null, ident:null, cond:null, price:null, rejected:false, saved:null,
-           cat: keepCat ? fn.cat : null };
+           cat: keepCat ? fn.cat : null };   // the store sticks: a bench does not move
     fnDraw();
   }
 
@@ -18337,6 +18337,7 @@
   window.fnPickPrice = (v) => { fn.price = v; fnDraw(); };
   window.fnReject = () => { fn.rejected = true; fnDraw(); };
   window.fnRetake = () => fnReset(true);
+  window.fnStore = (st) => { fn.store = st; fnDraw(); };
 
   async function fnShot(input) {
     const f = input.files && input.files[0];
@@ -18381,6 +18382,7 @@
           r2_key: fn.ident.r2_key, content_type: fn.ident.content_type, l3: fn.cat,
           descriptor: fn.ident.descriptor, attributes: fn.ident.attributes,
           condition: matchedId ? null : fn.cond, price, matched_id: matchedId || null,
+          store: fn.store || undefined,
         }),
       });
       const j = await r.json();
@@ -18455,6 +18457,16 @@
     if (psCanOverride() && fn.cat) {
       h += `<div style="text-align:right;margin-top:-4px"><button class="ps-link" type="button"
               onclick="fnBands()">Set the ranges</button></div>`;
+    }
+
+    // 🔑 Only asked of people who could be at more than one store. A manager scoped to
+    // one never sees this; the worker fills it from their session and checks whatever is
+    // sent against what they are allowed anyway.
+    const stores = (typeof getUserStores === 'function' ? getUserStores() : []) || [];
+    if (stores.length > 1) {
+      if (!fn.store) fn.store = stores[0];
+      h += `<div class="fn-seg">${stores.map(st =>
+        `<button class="${fn.store === st ? 'on' : ''}" onclick="fnStore('${psEsc(st)}')">${psEsc(st)}</button>`).join('')}</div>`;
     }
 
     if (!fn.cat) { h += `<div class="ps-up" style="text-align:center">Pick a category to start.</div>`; host.innerHTML = h; return; }

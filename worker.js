@@ -9746,36 +9746,63 @@ function furnitureAttrs(v) {
   return out;
 }
 
-// 🔑 SWEPT, NOT GUESSED. Against realistic vision output — the same armchair photographed
-// twice from different angles, the same model in another colour, a sofa, a bookcase and an
-// unrelated dining chair:
+// 🛑 MATCHED ON WORDS, NOT WHOLE PHRASES — and this was found the hard way. The first
+// version compared attributes as complete strings, swept against attribute sets I had
+// written myself, and looked fine. Then two photographs of the SAME black mesh office
+// chair, thirty-five seconds apart, scored 0.444 against a 0.45 threshold and did not
+// match. Six thousandths.
 //
-//   rule            finds the re-shot chair    offers something plainly wrong
-//   overlap>=3 .30           yes                yes — a grey armchair, for a photo of a SOFA
-//   overlap>=4 .45           yes                none
-//   overlap>=5 .60           yes                none
+// The reason is in what they shared and what they did not:
 //
-// 4 and 0.45. The tighter rules were clean here too, but they leave no room for a photo
-// described in fewer words than the one already stored, which is the ordinary case as
-// lighting and angle change.
+//   shared   office chair · mesh back · mesh seat · black · padded armrests ·
+//            five star base · single seat · swivel chair
+//   only #1  castors · lumbar support cutout · ergonomic design · high back
+//   only #2  rolling casters · lumbar cutout in backrest · ergonomic back shape
 //
-// Jaccard rather than a raw count, so a piece described in fifteen attributes cannot beat
-// one described in eight simply for being wordier. At the chosen rule the re-shot chair
-// scores 0.60 and the SAME MODEL IN BLUE comes second at 0.455 — which is the behaviour
-// worth having: near-misses are shown, and a person tells them apart in a glance.
-const FURNITURE_MIN_OVERLAP = 4;
-const FURNITURE_MIN_SCORE = 0.45;
+// Every difference is the model renaming the same feature. Whole-phrase matching punishes
+// that twice — once for the miss on one side, once for the extra on the other. My own
+// test data never drifted like that because I wrote both halves in one sitting; real
+// vision output picks different words every call.
+//
+// 🔑 Measured on the four real pieces, the normalisation steps that earn their place:
+//
+//   raw words                       true 0.586   nearest false 0.455   gap 0.132
+//   + stop words                    true 0.630   nearest false 0.469   gap 0.161
+//   + plural strip + castor/caster  true 0.692   nearest false 0.516   gap 0.176
+//
+// Stripping plurals alone changed NOTHING — it is here because it is what lets "castors"
+// and "casters" collapse to one token, and the pair together widens the gap.
+//
+// 0.60 sits between the true match at 0.692 and the nearest false one at 0.516, biased
+// toward misses on purpose: a miss costs a manager twenty seconds and a condition tap,
+// while a false match prices the wrong item and nothing downstream would catch it.
+const FURNITURE_MIN_OVERLAP = 6;
+const FURNITURE_MIN_SCORE = 0.60;
+
+// Filler the model varies freely — "ergonomic design" against "ergonomic back shape" is
+// one feature described twice, and these are the words that make it look like two.
+const FURNITURE_STOP = new Set(["and", "or", "with", "in", "on", "the", "for",
+                                "tone", "style", "design", "shape", "type"]);
+
+function furnitureWords(list) {
+  const out = new Set();
+  for (const phrase of list || []) {
+    for (const raw of String(phrase).split(" ")) {
+      // Plural strip first, so the spelling map below sees a singular to work on.
+      let t = raw.replace(/s$/, "").replace(/^cast[oe]r$/, "caster");
+      if (t.length <= 2 || FURNITURE_STOP.has(t)) continue;
+      out.add(t);
+    }
+  }
+  return out;
+}
 
 function furnitureMatch(attrs, rows) {
-  const a = new Set(attrs);
+  const a = furnitureWords(attrs);
   if (a.size < FURNITURE_MIN_OVERLAP) return [];
   const scored = [];
   for (const r of rows || []) {
-    // 🛑 PIPE-SEPARATED, NOT SPACE. Attributes contain spaces — "wooden legs", "three
-    // seat" — so a space-joined column shreds every multi-word attribute into single
-    // words on the way back out, and nothing ever matched. furnitureAttrs strips
-    // everything but letters, digits and spaces, so a pipe cannot occur inside one.
-    const b = new Set(String(r.attributes || "").split("|").map(x => x.trim()).filter(Boolean));
+    const b = furnitureWords(String(r.attributes || "").split("|").map(x => x.trim()).filter(Boolean));
     if (!b.size) continue;
     let overlap = 0;
     for (const t of a) if (b.has(t)) overlap++;
@@ -9784,8 +9811,8 @@ function furnitureMatch(attrs, rows) {
     if (score < FURNITURE_MIN_SCORE) continue;
     scored.push({ ...r, overlap, score: +score.toFixed(3) });
   }
-  // Best first, and only a few — a manager comparing photographs is doing it by eye, and
-  // a list of ten is a list nobody reads to the end.
+  // Best first, and only a few — a manager comparing photographs does it by eye, and a
+  // list of ten is a list nobody reads to the end.
   return scored.sort((x, y) => y.score - x.score).slice(0, 3);
 }
 
@@ -17786,11 +17813,23 @@ export default {
         if (!key.startsWith("furniture/")) {
           return new Response(JSON.stringify({ error: "No photo to save" }), { status: 400, headers: corsJson });
         }
-        // 🔑 The store comes from the SESSION, never the request. Which store priced a
-        // piece is what makes "another store already priced this" mean anything, and a
-        // caller-supplied value would let it be wrong.
+        // 🔑 WHICH STORE PRICED IT IS THE POINT — "another store already charged $35" is
+        // the whole promise, and the first four pieces saved with store NULL because a
+        // superuser has no single store and allowedStores() returns null for them.
+        //
+        // A manager scoped to one store never chooses; anyone who could be at several is
+        // asked, and the answer is CHECKED against what they are allowed rather than
+        // trusted, so the picker cannot be used to write another store's name.
         const allow = currentUser ? allowedStores(currentUser) : null;
-        const store = (allow && allow.length === 1) ? allow[0] : (currentUser?.store || null);
+        let store = null;
+        if (allow && allow.length === 1) store = allow[0];
+        else {
+          const asked = String(b?.store || "").trim().toUpperCase();
+          if (!asked) return new Response(JSON.stringify({ error: "Which store is this piece at?", code: "NEED_STORE" }), { status: 400, headers: corsJson });
+          if (!ALL_STORES.includes(asked)) return new Response(JSON.stringify({ error: "Not a store we have" }), { status: 400, headers: corsJson });
+          if (allow && !allow.includes(asked)) return new Response(JSON.stringify({ error: "Not a store you can price for" }), { status: 403, headers: corsJson });
+          store = asked;
+        }
 
         const now = new Date().toISOString();
         const res = await env.DB.prepare(

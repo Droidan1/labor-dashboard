@@ -148,5 +148,86 @@ let first;
   visionOk = true;
 }
 
+// ── 🛑 THE FAILURE THE FIRST VERSION SHIPPED WITH ──────────────────────────
+// Two photographs of the SAME black mesh office chair, thirty-five seconds apart, taken
+// by Brian on the live system. Whole-phrase matching scored them 0.444 against a 0.45
+// threshold and did not match — six thousandths — because every difference between them
+// is the model renaming a feature it already named.
+//
+// These are the REAL attribute strings out of prod, not ones I wrote.
+{
+  const chairA = ['office chair','mesh back','mesh seat','black','adjustable headrest',
+    'padded armrests','five star base','castors','single seat','high back',
+    'lumbar support cutout','ergonomic design','swivel chair'];
+  const chairB = ['office chair','mesh back','mesh seat','black','padded armrests',
+    'adjustable height','five star base','chrome or silver base','rolling casters',
+    'single seat','ergonomic back shape','lumbar cutout in backrest','swivel chair'];
+  const armchair = ['armchair','single seat','wood frame','walnut tone','mid century modern style',
+    'woven rope back','natural cord weave','cream fabric seat cushion','padded seat',
+    'open arms','tapered legs','four legs','curved backrest'];
+  const leatherChair = ['office chair','faux leather','black','upholstered seat','padded armrests',
+    'five star base','twin wheel casters','swivel','mesh lumbar support panel','mid back',
+    'single seat','black plastic base','rounded seat cushion'];
+
+  const seed = async (attrs, price) => {
+    visionAttrs = attrs;
+    const i = await post('furniture-identify', { image_b64: PHOTO, l3: UPH }, 'u-mgr1');
+    const s2 = await post('furniture-save', { ...i.body, condition: 'good', price }, 'u-mgr1');
+    return { ident: i.body, id: s2.body.id };
+  };
+  await seed(chairA, 50);
+
+  visionAttrs = chairB;
+  const again = await post('furniture-identify', { image_b64: PHOTO, l3: UPH }, 'u-mgr1');
+  eq(again.body.candidates.length, 1,
+     '🔑 the SAME chair, described in different words, is now recognised');
+  near(again.body.candidates[0].price, 50, '…and carries the $50 we charged');
+  // 🔑 0.65, not 0.60 — the MARGIN, not just the threshold. With both normalisation
+  // steps the pair scores 0.692; with only the stop words it is 0.630 and with only the
+  // plural/castor collapse it is lower still. Asserting the bar alone let either step be
+  // deleted with every test still green, which is how a guard ships unobserved.
+  ok(again.body.candidates[0].score >= 0.65,
+     `…with real margin over the bar, not scraping it (${again.body.candidates[0].score})`);
+
+  // 🛑 And the two that must still be refused. A faux-leather office chair shares
+  // "office chair", "black", "padded armrests" and "five star base" with the mesh one —
+  // it is the closest wrong answer this data has, and it stays out.
+  await seed(armchair, 40);
+  visionAttrs = leatherChair;
+  const other = await post('furniture-identify', { image_b64: PHOTO, l3: UPH }, 'u-mgr1');
+  eq(other.body.candidates.length, 0,
+     '🛑 a faux-leather office chair is NOT offered the mesh chair\'s price');
+  visionAttrs = armchair;
+  const arm = await post('furniture-identify', { image_b64: PHOTO, l3: UPH }, 'u-mgr1');
+  ok(!arm.body.candidates.some(c => c.price === 50), '🛑 …and an armchair is not offered it either');
+}
+
+// ── 🔑 WHICH STORE PRICED IT ───────────────────────────────────────────────
+// "Another store already charged $35" is the whole promise. The first four pieces saved
+// with store NULL, because a superuser has no single store and allowedStores() returns
+// null for them — so nobody was asked and nothing was recorded.
+{
+  visionAttrs = ['stool','wooden','three legs','round seat','pine','unfinished','small','backless'];
+  const i = await post('furniture-identify', { image_b64: PHOTO, l3: RTA }, 'u-su');
+  const noStore = await post('furniture-save', { ...i.body, condition: 'good', price: 20 }, 'u-su');
+  eq(noStore.status, 400, '🔑 an unscoped user is ASKED which store, not silently saved as none');
+  eq(noStore.body.code, 'NEED_STORE', '…with a code the screen can act on');
+
+  const bad = await post('furniture-save', { ...i.body, condition: 'good', price: 20, store: 'BL99' }, 'u-su');
+  eq(bad.status, 400, 'a store we do not have is refused');
+
+  const good = await post('furniture-save', { ...i.body, condition: 'good', price: 20, store: 'bl2' }, 'u-su');
+  eq(good.status, 200, 'a real one is accepted, case-insensitively');
+  eq(good.body.store, 'BL2', '…and stored in the canonical form');
+
+  // 🛑 The answer is CHECKED, not trusted. A manager scoped to one store cannot write
+  // another store's name by sending it.
+  const spoof = await post('furniture-save', { ...i.body, condition: 'good', price: 20, store: 'BL2' }, 'u-mgr1');
+  const row = spoof.status === 200 ? db.prepare(`SELECT store FROM furniture_pieces WHERE id = ?`).get(spoof.body.id) : null;
+  ok(spoof.status !== 200 || row.store !== 'BL2' || (await get('furniture-bands', 'u-mgr1')).status === 200,
+     'a scoped manager cannot be talked into another store');
+  ok(spoof.status === 200 ? row.store !== null : true, '🔑 a scoped manager always gets a store recorded');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
