@@ -1368,5 +1368,63 @@ console.log('Price Scan');
   }
 }
 
+// ── 🛑 $959.40 FOR A BOTTLE OF COLLAGEN ────────────────────────────────────
+// Found in the live cache. A single bottle listed at $15.99, multiplied by sixty,
+// because the size field said "60 ct" and retailPackSize read that as a sixty-pack.
+// Also live: $1,999.25 for a 55-count box of dishwasher tablets and $392.55 for steel
+// wool pads. The parser was not wrong — it was being asked a MANIFEST question on a scan.
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      const q = decodeURIComponent(url);
+      if (/0?12345600001/.test(q)) {
+        return new Response(JSON.stringify({ results: [
+          { position: 1, url: 'https://world.openfoodfacts.org/p/c', title: "Nature's Truth Collagen 60 ct", snippet: "Nature's Truth" }]}), { status: 200 });
+      }
+      return new Response(JSON.stringify({ results: [
+        { position: 1, url: 'https://www.walmart.com/ip/collagen/1', title: "Nature's Truth Collagen Gummies 60 Count", snippet: '$15.99' }]}), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls++;
+      const b = JSON.parse(init.body); const sys = b.system || '';
+      if (/expand abbreviated/i.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          items: [{ row: 1, brand: "Nature's Truth", title: "Nature's Truth Collagen Peptides Type 1 & 3", size: '60 ct' }] }) }] }), { status: 200 });
+      }
+      if (/category/i.test(sys) && /rows/.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          rows: [{ row: 1, category: SNACKS, confidence: 'high' }] }) }] }), { status: 200 });
+      }
+      // ONE bottle, at its shelf price, correctly extracted. Everything after this is ours.
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ prices: [
+        { url: 'https://www.walmart.com/ip/collagen/1', price: 15.99, title: "Nature's Truth Collagen Gummies 60 Count", pack: 1, in_stock: true, sold_by: 'Walmart.com' }]}) }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const r = await post('merch-scan', { identifier: '012345600001' });
+  eq(r.body.size, '60 ct', 'the size really does say 60 ct');
+  near(r.body.retail, 15.99,
+     '🛑 a scanned bottle is ONE bottle — its own count is not a multipack');
+  ok(r.body.retail < 100, `…and nowhere near $959 (${r.body.retail})`);
+  globalThis.fetch = realFetch;
+}
+
+// 🔑 THE MANIFEST STILL READS COUNTS AS PACKS, because there it is right: the line's cost
+// is per case and "8 CT" says what is being bought. Deleting that reading to fix the scan
+// would have broken the surface it was written for.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const dec = src.slice(src.indexOf('function retailDecide('), src.indexOf('\n}', src.indexOf('function retailDecide(')));
+  ok(/opts\.scan \? 1 : retailPackSize\(line\.description\)/.test(dec),
+     '🔑 the pack reading is switched by the PATH, not deleted');
+  const pl = src.slice(src.indexOf('async function retailPriceLine('), src.indexOf('\n}\n', src.indexOf('async function retailPriceLine(')));
+  eq((pl.match(/scan: !!ctx\.scan/g) || []).length, 3,
+     '…and every retailDecide inside the lookup is told which path it is on');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

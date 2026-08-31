@@ -7677,7 +7677,17 @@ async function retailParsePrices(env, item, candidates, ctx = {}, model = null) 
 // This is where R2–R7 actually land.
 function retailDecide(line, cands, domains = [], opts = {}) {
   const flags = [];
-  const targetPack = retailPackSize(line.description);
+  // 🛑 A SCANNED ITEM IS ONE RETAIL UNIT. YOU ARE HOLDING IT.
+  //
+  // retailPackSize reads "8 CT" off a MANIFEST line and is right to: there the cost is per
+  // case and the count tells you what you are buying. On a scan the description is
+  // `title + size`, and a size of "60 ct" is sixty gummies inside ONE bottle — so the same
+  // reading multiplied a $15.99 bottle by sixty and stored $959.40. Live in the cache when
+  // this was found, alongside $1,999.25 for a 55-count box of dishwasher tablets and
+  // $392.55 for steel wool pads.
+  //
+  // Nothing about the parser is wrong; it was being asked a manifest question on a scan.
+  const targetPack = opts.scan ? 1 : retailPackSize(line.description);
   const targetOz = retailOunces(line.description);
 
   // R3 — a marketplace listing is never a retail price, whatever domain it sits on.
@@ -8107,7 +8117,7 @@ async function retailClassPrice(env, line, brand, size, budget, ctx = {}) {
   // own msrp-above-street and comp-overstated checks still fire. A class price reached
   // by weaker rules than the SKU price would be the wrong thing to trust over it.
   const d = retailDecide(line, cands, RETAIL_CPG_DOMAINS,
-                         { resultUrls: results.map(r => r.url).filter(Boolean) });
+                         { resultUrls: results.map(r => r.url).filter(Boolean), scan: !!ctx.scan });
   return d.retail_price > 0 ? d : null;
 }
 
@@ -8160,7 +8170,7 @@ async function retailPriceLine(env, line, budget, ctx, searchName, ident = null)
   const results = await retailSearch(env, query, domains, ctx);
   if (results === null) return { skipped: "search failed" };
   // Zero results across every allowed domain lands on "not at big box" via retailDecide.
-  if (!results.length) return { decided: retailDecide(line, [], domains, { resultUrls: [] }) };
+  if (!results.length) return { decided: retailDecide(line, [], domains, { resultUrls: [], scan: !!ctx.scan }) };
 
   const resultUrls = results.map(r => r.url).filter(Boolean);
 
@@ -8190,7 +8200,7 @@ async function retailPriceLine(env, line, budget, ctx, searchName, ident = null)
             [{ url: urls[0], title: scraped?.metadata?.title, text: scraped.markdown }], ctx);
           if (parsed.length) cands = parsed;
         } else if (!cands.length) {
-          const d = retailDecide(line, cands, domains, { resultUrls });
+          const d = retailDecide(line, cands, domains, { resultUrls, scan: !!ctx.scan });
           // Two separate facts, and collapsing them loses one. WHAT stopped us —
           // a refused request or a page that rendered to nothing — and, for big-ticket,
           // that a heavier tool is required (R8). "no first-party stockist" is a third
@@ -8206,7 +8216,7 @@ async function retailPriceLine(env, line, budget, ctx, searchName, ident = null)
       }
     }
   }
-  const decided = retailDecide(line, cands, domains, { resultUrls });
+  const decided = retailDecide(line, cands, domains, { resultUrls, scan: !!ctx.scan });
   return { decided: retailClassCheck(decided, await classAhead) };
 }
 
