@@ -21,7 +21,7 @@ CODEBG  = colors.HexColor("#f4f3ee")
 TABLEHD = colors.HexColor("#eceadf")
 
 def S(name, **kw):
-    base = dict(name=name, fontName="Helvetica", fontSize=9.6, leading=13.7,
+    base = dict(name=name, fontName="Helvetica", fontSize=9.6, leading=13.3,
                 textColor=INK, alignment=TA_LEFT, spaceAfter=0)
     base.update(kw)
     return ParagraphStyle(**base)
@@ -33,13 +33,14 @@ h2       = S("h2", fontName="Helvetica-Bold", fontSize=12.4, leading=15,
              textColor=GREEN, spaceBefore=13, spaceAfter=5)
 h3       = S("h3", fontName="Helvetica-Bold", fontSize=10, leading=13.4,
              textColor=INK, spaceBefore=9, spaceAfter=3)
-body     = S("body", spaceAfter=6.5)
+body     = S("body", spaceAfter=6)
 lead     = S("lead", fontSize=10.4, leading=15, spaceAfter=8)
 bullet   = S("bullet", leftIndent=13, bulletIndent=2, spaceAfter=3.5)
-cell     = S("cell", fontSize=8.7, leading=12, spaceAfter=0)
+cell     = S("cell", fontSize=8.7, leading=11.7, spaceAfter=0)
 cellb    = S("cellb", fontSize=8.7, leading=12, fontName="Helvetica-Bold", spaceAfter=0)
 code     = S("code", fontName="Courier", fontSize=8.1, leading=11.4, textColor=INK)
 foot     = S("foot", fontSize=7.6, leading=10, textColor=DIM)
+conf     = S("conf", fontSize=8.4, leading=12, textColor=colors.HexColor("#8a3324"))
 
 def rule(space_before=0, space_after=8, color=RULE, width=0.6):
     return HRFlowable(width="100%", thickness=width, color=color,
@@ -69,7 +70,7 @@ def datatable(header, rows, widths):
         ("BACKGROUND", (0,0), (-1,0), TABLEHD),
         ("VALIGN", (0,0), (-1,-1), "TOP"),
         ("LEFTPADDING", (0,0), (-1,-1), 7), ("RIGHTPADDING", (0,0), (-1,-1), 7),
-        ("TOPPADDING", (0,0), (-1,-1), 5), ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("TOPPADDING", (0,0), (-1,-1), 4.5), ("BOTTOMPADDING", (0,0), (-1,-1), 4.5),
         ("LINEBELOW", (0,0), (-1,-2), 0.4, RULE),
         ("BOX", (0,0), (-1,-1), 0.5, RULE),
     ]))
@@ -92,8 +93,10 @@ A(Spacer(1, 7))
 A(rule(space_after=3, color=EMERALD, width=1.6))
 A(Spacer(1, 6))
 A(Paragraph("Technical brief &nbsp;·&nbsp; 31 August 2026 &nbsp;·&nbsp; "
-            "Bargain Lane Operator Dashboard &nbsp;·&nbsp; Prepared for external technical review",
-            meta))
+            "Bargain Lane Operator Dashboard", meta))
+A(Spacer(1, 3))
+A(Paragraph("<b>COMMERCIALLY CONFIDENTIAL</b> &nbsp;·&nbsp; Contains Bargain Lane buy criteria "
+            "and pricing rules. Shared for technical evaluation; not for redistribution.", conf))
 A(Spacer(1, 14))
 
 A(Paragraph(
@@ -120,7 +123,58 @@ A(Paragraph(
   "pipeline.", body))
 
 # ── 2 ─────────────────────────────────────────────────────────────────────────
-A(Paragraph("2 &nbsp; Where it runs", h2))
+A(Paragraph("2 &nbsp; What a street price actually decides", h2))
+A(Paragraph(
+  "A street price is not a reference figure in this system. It is load-bearing in two "
+  "separate decisions, and an error in it propagates to both. These are the chain-level "
+  "defaults; criteria are set per category and versioned, and a category inherits these "
+  "until it is overridden.", body))
+A(Spacer(1, 2))
+A(KeepTogether(datatable(
+    ["Rule", "Default", "What it governs"],
+    [["Max cost as % of retail", "30%",
+      "<b>The buy.</b> Unit cost must land under 30% of street retail — a 70% gross "
+      "position at full price. This is the test a manifest line passes or fails."],
+     ["Price cap as % of retail", "50%",
+      "<b>The ticket.</b> The shelf price is capped at half the street price. Being "
+      "visibly cheaper than big box <i>is</i> the offer, and this cap is what encodes it."],
+     ["Min gross margin", "30%",
+      "A pricing floor: the ticket must retain 30% of itself as gross profit. An item can "
+      "pass the buy test and fail this one, which is exactly the case worth seeing."],
+     ["Dollar ceiling", "per category",
+      "What the discount retailer down the road charges for a comparable item. A hard "
+      "ceiling — you cannot price above the competition and expect to sell, whatever "
+      "retail says."],
+     ["Max break-even sell-through", "50%",
+      "The share of units that must sell for the load to clear its cost."],
+     ["Cash-back days", "40",
+      "The window in which the cash outlay is expected back."],
+     ["Rounding", ".99",
+      "Applied after the cap and re-clamped, so rounding up cannot push a price back "
+      "above the ceiling it was just held under."]],
+    [1.55*inch, 0.72*inch, 4.23*inch])))
+A(Spacer(1, 8))
+A(Paragraph(
+  "The pricing ladder resolves these in a fixed order, and the ordering matters: <b>the "
+  "street price governs whenever we have one.</b> Our own average selling price is the "
+  "fallback for having <i>no</i> street price — never a reason to charge more than the cap "
+  "when a street price exists. A can that a national grocer sells at $2.27, priced at our "
+  "own $2.00 ASP, is 27 cents under the street, and nobody drives to a discounter to save "
+  "27 cents.", body))
+A(Paragraph(
+  "So a retail figure that is wrong <i>high</i> does two kinds of damage at once. It lets a "
+  "load pass a buy test it should have failed, and it tickets the item at a price nobody "
+  "will pay. Finding 5 in section 8 is that failure in its exact form: a search snippet "
+  "carrying $20.35 for a can whose real shelf price is $2.39. Against the true price a "
+  "$1.00 unit cost is 42% of retail and correctly fails the 30% buy test; against the bogus "
+  "one it is 4.9% and sails through — and the 50% cap then suggests we ticket that can at "
+  "$10.50.", body))
+A(Paragraph(
+  "This is the whole reason the pipeline below is built the way it is, and the reason a "
+  "price that merely <i>parses</i> is not good enough.", body))
+
+# ── 3 ─────────────────────────────────────────────────────────────────────────
+A(Paragraph("3 &nbsp; Where it runs", h2))
 A(datatable(
     ["Surface", "What it does", "Shape of the work"],
     [["Manifest Scorer",
@@ -143,7 +197,7 @@ A(Paragraph(
   "page text where no structured data is available.", body))
 
 # ── 3 ─────────────────────────────────────────────────────────────────────────
-A(Paragraph("3 &nbsp; The lookup pipeline", h2))
+A(Paragraph("4 &nbsp; The lookup pipeline", h2))
 A(Paragraph(
   "The pipeline is an escalation ladder, ordered cheapest-first. Each rung runs only because the "
   "one before it failed to produce a price.", body))
@@ -168,7 +222,7 @@ A(datatable(
       "rather than a price. Up to three non-marketplace product pages, 10s cap.",
       "TinyFish Fetch — free"],
      ["5 &nbsp;Render",
-      "Only if steps 3–4 produced <i>no price at all</i>. Firecrawl renders the page and returns "
+      "Only if steps 4–5 produced <i>no price at all</i>. Firecrawl renders the page and returns "
       "structured product data.",
       "<b>Firecrawl — 1 credit</b>"],
      ["6 &nbsp;Decide",
@@ -183,7 +237,7 @@ A(Paragraph(
   "actions, so every call is recorded.", body))
 
 # ── 4 ─────────────────────────────────────────────────────────────────────────
-A(Paragraph("4 &nbsp; Why TinyFish", h2))
+A(Paragraph("5 &nbsp; Why TinyFish", h2))
 A(Paragraph(
   "TinyFish Search and Fetch carry the volume. Search is rate-limited at 30 requests per minute "
   "and Fetch at 150 URLs per minute per key, which is comfortably enough that a 300-line manifest "
@@ -205,20 +259,20 @@ A(Paragraph(
   "quietly billed.", body))
 
 # ── 5 ─────────────────────────────────────────────────────────────────────────
-A(Paragraph("5 &nbsp; Why Firecrawl", h2))
+A(Paragraph("6 &nbsp; Why Firecrawl", h2))
 A(Paragraph(
   "Firecrawl is scoped to exactly the two places the free path measurably dies, and to nothing "
   "else.", body))
-A(sub("5.1 &nbsp; JavaScript-walled pages",
+A(sub("6.1 &nbsp; JavaScript-walled pages",
   "A plain fetch of certain retailer product pages returns navigation chrome and no content after "
   "ten seconds. The page is real and the price is on it; it simply is not in the HTML that "
   "arrives. Firecrawl renders it."))
-A(sub("5.2 &nbsp; Fetch-hostile sites",
+A(sub("6.2 &nbsp; Fetch-hostile sites",
   "Home Depot returns HTTP 403 to a plain fetch. Firecrawl's " + MONO % 'proxy: "auto"' + " retries "
   "through enhanced proxies at no credit surcharge. This matters disproportionately because the "
   "big-ticket categories — home improvement, appliances, consumer electronics — are both the most "
   "fetch-hostile and the ones where a wrong buy costs the most."))
-A(sub("5.3 &nbsp; The structured product format — the actual reason",
+A(sub("6.3 &nbsp; The structured product format — the actual reason",
   "The decisive advantage is not rendering, which several tools do. It is that "
   + MONO % 'formats: ["product"]' + " returns " + MONO % "price.amount" + " and "
   + MONO % "availability.inStock" + " as structured data. A rendered page therefore never has to "
@@ -254,14 +308,14 @@ A(Paragraph(
   "to the parser rather than wasting the credit.", body))
 
 # ── 6 ─────────────────────────────────────────────────────────────────────────
-A(Paragraph("6 &nbsp; Cost control and observability", h2))
+A(Paragraph("7 &nbsp; Cost control and observability", h2))
 A(Paragraph(
   "Firecrawl is the only call in this pipeline that costs money. Everything else is free at "
   "current tiers. That asymmetry drives four controls:", body))
 A(Spacer(1, -3))
 for b in bullets([
   "<b>It runs only after the free path has failed to produce a price.</b> The test is the presence "
-  "of a price, not the size of the response — see finding 3 below.",
+  "of a price, not the size of the response — see finding 3 in section 8.",
   "<b>Hard credit cap per batch.</b> Ten credits, which keeps a 331-line manifest inside the "
   "1,000/month free tier even if every eligible line escalates.",
   "<b>Every call is logged to D1</b> — provider, target, credits, success, HTTP status and "
@@ -273,7 +327,7 @@ for b in bullets([
     A(b)
 
 # ── 7 ─────────────────────────────────────────────────────────────────────────
-A(Paragraph("7 &nbsp; Findings from production", h2))
+A(Paragraph("8 &nbsp; Findings from production", h2))
 A(Paragraph(
   "Every rule in the pipeline was written after a real lookup returned a wrong number. The ones "
   "most relevant to a tooling discussion:", body))
@@ -298,9 +352,10 @@ A(datatable(
            "Scoping is treated as a ranking preference. Results are re-filtered by host before "
            "use."],
      ["5", "A discount retailer's search snippets carried $20.35 for an item a national grocer "
-           "sells at $2.39.",
-           "A price that parses cleanly can still be wrong by an order of magnitude. "
-           "Corroboration across retailers is not optional."],
+           "sells at $2.39 — an 8.5x error that parsed perfectly cleanly.",
+           "Straight through both rules in section 2: the load passes a 30% buy test it should "
+           "fail, and the 50% cap tickets the can at $10.50. Corroboration across retailers is "
+           "not optional."],
      ["6", "A credit budget built with a coercion that yielded NaN compared false against every "
            "check, leaving the paid path effectively uncapped. The tell was a null in the "
            "response body the whole time.",
@@ -309,7 +364,7 @@ A(datatable(
     [0.3*inch, 3.15*inch, 3.05*inch]))
 
 # ── 8 ─────────────────────────────────────────────────────────────────────────
-A(Paragraph("8 &nbsp; Where we would expand", h2))
+A(Paragraph("9 &nbsp; Where we would expand", h2))
 A(Paragraph(
   "Firecrawl is currently rationed for cost reasons rather than fit. Three expansions are already "
   "identified:", body))
@@ -322,22 +377,22 @@ for b in bullets([
   "<b>Big-ticket categories.</b> Home improvement, appliances and consumer electronics are the "
   "most fetch-hostile sources and carry the highest per-unit stakes. Lines in these categories "
   "that need heavier tooling are currently flagged and left unpriced entirely.",
-  "<b>Price Scan latency.</b> The interactive path has a manager standing in an aisle. Skipping "
-  "the free-then-fallback ladder in favour of going straight to structured data would trade "
-  "credits for seconds — a trade currently unavailable to us."]):
+  "<b>Price Scan latency.</b> The interactive path has a manager standing in an aisle. Going "
+  "straight to structured data would trade credits for seconds — a trade currently "
+  "unavailable to us."]):
     A(b)
 A(Spacer(1, 5))
 A(Paragraph(
   "The constraint on all three is the same: budget headroom on the one paid line in the pipeline. "
   "We would welcome a conversation about what expanded usage could look like.", body))
 
-A(Spacer(1, 5))
+A(Spacer(1, 0))
 A(KeepTogether([
   rule(space_after=4),
   Paragraph(
-    "Prepared from the production integration in the Bargain Lane operator dashboard. "
-    "Buy-criteria thresholds, internal pricing and sales figures are omitted by design; "
-    "this covers integration architecture only.", foot)]))
+    "Prepared from the production integration in the Bargain Lane operator dashboard. The buy "
+    "criteria in section 2 are commercially confidential. Per-store sales figures and vendor "
+    "terms bear on no part of the integration and are omitted.", foot)]))
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 def decorate(canvas, doc):
@@ -354,7 +409,7 @@ def decorate(canvas, doc):
 
 doc = BaseDocTemplate(OUT, pagesize=LETTER,
                       leftMargin=1.0*inch, rightMargin=1.0*inch,
-                      topMargin=0.85*inch, bottomMargin=0.95*inch,
+                      topMargin=0.85*inch, bottomMargin=0.82*inch,
                       title="Retail Price Discovery — Firecrawl & TinyFish Integration",
                       author="Bargain Lane",
                       subject="Technical brief on the retail price lookup pipeline")
