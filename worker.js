@@ -9718,9 +9718,32 @@ const merchOtherParent = (key) =>
 // ⚠️ Two categories will not hold this for long. A dining chair and a bookcase are both
 // READY TO ASSEMBLE and they are not one price band; the finer item-type list is the
 // thing this really wants, and the ranges will feel wrong until it exists.
+// Brian's four. The first three are where anything ordinarily lands; the taxonomy splits
+// them by construction, which is how this business already thinks about stock.
+//
+// 🛑 UPHOLSTERY IS OPT-IN AND MUST STAY THAT WAY. Its unit cost is $100 against $12.50 for
+// the others — an eightfold difference — and its margin floor is $142.86 rather than
+// $17.86. A piece that lands there by default is not a mis-filing, it is a price wrong by
+// a multiple. Nothing suggests it, nothing defaults to it; a person picks it or it is not
+// used.
 const FURNITURE_L3S = [
   "FG BL FURNITURE - READY TO ASSEMBLE",
+  "FG BL FURNITURE - RTA - CHAIRS",
+  "FG BL FURNITURE - RTA - TABLES/STANDS",
   "FG BL FURNITURE - UPHOLSTERY",
+];
+const FURNITURE_OPT_IN = new Set(["FG BL FURNITURE - UPHOLSTERY"]);
+
+// 🔑 A STARTING VOCABULARY, NOT A TAXONOMY. Offered to the vision call so the common cases
+// come back spelled the same way every time — but it may answer with its own words when
+// none fits, and those answers are the point: they are how we find out what is missing.
+// Nothing prices off this yet.
+const FURNITURE_TYPES = [
+  "dining chair", "office chair", "armchair", "recliner", "sofa", "loveseat",
+  "stool", "bench", "ottoman", "dining table", "coffee table", "end table",
+  "desk", "console table", "dresser", "nightstand", "bookcase", "cabinet",
+  "wardrobe", "tv stand", "bed frame", "headboard", "mattress", "patio seating",
+  "patio table",
 ];
 
 const FURNITURE_CONDITIONS = [
@@ -17732,7 +17755,12 @@ export default {
                 "You are cataloguing ONE piece of second-hand furniture from a photo, so that the " +
                 "same piece can be recognised if it turns up again at another store. " +
                 'Return ONLY JSON: {"descriptor":"<one short line a person would read>",' +
+                '"item_type":"<what kind of thing it is>",' +
                 '"attributes":["<lowercase single words or short phrases>"]}. ' +
+                "item_type names the piece in one or two lowercase words. Prefer one of: " +
+                FURNITURE_TYPES.join(", ") + ". " +
+                "If none of those genuinely fits, answer with your own short label rather " +
+                "than forcing the nearest one — a wrong label is worse than a new one. " +
                 "descriptor names the piece plainly, e.g. 'grey fabric armchair with wooden legs'. " +
                 "attributes are the things that would still be true from a different angle in " +
                 "different light: the kind of item, material, colour, leg or frame style, number of " +
@@ -17756,6 +17784,11 @@ export default {
         if (!ok) return new Response(JSON.stringify({ error: "Could not read that photo — try again" }), { status: 502, headers: corsJson });
 
         const descriptor = String(got.descriptor || "").slice(0, 200) || null;
+        // Normalised only for shape — NOT snapped to the vocabulary. A label the list does
+        // not contain is the most useful answer this returns; forcing it to the nearest
+        // known type would erase exactly the signal we are collecting.
+        const itemType = String(got.item_type || "").toLowerCase()
+          .replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 40) || null;
         const attrs = furnitureAttrs(got.attributes);
         if (!attrs.length && !descriptor) {
           return new Response(JSON.stringify({ error: "Could not make out a piece of furniture there. Fill more of the frame." }), { status: 422, headers: corsJson });
@@ -17775,7 +17808,7 @@ export default {
         const candidates = furnitureMatch(attrs, results || []);
 
         return new Response(JSON.stringify({
-          ok: true, r2_key: key, content_type: mt, l3, descriptor, attributes: attrs,
+          ok: true, r2_key: key, content_type: mt, l3, descriptor, item_type: itemType, attributes: attrs,
           candidates: candidates.map(c => ({
             id: c.id, descriptor: c.descriptor, price: c.price, store: c.store,
             condition: c.condition, priced_at: c.priced_at, overlap: c.overlap, score: c.score,
@@ -17833,11 +17866,12 @@ export default {
 
         const now = new Date().toISOString();
         const res = await env.DB.prepare(
-          `INSERT INTO furniture_pieces (r2_key, content_type, l3, descriptor, attributes,
+          `INSERT INTO furniture_pieces (r2_key, content_type, l3, descriptor, item_type, attributes,
              condition, price, store, matched_id, priced_by, priced_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
         ).bind(key, String(b?.content_type || "image/jpeg"), l3,
                b?.descriptor ? String(b.descriptor).slice(0, 200) : null,
+               b?.item_type ? String(b.item_type).toLowerCase().slice(0, 40) : null,
                furnitureAttrs(b?.attributes).join("|") || null,
                cond, roundCents(price), store,
                Number.isInteger(Number(b?.matched_id)) ? Number(b.matched_id) : null,
@@ -17885,7 +17919,7 @@ export default {
           ok: true,
           conditions: FURNITURE_CONDITIONS,
           categories: FURNITURE_L3S.map(l3 => ({
-            key: l3, label: merchLabel(l3),
+            key: l3, label: merchLabel(l3), opt_in: FURNITURE_OPT_IN.has(l3),
             // 🔑 Said plainly when there is no history: both of these categories have
             // almost none, so a screen that quoted an ASP anyway would be inventing the
             // very number the bands are supposed to be checked against.

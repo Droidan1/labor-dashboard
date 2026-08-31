@@ -17,7 +17,8 @@ const near = (a, b, m) => ok(a !== null && Math.abs(a - b) < 0.02, `${m} (got ${
 const worker = await loadWorker(repo);
 const { db, env } = makeEnv(repo);
 for (const m of ['migration-041.sql','migration-042.sql','migration-043.sql','migration-044.sql',
-                 'migration-045.sql','migration-046.sql','migration-047.sql','migration-052.sql'])
+                 'migration-045.sql','migration-046.sql','migration-047.sql','migration-052.sql',
+                 'migration-053.sql'])
   { try { db.exec(fs.readFileSync(path.join(repo, m), 'utf8')); } catch (e) {} }
 applyMigrationAlters(db, repo);
 env.ANTHROPIC_API_KEY = 'sk-test';
@@ -28,12 +29,14 @@ const UPH = 'FG BL FURNITURE - UPHOLSTERY';
 // The vision call is the only egress; everything else is real.
 let visionAttrs = ['armchair','grey','fabric','wooden legs','buttoned back','four legs','upholstered seat','mid century'];
 let visionOk = true;
+let visionType = 'armchair';
 globalThis.fetch = async (u, init) => {
   const url = String(u);
   if (url.includes('api.anthropic.com')) {
     if (!visionOk) return new Response('nope', { status: 500 });
     return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
-      descriptor: 'grey fabric armchair with wooden legs', attributes: visionAttrs }) }] }), { status: 200 });
+      descriptor: 'grey fabric armchair with wooden legs',
+      item_type: visionType, attributes: visionAttrs }) }] }), { status: 200 });
   }
   throw new Error('unexpected egress: ' + url.slice(0, 60));
 };
@@ -227,6 +230,61 @@ let first;
   ok(spoof.status !== 200 || row.store !== 'BL2' || (await get('furniture-bands', 'u-mgr1')).status === 200,
      'a scoped manager cannot be talked into another store');
   ok(spoof.status === 200 ? row.store !== null : true, '🔑 a scoped manager always gets a store recorded');
+}
+
+// ── 🔑 WHAT THE PIECE IS, RECORDED BUT NOT YET USED ────────────────────────
+// The ten furniture categories group by construction or by vendor; exactly one names an
+// item. So nothing says whether a thing is a dining chair or a bookcase — and those are
+// not one price. Rather than invent twenty types and a hundred and ten bands today, the
+// vision call names each piece and we watch what actually comes through the door.
+{
+  const CH = 'FG BL FURNITURE - RTA - CHAIRS';
+  visionAttrs = ['dining chair','wooden','four legs','slat back','natural finish','armless','single seat','flat pack'];
+  visionType = 'dining chair';
+  const r = await post('furniture-identify', { image_b64: PHOTO, l3: CH }, 'u-mgr1');
+  eq(r.body.item_type, 'dining chair', '🔑 the vision call names the piece');
+  const s2 = await post('furniture-save', { ...r.body, condition: 'good', price: 45 }, 'u-mgr1');
+  const row = db.prepare(`SELECT item_type, l3 FROM furniture_pieces WHERE id = ?`).get(s2.body.id);
+  eq(row.item_type, 'dining chair', '…and it is stored');
+  eq(row.l3, CH, "🔑 …alongside the category the MANAGER picked, which is what still prices it");
+
+  // 🔑 A label outside the starting list is the most useful answer this returns. Snapping
+  // it to the nearest known type would erase the very signal being collected.
+  visionType = 'shoe rack';
+  const odd = await post('furniture-identify', { image_b64: PHOTO, l3: CH }, 'u-mgr1');
+  eq(odd.body.item_type, 'shoe rack', '🔑 a type the list does not contain survives intact');
+  const s3 = await post('furniture-save', { ...odd.body, condition: 'good', price: 30 }, 'u-mgr1');
+  eq(db.prepare(`SELECT item_type FROM furniture_pieces WHERE id = ?`).get(s3.body.id).item_type,
+     'shoe rack', '…all the way to the record');
+
+  // Shape only — never a lookup against the vocabulary.
+  visionType = '  Dining CHAIR!!  ';
+  const messy = await post('furniture-identify', { image_b64: PHOTO, l3: CH }, 'u-mgr1');
+  eq(messy.body.item_type, 'dining chair', 'casing and punctuation are normalised, the words are not');
+
+  // 🛑 And nothing prices off it yet. Two pieces of the same type in different categories
+  // take their own category's band, because the category is still what carries the money.
+  const bands = await get('furniture-bands', 'u-mgr1');
+  const chairs = bands.body.categories.find(c => c.key === CH);
+  ok(chairs, '🔑 all four of Brian\'s categories are offered');
+  eq(bands.body.categories.length, 4, '…and only those four');
+  visionType = 'armchair';
+}
+
+// ── 🛑 UPHOLSTERY IS OPT-IN ────────────────────────────────────────────────
+// Its unit cost is $100 against $12.50 for the others and its floor is $142.86 rather
+// than $17.86. A piece landing there by default is not a mis-filing, it is a price wrong
+// by a multiple.
+{
+  const b = await get('furniture-bands', 'u-mgr1');
+  const uph = b.body.categories.find(c => c.key === UPH);
+  const rta = b.body.categories.find(c => c.key === RTA);
+  eq(uph.opt_in, true, '🛑 Upholstery is marked opt-in, so the screen can set it apart');
+  eq(rta.opt_in, false, '…and the ordinary categories are not');
+  eq(b.body.categories.filter(c => c.opt_in).length, 1, '…exactly one category is opt-in');
+  // Nothing in the response suggests or defaults to a category at all — the manager picks.
+  ok(!('default' in b.body) && !('suggested' in b.body),
+     '🛑 nothing is suggested or defaulted — every category is a deliberate tap');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

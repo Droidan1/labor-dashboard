@@ -2317,7 +2317,7 @@
         .dark .fn-shot{color:#8893a7;background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.18)}
         .fn-shot img{width:100%;display:block;max-height:200px;object-fit:cover}
         .fn-seg{display:flex;gap:6px}
-        .fn-seg button{flex:1;padding:10px 6px;border-radius:9px;border:1px solid rgba(20,16,8,.18);
+        .fn-seg button{flex:1 1 44%;min-width:0;padding:10px 6px;border-radius:9px;border:1px solid rgba(20,16,8,.18);
           background:transparent;color:#14110a;font-size:12.5px;font-family:inherit;cursor:pointer;line-height:1.25}
         .dark .fn-seg button{color:#e7ecf3;border-color:rgba(255,255,255,.16)}
         .fn-seg button.on{background:rgba(34,197,94,.16);border-color:transparent;color:#1c7a33;font-weight:700}
@@ -18380,7 +18380,8 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           r2_key: fn.ident.r2_key, content_type: fn.ident.content_type, l3: fn.cat,
-          descriptor: fn.ident.descriptor, attributes: fn.ident.attributes,
+          descriptor: fn.ident.descriptor, item_type: fn.ident.item_type,
+          attributes: fn.ident.attributes,
           condition: matchedId ? null : fn.cond, price, matched_id: matchedId || null,
           store: fn.store || undefined,
         }),
@@ -18439,9 +18440,16 @@
     const host = el('fn-panel');
     if (!host || !fn.open) return;
     const cat = fn.cats.find(c => c.key === fn.cat) || null;
-    let h = `<div class="fn-seg">${fn.cats.map(c =>
-      `<button class="${fn.cat === c.key ? 'on' : ''}" onclick="fnCat('${psEsc(c.key)}')">${psEsc(c.label)}</button>`
-      ).join('') || '<div class="ps-up">Loading…</div>'}</div>`;
+    // 🛑 Upholstery is set apart, not listed as a fourth equal. Its cost is eight times
+    // the others and its floor is $142.86 against $17.86 — landing there by accident is a
+    // price wrong by a multiple, so it reads as the deliberate choice it has to be.
+    const ordinary = fn.cats.filter(c => !c.opt_in);
+    const optIn = fn.cats.filter(c => c.opt_in);
+    const btn = (c) => `<button class="${fn.cat === c.key ? 'on' : ''}" onclick="fnCat('${psEsc(c.key)}')">${psEsc(c.label)}</button>`;
+    let h = fn.cats.length
+      ? `<div class="fn-seg" style="flex-wrap:wrap">${ordinary.map(btn).join('')}</div>` +
+        (optIn.length ? `<div class="fn-seg">${optIn.map(btn).join('')}</div>` : '')
+      : `<div class="ps-up">Loading…</div>`;
 
     if (fn.saved) {
       h += `<div class="ps-hero">${psMoney(fn.saved.price)}</div>
