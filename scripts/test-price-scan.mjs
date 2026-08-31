@@ -1426,5 +1426,93 @@ console.log('Price Scan');
      '…and every retailDecide inside the lookup is told which path it is on');
 }
 
+// ── 🛑 A SEARCH PAGE IS NOT A PRODUCT PAGE ─────────────────────────────────
+// The host allowlist checked WHO was selling; nothing checked WHAT page was being read.
+// Of 116 source URLs in the live cache, 37 were category, brand or search results —
+// three different Olay creams all carrying $24.94 off one Walmart keyword page, and the
+// same Gillette razor at $13.98 and $5.24 on separate runs off one Target search.
+{
+  const { retailIsListPage } = (() => {
+    const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+    const arr = src.slice(src.indexOf('const RETAIL_LIST_PAGE = ['), src.indexOf('];', src.indexOf('const RETAIL_LIST_PAGE = [')) + 2);
+    const f = src.slice(src.indexOf('const retailIsListPage ='), src.indexOf(';', src.indexOf('const retailIsListPage =')) + 1);
+    return new Function(arr + '\n' + f + '; return { retailIsListPage };')();
+  })();
+
+  // 🛑 Every one of these is a REAL product URL out of the cache. None may be rejected —
+  // a rule that throws away good prices does more harm than the bug it fixes.
+  for (const u of [
+    'https://www.walmart.com/ip/Finish-Quantum-14ct-Dishwasher-Detergent/123',
+    'https://www.target.com/p/finish-quantum-dishwasher-detergent-tablets/-/A-1',
+    'https://www.kroger.com/p/energizer-max-aaa-batteries/0003800013860',
+    'https://www.meijer.com/shopping/product/pringles-cheddar/3800013897.html',
+    'https://www.cvs.com/shop/gillette-venus-smooth-3-blade-razor-blade-refills-prodid-1010352',
+    'https://www.walgreens.com/store/c/olay-smoothing-eye-cream-fragrance-free/ID=300395236-product',
+    'https://www.lowes.com/pd/Brita-6-Cup-Water-Filter-Pitcher/5001',
+    'https://www.homedepot.com/p/Clorox-Clean-Up-32-oz/10044600312214',
+  ]) ok(!retailIsListPage(u), `🛑 a real product page is kept: ${u.slice(8, 62)}`);
+
+  // …and every one of these is a real LIST url out of the same cache.
+  for (const u of [
+    'https://www.walmart.com/c/kp/regenerist-micro-sculpting-cream',
+    'https://www.walmart.com/browse/beauty/st-ives-exfoliators-and-scrubs/st-ives/1',
+    'https://www.walmart.com/brand/yardleylondon/20016994',
+    'https://www.target.com/s/gillette+blue+3',
+    'https://www.target.com/c/deodorant-personal-care',
+    'https://www.kroger.com/q/flex+3',
+    'https://www.kroger.com/pb/robitussin/children-s-cold-cough-flu/2201400002',
+    'https://www.walgreens.com/store/c/productlist/mitchum-for-men/N=361443-2054',
+  ]) ok(retailIsListPage(u), `🛑 a listing page is refused: ${u.slice(8, 62)}`);
+
+  // 🔑 The two conditional shapes, which are what make this safe. Walgreens /store/c/ is
+  // mostly PRODUCT pages and only /productlist/ is a list; a CVS /shop/ URL is a product
+  // exactly when it carries a prodid. Blocking either wholesale loses good prices.
+  ok(!retailIsListPage('https://www.walgreens.com/store/c/camay-classic-soap/ID'),
+     '🔑 walgreens /store/c/ is not blocked wholesale — most of them are products');
+  ok(retailIsListPage('https://www.cvs.com/shop/skin-care-moisturizers'),
+     '🔑 a CVS shop page with no prodid is a category');
+  ok(!retailIsListPage('https://www.cvs.com/shop/olay-regenerist-prodid-1020135'),
+     '🔑 …and the same path WITH one is a product');
+}
+
+// And end to end: a price that exists only on a search page is not used, and the screen
+// says which of the three "no price" situations this is.
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      const q = decodeURIComponent(url);
+      if (/0?12345600002/.test(q)) {
+        return new Response(JSON.stringify({ results: [
+          { position: 1, url: 'https://world.openfoodfacts.org/p/z', title: 'Listy Soap 4 oz', snippet: 'Brands: Listy' }]}), { status: 200 });
+      }
+      return new Response(JSON.stringify({ results: [
+        { position: 1, url: 'https://www.target.com/s/listy+soap', title: 'Listy Soap search', snippet: '$8.99' }]}), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls++;
+      const b = JSON.parse(init.body); const sys = b.system || '';
+      if (/expand abbreviated/i.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          items: [{ row: 1, brand: 'Listy', title: 'Listy Soap', size: '4 oz' }] }) }] }), { status: 200 });
+      }
+      if (/category/i.test(sys) && /rows/.test(sys)) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+          rows: [{ row: 1, category: SNACKS, confidence: 'high' }] }) }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ prices: [
+        { url: 'https://www.target.com/s/listy+soap', price: 8.99, title: 'Listy Soap search', pack: 1, in_stock: true, sold_by: 'Target' }]}) }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+  const r = await post('merch-scan', { identifier: '012345600002' });
+  eq(r.body.retail, null, '🛑 a price that exists only on a search page is not used');
+  ok((r.body.flags || []).includes('only listing pages'),
+     '🔑 …and it says WHICH kind of nothing this is — the item is carried, the page was wrong');
+  globalThis.fetch = realFetch;
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

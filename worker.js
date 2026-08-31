@@ -7469,7 +7469,8 @@ function retailPackSize(text) {
 // informative. "not at big box" is a real answer for a discounter: nothing to
 // undercut, and no evidence anyone wants it — price off our own ASP and carry the risk.
 const RETAIL_MISS_FLAGS = ["not at big box", "marketplace only", "no price found",
-                           "lookup failed", "no description", "not looked up", "no retail"];
+                           "lookup failed", "no description", "not looked up", "no retail",
+                           "only listing pages"];
 // Everything the retail run SETS, and therefore everything it must CLEAR before a
 // re-run. Kept as one list beside RETAIL_MISS_FLAGS because the stripper used to carry
 // its own hardcoded copy: any flag added to one and not the other sticks to the line
@@ -7543,6 +7544,31 @@ async function retailLog(env, row) {
 // subdomain let both through, because the rule was written to admit shop.kroger.com and
 // never distinguished a store from a wholesaler.
 const RETAIL_HOST_BLOCK = /^(business|beta|sameday|wholesale|b2b|bulk|pro|dev|staging|test)\./i;
+
+// 🛑 A SEARCH PAGE IS NOT A PRODUCT PAGE, AND ITS PRICE BELONGS TO WHATEVER IT LISTED.
+//
+// The host allowlist checks WHO is selling; nothing checked WHAT page we were reading. Of
+// 116 source URLs in the cache, 37 — nearly a third — were category, brand or search
+// results. Three different Olay creams all carried $24.94 off one Walmart keyword page,
+// and the same Gillette razor came back at $13.98 and $5.24 on separate runs off the same
+// Target search, because the number belongs to the page rather than to the item.
+//
+// 🔑 Written from those 116 real URLs and validated against them: 37 blocked, and ZERO
+// product pages caught by mistake. The conditional shapes matter — Walgreens `/store/c/`
+// is mostly PRODUCT pages and only `/productlist/` is a list, and a CVS `/shop/` URL is a
+// product exactly when it carries a prodid. Blocking either wholesale would have thrown
+// away good prices, which is how a fix like this quietly does more harm than the bug.
+const RETAIL_LIST_PAGE = [
+  /\/browse\//i,                       // walmart category
+  /\/c\/kp\//i,                        // walmart keyword page
+  /walmart\.com\/(c|brand)\//i,        // walmart category and brand pages
+  /target\.com\/(s|c)\//i,             // target search and category
+  /kroger\.com\/(q|pb)\//i,            // kroger search and brand
+  /\/productlist\//i,                  // walgreens list
+  /cvs\.com\/shop\/(?![^?]*prodid)/i,  // cvs shop WITHOUT a product id
+  /[?&](q|searchTerm|search)=/i,       // any explicit search query
+];
+const retailIsListPage = (url) => RETAIL_LIST_PAGE.some(re => re.test(String(url || "")));
 
 function retailHostAllowed(url, domains) {
   const host = (String(url).match(/^https?:\/\/([^/:]+)/) || [])[1];
@@ -7701,13 +7727,15 @@ function retailDecide(line, cands, domains = [], opts = {}) {
   // "not at big box" for items Walmart plainly stocks — a false negative, and the worst
   // kind here, because it tells a buyer there is no competition when there is.
   let sawApproved = (opts.resultUrls || []).some(u => retailHostAllowed(u, domains));
-  let sawMarketplace = false;
+  let sawMarketplace = false, sawList = false;
   const firstParty = cands.filter(c => {
     // 🔑 The allowlist is checked HERE too, not only on the search results. What comes
     // back from the parser is model output carrying a URL, and the only safe assumption
     // about model output is that it might be anything.
     if (domains.length && !retailHostAllowed(c.url, domains)) return false;
     sawApproved = true;
+    // A price read off a category or search page is the page's price, not this item's.
+    if (retailIsListPage(c.url)) { sawList = true; return false; }
     if (RETAIL_MARKETPLACE.test(String(c.url || ""))) { sawMarketplace = true; return false; }
     if (c.sold_by && RETAIL_MARKETPLACE.test(String(c.sold_by))) { sawMarketplace = true; return false; }
     // "sold and shipped by" naming anyone other than the retailer itself.
@@ -7734,7 +7762,11 @@ function retailDecide(line, cands, domains = [], opts = {}) {
     // to beat, but no proof of demand either — as distinct from the tool failing to read
     // a page it did find. Rendering both as a blank cell reads as failure and throws away
     // the more useful of the two.
-    if (sawMarketplace) flags.push("marketplace only");
+    // Distinct from "no price found": we DID read prices, they were just on pages that
+    // list many things. A buyer reading that knows the item is carried and that the
+    // lookup needs a better page, not that the item does not exist.
+    if (sawList && !sawMarketplace) flags.push("only listing pages");
+    else if (sawMarketplace) flags.push("marketplace only");
     else if (sawApproved) flags.push("no price found");
     else flags.push("not at big box");
     return { retail_price: null, retail_basis: null, retail_confidence: null,
