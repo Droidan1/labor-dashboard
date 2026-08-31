@@ -747,5 +747,112 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   globalThis.fetch = realFetch;
 }
 
+// ── 🛑 A PAGE THAT RENDERS BUT CARRIES NO PRICE ────────────────────────────
+// Reported from the floor: a Room Essentials writing desk scanned and returned nothing,
+// though Target plainly sells it. The lookup DID find the product page and DID fetch it.
+//
+// The escalation asked whether the page came back SHORT — under 400 characters — and
+// treated anything longer as a success. The real Target page returns 820 characters of
+// "skip to main content · Sponsored · Add to cart · Q&A (46)" and no price. It sails past
+// the length test, the parse finds nothing, and the paid renderer never runs.
+{
+  const realFetch = globalThis.fetch;
+  // 820 characters of navigation chrome, taken from the actual page.
+  const CHROME = 'skip to main content skip to footer Target Circle Registry Wish List Weekly Ad '
+    + 'Find Stores Categories Deals Pickup delivery search Ask Target Sponsored Shop all Room '
+    + 'Essentials Writing Desk with Drawers White Room Essentials Sponsored Additional product '
+    + 'information and recommendations Load all content at once Disclaimer Get top deals latest '
+    + 'trends Email address Sign up Privacy policy Terms Home Decor Furniture Office Furniture '
+    + 'Desks Computer Desks Skip images 3.89 out of 5 stars 488 46 Questions Only at target '
+    + 'Highly rated Rarely returned Color White Pickup Delivery Shipping Add to cart Eligible '
+    + 'for registries and wish lists Sign in About this item Details Specifications Shipping '
+    + 'Returns Q A 46 Discover more options Skip to next section';
+  ok(CHROME.length > 400, `the chrome really is over the old threshold (${CHROME.length} chars)`);
+
+  let firecrawlRan = false;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      return new Response(JSON.stringify({ results: [
+        { position: 1, url: 'https://www.target.com/p/writing-desk-with-drawers-white-room-essentials-8482/-/A-80785965',
+          title: 'Writing Desk with Drawers White - Room Essentials', snippet: 'Read reviews and buy' }]}), { status: 200 });
+    }
+    if (url.startsWith('https://api.fetch.tinyfish.ai')) {
+      // Renders. Long. No price anywhere in it.
+      return new Response(JSON.stringify({ results: [
+        { url: 'https://www.target.com/p/writing-desk-with-drawers-white-room-essentials-8482/-/A-80785965',
+          title: 'Writing Desk with Drawers White', text: CHROME }]}), { status: 200 });
+    }
+    if (url.startsWith('https://api.firecrawl.dev')) {
+      firecrawlRan = true;
+      // The shape firecrawlCandidates actually reads: a product with variants.
+      return new Response(JSON.stringify({ success: true, data: {
+        product: { title: 'Writing Desk with Drawers White - Room Essentials', variants: [
+          { title: 'Writing Desk with Drawers White', price: { amount: 79.99, currency: 'USD' },
+            availability: { inStock: true } }] },
+        metadata: { title: 'Writing Desk with Drawers White - Room Essentials' } } }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      const b = JSON.parse(init.body);
+      if (/expand abbreviated/i.test(b.system || '')) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ items: [] }) }] }), { status: 200 });
+      }
+      // The model reads the chrome honestly and finds nothing, which is correct.
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: '{"prices":[]}' }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+  env.FIRECRAWL_API_KEY = 'fc-test';
+
+  db.prepare(`INSERT INTO manifests (id,vendor,uploaded_at,sell_as,units_per_case,status)
+              VALUES ('desk','V','2026-08-20T00:00:00Z','each',1,'draft')`).run();
+  db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,flags)
+              VALUES ('desk',1,'196761474706','upc','Room Essentials Writing Desk',10,20,'[]')`).run();
+  await post('manifest-retail', { id: 'desk', batch: 1, max_searches: 5, max_credits: 5 });
+  const line = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id='desk'`).get();
+
+  ok(firecrawlRan, '🔑 a page that renders WITHOUT a price now escalates to the renderer that works');
+  near(line.retail_price, 79.99, '…and the price comes back');
+
+  // 🔑 And when the renderer returns no STRUCTURED product either, its markdown still goes
+  // through the parse. Two ways home, because the structured block is not guaranteed.
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      return new Response(JSON.stringify({ results: [
+        { position: 1, url: 'https://www.target.com/p/desk-two/-/A-1', title: 'Desk Two', snippet: 'buy' }]}), { status: 200 });
+    }
+    if (url.startsWith('https://api.fetch.tinyfish.ai')) {
+      return new Response(JSON.stringify({ results: [
+        { url: 'https://www.target.com/p/desk-two/-/A-1', title: 'Desk Two', text: CHROME }]}), { status: 200 });
+    }
+    if (url.startsWith('https://api.firecrawl.dev')) {
+      return new Response(JSON.stringify({ success: true, data: {
+        markdown: 'Desk Two — Room Essentials. Price $64.00. In stock at Target.' } }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      const b = JSON.parse(init.body);
+      if (/expand abbreviated/i.test(b.system || '')) {
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ items: [] }) }] }), { status: 200 });
+      }
+      const asked = JSON.stringify(b.messages || '');
+      // The chrome yields nothing; the rendered markdown yields the price.
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: /Price \$64/.test(asked)
+        ? JSON.stringify({ prices: [{ url: 'https://www.target.com/p/desk-two/-/A-1', title: 'Desk Two',
+            price: 64.00, pack: 1, in_stock: true, sold_by: 'Target' }] })
+        : '{"prices":[]}' }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+  db.prepare(`INSERT INTO manifests (id,vendor,uploaded_at,sell_as,units_per_case,status)
+              VALUES ('desk2','V','2026-08-20T00:00:00Z','each',1,'draft')`).run();
+  db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,flags)
+              VALUES ('desk2',1,'196761474707','upc','Desk Two',10,20,'[]')`).run();
+  await post('manifest-retail', { id: 'desk2', batch: 1, max_searches: 5, max_credits: 5 });
+  const line2 = db.prepare(`SELECT * FROM manifest_lines WHERE manifest_id='desk2'`).get();
+  near(line2.retail_price, 64.00, '🔑 …and markdown-only rendering is parsed rather than dropped');
+  globalThis.fetch = realFetch;
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

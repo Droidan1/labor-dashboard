@@ -8302,11 +8302,24 @@ async function retailPriceLine(env, line, budget, ctx, searchName, ident = null)
     const urls = results.slice(0, 3).map(r => r.url).filter(u => !RETAIL_MARKETPLACE.test(u));
     if (urls.length) {
       const pages = await retailFetch(env, urls, ctx);
-      // A fetch that "worked" but came back with almost nothing is the JS-wall case, and
-      // it is indistinguishable from success unless you look at what came back.
-      const thin = (pages || []).every(pg => String(pg?.text || "").length < 400);
-      if (pages === null || !pages.length || thin) {
-        // ESCALATE, in that order: free first, paid only once free has actually failed.
+
+      // 🛑 THE ESCALATION MEASURED THE WRONG THING. It asked whether the page came back
+      // SHORT — under 400 characters — and treated anything longer as a success. But a
+      // Target product page returns 820 characters of "skip to main content · Sponsored ·
+      // Add to cart · Q&A (46)" and NO PRICE. It sails past the length test, the parse
+      // finds nothing, and the paid renderer that would have worked never runs.
+      //
+      // Measured on the real page for a Room Essentials writing desk, which a manager
+      // scanned and got nothing for. Length was never the question — a price was.
+      if (pages && pages.length) {
+        const parsed = await retailParsePrices(env, item,
+          pages.map(pg => ({ url: pg.url, title: pg.title, text: pg.text })), ctx);
+        if (parsed.length) cands = parsed;
+      }
+
+      // 🔑 Free first, paid only once free has ACTUALLY failed — which is now judged by
+      // whether there is a price, not by how many bytes came back.
+      if (!cands.length) {
         const scraped = await firecrawlScrape(env, urls[0], budget, ctx);
         const fc = scraped ? firecrawlCandidates(scraped, urls[0]) : [];
         if (fc.length) {
@@ -8315,20 +8328,18 @@ async function retailPriceLine(env, line, budget, ctx, searchName, ident = null)
           const parsed = await retailParsePrices(env, item,
             [{ url: urls[0], title: scraped?.metadata?.title, text: scraped.markdown }], ctx);
           if (parsed.length) cands = parsed;
-        } else if (!cands.length) {
-          const d = retailDecide(line, cands, domains, { resultUrls, scan: !!ctx.scan });
-          // Two separate facts, and collapsing them loses one. WHAT stopped us —
-          // a refused request or a page that rendered to nothing — and, for big-ticket,
-          // that a heavier tool is required (R8). "no first-party stockist" is a third
-          // thing entirely and is not this.
-          d.flags.push(pages === null ? "fetch blocked" : "page unreadable");
-          if (bigTicket) d.flags.push("needs agent");
-          return { decided: d };
         }
-      } else if (pages.length) {
-        const parsed = await retailParsePrices(env, item,
-          pages.map(pg => ({ url: pg.url, title: pg.title, text: pg.text })), ctx);
-        if (parsed.length) cands = parsed;
+      }
+
+      if (!cands.length) {
+        const d = retailDecide(line, cands, domains, { resultUrls, scan: !!ctx.scan });
+        // Three separate facts, and collapsing them loses two. WHAT stopped us — a
+        // refused request, or a page that rendered without a price — and, for
+        // big-ticket, that a heavier tool is required (R8). "no first-party stockist"
+        // is a fourth thing entirely and is not this.
+        d.flags.push(pages === null ? "fetch blocked" : "page unreadable");
+        if (bigTicket) d.flags.push("needs agent");
+        return { decided: d };
       }
     }
   }
