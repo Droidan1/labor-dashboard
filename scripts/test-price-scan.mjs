@@ -208,8 +208,10 @@ console.log('Price Scan');
 
 // ── Managers may use it; staff may not, yet ─────────────────────────────────
 {
-  eq((await post('merch-scan', { identifier: '111' }, 'u-mgr1')).status, 200, 'a manager may scan');
-  eq((await post('merch-scan', { identifier: '111' }, 'u-staff')).status, 403, 'staff may not, yet');
+  // A real 12-digit barcode: '111' is now refused for being three digits, and this test
+  // is about WHO may scan, not about what a barcode looks like.
+  eq((await post('merch-scan', { identifier: '024100113163' }, 'u-mgr1')).status, 200, 'a manager may scan');
+  eq((await post('merch-scan', { identifier: '024100113163' }, 'u-staff')).status, 403, 'staff may not, yet');
   eq((await post('merch-scan-save', { identifier: '111', retail_price: 5 }, 'u-staff')).status, 403,
      '…and certainly may not override a price');
   // 🔑 Scanning and OVERRIDING are different rights. A manager prices items all day; only
@@ -1587,6 +1589,63 @@ console.log('Price Scan');
   const untitled = retailTitleRank({ description: 'Anything At All' },
     [{ title: null, unit: 1 }, { title: '', unit: 2 }]);
   eq(untitled.length, 2, '🔑 with no titles to compare, nothing is narrowed');
+}
+
+// ── 🛑 ELEVEN DIGITS IS NOT A BARCODE ──────────────────────────────────────
+// A Room Essentials desk was scanned as 196761474706 and a row was saved under
+// '19761474706' — one digit short, typed as vendor_sku, a number that cannot exist. The
+// correct barcode could never match it again, so everything that row had paid for was
+// invisible on the next scan.
+{
+  for (const [code, why] of [
+    ['19761474706', 'eleven digits, one short of a UPC'],
+    ['111', 'three digits'],
+    ['1234567', 'seven digits'],
+    ['123456789012345', 'fifteen digits'],
+  ]) {
+    const r = await post('merch-scan', { identifier: code }, 'u-mgr1');
+    eq(r.status, 400, `🛑 ${why} is refused, not stored`);
+    eq(r.body.code, 'BAD_BARCODE', '…with a code the screen can act on');
+    ok(/12|13|8/.test(r.body.error), '…and it says what a barcode actually looks like');
+  }
+  // The real lengths all still work.
+  for (const [code, len] of [['01234565', 8], ['024100113163', 12], ['0038000293122', 13]])
+    ok((await post('merch-scan', { identifier: code }, 'u-mgr1')).status === 200, `${len} digits is a barcode`);
+
+  // 🔑 And a NAME is not a barcode, so it never meets this rule.
+  eq((await post('merch-scan', { description: 'Room Essentials Writing Desk' }, 'u-mgr1')).status, 200,
+     '🔑 typing what the item is still works — which is the way out of an unknown code');
+  // Nothing was written under the bad number.
+  const ghost = db.prepare(`SELECT COUNT(*) n FROM item_cache WHERE identifier='19761474706'`).get();
+  eq(Number(ghost.n), 0, '🛑 and no phantom row is left behind');
+}
+
+// ── 🔑 "WE CANNOT NAME IT" IS NOT "NOBODY SELLS IT" ────────────────────────
+// The desk's barcode returns nothing from ANY of the fifteen sources, product databases
+// included, because Target house brands are not publicly indexed. Target sells it
+// perfectly well. Telling a manager it is not stocked sends them the wrong way.
+{
+  const realFetch = globalThis.fetch;
+  const before = searchCalls;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });   // nothing, anywhere
+    }
+    if (url.includes('api.anthropic.com')) { modelCalls++; return new Response(JSON.stringify({ content: [{ type: 'text', text: '{}' }] }), { status: 200 }); }
+    return realFetch(u, init);
+  };
+  const r = await post('merch-scan', { identifier: '196761474706' }, 'u-mgr1');
+  eq(r.status, 200, 'an unidentifiable barcode still answers');
+  ok((r.body.flags || []).includes('barcode not recognised'),
+     '🔑 it says the CODE was not recognised, not that the item is unstocked');
+  ok(!(r.body.flags || []).includes('not at big box'),
+     '🛑 …and does not claim nobody stocks it, which is the opposite conclusion');
+  // 🛑 Identity searched a WIDER net than pricing does and found nothing. Running the
+  // price search anyway spends a lookup to reach a conclusion already in hand.
+  eq(searchCalls - before, 2, '🔑 two identity spellings tried, and no price search after them');
+  globalThis.fetch = realFetch;
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

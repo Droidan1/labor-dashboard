@@ -18246,10 +18246,22 @@
     const raw = el('ps-input').value.trim();
     if (!raw) { el('ps-input').focus(); return; }
     // A run of digits is a barcode; anything else is a description someone typed.
-    const isCode = /^[0-9]{6,14}$/.test(raw.replace(/[\s-]/g, ''));
-    const payload = isCode
-      ? { identifier: raw.replace(/[\s-]/g, '') }
-      : { description: raw };
+    // 🛑 And a barcode has a LENGTH — 8, 12, 13 or 14. This once read six to fourteen, so
+    // a desk misread as eleven digits was saved under a number that cannot exist, and the
+    // correct barcode never matched that row again. Caught here so the manager is told
+    // straight away instead of waiting on a round trip.
+    const digits = raw.replace(/[\s-]/g, '');
+    const isCode = /^[0-9]+$/.test(digits);
+    if (isCode && ![8, 12, 13, 14].includes(digits.length)) {
+      // Clear the last result first: a rejected scan next to the PREVIOUS item's price is
+      // exactly the confusion this whole fix exists to stop.
+      el('ps-result').innerHTML = '';
+      psStatus(`That is ${digits.length} digits — a barcode is 12, or 13 with the country digit. Check the number, or type what the item is.`);
+      el('ps-input').focus();
+      el('ps-input').select();
+      return;
+    }
+    const payload = isCode ? { identifier: digits } : { description: raw };
 
     psBusy = true;
     el('ps-go').disabled = true;
@@ -18712,6 +18724,11 @@
     // What the retail lookup actually concluded. Ordered most → least informative, and
     // matching the flags the worker sets, so the screen never invents a reason.
     const MISS_WHY = {
+      // 🔑 An unreadable CODE and an unstocked ITEM are opposite problems with opposite
+      // fixes, and until now both showed the same empty price. Target's house brands are
+      // not publicly indexed, so a Room Essentials desk returns nothing anywhere — while
+      // Target sells it perfectly well.
+      'barcode not recognised': 'This barcode is not in any product database — house brands like Room Essentials or Mainstays usually are not. Type what the item is instead and it will price normally.',
       'not at big box':   'No big-box price exists for this — nothing to undercut, and no proof of demand either.',
       'marketplace only': 'Only third-party sellers list it. That is not a shelf price, so it was not used.',
       'no price found':   'A retailer carries it, but no price could be read from the page.',

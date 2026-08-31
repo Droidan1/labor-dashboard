@@ -7470,7 +7470,7 @@ function retailPackSize(text) {
 // undercut, and no evidence anyone wants it — price off our own ASP and carry the risk.
 const RETAIL_MISS_FLAGS = ["not at big box", "marketplace only", "no price found",
                            "lookup failed", "no description", "not looked up", "no retail",
-                           "only listing pages"];
+                           "only listing pages", "barcode not recognised"];
 // Everything the retail run SETS, and therefore everything it must CLEAR before a
 // re-run. Kept as one list beside RETAIL_MISS_FLAGS because the stripper used to carry
 // its own hardcoded copy: any flag added to one and not the other sticks to the line
@@ -8122,6 +8122,21 @@ async function manifestNormalize(env, lines) {
 // Everything we already knew about that item was sitting one leading zero away. So the
 // twelve-digit form is canonical wherever a thirteen-digit code begins with a zero, and a
 // true EAN-13 — which never does — is left exactly alone.
+// 🛑 A BARCODE HAS A LENGTH. UPC-E is 8, UPC-A is 12, EAN-13 is 13, GTIN-14 is 14 —
+// nothing else is a real one. A Room Essentials desk was scanned as ELEVEN digits, one
+// short, and the scan screen accepted anything from six to fourteen. It became a row
+// keyed on a number that cannot exist, under identifier_type "vendor_sku", and the
+// correct barcode could never match it again — so every lookup that row had paid for was
+// invisible on the next scan.
+//
+// 🔑 Only the SCAN path is held to this. A manifest legitimately carries vendor SKUs of
+// any length; there the number is whatever the vendor wrote, not a claim about a barcode.
+const GTIN_LENGTHS = new Set([8, 12, 13, 14]);
+function isPlausibleBarcode(raw) {
+  const d = String(raw || "").replace(/\D/g, "");
+  return d.length > 0 && d.length === String(raw || "").trim().length && GTIN_LENGTHS.has(d.length);
+}
+
 function merchCanonicalUpc(raw) {
   const d = String(raw || "").replace(/\D/g, "");
   if (d.length === 14 && d.startsWith("00")) return d.slice(2);   // GTIN-14 of a UPC-A
@@ -18565,6 +18580,15 @@ export default {
         // Canonicalised HERE, at the one door every scan comes through — typed, decoded,
         // read off a photo, or handed over by a native detector. Downstream there is only
         // ever one spelling, so nothing further along has to remember this.
+        // A digits-only entry on this screen is a claim to be a barcode, so it is held to
+        // what a barcode can be. Anything else typed here is a product name and goes down
+        // the description path untouched.
+        if (rawId && /^\d+$/.test(rawId) && !isPlausibleBarcode(rawId)) {
+          return new Response(JSON.stringify({
+            error: `${rawId.length} digits is not a barcode — a UPC is 12, an EAN is 13, and a short code is 8. Check the number, or type what the item is.`,
+            code: "BAD_BARCODE",
+          }), { status: 400, headers: corsJson });
+        }
         const identifier = rawId ? (merchCanonicalUpc(rawId) || rawId) : null;
         const identType = identifier ? manifestIdentType(identifier) : "none";
 
@@ -18609,16 +18633,31 @@ export default {
         // a multipack. Resolve it to a brand, product and size first, and price THAT.
         let brand = cached?.brand ?? null;
         let size = cached?.size ?? null;
+        let unknownCode = false;
         if (identifier && !title) {
           const who = await retailIdentify(env, identifier, { scan: true });
           if (who) { title = who.title; brand = who.brand; size = who.size; looked = true; }
+          else {
+            // 🔑 "WE CANNOT NAME IT" IS NOT "NOBODY SELLS IT", and until now both came out
+            // as an empty price. Measured on a Room Essentials writing desk: its barcode
+            // returns nothing from any of the fifteen sources, product databases included,
+            // because house brands are not publicly indexed. Target sells it perfectly
+            // well. The manager needs to be told to type the name, not told it is not
+            // stocked — those lead to opposite actions.
+            unknownCode = true;
+            looked = true;
+            missFlags.push("barcode not recognised");
+          }
         }
 
         // ── STEP 2: WHAT DOES IT COST ELSEWHERE? ─────────────────────────────
         const budget = { searches: 3, fetches: 3, classSearches: 1,
                          credits: budgetNum(body?.maxCredits, 2) };
         let pricing = Promise.resolve(null);
-        if (retail === null || retail === undefined) {
+        // 🛑 With no name there is nothing to search but the bare number, and identity has
+        // ALREADY established that finds nothing — across a wider net than pricing uses.
+        // Running it anyway spends a search to reach a conclusion we hold.
+        if ((retail === null || retail === undefined) && !unknownCode) {
           // Not seen before, so this is the one path that spends anything.
           // 🔑 THE SIZE GOES INTO THE QUERY. It was resolved and then dropped, so the
           // search asked "Pringles Everything Bagel Potato Crisps" and matched a 2-can
