@@ -7483,7 +7483,8 @@ const RETAIL_UNSETTLED_FLAGS = ["not looked up"];
 const RETAIL_SETTLED_FLAGS = RETAIL_MISS_FLAGS.filter(f => !RETAIL_UNSETTLED_FLAGS.includes(f));
 const RETAIL_OWNED_FLAGS = [...RETAIL_MISS_FLAGS, "price conflict", "size mismatch",
                             "comp overstated", "msrp above street", "needs agent", "fetch blocked",
-                            "priced as brand + size"];
+                            "priced as brand + size",
+                            "closest match used"];
 // 🛑 `Number(x) ?? fallback` DOES NOT FALL BACK. `??` catches null and undefined; Number
 // turns both of those into NaN, which is neither — so the fallback is skipped and NaN is
 // kept. Every comparison against NaN is then false, which means a BUDGET built this way
@@ -7701,6 +7702,81 @@ async function retailParsePrices(env, item, candidates, ctx = {}, model = null) 
 
 // Turn parsed candidates into ONE retail price, a basis, a confidence and any flags.
 // This is where R2–R7 actually land.
+// ─── Which of these listings is actually the thing in your hand? ─────────────
+//
+// The decider filtered on WHO was selling and WHAT KIND of page it was, and then took the
+// cheapest survivor. Nothing asked whether a listing was the same PRODUCT. Measured on a
+// real search: a Pop-Tarts Frosted Strawberry 5ct scan had the exact item at $3.47 on an
+// HEB product page and a Frosted BROWNIE two-pack at $4.97 — and cheapest-wins took
+// $4.97/2 = $2.49, off the wrong flavour.
+//
+// 🛑 FILTERING ON TITLE DOES NOT WORK, and the sweep is why. Across 27 real candidate
+// titles from five products, correct listings scored anywhere from 0.21 to 1.00 and wrong
+// ones from 0.11 to 0.83 — overlapping ranges, so every threshold either dropped real
+// prices or admitted wrong ones. Coverage cannot see the thing that matters, because the
+// giveaway is a CONFLICT ("120ct" against "60 ct", Brownie against Strawberry) rather
+// than an absence.
+//
+// 🔑 SO IT RANKS INSTEAD OF REJECTING. Keep only the best-matching tier and let the
+// existing preferences pick within it. Ranking cannot produce "no price" — the top tier
+// is never empty — which is exactly why it is safe where a threshold is not. On the same
+// five products the top tier held ONLY correct listings, at every band from 0.00 to 0.20.
+const RETAIL_TITLE_BAND = 0.15;
+
+// Words that carry no identity. Keeping them pushes every score toward 1 and hides the
+// one word that differs.
+const RETAIL_TITLE_STOP = new Set(["the", "and", "of", "with", "for", "a", "an", "in", "on",
+  "by", "pack", "count", "ct", "oz", "fl", "ml", "lb", "kg", "each", "size", "new", "value",
+  "plus", "free", "shop", "buy"]);
+
+function retailTitleWords(text) {
+  return [...new Set(String(text || "").toLowerCase().replace(/[^a-z0-9. ]+/g, " ")
+    .split(/\s+/)
+    .filter(w => w.length > 1 && !RETAIL_TITLE_STOP.has(w) && !/^\d+(\.\d+)?$/.test(w))
+    // Plural stripping, the same lesson the furniture matcher taught: "type" and "types"
+    // are one word, and a listing writes whichever it feels like.
+    .map(w => w.replace(/(?:es|s)$/, "")))];
+}
+
+// A count STATED in a title: "60 ct", "120ct", "24 count".
+function retailStatedCount(text) {
+  const m = String(text || "").toLowerCase().match(/(\d{1,4})\s*(?:ct|count)\b/);
+  return m ? Number(m[1]) : null;
+}
+
+// 🔑 Each query word is weighted by how much it DISCRIMINATES among the listings on offer.
+// "pop" appears in all seven Pop-Tarts results and settles nothing; "strawberry" appears
+// in three and is the entire question. Rarity within this candidate set is the weight,
+// which needs no vocabulary and no model — only the results already in hand.
+function retailTitleRank(line, cands) {
+  const q = retailTitleWords(line?.description);
+  if (!q.length || cands.length < 2) return cands;
+  const bags = cands.map(c => new Set(retailTitleWords(c.title)));
+  if (bags.every(b => !b.size)) return cands;            // no titles to compare
+  const df = {};
+  for (const w of q) df[w] = bags.filter(b => b.has(w)).length;
+  const qCount = retailStatedCount(line?.description);
+
+  const scored = cands.map((c, i) => {
+    let num = 0, den = 0;
+    for (const w of q) {
+      const weight = 1 - (df[w] / cands.length) + 0.15;   // common words still count a little
+      den += weight;
+      if (bags[i].has(w)) num += weight;
+    }
+    const tCount = retailStatedCount(c.title);
+    return { c, score: den ? num / den : 1,
+             // 🛑 A stated count that CONTRADICTS is not a near miss, it is a different
+             // pack. Clean in the sweep: four wrong listings caught, no right one lost.
+             clash: qCount !== null && tCount !== null && qCount !== tCount };
+  });
+
+  const usable = scored.filter(x => !x.clash);
+  if (!usable.length) return cands.map(c => c);           // nothing left; let the rest decide
+  const best = Math.max(...usable.map(x => x.score));
+  return usable.filter(x => x.score >= best - RETAIL_TITLE_BAND).map(x => x.c);
+}
+
 function retailDecide(line, cands, domains = [], opts = {}) {
   const flags = [];
   // 🛑 A SCANNED ITEM IS ONE RETAIL UNIT. YOU ARE HOLDING IT.
@@ -7799,22 +7875,30 @@ function retailDecide(line, cands, domains = [], opts = {}) {
              retail_in_stock: null, retail_source: null, retail_url: null, flags };
   }
 
+  // 🔑 NARROWED TO THE MATCHING LISTINGS BEFORE ANYTHING ELSE LOOKS AT THEM — including
+  // the spread check below. A gap between a Strawberry and a Brownie is not a price
+  // conflict, it is two products; measuring disagreement across them flags noise and
+  // misses the real thing, which is two listings of the SAME item that do not agree.
+  const matched = retailTitleRank(line, priced);
+  if (matched.length && matched.length < priced.length) flags.push("closest match used");
+  const considered = matched.length ? matched : priced;
+
   // R4 — in stock beats listed, and a wide spread is a conflict rather than a pick.
   //
   // 🔑 The conflict is measured across ALL first-party prices, then the pick is taken
   // from the in-stock ones. Narrowing first hides the very disagreement the rule exists
   // to catch: the Dove case is a $6.63 out-of-stock 50ct against an in-stock 30ct
   // implying $3.78, and filtering to in-stock first leaves ONE price and no conflict.
-  const spreadLo = priced.reduce((a, b) => (a.unit <= b.unit ? a : b));
-  const spreadHi = priced.reduce((a, b) => (a.unit >= b.unit ? a : b));
+  const spreadLo = considered.reduce((a, b) => (a.unit <= b.unit ? a : b));
+  const spreadHi = considered.reduce((a, b) => (a.unit >= b.unit ? a : b));
   const conflict = spreadHi.unit > spreadLo.unit * 1.5;
   if (conflict) flags.push("price conflict");
 
   // Preference order: on a shelf, then in stock online, then merely listed. An item a
   // store actually carries is the closest thing to the price a customer walks up and pays.
-  const inStore = priced.filter(c => c.in_store === true);
-  const inStock = priced.filter(c => c.in_stock === true);
-  let pool = inStore.length ? inStore : inStock.length ? inStock : priced;
+  const inStore = considered.filter(c => c.in_store === true);
+  const inStock = considered.filter(c => c.in_stock === true);
+  let pool = inStore.length ? inStore : inStock.length ? inStock : considered;
 
   // 🛑 CHEAPEST-WINS IS A TRAP. Taking the lowest unit price sounds conservative, but it
   // hands the answer to whichever listing was parsed WRONG: a "Pack Of 3 … 12 ct" read as

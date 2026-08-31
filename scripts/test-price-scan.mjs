@@ -1514,5 +1514,80 @@ console.log('Price Scan');
   globalThis.fetch = realFetch;
 }
 
+// ── 🛑 CHEAPEST-WINS TOOK THE WRONG FLAVOUR ────────────────────────────────
+// Found on a live search. A Pop-Tarts Frosted Strawberry 5ct scan had the exact item at
+// $3.47 on an HEB product page and a Frosted BROWNIE two-pack at $4.97 — and $4.97/2 =
+// $2.49 beat it, because nothing asked whether a listing was the same PRODUCT.
+{
+  const { retailDecide, retailTitleRank } = (() => {
+    const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+    const fn = (sig) => { const i = src.indexOf(sig); return src.slice(i, src.indexOf('\n}', i) + 2); };
+    const con = (n, end) => { const i = src.indexOf('const ' + n); return src.slice(i, src.indexOf(end, i) + end.length); };
+    const arrow = (n) => { const i = src.indexOf('const ' + n); return src.slice(i, src.indexOf(';', i) + 1); };
+    return new Function('const roundCents=(n)=>Math.round(n*100)/100;' +
+      con('RETAIL_CPG_DOMAINS', '];') + con('RETAIL_LIST_PAGE', '];') + con('RETAIL_TITLE_STOP', ');') +
+      arrow('RETAIL_TITLE_BAND') + arrow('retailIsListPage') + arrow('RETAIL_HOST_BLOCK') +
+      arrow('RETAIL_MARKETPLACE') + arrow('RETAIL_BULK_TITLE') + con('retailIsImport', '};') +
+      fn('function retailHostAllowed(') + fn('function retailPackSize(') + fn('function retailOunces(') +
+      fn('function retailTitleWords(') + fn('function retailStatedCount(') +
+      fn('function retailTitleRank(') + fn('function retailDecide(') +
+      '; return { retailDecide, retailTitleRank };')();
+  })();
+  const DOM = ['walmart.com','target.com','walgreens.com','cvs.com','kroger.com','meijer.com','heb.com'];
+
+  const line = { description: 'Pop-Tarts Crunchy Poppers Frosted Strawberry 5 ct', identifier: null };
+  const cands = [
+    { url:'https://www.heb.com/product-detail/pop-tarts-crunchy-poppers-frosted-strawberry-crunch/11305511',
+      title:'Pop-Tarts Crunchy Poppers Frosted Strawberry Crunch, 5 oz, 5 ct', price:3.47, pack:1, in_stock:true, sold_by:'HEB' },
+    { url:'https://www.walmart.com/ip/Kelloggs-Pop-Tarts-Frosted-Brownie-Crunchy-Poppers-5-ct-Pack-of-2/16939051065',
+      title:'Kelloggs Pop-Tarts Frosted Brownie Crunchy Poppers 5 ct - Pack of 2', price:4.97, pack:2, in_stock:true, sold_by:'Walmart.com' },
+  ];
+  const d = retailDecide(line, cands, DOM, { resultUrls: cands.map(c => c.url), scan: true });
+  near(d.retail_price, 3.47, '🔑 the exact product wins, not the cheaper wrong flavour');
+  eq(d.retail_source, 'heb.com', '…from the listing that actually matches');
+  ok((d.flags || []).includes('closest match used'), '…and it SAYS a near-miss was set aside');
+
+  // 🛑 A stated count that contradicts is a different pack, not a near miss.
+  const collagen = { description: "Nature's Truth Collagen Peptides Type 1 & 3 60 ct", identifier: null };
+  const kept = retailTitleRank(collagen, [
+    { title: "Nature's Truth Type 1 + 3 Collagen Peptides Gummies - Strawberry 60 ct", unit: 11.38 },
+    { title: "Nature's Truth Collagen Peptides Gummies, 120ct", unit: 16.09 },
+    { title: "Nature's Truth Womens Multi-Vitamin + Collagen Gummies, 70 ct", unit: 12.00 },
+  ]);
+  eq(kept.length, 1, '🛑 120ct and 70ct are refused against a 60 ct scan');
+  ok(/60 ct/.test(kept[0].title), '…leaving the 60 ct one');
+
+  // 🛑 THE CLASH RULE DOING WORK THE SCORE CANNOT. Identical wording, different pack —
+  // every word matches, so the ranking sees two perfect ties and only the stated count
+  // tells them apart. Without it the 10ct box is indistinguishable from the 5ct one.
+  const samewords = retailTitleRank(
+    { description: 'Pop-Tarts Crunchy Poppers Frosted Strawberry Crunch 5 ct' },
+    [{ title: 'Pop-Tarts Crunchy Poppers Frosted Strawberry Crunch 5 ct', unit: 3.47 },
+     { title: 'Pop-Tarts Crunchy Poppers Frosted Strawberry Crunch 10 ct', unit: 2.10 }]);
+  eq(samewords.length, 1, '🛑 a 10 ct box is not a 5 ct box, however identical the words');
+  ok(/5 ct/.test(samewords[0].title) && !/10 ct/.test(samewords[0].title), '…the 5 ct one survives');
+
+  // 🔑 AND WHEN EVERY CANDIDATE CLASHES, NOTHING IS THROWN AWAY. Narrowing to nothing
+  // would turn a wrong price into NO price, and both are wrong answers — so the rest of
+  // the decider gets the full set and applies its own rules instead.
+  const allClash = retailTitleRank(
+    { description: 'Widget 5 ct' },
+    [{ title: 'Widget 10 ct', unit: 2 }, { title: 'Widget 20 ct', unit: 3 }]);
+  eq(allClash.length, 2, '🔑 every candidate clashing hands them all back, not none');
+
+  // 🔑 RANKING CANNOT PRODUCE "NO PRICE". The top tier is never empty, which is the whole
+  // reason this ranks rather than filters — a threshold that drops every candidate turns
+  // a wrong price into no price, and both are wrong answers.
+  const nothingMatches = retailTitleRank(
+    { description: 'Utterly Unrelated Widget 3 oz' },
+    [{ title: 'Something Else Entirely', unit: 5 }, { title: 'A Third Thing', unit: 9 }]);
+  ok(nothingMatches.length >= 1, '🔑 even with no good match, a candidate survives');
+
+  // Untitled candidates must not be scored into oblivion.
+  const untitled = retailTitleRank({ description: 'Anything At All' },
+    [{ title: null, unit: 1 }, { title: '', unit: 2 }]);
+  eq(untitled.length, 2, '🔑 with no titles to compare, nothing is narrowed');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
