@@ -17821,8 +17821,13 @@ export default {
           let parsed = [], err = null;
           try { parsed = await retailParsePrices(env, query, cands, { bench: true }, m); }
           catch (e) { err = e.message; }
+          // 🛑 scan: true, or the bench measures the WRONG PATH. Without it retailDecide
+          // reads a pack size off the query — "60 ct" became a sixty-pack — and the bench
+          // reported $959.40 for a bottle whose price both models had extracted correctly
+          // at $15.99. A tool that lies about the thing it is measuring is worse than no
+          // tool; it made a fixed bug look unfixed.
           const decided = parsed.length ? retailDecide(line, parsed, RETAIL_CPG_DOMAINS,
-            { resultUrls: results.map(r => r.url).filter(Boolean) }) : null;
+            { resultUrls: results.map(r => r.url).filter(Boolean), scan: true }) : null;
           runs.push({
             model: m, ms: Date.now() - t0, error: err,
             extracted: parsed.length,
