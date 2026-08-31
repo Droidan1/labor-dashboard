@@ -1105,9 +1105,13 @@ console.log('Price Scan');
   ok(!names('typed').some(n => /barcode|Identifying/.test(n)),
      '…and never claims to be reading a barcode that was never scanned');
 
-  // The measured total, so the schedule cannot drift from the thing it describes.
+  // 🔑 The schedule has to keep matching the thing it describes. It was ~17s when every
+  // step ran in single file; overlapping the street-price and brand-and-size lookups took
+  // a measured cold scan to ~11s, and the schedule was re-timed with it. A list that
+  // finishes long before the answer arrives is as misleading as one that never finishes.
   const total = api.psStages('barcode').reduce((n, s2) => n + s2[1], 0);
-  ok(total > 15000 && total < 22000, `the schedule adds up to the measured ~17s (${(total / 1000).toFixed(1)}s)`);
+  ok(total > 9000 && total < 14000,
+     `the schedule adds up to the measured ~11s cold scan (${(total / 1000).toFixed(1)}s)`);
 
   // ── the two honesty properties ──
   {
@@ -1265,6 +1269,103 @@ console.log('Price Scan');
   near(back.body.retail, 3.15, '🛑 …to the SAME row the 12-digit form reads, not a phantom');
   const phantom = db.prepare(`SELECT COUNT(*) n FROM item_cache WHERE identifier = '0038000293122'`).get();
   eq(Number(phantom.n), 0, '…and no phantom row is left behind');
+}
+
+// ── 🔑 THE THINGS THAT MADE IT SLOW ────────────────────────────────────────
+// A cold scan was ~17s of strictly sequential work. Each of these is a step that did not
+// need to wait for the one before it.
+{
+  const realFetch = globalThis.fetch;
+
+  // ── the ASP table is built ONCE, not once per scan ──
+  // 28 days x 6 stores = 168 KV reads, ~3.5MB parsed — and it ran on EVERY call,
+  // including scans answered entirely from cache that looked nothing up.
+  {
+    let kvReads = 0;
+    const realGet = env.SALES_SNAPSHOTS.get.bind(env.SALES_SNAPSHOTS);
+    env.SALES_SNAPSHOTS.get = async (k, t) => { if (String(k).startsWith('items:')) kvReads++; return realGet(k, t); };
+    globalThis.fetch = async (u, i2) => realFetch(u, i2);
+
+    await post('merch-scan', { identifier: '0038000293122' });
+    await post('merch-scan', { identifier: '073731003282' });
+    await post('merch-scan', { identifier: '0038000293122' });
+    // 🔑 Without the memo this is 168 snapshot reads PER SCAN — 28 days x 6 stores, ~3.5MB
+    // parsed and merged — on every call including ones answered entirely from cache.
+    eq(kvReads, 0, `🔑 three scans read ZERO snapshots — the ASP table is built once a day (${kvReads})`);
+    // And the answer is durable, not just an isolate-lifetime memo: a cold worker reads
+    // one key instead of a hundred and sixty-eight.
+    const keys = [...env.SALES_SNAPSHOTS._map.keys()];
+    ok(keys.some(k => String(k).startsWith('asp-velocity:')),
+       '…and it is written to KV, so a cold isolate pays one read rather than 168');
+
+    env.SALES_SNAPSHOTS.get = realGet;
+    globalThis.fetch = realFetch;
+  }
+
+  // ── the class price runs ALONGSIDE the SKU chain, not after it ──
+  // It depends on nothing the SKU lookup produces, so waiting for it was a whole search
+  // plus a parse — four to eight seconds — sitting on the critical path for nothing.
+  {
+    const started = [];
+    let skuAt = null, classAt = null, t0 = 0;
+    globalThis.fetch = async (u, init) => {
+      const url = String(u);
+      if (url.startsWith('https://api.search.tinyfish.ai')) {
+        searchCalls++;
+        const q = decodeURIComponent(url);
+        const at = Date.now() - t0;
+        if (/038000299000/.test(q)) {
+          return new Response(JSON.stringify({ results: [
+            { position: 1, url: 'https://world.openfoodfacts.org/p/x', title: 'Testo Beans 16oz', snippet: 'Brands: Testo' }]}), { status: 200 });
+        }
+        if (/Testo Beans/.test(q)) skuAt = at; else classAt = at;
+        started.push(q);
+        // Both stall the same amount; if they were sequential the second could not have
+        // started before the first came back.
+        await new Promise(r => setTimeout(r, 40));
+        return new Response(JSON.stringify({ results: [
+          { position: 1, url: 'https://www.walmart.com/ip/t/1', title: 'Testo Beans 16oz', snippet: '$2.50' }]}), { status: 200 });
+      }
+      if (url.includes('api.anthropic.com')) {
+        modelCalls++;
+        const b = JSON.parse(init.body); const sys = b.system || '';
+        if (/expand abbreviated/i.test(sys)) {
+          return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+            items: [{ row: 1, brand: 'Testo', title: 'Testo Beans', size: '16 oz' }] }) }] }), { status: 200 });
+        }
+        if (/category/i.test(sys) && /rows/.test(sys)) {
+          return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+            rows: [{ row: 1, category: SNACKS, confidence: 'high' }] }) }] }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({ prices: [
+          { url: 'https://www.walmart.com/ip/t/1', price: 2.50, title: 'Testo Beans 16oz', pack: 1, in_stock: true, sold_by: 'Walmart.com' }]}) }] }), { status: 200 });
+      }
+      return realFetch(u, init);
+    };
+
+    t0 = Date.now();
+    const r = await post('merch-scan', { identifier: '038000299000' });
+    eq(r.status, 200, 'the scan answers');
+    ok(skuAt !== null && classAt !== null, 'both the SKU and the class search ran');
+    // 🔑 TIMED, not counted. Each search stalls 40ms before answering, so sequential means
+    // the class search cannot begin until the SKU search has returned AND its parse has
+    // run — at least 40ms later. Overlapping, both are in flight within a tick or two.
+    ok(Math.abs(skuAt - classAt) < 25,
+       `🔑 both searches are in flight together, not one after the other (${skuAt}ms vs ${classAt}ms)`);
+    globalThis.fetch = realFetch;
+  }
+
+  // ── the tails are capped ──
+  // 🛑 A tinyfish_fetch has been logged at 120 SECONDS and a firecrawl at 55. There is a
+  // paid fallback right behind the first, so waiting two minutes for a free fetch to fail
+  // is the worst of both outcomes.
+  {
+    const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+    const fetchFn = src.slice(src.indexOf('async function retailFetch('), src.indexOf('\n}', src.indexOf('async function retailFetch(')));
+    ok(/AbortSignal\.timeout\(10000\)/.test(fetchFn), '🛑 the free fetch gives up at 10s and lets the escalation run');
+    const fc = src.slice(src.indexOf('async function firecrawlScrape('), src.indexOf('\n}', src.indexOf('async function firecrawlScrape(')));
+    ok(/AbortSignal\.timeout\(20000\)/.test(fc), '🛑 …and the paid one at 20s');
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

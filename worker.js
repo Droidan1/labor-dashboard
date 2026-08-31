@@ -7579,10 +7579,15 @@ async function retailFetch(env, urls, ctx = {}) {
   const t0 = Date.now();
   let res, body = null, ok = false;
   try {
+    // 🛑 CAPPED. One of these has been logged at 120 SECONDS. There is a paid fallback
+    // sitting right behind it that renders the page properly, so waiting two minutes for
+    // a free fetch to fail is the worst of both — the scan is dead in the water and the
+    // escalation that would have worked never runs. Ten seconds, then move on.
     res = await fetch("https://api.fetch.tinyfish.ai", {
       method: "POST",
       headers: { "X-API-Key": env.TINYFISH_API_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({ urls: urls.slice(0, 5), format: "markdown" }),
+      signal: AbortSignal.timeout(10000),
     });
     ok = res.ok;
     if (ok) body = await res.json();
@@ -7853,6 +7858,10 @@ async function firecrawlScrape(env, url, budget, ctx = {}) {
         timeout: 30000,
         location: { country: "US", languages: ["en-US"] },
       }),
+      // Firecrawl's own timeout is what IT waits for the page; this is what WE wait for
+      // Firecrawl, and one has been logged at 55s. Nothing follows it, so a miss here
+      // just means no street price — which the screen already says plainly.
+      signal: AbortSignal.timeout(20000),
     });
     ok = res.ok;
     if (ok) body = await res.json();
@@ -8100,10 +8109,12 @@ async function retailClassPrice(env, line, brand, size, budget, ctx = {}) {
 
 // Is the price we just found a shelf price, or a reseller's? One place, so the Manifest
 // Scorer and Price Scan can never drift on the question.
-async function retailClassCheck(env, decided, line, ident, budget, ctx) {
+//
+// 🔑 Pure now — it does the COMPARING, not the fetching. The class price is looked up
+// ahead of time in parallel with the SKU chain and simply handed in, which is what took
+// it off the critical path.
+function retailClassCheck(decided, cls) {
   if (!decided || !(decided.retail_price > 0)) return decided;
-  if (!ident?.brand || !ident?.size) return decided;
-  const cls = await retailClassPrice(env, line, ident.brand, ident.size, budget, ctx);
   if (!cls || !(decided.retail_price > cls.retail_price * RETAIL_CLASS_TRIP)) return decided;
   return {
     ...cls,
@@ -8115,6 +8126,18 @@ async function retailClassCheck(env, decided, line, ident, budget, ctx) {
 }
 
 async function retailPriceLine(env, line, budget, ctx, searchName, ident = null) {
+  // 🔑 THE CLASS PRICE STARTS NOW, ALONGSIDE THE SKU CHAIN, NOT AFTER IT. It depends on
+  // nothing the SKU lookup produces — brand and size are already in hand — and it is a
+  // whole search plus a parse, four to eight seconds sitting on the critical path for no
+  // reason other than the order the code was written in.
+  //
+  // Speculative, so it costs one search and one parse on the runs where the SKU price
+  // turns out fine or absent. Both are cheap and the searches are free; at the volume
+  // this screen actually sees, seconds off every scan is the better trade.
+  const classAhead = (ident?.brand && ident?.size)
+    ? retailClassPrice(env, line, ident.brand, ident.size, budget, ctx).catch(() => null)
+    : Promise.resolve(null);
+
   const bigTicket = retailIsBigTicket(line);
   const domains = bigTicket ? RETAIL_BIG_DOMAINS : RETAIL_CPG_DOMAINS;
   const item = [searchName || line.description,
@@ -8180,7 +8203,7 @@ async function retailPriceLine(env, line, budget, ctx, searchName, ident = null)
     }
   }
   const decided = retailDecide(line, cands, domains, { resultUrls });
-  return { decided: await retailClassCheck(env, decided, line, ident, budget, ctx) };
+  return { decided: retailClassCheck(decided, await classAhead) };
 }
 
 // Run the lookup across a manifest.
@@ -8858,7 +8881,47 @@ function manifestUpgradeMap(map, headers) {
 // ASP is what WE actually get for a thing, which is the honest comparator when there is
 // no street price to check a cost against. Velocity turns a load into a number of days,
 // which is what "money back in 35–40" is actually asking.
+// 🔑 COMPUTED ONCE A DAY, NOT ONCE A SCAN. This rebuilds the chain ASP table from raw
+// snapshots: 28 days x 6 stores = 168 KV reads, ~3.5MB parsed and merged — and it ran on
+// EVERY call, including scans that answered entirely from cache and never looked anything
+// up. Snapshots are only written by the nightly cron, so within a day the answer cannot
+// change; recomputing it was pure latency.
+//
+// Two layers, cheapest first: a module memo that makes it free for the rest of an
+// isolate's life, then a KV entry so a cold isolate pays a single read instead of 168.
+// The key carries the date, so midnight in New York invalidates it without anyone
+// remembering to — and the TTL sweeps the old ones up.
+//
+// 🛑 The date is the ET date of the window's END, not "today". The window closes at
+// YESTERDAY (today's snapshot is not written until the cron runs, and counting a partial
+// day understates every rate), so a key stamped with today's date would be wrong for the
+// first hours after midnight.
+let ASP_MEMO = { key: null, value: null };
+
 async function manifestAspVelocity(env, days = 28) {
+  const et = d => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
+  const endDay = et(new Date(Date.now() - 24 * 3600 * 1000));
+  const memoKey = `asp-velocity:${days}:${endDay}`;
+
+  if (ASP_MEMO.key === memoKey && ASP_MEMO.value) return ASP_MEMO.value;
+  if (env.SALES_SNAPSHOTS) {
+    try {
+      const hit = await env.SALES_SNAPSHOTS.get(memoKey, "json");
+      if (hit) { ASP_MEMO = { key: memoKey, value: hit }; return hit; }
+    } catch (_) { /* a cache that cannot be read is not a reason to fail */ }
+  }
+  const fresh = await manifestAspVelocityCompute(env, days);
+  ASP_MEMO = { key: memoKey, value: fresh };
+  if (env.SALES_SNAPSHOTS) {
+    // Two days, so a cron that fails to run overnight leaves yesterday's answer readable
+    // rather than sending every scan back through 168 reads.
+    try { await env.SALES_SNAPSHOTS.put(memoKey, JSON.stringify(fresh), { expirationTtl: 172800 }); }
+    catch (_) { /* writing the cache is an optimisation, never a requirement */ }
+  }
+  return fresh;
+}
+
+async function manifestAspVelocityCompute(env, days = 28) {
   const et = d => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
   const end = new Date(Date.now() - 24 * 3600 * 1000);
   const dates = [];
@@ -18311,6 +18374,18 @@ export default {
           if (cached) break;
         }
 
+        // 🔑 EVERYTHING THAT DEPENDS ON NOTHING STARTS NOW. The chain ASP table, both
+        // cost blobs and the live criteria are the same for every scan of every product —
+        // they were simply read LAST, so their time landed on the end of the critical path
+        // instead of underneath the lookups. Fired here, they are done before anything
+        // needs them, and a cached scan that looks nothing up gets them for nothing.
+        const sidecar = Promise.all([
+          manifestAspVelocity(env),
+          env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json"),
+          env.SALES_SNAPSHOTS.get(ITEM_COSTS_KEY, "json"),
+          merchVersions(env).then(v => v.live ? merchResolve(env, v.live.version).then(r => [v.live, r]) : [null, null]),
+        ]);
+
         // ── what it is ────────────────────────────────────────────────────────
         let title = cached?.title || desc || null;
         let l3 = cached?.l3 ?? null;
@@ -18337,6 +18412,7 @@ export default {
         // ── STEP 2: WHAT DOES IT COST ELSEWHERE? ─────────────────────────────
         const budget = { searches: 3, fetches: 3, classSearches: 1,
                          credits: budgetNum(body?.maxCredits, 2) };
+        let pricing = Promise.resolve(null);
         if (retail === null || retail === undefined) {
           // Not seen before, so this is the one path that spends anything.
           // 🔑 THE SIZE GOES INTO THE QUERY. It was resolved and then dropped, so the
@@ -18350,7 +18426,23 @@ export default {
           // different pack size nor flag a size mismatch. Both now work.
           const named = [title, size].filter(Boolean).join(" ");
           const line = { identifier, identifier_type: identType, description: named, qty: 1, cost: null };
-          const r = await retailPriceLine(env, line, budget, { scan: true }, named, { brand, size });
+          pricing = retailPriceLine(env, line, budget, { scan: true }, named, { brand, size });
+        }
+
+        // ── which of our categories ───────────────────────────────────────────
+        // 🔑 STARTED ALONGSIDE THE PRICE, NOT AFTER IT. Classifying needs the title and
+        // nothing else the price lookup produces, so running it second was two Claude
+        // calls in single file for no reason. Whichever finishes last is now the cost.
+        const classifying = (!l3 && title)
+          // manifestClassify reports counts and writes what it learned into item_cache; it
+          // does not hand the category back — the rows come with it so the caller can read
+          // what it decided. Writing the cache is also what makes the NEXT scan free.
+          ? manifestClassify(env, [{ id: null, row_no: 1, description: title,
+                                     identifier, identifier_type: identType }]).catch(() => null)
+          : Promise.resolve(null);
+
+        const [r, got] = await Promise.all([pricing, classifying]);
+        if (r) {
           looked = true;
           if (r?.decided) {
             retail = r.decided.retail_price ?? null;
@@ -18364,34 +18456,15 @@ export default {
             missFlags.push(r.skipped === "budget" ? "not looked up" : String(r.skipped));
           }
         }
-
-        // ── which of our categories ───────────────────────────────────────────
-        if (!l3 && title) {
-          // manifestClassify reports counts and writes what it learned into item_cache; it
-          // does not hand the category back. Read it from the cache it just populated —
-          // that is also what makes the NEXT scan of this UPC free.
-          const got = await manifestClassify(env, [{ id: null, row_no: 1, description: title,
-                                                     identifier, identifier_type: identType }]);
-          const hit = (got?.rows || [])[0];
-          if (hit?.l3) { l3 = hit.l3; l3Source = "claude"; }
-          // A barcode ALSO gets the answer written to item_cache by manifestClassify, so
-          // the next scan of it is free. A typed name has nothing to key on, and is
-          // looked up fresh each time — correct, but worth knowing.
-        }
+        const hit = (got?.rows || [])[0];
+        if (hit?.l3 && !l3) { l3 = hit.l3; l3Source = "claude"; }
         const l2 = l3 ? (L3_TO_L2[l3] || merchParentOf(l3) || null) : null;
 
         // ── what WE sell it for, and what it costs us ─────────────────────────
-        const av = await manifestAspVelocity(env);
+        // Already in flight since before the lookups — this is just collecting it.
+        const [av, catBlob, imBlob, [live, resolved]] = await sidecar;
         const asp = l3 && av[l3] ? (av[l3].asp ?? null) : null;
-        const [catBlob, imBlob] = await Promise.all([
-          env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json"),
-          env.SALES_SNAPSHOTS.get(ITEM_COSTS_KEY, "json"),
-        ]);
         const cost = l3UnitCost(l3, (imBlob || {}).items || {}, (catBlob || {}).costs || {});
-
-        // ── the price ─────────────────────────────────────────────────────────
-        const { live } = await merchVersions(env);
-        const resolved = live ? await merchResolve(env, live.version) : null;
         const critAt = (field) => {
           if (!resolved) return null;
           const kids = resolved.categories.flatMap(c => [c, ...(c.children || [])]);

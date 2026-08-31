@@ -18175,21 +18175,25 @@
   // lie: the FINAL step never completes on a timer — it holds, spinning, until the answer
   // actually lands — and a run that outlasts its schedule says so rather than sitting on
   // six ticks with nothing to show.
+  // 🔑 RE-TIMED AFTER THE WORK WAS OVERLAPPED. The steps still happen in this order and
+  // are still real, but the brand-and-size check now runs ALONGSIDE the street price
+  // rather than after it, so the schedule that described them one after another was
+  // describing a shape the worker no longer has. Measured cold scan: ~11s, not ~17s.
   const PS_STAGES = [
     ['Finding street prices', 1300],
-    ['Reading what shops charge', 4400],
-    ['Checking brand and size', 2100],
-    ['Working out our price', 5600],
+    ['Reading what shops charge', 3200],
+    ['Checking brand and size', 900],
+    ['Working out our price', 1600],
   ];
   function psStages(kind) {
     // Furniture is its own shape: a vision call, then a search of our OWN history. No
     // street lookup at all — furniture has no SKU, so that number was always a guess.
     if (kind === 'furniture') {
       return [['Reading the photo', 3000], ['Working out what it is', 2600],
-              ['Checking what we priced before', 1200]];
+              ['Checking what we priced before', 900]];
     }
     const head = kind === 'photo' ? [['Reading the photo', 5000]]
-      : kind === 'barcode' ? [['Reading the barcode', 3100], ['Identifying the product', 2600]]
+      : kind === 'barcode' ? [['Reading the barcode', 2500], ['Identifying the product', 2100]]
       : [];
     return [...head, ...PS_STAGES];
   }

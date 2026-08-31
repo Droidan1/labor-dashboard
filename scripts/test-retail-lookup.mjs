@@ -510,8 +510,14 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
     results: RES('https://www.target.com/p/cascade'),
     snippets: [{ url:'https://www.target.com/p/cascade', price:5.99, title:'Cascade ActionPacs 4ct', pack:4, in_stock:true }] });
   eq(normalizeCalls.length, 1, 'the shorthand is expanded first');
-  ok(/Cascade ActionPacs/.test(searches[0]),
-     `🔑 the SEARCH uses the expanded name, not the abbreviation (${searches[0].slice(0, 90)})`);
+  // 🔑 The property is that NO search carries the abbreviation and the SKU search carries
+  // the expanded name — not that it happens to be recorded first. The class lookup now
+  // runs alongside it, so either can land in the array ahead of the other; asserting on
+  // searches[0] was asserting on a race.
+  ok(searches.some(q => /Cascade ActionPacs/.test(q)),
+     `🔑 the SEARCH uses the expanded name, not the abbreviation (${searches.join(' | ').slice(0, 110)})`);
+  ok(!searches.some(q => /CASCADE\+AP\+COMP|CASCADE AP COMP/.test(q)),
+     '🛑 …and the warehouse shorthand never reaches a search at all');
   ok(!/AP COMP FRSH/.test(searches[0]),
      '...and the warehouse string never reaches the search box');
   near(s1.line.retail_price, 5.99, 'and the price lands');
