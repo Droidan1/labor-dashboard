@@ -17879,16 +17879,28 @@
   }
   window.mfConfirmMap = mfConfirmMap;
 
-  async function mfOpen(id) {
+  // `live` re-scores a DECIDED manifest against today instead of serving the record of
+  // what was approved. It is deliberately a separate act, and the header says which one
+  // is on screen — the two answers are both useful and must never be mistaken for
+  // each other.
+  let mfLive = false;
+  async function mfOpen(id, live = false) {
     mfOpenId = id;
+    mfLive = !!live;
     el('mf-back').classList.remove('hidden');
-    mfSay('Scoring…');
+    mfSay(live ? 'Re-scoring against today…' : 'Scoring…');
     try {
-      const j = await mfApi(`manifest&id=${encodeURIComponent(id)}`);
+      const j = await mfApi(`manifest&id=${encodeURIComponent(id)}${live ? '&live=1' : ''}`);
       mfRenderScore(j);
     } catch (e) { mfSay(`Could not open: ${e.message}`); }
   }
   window.mfOpen = mfOpen;
+  // Zero-arg wrappers, because an inline onclick runs in global scope and cannot see
+  // mfOpenId. Same reason mfClassify() and mfRetail() take no arguments.
+  const mfRescore    = () => mfOpen(mfOpenId, true);
+  const mfShowRecord = () => mfOpen(mfOpenId, false);
+  window.mfRescore = mfRescore;
+  window.mfShowRecord = mfShowRecord;
 
   async function mfClassify() {
     mfSay('Categorising…');
@@ -17897,6 +17909,39 @@
     } catch (e) { mfSay(`Could not categorise: ${e.message}`); }
   }
   window.mfClassify = mfClassify;
+
+  // Which of the three things the reader is looking at, said in words rather than left
+  // to be inferred from a version number.
+  //
+  //   frozen          — the record. The figures the buyer actually agreed to.
+  //   rescored        — today's answer for a decided buy. NOT the record, and says so.
+  //   snapshotMissing — decided before we kept records. Unreconstructable; admit it.
+  //
+  // 🛑 The old header said "Scored under criteria v12" on all three, which was true of
+  // the number and false about the thing.
+  function mfCriteriaLine(j) {
+    const when = j.manifest?.decided_at
+      ? new Date(j.manifest.decided_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      : null;
+    if (j.frozen) {
+      return `Approved${when ? ' ' + mfEsc(when) : ''} under criteria v${j.criteriaVersion}.
+        <strong>These are the figures it was approved on</strong>, kept as they were.
+        <button class="mf-btn ghost" style="padding:3px 10px;font-size:12px;margin-left:6px"
+                onclick="mfRescore()">Re-score with today's data</button>`;
+    }
+    if (j.rescored) {
+      return `<strong>Re-scored against today's criteria v${j.criteriaVersion}</strong> —
+        this is <em>not</em> what was approved${when ? ' on ' + mfEsc(when) : ''}.
+        <button class="mf-btn ghost" style="padding:3px 10px;font-size:12px;margin-left:6px"
+                onclick="mfShowRecord()">Show what was approved</button>`;
+    }
+    if (j.snapshotMissing) {
+      return `Decided${when ? ' ' + mfEsc(when) : ''} under criteria v${j.manifest?.criteria_version ?? '?'},
+        but no record of the figures was kept. This is a fresh score against today's
+        v${j.criteriaVersion}, not what was agreed to.`;
+    }
+    return `Scored under criteria v${j.criteriaVersion}.`;
+  }
 
   // Freight and an unsellable share are what turn an invoice price into what the goods
   // actually cost us. Both default to zero, and the note says plainly when they are —
@@ -18024,7 +18069,7 @@
           vendor subtotals or fragments. They are listed but left out of the totals above, so
           nothing is counted twice.</div>` : ''}
         <div class="mf-note">⚠️ ${mfEsc(s.basis)}
-          ${j.criteriaNote ? `<br>${mfEsc(j.criteriaNote)}` : ` Scored under criteria v${j.criteriaVersion}.`}
+          ${j.criteriaNote ? `<br>${mfEsc(j.criteriaNote)}` : ` ${mfCriteriaLine(j)}`}
           ${s.totals.linesPriced < s.totals.lines ? `<br>${s.totals.linesPriced} of ${s.totals.lines} lines have an ASP to compare against.` : ''}</div>
       </div>
 

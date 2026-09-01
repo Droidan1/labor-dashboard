@@ -326,13 +326,19 @@ let mid;
 
 // ── A decision records what it was measured against ─────────────────────────
 {
-  const noNote = await post('manifest-decide', { id: mid, status: 'approved' });
+  // 🔑 ON ITS OWN MANIFEST, NOT THE SHARED FIXTURE. Deciding `mid` used to be harmless
+  // because a decided manifest still re-scored live — so the ceiling and manual-price
+  // tests below kept working on it by accident. Now that a decision FREEZES what it was
+  // taken on, that accident becomes a silent dependency: those tests would read a
+  // snapshot and never see the criteria they just published.
+  const dmid = (await post('manifest-upload', { vendor: 'DecisionRecord', csv: CSV })).body.id;
+  const noNote = await post('manifest-decide', { id: dmid, status: 'approved' });
   eq(noNote.status, 400, 'a decision with no note is refused');
-  const bad = await post('manifest-decide', { id: mid, status: 'whatever', note: 'x' });
+  const bad = await post('manifest-decide', { id: dmid, status: 'whatever', note: 'x' });
   eq(bad.status, 400, 'an unknown status is refused');
-  const good = await post('manifest-decide', { id: mid, status: 'approved_edits', note: 'drop the widget' });
+  const good = await post('manifest-decide', { id: dmid, status: 'approved_edits', note: 'drop the widget' });
   eq(good.status, 200, 'the decision is recorded');
-  const row = db.prepare(`SELECT * FROM manifests WHERE id=?`).get(mid);
+  const row = db.prepare(`SELECT * FROM manifests WHERE id=?`).get(dmid);
   eq(row.status, 'approved_edits', 'status stored');
   ok(row.criteria_version !== null, '🔑 and the criteria version it was judged under');
   // 🛑 Right here for the WRONG REASON until now. This fixture genuinely was scored
@@ -341,9 +347,9 @@ let mid;
   // holds whether or not the code is correct is what let the bug live. The property it
   // was missing is asserted in its own block below.
   eq(row.scored_without_retail, 1, '...and that this one really was judged without retail');
-  const locked = await post('manifest-remap', { id: mid, csv: CSV, column_map: { description:'Item Description', qty:'Qty', cost:'Unit Cost' } });
+  const locked = await post('manifest-remap', { id: dmid, csv: CSV, column_map: { description:'Item Description', qty:'Qty', cost:'Unit Cost' } });
   eq(locked.status, 409, 'a decided manifest cannot be silently remapped underneath the decision');
-  const del = await post('manifest-delete', { id: mid });
+  const del = await post('manifest-delete', { id: dmid });
   eq(del.status, 409, 'a decided manifest is not deletable either — it is the record of a call');
   ok(/record of a decision/i.test(del.body.error || ''), '...and says why');
 }
@@ -1393,6 +1399,96 @@ let mid;
   const line = db.prepare(`SELECT cost, flags FROM manifest_lines WHERE manifest_id=?`).get(up.body.id);
   near(line.cost, 2.00, '🛑 $2.00 is stored as $2.00 — the stored "extended" does not divide it again');
   ok(!JSON.parse(line.flags).some(f => /line total/.test(f)), '...and no division is claimed');
+}
+
+// ── 🛑 A DECISION IS FROZEN AT THE MOMENT IT IS TAKEN ──────────────────────
+// Opening a manifest recomputed it from whatever was true NOW — today's criteria, ASP,
+// costs and shelf. Right for a manifest still being weighed; wrong for one already
+// approved, because the page then shows numbers nobody agreed to under the same status
+// and the same note. Criteria went v1 → v12 in eleven days, several of those changing
+// pricing rules outright, so the drift is not hypothetical.
+{
+  const up = await post('manifest-upload', { vendor: 'FreezeTest', csv: CSV });
+  const fid = up.body.id;
+
+  // What the buyer sees before deciding.
+  const before = await get(`manifest&id=${fid}`);
+  eq(before.status, 200, 'a draft opens');
+  eq(before.body.frozen, false, '…and is scored live, as a draft should be');
+  const shownPrice = before.body.lines[0].suggested_price;
+  const shownVerdict = before.body.score.lines[0].verdict;
+  const shownVersion = before.body.criteriaVersion;
+  ok(shownVersion !== null, 'it was scored under a published criteria version');
+
+  const d = await post('manifest-decide', { id: fid, status: 'approved', note: 'buying it' });
+  eq(d.status, 200, 'the decision is recorded');
+  ok(d.body.snapshot_lines > 0, '🔑 …and it captured the lines it was taken on');
+
+  // Now move the world underneath it: a new criteria version with a different price cap
+  // and rounding, which is exactly the v9→v10→v11 churn that happened for real.
+  const draft = await post('merch-criteria-draft', { cells: [
+    { l3: null, field: 'price_cap_pct_retail', value: '20' },
+    { l3: null, field: 'rounding', value: '$1 down' },
+  ] });
+  eq(draft.status, 200, 'a new criteria draft is opened');
+  const pub = await post('merch-criteria-publish', { note: 'v-next — cap to 20%, round to whole dollars' });
+  eq(pub.status, 200, 'and published');
+
+  // 🛑 THE RECORD DOES NOT MOVE.
+  const after = await get(`manifest&id=${fid}`);
+  eq(after.status, 200, 'the decided manifest still opens');
+  eq(after.body.frozen, true, '🔑 …and says it is showing the frozen record');
+  eq(after.body.criteriaVersion, shownVersion,
+     '🛑 under the version it was actually decided under, not the live one');
+  eq(after.body.lines[0].suggested_price, shownPrice,
+     '🛑 every figure is the one the buyer agreed to');
+  eq(after.body.score.lines[0].verdict, shownVerdict, '…verdicts included');
+  ok(after.body.capturedAt, '…and when the record was taken');
+
+  // 🔑 …AND TODAY'S ANSWER IS STILL AVAILABLE, as a different question.
+  const live = await get(`manifest&id=${fid}&live=1`);
+  eq(live.status, 200, 're-scoring against today is allowed');
+  eq(live.body.frozen, false, '…and never claims to be the record');
+  eq(live.body.rescored, true, '🔑 it says plainly that this is a re-score of a decided buy');
+  ok(live.body.criteriaVersion > shownVersion,
+     '…against the CURRENT criteria version');
+  // The whole point: the two genuinely differ.
+  const moved = live.body.lines.some((l, i) => l.suggested_price !== after.body.lines[i].suggested_price)
+             || live.body.score.lines.some((l, i) => l.verdict !== after.body.score.lines[i].verdict);
+  ok(moved, '🛑 the live re-score really IS different — which is what made the old behaviour a lie');
+
+  // A snapshot is served verbatim, never blended with live figures.
+  eq(after.body.score.totals.warn, before.body.score.totals.warn,
+     '🔑 the frozen totals match what was on screen at decision time');
+}
+
+// ── 🔑 A DECISION FROM BEFORE SNAPSHOTS SAYS SO ────────────────────────────
+// It cannot be reconstructed — the inputs are gone. The page must not imply the live
+// re-score is the record, which is precisely the behaviour being fixed.
+{
+  const up = await post('manifest-upload', { vendor: 'LegacyDecision', csv: CSV });
+  const lid = up.body.id;
+  await post('manifest-decide', { id: lid, status: 'approved', note: 'older call' });
+  // Strip the snapshot to stand in for a decision taken before this shipped.
+  db.prepare(`UPDATE manifests SET decision_snapshot = NULL WHERE id = ?`).run(lid);
+
+  const r = await get(`manifest&id=${lid}`);
+  eq(r.status, 200, 'it still opens');
+  eq(r.body.frozen, false, '…and does not pretend to be a frozen record');
+  eq(r.body.snapshotMissing, true,
+     '🛑 it says outright that no record of the original figures was kept');
+}
+
+// ── 🔑 A CORRUPT SNAPSHOT FALLS BACK, IT DOES NOT 500 ──────────────────────
+{
+  const up = await post('manifest-upload', { vendor: 'BadSnapshot', csv: CSV });
+  const bid = up.body.id;
+  await post('manifest-decide', { id: bid, status: 'passed', note: 'no thanks' });
+  db.prepare(`UPDATE manifests SET decision_snapshot = ? WHERE id = ?`).run('{not json', bid);
+  const r = await get(`manifest&id=${bid}`);
+  eq(r.status, 200, '🔑 an unreadable snapshot still serves the manifest');
+  eq(r.body.frozen, false, '…as a live score, honestly labelled');
+  ok(Array.isArray(r.body.lines), '…with real lines');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

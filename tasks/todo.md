@@ -120,7 +120,7 @@ is not touched:
 
 ## Plan
 
-- [x] `migration-054.sql` — `manifests.cost_basis`, `vendor_templates.cost_basis_default`
+- [x] `migration-055.sql` — `manifests.cost_basis`, `vendor_templates.cost_basis_default`
 - [x] `MANIFEST_COST_BASIS` — header → `unit｜case｜extended`, and **`null` when the header
       does not name its unit**. "Sale Price" is genuinely ambiguous; guessing it from the
       name is how this happened. Unknown keeps today's behaviour and says so.

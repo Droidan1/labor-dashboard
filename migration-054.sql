@@ -1,36 +1,32 @@
--- What unit the vendor's cost column is quoted in — and therefore what it MEANS.
+-- Freeze the figures a buying decision was actually taken on.
 --
--- WHY — `sell_as` was taken from the caller, else the vendor template, else 'each', and it
--- never looked at which column had been mapped to `cost`. Two of the four saved templates
--- were wrong the moment they were saved:
+-- WHY — opening a manifest recomputes it from whatever is true NOW: today's criteria,
+-- today's ASP, today's category costs, today's shelf state. That is the right behaviour
+-- for a manifest still being weighed. It is the wrong behaviour for one already approved,
+-- because the page then shows numbers nobody ever agreed to while still reading as the
+-- record of the call.
 --
---   Alliance   "Unit Price"      per unit   → each  ✓
---   Kind       "Price per unit"  per unit   → each  ✓
---   WI Food    "Case Price"      per CASE   → each  ✗  costs read 12× too high
---   Clorox     "Sale Price"      LINE TOTAL → each  ✗  $900.93 read as a unit price
+-- 🔑 THE DRIFT RATE IS THE ARGUMENT. Criteria went from v1 to v12 in eleven days — nine
+-- of those versions inside a single week, and several changed pricing rules outright
+-- (v9 rounds consumables DOWN, v10 moves them to quarters, v11 back to half dollars).
+-- A manifest approved under v9 and reopened under v12 can show a different suggested
+-- price on every consumable line, with the same status and the same note beside it.
 --
--- Clorox is the one that forced this column. A line total is a third thing, and `sell_as`
--- has only two values: 'each' read $900.93 per unit, 'case' read $75.08, and the truth was
--- $7.57. There was no way to say what the sheet actually meant.
+-- 🔑 AND IT COSTS NOTHING TODAY. There are ZERO decided manifests in production, so
+-- nothing needs backfilling and no history is lost by adding this now. After the first
+-- approval it is unrecoverable — the inputs are gone and cannot be reconstructed.
 --
--- 🔑 THE BASIS IS PERSISTED BECAUSE REMAP RE-READS THE RAW FILE. Normalising an extended
--- cost is a division done at import, so a remap that did not know the basis would either
--- skip the division (leaving the raw total) or repeat it. The stored basis is what makes
--- the second pass reproduce the first.
+-- The snapshot holds the lines and the score as rendered at the moment of the decision,
+-- so it survives later edits to manifest_lines (manifest-line and manifest-classify both
+-- still write to a decided manifest) and any future change to the scoring code itself.
+-- Measured at ~28 KB for the largest real manifest (41 lines).
 --
--- 🛑 'unit' IS THE DEFAULT AND THAT IS DELIBERATE. It is exactly what every existing row
--- already does — cost stored verbatim, sell_as 'each' — so backfilling this column changes
--- no stored number and no existing verdict. A manifest whose basis was really something
--- else is corrected by remapping it, not by this migration guessing on its behalf.
+-- Lifecycle: written once by manifest-decide, never updated. A manifest decided before
+-- this shipped has criteria_version but no snapshot; the read endpoint says so rather
+-- than pretending the live re-score is the record.
 --
 -- Apply:
 --   npx wrangler d1 execute labor-dashboard-db-staging --remote --file=migration-054.sql
 --   npx wrangler d1 execute labor-dashboard-db         --remote --file=migration-054.sql
---
--- Additive. Existing rows take 'unit', which is their current behaviour exactly.
-ALTER TABLE manifests ADD COLUMN cost_basis TEXT NOT NULL DEFAULT 'unit';
 
--- The same fact, remembered per vendor, so the NEXT load from Clorox does not have to be
--- corrected by hand again. Nullable: a template saved before this column existed has not
--- told us anything, and 'unit' would be a claim rather than the absence of one.
-ALTER TABLE vendor_templates ADD COLUMN cost_basis_default TEXT;
+ALTER TABLE manifests ADD COLUMN decision_snapshot TEXT;

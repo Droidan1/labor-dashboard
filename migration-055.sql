@@ -1,0 +1,36 @@
+-- What unit the vendor's cost column is quoted in — and therefore what it MEANS.
+--
+-- WHY — `sell_as` was taken from the caller, else the vendor template, else 'each', and it
+-- never looked at which column had been mapped to `cost`. Two of the four saved templates
+-- were wrong the moment they were saved:
+--
+--   Alliance   "Unit Price"      per unit   → each  ✓
+--   Kind       "Price per unit"  per unit   → each  ✓
+--   WI Food    "Case Price"      per CASE   → each  ✗  costs read 12× too high
+--   Clorox     "Sale Price"      LINE TOTAL → each  ✗  $900.93 read as a unit price
+--
+-- Clorox is the one that forced this column. A line total is a third thing, and `sell_as`
+-- has only two values: 'each' read $900.93 per unit, 'case' read $75.08, and the truth was
+-- $7.57. There was no way to say what the sheet actually meant.
+--
+-- 🔑 THE BASIS IS PERSISTED BECAUSE REMAP RE-READS THE RAW FILE. Normalising an extended
+-- cost is a division done at import, so a remap that did not know the basis would either
+-- skip the division (leaving the raw total) or repeat it. The stored basis is what makes
+-- the second pass reproduce the first.
+--
+-- 🛑 'unit' IS THE DEFAULT AND THAT IS DELIBERATE. It is exactly what every existing row
+-- already does — cost stored verbatim, sell_as 'each' — so backfilling this column changes
+-- no stored number and no existing verdict. A manifest whose basis was really something
+-- else is corrected by remapping it, not by this migration guessing on its behalf.
+--
+-- Apply:
+--   npx wrangler d1 execute labor-dashboard-db-staging --remote --file=migration-055.sql
+--   npx wrangler d1 execute labor-dashboard-db         --remote --file=migration-055.sql
+--
+-- Additive. Existing rows take 'unit', which is their current behaviour exactly.
+ALTER TABLE manifests ADD COLUMN cost_basis TEXT NOT NULL DEFAULT 'unit';
+
+-- The same fact, remembered per vendor, so the NEXT load from Clorox does not have to be
+-- corrected by hand again. Nullable: a template saved before this column existed has not
+-- told us anything, and 'unit' would be a claim rather than the absence of one.
+ALTER TABLE vendor_templates ADD COLUMN cost_basis_default TEXT;
