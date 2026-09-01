@@ -9551,6 +9551,177 @@ async function retailDrainQueue(env) {
   return { manifest: m.id, vendor: m.vendor, ...out };
 }
 
+// Build a manifest's lines and score from the CURRENT criteria, ASP, costs and shelf.
+//
+// 🔑 ONE implementation, called by the read endpoint AND by the decision that freezes it.
+// These were the same forty lines written twice, and the whole point of a decision
+// snapshot is that it holds the very numbers the buyer was looking at — which is only
+// true if the two paths cannot drift.
+async function manifestBuild(env, m) {
+  const { results: rawLines } = await env.DB.prepare(
+    `SELECT * FROM manifest_lines WHERE manifest_id = ? ORDER BY row_no`).bind(m.id).all();
+
+  // Everything downstream is evaluated in the unit the buyer is thinking in.
+  const factor = m.sell_as === "case" ? (m.units_per_case || 12) : 1;
+  const av = await manifestAspVelocity(env);
+  // What WE book as the cost of anything in that category — the same figure the
+  // costing engine uses, read from the same place, so the scorer can never quote a
+  // standard cost the rest of the Hub disagrees with.
+  // Both cost sources; l3UnitCost prefers the per-category IM figure and falls back
+  // to the blanket category map. See the note on l3UnitCost for why that order.
+  const [catCostBlob, imCostBlob] = await Promise.all([
+    env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json"),
+    env.SALES_SNAPSHOTS.get(ITEM_COSTS_KEY, "json"),
+  ]);
+  const stdCosts = (catCostBlob || {}).costs || {};
+  const imCosts = (imCostBlob || {}).items || {};
+  const { live } = await merchVersions(env);
+  const resolved = live ? await merchResolve(env, live.version) : null;
+
+  // Freight is a LOAD-level figure and has to be spread before any line is judged.
+  // The unit formula here must stay identical to the one inside the map below —
+  // amortising over a different denominator than the lines are priced in would
+  // quietly mis-state every effective cost on the manifest.
+  const unitsOf = (l) => (Number(l.qty) || 0) *
+    (m.sell_as === "case" ? (Number(l.units_per_case) || factor) : 1);
+
+  // A lot buy is quoted as a share of retail, not per line. Manifest # 07002:
+  // $12,175 against $32,902 of extended retail — 37%. A vendor quoting the lump sum
+  // and one quoting the rate are saying the same thing, so both land on one figure.
+  const lotRetail = (rawLines || []).reduce(
+    (t, l) => t + (Number(l.msrp) || 0) * unitsOf(l), 0);
+  const lotCost = Number(m.lot_cost) || 0;
+  const retailPct = lotCost > 0 && lotRetail > 0
+    ? (lotCost / lotRetail) * 100
+    : (Number(m.retail_pct) || 0);
+  const totalUnits = (rawLines || []).reduce((n, l) => n + unitsOf(l), 0);
+  const freightPerUnit = totalUnits > 0 ? (Number(m.freight_cost) || 0) / totalUnits : 0;
+
+  const lines = (rawLines || []).map(l => {
+    // 🔑 TWO DIFFERENT QUESTIONS, and conflating them cost a wrong answer.
+    //
+    //   How many are in a pack?      -> the sheet's Case pack column. Used to price
+    //                                   retail against the same thing we are buying.
+    //   Is qty/cost quoted per CASE? -> the sell_as toggle, and ONLY that.
+    //
+    // A Case pack column answers the first and says nothing about the second. Kind's
+    // sheet names its columns "Units" and "Price per unit": 810 boxes at $1.45 a box.
+    // Treating a pack of 5 as "these are cases" turned that into 4,050 units at
+    // $0.29 — and cost-of-retail from a believable 35% into 175%, which nobody buys.
+    const linePack = Number(l.units_per_case) || null;
+    const asCase = m.sell_as === "case";
+    const upc = asCase ? (linePack || factor) : 1;
+    const units = (Number(l.qty) || 0) * (asCase ? upc : 1);
+    let costPerUnit = l.cost === null ? null : roundCents(Number(l.cost) / (asCase ? upc : 1));
+    // 🔑 Only when the line has no cost of its own. A manifest that quotes real
+    // per-line costs must never have them overwritten by a lot rate.
+    let costFromLot = false;
+    if (costPerUnit === null && retailPct > 0 && Number(l.msrp) > 0) {
+      costPerUnit = roundCents((Number(l.msrp) * retailPct) / 100);
+      costFromLot = true;
+    }
+    const stdCost = l3UnitCost(l.l3, imCosts, stdCosts);
+    const stats = l.l3 ? av[l.l3] : null;
+    const rounding = resolved && l.l3
+      ? (resolved.categories.flatMap(c => [c, ...(c.children || [])]).find(c => c.key === l.l3)?.fields?.rounding?.value
+         ?? resolved.categories.find(c => c.key === l.l2)?.fields?.rounding?.value
+         ?? resolved.defaults?.rounding?.value)
+      : null;
+    const asp = stats?.asp ?? null;
+    // The same three-level walk the rounding rule uses: the L3's own value, else
+    // its L2's, else the chain default.
+    const critAt = (field) => resolved && l.l3
+      ? (resolved.categories.flatMap(c => [c, ...(c.children || [])]).find(c => c.key === l.l3)?.fields?.[field]?.value
+         ?? resolved.categories.find(c => c.key === l.l2)?.fields?.[field]?.value
+         ?? resolved.defaults?.[field]?.value)
+      : (resolved?.defaults?.[field]?.value ?? null);
+    const ceilingRaw = Number(critAt("dollar_ceiling"));
+    const ceiling = Number.isFinite(ceilingRaw) && ceilingRaw > 0 ? ceilingRaw : null;
+
+    // 🔑 A manual price is a decision and is never overridden. The ceiling only
+    // shapes the price we SUGGEST — capping first, then rounding, so the rounding
+    // rule cannot push the answer back above the ceiling it was just held under.
+    // One implementation, shared with Price Scan — see merchPriceLadder.
+    const asNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+    // 🔑 What we ACTUALLY pay beats a category average whenever we know it. On a
+    // manifest the vendor quotes a cost for this exact line, freight and defect
+    // included; the L3 figure is a blended average across a whole load type. The
+    // fallback is what Price Scan runs on, where a warehouse item has no vendor line.
+    const effCost = manifestEffectiveCost(costPerUnit, freightPerUnit, m.defect_pct);
+    const unitCost = effCost !== null ? effCost : stdCost;
+    const gpFloorPct = asNum(critAt("min_gross_margin_pct"));
+
+    let suggested, priceBasis = null, belowFloor = false, ceilingBound = false, thinDeal = false;
+    if (l.suggested_price !== null && l.suggested_price !== undefined) {
+      // A manual price is a decision and is never recomputed.
+      suggested = Number(l.suggested_price);
+      priceBasis = "manual";
+      if (gpFloorPct !== null && unitCost !== null && suggested > 0) {
+        belowFloor = ((suggested - unitCost) / suggested) * 100 < gpFloorPct;
+      }
+    } else {
+      const lad = merchPriceLadder({
+        retail: l.retail_price, asp, cost: unitCost,
+        crit: { priceCapPct: asNum(critAt("price_cap_pct_retail")), gpFloorPct,
+                ceiling, rounding },
+      });
+      suggested = lad.price; priceBasis = lad.basis;
+      belowFloor = lad.belowFloor; ceilingBound = lad.ceilingBound;
+      thinDeal = lad.thinDeal;
+    }
+
+    const flags = (() => { try { return JSON.parse(l.flags || "[]"); } catch { return []; } })();
+    if (!l.l3) flags.push("no category");
+    if (asp === null && l.l3) flags.push("no ASP");
+    // Say when the ceiling actually bit. A suggested price that is lower than our
+    // own ASP needs a reason visible on the line, or it reads as a mistake.
+    if (ceilingBound) flags.push(`held to the $${ceiling.toFixed(2)} dollar-store ceiling`);
+    // Not a pricing failure — a BUYING one. Every rung that earns the margin is
+    // still too close to the street, so there is no price a customer walks over
+    // for. Worth more on a buy sheet than the number it sits beside.
+    if (thinDeal) flags.push("thin discount");
+    if (belowFloor && suggested !== null && unitCost !== null) {
+      const gp = ((suggested - unitCost) / suggested) * 100;
+      flags.push(`${gp.toFixed(0)}% GP at $${suggested.toFixed(2)} — under the ${gpFloorPct}% floor`);
+    }
+    return { ...l, units, cost: costPerUnit, qty: units, asp_l3: asp,
+             std_cost_l3: stdCost,
+             // Invoice cost stays on `cost`; what it really lands at rides beside it.
+             cost_from_lot: costFromLot,
+             freight_per_unit: freightPerUnit ? roundCents(freightPerUnit) : 0,
+             effective_cost: effCost,
+             // Vendor cost against what we normally pay for that category. Under
+             // 100% is a better buy than our own book cost; over it is not.
+             cost_vs_std: stdCost && costPerUnit !== null && stdCost > 0
+               ? +((costPerUnit / stdCost) * 100).toFixed(0) : null,
+             // What the pack IS, and separately whether it was used to convert.
+             dollar_ceiling: ceiling, ceiling_bound: ceilingBound,
+             pack_used: linePack || (asCase ? factor : null),
+             pack_source: linePack ? "sheet" : (asCase ? "toggle" : null),
+             pack_converted: asCase,
+             velocity_l3: stats?.velocity ?? null,
+             suggested_price: suggested,
+             price_basis: priceBasis, below_gp_floor: belowFloor,
+             gp_pct: suggested && unitCost !== null && suggested > 0
+               ? +(((suggested - unitCost) / suggested) * 100).toFixed(1) : null,
+             suggested_source: l.suggested_price !== null && l.suggested_price !== undefined ? "manual" : "rule",
+             flags };
+  });
+
+  // What the floor is doing with these categories right now, so a rollup row can
+  // say "and this category is already dead on the shelf".
+  // Reuses the per-L3 units already fetched for ASP rather than re-reading every
+  // snapshot; a shelf-now column is not worth doubling this endpoint's KV reads.
+  const shelfState = await merchShelfStates(env, av);
+
+  const score = manifestScore(lines, resolved, { storeCount: merchStores().length, shelfState });
+  return {
+    lines, score,
+    criteriaVersion: live?.version ?? null,
+    criteriaNote: live ? null : "No criteria published yet — the lines are classified and priced, but nothing has been scored against a threshold.",
+  };
+}
+
 // Score one manifest against a resolved criteria version.
 //
 // ⚠️ THIS SLICE HAS NO STREET RETAIL. Every threshold in §5.3 is written against retail,
@@ -17589,10 +17760,20 @@ export default {
       }
     }
 
-    // GET ?action=manifest&id=… — the manifest, its lines, and a LIVE score.
-    // The score is computed on read rather than stored: criteria and our own ASP both
-    // move, and a stored verdict would quietly go stale while still looking authoritative.
-    // What IS stored is which version a decision was taken under.
+    // GET ?action=manifest&id=…[&live=1] — the manifest, its lines, and a score.
+    //
+    // While a manifest is still being weighed the score is computed on READ, because
+    // criteria and our own ASP both move and a stored verdict would go stale while still
+    // looking authoritative.
+    //
+    // 🔑 ONCE IT HAS BEEN DECIDED THAT REVERSES. A decision is a record of what somebody
+    // agreed to, and recomputing it means the page shows numbers nobody ever saw. Criteria
+    // moved v1 → v12 in eleven days, several of those changing pricing rules outright, so
+    // a manifest approved under v9 and reopened under v12 can show a different suggested
+    // price on every consumable line — under the same status, beside the same note.
+    //
+    // So a decided manifest serves its snapshot, and `?live=1` re-scores against today on
+    // purpose and says that is what it did. Both are useful; conflating them is not.
     if (url.searchParams.get("action") === "manifest" && request.method === "GET") {
       const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
       if (unauth) return unauth;
@@ -17600,167 +17781,33 @@ export default {
         const id = url.searchParams.get("id");
         const m = await env.DB.prepare(`SELECT * FROM manifests WHERE id = ?`).bind(id).first();
         if (!m) return new Response(JSON.stringify({ error: "No such manifest" }), { status: 404, headers: corsJson });
-        const { results: rawLines } = await env.DB.prepare(
-          `SELECT * FROM manifest_lines WHERE manifest_id = ? ORDER BY row_no`).bind(id).all();
-
-        // Everything downstream is evaluated in the unit the buyer is thinking in.
-        const factor = m.sell_as === "case" ? (m.units_per_case || 12) : 1;
-        const av = await manifestAspVelocity(env);
-        // What WE book as the cost of anything in that category — the same figure the
-        // costing engine uses, read from the same place, so the scorer can never quote a
-        // standard cost the rest of the Hub disagrees with.
-        // Both cost sources; l3UnitCost prefers the per-category IM figure and falls back
-        // to the blanket category map. See the note on l3UnitCost for why that order.
-        const [catCostBlob, imCostBlob] = await Promise.all([
-          env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json"),
-          env.SALES_SNAPSHOTS.get(ITEM_COSTS_KEY, "json"),
-        ]);
-        const stdCosts = (catCostBlob || {}).costs || {};
-        const imCosts = (imCostBlob || {}).items || {};
-        const { live } = await merchVersions(env);
-        const resolved = live ? await merchResolve(env, live.version) : null;
-
-        // Freight is a LOAD-level figure and has to be spread before any line is judged.
-        // The unit formula here must stay identical to the one inside the map below —
-        // amortising over a different denominator than the lines are priced in would
-        // quietly mis-state every effective cost on the manifest.
-        const unitsOf = (l) => (Number(l.qty) || 0) *
-          (m.sell_as === "case" ? (Number(l.units_per_case) || factor) : 1);
-
-        // A lot buy is quoted as a share of retail, not per line. Manifest # 07002:
-        // $12,175 against $32,902 of extended retail — 37%. A vendor quoting the lump sum
-        // and one quoting the rate are saying the same thing, so both land on one figure.
-        const lotRetail = (rawLines || []).reduce(
-          (t, l) => t + (Number(l.msrp) || 0) * unitsOf(l), 0);
-        const lotCost = Number(m.lot_cost) || 0;
-        const retailPct = lotCost > 0 && lotRetail > 0
-          ? (lotCost / lotRetail) * 100
-          : (Number(m.retail_pct) || 0);
-        const totalUnits = (rawLines || []).reduce((n, l) => n + unitsOf(l), 0);
-        const freightPerUnit = totalUnits > 0 ? (Number(m.freight_cost) || 0) / totalUnits : 0;
-
-        const lines = (rawLines || []).map(l => {
-          // 🔑 TWO DIFFERENT QUESTIONS, and conflating them cost a wrong answer.
-          //
-          //   How many are in a pack?      -> the sheet's Case pack column. Used to price
-          //                                   retail against the same thing we are buying.
-          //   Is qty/cost quoted per CASE? -> the sell_as toggle, and ONLY that.
-          //
-          // A Case pack column answers the first and says nothing about the second. Kind's
-          // sheet names its columns "Units" and "Price per unit": 810 boxes at $1.45 a box.
-          // Treating a pack of 5 as "these are cases" turned that into 4,050 units at
-          // $0.29 — and cost-of-retail from a believable 35% into 175%, which nobody buys.
-          const linePack = Number(l.units_per_case) || null;
-          const asCase = m.sell_as === "case";
-          const upc = asCase ? (linePack || factor) : 1;
-          const units = (Number(l.qty) || 0) * (asCase ? upc : 1);
-          let costPerUnit = l.cost === null ? null : roundCents(Number(l.cost) / (asCase ? upc : 1));
-          // 🔑 Only when the line has no cost of its own. A manifest that quotes real
-          // per-line costs must never have them overwritten by a lot rate.
-          let costFromLot = false;
-          if (costPerUnit === null && retailPct > 0 && Number(l.msrp) > 0) {
-            costPerUnit = roundCents((Number(l.msrp) * retailPct) / 100);
-            costFromLot = true;
-          }
-          const stdCost = l3UnitCost(l.l3, imCosts, stdCosts);
-          const stats = l.l3 ? av[l.l3] : null;
-          const rounding = resolved && l.l3
-            ? (resolved.categories.flatMap(c => [c, ...(c.children || [])]).find(c => c.key === l.l3)?.fields?.rounding?.value
-               ?? resolved.categories.find(c => c.key === l.l2)?.fields?.rounding?.value
-               ?? resolved.defaults?.rounding?.value)
-            : null;
-          const asp = stats?.asp ?? null;
-          // The same three-level walk the rounding rule uses: the L3's own value, else
-          // its L2's, else the chain default.
-          const critAt = (field) => resolved && l.l3
-            ? (resolved.categories.flatMap(c => [c, ...(c.children || [])]).find(c => c.key === l.l3)?.fields?.[field]?.value
-               ?? resolved.categories.find(c => c.key === l.l2)?.fields?.[field]?.value
-               ?? resolved.defaults?.[field]?.value)
-            : (resolved?.defaults?.[field]?.value ?? null);
-          const ceilingRaw = Number(critAt("dollar_ceiling"));
-          const ceiling = Number.isFinite(ceilingRaw) && ceilingRaw > 0 ? ceilingRaw : null;
-
-          // 🔑 A manual price is a decision and is never overridden. The ceiling only
-          // shapes the price we SUGGEST — capping first, then rounding, so the rounding
-          // rule cannot push the answer back above the ceiling it was just held under.
-          // One implementation, shared with Price Scan — see merchPriceLadder.
-          const asNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
-          // 🔑 What we ACTUALLY pay beats a category average whenever we know it. On a
-          // manifest the vendor quotes a cost for this exact line, freight and defect
-          // included; the L3 figure is a blended average across a whole load type. The
-          // fallback is what Price Scan runs on, where a warehouse item has no vendor line.
-          const effCost = manifestEffectiveCost(costPerUnit, freightPerUnit, m.defect_pct);
-          const unitCost = effCost !== null ? effCost : stdCost;
-          const gpFloorPct = asNum(critAt("min_gross_margin_pct"));
-
-          let suggested, priceBasis = null, belowFloor = false, ceilingBound = false, thinDeal = false;
-          if (l.suggested_price !== null && l.suggested_price !== undefined) {
-            // A manual price is a decision and is never recomputed.
-            suggested = Number(l.suggested_price);
-            priceBasis = "manual";
-            if (gpFloorPct !== null && unitCost !== null && suggested > 0) {
-              belowFloor = ((suggested - unitCost) / suggested) * 100 < gpFloorPct;
-            }
-          } else {
-            const lad = merchPriceLadder({
-              retail: l.retail_price, asp, cost: unitCost,
-              crit: { priceCapPct: asNum(critAt("price_cap_pct_retail")), gpFloorPct,
-                      ceiling, rounding },
-            });
-            suggested = lad.price; priceBasis = lad.basis;
-            belowFloor = lad.belowFloor; ceilingBound = lad.ceilingBound;
-            thinDeal = lad.thinDeal;
-          }
-
-          const flags = (() => { try { return JSON.parse(l.flags || "[]"); } catch { return []; } })();
-          if (!l.l3) flags.push("no category");
-          if (asp === null && l.l3) flags.push("no ASP");
-          // Say when the ceiling actually bit. A suggested price that is lower than our
-          // own ASP needs a reason visible on the line, or it reads as a mistake.
-          if (ceilingBound) flags.push(`held to the $${ceiling.toFixed(2)} dollar-store ceiling`);
-          // Not a pricing failure — a BUYING one. Every rung that earns the margin is
-          // still too close to the street, so there is no price a customer walks over
-          // for. Worth more on a buy sheet than the number it sits beside.
-          if (thinDeal) flags.push("thin discount");
-          if (belowFloor && suggested !== null && unitCost !== null) {
-            const gp = ((suggested - unitCost) / suggested) * 100;
-            flags.push(`${gp.toFixed(0)}% GP at $${suggested.toFixed(2)} — under the ${gpFloorPct}% floor`);
-          }
-          return { ...l, units, cost: costPerUnit, qty: units, asp_l3: asp,
-                   std_cost_l3: stdCost,
-                   // Invoice cost stays on `cost`; what it really lands at rides beside it.
-                   cost_from_lot: costFromLot,
-                   freight_per_unit: freightPerUnit ? roundCents(freightPerUnit) : 0,
-                   effective_cost: effCost,
-                   // Vendor cost against what we normally pay for that category. Under
-                   // 100% is a better buy than our own book cost; over it is not.
-                   cost_vs_std: stdCost && costPerUnit !== null && stdCost > 0
-                     ? +((costPerUnit / stdCost) * 100).toFixed(0) : null,
-                   // What the pack IS, and separately whether it was used to convert.
-                   dollar_ceiling: ceiling, ceiling_bound: ceilingBound,
-                   pack_used: linePack || (asCase ? factor : null),
-                   pack_source: linePack ? "sheet" : (asCase ? "toggle" : null),
-                   pack_converted: asCase,
-                   velocity_l3: stats?.velocity ?? null,
-                   suggested_price: suggested,
-                   price_basis: priceBasis, below_gp_floor: belowFloor,
-                   gp_pct: suggested && unitCost !== null && suggested > 0
-                     ? +(((suggested - unitCost) / suggested) * 100).toFixed(1) : null,
-                   suggested_source: l.suggested_price !== null && l.suggested_price !== undefined ? "manual" : "rule",
-                   flags };
-        });
-
-        // What the floor is doing with these categories right now, so a rollup row can
-        // say "and this category is already dead on the shelf".
-        // Reuses the per-L3 units already fetched for ASP rather than re-reading every
-        // snapshot; a shelf-now column is not worth doubling this endpoint's KV reads.
-        const shelfState = await merchShelfStates(env, av);
-
-        const score = manifestScore(lines, resolved, { storeCount: merchStores().length, shelfState });
+        // A snapshot is only ever read back verbatim — never merged with live figures,
+        // which would produce a third set of numbers that is neither what was approved nor
+        // what is true now.
+        const wantLive = url.searchParams.get("live") === "1";
+        let frozen = null;
+        if (!wantLive && m.decision_snapshot) {
+          try { frozen = JSON.parse(m.decision_snapshot); } catch { frozen = null; }
+        }
+        if (frozen) {
+          return new Response(JSON.stringify({
+            ok: true, manifest: m, lines: frozen.lines, score: frozen.score,
+            criteriaVersion: frozen.criteriaVersion, criteriaNote: frozen.criteriaNote ?? null,
+            frozen: true, capturedAt: frozen.capturedAt ?? m.decided_at ?? null,
+          }), { headers: corsJson });
+        }
+        const built = await manifestBuild(env, m);
+        const decided = !!m.decided_at;
         return new Response(JSON.stringify({
-          ok: true, manifest: m, lines, score,
-          criteriaVersion: live?.version ?? null,
-          criteriaNote: live ? null : "No criteria published yet — the lines are classified and priced, but nothing has been scored against a threshold.",
+          ok: true, manifest: m, ...built,
+          frozen: false,
+          // Re-scoring a decided manifest is a different act from opening a draft, and the
+          // screen has to be able to say which one the reader is looking at.
+          rescored: decided && !!m.decision_snapshot,
+          // 🔑 Decided, but from before snapshots existed — so this IS a live re-score and
+          // there is no record to compare it against. Say so rather than implying the
+          // figures on screen are the ones that were approved.
+          snapshotMissing: decided && !m.decision_snapshot,
         }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
@@ -17971,13 +18018,27 @@ export default {
         }
         const m = await env.DB.prepare(`SELECT * FROM manifests WHERE id = ?`).bind(body?.id).first();
         if (!m) return new Response(JSON.stringify({ error: "No such manifest" }), { status: 404, headers: corsJson });
-        const { live } = await merchVersions(env);
+        // 🔑 SCORED THROUGH THE SAME CODE THE SCREEN USED. Rebuilding the verdict here
+        // by hand would eventually disagree with what the buyer was shown, and a record
+        // that disagrees with the thing it records is worse than no record.
+        const built = await manifestBuild(env, m);
+        const now = new Date().toISOString();
+        const snapshot = JSON.stringify({
+          capturedAt: now,
+          criteriaVersion: built.criteriaVersion,
+          criteriaNote: built.criteriaNote,
+          score: built.score,
+          lines: built.lines,
+        });
         await env.DB.prepare(
           `UPDATE manifests SET status = ?, decision_note = ?, decided_by = ?, decided_at = ?,
-             criteria_version = ?, scored_at = ? WHERE id = ?`
+             criteria_version = ?, scored_at = ?, decision_snapshot = ? WHERE id = ?`
         ).bind(body.status, String(body.note).trim(), currentUser?.email || currentUser?.name || null,
-               new Date().toISOString(), live?.version ?? null, new Date().toISOString(), m.id).run();
-        return new Response(JSON.stringify({ ok: true, status: body.status, criteria_version: live?.version ?? null }), { headers: corsJson });
+               now, built.criteriaVersion, now, snapshot, m.id).run();
+        return new Response(JSON.stringify({
+          ok: true, status: body.status, criteria_version: built.criteriaVersion,
+          snapshot_lines: built.lines.length,
+        }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }

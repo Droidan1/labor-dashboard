@@ -1,0 +1,32 @@
+-- Freeze the figures a buying decision was actually taken on.
+--
+-- WHY — opening a manifest recomputes it from whatever is true NOW: today's criteria,
+-- today's ASP, today's category costs, today's shelf state. That is the right behaviour
+-- for a manifest still being weighed. It is the wrong behaviour for one already approved,
+-- because the page then shows numbers nobody ever agreed to while still reading as the
+-- record of the call.
+--
+-- 🔑 THE DRIFT RATE IS THE ARGUMENT. Criteria went from v1 to v12 in eleven days — nine
+-- of those versions inside a single week, and several changed pricing rules outright
+-- (v9 rounds consumables DOWN, v10 moves them to quarters, v11 back to half dollars).
+-- A manifest approved under v9 and reopened under v12 can show a different suggested
+-- price on every consumable line, with the same status and the same note beside it.
+--
+-- 🔑 AND IT COSTS NOTHING TODAY. There are ZERO decided manifests in production, so
+-- nothing needs backfilling and no history is lost by adding this now. After the first
+-- approval it is unrecoverable — the inputs are gone and cannot be reconstructed.
+--
+-- The snapshot holds the lines and the score as rendered at the moment of the decision,
+-- so it survives later edits to manifest_lines (manifest-line and manifest-classify both
+-- still write to a decided manifest) and any future change to the scoring code itself.
+-- Measured at ~28 KB for the largest real manifest (41 lines).
+--
+-- Lifecycle: written once by manifest-decide, never updated. A manifest decided before
+-- this shipped has criteria_version but no snapshot; the read endpoint says so rather
+-- than pretending the live re-score is the record.
+--
+-- Apply:
+--   npx wrangler d1 execute labor-dashboard-db-staging --remote --file=migration-054.sql
+--   npx wrangler d1 execute labor-dashboard-db         --remote --file=migration-054.sql
+
+ALTER TABLE manifests ADD COLUMN decision_snapshot TEXT;
