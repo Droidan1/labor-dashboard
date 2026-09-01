@@ -10620,15 +10620,20 @@ const STICKER_CODES_TTL = 86400;
 async function stickerCategoryCodes(env, store) {
   const cached = await env.SALES_SNAPSHOTS?.get(STICKER_CODES_KEY, "json");
   if (cached?.map && cached.at && (Date.now() - Date.parse(cached.at)) < STICKER_CODES_TTL * 1000) {
-    return cached.map;
+    return { map: cached.map, field: cached.field || "code" };
   }
   const s = String(store || "BL1").toUpperCase();
   const mId = env[`${s}_MERCHANT_ID`], tok = env[`${s}_API_TOKEN`];
-  if (!mId || !tok) return cached?.map || {};
+  if (!mId || !tok) return { map: cached?.map || {}, field: cached?.field || "code" };
 
-  // Count the codes seen per category rather than taking the first: a mis-keyed item
-  // should not be able to redefine a whole category's code on its own.
-  const tally = {};
+  // 🔑 `code` OR `sku` — the Inventory page's own dupKey() treats them as one field, so
+  // this must too. Looking only at `code` when a store keeps its numbers in `sku` finds
+  // nothing, and the screen then says "this category has no sticker number" — which reads
+  // as a Clover data problem when it is really us reading the wrong column.
+  //
+  // Which field won is REMEMBERED, because the existence check filters on a named field
+  // and has to ask about the same one the map was built from.
+  const tally = {}, fieldHits = { code: 0, sku: 0 };
   for (let offset = 0; offset < 5000; offset += 1000) {
     const r = await cloverFetch(
       `https://api.clover.com/v3/merchants/${mId}/items?expand=categories&limit=1000&offset=${offset}`,
@@ -10636,8 +10641,11 @@ async function stickerCategoryCodes(env, store) {
     if (!r?.ok) break;
     const rows = (await r.json())?.elements || [];
     for (const it of rows) {
-      const m = /^BL-(\d+)-/.exec(String(it?.code || ""));
-      if (!m) continue;
+      const field = /^BL-\d+-/.test(String(it?.code || "")) ? "code"
+                  : /^BL-\d+-/.test(String(it?.sku || "")) ? "sku" : null;
+      if (!field) continue;
+      fieldHits[field]++;
+      const m = /^BL-(\d+)-/.exec(String(it[field]));
       for (const c of (it?.categories?.elements || [])) {
         const name = String(c?.name || "").trim();
         if (!name) continue;
@@ -10646,24 +10654,28 @@ async function stickerCategoryCodes(env, store) {
     }
     if (rows.length < 1000) break;
   }
+  // Count per category rather than taking the first seen: one mis-keyed item should not
+  // be able to redefine a whole category's number.
   const map = {};
   for (const [name, counts] of Object.entries(tally)) {
     map[name] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
   }
+  const field = fieldHits.sku > fieldHits.code ? "sku" : "code";
   // An empty read is a Clover hiccup, not proof the codes vanished — keep what we had.
-  if (!Object.keys(map).length) return cached?.map || {};
-  await env.SALES_SNAPSHOTS?.put(STICKER_CODES_KEY, JSON.stringify({ map, at: new Date().toISOString() }));
-  return map;
+  if (!Object.keys(map).length) return cached?.map ? { map: cached.map, field: cached.field || "code" } : { map: {}, field: "code" };
+  await env.SALES_SNAPSHOTS?.put(STICKER_CODES_KEY, JSON.stringify({ map, field, at: new Date().toISOString() }));
+  return { map, field };
 }
 
 // Does this exact code exist in Clover? Reuses the same `filter=code=` lookup that
 // create-clover-item already uses as its duplicate check.
-async function stickerCodeExists(env, store, code) {
+async function stickerCodeExists(env, store, code, field = "code") {
   const s = String(store).toUpperCase();
   const mId = env[`${s}_MERCHANT_ID`], tok = env[`${s}_API_TOKEN`];
   if (!mId || !tok) return null;
+  const f = field === "sku" ? "sku" : "code";
   const r = await cloverFetch(
-    `https://api.clover.com/v3/merchants/${mId}/items?filter=code%3D${encodeURIComponent(code)}&limit=5`,
+    `https://api.clover.com/v3/merchants/${mId}/items?filter=${f}%3D${encodeURIComponent(code)}&limit=5`,
     { headers: { Authorization: `Bearer ${tok}` } });
   if (!r?.ok) return null;
   return ((await r.json())?.elements || []).length > 0;
@@ -19072,7 +19084,7 @@ export default {
           return new Response(JSON.stringify({ ok: true, printable: false, reason: "no price",
             detail: "There is no price to put on a sticker." }), { headers: corsJson });
         }
-        const codes = await stickerCategoryCodes(env, body?.store);
+        const { map: codes, field } = await stickerCategoryCodes(env, body?.store);
         // merchLabel is what Clover's category is actually called; L3 keys are ours.
         const catCode = codes[l3] || codes[merchLabel(l3)] || null;
         if (!catCode) {
@@ -19082,7 +19094,7 @@ export default {
         }
         const code = stickerCode(catCode, price);
         const store = String(body?.store || "BL1").toUpperCase();
-        const exists = await stickerCodeExists(env, store, code);
+        const exists = await stickerCodeExists(env, store, code, field);
         if (exists === null) {
           // Clover did not answer. Unknown is NOT permission to print — the whole
           // guarantee is that a printed code resolves, and we cannot claim that here.

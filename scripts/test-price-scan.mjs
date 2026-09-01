@@ -1831,6 +1831,23 @@ console.log('Price Scan');
      '🔑 …and refuses a category code that is not digits, so a name never lands in a QR');
 }
 
+// 🔑 THE NUMBERS MAY LIVE IN `code` OR IN `sku`, and the Inventory page's own dupKey()
+// already treats the two as one field. Reading only `code` when a store keeps its numbers
+// in `sku` finds nothing, and the screen then blames the category for having no sticker
+// number when the truth is we read the wrong column. Which field won is remembered,
+// because the existence check filters on a named field and must ask about the same one.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function stickerCategoryCodes('),
+                       src.indexOf('async function stickerCodeExists('));
+  ok(/it\?\.sku/.test(fn) && /it\?\.code/.test(fn),
+     'the map is derived from code OR sku, the way the Inventory page already reads them');
+  ok(/field === "sku" \? "sku" : "code"/.test(src),
+     '…and the existence check filters on whichever field the map was built from');
+  ok(/return \{ map, field \}/.test(fn),
+     '…so the choice travels with the map rather than being guessed twice');
+}
+
 // 🛑 REFUSING IS THE FEATURE. Every path that cannot PROVE the code resolves must return
 // printable:false — including Clover simply not answering. "We do not know" is not
 // permission to print something a customer will be standing in front of.
