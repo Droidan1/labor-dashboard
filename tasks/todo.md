@@ -234,3 +234,58 @@ scan still inside 40s, the drain longer than the scan but inside 60s.
 
 That test is the reason the split is safe rather than a guess. Worth keeping in mind next
 time a vendor console suggests a number.
+
+---
+
+# Price Scan → print a 1×1 shelf sticker
+
+Managers scan an item, the page decides a price, and today somebody re-keys that into a
+label tool. The sticker carries a QR of `BL-50008-2_5` — `BL-{category code}-{price, dot
+as underscore}` — which associates scan at the Clover POS.
+
+## The thing that makes this tractable
+
+`BL-50008` is **nowhere in this repo**. It lives in Clover, as the `code` on real items —
+and the worker already speaks to exactly the endpoints needed:
+
+    /items?filter=code=BL-50008-2_5&limit=5     already used, as the dup check in
+                                                `create-clover-item`
+    /items?expand=categories&limit=1000&offset= already used, full inventory
+    /categories?limit=1000                      already used
+    POST ?action=create-clover-item             already exists: {code, priceCents, l2, l3}
+
+So there is **no mapping table to invent and no list to maintain**. The category → numeric
+code map is derivable by listing Clover items and parsing `^BL-(\d+)-` grouped by category,
+and "does this exact code exist" is one live call we already know how to make.
+
+## Decisions taken
+
+- **Print path: ZPL first, browser fallback.** Zebra Browser Print where it is installed
+  (native ZPL, QR at printer resolution, no dialog); `@page { size: 1in 1in }` HTML print
+  everywhere else, so a phone still works.
+- **Unknown code: refuse and say why.** Print only when an exact Clover item exists for
+  that category and price. No snapping, no silent price change, nothing unscannable.
+
+## Plan
+
+- [ ] `sticker-code` helper — `BL-{code}-{price}` with `.` → `_`. Pure, unit-testable.
+      🛑 The price format is the whole contract: `$2.50` → `2_5`, not `2_50`. Confirm
+      against real Clover codes before writing the formatter, not after.
+- [ ] Category → numeric code, derived from Clover inventory and cached in KV.
+      Never hand-maintained.
+- [ ] `?action=sticker-check` — given category + price, return `{ code, exists }` from the
+      `filter=code=` lookup. One call, cacheable.
+- [ ] Scan page: a Print button that is DISABLED until the check passes, and names the
+      missing code when it does not. The existing `create-clover-item` is the escape hatch.
+- [ ] ZPL template + the CSS-print fallback, both from one label model.
+- [ ] Tests: code formatting incl. the `2_5` vs `2_50` trap, refusal when absent,
+      fallback selection.
+
+## Open, and blocking the formatter
+
+1. **`2_5` or `2_50`?** The photo shows `$2.50` → `2_5`. Is `$2.75` then `2_75`, and
+   `$10.00` → `10_0` or `10`? One real code at a non-round price settles it.
+2. **Is the code per category, or per category per store?** BL1 and BL16 share a Clover
+   account; if codes are per-account the map has to be keyed that way.
+3. **What does a category with no `BL-` code yet do?** Refuse, presumably — but worth
+   confirming that is not a common case.
