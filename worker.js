@@ -10600,6 +10600,15 @@ const stickerPriceCode = (price) => {
 };
 
 // 🔑 The category code is per CATEGORY, never per store — one map for the chain.
+//
+// 🛑 THIS IS NOT `IM_TO_L2`, AND THE TWO WILL LOOK INTERCHANGEABLE. That map is the IM#
+// rung of the costing ladder — a different numbering scheme that also happens to use
+// five-digit numbers beginning 50. They COLLIDE: 50008 is a sticker code for
+// "FG BL CONSUMABLES - FOOD - PANTRY", and separately an IM# that IM_TO_L2 resolves to
+// "Softline - Apparel". Reaching for IM_TO_L2 because it is already there and already
+// numeric would put a pantry item's price under an apparel code, and the sticker would
+// still scan — it would just ring up the wrong thing. Sticker codes come from Clover
+// item codes and from nowhere else.
 const stickerCode = (categoryCode, price) => {
   const p = stickerPriceCode(price);
   const c = String(categoryCode ?? "").trim();

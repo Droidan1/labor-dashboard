@@ -316,6 +316,18 @@ rounds a price to make a label scan.
 
 - **The UI + printing half.** Print button gated on `printable`, ZPL via Zebra Browser
   Print, `@page { size: 1in 1in }` fallback.
-- **The category map is unverified against real Clover data.** It is derived correctly by
-  construction, but nobody has yet confirmed `FG BL CONSUMABLES - CHEMICALS` actually
-  resolves to `50008`. One live call once this is deployed settles it.
+- **The category map is still unverified in bulk**, though the approach is now confirmed:
+  Brian reports `50008` = `FG BL CONSUMABLES - FOOD - PANTRY`, which is an L3 key verbatim,
+  so `codes[l3]` matches Clover's category name directly and the `merchLabel()` fallback is
+  belt-and-braces. One live run confirms the other ~30.
+
+  🛑 **`50008` ALSO EXISTS IN `IM_TO_L2`, AS "Softline - Apparel".** Two numbering schemes,
+  both five digits starting 50, colliding on this value. `IM_TO_L2` is the IM# rung of the
+  costing ladder and has nothing to do with stickers. Wiring the sticker to it — which is
+  tempting, since it is already there and already numeric — would print a pantry price
+  under an apparel code, and it would still scan. It would just ring up the wrong item.
+
+  ⏸ I asserted earlier that `50008` was CHEMICALS. That was invented, not read: the Clorox
+  manifest had chemicals in mind and I paired the two, then repeated it until it read as a
+  finding. It was never data. The derived map is unaffected — it reads Clover rather than
+  any pairing I might hold — which is the one reason the error cost nothing.

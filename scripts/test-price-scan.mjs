@@ -1848,6 +1848,21 @@ console.log('Price Scan');
      '…so the choice travels with the map rather than being guessed twice');
 }
 
+// 🛑 THE STICKER CODE MAP IS NOT IM_TO_L2, however much they look alike. Both are numeric
+// and both use five digits starting 50, and they COLLIDE: 50008 is a sticker code for
+// FG BL CONSUMABLES - FOOD - PANTRY and separately an IM# that IM_TO_L2 calls
+// Softline - Apparel. Wiring the sticker to IM_TO_L2 would print a pantry price under an
+// apparel code — and it would still scan, just ring up the wrong item.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const zone = src.slice(src.indexOf('const stickerPriceCode ='),
+                         src.indexOf('function merchTree()'));
+  ok(!/IM_TO_L2\s*\[/.test(zone),
+     '🔑 nothing in the sticker path reads IM_TO_L2 — different namespace, colliding numbers');
+  ok(/IM_TO_L2/.test(zone),
+     '…and the collision is written down where the next person will look');
+}
+
 // 🛑 REFUSING IS THE FEATURE. Every path that cannot PROVE the code resolves must return
 // printable:false — including Clover simply not answering. "We do not know" is not
 // permission to print something a customer will be standing in front of.
