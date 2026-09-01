@@ -1,14 +1,15 @@
-// Labor header week nav vs. the pane under it.
+// Which week each Labor tab shows, and whether the header nav names it.
 //
-// The bug: the header nav was hardcoded to the week being PLANNED on all three
-// tabs, while Budget vs Actual and Hours both render the week before it. On
-// 2026-08-25 the nav read "Aug 30 – Sep 5" over an Hours grid titled "Week of
-// Aug 23 – Aug 29" — two different weeks, one screen.
+// Two things are pinned here.
 //
-// The offset is deliberate and stays: Planning forecasts the upcoming week,
-// the other two report the one that closed. What is asserted here is that the
-// LABEL follows the pane. Same class as the 2026-07-03 lesson in lessons.md —
-// a fixed period label left pointing at the old period.
+// 1. The three tabs sit at FIXED offsets from the week being planned, and the
+//    header nav names whichever one is open. It used to be written once, from
+//    the planned week, on every tab — so Hours showed a nav reading
+//    "Aug 30 - Sep 5" above a grid titled "Week of Aug 23 - Aug 29".
+// 2. Hours opens on the last CLOSED week. Hours are keyed from Paylocity after
+//    a week ends, so every column of that grid must already be in the past —
+//    asserted here against a calendar, independently of how the offset table
+//    computes it.
 //
 // The page needs the remote worker + auth to render, so a screenshot proves
 // nothing; the real functions are lifted out of index.html by name (so this
@@ -24,20 +25,20 @@ const eq = (a, b, m) => ok(a === b, `${m} — expected ${JSON.stringify(b)}, got
 
 const src = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
 
-// Lift a top-level `function name(...) { ... }` out of index.html by brace match.
-function lift(name) {
-  const at = src.indexOf(`function ${name}(`);
-  if (at < 0) throw new Error(`index.html no longer defines ${name}()`);
+// Lift a top-level `function name(...) {...}` / `const NAME = {...}` by brace match.
+function lift(decl, name) {
+  const at = src.indexOf(decl === 'const' ? `const ${name} = {` : `function ${name}(`);
+  if (at < 0) throw new Error(`index.html no longer defines ${name}`);
   let i = src.indexOf('{', at), depth = 0;
   for (let j = i; j < src.length; j++) {
     if (src[j] === '{') depth++;
-    else if (src[j] === '}' && --depth === 0) return src.slice(at, j + 1);
+    else if (src[j] === '}' && --depth === 0) return src.slice(at, j + 1) + (decl === 'const' ? ';' : '');
   }
-  throw new Error(`unbalanced braces in ${name}()`);
+  throw new Error(`unbalanced braces in ${name}`);
 }
 
-const NAMES = ['laborUpcomingSaturday', 'laborWeekLabel', 'laborReportedWeek',
-               'laborHeaderWeek', 'laborActRange', 'laborSyncWeekChrome'];
+const FNS = ['laborUpcomingSaturday', 'laborWeekLabel', 'laborWeekFor',
+             'laborHeaderWeek', 'laborActRange', 'laborSyncWeekChrome'];
 
 // One stub DOM node per id the chrome touches, so classList.toggle is real.
 const node = () => {
@@ -55,59 +56,92 @@ const dom = { 'labor-week-label': node(), 'labor-fresh': node() };
 const laborState = { week: null, store: 'all', tab: 'plan', grain: 'w' };
 
 const build = new Function('laborState', 'el', `
-  ${NAMES.map(lift).join('\n')}
-  return { ${NAMES.join(', ')} };
+  ${lift('const', 'LABOR_TAB_WEEKS_BACK')}
+  ${FNS.map((n) => lift('function', n)).join('\n')}
+  return { LABOR_TAB_WEEKS_BACK, ${FNS.join(', ')} };
 `);
 const L = build(laborState, (id) => dom[id]);
 
-// ── The reported week is the one before the planned week ──────────────────
-// Screenshot state: planning Aug 30 – Sep 5, so Actual + Hours report Aug 23–29.
+const SAT = (iso) => new Date(iso + 'T00:00:00Z').getUTCDay() === 6;
+const shift = (iso, days) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
+
+// ── The three tabs, one week apart, oldest first ──────────────────────────
+// Screenshot state: planning Aug 30 – Sep 5.
 laborState.week = '2026-09-05';
-eq(L.laborWeekLabel(laborState.week), 'Aug 30 – Sep 5', 'planned week label');
-eq(L.laborReportedWeek(), '2026-08-29', 'reported week is planned − 7');
-eq(L.laborWeekLabel(L.laborReportedWeek()), 'Aug 23 – Aug 29', 'reported week label');
+eq(L.laborWeekFor('plan'),  '2026-09-05', 'Planning renders the planned week');
+eq(L.laborWeekFor('act'),   '2026-08-29', 'Budget vs Actual is one week back');
+eq(L.laborWeekFor('hours'), '2026-08-22', 'Hours is two weeks back — the last CLOSED week');
+eq(L.laborWeekLabel('2026-09-05'), 'Aug 30 – Sep 5', 'planned week label');
+eq(L.laborWeekLabel('2026-08-29'), 'Aug 23 – Aug 29', 'reported week label');
+eq(L.laborWeekLabel('2026-08-22'), 'Aug 16 – Aug 22', 'entered week label');
+eq(JSON.stringify(L.LABOR_TAB_WEEKS_BACK), '{"plan":0,"act":-1,"hours":-2}', 'offset table');
+ok(L.laborWeekFor('hours') < L.laborWeekFor('act') && L.laborWeekFor('act') < L.laborWeekFor('plan'),
+   'the tabs stay strictly ordered hours < act < plan');
+// An unknown tab must not silently land on some other week.
+eq(L.laborWeekFor('nope'), L.laborWeekFor('plan'), 'unknown tab falls back to no offset');
 
 // Sun→Sat, matching both sheets (tasks/labor-page.md).
-const start = new Date('2026-08-29T00:00:00Z'); start.setUTCDate(start.getUTCDate() - 6);
-eq(start.toISOString().slice(0, 10), '2026-08-23', 'week starts Sunday');
-eq(new Date('2026-08-23T00:00:00Z').getUTCDay(), 0, 'Aug 23 2026 is a Sunday');
-eq(new Date('2026-08-29T00:00:00Z').getUTCDay(), 6, 'Aug 29 2026 is a Saturday');
+for (const w of ['plan', 'act', 'hours']) {
+  ok(SAT(L.laborWeekFor(w)), `${w} week ends on a Saturday`);
+  eq(new Date(shift(L.laborWeekFor(w), -6) + 'T00:00:00Z').getUTCDay(), 0, `${w} week starts on a Sunday`);
+}
 
 // ── The header names whichever week the ACTIVE tab renders ────────────────
-for (const [tab, want] of [['plan', 'Aug 30 – Sep 5'], ['act', 'Aug 23 – Aug 29'], ['hours', 'Aug 23 – Aug 29']]) {
+for (const [tab, want] of [['plan', 'Aug 30 – Sep 5'], ['act', 'Aug 23 – Aug 29'], ['hours', 'Aug 16 – Aug 22']]) {
   laborState.tab = tab;
   L.laborSyncWeekChrome();
   eq(dom['labor-week-label'].textContent, want, `header label on the ${tab} tab`);
+  eq(dom['labor-week-label'].textContent, L.laborWeekLabel(L.laborWeekFor(tab)), `${tab} nav matches its own pane`);
 }
 
-// The regression itself: on Hours the header used to read the PLANNED week
-// while the pane read the reported one. Those must now be the same string.
+// The original regression: on Hours the nav used to read the PLANNED week.
 laborState.tab = 'hours';
 L.laborSyncWeekChrome();
-const paneTitle = 'Week of ' + L.laborWeekLabel(L.laborReportedWeek());   // laborHoursRender
-eq(paneTitle, 'Week of ' + dom['labor-week-label'].textContent, 'Hours pane title matches the nav');
+eq('Week of ' + L.laborWeekLabel(L.laborWeekFor('hours')),          // laborHoursRender's title
+   'Week of ' + dom['labor-week-label'].textContent, 'Hours pane title matches the nav');
 ok(dom['labor-week-label'].textContent !== L.laborWeekLabel(laborState.week),
    'Hours nav no longer shows the planned week');
 
-// Budget vs Actual ends on that same week — the two report tabs agree.
+// Budget vs Actual still ends on the week in progress — moving Hours must not
+// have dragged it along.
 laborState.tab = 'act';
 L.laborSyncWeekChrome();
-eq(L.laborActRange().to, L.laborReportedWeek(), 'Budget vs Actual ends on the reported week');
+eq(L.laborActRange().to, '2026-08-29', 'Budget vs Actual still anchors on the week in progress');
+eq(L.laborActRange().to, L.laborWeekFor('act'), 'Budget vs Actual fetches the week it labels');
 eq('Week of ' + L.laborWeekLabel(L.laborActRange().to), 'Week of ' + dom['labor-week-label'].textContent,
    'Budget vs Actual pane matches the nav');
-// Daily grain spans 14 days ending there; the range must not move with the tab.
-eq(L.laborActRange().to, '2026-08-29', 'reported week unchanged by tab switching');
+laborState.grain = 'd';
+eq(L.laborActRange().from, '2026-08-16', 'daily grain still spans the 14 days ending there');
+laborState.grain = 'w';
+eq(L.laborActRange().from, '2026-07-05', 'weekly grain still spans the 8 weeks ending there');
 
-// ── The arrows move both weeks together ───────────────────────────────────
-// laborShiftWeek only ever touches laborState.week, so the label and the pane
-// stay in step — a shift can never desync them.
-for (const [n, plan, rep] of [[-1, 'Aug 23 – Aug 29', 'Aug 16 – Aug 22'], [1, 'Sep 6 – Sep 12', 'Aug 30 – Sep 5']]) {
-  const d = new Date('2026-09-05T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n * 7);
-  laborState.week = d.toISOString().slice(0, 10);
-  laborState.tab = 'plan'; L.laborSyncWeekChrome();
-  eq(dom['labor-week-label'].textContent, plan, `plan tab after shift ${n}`);
-  laborState.tab = 'hours'; L.laborSyncWeekChrome();
-  eq(dom['labor-week-label'].textContent, rep, `hours tab after shift ${n}`);
+// ── Hours really does open on the last CLOSED week, any day of the week ───
+// Checked against the calendar, not against the offset table: the most recent
+// Saturday STRICTLY before today, since a week is not keyable until it ends.
+for (const today of ['2026-08-23', '2026-08-25', '2026-08-28', '2026-08-29', '2026-08-30', '2026-09-01', '2026-09-05']) {
+  laborState.week = L.laborUpcomingSaturday(today);
+  const wkEnd = L.laborWeekFor('hours');                            // what laborHoursLoad fetches
+  let want = shift(today, -1);
+  while (!SAT(want)) want = shift(want, -1);
+  eq(wkEnd, want, `Hours opens on the last closed week from ${today}`);
+  ok(wkEnd < today, `every Hours column is in the past from ${today}`);
+  // …and it is the LAST such week, not an older one.
+  ok(shift(wkEnd, 7) >= today, `Hours is not further back than it needs to be from ${today}`);
+  // Planning stays the upcoming week — a schedule is written before it runs.
+  ok(L.laborWeekFor('plan') > today, `Planning is still ahead of ${today}`);
+}
+
+// ── The arrows move all three together ────────────────────────────────────
+// laborShiftWeek only ever touches laborState.week, so the offsets hold and the
+// label cannot desync from the pane.
+for (const n of [-2, -1, 1, 2]) {
+  laborState.week = shift('2026-09-05', n * 7);
+  for (const tab of ['plan', 'act', 'hours']) {
+    laborState.tab = tab;
+    L.laborSyncWeekChrome();
+    const base = { plan: '2026-09-05', act: '2026-08-29', hours: '2026-08-22' }[tab];
+    eq(dom['labor-week-label'].textContent, L.laborWeekLabel(shift(base, n * 7)), `${tab} tab after shift ${n}`);
+  }
 }
 
 // ── The trailing-weeks chip is Planning's, and only Planning's ────────────
@@ -122,24 +156,13 @@ for (const [tab, shown] of [['plan', true], ['act', false], ['hours', false]]) {
 ok(/id="labor-fresh"[^>]*class="[^"]*\bhidden sm:inline-flex\b/.test(src),
    'labor-fresh still ships `hidden sm:inline-flex` for the toggle to act on');
 
-// ── Planning really is the UPCOMING week, on every weekday ────────────────
-// A schedule is written before the week it covers, so from any day of a week
-// the planned week is the NEXT one and the reported week is the current one.
-for (const [today, planEnd] of [
-  ['2026-08-23', '2026-09-05'],   // Sunday
-  ['2026-08-25', '2026-09-05'],   // Tuesday — the screenshot's state
-  ['2026-08-29', '2026-09-05'],   // Saturday, the last day of the week
-  ['2026-08-30', '2026-09-12'],   // next Sunday rolls it forward
-]) {
-  eq(L.laborUpcomingSaturday(today), planEnd, `planned week from ${today}`);
-  laborState.week = L.laborUpcomingSaturday(today);
-  const rep = new Date(planEnd + 'T00:00:00Z'); rep.setUTCDate(rep.getUTCDate() - 7);
-  eq(L.laborReportedWeek(), rep.toISOString().slice(0, 10), `reported week from ${today}`);
-}
-
-// Nothing else may write the nav label — one writer is what keeps it honest.
-const writers = (src.match(/labor-week-label/g) || []).length;
-eq(writers, 2, 'labor-week-label appears only in the markup and laborSyncWeekChrome');
+// Nothing else may write the nav label, and nothing may re-open-code an offset:
+// one writer and one table are what keep the nav and the panes in step.
+eq((src.match(/labor-week-label/g) || []).length, 2,
+   'labor-week-label appears only in the markup and laborSyncWeekChrome');
+const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+eq((code.match(/LABOR_TAB_WEEKS_BACK/g) || []).length, 2,
+   'LABOR_TAB_WEEKS_BACK is declared once and read once, by laborWeekFor');
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'} — ${pass} passed, ${fail} failed`);
-process.exit(fail === 0 ? 1 && 0 : 1);
+process.exit(fail === 0 ? 0 : 1);

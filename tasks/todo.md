@@ -72,9 +72,47 @@ returns the same `{from, to}` it did before.
   so the toggle acts on a real rule. No new class was introduced — the chip already shipped
   `hidden sm:inline-flex`, which is why it renders in the report.
 
-**Left alone deliberately — worth a decision, not a silent change:**
-Budget vs Actual and Hours anchor on the week *in progress*, not the last closed one. On a
-Tuesday that means Hours opens on a week with five of seven columns blank and you press `‹`
-once to reach the week you are actually keying from Paylocity. That anchoring is documented
-as intentional ("Anchored on the CURRENT week"), so changing it is a product call, not a
-bug fix. Flagged to Brian.
+**Follow-up, answered: Hours now opens on the last CLOSED week.**
+The open question above — Hours anchoring on the week *in progress*, so a Tuesday landed you
+on a mostly blank grid — came back "make hours default to the last closed week". Done below.
+
+---
+
+# Hours opens on the last closed week (2026-09-01, follow-up)
+
+**Asked:** "make hours default to the last closed week."
+
+Hours are keyed from Paylocity once a week has ENDED, so the tab was opening one week too
+early. Budget vs Actual is unchanged — it reports pace on the week in progress and its tiles
+already count complete periods only.
+
+## Plan
+
+- [x] Replace `laborReportedWeek()` with `LABOR_TAB_WEEKS_BACK = { plan: 0, act: -1, hours: -2 }`
+      plus `laborWeekFor(tab)`. One table states how far back each tab sits; the panes, their
+      fetches and the header nav all read it, so a pane and its label cannot disagree.
+- [x] `laborHoursLoad()` → `laborWeekFor('hours')`; `laborActRange()` → `laborWeekFor('act')`
+      (unchanged week, now named).
+- [x] Assert "last closed week" against a CALENDAR, not against the offset table — the most
+      recent Saturday strictly before today — on every weekday including Saturday itself.
+
+## Review
+
+`index.html`: the two derived-week helpers collapse into one table + `laborWeekFor(tab)`.
+`laborHeaderWeek()` is now a one-liner over it. Nothing else changed — Planning still plans
+the upcoming week and Budget vs Actual still anchors on the week in progress, both asserted.
+
+The arrows still move only `laborState.week`, so all three tabs shift together and keep
+their spacing; switching tabs now steps the nav a week at a time, which is honest — each tab
+is about a different week, and its own pane title says so.
+
+**Verified:**
+- `scripts/test-labor-week-label.mjs` — 74 assertions (was 32). The load-bearing new one:
+  for each of seven `today` values spanning Sun→Sat, `laborWeekFor('hours')` equals the most
+  recent Saturday *strictly before* that day, every column of the grid is in the past, and it
+  is not further back than it needs to be. Saturday is the edge case that matters — the week
+  ending today has not closed yet, and Hours correctly stays on the one before it.
+- **Negative control:** flipping the table back to `hours: -1` fails 20 assertions, including
+  "every Hours column is in the past" on all seven days.
+- `npm test` — 2584 assertions across 51 suites, all pass.
+- All inline JS in `index.html` parses (`node --check`).

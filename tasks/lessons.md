@@ -853,3 +853,31 @@ one of them — it is exactly why the chrome has to follow the active pane.
 functions out of `index.html` by name and drives them; the negative control — a scratch copy
 with the old one-line header behaviour restored — reproduces the screenshot exactly
 (`expected "Aug 23 – Aug 29", got "Aug 30 – Sep 5"`) and fails 9 assertions.
+
+## An entry surface opens on the period you HAVE data for (2026-09-01)
+
+**Correction:** I fixed the Labor week-nav mislabel, noticed Hours opened on the week *in
+progress* (a Tuesday → five of seven columns blank, press `‹` to get to work), flagged it as
+"a product call, not a bug fix" and left it. Brian: "make hours default to the last closed
+week." He was right and I should not have needed asking.
+
+**Lesson — a reporting view and an ENTRY view do not want the same anchor.** Budget vs Actual
+reports pace, so the week in progress is the useful default. Hours entry transcribes numbers
+that only exist once the week has ended and payroll has run, so the week in progress is the
+one week you can never key. When a surface exists to be *filled in*, its default period is the
+most recent one whose source data is complete — not "now", and not whatever the neighbouring
+tab uses. "It matches the tab next to it" is symmetry, not a reason.
+
+<rules>
+1. **Ask what the source of truth is and when it lands.** Paylocity closes weekly; that fact,
+   not the calendar, sets the default. Same shape as any month-end or settlement-lagged feed.
+2. **A default that always needs one click is a bug, not a preference.** If the first thing
+   you would do on opening a surface is navigate, the default is wrong.
+3. **Assert a relative default against a CALENDAR, not against the offset that produced it.**
+   `laborWeekFor('hours')` is pinned to "the most recent Saturday strictly before today" over
+   all seven weekdays — the Saturday case is the one an offset gets wrong, since the week
+   ending today has not closed.
+4. **When N surfaces derive periods from one selector, put the offsets in ONE table**
+   (`LABOR_TAB_WEEKS_BACK`) that the panes, their fetches and the nav label all read. Adding
+   a third distinct week was then one number, and the nav could not fall out of step.
+</rules>
