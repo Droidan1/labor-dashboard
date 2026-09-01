@@ -17870,8 +17870,18 @@
     }
     mfSay('Applying…');
     try {
+      const pickedBasis = el('mf-basis').value;
       await mfApi('manifest-remap', { id: mfPending.id, ...mfFile, column_map: map,
-        cost_basis: el('mf-basis').value, units_per_case: Number(el('mf-upc').value) || 12 });
+        cost_basis: pickedBasis,
+        // 🔑 SENT ALONGSIDE, FOR A WORKER THAT PREDATES cost_basis. This page ships on a
+        // merge to main; the worker is a MANUAL deploy. So there is a window — open-ended,
+        // not a few seconds — where the new page is talking to the old API, and the old
+        // remap handler reads only `sell_as`. Without this the "Cost is" control would
+        // silently do nothing for the whole window, which is worse than not shipping it.
+        // The new worker prefers cost_basis and never reads this; 'extended' degrades to
+        // 'each', which is exactly what the old model did with such a sheet anyway.
+        sell_as: pickedBasis === 'case' ? 'case' : 'each',
+        units_per_case: Number(el('mf-upc').value) || 12 });
       mfSay('Categorising…');
       await mfApi('manifest-classify', { id: mfPending.id });
       mfOpen(mfPending.id);
