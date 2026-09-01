@@ -17813,6 +17813,19 @@
   // The mapping is always shown for confirmation, even when it was guessed correctly —
   // a wrong column is silent everywhere downstream, and this is the one cheap moment to
   // catch it.
+  // 🔑 SAY WHICH IT IS AND WHY. The old copy here asserted a rule at the reader ("only set
+  // this if Qty and Cost are per CASE"); it could not say what we had actually concluded,
+  // because nothing concluded anything — the value was just whatever the default was. Now
+  // there is a decision and a reason for it, and the one case that needs a human is the one
+  // that says so.
+  function mfBasisNote(j) {
+    const col = j.cost_header ? `"${mfEsc(j.cost_header)}"` : 'the cost column';
+    if (j.cost_basis_source === 'column') return `read from ${col} — change it if that is wrong`;
+    if (j.cost_basis_source === 'remembered') return `remembered from this vendor's last load`;
+    if (j.cost_basis_source === 'you') return `set by you`;
+    return `${col} does not say what unit it is in, so this is a guess — check it against the sample rows below`;
+  }
+
   function mfShowMapping(j) {
     el('mf-back').classList.remove('hidden');
     el('mf-pill').textContent = j.map_source === 'template' ? 'Mapped from template' : 'Check the mapping';
@@ -17824,14 +17837,15 @@
       j.headers.map(h => `<option value="${mfEsc(h)}" ${h === sel ? 'selected' : ''}>${mfEsc(h)}</option>`).join('');
     el('mf-view').innerHTML = `<div class="mf-panel">
       <div class="mf-bar"><span class="mf-barlbl">Columns · ${mfEsc(j.vendor)}</span>
-        <label class="mf-row" style="gap:6px;font-size:13px">Sells as
-          <select id="mf-sellas" class="mf-in">
-            <option value="each" ${j.sell_as === 'each' ? 'selected' : ''}>each</option>
-            <option value="case" ${j.sell_as === 'case' ? 'selected' : ''}>case</option>
+        <label class="mf-row" style="gap:6px;font-size:13px">Cost is
+          <select id="mf-basis" class="mf-in">
+            <option value="unit" ${j.cost_basis === 'unit' ? 'selected' : ''}>per unit</option>
+            <option value="case" ${j.cost_basis === 'case' ? 'selected' : ''}>per case</option>
+            <option value="extended" ${j.cost_basis === 'extended' ? 'selected' : ''}>a line total</option>
           </select></label>
         <label class="mf-row" style="gap:6px;font-size:13px" title="Only used for lines where the sheet gives no case pack of its own">Units per case
           <input id="mf-upc" class="mf-in" style="width:70px" value="${j.units_per_case}"></label>
-        <span style="font-size:11.5px;color:#6b6453">only set this if Qty and Cost are per CASE — a pack column alone does not mean they are</span>
+        <span style="font-size:11.5px;color:#6b6453">${mfBasisNote(j)}</span>
         <button class="mf-btn" style="margin-left:auto" onclick="mfConfirmMap()">Use this mapping</button>
       </div>
       <div class="mf-body">
@@ -17857,7 +17871,7 @@
     mfSay('Applying…');
     try {
       await mfApi('manifest-remap', { id: mfPending.id, ...mfFile, column_map: map,
-        sell_as: el('mf-sellas').value, units_per_case: Number(el('mf-upc').value) || 12 });
+        cost_basis: el('mf-basis').value, units_per_case: Number(el('mf-upc').value) || 12 });
       mfSay('Categorising…');
       await mfApi('manifest-classify', { id: mfPending.id });
       mfOpen(mfPending.id);
@@ -17964,7 +17978,11 @@
     el('mf-view').innerHTML = `
       <div class="mf-panel">
         <div class="mf-bar"><span class="mf-barlbl">${mfEsc(m.vendor)}</span>
-          <span style="font-size:12px;color:#6b6453">${mfEsc(m.sell_as === 'case' ? `sold as cases of ${m.units_per_case}` : 'sold as each')}</span>
+          <span style="font-size:12px;color:#6b6453">${mfEsc(m.sell_as === 'case' ? `sold as cases of ${m.units_per_case}` : 'sold as each')}${
+            // "sold as each" is true after an extended cost is normalised, but it is not the
+            // whole truth: those numbers were divided on the way in. Say so here, where
+            // someone reading the load's money can see it, not only on the lines.
+            m.cost_basis === 'extended' ? mfEsc(' · costs divided from line totals') : ''}</span>
           <button class="mf-btn ghost" style="margin-left:auto" onclick="mfClassify()">Categorise remaining</button>
           <button class="mf-btn ghost" onclick="mfRetail()">Look up retail</button>
           <button class="mf-btn ghost" onclick="mfDelete()">Delete</button>

@@ -8878,9 +8878,18 @@ const MANIFEST_HINTS = {
   // first made a good buy look 85% dearer and it would have been rejected. The named
   // deal-price columns therefore come FIRST and /^wholesale/ sits last, where it only
   // wins if a sheet offers nothing better.
+  // The extended forms sit LATE, after every per-unit and per-case name and after a bare
+  // "Cost"/"Price": a sheet carrying both "Unit Price" and "Extended Cost" means the first,
+  // and taking the total when a unit price is right there buys a division for nothing.
+  // 🛑 Each one names cost/price/amount rather than matching "Extended" alone — "Extended
+  // Retail" is MSRP's column, and a bare /^ext/ here would take it and price the load off
+  // the retail we are supposed to be beating.
   cost: [/^unit\s*price/i, /^sale\s*price/i, /^your\s*cost/i, /unit\s*cost/i, /^ea\s*cost/i,
          /^price\s*per\s*unit/i, /^case\s*price/i, /^deal\s*price/i, /^rate$/i,
-         /^cost\b/i, /^price$/i, /^wholesale/i, /^wsl/i],
+         /^cost\b/i, /^price$/i,
+         /^ext(?:ended)?\.?\s*(?:price|cost|amount)/i, /^line\s*(?:total|cost|price)/i,
+         /^total\s*(?:cost|price)/i,
+         /^wholesale/i, /^wsl/i],
   // The reference we are beating, never what we pay. Read as a sanity check only.
   msrp: [/^msrp\b/i, /^list\b/i, /retail\s*price/i, /^srp\b/i, /^orig(inal)?\s*retail/i,
          /^unit\s*retail/i, /^retail$/i, /^unit\s*wholesale/i],
@@ -8889,6 +8898,72 @@ const MANIFEST_HINTS = {
   // with both a "Grade" and a "Condition" column means the second one.
   condition: [/^condition/i, /^sort$/i, /^cosmetic/i, /^grade$/i],
 };
+
+// ─── What unit is the cost column quoted in? ─────────────────────────────────
+//
+// 🔑 THE COST HINTS ABOVE MATCH THREE DIFFERENT KINDS OF NUMBER and nothing ever noticed.
+// `sell_as` was taken from the caller, else the template, else 'each' — never from the
+// column that was actually mapped — so the two could disagree indefinitely, and on two of
+// four saved templates they did:
+//
+//   "Unit Price" / "Price per unit"  a shelf unit    → each     ✓ Alliance, Kind
+//   "Case Price"                     a case          → case     ✗ WI Food read 12× high
+//   "Sale Price"                     a LINE TOTAL    → neither  ✗ Clorox read $900.93/unit
+//
+// 🛑 CLASSIFY ONLY WHAT THE HEADER ACTUALLY NAMES. "Sale Price", "Deal Price", "Your Cost"
+// and a bare "Cost" do not say what unit they are in, and on a different vendor's sheet
+// any of them may well be per unit. Guessing from a name that carries no unit is exactly
+// how the Clorox load came to say `each` about a line total. Unknown returns null, which
+// keeps today's behaviour and asks a human — it does not invent an answer.
+const MANIFEST_COST_BASIS = {
+  unit: [/^unit\s*(?:price|cost)/i, /^(?:price|cost)\s*(?:per|\/)\s*unit/i, /^ea\.?\s*(?:price|cost)/i,
+         /^(?:price|cost)\s*(?:per|\/)\s*ea\b/i, /^each\s*(?:price|cost)/i, /^per\s*unit\b/i],
+  case: [/^case\s*(?:price|cost)/i, /^(?:price|cost)\s*(?:per|\/)\s*case/i, /^per\s*case\b/i,
+         /^cs\s*(?:price|cost)/i],
+  // A line total: the sheet has already multiplied by the quantity for us. Kept in step
+  // with the extended forms in MANIFEST_HINTS.cost — a header that can be MAPPED as a cost
+  // but not CLASSIFIED would silently fall back to 'unit', which is the failure this whole
+  // pair of tables exists to prevent.
+  extended: [/^ext(?:ended)?\.?\s*(?:price|cost|amount)/i, /^line\s*(?:total|price|cost)/i,
+             /^total\s*(?:price|cost|amount)/i, /^amount$/i, /^(?:price|cost)\s*ext(?:ended)?/i],
+};
+
+// The vocabulary, in one place. Every value that reaches the database is checked against
+// this — a basis arriving from a request body is user input, and an unrecognised one must
+// fall through to the derivation rather than be stored and silently divide by nothing.
+const MANIFEST_COST_BASES = Object.keys(MANIFEST_COST_BASIS);
+
+// A basis the caller sent, in either the new vocabulary or the old two-value one. `sell_as`
+// is still accepted because it is the contract every existing client speaks: 'case' has
+// always meant "cost is quoted per case", which is a basis by another name.
+function manifestBasisFromBody(body) {
+  if (MANIFEST_COST_BASES.includes(body?.cost_basis)) return body.cost_basis;
+  if (body?.sell_as) return body.sell_as === "case" ? "case" : "unit";
+  return null;
+}
+
+// A legacy `sell_as` default, read as the basis it always implied.
+const manifestBasisFromSellAs = (v) => v ? (v === "case" ? "case" : "unit") : null;
+
+// The basis of whichever header ended up mapped to `cost`, or null when the header does
+// not name a unit. Takes the map rather than a header string so the caller cannot ask
+// about a column that is not the one being used.
+function manifestCostBasis(map) {
+  const header = String(map?.cost || "").trim();
+  if (!header) return null;
+  for (const [basis, pats] of Object.entries(MANIFEST_COST_BASIS)) {
+    if (pats.some(re => re.test(header))) return basis;
+  }
+  return null;
+}
+
+// Each basis lands on a path that is ALREADY correct downstream, which is the whole reason
+// this is safe: nothing in the scorer's money math changes.
+//   unit     → verbatim, 'each'   the behaviour every existing manifest already has
+//   case     → verbatim, 'case'   the scorer divides by units_per_case for us
+//   extended → ÷ qty at import, 'each'  normalised on the way in, so nothing downstream
+//                                       has to learn a third basis
+const manifestSellAsFor = (basis) => basis === "case" ? "case" : "each";
 // ─── .xlsx → rows ────────────────────────────────────────────────────────────
 //
 // An .xlsx is a ZIP of XML. Workers ship DecompressionStream("deflate-raw"), so this needs
@@ -9344,7 +9419,7 @@ function manifestRound(price, rule) {
 // Write a manifest's lines from a mapped CSV, filling anything item_cache already knows.
 // The cache is what makes the SECOND manifest carrying a product cost nothing to
 // classify — and what keeps a human's correction from being overwritten by the model.
-async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
+async function manifestWriteLines(env, manifestId, headers, dataRows, map, costBasis = "unit") {
   const col = {};
   for (const f of MANIFEST_FIELDS) if (map[f]) col[f] = headers.indexOf(map[f]);
 
@@ -9411,6 +9486,31 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
     };
   });
 
+  // 🔑 AN EXTENDED COST IS A LINE TOTAL, AND IT IS NORMALISED HERE — ONCE, ON THE WAY IN.
+  // Clorox's "Sale Price" reads $900.93 against a qty of 119. That is $7.57 a unit, and
+  // stored raw it was read as the price of one bottle.
+  //
+  // Dividing at import rather than teaching the scorer a third basis is deliberate. Every
+  // consumer of `cost` — the scorer's costPerUnit, freight amortisation, the retail
+  // comparison — already reads it as "per the manifest's own unit", and this repo's money
+  // math is the last place to add a branch. Normalising here means none of them changes.
+  //
+  // The original is kept on the line: a figure this one was derived from is exactly what
+  // someone wants when they doubt it.
+  //
+  // 🛑 NO QTY, NO DIVISION. There is nothing to divide by, and a line total left standing
+  // as a unit price is the precise error this exists to stop — so the line says so instead
+  // of being quietly wrong. `qty > 0` and not merely non-null: a zero would divide to
+  // Infinity and a negative would flip the sign.
+  if (costBasis === "extended") {
+    for (const l of parsed) {
+      if (l.cost === null) continue;
+      if (!(l.qty > 0)) { l.costTotalNoQty = true; continue; }
+      l.costTotal = l.cost;
+      l.cost = roundCents(l.cost / l.qty);
+    }
+  }
+
   // One read for the whole file. Range-bounded rather than IN(?,?,…): D1 caps bound
   // params at 100 per query and a manifest can carry thousands of identifiers.
   const cache = {};
@@ -9440,6 +9540,9 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
       if (l.qty === null) flags.push("no qty");
       if (l.qtyApprox) flags.push("qty is a minimum");
       if (l.cost === null) flags.push("no cost");
+      // Audit trail for the division above — the sheet's own number, and what it was cut by.
+      if (l.costTotal !== undefined) flags.push(`cost from line total: ${l.costTotal} \u00f7 ${l.qty}`);
+      if (l.costTotalNoQty) flags.push("cost is a line total but the line has no qty");
       // The vendor's pack and the description's pack are two claims about the same
       // thing. On the Kind file three lines say "6 ct" in the text while the Case pack
       // column says 5. Neither is silently preferred without saying so.
@@ -17588,19 +17691,46 @@ export default {
         }
         if (!map) { map = manifestGuessMap(headers); mapSource = "guessed"; }
         const missing = manifestMissing(map, headers);
-        const sellAs = (body?.sell_as || tpl?.sell_as_default || "each") === "case" ? "case" : "each";
+        // 🔑 THE COLUMN GETS A VOTE AT LAST. `sell_as` used to be the caller's, else the
+        // template's, else 'each' — and never once the header that was actually mapped to
+        // `cost`. So "Case Price" and "Sale Price" both stored 'each', and the disagreement
+        // was invisible because nothing ever compared them. Strongest evidence first:
+        //
+        //   1. the caller — a human answering this exact question on the mapping screen
+        //   2. the vendor's REMEMBERED basis — that same human, on the last load
+        //   3. what the mapped header NAMES — "Unit Price", "Case Price", "Extended"
+        //   4. the vendor's legacy sell_as default, read as the basis it always implied
+        //   5. 'unit', which is what every manifest already did
+        //
+        // 🛑 A REMEMBERED ANSWER BEATS THE HEADER, and that ordering is load-bearing. A
+        // vendor can name a column "Unit Cost" and quote cases in it; if the header could
+        // override what someone told us last time, that correction would be impossible to
+        // make stick. The header only ever fills a vacuum — which is precisely the vacuum
+        // the four saved templates are sitting in today.
+        const named = manifestCostBasis(map);
+        const fromBody = manifestBasisFromBody(body);
+        const remembered = MANIFEST_COST_BASES.includes(tpl?.cost_basis_default) ? tpl.cost_basis_default : null;
+        const costBasis = fromBody || remembered || named
+          || manifestBasisFromSellAs(tpl?.sell_as_default) || "unit";
+        const sellAs = manifestSellAsFor(costBasis);
         const upc = Number(body?.units_per_case ?? tpl?.units_per_case_default ?? 12) || 12;
 
         const id = randomHex(12), now = new Date().toISOString();
         const who = currentUser?.email || currentUser?.name || null;
         await env.DB.prepare(
-          `INSERT INTO manifests (id, vendor, filename, uploaded_by, uploaded_at, sell_as, units_per_case, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`
-        ).bind(id, vendor, String(body?.filename || "").slice(0, 200) || null, who, now, sellAs, upc).run();
+          `INSERT INTO manifests (id, vendor, filename, uploaded_by, uploaded_at, sell_as, units_per_case, cost_basis, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft')`
+        ).bind(id, vendor, String(body?.filename || "").slice(0, 200) || null, who, now, sellAs, upc, costBasis).run();
 
-        const wrote = missing.length ? null : await manifestWriteLines(env, id, headers, dataRows, map);
+        const wrote = missing.length ? null : await manifestWriteLines(env, id, headers, dataRows, map, costBasis);
         return new Response(JSON.stringify({
           ok: true, id, vendor, sell_as: sellAs, units_per_case: upc,
+          // 🔑 The page shows BOTH, because "we read it off your column" and "we fell back
+          // to the default" are different levels of confidence and the reader has to be
+          // able to tell them apart. `cost_header` names the column so the claim is checkable.
+          cost_basis: costBasis, cost_basis_source: fromBody ? "you" : remembered ? "remembered"
+            : named ? "column" : tpl?.sell_as_default ? "remembered" : "default",
+          cost_header: map?.cost || null,
           headers, column_map: map, map_source: mapSource, missing,
           // The page shows these: a skipped preamble the user did not expect, or a header
           // that matched only one field, both mean "look at this before trusting it".
@@ -17650,22 +17780,38 @@ export default {
         if (missing.length) {
           return new Response(JSON.stringify({ error: `Still unmapped: ${missing.join(", ")}` }), { status: 400, headers: corsJson });
         }
-        const sellAs = (body?.sell_as || m.sell_as) === "case" ? "case" : "each";
+        // 🛑 THE BASIS IS RE-DECIDED HERE, NOT INHERITED. A remap re-reads the RAW file, so
+        // normalising an extended cost is a division that has to happen again — and against
+        // the mapping the caller just chose, which may have moved `cost` to a different
+        // column with a different basis entirely. Inheriting the stored basis while the
+        // column moved underneath is how a line total gets divided twice, or not at all.
+        //
+        // 🔑 AND HERE THE COLUMN OUTRANKS THE STORED BASIS — the reverse of upload, for the
+        // reason that decides it either way: whoever is remapping is editing the mapping
+        // right now, so the column they just picked is fresher evidence than a basis saved
+        // against the mapping they are replacing. Their own answer still beats both.
+        const named = manifestCostBasis(map);
+        const fromBody = manifestBasisFromBody(body);
+        const costBasis = fromBody || named
+          || (MANIFEST_COST_BASES.includes(m.cost_basis) ? m.cost_basis : null)
+          || manifestBasisFromSellAs(m.sell_as) || "unit";
+        const sellAs = manifestSellAsFor(costBasis);
         const upc = Number(body?.units_per_case ?? m.units_per_case) || 12;
-        await env.DB.prepare(`UPDATE manifests SET sell_as = ?, units_per_case = ? WHERE id = ?`)
-          .bind(sellAs, upc, m.id).run();
+        await env.DB.prepare(`UPDATE manifests SET sell_as = ?, units_per_case = ?, cost_basis = ? WHERE id = ?`)
+          .bind(sellAs, upc, costBasis, m.id).run();
         await env.DB.prepare(`DELETE FROM manifest_lines WHERE manifest_id = ?`).bind(m.id).run();
-        const rewrote = await manifestWriteLines(env, m.id, headers, rows.slice(rehdr.headerRow + 1), map);
+        const rewrote = await manifestWriteLines(env, m.id, headers, rows.slice(rehdr.headerRow + 1), map, costBasis);
 
         if (body?.save_template !== false) {
           const now = new Date().toISOString();
           await env.DB.prepare(
-            `INSERT INTO vendor_templates (vendor, column_map, sell_as_default, units_per_case_default, updated_by, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)
+            `INSERT INTO vendor_templates (vendor, column_map, sell_as_default, units_per_case_default, cost_basis_default, updated_by, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(vendor) DO UPDATE SET column_map = excluded.column_map,
                sell_as_default = excluded.sell_as_default, units_per_case_default = excluded.units_per_case_default,
+               cost_basis_default = excluded.cost_basis_default,
                updated_by = excluded.updated_by, updated_at = excluded.updated_at`
-          ).bind(m.vendor, JSON.stringify(map), sellAs, upc,
+          ).bind(m.vendor, JSON.stringify(map), sellAs, upc, costBasis,
                  currentUser?.email || currentUser?.name || null, now).run();
         }
         return new Response(JSON.stringify({

@@ -91,3 +91,85 @@ the old code, which is the exact mechanism behind the live $392.55.
   manifest. Clearing them is a write, and per the repo rules that is Brian's call.
 - **The Agent stays off.** Once routing is right, re-measure how many lines genuinely still
   need it. Expectation: close to zero.
+
+---
+
+# Manifest mapping: make the cost basis a fact, not a default
+
+`worker.js:17591` — `sell_as` is taken from the caller, else the template default, else
+`"each"`, and **never looks at which column was mapped to `cost`**. Two of the four saved
+vendor templates are wrong because of it:
+
+| Vendor | mapped cost column | true basis | `sell_as` today |
+|---|---|---|---|
+| Alliance | `Unit Price` | per unit | `each` ✓ |
+| Kind | `Price per unit` | per unit | `each` ✓ |
+| WI Food | `Case Price` | **per case** | `each` ✗ |
+| Clorox | `Sale Price` | **extended line total** | `each` ✗ |
+
+Clorox is the one no `sell_as` value can express: `each` reads $900.93/unit, `case` reads
+$75.08, the truth is $7.57. Decision taken: **normalise at import** — divide by qty, store
+a per-unit cost, keep the original on the line as a flag.
+
+Each basis maps onto a path that is already correct downstream, so the scorer's money math
+is not touched:
+
+    unit      → store verbatim,          sell_as = each   (today's behaviour)
+    case      → store verbatim,          sell_as = case   (scorer already ÷ units_per_case)
+    extended  → cost ÷ qty at write time, sell_as = each
+
+## Plan
+
+- [x] `migration-054.sql` — `manifests.cost_basis`, `vendor_templates.cost_basis_default`
+- [x] `MANIFEST_COST_BASIS` — header → `unit｜case｜extended`, and **`null` when the header
+      does not name its unit**. "Sale Price" is genuinely ambiguous; guessing it from the
+      name is how this happened. Unknown keeps today's behaviour and says so.
+- [x] Upload derives the basis and sets `sell_as` from it; reports `cost_basis` + source
+- [x] `manifestWriteLines` divides an extended cost by qty, flags the line with the original
+- [x] No qty → cannot divide → flag, never guess
+- [x] Remap accepts a corrected `cost_basis`, persists it, re-normalises; template remembers it
+- [x] Mapping screen: "Sells as each/case" → "Cost is per unit / per case / line total"
+- [x] Tests, full suite, then push
+
+## Not in scope
+
+- Re-running or rewriting the existing Clorox manifest in D1. That is a database mutation
+  and needs explicit confirmation with a summary of what it would touch.
+
+## Review — cost basis
+
+**Landed.** 2,671 assertions across 51 suites, all green (2,643 before; +28 new).
+
+### Precedence, and the one ordering that matters
+
+    upload:  caller  >  remembered  >  column  >  legacy sell_as  >  'unit'
+    remap:   caller  >  column      >  stored  >  legacy sell_as  >  'unit'
+
+**A remembered answer beats the header on upload, and that is load-bearing.** A vendor can
+name a column "Unit Cost" and quote cases in it; if the header could override what someone
+told us last time, the correction could never stick. The existing suite caught me getting
+this backwards — `test-manifest-scorer` asserts a saved `sell_as` survives the next upload,
+and my first cut let the header win. **On remap the column wins instead**, because whoever
+is remapping is editing the mapping right now, so the column they just picked is fresher
+than a basis stored against the mapping they are replacing.
+
+### A gap the tests found
+
+`MANIFEST_HINTS.cost` had no extended forms at all — "Extended Cost" was never mapped as a
+cost column, so the basis could never have been detected no matter how good the classifier
+was. Added late in the list (a sheet with both "Unit Price" and "Extended Cost" means the
+first), and each pattern names cost/price/amount rather than matching "Extended" alone —
+a bare `/^ext/` would take **"Extended Retail"**, which is MSRP's column, and price the
+load off the retail we are supposed to be beating.
+
+### Proof
+
+Reverting `worker.js` alone fails the new assertions immediately — with no `cost_basis` in
+the response and "Extended Cost" unmapped, the suite aborts at the first fixture.
+
+### Still open
+
+- **Clorox is not auto-fixed, by design.** "Sale Price" does not name a unit, and guessing
+  one from a name that does not carry it is exactly how this happened. The mapping screen
+  now says so in those words and offers the control. Correcting that vendor means a remap
+  (a database write) and is not done here.
