@@ -1793,5 +1793,69 @@ console.log('Price Scan');
   globalThis.fetch = realFetch;
 }
 
+// ── 🛑 THE STICKER CODE IS A LOOKUP KEY, NOT A LABEL ───────────────────────
+// The QR on a 1x1 shelf sticker carries `BL-50008-2_5`, and the POS resolves it to a real
+// Clover item. Get the encoding wrong and every sticker fails at the register with a
+// customer standing there — so the three confirmed real codes are pinned here verbatim.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const fn = src.slice(src.indexOf('const stickerPriceCode ='),
+                       src.indexOf('};', src.indexOf('const stickerPriceCode =')) + 2);
+  const stickerPriceCode = eval('(' + fn.replace('const stickerPriceCode =', '') .replace(/;$/, '') + ')');
+
+  // Confirmed against real Clover codes.
+  eq(stickerPriceCode(2.50), '2_5',  '🔑 $2.50 is 2_5 — the trailing zero goes');
+  eq(stickerPriceCode(2.75), '2_75', '🔑 $2.75 is 2_75 — the 5 is significant, it stays');
+  eq(stickerPriceCode(10),   '10',   '🛑 $10.00 is 10 — NO separator at all, not 10_0');
+
+  // The whole-dollar case is a different SHAPE, not just a different value. Anything
+  // reading these back has to cope with a code that contains no underscore.
+  eq(stickerPriceCode(3),     '3',     '…any whole dollar drops the separator');
+  eq(stickerPriceCode(20),    '20',    '…including two digits');
+  eq(stickerPriceCode(1.10),  '1_1',   'one trailing zero goes');
+  eq(stickerPriceCode(1.05),  '1_05',  '…but a LEADING zero in the cents is significant');
+  eq(stickerPriceCode(12.25), '12_25', 'quarters survive intact');
+
+  // A sticker for nothing is worse than no sticker.
+  eq(stickerPriceCode(0),    null, 'a zero price yields no code');
+  eq(stickerPriceCode(-1),   null, '…nor does a negative');
+  eq(stickerPriceCode(null), null, '…nor does a missing one');
+}
+
+// The category half is per CATEGORY and numeric; anything else is not a code.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  ok(/const stickerCode = \(categoryCode, price\)/.test(src),
+     'stickerCode joins the category code and the price');
+  ok(/\/\^\\d\+\$\/\.test\(c\)/.test(src),
+     '🔑 …and refuses a category code that is not digits, so a name never lands in a QR');
+}
+
+// 🛑 REFUSING IS THE FEATURE. Every path that cannot PROVE the code resolves must return
+// printable:false — including Clover simply not answering. "We do not know" is not
+// permission to print something a customer will be standing in front of.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  // 🛑 Search FORWARD from the handler for the end marker. `merch-scan` is mentioned in
+  // an earlier comment too, so a bare indexOf picks that one and slices backwards to "".
+  const at = src.indexOf('action") === "sticker-check"');
+  const h = src.slice(at, src.indexOf('POST ?action=merch-scan', at));
+  ok(h.length > 500, 'the handler slice actually found the handler');
+  for (const [why, re] of [
+    ['no category',      /reason: "no category"/],
+    ['no price',         /reason: "no price"/],
+    ['no category code', /reason: "no category code"/],
+    ['clover unreachable', /reason: "clover unreachable"/],
+    // This one is a ternary, not a literal `reason:` — the code exists, the item does not.
+    ['no clover item',   /"no clover item"/],
+  ]) ok(re.test(h), `refusal is named: ${why}`);
+  eq((h.match(/printable: false/g) || []).length, 4,
+     '🔑 every refusal says printable:false — four of them, one per way this can fail');
+  ok(/exists === null/.test(h) && /cannot confirm/.test(h),
+     '🛑 an unreachable Clover refuses too — unknown is not permission to print');
+  ok(!/nearest|snap|round/i.test(h),
+     '🛑 …and nothing anywhere near this snaps the price to make a label scan');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

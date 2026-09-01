@@ -268,12 +268,12 @@ and "does this exact code exist" is one live call we already know how to make.
 
 ## Plan
 
-- [ ] `sticker-code` helper — `BL-{code}-{price}` with `.` → `_`. Pure, unit-testable.
+- [x] `sticker-code` helper — `BL-{code}-{price}` with `.` → `_`. Pure, unit-testable.
       🛑 The price format is the whole contract: `$2.50` → `2_5`, not `2_50`. Confirm
       against real Clover codes before writing the formatter, not after.
-- [ ] Category → numeric code, derived from Clover inventory and cached in KV.
+- [x] Category → numeric code, derived from Clover inventory and cached in KV.
       Never hand-maintained.
-- [ ] `?action=sticker-check` — given category + price, return `{ code, exists }` from the
+- [x] `?action=sticker-check` — given category + price, return `{ code, exists }` from the
       `filter=code=` lookup. One call, cacheable.
 - [ ] Scan page: a Print button that is DISABLED until the check passes, and names the
       missing code when it does not. The existing `create-clover-item` is the escape hatch.
@@ -281,11 +281,41 @@ and "does this exact code exist" is one live call we already know how to make.
 - [ ] Tests: code formatting incl. the `2_5` vs `2_50` trap, refusal when absent,
       fallback selection.
 
-## Open, and blocking the formatter
+## Answered — the contract is settled
 
-1. **`2_5` or `2_50`?** The photo shows `$2.50` → `2_5`. Is `$2.75` then `2_75`, and
-   `$10.00` → `10_0` or `10`? One real code at a non-round price settles it.
-2. **Is the code per category, or per category per store?** BL1 and BL16 share a Clover
-   account; if codes are per-account the map has to be keyed that way.
-3. **What does a category with no `BL-` code yet do?** Refuse, presumably — but worth
-   confirming that is not a common case.
+1. **Price encoding.** `$2.50` → `2_5`, `$2.75` → `2_75`, `$10.00` → `10`. So: two decimal
+   places, strip trailing zeros, drop the separator entirely if nothing is left.
+   🛑 A whole-dollar price therefore carries **no underscore at all** — `BL-50008-10`, a
+   different shape from `BL-50008-2_5`. Anything parsing these has to accept both.
+2. **The code is per CATEGORY**, not per store. One map, no store dimension.
+3. **A category with no `BL-` code refuses**, same as a missing price point.
+
+## Review — worker half landed
+
+**2,745 assertions across 51 suites, all green** (2,723 before; +22).
+
+Shipped: `stickerPriceCode` / `stickerCode`, the Clover-derived category map cached in KV,
+and `?action=sticker-check`. **Not yet built: the UI button, the ZPL template and the
+CSS-print fallback.** That is the next piece, not a thing quietly dropped.
+
+### The suite caught a production 403
+
+`test-business-gate` asserts every routed action is classified, and `sticker-check` was
+not — an unclassified action **403s in prod**. Added to the `bl` bucket beside `merch-scan`.
+Worth noting how cheap that catch was: the endpoint was otherwise complete and tested, and
+would have failed on first use with an error naming nothing useful.
+
+### Refusal is the tested behaviour, not a side effect
+
+Four distinct refusals, each named and each pinned: no category, no price, no category
+code, and **Clover unreachable**. That last one is the one worth defending — an unanswered
+Clover is not permission to print. A test also asserts nothing in the handler snaps or
+rounds a price to make a label scan.
+
+### Still open
+
+- **The UI + printing half.** Print button gated on `printable`, ZPL via Zebra Browser
+  Print, `@page { size: 1in 1in }` fallback.
+- **The category map is unverified against real Clover data.** It is derived correctly by
+  construction, but nobody has yet confirmed `FG BL CONSUMABLES - CHEMICALS` actually
+  resolves to `50008`. One live call once this is deployed settles it.
