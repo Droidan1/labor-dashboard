@@ -176,6 +176,46 @@ console.log('Retail lookup (R1–R8)');
   near(s.line.retail_price, 3.49, 'shop.kroger.com counts as Kroger');
 }
 
+// ── 🔑 THE CONFIDENCE SCALE HAS TO BE ABLE TO SAY "GOOD" ───────────────────
+// Every consumer of retail_confidence is useless if one value is universal: the manifest
+// retail cell prints the grade whenever it is not high, so it appeared on 100% of rows
+// and read as decoration, and any gate built on it would have refused everything.
+// These pin the three rungs against each other so no future rule can flatten them again.
+{
+  // Two corroborating listings, single unit, in stock — nothing weak about it.
+  const strong = await scenario({ desc: 'Soap 8oz', upc: '012345678944',
+    results: [{ position:1, url:'https://www.target.com/p/soap', title:'Soap', snippet:'$4.00' },
+              { position:2, url:'https://www.walgreens.com/store/c/soap/ID=1-product', title:'Soap', snippet:'$4.20' }],
+    snippets: [{ url:'https://www.target.com/p/soap', price:4.00, title:'Soap 8oz', pack:1, in_stock:true },
+               { url:'https://www.walgreens.com/store/c/soap/ID=1-product', price:4.20, title:'Soap 8oz', pack:1, in_stock:true }] });
+  eq(strong.line.retail_confidence, 'high', '🔑 corroborated, single-unit, in stock → high');
+
+  // Derived by dividing a multipack is a weaker way to know the same number.
+  // The LINE is one bar; the only listing is a 6-pack, so the unit price is divided out.
+  // (With "6ct" in the description 6 would be the target pack and the listing a direct
+  // match — the division is what makes this weaker, not the number six.)
+  const derived = await scenario({ desc: 'Bars', upc: '012345678951',
+    results: RES('https://www.target.com/p/bars'),
+    snippets: [{ url:'https://www.target.com/p/bars', price:12.00, title:'Bars 6 ct', pack:6, in_stock:true }] });
+  eq(derived.line.retail_basis, 'multipack_div_n', 'the unit price really was divided out');
+  eq(derived.line.retail_confidence, 'medium', '🔑 …divided out of a multipack → medium, not high');
+
+  // Sources that disagree by more than half are not one answer.
+  const clash = await scenario({ desc: 'Lotion 10oz', upc: '012345678968',
+    results: [{ position:1, url:'https://www.target.com/p/lotion', title:'Lotion', snippet:'$3.00' },
+              { position:2, url:'https://www.walgreens.com/store/c/lotion/ID=2-product', title:'Lotion', snippet:'$9.00' }],
+    snippets: [{ url:'https://www.target.com/p/lotion', price:3.00, title:'Lotion 10oz', pack:1, in_stock:true },
+               { url:'https://www.walgreens.com/store/c/lotion/ID=2-product', price:9.00, title:'Lotion 10oz', pack:1, in_stock:true }] });
+  ok(JSON.parse(clash.line.flags || '[]').includes('price conflict'),
+     '🔑 a 3x spread is flagged as a conflict');
+  eq(clash.line.retail_confidence, 'medium', '…and drops the grade');
+
+  // 🛑 The whole point: the three are DIFFERENT. A scale whose values all coincide is
+  // the failure this fix exists to undo.
+  ok(new Set([strong.line.retail_confidence, derived.line.retail_confidence]).size === 2,
+     '🛑 the scale actually discriminates — high and medium are both reachable');
+}
+
 // ── R1 — snippets answer, so NO page is fetched ────────────────────────────
 let pricedId;   // captured, not assumed — inserting a scenario above renumbers them all
 {
@@ -187,10 +227,14 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   pricedId = s.id;
   near(s.line.retail_price, 2.49, 'the price lands');
   eq(s.line.retail_basis, 'single', 'basis recorded as single');
-  // Not high any more, deliberately. "High" now means we saw it on a SHELF; a page that
-  // says only "in stock" online, with no store availability, is a weaker answer and reads
-  // as one. That is the point of the in-store check.
-  eq(s.line.retail_confidence, 'medium', 'in stock online but not confirmed in a store caps at medium');
+  // 🛑 THIS ASSERTED THE BUG. The "we never saw it on a shelf" rule capped confidence at
+  // medium — and it fired on EVERY price ever stored, because `in_store` has never once
+  // been true: 0 of 94 cached rows, 0 of 8 manifest lines. In-store availability sits
+  // behind a store-picker widget, not in the page text we read, so the rule demanded
+  // evidence this pipeline cannot collect. A scale that can only emit "not high" grades
+  // our own plumbing, not the price — and this test locked it in place.
+  eq(s.line.retail_confidence, 'high',
+     '🔑 a single-unit price, stated directly and in stock, IS a high-confidence answer');
   ok(!s.flags.includes('no retail'), 'not flagged as unpriced');
 }
 

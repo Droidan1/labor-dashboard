@@ -1491,5 +1491,58 @@ let mid;
   ok(Array.isArray(r.body.lines), '…with real lines');
 }
 
+// ── 🔑 A PASS ON A CONTESTED PRICE SAYS SO — AND IS STILL A PASS ───────────
+// The lookup grades every price and flags the ones whose sources disagree, and scoring
+// threw all of it away: a clean pass computed from two retailers 3x apart read exactly
+// like one computed from a corroborated price.
+//
+// 🛑 IT MUST NOT BLOCK. This is a liquidation retailer; refusing every line whose price
+// is less than perfect refuses the business. The verdict is untouched — the buyer is
+// told which passes are worth a second look, and decides.
+{
+  const up = await post('manifest-upload', { vendor: 'EvidenceTest', csv: CSV });
+  const eid = up.body.id;
+  const target = db.prepare(
+    `SELECT id FROM manifest_lines WHERE manifest_id=? AND l3=?`).get(eid, SNACKS);
+  ok(target, 'the snacks line is there to work with');
+
+  // A retail price low enough that the cost test passes outright, but contested.
+  db.prepare(`UPDATE manifest_lines SET retail_price=?, retail_confidence=?, flags=? WHERE id=?`)
+    .run(9.99, 'medium', JSON.stringify(['price conflict']), target.id);
+
+  const r = await get(`manifest&id=${eid}`);
+  const line = r.body.score.lines.find(l => l.id === target.id);
+  ok(line, 'the line is scored');
+  eq(line.tests.cost.verdict, 'pass', '🛑 it still PASSES — nothing is refused for this');
+  eq(line.evidence, 'contested', '🔑 …and the line records that the price is contested');
+  ok(/disagree/.test(line.tests.cost.note),
+     '🔑 …with the cost test saying so in words, beside the number it rests on');
+  eq(r.body.score.totals.weakEvidence, 1, 'countable in the totals');
+  ok(/worth checking/.test(r.body.score.verdictText),
+     '🔑 …and the verdict sentence mentions it, so nobody has to read every line');
+
+  // A `low` grade earns the same treatment; `medium` — the ordinary case — does not.
+  db.prepare(`UPDATE manifest_lines SET retail_confidence=?, flags=? WHERE id=?`)
+    .run('low', '[]', target.id);
+  const low = await get(`manifest&id=${eid}`);
+  eq(low.body.score.lines.find(l => l.id === target.id).evidence, 'weak',
+     'a low-confidence price is flagged too');
+
+  db.prepare(`UPDATE manifest_lines SET retail_confidence=? WHERE id=?`).run('medium', target.id);
+  const mid2 = await get(`manifest&id=${eid}`);
+  eq(mid2.body.score.lines.find(l => l.id === target.id).evidence, null,
+     '🛑 …but MEDIUM is the ordinary case and is NOT flagged — treating it as a warning is how a signal becomes wallpaper');
+  eq(mid2.body.score.totals.weakEvidence, 0, '…and does not count');
+  ok(!/worth checking/.test(mid2.body.score.verdictText), '…nor reach the summary');
+
+  // 🔑 And it only applies when the STREET price is what the test rests on. A line
+  // scored off our own ASP has no retail evidence to be weak about.
+  db.prepare(`UPDATE manifest_lines SET retail_price=NULL, retail_confidence='low' WHERE id=?`)
+    .run(target.id);
+  const noRetail = await get(`manifest&id=${eid}`);
+  eq(noRetail.body.score.lines.find(l => l.id === target.id).evidence, null,
+     '🔑 no street price means nothing to grade — the ASP fallback is judged on its own terms');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
