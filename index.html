@@ -2246,6 +2246,13 @@
         .dark .ps-btn.ghost{color:#5fd170;box-shadow:inset 0 0 0 1px rgba(255,255,255,.20)}
         .ps-btn:disabled{opacity:.5;cursor:default}
         .ps-row{display:flex;gap:9px}
+        #ps-sticker{display:flex;flex-direction:column;gap:7px}
+        .ps-stat{font-size:12px;line-height:1.4;color:#6b6453}
+        .dark .ps-stat{color:#8893a7}
+        .ps-stat.no{color:#9a3412}
+        .dark .ps-stat.no{color:#fca5a5}
+        .ps-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
+          font-weight:700;letter-spacing:.02em}
         .ps-ident{text-align:center;display:flex;flex-direction:column;gap:3px}
         .ps-nm{font-weight:600;font-size:15px;line-height:1.3}
         .ps-up{font-size:12px;color:#6b6453;font-variant-numeric:tabular-nums}
@@ -18911,13 +18918,122 @@
              <div id="ps-edit" class="hidden"></div>`
           : ''}
 
+        ${psStickerRow(j)}
+
         ${prev ? `<div id="ps-prev">
           <div><div class="ps-pn">${psEsc(prev.title || prev.identifier || 'Previous')}</div>
                <div class="ps-pm">Priced just before this</div></div>
           <div class="ps-pp">${prev.price === null || prev.price === undefined ? '—' : psMoney(prev.price)}</div>
         </div>` : ''}
       </div>`;
+
+    // After the paint, never before it: the sticker check is a Clover round trip and the
+    // price should not wait behind a button most scans never press.
+    psStickerCheck(j);
   }
+
+  // ─── Shelf stickers ────────────────────────────────────────────────────────
+  //
+  // The QR is a LOOKUP KEY the register resolves, not decoration. So the button stays
+  // disabled until the worker has confirmed the exact code exists in Clover, and every
+  // refusal says which part is missing. A label that does not scan is worse than no
+  // label: it fails in front of a customer, and the associate has no way to tell why.
+  let psSticker = null;      // { printable, code, detail } for the item on screen
+  let psStickerFor = null;   // which identifier that answer belongs to
+
+  function psStickerRow(j) {
+    if (!psCanOverride()) return '';
+    if (j.price === null || j.price === undefined) return '';
+    return `<div id="ps-sticker">
+      <button class="ps-btn ghost" id="ps-print" type="button" disabled onclick="psPrint()">Print sticker</button>
+      <div class="ps-stat" id="ps-print-note">Checking the sticker code…</div>
+    </div>`;
+  }
+
+  // 🔑 ASKED AFTER RENDER, NOT DURING. The check is a Clover round trip; blocking the
+  // price behind it would make every scan feel slower for a button most scans never use.
+  async function psStickerCheck(j) {
+    if (!el('ps-print')) return;
+    psSticker = null; psStickerFor = j.identifier || j.title || null;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=sticker-check`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ l3: j.l3, price: j.price }),
+      });
+      const a = await r.json();
+      // The screen moved on while we were asking — say nothing about the old item.
+      if ((j.identifier || j.title || null) !== psStickerFor) return;
+      psSticker = a;
+      const btn = el('ps-print'), note = el('ps-print-note');
+      if (!btn || !note) return;
+      btn.disabled = !a.printable;
+      note.className = 'ps-stat' + (a.printable ? '' : ' no');
+      note.innerHTML = a.printable
+        ? `Prints <span class="ps-code">${psEsc(a.code)}</span>`
+        : psEsc(a.detail || 'This cannot be printed yet.');
+    } catch (_) {
+      const note = el('ps-print-note');
+      if (note) { note.className = 'ps-stat no'; note.textContent = 'Could not check the sticker code.'; }
+    }
+  }
+
+  // ZPL, because the printer draws the QR itself at its own resolution — no rasterising,
+  // no scaling, and nothing for a driver to soften. ^BQ is the QR field; the code goes in
+  // as `LA,` (byte mode) because our codes contain `_`, which QR's alphanumeric set has no
+  // room for and which would otherwise silently force a different encoding.
+  //
+  // ⏸ THE GEOMETRY IS UNVERIFIED. These are 203 dpi dot positions laid out to match the
+  // sticker in the photo, but nobody has run one through a real printer yet — the numbers
+  // want a test print before anyone trusts a roll to them.
+  function psZpl(code, price) {
+    const money = '$' + Number(price).toFixed(2);
+    return ['^XA', '^PW203', '^LL203', '^MNN', '^LH0,0',
+      `^FO104,10^BQN,2,4^FDLA,${code}^FS`,      // QR, top right
+      '^FO12,18^A0N,74,74^FD$^FS',              // the dollar mark, top left
+      `^FO10,116^A0N,20,20^FD${code}^FS`,       // the code, readable by a human
+      `^FO10,142^A0N,54,54^FD${money}^FS`,      // the price, the thing a customer reads
+      '^XZ'].join('\n');
+  }
+
+  // Zebra Browser Print listens on loopback, and a loopback origin is treated as
+  // trustworthy even from an https page — so this needs no SDK script and no CDN.
+  async function psZebraDevice() {
+    const r = await fetch('http://127.0.0.1:9100/available', { signal: AbortSignal.timeout(1500) });
+    const d = await r.json();
+    return (d?.printer || []).find(p => p?.uid) || null;
+  }
+
+  async function psPrint() {
+    const a = psSticker;
+    if (!a?.printable || !psLast) return;
+    const btn = el('ps-print'), note = el('ps-print-note');
+    if (btn) btn.disabled = true;
+    if (note) { note.className = 'ps-stat'; note.textContent = 'Printing…'; }
+    try {
+      const dev = await psZebraDevice();
+      if (!dev) throw new Error('no-agent');
+      await fetch('http://127.0.0.1:9100/write', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device: dev, data: psZpl(a.code, psLast.price) }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (note) note.innerHTML = `Sent <span class="ps-code">${psEsc(a.code)}</span> to ${psEsc(dev.name || 'the printer')}.`;
+    } catch (_) {
+      // 🛑 NO SILENT FALLBACK TO A LABEL WITHOUT A QR. Nothing in the browser here can
+      // draw one — the repo carries no QR encoder — and a sticker with only text on it
+      // does not scan, which is the exact failure this whole feature exists to prevent.
+      // Saying what to install is more use than printing something that fails at the till.
+      if (note) {
+        note.className = 'ps-stat no';
+        note.textContent = 'Zebra Browser Print is not running on this machine, so the QR cannot be drawn. '
+          + 'Install it, or print from a machine that has it.';
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+  window.psPrint = psPrint;
 
   // Scanning and overriding are different rights: a manager prices items all day, but only
   // an admin may permanently change what an item is worth for every store. The worker

@@ -234,3 +234,140 @@ scan still inside 40s, the drain longer than the scan but inside 60s.
 
 That test is the reason the split is safe rather than a guess. Worth keeping in mind next
 time a vendor console suggests a number.
+
+---
+
+# Price Scan → print a 1×1 shelf sticker
+
+Managers scan an item, the page decides a price, and today somebody re-keys that into a
+label tool. The sticker carries a QR of `BL-50008-2_5` — `BL-{category code}-{price, dot
+as underscore}` — which associates scan at the Clover POS.
+
+## The thing that makes this tractable
+
+`BL-50008` is **nowhere in this repo**. It lives in Clover, as the `code` on real items —
+and the worker already speaks to exactly the endpoints needed:
+
+    /items?filter=code=BL-50008-2_5&limit=5     already used, as the dup check in
+                                                `create-clover-item`
+    /items?expand=categories&limit=1000&offset= already used, full inventory
+    /categories?limit=1000                      already used
+    POST ?action=create-clover-item             already exists: {code, priceCents, l2, l3}
+
+So there is **no mapping table to invent and no list to maintain**. The category → numeric
+code map is derivable by listing Clover items and parsing `^BL-(\d+)-` grouped by category,
+and "does this exact code exist" is one live call we already know how to make.
+
+## Decisions taken
+
+- **Print path: ZPL first, browser fallback.** Zebra Browser Print where it is installed
+  (native ZPL, QR at printer resolution, no dialog); `@page { size: 1in 1in }` HTML print
+  everywhere else, so a phone still works.
+- **Unknown code: refuse and say why.** Print only when an exact Clover item exists for
+  that category and price. No snapping, no silent price change, nothing unscannable.
+
+## Plan
+
+- [x] `sticker-code` helper — `BL-{code}-{price}` with `.` → `_`. Pure, unit-testable.
+      🛑 The price format is the whole contract: `$2.50` → `2_5`, not `2_50`. Confirm
+      against real Clover codes before writing the formatter, not after.
+- [x] Category → numeric code, derived from Clover inventory and cached in KV.
+      Never hand-maintained.
+- [x] `?action=sticker-check` — given category + price, return `{ code, exists }` from the
+      `filter=code=` lookup. One call, cacheable.
+- [x] Scan page: a Print button that is DISABLED until the check passes, and names the
+      missing code when it does not. The existing `create-clover-item` is the escape hatch.
+- [x] ZPL template + the CSS-print fallback, both from one label model.
+- [x] Tests: code formatting incl. the `2_5` vs `2_50` trap, refusal when absent,
+      fallback selection.
+
+## Answered — the contract is settled
+
+1. **Price encoding.** `$2.50` → `2_5`, `$2.75` → `2_75`, `$10.00` → `10`. So: two decimal
+   places, strip trailing zeros, drop the separator entirely if nothing is left.
+   🛑 A whole-dollar price therefore carries **no underscore at all** — `BL-50008-10`, a
+   different shape from `BL-50008-2_5`. Anything parsing these has to accept both.
+2. **The code is per CATEGORY**, not per store. One map, no store dimension.
+3. **A category with no `BL-` code refuses**, same as a missing price point.
+
+## Review — worker half landed
+
+**2,745 assertions across 51 suites, all green** (2,723 before; +22).
+
+Shipped: `stickerPriceCode` / `stickerCode`, the Clover-derived category map cached in KV,
+and `?action=sticker-check`. **Not yet built: the UI button, the ZPL template and the
+CSS-print fallback.** That is the next piece, not a thing quietly dropped.
+
+### The suite caught a production 403
+
+`test-business-gate` asserts every routed action is classified, and `sticker-check` was
+not — an unclassified action **403s in prod**. Added to the `bl` bucket beside `merch-scan`.
+Worth noting how cheap that catch was: the endpoint was otherwise complete and tested, and
+would have failed on first use with an error naming nothing useful.
+
+### Refusal is the tested behaviour, not a side effect
+
+Four distinct refusals, each named and each pinned: no category, no price, no category
+code, and **Clover unreachable**. That last one is the one worth defending — an unanswered
+Clover is not permission to print. A test also asserts nothing in the handler snaps or
+rounds a price to make a label scan.
+
+### Still open
+
+- **The UI + printing half.** Print button gated on `printable`, ZPL via Zebra Browser
+  Print, `@page { size: 1in 1in }` fallback.
+- **The category map is still unverified in bulk**, though the approach is now confirmed:
+  Brian reports `50008` = `FG BL CONSUMABLES - FOOD - PANTRY`, which is an L3 key verbatim,
+  so `codes[l3]` matches Clover's category name directly and the `merchLabel()` fallback is
+  belt-and-braces. One live run confirms the other ~30.
+
+  🛑 **`50008` ALSO EXISTS IN `IM_TO_L2`, AS "Softline - Apparel".** Two numbering schemes,
+  both five digits starting 50, colliding on this value. `IM_TO_L2` is the IM# rung of the
+  costing ladder and has nothing to do with stickers. Wiring the sticker to it — which is
+  tempting, since it is already there and already numeric — would print a pantry price
+  under an apparel code, and it would still scan. It would just ring up the wrong item.
+
+  ⏸ I asserted earlier that `50008` was CHEMICALS. That was invented, not read: the Clorox
+  manifest had chemicals in mind and I paired the two, then repeated it until it read as a
+  finding. It was never data. The derived map is unaffected — it reads Clover rather than
+  any pairing I might hold — which is the one reason the error cost nothing.
+
+## Review — UI + printing
+
+**2,765 assertions across 51 suites, all green** (2,750 before; +15).
+
+Print button on the scan card, disabled until `sticker-check` confirms the code; every
+refusal shown in words. ZPL built client-side and sent to Zebra Browser Print over
+loopback — no SDK script, no CDN, because a loopback origin counts as trustworthy even
+from an https page.
+
+### 🛑 The CSS-print fallback was NOT built, and that is a decision, not an omission
+
+The chosen design was "ZPL with a browser fallback". Building it surfaced the reason it
+cannot be done as specified: **this repo contains no QR encoder**, and the browser cannot
+draw one. A `@page { size: 1in 1in }` label would carry the code as text and no QR — which
+does not scan, and therefore fails in front of a customer with nothing on it to explain
+why. That is the precise failure the whole feature is built to prevent, so shipping it as
+a "fallback" would have contradicted the design it was part of.
+
+When Browser Print is absent the screen now says so and names what to install. Refusing is
+consistent with everything else here: we refuse a code we cannot verify, so we refuse a
+label we cannot make scan.
+
+To actually have a fallback, one of these has to be chosen — it is a dependency decision,
+not a coding one:
+
+- **Vendor a small QR encoder** into `index.html` (~4 KB minified). The repo currently has
+  zero app-JS dependencies, so this is a real change of posture.
+- **Encode server-side** in the worker and return an SVG. One implementation, unit-testable
+  against published vectors, no client dependency — but it is ~300 lines of Reed-Solomon
+  and masking, and a subtly wrong QR still *looks* fine.
+- **Leave it.** Browser Print is a one-time install per machine, and the ZPL path is the
+  one that produces the crisp sticker in the photo anyway.
+
+### ⏸ The ZPL geometry is unverified
+
+`^PW203`/`^LL203` and the field positions are laid out to match the photographed sticker at
+203 dpi, but nothing has been through a real printer. **Print one before trusting a roll to
+it** — particularly the QR magnification (`^BQN,2,4`), which decides whether it scans at
+one inch.

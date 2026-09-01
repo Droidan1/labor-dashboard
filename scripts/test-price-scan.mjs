@@ -1793,5 +1793,157 @@ console.log('Price Scan');
   globalThis.fetch = realFetch;
 }
 
+// ── 🛑 THE STICKER CODE IS A LOOKUP KEY, NOT A LABEL ───────────────────────
+// The QR on a 1x1 shelf sticker carries `BL-50008-2_5`, and the POS resolves it to a real
+// Clover item. Get the encoding wrong and every sticker fails at the register with a
+// customer standing there — so the three confirmed real codes are pinned here verbatim.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const fn = src.slice(src.indexOf('const stickerPriceCode ='),
+                       src.indexOf('};', src.indexOf('const stickerPriceCode =')) + 2);
+  const stickerPriceCode = eval('(' + fn.replace('const stickerPriceCode =', '') .replace(/;$/, '') + ')');
+
+  // Confirmed against real Clover codes.
+  eq(stickerPriceCode(2.50), '2_5',  '🔑 $2.50 is 2_5 — the trailing zero goes');
+  eq(stickerPriceCode(2.75), '2_75', '🔑 $2.75 is 2_75 — the 5 is significant, it stays');
+  eq(stickerPriceCode(10),   '10',   '🛑 $10.00 is 10 — NO separator at all, not 10_0');
+
+  // The whole-dollar case is a different SHAPE, not just a different value. Anything
+  // reading these back has to cope with a code that contains no underscore.
+  eq(stickerPriceCode(3),     '3',     '…any whole dollar drops the separator');
+  eq(stickerPriceCode(20),    '20',    '…including two digits');
+  eq(stickerPriceCode(1.10),  '1_1',   'one trailing zero goes');
+  eq(stickerPriceCode(1.05),  '1_05',  '…but a LEADING zero in the cents is significant');
+  eq(stickerPriceCode(12.25), '12_25', 'quarters survive intact');
+
+  // A sticker for nothing is worse than no sticker.
+  eq(stickerPriceCode(0),    null, 'a zero price yields no code');
+  eq(stickerPriceCode(-1),   null, '…nor does a negative');
+  eq(stickerPriceCode(null), null, '…nor does a missing one');
+}
+
+// The category half is per CATEGORY and numeric; anything else is not a code.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  ok(/const stickerCode = \(categoryCode, price\)/.test(src),
+     'stickerCode joins the category code and the price');
+  ok(/\/\^\\d\+\$\/\.test\(c\)/.test(src),
+     '🔑 …and refuses a category code that is not digits, so a name never lands in a QR');
+}
+
+// 🔑 THE NUMBERS MAY LIVE IN `code` OR IN `sku`, and the Inventory page's own dupKey()
+// already treats the two as one field. Reading only `code` when a store keeps its numbers
+// in `sku` finds nothing, and the screen then blames the category for having no sticker
+// number when the truth is we read the wrong column. Which field won is remembered,
+// because the existence check filters on a named field and must ask about the same one.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function stickerCategoryCodes('),
+                       src.indexOf('async function stickerCodeExists('));
+  ok(/it\?\.sku/.test(fn) && /it\?\.code/.test(fn),
+     'the map is derived from code OR sku, the way the Inventory page already reads them');
+  ok(/field === "sku" \? "sku" : "code"/.test(src),
+     '…and the existence check filters on whichever field the map was built from');
+  ok(/return \{ map, field \}/.test(fn),
+     '…so the choice travels with the map rather than being guessed twice');
+}
+
+// 🛑 THE STICKER CODE MAP IS NOT IM_TO_L2, however much they look alike. Both are numeric
+// and both use five digits starting 50, and they COLLIDE: 50008 is a sticker code for
+// FG BL CONSUMABLES - FOOD - PANTRY and separately an IM# that IM_TO_L2 calls
+// Softline - Apparel. Wiring the sticker to IM_TO_L2 would print a pantry price under an
+// apparel code — and it would still scan, just ring up the wrong item.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const zone = src.slice(src.indexOf('const stickerPriceCode ='),
+                         src.indexOf('function merchTree()'));
+  ok(!/IM_TO_L2\s*\[/.test(zone),
+     '🔑 nothing in the sticker path reads IM_TO_L2 — different namespace, colliding numbers');
+  ok(/IM_TO_L2/.test(zone),
+     '…and the collision is written down where the next person will look');
+}
+
+// 🛑 REFUSING IS THE FEATURE. Every path that cannot PROVE the code resolves must return
+// printable:false — including Clover simply not answering. "We do not know" is not
+// permission to print something a customer will be standing in front of.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  // 🛑 Search FORWARD from the handler for the end marker. `merch-scan` is mentioned in
+  // an earlier comment too, so a bare indexOf picks that one and slices backwards to "".
+  const at = src.indexOf('action") === "sticker-check"');
+  const h = src.slice(at, src.indexOf('POST ?action=merch-scan', at));
+  ok(h.length > 500, 'the handler slice actually found the handler');
+  for (const [why, re] of [
+    ['no category',      /reason: "no category"/],
+    ['no price',         /reason: "no price"/],
+    ['no category code', /reason: "no category code"/],
+    ['clover unreachable', /reason: "clover unreachable"/],
+    // This one is a ternary, not a literal `reason:` — the code exists, the item does not.
+    ['no clover item',   /"no clover item"/],
+  ]) ok(re.test(h), `refusal is named: ${why}`);
+  eq((h.match(/printable: false/g) || []).length, 4,
+     '🔑 every refusal says printable:false — four of them, one per way this can fail');
+  ok(/exists === null/.test(h) && /cannot confirm/.test(h),
+     '🛑 an unreachable Clover refuses too — unknown is not permission to print');
+  ok(!/nearest|snap|round/i.test(h),
+     '🛑 …and nothing anywhere near this snaps the price to make a label scan');
+}
+
+// ── The label the printer actually draws ───────────────────────────────────
+// ZPL rather than a rendered image, because the printer builds the QR itself at its own
+// resolution — nothing to rasterise, nothing for a driver to soften.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const fn = html.slice(html.indexOf('function psZpl('), html.indexOf('async function psZebraDevice('));
+  const psZpl = eval('(' + fn.slice(fn.indexOf('function psZpl(')).replace(/\n\s*\/\/[^\n]*/g, '') + ')');
+
+  const z = psZpl('BL-50008-2_5', 2.50);
+  ok(z.startsWith('^XA') && z.trim().endsWith('^XZ'), 'the label is a framed ZPL job');
+  ok(z.includes('^PW203') && z.includes('^LL203'), '🔑 sized 1in x 1in at 203 dpi, not left to the driver');
+
+  // 🛑 BYTE MODE, NOT ALPHANUMERIC. QR's alphanumeric set has no underscore in it, and our
+  // codes are full of them. `LA,` forces byte mode; without it the encoder either refuses
+  // the string or silently switches, and a QR that encodes something else still scans —
+  // it just resolves to the wrong item, or to nothing.
+  ok(z.includes('^FDLA,BL-50008-2_5^FS'), '🛑 the QR carries the code in BYTE mode, because of the underscore');
+
+  ok(z.includes('^FDBL-50008-2_5^FS'), '…the code is printed as text too, so a human can read it back');
+  ok(z.includes('$2.50'), '…and the price, which is the part a customer looks at');
+
+  // A whole-dollar code has no underscore at all — it must still round-trip.
+  const ten = psZpl('BL-50008-10', 10);
+  ok(ten.includes('^FDLA,BL-50008-10^FS'), 'a whole-dollar code survives with no separator');
+  ok(ten.includes('$10.00'), '…and still prints two decimal places for the shopper');
+
+  for (const [code, price] of [['BL-1-1', 1], ['BL-99999-12_25', 12.25]]) {
+    const out = psZpl(code, price);
+    ok(!/undefined|NaN/.test(out), `no undefined or NaN reaches the printer (${code})`);
+  }
+}
+
+// 🛑 THERE IS NO SILENT DEGRADE TO A LABEL WITHOUT A QR. The repo carries no QR encoder,
+// so when Browser Print is absent the browser cannot draw one — and a sticker with only
+// text on it does not scan, which is the precise failure this feature exists to prevent.
+// It says what to install instead. Printing something that fails at the till would be the
+// one outcome worse than refusing.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const fn = html.slice(html.indexOf('async function psPrint('), html.indexOf('window.psPrint'));
+  ok(/Browser Print is not running/.test(fn), 'an absent print agent is explained, not worked around');
+  ok(!/window\.print|@page|iframe/.test(fn), '🛑 …and no browser-print path quietly emits a QR-less label');
+  ok(/psZpl\(/.test(fn), 'the one print path builds ZPL');
+}
+
+// The button is a claim that the code resolves, so it stays disabled until the worker says so.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const row = html.slice(html.indexOf('function psStickerRow('), html.indexOf('async function psStickerCheck('));
+  ok(/id="ps-print"[^>]*disabled/.test(row), '🔑 Print starts DISABLED — enabled only once Clover confirms the code');
+  const chk = html.slice(html.indexOf('async function psStickerCheck('), html.indexOf('function psZpl('));
+  ok(/btn\.disabled = !a\.printable/.test(chk), '…and follows printable, never the mere presence of a price');
+  ok(/!== psStickerFor\) return/.test(chk),
+     '🔑 a late answer for a PREVIOUS item is dropped, so the button never describes the wrong scan');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
