@@ -881,3 +881,34 @@ tab uses. "It matches the tab next to it" is symmetry, not a reason.
    (`LABOR_TAB_WEEKS_BACK`) that the panes, their fetches and the nav label all read. Adding
    a third distinct week was then one number, and the nav could not fall out of step.
 </rules>
+
+## A frontend change is not shipped until CACHE_NAME moves (2026-09-01)
+
+**What happened:** I merged the Labor week-nav change, watched the Pages deploy go green, and
+reported it deployed. It was — to the CDN. But `sw.js` serves the app shell
+**stale-while-revalidate**, and I never bumped `CACHE_NAME` (still `dashboard-cache-v139`,
+last touched by an unrelated commit). `MEMORY.md:55` says this in one line: *"Bump
+`CACHE_NAME` in `sw.js` or installed apps keep the old bundle; open apps never self-update."*
+21 of the last 25 commits touching `index.html` bump it. Mine did not.
+
+Without the bump the documented update path never fires: `sw.js` is byte-identical, so no new
+worker installs, `activate()` never purges the old cache, and the `controllerchange` reload
+never runs. An installed app serves the OLD `index.html` on its next launch and only picks up
+the new one the launch after that — silently, with no reload. Brian would have opened Labor,
+seen the old dates, and reasonably concluded the fix did not work.
+
+<rules>
+1. **Touching `index.html` means bumping `CACHE_NAME` in the same commit.** It is a
+   one-line edit and it is the difference between deployed and delivered. Check it before
+   opening the PR, not after the merge.
+2. **"The deploy is green" is not "users have it."** A green Pages run proves the CDN has
+   the bytes. The service worker sits between the CDN and the user and is a second, separate
+   cache with its own invalidation. Verify the LAST hop, not the first.
+3. **Re-read `MEMORY.md` before saying a frontend change has shipped.** The rule was already
+   written down; I had read the file for the destructive-ops rules and skipped past this line
+   because it was not about the task in front of me.
+4. **When egress policy blocks verifying prod, say so and check what you CAN reach.** Both
+   `www.retjghub.com` and the artifact host returned 403 CONNECT here. The proxy README says
+   report a policy denial rather than route around it — so report it, then reason from the
+   repo (the SW strategy) instead of asserting the deploy is fine because a job was green.
+</rules>
