@@ -814,3 +814,42 @@ was rejected.
 3. **Then assert `HEAD == origin/main`** and `git diff HEAD -- worker.js` is empty, so the
    bytes deployed are the bytes on main.
 </rules>
+
+## A global selector needs a label per CONSUMER, not one per page (2026-09-01)
+
+**Reported:** "Can you fix the dates, they don't match up" — Labor / Hours tab, the header
+week nav reading **Aug 30 – Sep 5** directly above a grid titled **Week of Aug 23 – Aug 29**.
+
+**Bug:** the Labor header holds one week nav shared by three tabs whose panes deliberately
+render *two different weeks* — Planning forecasts the upcoming week, Budget vs Actual and
+Hours report the week before it. `initLabor()` wrote `#labor-week-label` from
+`laborState.week` (the planned week) unconditionally, and `laborSetTab()` never touched it,
+so two of three tabs shipped a nav naming a week neither pane showed. `#labor-fresh`
+("Trailing 4 wks · thru …") had the same shape: written only by Planning's renderer,
+never hidden, so Planning's *inputs* stayed pinned over the other two panes.
+
+**Lesson — this is the 2026-07-03 mislabel lesson with the arrow reversed.** There, one
+label was left behind when the *value* moved to a new range. Here the value was always
+right and the label was never per-tab to begin with. The tell is the same either way: a
+label rendered from page-level state while the thing under it derives from a *shifted* copy
+of that state. An intentional offset between panes is not an excuse for the chrome to pick
+one of them — it is exactly why the chrome has to follow the active pane.
+
+<rules>
+1. **When N panes derive different periods from one selector, the selector's label is a
+   function of the active pane** — `laborHeaderWeek()` — never of the raw state. Sync it
+   from the tab switcher, not only from init.
+2. **Define a shifted period ONCE.** `laborState.week - 7` was open-coded in
+   `laborActRange()` and `laborHoursWeek()`; both now call `laborReportedWeek()`, so the
+   label cannot drift from the panes.
+3. **A chip written by one tab's renderer must be hidden by the others.** Grep for ids set
+   inside a single `*Render()` and shown in shared chrome.
+4. **`hidden sm:inline-flex` is hidden-then-shown.** Adding `hidden` to it does nothing at
+   sm+ — drop the `sm:` variant instead. Verify against the built CSS, not `tailwind.css`.
+</rules>
+
+**Verification pattern that worked (same as 2026-07-03):** the page needs the remote worker
++ auth, so a screenshot proves nothing. `scripts/test-labor-week-label.mjs` lifts the real
+functions out of `index.html` by name and drives them; the negative control — a scratch copy
+with the old one-line header behaviour restored — reproduces the screenshot exactly
+(`expected "Aug 23 – Aug 29", got "Aug 30 – Sep 5"`) and fails 9 assertions.
