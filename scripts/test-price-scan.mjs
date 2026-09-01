@@ -1435,8 +1435,14 @@ console.log('Price Scan');
 {
   const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
   const dec = src.slice(src.indexOf('function retailDecide('), src.indexOf('\n}', src.indexOf('function retailDecide(')));
-  ok(/opts\.scan \? 1 : retailPackSize\(line\.description\)/.test(dec),
+  // The SHAPE is what matters, not the exact expression: a scan is pinned to 1, and the
+  // manifest branch still reads a pack. It now prefers the sheet's Case pack column and
+  // falls back to the (vendor-aware) description parse, so the literal it used to match
+  // is gone — the intent it was defending is not.
+  ok(/opts\.scan \? 1/.test(dec),
      '🔑 the pack reading is switched by the PATH, not deleted');
+  ok(/units_per_case/.test(dec) && /retailPackSize\(line\.description, \{ vendor: true \}\)/.test(dec),
+     '…and the manifest branch reads the Case pack column first, the description second');
   const pl = src.slice(src.indexOf('async function retailPriceLine('), src.indexOf('\n}\n', src.indexOf('async function retailPriceLine(')));
   eq((pl.match(/scan: !!ctx\.scan/g) || []).length, 3,
      '…and every retailDecide inside the lookup is told which path it is on');
