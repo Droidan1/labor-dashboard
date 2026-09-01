@@ -1290,6 +1290,117 @@ let mid;
   delete env.FIRECRAWL_API_KEY;
 }
 
+// ── The cost column decides what the cost MEANS ────────────────────────────
+//
+// `sell_as` was the caller's, else the template's, else 'each', and never once the header
+// that was mapped to `cost`. Two of the four saved vendor templates were wrong the moment
+// they were saved: WI Food maps "Case Price" and stored 'each' (costs read 12× high), and
+// Clorox maps "Sale Price" — a LINE TOTAL — and stored 'each', which read $900.93 as the
+// price of one bottle of bathroom cleaner.
+{
+  const CASE_CSV = ['UPC,Description,Qty,Case Price',
+                    '012345678905,Soda 12oz,40,24.00'].join('\n');
+  const r = await post('manifest-upload', { vendor: 'CaseCo', csv: CASE_CSV });
+  eq(r.status, 200, 'a sheet quoting case prices uploads');
+  eq(r.body.cost_basis, 'case', '🔑 "Case Price" is read as a CASE basis');
+  eq(r.body.sell_as, 'case', '...so sell_as follows the column instead of defaulting to each');
+  eq(r.body.cost_basis_source, 'column', '...and it says the column is where that came from');
+  const line = db.prepare(`SELECT cost FROM manifest_lines WHERE manifest_id=?`).get(r.body.id);
+  near(line.cost, 24.00, 'the case price is stored verbatim — the scorer divides it by the pack');
+}
+
+{
+  const UNIT_CSV = ['UPC,Description,Qty,Unit Price',
+                    '012345678905,Soda 12oz,40,2.00'].join('\n');
+  const r = await post('manifest-upload', { vendor: 'UnitCo', csv: UNIT_CSV });
+  eq(r.body.cost_basis, 'unit', '"Unit Price" is a unit basis');
+  eq(r.body.sell_as, 'each', '...and sells as each');
+}
+
+// ── An extended cost is normalised on the way in ───────────────────────────
+// Clorox's real shape: "Sale Price" $900.93 against a qty of 119. That is $7.57 a unit.
+// Divided at import so nothing downstream — the scorer's costPerUnit, freight
+// amortisation, the retail comparison — has to learn a third basis.
+{
+  const EXT_CSV = ['UPC,Description,Quantity,Extended Cost',
+                   '012345678905,Bathroom cleaner 30fo,119,900.93',
+                   // No qty: there is nothing to divide by, and a total left standing as a
+                   // unit price is the exact error this exists to stop.
+                   '012345678912,Wipes 75ct,,450.00'].join('\n');
+  const r = await post('manifest-upload', { vendor: 'ExtCo', csv: EXT_CSV });
+  eq(r.body.cost_basis, 'extended', '🔑 "Extended Cost" is recognised as a line total');
+  eq(r.body.sell_as, 'each', '...and normalises to each, because the cost is now per unit');
+  const rows = db.prepare(`SELECT qty, cost, flags FROM manifest_lines WHERE manifest_id=? ORDER BY row_no`).all(r.body.id);
+  near(rows[0].cost, 7.57, '🔑 $900.93 over 119 is stored as $7.57 a unit, not $900.93');
+  ok(JSON.parse(rows[0].flags).some(f => /line total: 900\.93/.test(f)),
+     '...and the sheet\'s own number is kept on the line, because someone will doubt it');
+  near(rows[1].cost, 450.00, '🛑 with no qty there is nothing to divide by, so nothing is divided');
+  ok(JSON.parse(rows[1].flags).includes('cost is a line total but the line has no qty'),
+     '...and the line SAYS so rather than passing a total off as a unit price');
+}
+
+// 🛑 A HEADER THAT NAMES NO UNIT IS NOT GUESSED AT. "Sale Price", "Deal Price", a bare
+// "Cost" — on another vendor's sheet any of them may well be per unit. Reading a unit off
+// a name that does not carry one is how the Clorox load came to say 'each' about a total.
+{
+  const AMBIG_CSV = ['UPC,Description,Quantity,Sale Price',
+                     '012345678905,Bathroom cleaner 30fo,119,900.93'].join('\n');
+  const r = await post('manifest-upload', { vendor: 'AmbigCo', csv: AMBIG_CSV });
+  eq(r.body.cost_basis, 'unit', 'an unclassifiable header keeps the behaviour every manifest already had');
+  eq(r.body.cost_basis_source, 'default', '🔑 ...and reports it as a DEFAULT, not as something we read');
+  eq(r.body.cost_header, 'Sale Price', '...naming the column, so the claim is checkable');
+}
+
+// A human outranks the column — including when the column is confidently named.
+{
+  const MISLEADING = ['UPC,Description,Quantity,Unit Price',
+                      '012345678905,Bathroom cleaner 30fo,100,500.00'].join('\n');
+  const r = await post('manifest-upload', { vendor: 'HumanCo', csv: MISLEADING, cost_basis: 'extended' });
+  eq(r.body.cost_basis, 'extended', '🔑 the caller beats a header that says otherwise');
+  eq(r.body.cost_basis_source, 'you', '...and it is attributed to them');
+  const line = db.prepare(`SELECT cost FROM manifest_lines WHERE manifest_id=?`).get(r.body.id);
+  near(line.cost, 5.00, '...and the normalisation follows their answer, not the header');
+}
+
+// ── A correction sticks ────────────────────────────────────────────────────
+// 🔑 THE REMEMBERED ANSWER BEATS THE HEADER ON UPLOAD, and that ordering is the whole
+// reason a correction is worth making: a vendor can name a column "Unit Cost" and quote
+// cases in it, and if the header could override what someone told us last time, there
+// would be no way to make the correction stick.
+{
+  const CSV2 = ['UPC,Description,Qty,Unit Cost',
+                '012345678905,Soda 12oz,40,24.00'].join('\n');
+  const first = await post('manifest-upload', { vendor: 'StickCo', csv: CSV2 });
+  eq(first.body.cost_basis, 'unit', 'the header is believed when nothing better exists');
+  const fixed = await post('manifest-remap', { id: first.body.id, csv: CSV2,
+    column_map: { identifier:'UPC', description:'Description', qty:'Qty', cost:'Unit Cost' },
+    cost_basis: 'case', units_per_case: 12 });
+  eq(fixed.status, 200, 'the mapping screen corrects it');
+  const again = await post('manifest-upload', { vendor: 'StickCo', csv: CSV2 });
+  eq(again.body.cost_basis, 'case', '🔑 the next load remembers the correction');
+  eq(again.body.cost_basis_source, 'remembered', '...and says where it came from');
+  eq(again.body.sell_as, 'case', '...with sell_as following it');
+}
+
+// 🔑 ON REMAP THE COLUMN OUTRANKS THE STORED BASIS — the reverse of upload, and for the
+// reason that settles it either way: whoever is remapping is editing the mapping right
+// now, so the column they just picked is fresher than a basis saved against the mapping
+// they are replacing. Inheriting blindly is how a line total gets divided twice, or never.
+{
+  const TWOCOL = ['UPC,Description,Qty,Extended Cost,Unit Price',
+                  '012345678905,Soda 12oz,40,80.00,2.00'].join('\n');
+  const up = await post('manifest-upload', { vendor: 'MoveCo', csv: TWOCOL,
+    column_map: { identifier:'UPC', description:'Description', qty:'Qty', cost:'Extended Cost' } });
+  eq(up.body.cost_basis, 'extended', 'mapped to the total, it normalises');
+  const moved = await post('manifest-remap', { id: up.body.id, csv: TWOCOL,
+    column_map: { identifier:'UPC', description:'Description', qty:'Qty', cost:'Unit Price' },
+    save_template: false });
+  eq(moved.status, 200, 'the cost column is moved to the per-unit one');
+  const line = db.prepare(`SELECT cost, flags FROM manifest_lines WHERE manifest_id=?`).get(up.body.id);
+  near(line.cost, 2.00, '🛑 $2.00 is stored as $2.00 — the stored "extended" does not divide it again');
+  ok(!JSON.parse(line.flags).some(f => /line total/.test(f)), '...and no division is claimed');
+}
+
 // ── 🛑 A DECISION IS FROZEN AT THE MOMENT IT IS TAKEN ──────────────────────
 // Opening a manifest recomputed it from whatever was true NOW — today's criteria, ASP,
 // costs and shelf. Right for a manifest still being weighed; wrong for one already

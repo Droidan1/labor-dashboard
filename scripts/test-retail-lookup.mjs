@@ -83,13 +83,14 @@ const get  = (q, user='u-su') => call(`/?action=${q}`, { user });
 
 // One manifest per scenario, so nothing leaks between rules.
 let n = 0;
-async function scenario({ desc, upc = null, cost = 1, msrp = null, comp = null, results, snippets, pages = null, blocked = false }) {
+async function scenario({ desc, upc = null, cost = 1, msrp = null, comp = null, results, snippets, pages = null, blocked = false,
+                          l2 = null, sellAs = 'each', unitsPerCase = 1, linePack = null }) {
   const id = `m${++n}`;
-  db.prepare(`INSERT INTO manifests (id,vendor,uploaded_at,sell_as,units_per_case,status) VALUES (?,?,?,'each',1,'draft')`)
-    .run(id, 'V', '2026-08-20T00:00:00Z');
-  db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,msrp,vendor_claimed_retail,flags)
-              VALUES (?,1,?,?,?,10,?,?,?,'[]')`)
-    .run(id, upc, upc ? 'upc' : 'none', desc, cost, msrp, comp);
+  db.prepare(`INSERT INTO manifests (id,vendor,uploaded_at,sell_as,units_per_case,status) VALUES (?,?,?,?,?,'draft')`)
+    .run(id, 'V', '2026-08-20T00:00:00Z', sellAs, unitsPerCase);
+  db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,msrp,vendor_claimed_retail,l2,units_per_case,flags)
+              VALUES (?,1,?,?,?,10,?,?,?,?,?,'[]')`)
+    .run(id, upc, upc ? 'upc' : 'none', desc, cost, msrp, comp, l2, linePack);
   searches = []; fetches = []; agentCalls = []; crawls = []; normalizeCalls = []; priceParsePrompts = [];
   searchResults = results; snippetPrices = snippets; pagePrices = pages; fetchFails = blocked;
   const r = await post('manifest-retail', { id });
@@ -349,6 +350,145 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   eq(s.line.retail_price, null, '...and stays unpriced rather than guessed');
 }
 
+// ── 🛑 A PALLET COST IS NOT A BIG-TICKET ITEM ──────────────────────────────
+// The Clorox load, 2026-09-01: 41 lines of wipes, Pine-Sol and bleach, every one of them
+// over $100 because every one of them is a pallet. `cost > 100` classed all 41 as
+// big-ticket, so the lookup searched Best Buy, Lowe's and Home Depot for Clorox wipes.
+// 27 came back "page unreadable" and were flagged `needs agent` — which then reads as
+// "a heavier browser would fix this" when the truth is we asked the wrong shops.
+{
+  const s = await scenario({ desc: 'Clorox Disinfecting Wipes 6/75ct', upc: '012345670001',
+    cost: 1084.10, l2: 'Consumable Other',
+    results: RES('https://www.walmart.com/ip/clorox-wipes'),
+    snippets: [{ url:'https://www.walmart.com/ip/clorox-wipes', price:5.98, title:'Clorox Wipes 75ct', pack:1, in_stock:true, sold_by:'Walmart.com' }] });
+  ok(searches[0].includes('walmart.com'),
+     '🔑 a $1,084 pallet of wipes searches the GROCERY set, not the big-box set');
+  ok(!searches[0].includes('homedepot.com'), '...Home Depot is not asked about Clorox wipes');
+  ok(!s.flags.includes('needs agent'),
+     '...and nothing is flagged for the metered path it never needed');
+}
+
+// The category cuts BOTH ways, or it is just a thumb on the scale for cheap goods.
+{
+  const s = await scenario({ desc: 'Cordless drill kit', upc: '012345670002',
+    cost: 40, l2: 'Hardlines',
+    results: RES('https://www.homedepot.com/p/drill'),
+    snippets: [{ url:'https://www.homedepot.com/p/drill', price:99, title:'Drill', pack:1, in_stock:true }] });
+  ok(searches[0].includes('homedepot.com'),
+     '🔑 a $40 Hardlines line still searches the big-box set — the category outranks the cost');
+  near(s.line.retail_price, 99, '...and prices off it');
+}
+
+// ── The cost test itself, now in the unit a shelf price is quoted in ───────
+// A case of 24 at $120 is $5 a can. Read whole it trips the $100 threshold and goes to
+// Best Buy; divided by the case pack it is what it is — grocery.
+{
+  const s = await scenario({ desc: 'Soda 12oz cans', upc: '012345670003',
+    cost: 120, sellAs: 'case', unitsPerCase: 24, linePack: 24,
+    results: RES('https://www.kroger.com/p/soda'),
+    snippets: [{ url:'https://www.kroger.com/p/soda', price:5.00, title:'Soda 24 pack', pack:24, in_stock:true }] });
+  ok(searches[0].includes('kroger.com'),
+     '🔑 $120 a case ÷ 24 is $5 a can — the grocery set, not the appliance set');
+  ok(!searches[0].includes('bestbuy.com'), '...Best Buy is not asked about soda');
+}
+
+// 🛑 AND `msrp` IS NOT DIVIDED. The scorer multiplies it by units to get extended retail,
+// so it is already per shelf unit. Dividing it too would drop real big-ticket lines into
+// the grocery set — the opposite error, and the one that quietly understates a buy.
+{
+  await scenario({ desc: 'Chest freezer', upc: '012345670004',
+    cost: 60, msrp: 399, sellAs: 'case', unitsPerCase: 24,
+    results: RES('https://www.bestbuy.com/site/freezer'),
+    snippets: [{ url:'https://www.bestbuy.com/site/freezer', price:299, title:'Freezer', pack:1, in_stock:true }] });
+  ok(searches[0].includes('bestbuy.com'),
+     '🔑 a $399 MSRP is big-ticket whatever the case pack says');
+}
+
+// ── The vendor's case notation: "9/32fo" is NINE bottles, not a fraction ───
+// These sheets carry no Case pack column, so the leading count in the description is the
+// only thing that says what a line is. It used to read as 1 — or worse, as the INNER
+// count: "12/15ct" gave 15, and a $26.17 listing became $392.55 for steel wool pads.
+{
+  const s = await scenario({ desc: 'Clorox Plus Tilex Mold & Mildew Remover Spray 9/32fo', upc: '012345670005',
+    l2: 'Consumable Other',
+    results: RES('https://www.walmart.com/ip/tilex'),
+    snippets: [{ url:'https://www.walmart.com/ip/tilex', price:5.00, title:'Tilex 32 oz', pack:1, in_stock:true, sold_by:'Walmart.com' }] });
+  near(s.line.retail_price, 45.00,
+     '🔑 nine 32oz bottles at $5 each is a $45 case, not a $5 one');
+}
+
+// ...and the sheet's column outranks the description when both speak.
+{
+  const s = await scenario({ desc: 'S.O.S Steel Wool Soap Pads 12/15ct', upc: '012345670006',
+    linePack: 12, l2: 'Consumable Other',
+    results: RES('https://www.walmart.com/ip/sos'),
+    snippets: [{ url:'https://www.walmart.com/ip/sos', price:3.00, title:'S.O.S Pads 15ct', pack:1, in_stock:true, sold_by:'Walmart.com' }] });
+  near(s.line.retail_price, 36.00,
+     '🔑 twelve boxes at $3 — the inner 15 is a box count, never the case pack');
+}
+
+// 🛑 AND NOT ON A LENGTH. Home Depot and Lowe's write fractional dimensions in exactly
+// this shape — "3/4 in. x 10 ft." — and reading that as a three-pack divides a real price
+// by three. The unit after the slash is the guard: a count or a volume, never a length.
+{
+  const s = await scenario({ desc: 'PVC pipe 3/4 in. x 10 ft.', upc: '012345670007',
+    l2: 'Hardlines',
+    results: RES('https://www.lowes.com/pd/pvc-pipe'),
+    snippets: [{ url:'https://www.lowes.com/pd/pvc-pipe', price:8.00, title:'PVC Pipe 3/4 in.', pack:1, in_stock:true }] });
+  near(s.line.retail_price, 8.00,
+     '🛑 "3/4 in." is a dimension — pricing it as a 3-pack would treble a real price');
+  eq(s.line.retail_basis, 'single', '...and the basis says so');
+}
+
+// ...and the same guard on the older `NxM` rule, which had the bug first. It was latent
+// only because Hardlines was being sent to the grocery set, which returned nothing to
+// multiply; routing it to the sellers that stock it is what makes it reachable.
+{
+  const s = await scenario({ desc: 'Oak board 3/4 x 10 ft', upc: '012345670009',
+    l2: 'Hardlines',
+    results: RES('https://www.lowes.com/pd/oak-board'),
+    snippets: [{ url:'https://www.lowes.com/pd/oak-board', price:12.00, title:'Oak Board', pack:1, in_stock:true }] });
+  near(s.line.retail_price, 12.00,
+     '🛑 "3/4 x 10 ft" is a plank, not a 4-pack — no length is ever a pack count');
+}
+{
+  const s = await scenario({ desc: 'Lag screw 5/16 x 4 in.', upc: '012345670010',
+    l2: 'Hardlines',
+    results: RES('https://www.homedepot.com/p/lag-screw'),
+    snippets: [{ url:'https://www.homedepot.com/p/lag-screw', price:2.50, title:'Lag Screw', pack:1, in_stock:true }] });
+  near(s.line.retail_price, 2.50,
+     '🛑 ...nor is "5/16 x 4 in." a 16-pack');
+}
+
+// The vendor rule is opt-in, and the opt-in is the whole safety argument: it may only
+// ever be applied to OUR line, never to a title a retailer wrote.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const cand = src.slice(src.indexOf('function firecrawlCandidates('),
+                         src.indexOf('\n}', src.indexOf('function firecrawlCandidates(')));
+  ok(/retailPackSize\(v\.title \|\| p\.title\)/.test(cand) && !/vendor/.test(cand),
+     '🔑 a retailer listing title is never read with the vendor case rule');
+}
+
+// ── Fetch strips the chrome that was crowding out the price ────────────────
+// A Target product page came back as 820 characters of "skip to main content · Sponsored
+// · Add to cart · Q&A (46)" and NO price — long enough to pass for a success, so the paid
+// renderer that would have worked never ran.
+{
+  await scenario({ desc: 'Writing desk', upc: '012345670008',
+    results: RES('https://www.target.com/p/desk'),
+    snippets: [],
+    pages: [{ url:'https://www.target.com/p/desk', price:89.99, title:'Desk', pack:1, in_stock:true }] });
+  ok(fetches.length > 0, 'the page fetch ran');
+  const body = fetches[0];
+  ok(Array.isArray(body.exclude_selectors) && body.exclude_selectors.includes('nav'),
+     '🔑 the fetch strips nav/footer chrome before extraction');
+  ok(!('include_selectors' in body),
+     '🛑 EXCLUDE, never INCLUDE — an exclude that matches nothing is a no-op, an include that matches nothing FAILS the URL');
+  ok(!body.exclude_selectors.some(sel => /header|banner/.test(sel)),
+     '...and never <header>, where some product pages put the title and price');
+}
+
 // ── The cache means the same product is never looked up twice ──────────────
 {
   const first = await scenario({ desc: 'Cereal 18oz', upc: '012345678912',
@@ -518,6 +658,11 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   eq(crawls.length, 1, 'a blocked free fetch escalates exactly once');
   eq(crawls[0].proxy, 'auto', 'with the proxy retry that gets past a 403');
   ok(crawls[0].formats.includes('product'), 'asking for structured product data');
+  // 🔑 THE DRAIN GETS THE LONGER CEILING. Nobody is watching it, and a line left unpriced
+  // comes back round as work, so it is worth waiting out a slow product page. Firecrawl's
+  // console asked for 120000; 45s clears the whole measured band (successes top out at
+  // 25.6s) without putting a two-minute abort on a batch that may escalate ten times.
+  eq(crawls[0].timeout, 45000, '🔑 a manifest scrape waits 45s, not the scan\'s 20s');
   near(s3.line.retail_price, 7.00, 'and the structured price lands');
   eq(s3.line.retail_basis, 'single', '...in our own unit');
 

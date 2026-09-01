@@ -7434,17 +7434,82 @@ const RETAIL_ID_DOMAINS = ["openfoodfacts.org", "world.openfoodfacts.org", "upci
 // Never a price from any of these, whatever the domain filter let through.
 const RETAIL_MARKETPLACE = /(amazon|ebay|aliexpress|alibaba|poshmark|mercari|etsy|wish|temu|walmart\.com\/(?:ip\/)?seller|marketplace)/i;
 
+// How many SHELF UNITS are in one of whatever the manifest is quoting.
+//
+// 🔑 IDENTICAL TO THE SCORER'S FORMULA (see `upc` in the manifest GET). The retail path
+// used to have no unit model at all, so the two halves of the same screen disagreed about
+// what a line's cost meant — the scorer divided a case cost by the case pack, and the
+// retail lookup read the same number as a shelf price. Any change here belongs in both.
+//
+// 🛑 THE CASE PACK COLUMN DOES NOT MEAN "THESE ARE CASES". Only `sell_as` says that. A
+// sheet can carry a pack size for reference while still quoting per each — Kind's does —
+// and treating its pack of 5 as a case turned 810 boxes at $1.45 into 4,050 units at $0.29.
+const retailUnitsPerLine = (line, manifest) =>
+  manifest?.sell_as === "case"
+    ? (Number(line?.units_per_case) || Number(manifest?.units_per_case) || 12)
+    : 1;
+
+// Which retailers would actually stock this. The L2 category is resolved before the retail
+// run and costs nothing to read, so it answers the question directly instead of by proxy.
+// Anything not listed here falls through to the cost test — silence is "we do not know",
+// not "it is CPG".
+const RETAIL_BIG_L2 = new Set(["Furniture", "Hardlines"]);
+const RETAIL_CPG_L2 = new Set(["Consumable Food", "Consumable HBA", "Consumable Other"]);
+
 // A line is big-ticket when the money involved makes a street check worth it — R6's
 // "cost over ~$100" plus an MSRP that suggests the same.
-const retailIsBigTicket = (line) =>
-  (Number(line.cost) || 0) > 100 || (Number(line.msrp) || 0) > 150;
+//
+// 🛑 COST IS NOT A CATEGORY, AND THE COST IT READ WAS NOT PER UNIT. This one boolean picks
+// the retailer set, and on a wholesale grocery sheet every line trips a $100 threshold:
+// the Clorox load's CHEAPEST line was $103.02. All 41 lines classed big-ticket, so the
+// lookup searched Best Buy, Lowe's and Home Depot for Pine-Sol and Clorox wipes. 27 came
+// back "page unreadable" and were flagged `needs agent` — a flag that then reads as
+// "a heavier browser would fix this" when the truth is we asked the wrong shops.
+//
+// Two things were wrong and both are fixed here:
+//   1. The category was ignored even though the line already knows it. It is checked first.
+//   2. The cost was the manifest's own unit — a case, or a pallet — compared against a
+//      threshold that means a shelf price. It is divided down first now.
+// `msrp` is NOT divided: the scorer multiplies it by units to get extended retail, so it
+// is already per shelf unit.
+const retailIsBigTicket = (line, unitsPerLine = 1) => {
+  if (line.l2 && RETAIL_CPG_L2.has(line.l2)) return false;
+  if (line.l2 && RETAIL_BIG_L2.has(line.l2)) return true;
+  const perUnit = (Number(line.cost) || 0) / (Number(unitsPerLine) || 1);
+  return perUnit > 100 || (Number(line.msrp) || 0) > 150;
+};
+
+// A wholesale grocer writes a case as COUNT / SIZE-OF-ONE: "9/32fo" is nine 32-ounce
+// bottles, "12/15ct" twelve 15-count boxes, "18/3x75ct" eighteen 3-packs of 75. The
+// leading number is the case pack, and it is the only place on the line that says so —
+// these sheets carry no Case pack column.
+//
+// 🛑 OPT-IN, AND NEVER ON A RETAILER'S LISTING TITLE. Home Depot and Lowe's write
+// fractional dimensions in exactly this shape — "3/4 in. x 10 ft.", "1/2 in. PVC" — and
+// reading that as a three-pack divides a real price by three. The units below are the
+// guard: a count or a volume, never a length. Passing `vendor: true` is a promise that
+// the text came off OUR manifest line, which is why the two manifest call sites set it
+// and the candidate-listing site does not.
+//
+// The trailing unit is load-bearing, including on the `x` form: "18/3x75ct" is eighteen
+// 3-packs of 75 and ends in a COUNT, whereas "3/4 x 10 ft" is a plank. Requiring the unit
+// after the x is what keeps a dimension from parsing as a case.
+const RETAIL_VENDOR_UNIT = "ct|cnt|pk|pack|oz|fo|lb|ml|gal|qt|pt";
+const RETAIL_VENDOR_CASE = new RegExp(
+  `\\b(\\d{1,3})\\s*\\/\\s*\\d{1,3}\\s*(?:[xX]\\s*\\d{1,3}\\s*(?:${RETAIL_VENDOR_UNIT})|(?:${RETAIL_VENDOR_UNIT}))\\b`, "i");
 
 // Pack size out of a description: "6-pack", "2 pk", "16 ct", "24 count".
 // R2: about half the Aug 19 prices came from multipacks, so a per-unit price needs the
 // divisor or it is out by the pack size.
-function retailPackSize(text) {
+function retailPackSize(text, opts = {}) {
   const t = String(text || "");
   const ok = (v) => { const n = Number(v); return n > 1 && n <= 200 ? n : null; };
+  // First, because the generic rules below read the INNER count off the same string:
+  // "12/15ct" is twelve boxes of fifteen, and `15` is the wrong divisor for a case.
+  if (opts.vendor) {
+    const m = t.match(RETAIL_VENDOR_CASE);
+    if (m && ok(m[1])) return ok(m[1]);
+  }
   // "6 ct", "6-pack", "24 count"
   let m = t.match(/(\d{1,3})\s*[-\s]?\s*(?:pk|pack|ct|count|cnt)\b/i);
   if (m && ok(m[1])) return ok(m[1]);
@@ -7456,8 +7521,21 @@ function retailPackSize(text) {
   // "Pack of 12", "Case of 24"
   m = t.match(/\b(?:pack|case|box)\s+of\s+(\d{1,3})\b/i);
   if (m && ok(m[1])) return ok(m[1]);
-  // "3X3.5OZ" — count first
-  m = t.match(/\b(\d{1,3})\s*[xX]\s*\d/);
+  // "3X3.5OZ" — count first.
+  // 🛑 UNLESS WHAT FOLLOWS IS A DIMENSION. "5/16 x 4 in." is a lag screw, "3/4 x 10 ft" a
+  // plank and "2 x 4 x 8 ft" a stud; they used to read as a 16-, 4- and 2-pack and
+  // multiply a real price by that much. Latent while Hardlines was being sent to the
+  // grocery set, which returned nothing to multiply — routing it to the sellers that
+  // actually stock it is what makes this reachable.
+  // A negative guard, not a rewrite: anything that is not a length parses exactly as before.
+  //
+  // 🔑 `(?=(\d+…))\2` IS AN ATOMIC GROUP, and it is the only reason the guard holds. Plain
+  // `\d+` backtracks "10" down to "1" so the lookahead inspects "0 ft" instead of "ft",
+  // finds no length, and waves the plank through. `\b` instead of atomic does stop that —
+  // and breaks "6X12OZ", where digit meets letter with no boundary between them. The
+  // whitespace has to live INSIDE the lookahead for the same reason: a trailing `\s*`
+  // outside it simply backtracks to zero width and reads the space rather than the unit.
+  m = t.match(/\b(\d{1,3})\s*[xX]\s*(?=(\d+(?:\.\d+)?))\2(?!\s*(?:in\b|inch|ft\b|feet|foot|mm\b|cm\b|yd\b|"|[xX]\s*\d))/i);
   if (m && ok(m[1])) return ok(m[1]);
   return 1;
 }
@@ -7618,6 +7696,25 @@ async function retailSearch(env, query, domains, ctx = {}) {
   return (body?.results || []).filter(r => retailHostAllowed(r.url, domains));
 }
 
+// 🔑 STRIP THE CHROME BEFORE IT CROWDS OUT THE PRICE. Fetch gained CSS selector scoping
+// after this integration was written, and it lands exactly on the failure recorded at the
+// escalation below: a Target product page came back as 820 characters of "skip to main
+// content · Sponsored · Add to cart · Q&A (46)" and NO PRICE, sailed past the length
+// test, and the paid renderer that would have worked never ran.
+//
+// `exclude_selectors`, NOT `include_selectors`, and that choice is the whole safety
+// argument. An exclude that matches nothing is a documented no-op; an include that
+// matches nothing FAILS the URL outright (`selector_not_matched`). Price markup differs
+// on every retailer, so an include list would have to be right about all seven of them or
+// it would lose pages that read fine today. This can only ever remove noise.
+//
+// Nothing here can contain a price: a nav, a footer, a complementary aside, or a node the
+// page itself hides from assistive tech. `header`/`[role="banner"]` are deliberately NOT
+// on the list — some product pages put the title and price inside a <header>.
+const RETAIL_FETCH_STRIP = ["nav", "footer", "aside",
+                            '[role="navigation"]', '[role="contentinfo"]',
+                            '[aria-hidden="true"]'];
+
 async function retailFetch(env, urls, ctx = {}) {
   const t0 = Date.now();
   let res, body = null, ok = false;
@@ -7629,7 +7726,8 @@ async function retailFetch(env, urls, ctx = {}) {
     res = await fetch("https://api.fetch.tinyfish.ai", {
       method: "POST",
       headers: { "X-API-Key": env.TINYFISH_API_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ urls: urls.slice(0, 5), format: "markdown" }),
+      body: JSON.stringify({ urls: urls.slice(0, 5), format: "markdown",
+                            exclude_selectors: RETAIL_FETCH_STRIP }),
       signal: AbortSignal.timeout(10000),
     });
     ok = res.ok;
@@ -7804,7 +7902,21 @@ function retailDecide(line, cands, domains = [], opts = {}) {
   // $392.55 for steel wool pads.
   //
   // Nothing about the parser is wrong; it was being asked a manifest question on a scan.
-  const targetPack = opts.scan ? 1 : retailPackSize(line.description);
+  //
+  // 🔑 AND THE SHEET'S CASE PACK COLUMN OUTRANKS THE DESCRIPTION. These are the two
+  // questions the scorer keeps apart and they must not be merged here either:
+  //
+  //   How many are in a pack?      -> `units_per_case`. THIS one. It says what we are
+  //                                   buying, so it is what retail must be priced against.
+  //   Is qty/cost quoted per CASE? -> `sell_as`, and only that. A cost question; it has
+  //                                   no business setting the retail unit.
+  //
+  // Reading the description when a column exists is guessing over a stated fact. The
+  // parser stays as the fallback, now vendor-aware: on the Clorox load "12/15ct" is twelve
+  // boxes of fifteen, and taking the inner 15 multiplied a $26.17 listing into $392.55 for
+  // a box of steel wool pads.
+  const targetPack = opts.scan ? 1
+    : (Number(line.units_per_case) || retailPackSize(line.description, { vendor: true }));
   const targetOz = retailOunces(line.description);
 
   // R3 — a marketplace listing is never a retail price, whatever domain it sits on.
@@ -7997,11 +8109,27 @@ function retailDecide(line, cands, domains = [], opts = {}) {
 // run's parses died with a bare HTTP 400.
 // One end-to-end budget for a paid scrape. Firecrawl is told the shorter figure so it
 // answers before we stop listening; the headroom on top is transit, not patience.
+//
+// 🔑 TWO CEILINGS, BECAUSE TWO VERY DIFFERENT THINGS ARE WAITING. A single number was
+// serving both, and 20s is right for exactly one of them:
+//
+//   SCAN     a manager is stood at the shelf holding the barcode. Latency IS the feature;
+//            a minute of spinner is worse than "no price found", which they can act on.
+//   MANIFEST the every-minute drain. Nobody is watching, and a line left unpriced comes
+//            back round as work — so it is worth waiting out a slow product page.
+//
+// 45s is measured, not chosen for roundness: successful scrapes top out at 25.6s and the
+// failures cluster 22–35s, so 45s clears the band. Firecrawl's console suggested 120000,
+// which past 45s only buys a single 54.9s outlier that failed with a 500 anyway — and
+// would put a 125s abort on a drain that may escalate ten times in one request.
 const FIRECRAWL_BUDGET_MS = 20000;
+const FIRECRAWL_BUDGET_BATCH_MS = 45000;
 async function firecrawlScrape(env, url, budget, ctx = {}) {
   if (!env.FIRECRAWL_API_KEY) return null;
   if (!budget || budget.credits <= 0) return null;
   const t0 = Date.now();
+  // The scan path is the only one with a person on the other end of it.
+  const budgetMs = ctx.scan ? FIRECRAWL_BUDGET_MS : FIRECRAWL_BUDGET_BATCH_MS;
   let res, body = null, ok = false;
   try {
     res = await fetch("https://api.firecrawl.dev/v2/scrape", {
@@ -8012,8 +8140,11 @@ async function firecrawlScrape(env, url, budget, ctx = {}) {
         formats: ["product", "markdown"],
         onlyMainContent: true,
         proxy: "auto",          // retries through enhanced proxies for the 403-ing sites
-        maxAge: 172800000,      // a two-day-old price is still the price, and costs less
-        timeout: FIRECRAWL_BUDGET_MS,
+        // A two-day-old price is still the price. 🛑 It does NOT save a credit — the docs
+        // are explicit that "cached results still cost 1 credit per page; caching improves
+        // speed, not credit usage". This buys latency, and latency only.
+        maxAge: 172800000,
+        timeout: budgetMs,
         location: { country: "US", languages: ["en-US"] },
       }),
       // 🛑 THE TWO DEADLINES HAVE TO AGREE, AND OURS HAS TO BE THE LONGER ONE. The body
@@ -8021,7 +8152,7 @@ async function firecrawlScrape(env, url, budget, ctx = {}) {
       // in between was thrown away — and the credit was still spent, because a scrape is
       // billed whether or not we are still listening. Firecrawl now gives up first and we
       // wait out the transit, so every credit we pay for is a credit we can read.
-      signal: AbortSignal.timeout(FIRECRAWL_BUDGET_MS + 5000),
+      signal: AbortSignal.timeout(budgetMs + 5000),
     });
     ok = res.ok;
     if (ok) body = await res.json();
@@ -8313,7 +8444,10 @@ async function retailPriceLine(env, line, budget, ctx, searchName, ident = null)
     ? retailClassPrice(env, line, ident.brand, ident.size, budget, ctx).catch(() => null)
     : Promise.resolve(null);
 
-  const bigTicket = retailIsBigTicket(line);
+  // Set by retailRunManifest from the manifest's own `sell_as`; absent on a scan, where
+  // one scanned item is one shelf unit by definition. A COST divisor only — what we are
+  // buying is `units_per_case`, and retailDecide reads that itself.
+  const bigTicket = retailIsBigTicket(line, Number(ctx.unitsPerLine) || 1);
   const domains = bigTicket ? RETAIL_BIG_DOMAINS : RETAIL_CPG_DOMAINS;
   const item = [searchName || line.description,
                 line.identifier_type === "upc" ? `UPC ${line.identifier}` : line.identifier]
@@ -8428,6 +8562,12 @@ async function retailRunManifest(env, manifestId, opts = {}) {
   const budget = { searches: maxSearches, fetches: Number(opts.maxFetches) || maxSearches,
                    classSearches: budgetNum(opts.maxClassSearches, maxSearches),
                    credits: budgetNum(opts.maxCredits, 10) };
+  // 🔑 The manifest, for `sell_as` and `units_per_case` ONLY. Without it the retail
+  // lookup has no idea whether a line's cost is a shelf price or a case price, and every
+  // downstream judgement — which shops to search, what to divide a listing by — is made
+  // in a unit nobody declared. One row, read once for the whole batch.
+  const manifest = await env.DB.prepare(
+    `SELECT sell_as, units_per_case FROM manifests WHERE id = ?`).bind(manifestId).first();
   const { results: allLines } = await env.DB.prepare(
     `SELECT * FROM manifest_lines WHERE manifest_id = ? ORDER BY row_no`).bind(manifestId).all();
   if (!allLines?.length) return { priced: 0, cached: 0, skipped: 0, partial: false, remaining: 0 };
@@ -8524,7 +8664,8 @@ async function retailRunManifest(env, manifestId, opts = {}) {
         ? [known.title, known.size].filter(Boolean).join(" ")
         : null;
       const r = await retailPriceLine(env, line, budget,
-        { manifest_id: manifestId, line_id: line.id }, searchName,
+        { manifest_id: manifestId, line_id: line.id,
+          unitsPerLine: retailUnitsPerLine(line, manifest) }, searchName,
         known ? { brand: known.brand, size: known.size } : null);
       if (r.skipped === "throttled") {
         // Stop here. The next search would be refused too, and a line we never asked
@@ -8766,9 +8907,18 @@ const MANIFEST_HINTS = {
   // first made a good buy look 85% dearer and it would have been rejected. The named
   // deal-price columns therefore come FIRST and /^wholesale/ sits last, where it only
   // wins if a sheet offers nothing better.
+  // The extended forms sit LATE, after every per-unit and per-case name and after a bare
+  // "Cost"/"Price": a sheet carrying both "Unit Price" and "Extended Cost" means the first,
+  // and taking the total when a unit price is right there buys a division for nothing.
+  // 🛑 Each one names cost/price/amount rather than matching "Extended" alone — "Extended
+  // Retail" is MSRP's column, and a bare /^ext/ here would take it and price the load off
+  // the retail we are supposed to be beating.
   cost: [/^unit\s*price/i, /^sale\s*price/i, /^your\s*cost/i, /unit\s*cost/i, /^ea\s*cost/i,
          /^price\s*per\s*unit/i, /^case\s*price/i, /^deal\s*price/i, /^rate$/i,
-         /^cost\b/i, /^price$/i, /^wholesale/i, /^wsl/i],
+         /^cost\b/i, /^price$/i,
+         /^ext(?:ended)?\.?\s*(?:price|cost|amount)/i, /^line\s*(?:total|cost|price)/i,
+         /^total\s*(?:cost|price)/i,
+         /^wholesale/i, /^wsl/i],
   // The reference we are beating, never what we pay. Read as a sanity check only.
   msrp: [/^msrp\b/i, /^list\b/i, /retail\s*price/i, /^srp\b/i, /^orig(inal)?\s*retail/i,
          /^unit\s*retail/i, /^retail$/i, /^unit\s*wholesale/i],
@@ -8777,6 +8927,72 @@ const MANIFEST_HINTS = {
   // with both a "Grade" and a "Condition" column means the second one.
   condition: [/^condition/i, /^sort$/i, /^cosmetic/i, /^grade$/i],
 };
+
+// ─── What unit is the cost column quoted in? ─────────────────────────────────
+//
+// 🔑 THE COST HINTS ABOVE MATCH THREE DIFFERENT KINDS OF NUMBER and nothing ever noticed.
+// `sell_as` was taken from the caller, else the template, else 'each' — never from the
+// column that was actually mapped — so the two could disagree indefinitely, and on two of
+// four saved templates they did:
+//
+//   "Unit Price" / "Price per unit"  a shelf unit    → each     ✓ Alliance, Kind
+//   "Case Price"                     a case          → case     ✗ WI Food read 12× high
+//   "Sale Price"                     a LINE TOTAL    → neither  ✗ Clorox read $900.93/unit
+//
+// 🛑 CLASSIFY ONLY WHAT THE HEADER ACTUALLY NAMES. "Sale Price", "Deal Price", "Your Cost"
+// and a bare "Cost" do not say what unit they are in, and on a different vendor's sheet
+// any of them may well be per unit. Guessing from a name that carries no unit is exactly
+// how the Clorox load came to say `each` about a line total. Unknown returns null, which
+// keeps today's behaviour and asks a human — it does not invent an answer.
+const MANIFEST_COST_BASIS = {
+  unit: [/^unit\s*(?:price|cost)/i, /^(?:price|cost)\s*(?:per|\/)\s*unit/i, /^ea\.?\s*(?:price|cost)/i,
+         /^(?:price|cost)\s*(?:per|\/)\s*ea\b/i, /^each\s*(?:price|cost)/i, /^per\s*unit\b/i],
+  case: [/^case\s*(?:price|cost)/i, /^(?:price|cost)\s*(?:per|\/)\s*case/i, /^per\s*case\b/i,
+         /^cs\s*(?:price|cost)/i],
+  // A line total: the sheet has already multiplied by the quantity for us. Kept in step
+  // with the extended forms in MANIFEST_HINTS.cost — a header that can be MAPPED as a cost
+  // but not CLASSIFIED would silently fall back to 'unit', which is the failure this whole
+  // pair of tables exists to prevent.
+  extended: [/^ext(?:ended)?\.?\s*(?:price|cost|amount)/i, /^line\s*(?:total|price|cost)/i,
+             /^total\s*(?:price|cost|amount)/i, /^amount$/i, /^(?:price|cost)\s*ext(?:ended)?/i],
+};
+
+// The vocabulary, in one place. Every value that reaches the database is checked against
+// this — a basis arriving from a request body is user input, and an unrecognised one must
+// fall through to the derivation rather than be stored and silently divide by nothing.
+const MANIFEST_COST_BASES = Object.keys(MANIFEST_COST_BASIS);
+
+// A basis the caller sent, in either the new vocabulary or the old two-value one. `sell_as`
+// is still accepted because it is the contract every existing client speaks: 'case' has
+// always meant "cost is quoted per case", which is a basis by another name.
+function manifestBasisFromBody(body) {
+  if (MANIFEST_COST_BASES.includes(body?.cost_basis)) return body.cost_basis;
+  if (body?.sell_as) return body.sell_as === "case" ? "case" : "unit";
+  return null;
+}
+
+// A legacy `sell_as` default, read as the basis it always implied.
+const manifestBasisFromSellAs = (v) => v ? (v === "case" ? "case" : "unit") : null;
+
+// The basis of whichever header ended up mapped to `cost`, or null when the header does
+// not name a unit. Takes the map rather than a header string so the caller cannot ask
+// about a column that is not the one being used.
+function manifestCostBasis(map) {
+  const header = String(map?.cost || "").trim();
+  if (!header) return null;
+  for (const [basis, pats] of Object.entries(MANIFEST_COST_BASIS)) {
+    if (pats.some(re => re.test(header))) return basis;
+  }
+  return null;
+}
+
+// Each basis lands on a path that is ALREADY correct downstream, which is the whole reason
+// this is safe: nothing in the scorer's money math changes.
+//   unit     → verbatim, 'each'   the behaviour every existing manifest already has
+//   case     → verbatim, 'case'   the scorer divides by units_per_case for us
+//   extended → ÷ qty at import, 'each'  normalised on the way in, so nothing downstream
+//                                       has to learn a third basis
+const manifestSellAsFor = (basis) => basis === "case" ? "case" : "each";
 // ─── .xlsx → rows ────────────────────────────────────────────────────────────
 //
 // An .xlsx is a ZIP of XML. Workers ship DecompressionStream("deflate-raw"), so this needs
@@ -9232,7 +9448,7 @@ function manifestRound(price, rule) {
 // Write a manifest's lines from a mapped CSV, filling anything item_cache already knows.
 // The cache is what makes the SECOND manifest carrying a product cost nothing to
 // classify — and what keeps a human's correction from being overwritten by the model.
-async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
+async function manifestWriteLines(env, manifestId, headers, dataRows, map, costBasis = "unit") {
   const col = {};
   for (const f of MANIFEST_FIELDS) if (map[f]) col[f] = headers.indexOf(map[f]);
 
@@ -9299,6 +9515,31 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
     };
   });
 
+  // 🔑 AN EXTENDED COST IS A LINE TOTAL, AND IT IS NORMALISED HERE — ONCE, ON THE WAY IN.
+  // Clorox's "Sale Price" reads $900.93 against a qty of 119. That is $7.57 a unit, and
+  // stored raw it was read as the price of one bottle.
+  //
+  // Dividing at import rather than teaching the scorer a third basis is deliberate. Every
+  // consumer of `cost` — the scorer's costPerUnit, freight amortisation, the retail
+  // comparison — already reads it as "per the manifest's own unit", and this repo's money
+  // math is the last place to add a branch. Normalising here means none of them changes.
+  //
+  // The original is kept on the line: a figure this one was derived from is exactly what
+  // someone wants when they doubt it.
+  //
+  // 🛑 NO QTY, NO DIVISION. There is nothing to divide by, and a line total left standing
+  // as a unit price is the precise error this exists to stop — so the line says so instead
+  // of being quietly wrong. `qty > 0` and not merely non-null: a zero would divide to
+  // Infinity and a negative would flip the sign.
+  if (costBasis === "extended") {
+    for (const l of parsed) {
+      if (l.cost === null) continue;
+      if (!(l.qty > 0)) { l.costTotalNoQty = true; continue; }
+      l.costTotal = l.cost;
+      l.cost = roundCents(l.cost / l.qty);
+    }
+  }
+
   // One read for the whole file. Range-bounded rather than IN(?,?,…): D1 caps bound
   // params at 100 per query and a manifest can carry thousands of identifiers.
   const cache = {};
@@ -9328,10 +9569,15 @@ async function manifestWriteLines(env, manifestId, headers, dataRows, map) {
       if (l.qty === null) flags.push("no qty");
       if (l.qtyApprox) flags.push("qty is a minimum");
       if (l.cost === null) flags.push("no cost");
+      // Audit trail for the division above — the sheet's own number, and what it was cut by.
+      if (l.costTotal !== undefined) flags.push(`cost from line total: ${l.costTotal} \u00f7 ${l.qty}`);
+      if (l.costTotalNoQty) flags.push("cost is a line total but the line has no qty");
       // The vendor's pack and the description's pack are two claims about the same
       // thing. On the Kind file three lines say "6 ct" in the text while the Case pack
       // column says 5. Neither is silently preferred without saying so.
-      const descPack = retailPackSize(l.description);
+      // 🔑 `vendor` — this is OUR line, so "12/15ct" is twelve boxes of fifteen. Reading
+      // the inner 15 as the case pack invented a mismatch against a sheet that said 12.
+      const descPack = retailPackSize(l.description, { vendor: true });
       if (l.units_per_case && descPack > 1 && l.units_per_case !== descPack) {
         flags.push(`pack mismatch: sheet ${l.units_per_case}, description ${descPack}`);
       }
@@ -17678,19 +17924,46 @@ export default {
         }
         if (!map) { map = manifestGuessMap(headers); mapSource = "guessed"; }
         const missing = manifestMissing(map, headers);
-        const sellAs = (body?.sell_as || tpl?.sell_as_default || "each") === "case" ? "case" : "each";
+        // 🔑 THE COLUMN GETS A VOTE AT LAST. `sell_as` used to be the caller's, else the
+        // template's, else 'each' — and never once the header that was actually mapped to
+        // `cost`. So "Case Price" and "Sale Price" both stored 'each', and the disagreement
+        // was invisible because nothing ever compared them. Strongest evidence first:
+        //
+        //   1. the caller — a human answering this exact question on the mapping screen
+        //   2. the vendor's REMEMBERED basis — that same human, on the last load
+        //   3. what the mapped header NAMES — "Unit Price", "Case Price", "Extended"
+        //   4. the vendor's legacy sell_as default, read as the basis it always implied
+        //   5. 'unit', which is what every manifest already did
+        //
+        // 🛑 A REMEMBERED ANSWER BEATS THE HEADER, and that ordering is load-bearing. A
+        // vendor can name a column "Unit Cost" and quote cases in it; if the header could
+        // override what someone told us last time, that correction would be impossible to
+        // make stick. The header only ever fills a vacuum — which is precisely the vacuum
+        // the four saved templates are sitting in today.
+        const named = manifestCostBasis(map);
+        const fromBody = manifestBasisFromBody(body);
+        const remembered = MANIFEST_COST_BASES.includes(tpl?.cost_basis_default) ? tpl.cost_basis_default : null;
+        const costBasis = fromBody || remembered || named
+          || manifestBasisFromSellAs(tpl?.sell_as_default) || "unit";
+        const sellAs = manifestSellAsFor(costBasis);
         const upc = Number(body?.units_per_case ?? tpl?.units_per_case_default ?? 12) || 12;
 
         const id = randomHex(12), now = new Date().toISOString();
         const who = currentUser?.email || currentUser?.name || null;
         await env.DB.prepare(
-          `INSERT INTO manifests (id, vendor, filename, uploaded_by, uploaded_at, sell_as, units_per_case, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`
-        ).bind(id, vendor, String(body?.filename || "").slice(0, 200) || null, who, now, sellAs, upc).run();
+          `INSERT INTO manifests (id, vendor, filename, uploaded_by, uploaded_at, sell_as, units_per_case, cost_basis, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft')`
+        ).bind(id, vendor, String(body?.filename || "").slice(0, 200) || null, who, now, sellAs, upc, costBasis).run();
 
-        const wrote = missing.length ? null : await manifestWriteLines(env, id, headers, dataRows, map);
+        const wrote = missing.length ? null : await manifestWriteLines(env, id, headers, dataRows, map, costBasis);
         return new Response(JSON.stringify({
           ok: true, id, vendor, sell_as: sellAs, units_per_case: upc,
+          // 🔑 The page shows BOTH, because "we read it off your column" and "we fell back
+          // to the default" are different levels of confidence and the reader has to be
+          // able to tell them apart. `cost_header` names the column so the claim is checkable.
+          cost_basis: costBasis, cost_basis_source: fromBody ? "you" : remembered ? "remembered"
+            : named ? "column" : tpl?.sell_as_default ? "remembered" : "default",
+          cost_header: map?.cost || null,
           headers, column_map: map, map_source: mapSource, missing,
           // The page shows these: a skipped preamble the user did not expect, or a header
           // that matched only one field, both mean "look at this before trusting it".
@@ -17740,22 +18013,38 @@ export default {
         if (missing.length) {
           return new Response(JSON.stringify({ error: `Still unmapped: ${missing.join(", ")}` }), { status: 400, headers: corsJson });
         }
-        const sellAs = (body?.sell_as || m.sell_as) === "case" ? "case" : "each";
+        // 🛑 THE BASIS IS RE-DECIDED HERE, NOT INHERITED. A remap re-reads the RAW file, so
+        // normalising an extended cost is a division that has to happen again — and against
+        // the mapping the caller just chose, which may have moved `cost` to a different
+        // column with a different basis entirely. Inheriting the stored basis while the
+        // column moved underneath is how a line total gets divided twice, or not at all.
+        //
+        // 🔑 AND HERE THE COLUMN OUTRANKS THE STORED BASIS — the reverse of upload, for the
+        // reason that decides it either way: whoever is remapping is editing the mapping
+        // right now, so the column they just picked is fresher evidence than a basis saved
+        // against the mapping they are replacing. Their own answer still beats both.
+        const named = manifestCostBasis(map);
+        const fromBody = manifestBasisFromBody(body);
+        const costBasis = fromBody || named
+          || (MANIFEST_COST_BASES.includes(m.cost_basis) ? m.cost_basis : null)
+          || manifestBasisFromSellAs(m.sell_as) || "unit";
+        const sellAs = manifestSellAsFor(costBasis);
         const upc = Number(body?.units_per_case ?? m.units_per_case) || 12;
-        await env.DB.prepare(`UPDATE manifests SET sell_as = ?, units_per_case = ? WHERE id = ?`)
-          .bind(sellAs, upc, m.id).run();
+        await env.DB.prepare(`UPDATE manifests SET sell_as = ?, units_per_case = ?, cost_basis = ? WHERE id = ?`)
+          .bind(sellAs, upc, costBasis, m.id).run();
         await env.DB.prepare(`DELETE FROM manifest_lines WHERE manifest_id = ?`).bind(m.id).run();
-        const rewrote = await manifestWriteLines(env, m.id, headers, rows.slice(rehdr.headerRow + 1), map);
+        const rewrote = await manifestWriteLines(env, m.id, headers, rows.slice(rehdr.headerRow + 1), map, costBasis);
 
         if (body?.save_template !== false) {
           const now = new Date().toISOString();
           await env.DB.prepare(
-            `INSERT INTO vendor_templates (vendor, column_map, sell_as_default, units_per_case_default, updated_by, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)
+            `INSERT INTO vendor_templates (vendor, column_map, sell_as_default, units_per_case_default, cost_basis_default, updated_by, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(vendor) DO UPDATE SET column_map = excluded.column_map,
                sell_as_default = excluded.sell_as_default, units_per_case_default = excluded.units_per_case_default,
+               cost_basis_default = excluded.cost_basis_default,
                updated_by = excluded.updated_by, updated_at = excluded.updated_at`
-          ).bind(m.vendor, JSON.stringify(map), sellAs, upc,
+          ).bind(m.vendor, JSON.stringify(map), sellAs, upc, costBasis,
                  currentUser?.email || currentUser?.name || null, now).run();
         }
         return new Response(JSON.stringify({

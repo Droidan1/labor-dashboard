@@ -1,118 +1,236 @@
-# Labor header shows a different week than the pane under it (2026-09-01)
+# Retail lookup: unit semantics + free Fetch scoping
 
-**Reported:** "Can you fix the dates, they don't match up." Screenshot: Hours tab, header
-week nav reads **Aug 30 – Sep 5**, the pane under it reads **Week of Aug 23 – Aug 29** with
-Sun 23 → Sat 29 columns, and the chip beside the title reads **Trailing 4 wks · thru Aug 29**.
+Follow-on from the TinyFish Agent review. The Agent stays OFF; these are the free fixes
+that have to land before "needs agent" means anything.
 
-## What is actually wrong
+## The one underlying defect
 
-The offset itself is intentional and consistent — `laborState.week` is the week being
-**planned** (next full week), and both Budget vs Actual and Hours deliberately report the
-week before it:
+The retail path does not know whether a manifest line's numbers are **per shelf unit** or
+**per case**, and it guesses differently in three places:
 
-- `laborUpcomingSaturday()` → this week's Saturday **+ 7**  (the planned week)
-- `laborActRange()`  → `laborState.week - 7`
-- `laborHoursWeek()` → `laborState.week - 7`
+| Place | Guess it makes | What it broke |
+|---|---|---|
+| `retailIsBigTicket` | `cost` is per unit | Clorox pallets ($103–$4,786/line) classed big-ticket → searched Best Buy / Lowe's / Home Depot instead of Walmart / Target / Kroger |
+| `targetPack` (`retailDecide`) | the description's count is our pack | multiplied retail by 15 on a `sell_as:"each"` sheet → S.O.S pads priced $392.55 |
+| `retailPackSize` | — | cannot read the vendor's `N/size` case notation at all (`9/32fo` → 1) |
 
-Sun→Sat weeks check out (Aug 23 2026 is a Sunday, Aug 29 a Saturday), so the day columns
-are right. The defect is that the **header chrome is hardcoded to the Planning week on all
-three tabs**:
+The scorer already has the right model at `worker.js:17652` — `sell_as` + `units_per_case`.
+The retail path just never got it.
 
-1. `initLabor()` sets `#labor-week-label` to `laborWeekLabel(laborState.week)` unconditionally,
-   and `laborSetTab()` never touches it. On Budget vs Actual and Hours the nav therefore
-   names a week neither pane is showing.
-2. `#labor-fresh` ("Trailing 4 wks · thru …") is written only by `laborRender()` — Planning's
-   renderer — but is never hidden, so Planning's *inputs* stay pinned over the other panes.
-
-Same class as the 2026-07-03 lesson in `lessons.md`: a fixed period label left pointing at
-the old period after the value under it moved.
+Measured on prod (`Clorox Update - Arlington, TX`, 41 lines): 27 flagged `needs agent`,
+8 priced, **4 of those 8 wrong** — three unrelated products all priced off one Home Depot
+75-count wipes page at $0.26 ($19.50 ÷ 75 = the price of one wipe).
 
 ## Plan
 
-- [x] `laborReportedWeek()` — one definition of "the week Actual + Hours report", replacing
-      the `- 7` duplicated in `laborActRange()` and `laborHoursWeek()`.
-- [x] `laborHeaderWeek()` — the week the **active tab** renders: Planning → `laborState.week`,
-      Actual/Hours → `laborReportedWeek()`.
-- [x] `laborSyncWeekChrome()` — writes `#labor-week-label` from `laborHeaderWeek()` and hides
-      `#labor-fresh` off Planning. Called from `initLabor()` and `laborSetTab()`.
-- [x] Keep the arrows on `laborState.week`: a shift of ±7 moves both weeks together, so the
-      label stays in step with whichever pane is open.
-- [x] Prove it with a data-model reproduction (`scripts/test-labor-week-label.mjs`) rather
-      than a screenshot — the page needs the remote worker + auth to render.
+- [x] **1. Unit model.** `retailUnitsPerLine(line, manifest)` — the SAME formula as the
+      scorer: `sell_as === "case" ? (line.units_per_case || manifest.units_per_case || 12) : 1`.
+      Thread it from `retailRunManifest` through `ctx` into `retailPriceLine`/`retailDecide`.
+- [x] **2. `retailIsBigTicket`** — category first (L2 is already resolved and free), then a
+      **per-unit** cost. `msrp` is already per unit (the scorer multiplies it by units), so
+      it is not divided.
+- [x] **3. `retailPackSize(text, { vendor: true })`** — learn `9/32fo`, `12/15ct`, `18/3x75ct`.
+      🛑 Opt-in, and NEVER applied to a retailer's listing title: Home Depot and Lowe's write
+      fractional dimensions the same way ("3/4 in. x 10 ft.") and reading that as a 3-pack
+      divides a real price by three.
+- [x] **4. `targetPack` respects `sell_as`** — use the unit model, fall back to the parser
+      only when a caller has no manifest context (the scan path stays at 1, unchanged).
+- [x] **5. `retailFetch` selector scoping** — `include_selectors` / `exclude_selectors` are
+      new since the Aug 2026 integration and free. Aimed at the failure the code already
+      documents at `worker.js:8348`: a Target page returning 820 chars of nav chrome and no price.
+- [x] **6. Tests** for each, in `scripts/test-retail-lookup.mjs`.
+- [x] **7. Full suite green**, then commit + push + draft PR.
+
+## Not in scope
+
+- Funding the TinyFish Agent. Still off; still flagged, not billed.
+- Re-running the Clorox manifest against prod (that is a write, and Brian's call).
+- The 4 wrong prices sitting in D1 — they are on a **draft** manifest, so nothing has been
+  bought against them. They clear on the next run once this lands.
 
 ## Review
 
-**Changed — `index.html`, 4 edits, no behaviour change to any figure:**
+**Landed.** 2,643 assertions across 51 suites, all green (was 2,623 before; +20 new).
 
-1. `laborReportedWeek()` — new. The single definition of the week Budget vs Actual and
-   Hours report. `laborActRange()` and `laborHoursLoad()` now call it; the open-coded
-   `- 7` is gone from both (`laborHoursWeek()` deleted as a duplicate of it).
-2. `laborHeaderWeek()` — new. Planning → `laborState.week`; Actual/Hours → `laborReportedWeek()`.
-3. `laborSyncWeekChrome()` — new. Writes `#labor-week-label` from `laborHeaderWeek()` and
-   drops `sm:inline-flex` from `#labor-fresh` off Planning. Called from `laborSetTab()` (so
-   it fires on every tab switch, which is what was missing) and, via it, from `initLabor()`.
-   The hardcoded label write in `initLabor()` is removed — one writer now.
-4. Corrected the Hours comment: it said the entered week "just RAN", but the arithmetic is
-   the CURRENT week, which is what the Budget vs Actual comment eight lines up already says.
+### What changed
 
-The arrows still move only `laborState.week`, so both weeks shift together and the label
-cannot desync from the pane. No endpoint, query or figure changed — `laborActRange()`
-returns the same `{from, to}` it did before.
+| | |
+|---|---|
+| `retailUnitsPerLine(line, manifest)` | new — the scorer's own `sell_as`/`units_per_case` formula, so both halves of the screen finally agree what a line's cost means |
+| `retailIsBigTicket(line, unitsPerLine)` | L2 category first, then a **per-unit** cost. `msrp` deliberately not divided |
+| `retailPackSize(text, { vendor })` | learns `9/32fo`, `12/15ct`, `18/3x75ct`. Opt-in, and never applied to a retailer's title |
+| `targetPack` | `units_per_case` first, vendor-aware description second. Scan still pinned to 1 |
+| `retailFetch` | sends `exclude_selectors` — free, and can only remove noise |
 
-**Verified:**
-- `scripts/test-labor-week-label.mjs` — 32 assertions. Lifts the real functions out of
-  `index.html` by name, so it fails if they are renamed or the offset is open-coded again.
-- **Negative control:** a scratch copy with the old one-line header behaviour restored
-  fails 9 of them and reproduces the screenshot verbatim —
-  `expected "Aug 23 – Aug 29", got "Aug 30 – Sep 5"`.
-- `npm test` — 2541 assertions across 51 suites, all pass (incl. `test-labor-plan`,
-  `test-labor-endpoint`, `test-labour`).
-- All 19,898 lines of inline JS in `index.html` parse (`node --check`).
-- `npm run build` succeeds; `.sm\:inline-flex` is present in the compiled `dist/tailwind.css`,
-  so the toggle acts on a real rule. No new class was introduced — the chip already shipped
-  `hidden sm:inline-flex`, which is why it renders in the report.
+### Two things found while doing it, both fixed
 
-**Follow-up, answered: Hours now opens on the last CLOSED week.**
-The open question above — Hours anchoring on the week *in progress*, so a Tuesday landed you
-on a mostly blank grid — came back "make hours default to the last closed week". Done below.
+1. **I conflated the two questions the scorer keeps apart.** My first cut drove `targetPack`
+   off `sell_as`, which is the *cost* question. The existing R2 tests caught it immediately
+   — "a 6-ct line priced off a 6-pack is the PACK price, not the bar price". `units_per_case`
+   answers "what are we buying"; `sell_as` answers "is cost per case". They are not the same
+   number and merging them broke eight assertions.
+2. **A pre-existing dimension bug in the older `NxM` rule.** "5/16 x 4 in." read as a
+   16-pack and "3/4 x 10 ft" as a 4-pack. Not caused by this work, but this work makes it
+   *reachable* — Hardlines now goes to the sellers that actually stock it, so there is
+   finally a price there to multiply. Guarded, with the atomic-group note explaining why
+   the obvious `\b` fix breaks `6X12OZ`.
+
+### Proof it works
+
+Reverting `worker.js` alone (keeping the new tests) fails **11** of the new assertions —
+they are regression tests, not restatements. Notably `12/15ct` returns 45 instead of 36 on
+the old code, which is the exact mechanism behind the live $392.55.
+
+### Still open — not code
+
+- **The Clorox manifest is mis-mapped.** `sell_as: "each"` with per-line costs of $103–$4,786
+  and `$103.02 / 102 = $1.0100`, `$250.48 / 248 = $1.0100` — that column is an *extended*
+  line total, not a per-each cost. These fixes stop the routing damage; they cannot make a
+  mis-mapped column mean something else. Worth a remap before the next run.
+- **Nothing has been re-run against prod.** The 4 wrong prices are still in D1 on a draft
+  manifest. Clearing them is a write, and per the repo rules that is Brian's call.
+- **The Agent stays off.** Once routing is right, re-measure how many lines genuinely still
+  need it. Expectation: close to zero.
 
 ---
 
-# Hours opens on the last closed week (2026-09-01, follow-up)
+# Manifest mapping: make the cost basis a fact, not a default
 
-**Asked:** "make hours default to the last closed week."
+`worker.js:17591` — `sell_as` is taken from the caller, else the template default, else
+`"each"`, and **never looks at which column was mapped to `cost`**. Two of the four saved
+vendor templates are wrong because of it:
 
-Hours are keyed from Paylocity once a week has ENDED, so the tab was opening one week too
-early. Budget vs Actual is unchanged — it reports pace on the week in progress and its tiles
-already count complete periods only.
+| Vendor | mapped cost column | true basis | `sell_as` today |
+|---|---|---|---|
+| Alliance | `Unit Price` | per unit | `each` ✓ |
+| Kind | `Price per unit` | per unit | `each` ✓ |
+| WI Food | `Case Price` | **per case** | `each` ✗ |
+| Clorox | `Sale Price` | **extended line total** | `each` ✗ |
+
+Clorox is the one no `sell_as` value can express: `each` reads $900.93/unit, `case` reads
+$75.08, the truth is $7.57. Decision taken: **normalise at import** — divide by qty, store
+a per-unit cost, keep the original on the line as a flag.
+
+Each basis maps onto a path that is already correct downstream, so the scorer's money math
+is not touched:
+
+    unit      → store verbatim,          sell_as = each   (today's behaviour)
+    case      → store verbatim,          sell_as = case   (scorer already ÷ units_per_case)
+    extended  → cost ÷ qty at write time, sell_as = each
 
 ## Plan
 
-- [x] Replace `laborReportedWeek()` with `LABOR_TAB_WEEKS_BACK = { plan: 0, act: -1, hours: -2 }`
-      plus `laborWeekFor(tab)`. One table states how far back each tab sits; the panes, their
-      fetches and the header nav all read it, so a pane and its label cannot disagree.
-- [x] `laborHoursLoad()` → `laborWeekFor('hours')`; `laborActRange()` → `laborWeekFor('act')`
-      (unchanged week, now named).
-- [x] Assert "last closed week" against a CALENDAR, not against the offset table — the most
-      recent Saturday strictly before today — on every weekday including Saturday itself.
+- [x] `migration-055.sql` — `manifests.cost_basis`, `vendor_templates.cost_basis_default`
+- [x] `MANIFEST_COST_BASIS` — header → `unit｜case｜extended`, and **`null` when the header
+      does not name its unit**. "Sale Price" is genuinely ambiguous; guessing it from the
+      name is how this happened. Unknown keeps today's behaviour and says so.
+- [x] Upload derives the basis and sets `sell_as` from it; reports `cost_basis` + source
+- [x] `manifestWriteLines` divides an extended cost by qty, flags the line with the original
+- [x] No qty → cannot divide → flag, never guess
+- [x] Remap accepts a corrected `cost_basis`, persists it, re-normalises; template remembers it
+- [x] Mapping screen: "Sells as each/case" → "Cost is per unit / per case / line total"
+- [x] Tests, full suite, then push
 
-## Review
+## Not in scope
 
-`index.html`: the two derived-week helpers collapse into one table + `laborWeekFor(tab)`.
-`laborHeaderWeek()` is now a one-liner over it. Nothing else changed — Planning still plans
-the upcoming week and Budget vs Actual still anchors on the week in progress, both asserted.
+- Re-running or rewriting the existing Clorox manifest in D1. That is a database mutation
+  and needs explicit confirmation with a summary of what it would touch.
 
-The arrows still move only `laborState.week`, so all three tabs shift together and keep
-their spacing; switching tabs now steps the nav a week at a time, which is honest — each tab
-is about a different week, and its own pane title says so.
+## Review — cost basis
 
-**Verified:**
-- `scripts/test-labor-week-label.mjs` — 74 assertions (was 32). The load-bearing new one:
-  for each of seven `today` values spanning Sun→Sat, `laborWeekFor('hours')` equals the most
-  recent Saturday *strictly before* that day, every column of the grid is in the past, and it
-  is not further back than it needs to be. Saturday is the edge case that matters — the week
-  ending today has not closed yet, and Hours correctly stays on the one before it.
-- **Negative control:** flipping the table back to `hours: -1` fails 20 assertions, including
-  "every Hours column is in the past" on all seven days.
-- `npm test` — 2584 assertions across 51 suites, all pass.
-- All inline JS in `index.html` parses (`node --check`).
+**Landed.** 2,671 assertions across 51 suites, all green (2,643 before; +28 new).
+
+### Precedence, and the one ordering that matters
+
+    upload:  caller  >  remembered  >  column  >  legacy sell_as  >  'unit'
+    remap:   caller  >  column      >  stored  >  legacy sell_as  >  'unit'
+
+**A remembered answer beats the header on upload, and that is load-bearing.** A vendor can
+name a column "Unit Cost" and quote cases in it; if the header could override what someone
+told us last time, the correction could never stick. The existing suite caught me getting
+this backwards — `test-manifest-scorer` asserts a saved `sell_as` survives the next upload,
+and my first cut let the header win. **On remap the column wins instead**, because whoever
+is remapping is editing the mapping right now, so the column they just picked is fresher
+than a basis stored against the mapping they are replacing.
+
+### A gap the tests found
+
+`MANIFEST_HINTS.cost` had no extended forms at all — "Extended Cost" was never mapped as a
+cost column, so the basis could never have been detected no matter how good the classifier
+was. Added late in the list (a sheet with both "Unit Price" and "Extended Cost" means the
+first), and each pattern names cost/price/amount rather than matching "Extended" alone —
+a bare `/^ext/` would take **"Extended Retail"**, which is MSRP's column, and price the
+load off the retail we are supposed to be beating.
+
+### Proof
+
+Reverting `worker.js` alone fails the new assertions immediately — with no `cost_basis` in
+the response and "Extended Cost" unmapped, the suite aborts at the first fixture.
+
+### Still open
+
+- **Clorox is not auto-fixed, by design.** "Sale Price" does not name a unit, and guessing
+  one from a name that does not carry it is exactly how this happened. The mapping screen
+  now says so in those words and offers the control. Correcting that vendor means a remap
+  (a database write) and is not done here.
+
+---
+
+# Firecrawl: one ceiling for two very different waits
+
+Firecrawl's debug console flagged a Sep 1 Walmart scrape that died on our `timeout: 20000`
+and suggested a config block. **Five of its six parameters are already exactly what we
+send** — `formats`, `onlyMainContent`, `maxAge`, `location`, and we additionally send
+`proxy: "auto"`. The only real suggestion is `timeout: 20000 → 120000`.
+
+## Why not 120000
+
+`AbortSignal.timeout(FIRECRAWL_BUDGET_MS + 5000)` has to stay the OUTER deadline — a scrape
+is billed whether or not we are still listening, so Firecrawl must give up first. 120s makes
+our abort 125s, on two surfaces that cannot take it:
+
+- **Price Scan** — a manager is stood there holding the barcode.
+- **Manifest drain** — `credits: 10` a batch, cron every minute. Ten escalations × 125s is
+  twenty minutes inside one request.
+
+One ceiling is serving a person and a cron job, and 20s is right for exactly one of them.
+`ctx.scan` already tells them apart.
+
+## Plan
+
+- [x] Split: **20s scan** (unchanged), **45s manifest drain**. 45s clears the whole observed
+      band — successes top out at 25.6s — where 120s only buys a single 54.9s outlier that
+      failed with a 500 anyway.
+- [x] Fix the `maxAge` comment. It claims a cached hit "costs less"; Firecrawl's docs say
+      the opposite in as many words: *"Cached results still cost 1 credit per page. Caching
+      improves speed, not credit usage."* The parameter is right, the stated reason is not.
+- [x] Tests: the two ceilings, and that the abort stays the outer one in both.
+
+## The abort is NOT broken — I was wrong
+
+I reported that `AbortSignal` was failing to bound four calls logged at 33–55s. It is not.
+Those are from **2026-08-20 and 08-24**, and `firecrawlScrape` carried **no client-side
+abort at all** until `9eae9db` on 08-31 (`timeout: 30000` was the only bound, server-side).
+`dae39fe` then fixed the inverted pair on 09-01.
+
+Today's calls confirm it works: max **25000ms exactly** — the abort firing at
+`20000 + 5000` — and nothing over it.
+
+This also narrows the case for the change. Most of the 26 logged failures predate the
+current ceiling and had a different cause, so "31% of spend lost to the timeout" was wrong.
+Under the current code the sample is 11 calls, 2 failures, **one** of them our own abort —
+the job Firecrawl debugged. The split is still right, on a much smaller evidence base.
+
+## Review — Firecrawl ceilings
+
+**Landed.** 2,700 assertions across 51 suites, all green (2,696 before; +4).
+
+Reverting `worker.js` alone fails six of them, including the pre-existing deadline test —
+which is the one that mattered most here. It already capped our wait at 40s *"because a
+manager is holding the item"*, so a blanket 45s would have broken the very constraint it
+exists to defend. It now checks the relationship for **both** ceilings: structurally
+(Firecrawl gets `budgetMs`, we abort at `budgetMs + transit`, so it cannot invert), the
+scan still inside 40s, the drain longer than the scan but inside 60s.
+
+That test is the reason the split is safe rather than a guess. Worth keeping in mind next
+time a vendor console suggests a number.
