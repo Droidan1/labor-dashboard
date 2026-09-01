@@ -8099,11 +8099,27 @@ function retailDecide(line, cands, domains = [], opts = {}) {
 // run's parses died with a bare HTTP 400.
 // One end-to-end budget for a paid scrape. Firecrawl is told the shorter figure so it
 // answers before we stop listening; the headroom on top is transit, not patience.
+//
+// 🔑 TWO CEILINGS, BECAUSE TWO VERY DIFFERENT THINGS ARE WAITING. A single number was
+// serving both, and 20s is right for exactly one of them:
+//
+//   SCAN     a manager is stood at the shelf holding the barcode. Latency IS the feature;
+//            a minute of spinner is worse than "no price found", which they can act on.
+//   MANIFEST the every-minute drain. Nobody is watching, and a line left unpriced comes
+//            back round as work — so it is worth waiting out a slow product page.
+//
+// 45s is measured, not chosen for roundness: successful scrapes top out at 25.6s and the
+// failures cluster 22–35s, so 45s clears the band. Firecrawl's console suggested 120000,
+// which past 45s only buys a single 54.9s outlier that failed with a 500 anyway — and
+// would put a 125s abort on a drain that may escalate ten times in one request.
 const FIRECRAWL_BUDGET_MS = 20000;
+const FIRECRAWL_BUDGET_BATCH_MS = 45000;
 async function firecrawlScrape(env, url, budget, ctx = {}) {
   if (!env.FIRECRAWL_API_KEY) return null;
   if (!budget || budget.credits <= 0) return null;
   const t0 = Date.now();
+  // The scan path is the only one with a person on the other end of it.
+  const budgetMs = ctx.scan ? FIRECRAWL_BUDGET_MS : FIRECRAWL_BUDGET_BATCH_MS;
   let res, body = null, ok = false;
   try {
     res = await fetch("https://api.firecrawl.dev/v2/scrape", {
@@ -8114,8 +8130,11 @@ async function firecrawlScrape(env, url, budget, ctx = {}) {
         formats: ["product", "markdown"],
         onlyMainContent: true,
         proxy: "auto",          // retries through enhanced proxies for the 403-ing sites
-        maxAge: 172800000,      // a two-day-old price is still the price, and costs less
-        timeout: FIRECRAWL_BUDGET_MS,
+        // A two-day-old price is still the price. 🛑 It does NOT save a credit — the docs
+        // are explicit that "cached results still cost 1 credit per page; caching improves
+        // speed, not credit usage". This buys latency, and latency only.
+        maxAge: 172800000,
+        timeout: budgetMs,
         location: { country: "US", languages: ["en-US"] },
       }),
       // 🛑 THE TWO DEADLINES HAVE TO AGREE, AND OURS HAS TO BE THE LONGER ONE. The body
@@ -8123,7 +8142,7 @@ async function firecrawlScrape(env, url, budget, ctx = {}) {
       // in between was thrown away — and the credit was still spent, because a scrape is
       // billed whether or not we are still listening. Firecrawl now gives up first and we
       // wait out the transit, so every credit we pay for is a credit we can read.
-      signal: AbortSignal.timeout(FIRECRAWL_BUDGET_MS + 5000),
+      signal: AbortSignal.timeout(budgetMs + 5000),
     });
     ok = res.ok;
     if (ok) body = await res.json();

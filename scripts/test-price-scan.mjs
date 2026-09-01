@@ -1371,16 +1371,22 @@ console.log('Price Scan');
     // had 30s — so a result arriving in between was discarded AND billed. Asserting the
     // relationship rather than either number is what makes that unrepresentable: any
     // future retuning of the budget has to move both ends together.
-    const theirs = Number((fc.match(/timeout:\s*(?:FIRECRAWL_BUDGET_MS|(\d+))/) || [])[1]
-                          ?? (src.match(/FIRECRAWL_BUDGET_MS\s*=\s*(\d+)/) || [])[1]);
-    const ours = Number((fc.match(/AbortSignal\.timeout\(\s*(?:FIRECRAWL_BUDGET_MS\s*\+\s*(\d+)|(\d+))/) || [])
-                        .slice(1).find(v => v !== undefined));
-    const oursMs = /FIRECRAWL_BUDGET_MS\s*\+/.test(fc) ? theirs + ours : ours;
-    ok(Number.isFinite(theirs) && theirs > 0, 'the paid scrape sets a deadline for Firecrawl');
-    ok(Number.isFinite(oursMs) && oursMs > 0, '…and one for ourselves');
-    ok(oursMs > theirs,
-       `🛑 we wait LONGER than we let Firecrawl work (${oursMs}ms vs ${theirs}ms) — otherwise a valid result is thrown away and the credit still spent`);
-    ok(oursMs <= 40000, '…and still bounded, because a manager is holding the item');
+    //
+    // 🔑 THERE ARE NOW TWO CEILINGS, and the relationship has to hold for BOTH. It is
+    // expressed structurally — Firecrawl is told `budgetMs`, we abort at `budgetMs` plus
+    // transit — so whichever ceiling the path selects, ours cannot be the shorter one.
+    const scan  = Number((src.match(/FIRECRAWL_BUDGET_MS\s*=\s*(\d+)/) || [])[1]);
+    const batch = Number((src.match(/FIRECRAWL_BUDGET_BATCH_MS\s*=\s*(\d+)/) || [])[1]);
+    const head  = Number((fc.match(/AbortSignal\.timeout\(\s*budgetMs\s*\+\s*(\d+)\s*\)/) || [])[1]);
+    ok(Number.isFinite(scan) && scan > 0, 'the paid scrape sets a deadline for Firecrawl');
+    ok(Number.isFinite(batch) && batch > 0, '…on the manifest drain too');
+    ok(/timeout:\s*budgetMs\b/.test(fc) && Number.isFinite(head) && head > 0,
+       '🛑 we wait LONGER than we let Firecrawl work — budgetMs for them, budgetMs + transit for us — otherwise a valid result is thrown away and the credit still spent');
+    ok(scan + head <= 40000, '…and the SCAN stays bounded, because a manager is holding the item');
+    // The drain has nobody waiting on it, but "nobody is waiting" is not "no limit": ten
+    // escalations in one batch still have to fit inside a single request.
+    ok(batch > scan, '🔑 the drain waits longer than the scan, because nothing is watching it');
+    ok(batch + head <= 60000, '…and is still bounded, because a batch may escalate ten times');
   }
 }
 
@@ -1731,6 +1737,20 @@ console.log('Price Scan');
        '🔑 …and a scan that found no price stamps no observation time either');
   }
   globalThis.fetch = realFetch;
+}
+
+// ── 🛑 A SCAN IS NOT A BATCH, AND IT MUST NOT WAIT LIKE ONE ────────────────
+// Firecrawl's debug console suggested raising `timeout` to 120000 after a Walmart product
+// page died on our 20s ceiling. It is right that the ceiling was the cause and wrong that
+// one number fits: on this path a manager is stood at the shelf holding the barcode, and a
+// two-minute spinner is worse than "no price found", which they can act on. The manifest
+// drain, which nobody is watching, takes the longer ceiling instead.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const fc = src.slice(src.indexOf('async function firecrawlScrape('),
+                       src.indexOf('\n}', src.indexOf('async function firecrawlScrape(')));
+  ok(/ctx\.scan \? FIRECRAWL_BUDGET_MS : FIRECRAWL_BUDGET_BATCH_MS/.test(fc),
+     '🔑 the ceiling is picked by the PATH — a person waiting, or a cron job');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

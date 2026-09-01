@@ -173,3 +173,64 @@ the response and "Extended Cost" unmapped, the suite aborts at the first fixture
   one from a name that does not carry it is exactly how this happened. The mapping screen
   now says so in those words and offers the control. Correcting that vendor means a remap
   (a database write) and is not done here.
+
+---
+
+# Firecrawl: one ceiling for two very different waits
+
+Firecrawl's debug console flagged a Sep 1 Walmart scrape that died on our `timeout: 20000`
+and suggested a config block. **Five of its six parameters are already exactly what we
+send** — `formats`, `onlyMainContent`, `maxAge`, `location`, and we additionally send
+`proxy: "auto"`. The only real suggestion is `timeout: 20000 → 120000`.
+
+## Why not 120000
+
+`AbortSignal.timeout(FIRECRAWL_BUDGET_MS + 5000)` has to stay the OUTER deadline — a scrape
+is billed whether or not we are still listening, so Firecrawl must give up first. 120s makes
+our abort 125s, on two surfaces that cannot take it:
+
+- **Price Scan** — a manager is stood there holding the barcode.
+- **Manifest drain** — `credits: 10` a batch, cron every minute. Ten escalations × 125s is
+  twenty minutes inside one request.
+
+One ceiling is serving a person and a cron job, and 20s is right for exactly one of them.
+`ctx.scan` already tells them apart.
+
+## Plan
+
+- [x] Split: **20s scan** (unchanged), **45s manifest drain**. 45s clears the whole observed
+      band — successes top out at 25.6s — where 120s only buys a single 54.9s outlier that
+      failed with a 500 anyway.
+- [x] Fix the `maxAge` comment. It claims a cached hit "costs less"; Firecrawl's docs say
+      the opposite in as many words: *"Cached results still cost 1 credit per page. Caching
+      improves speed, not credit usage."* The parameter is right, the stated reason is not.
+- [x] Tests: the two ceilings, and that the abort stays the outer one in both.
+
+## The abort is NOT broken — I was wrong
+
+I reported that `AbortSignal` was failing to bound four calls logged at 33–55s. It is not.
+Those are from **2026-08-20 and 08-24**, and `firecrawlScrape` carried **no client-side
+abort at all** until `9eae9db` on 08-31 (`timeout: 30000` was the only bound, server-side).
+`dae39fe` then fixed the inverted pair on 09-01.
+
+Today's calls confirm it works: max **25000ms exactly** — the abort firing at
+`20000 + 5000` — and nothing over it.
+
+This also narrows the case for the change. Most of the 26 logged failures predate the
+current ceiling and had a different cause, so "31% of spend lost to the timeout" was wrong.
+Under the current code the sample is 11 calls, 2 failures, **one** of them our own abort —
+the job Firecrawl debugged. The split is still right, on a much smaller evidence base.
+
+## Review — Firecrawl ceilings
+
+**Landed.** 2,700 assertions across 51 suites, all green (2,696 before; +4).
+
+Reverting `worker.js` alone fails six of them, including the pre-existing deadline test —
+which is the one that mattered most here. It already capped our wait at 40s *"because a
+manager is holding the item"*, so a blanket 45s would have broken the very constraint it
+exists to defend. It now checks the relationship for **both** ceilings: structurally
+(Firecrawl gets `budgetMs`, we abort at `budgetMs + transit`, so it cannot invert), the
+scan still inside 40s, the drain longer than the scan but inside 60s.
+
+That test is the reason the split is safe rather than a guess. Worth keeping in mind next
+time a vendor console suggests a number.

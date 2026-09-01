@@ -614,6 +614,11 @@ let pricedId;   // captured, not assumed — inserting a scenario above renumber
   eq(crawls.length, 1, 'a blocked free fetch escalates exactly once');
   eq(crawls[0].proxy, 'auto', 'with the proxy retry that gets past a 403');
   ok(crawls[0].formats.includes('product'), 'asking for structured product data');
+  // 🔑 THE DRAIN GETS THE LONGER CEILING. Nobody is watching it, and a line left unpriced
+  // comes back round as work, so it is worth waiting out a slow product page. Firecrawl's
+  // console asked for 120000; 45s clears the whole measured band (successes top out at
+  // 25.6s) without putting a two-minute abort on a batch that may escalate ten times.
+  eq(crawls[0].timeout, 45000, '🔑 a manifest scrape waits 45s, not the scan\'s 20s');
   near(s3.line.retail_price, 7.00, 'and the structured price lands');
   eq(s3.line.retail_basis, 'single', '...in our own unit');
 
