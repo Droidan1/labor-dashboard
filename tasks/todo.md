@@ -1,131 +1,118 @@
-# Bin-photo auto-draft: bin cover + bin text (2026-08-26)
+# Labor header shows a different week than the pane under it (2026-09-01)
 
-> **Carried over from the Aug 20 Merchandising plan** (the only item there still open):
-> `- [ ] Worker deploys before frontend`. Still open, and it matters here — worker deploys
-> are manual (`npx wrangler deploy`, no CI), and nothing in this change reaches production
-> until one runs.
+**Reported:** "Can you fix the dates, they don't match up." Screenshot: Hours tab, header
+week nav reads **Aug 30 – Sep 5**, the pane under it reads **Week of Aug 23 – Aug 29** with
+Sun 23 → Sat 29 columns, and the chip beside the title reads **Trailing 4 wks · thru Aug 29**.
 
-**Reported:** "the text and thumbnail still looks at the flow calendar and doesn't ignore it
-and use bin thumbnail with bin text."
+## What is actually wrong
 
-## What production actually shows (prod D1, read-only)
-The five auto-drafts of 2026-08-20 (`created_by='auto:bin-photos'`, BL14/BL16/BL2/BL4/BL1):
-- every one got `thumbnail_id = 3` — the "Dig for Deals" Dollar-Days price-ladder cover
-  (same byte count as thumbnail 1, uploaded 2026-07-09);
-- every caption is a description of **that graphic**, not of the bins: all five open
-  "Six days, six prices…" and recite $10 → $6 → $3 → $2 → $1 → 50¢, and tag #DollarDays.
+The offset itself is intentional and consistent — `laborState.week` is the week being
+**planned** (next full week), and both Budget vs Actual and Hours deliberately report the
+week before it:
 
-"Dollar Days" / "Double Dip" is Flow Calendar vocabulary — `marketing_flow.dd_loyalty`,
-rendered in the calendar as the **DD / loyalty** column. So the promo really is driving both
-the picture and the words.
+- `laborUpcomingSaturday()` → this week's Saturday **+ 7**  (the planned week)
+- `laborActRange()`  → `laborState.week - 7`
+- `laborHoursWeek()` → `laborState.week - 7`
 
-## Root cause — the cover is the vector, not the `marketing_flow` query
-`buildCaption` already refuses the Flow week for `bin_preview` (`MARKETING_FLOW_POST_TYPES`
-is `weekly_promo` + `event` only). The promo gets in **through the picture**: the auto-draft
-attaches a branded cover and the prompt says *"Match the caption to what it actually
-promotes — its theme, headline, and any recurring schedule, day-by-day pricing, or offer
-printed on it."* The model does exactly that. The bin photos the manager just uploaded are
-never shown to it at all.
+Sun→Sat weeks check out (Aug 23 2026 is a Sunday, Aug 29 a Saturday), so the day columns
+are right. The defect is that the **header chrome is hardcoded to the Planning week on all
+three tabs**:
 
-Second, smaller defect: the cover pick falls back to the newest active thumbnail **of any
-post type** when no `bin_preview` cover exists — so a weekly-promo or event cover can become
-a bin post's cover, and then its subject. `tasks/bin-photo-autodraft.md` specifies
-"auto-pick newest active `bin_preview` thumbnail"; the fallback is not in the spec.
+1. `initLabor()` sets `#labor-week-label` to `laborWeekLabel(laborState.week)` unconditionally,
+   and `laborSetTab()` never touches it. On Budget vs Actual and Hours the nav therefore
+   names a week neither pane is showing.
+2. `#labor-fresh` ("Trailing 4 wks · thru …") is written only by `laborRender()` — Planning's
+   renderer — but is never hidden, so Planning's *inputs* stay pinned over the other panes.
+
+Same class as the 2026-07-03 lesson in `lessons.md`: a fixed period label left pointing at
+the old period after the value under it moved.
 
 ## Plan
-- [x] Cover: newest active `bin_preview` only — drop the any-post-type fallback.
-- [x] `buildCaption`: take `photoIds`; when given, attach those photos (small thumbs first,
-      ≤4, ≤5 MB, PNG/JPEG/GIF/WebP) as the post's subject and do **not** attach the cover.
-- [x] Prompt: say the attached images are this week's bins, a sample of a larger batch;
-      write about the mix; nothing is printed on a bin photo, so state no price/day/offer.
-- [x] Shared system prompt: say "images" rather than "cover graphic" so the authority rule
-      is true for both callers (the manual composer still only ever sends a cover).
-- [x] `fillAutoDraftCaption`: pass the draft's `photo_ids`, not `thumbnail_id`.
-- [x] Extract `r2ImageBlock()` — the cover loader duplicated for photos otherwise.
-- [x] Tests: cover never crosses post types; the caption request carries the photos and no
-      cover; existing burst/idempotency assertions still hold.
 
-## Known consequence (unchanged trigger)
-The caption is still written by the **upload that creates the draft**, so the model usually
-sees the batch's **first** photo (a Thursday batch is ~30 separate requests). That is by
-design — Brian chose upload-triggered over a cron. Follow-up if the sample proves too thin:
-fill the caption from the every-minute tick once the batch has settled (no new photo for
-~2 min), which would show it the whole batch and also retry a failed caption.
+- [x] `laborReportedWeek()` — one definition of "the week Actual + Hours report", replacing
+      the `- 7` duplicated in `laborActRange()` and `laborHoursWeek()`.
+- [x] `laborHeaderWeek()` — the week the **active tab** renders: Planning → `laborState.week`,
+      Actual/Hours → `laborReportedWeek()`.
+- [x] `laborSyncWeekChrome()` — writes `#labor-week-label` from `laborHeaderWeek()` and hides
+      `#labor-fresh` off Planning. Called from `initLabor()` and `laborSetTab()`.
+- [x] Keep the arrows on `laborState.week`: a shift of ±7 moves both weeks together, so the
+      label stays in step with whichever pane is open.
+- [x] Prove it with a data-model reproduction (`scripts/test-labor-week-label.mjs`) rather
+      than a screenshot — the page needs the remote worker + auth to render.
 
-## Not code
-Thumbnail 7 "Doubledip" is tagged `post_type='bin_preview'` and is now the newest active one,
-so it is what the next auto-draft will pick up as its cover. If that is a Double Dip promo
-graphic rather than a bin cover, retag or deactivate it — code cannot tell a promo graphic
-from a bin cover, only which folder it was filed in.
+## Review
 
-## Verification gates
-- [x] `bash scripts/test.sh` green — **2263 assertions across 49 suites**, run again after
-      the rebase onto `origin/main` (11 of those are new here: 30 -> 41 in this suite).
-- [x] `node scripts/test-bin-photo-autodraft.mjs .` — 41 assertions (was 30).
-- [x] Mutation-tested one site at a time (lessons.md rule): restoring the cover fallback
-      fails 1 assertion; captioning from the cover again fails 4 *different* ones.
-- [x] `node --check` on worker.js as a module (it is ESM — plain `node --check` lies).
-- [ ] **Worker deploy** — `npx wrangler deploy`. No frontend change, so nothing to sequence
-      against and no `sw.js` bump needed; the worker goes out alone.
-- [ ] Verify on the next real bins upload: the draft's cover comes from the Bin Preview
-      folder, and the caption talks about what is in the photos.
+**Changed — `index.html`, 4 edits, no behaviour change to any figure:**
 
-## Review — Aug 26 2026
+1. `laborReportedWeek()` — new. The single definition of the week Budget vs Actual and
+   Hours report. `laborActRange()` and `laborHoursLoad()` now call it; the open-coded
+   `- 7` is gone from both (`laborHoursWeek()` deleted as a duplicate of it).
+2. `laborHeaderWeek()` — new. Planning → `laborState.week`; Actual/Hours → `laborReportedWeek()`.
+3. `laborSyncWeekChrome()` — new. Writes `#labor-week-label` from `laborHeaderWeek()` and
+   drops `sm:inline-flex` from `#labor-fresh` off Planning. Called from `laborSetTab()` (so
+   it fires on every tab switch, which is what was missing) and, via it, from `initLabor()`.
+   The hardcoded label write in `initLabor()` is removed — one writer now.
+4. Corrected the Hours comment: it said the entered week "just RAN", but the arithmetic is
+   the CURRENT week, which is what the Budget vs Actual comment eight lines up already says.
 
-**The Flow Calendar was never being queried.** `MARKETING_FLOW_POST_TYPES` already excludes
-`bin_preview`, so re-reading `buildCaption` would have confirmed the gate holds forever. The
-promo reached the caption **through the cover image** — the auto-draft attached a branded
-graphic and the prompt told the model to match the caption to the pricing printed on it. It
-did. The bin photos were never sent.
+The arrows still move only `laborState.week`, so both weeks shift together and the label
+cannot desync from the pane. No endpoint, query or figure changed — `laborActRange()`
+returns the same `{from, to}` it did before.
 
-Three changes, each at a different site:
-1. **The cover can only be a bin cover.** The `else any active one` fallback is gone — it
-   could hand a bin post the week's promo cover, and a cover is not decoration here, it is
-   what the model is shown.
-2. **The photos are the subject.** `buildCaption` takes `photoIds`, sends the small thumbs
-   (≤4, ≤5 MB), and sends no cover when it has photos — gated on what the caller *asked for*,
-   so an unreadable photo degrades to no image rather than back to the promo.
-3. **The shared prompt tells the truth.** "Cover graphic" → "images" in the order-of-authority
-   rule, since one caller now attaches photos. The manual composer's behaviour is unchanged:
-   it sends no `photoIds`, so it takes the cover branch exactly as before.
+**Verified:**
+- `scripts/test-labor-week-label.mjs` — 32 assertions. Lifts the real functions out of
+  `index.html` by name, so it fails if they are renamed or the offset is open-coded again.
+- **Negative control:** a scratch copy with the old one-line header behaviour restored
+  fails 9 of them and reproduces the screenshot verbatim —
+  `expected "Aug 23 – Aug 29", got "Aug 30 – Sep 5"`.
+- `npm test` — 2541 assertions across 51 suites, all pass (incl. `test-labor-plan`,
+  `test-labor-endpoint`, `test-labour`).
+- All 19,898 lines of inline JS in `index.html` parse (`node --check`).
+- `npm run build` succeeds; `.sm\:inline-flex` is present in the compiled `dist/tailwind.css`,
+  so the toggle acts on a real rule. No new class was introduced — the chip already shipped
+  `hidden sm:inline-flex`, which is why it renders in the report.
 
-Two things this does **not** fix, both flagged in `tasks/bin-photo-autodraft.md`: the caption
-still sees the batch's first photo (upload-triggered by design), and no code can tell whether
-a cover filed under Bin Preview is a bin cover or that week's promo graphic.
+**Follow-up, answered: Hours now opens on the last CLOSED week.**
+The open question above — Hours anchoring on the week *in progress*, so a Tuesday landed you
+on a mostly blank grid — came back "make hours default to the last closed week". Done below.
 
-## Follow-up — pin the auto-draft cover (2026-08-26, same day)
+---
 
-**Asked:** "Can you fix this without deleting the doubleDip thumbnail?"
+# Hours opens on the last closed week (2026-09-01, follow-up)
 
-Yes — the problem was never that cover, it was that the pick was a *guess* ("newest active
-`bin_preview`"), so any promo graphic filed in that folder wins it by being new. Made the pick
-explicit instead, with no migration and no data touched:
+**Asked:** "make hours default to the last closed week."
 
-- [x] `content_settings.auto_draft_cover_id` — the existing key/value table, already holding
-      `brand_guide`. No schema change.
-- [x] `ensureAutoDraftForPhotos`: pinned cover (if still active) → newest active `bin_preview`
-      → none. A stale pin logs and falls through rather than posting coverless.
-- [x] Pin validated at `?action=content-setting` when set — a pin naming a missing or removed
-      cover is refused there, not discovered on a Thursday.
-- [x] `?action=thumbnails` returns `auto_draft_cover_id` so the UI can show which is pinned.
-- [x] `AUTO` badge per tile in the Thumbnails tab, mirroring the delete badge beside it.
-- [x] `sw.js` CACHE_NAME → **v122** (frontend commit). Rebasing onto main landed on v121,
-      which main's own frontend commit had already taken — same name, so an installed PWA
-      that cached v121 would never fetch the AUTO badge.
-- [x] Suite 41 → 50 assertions; mutation-tested: ignoring the pin fails 2 assertions,
-      dropping the set-time validation fails a different 1. Full suite **2283 / 49** green.
-- [x] `bash scripts/build.sh` after `npm ci` — every new utility (`left-1.5`, `h-7`, `px-2`,
-      `tracking-wide`, `font-black`) compiles into `dist/tailwind.css`.
-- [x] Contrast, computed not eyeballed: pinned `#06210f` on `#22c55e` = **7.5:1**. The
-      unpinned badge started as `text-white/80` on `bg-black/60`, which composites to
-      **4.34:1** over a light cover — under the gate — so it is plain `text-white` (**5.7:1**
-      worst case). Both badges carry their own background, so neither depends on the theme.
+Hours are keyed from Paylocity once a week has ENDED, so the tab was opening one week too
+early. Budget vs Actual is unchanged — it reports pace on the week in progress and its tiles
+already count complete periods only.
 
-### ⚠️ Deploy order — worker FIRST, then frontend
-The new UI POSTs a settings key the current worker rejects as "Unknown setting", so a frontend
-that lands first has a dead AUTO button. The worker is backward-compatible on its own: with no
-pin set it behaves exactly as it does today.
+## Plan
 
-### Then set it
-The pin starts empty, which means today's behaviour — newest active `bin_preview`, i.e.
-"Doubledip". It only changes once someone taps AUTO on the cover they actually want.
+- [x] Replace `laborReportedWeek()` with `LABOR_TAB_WEEKS_BACK = { plan: 0, act: -1, hours: -2 }`
+      plus `laborWeekFor(tab)`. One table states how far back each tab sits; the panes, their
+      fetches and the header nav all read it, so a pane and its label cannot disagree.
+- [x] `laborHoursLoad()` → `laborWeekFor('hours')`; `laborActRange()` → `laborWeekFor('act')`
+      (unchanged week, now named).
+- [x] Assert "last closed week" against a CALENDAR, not against the offset table — the most
+      recent Saturday strictly before today — on every weekday including Saturday itself.
+
+## Review
+
+`index.html`: the two derived-week helpers collapse into one table + `laborWeekFor(tab)`.
+`laborHeaderWeek()` is now a one-liner over it. Nothing else changed — Planning still plans
+the upcoming week and Budget vs Actual still anchors on the week in progress, both asserted.
+
+The arrows still move only `laborState.week`, so all three tabs shift together and keep
+their spacing; switching tabs now steps the nav a week at a time, which is honest — each tab
+is about a different week, and its own pane title says so.
+
+**Verified:**
+- `scripts/test-labor-week-label.mjs` — 74 assertions (was 32). The load-bearing new one:
+  for each of seven `today` values spanning Sun→Sat, `laborWeekFor('hours')` equals the most
+  recent Saturday *strictly before* that day, every column of the grid is in the past, and it
+  is not further back than it needs to be. Saturday is the edge case that matters — the week
+  ending today has not closed yet, and Hours correctly stays on the one before it.
+- **Negative control:** flipping the table back to `hours: -1` fails 20 assertions, including
+  "every Hours column is in the past" on all seven days.
+- `npm test` — 2584 assertions across 51 suites, all pass.
+- All inline JS in `index.html` parses (`node --check`).

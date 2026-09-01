@@ -21571,6 +21571,27 @@
     const f = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
     return `${f(start)} – ${f(end)}`;
   }
+  // Each tab sits a fixed number of weeks back from the week being PLANNED, and
+  // this table is the only place that says how far. Every consumer — the panes,
+  // their fetches and the header nav — derives from it, so the label above a
+  // pane can never name a different week than the pane itself.
+  //
+  //   plan   0   the upcoming week; a schedule is written before it runs.
+  //   act   -1   the week in progress. Its tiles count COMPLETE periods only,
+  //              so a part-done week reports pace without overstating totals.
+  //   hours -2   the last CLOSED week. Hours are keyed from Paylocity after the
+  //              week ends, so opening on the week in progress meant landing on
+  //              a grid that was mostly blank and pressing ‹ every time.
+  const LABOR_TAB_WEEKS_BACK = { plan: 0, act: -1, hours: -2 };
+
+  function laborWeekFor(tab) {
+    const d = new Date((laborState.week || laborUpcomingSaturday()) + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + (LABOR_TAB_WEEKS_BACK[tab] || 0) * 7);
+    return d.toISOString().slice(0, 10);
+  }
+  // The week the ACTIVE tab renders — what the nav has to name.
+  function laborHeaderWeek() { return laborWeekFor(laborState.tab); }
+
   function laborShiftWeek(n) {
     const d = new Date((laborState.week || laborUpcomingSaturday()) + 'T00:00:00Z');
     d.setUTCDate(d.getUTCDate() + n * 7);
@@ -21593,10 +21614,8 @@
   // move together when you change weeks, so the two never describe different
   // moments in time.
   function laborActRange() {
-    const cur = new Date((laborState.week || laborUpcomingSaturday()) + 'T00:00:00Z');
-    cur.setUTCDate(cur.getUTCDate() - 7);                 // the week that just ran
-    const to = cur.toISOString().slice(0, 10);
-    const from = new Date(cur);
+    const to = laborWeekFor('act');
+    const from = new Date(to + 'T00:00:00Z');
     if (laborState.grain === 'd') from.setUTCDate(from.getUTCDate() - 13);
     else if (laborState.grain === 'w') from.setUTCDate(from.getUTCDate() - 7 * 7 - 6);
     else from.setUTCFullYear(from.getUTCFullYear(), 0, 1);
@@ -21751,10 +21770,24 @@
         tab.classList.toggle('dark:text-op-inkDim', x !== t);
       }
     });
+    laborSyncWeekChrome();
     // Budget vs Actual is its own endpoint — fetched on first open, not at
     // page load, so landing on Planning costs one request rather than two.
     if (t === 'act') { try { laborLoadActuals(); } catch (_) {} }
     if (t === 'hours') { try { laborHoursLoad(); } catch (_) {} }
+  }
+
+  // Header chrome belongs to whichever tab is open. Both pieces used to be
+  // pinned to Planning: the nav named the week being planned even while the
+  // pane under it reported the week before, and the trailing-weeks chip — which
+  // only ever describes Planning's inputs — stayed up over the other two tabs.
+  function laborSyncWeekChrome() {
+    const lbl = el('labor-week-label');
+    if (lbl) lbl.textContent = laborWeekLabel(laborHeaderWeek());
+    // `hidden sm:inline-flex` is the chip's visible state, so dropping the
+    // sm: variant — not adding `hidden` — is what actually hides it at sm+.
+    const fresh = el('labor-fresh');
+    if (fresh) fresh.classList.toggle('sm:inline-flex', laborState.tab === 'plan');
   }
 
   // Admin or superuser. The save posts an HOURS-ONLY payload, which
@@ -21776,8 +21809,6 @@
     if (!laborState.week) laborState.week = laborUpcomingSaturday();
     laborApplyRole();
     laborSetTab(laborState.tab);
-    const lbl = el('labor-week-label');
-    if (lbl) lbl.textContent = laborWeekLabel(laborState.week);
     if (laborState.busy) return;
     if (laborState.data && !force) { laborRender(); return; }
 
@@ -21962,16 +21993,14 @@
   // ?action=labor&grain=d, which already returns budget hours, actual hours and
   // actual sales per store per day — everything a cell needs.
   //
-  // The week entered is the one that just RAN, matching Budget vs Actual, so
-  // Planning forecasts week W while these two report and fill week W-1.
+  // The week entered is the last CLOSED one — a week is keyed from Paylocity
+  // once it has ended, so this opens on the grid you actually have numbers for
+  // rather than on the week in progress. That is one week further back than
+  // Budget vs Actual; LABOR_TAB_WEEKS_BACK holds both, and the header nav reads
+  // from the same table, so it names this week while the tab is open.
   const laborHours = { week: null, days: [], stores: [], base: {}, cur: {}, budget: {}, sales: {}, busy: false };
   const hKey = (s, d) => s + '|' + d;
 
-  function laborHoursWeek() {
-    const d = new Date((laborState.week || laborUpcomingSaturday()) + 'T00:00:00Z');
-    d.setUTCDate(d.getUTCDate() - 7);
-    return d.toISOString().slice(0, 10);
-  }
   function laborHoursNum(v) {
     const s = String(v == null ? '' : v).trim();
     if (s === '') return null;
@@ -21980,7 +22009,7 @@
   }
 
   async function laborHoursLoad(force) {
-    const wkEnd = laborHoursWeek();
+    const wkEnd = laborWeekFor('hours');
     if (laborHours.week === wkEnd && !force) { laborHoursRender(); return; }
     if (laborHours.busy) return;
     laborHours.busy = true;
