@@ -275,10 +275,10 @@ and "does this exact code exist" is one live call we already know how to make.
       Never hand-maintained.
 - [x] `?action=sticker-check` — given category + price, return `{ code, exists }` from the
       `filter=code=` lookup. One call, cacheable.
-- [ ] Scan page: a Print button that is DISABLED until the check passes, and names the
+- [x] Scan page: a Print button that is DISABLED until the check passes, and names the
       missing code when it does not. The existing `create-clover-item` is the escape hatch.
-- [ ] ZPL template + the CSS-print fallback, both from one label model.
-- [ ] Tests: code formatting incl. the `2_5` vs `2_50` trap, refusal when absent,
+- [x] ZPL template + the CSS-print fallback, both from one label model.
+- [x] Tests: code formatting incl. the `2_5` vs `2_50` trap, refusal when absent,
       fallback selection.
 
 ## Answered — the contract is settled
@@ -331,3 +331,43 @@ rounds a price to make a label scan.
   manifest had chemicals in mind and I paired the two, then repeated it until it read as a
   finding. It was never data. The derived map is unaffected — it reads Clover rather than
   any pairing I might hold — which is the one reason the error cost nothing.
+
+## Review — UI + printing
+
+**2,765 assertions across 51 suites, all green** (2,750 before; +15).
+
+Print button on the scan card, disabled until `sticker-check` confirms the code; every
+refusal shown in words. ZPL built client-side and sent to Zebra Browser Print over
+loopback — no SDK script, no CDN, because a loopback origin counts as trustworthy even
+from an https page.
+
+### 🛑 The CSS-print fallback was NOT built, and that is a decision, not an omission
+
+The chosen design was "ZPL with a browser fallback". Building it surfaced the reason it
+cannot be done as specified: **this repo contains no QR encoder**, and the browser cannot
+draw one. A `@page { size: 1in 1in }` label would carry the code as text and no QR — which
+does not scan, and therefore fails in front of a customer with nothing on it to explain
+why. That is the precise failure the whole feature is built to prevent, so shipping it as
+a "fallback" would have contradicted the design it was part of.
+
+When Browser Print is absent the screen now says so and names what to install. Refusing is
+consistent with everything else here: we refuse a code we cannot verify, so we refuse a
+label we cannot make scan.
+
+To actually have a fallback, one of these has to be chosen — it is a dependency decision,
+not a coding one:
+
+- **Vendor a small QR encoder** into `index.html` (~4 KB minified). The repo currently has
+  zero app-JS dependencies, so this is a real change of posture.
+- **Encode server-side** in the worker and return an SVG. One implementation, unit-testable
+  against published vectors, no client dependency — but it is ~300 lines of Reed-Solomon
+  and masking, and a subtly wrong QR still *looks* fine.
+- **Leave it.** Browser Print is a one-time install per machine, and the ZPL path is the
+  one that produces the crisp sticker in the photo anyway.
+
+### ⏸ The ZPL geometry is unverified
+
+`^PW203`/`^LL203` and the field positions are laid out to match the photographed sticker at
+203 dpi, but nothing has been through a real printer. **Print one before trusting a roll to
+it** — particularly the QR magnification (`^BQN,2,4`), which decides whether it scans at
+one inch.

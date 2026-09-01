@@ -1889,5 +1889,61 @@ console.log('Price Scan');
      '🛑 …and nothing anywhere near this snaps the price to make a label scan');
 }
 
+// ── The label the printer actually draws ───────────────────────────────────
+// ZPL rather than a rendered image, because the printer builds the QR itself at its own
+// resolution — nothing to rasterise, nothing for a driver to soften.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const fn = html.slice(html.indexOf('function psZpl('), html.indexOf('async function psZebraDevice('));
+  const psZpl = eval('(' + fn.slice(fn.indexOf('function psZpl(')).replace(/\n\s*\/\/[^\n]*/g, '') + ')');
+
+  const z = psZpl('BL-50008-2_5', 2.50);
+  ok(z.startsWith('^XA') && z.trim().endsWith('^XZ'), 'the label is a framed ZPL job');
+  ok(z.includes('^PW203') && z.includes('^LL203'), '🔑 sized 1in x 1in at 203 dpi, not left to the driver');
+
+  // 🛑 BYTE MODE, NOT ALPHANUMERIC. QR's alphanumeric set has no underscore in it, and our
+  // codes are full of them. `LA,` forces byte mode; without it the encoder either refuses
+  // the string or silently switches, and a QR that encodes something else still scans —
+  // it just resolves to the wrong item, or to nothing.
+  ok(z.includes('^FDLA,BL-50008-2_5^FS'), '🛑 the QR carries the code in BYTE mode, because of the underscore');
+
+  ok(z.includes('^FDBL-50008-2_5^FS'), '…the code is printed as text too, so a human can read it back');
+  ok(z.includes('$2.50'), '…and the price, which is the part a customer looks at');
+
+  // A whole-dollar code has no underscore at all — it must still round-trip.
+  const ten = psZpl('BL-50008-10', 10);
+  ok(ten.includes('^FDLA,BL-50008-10^FS'), 'a whole-dollar code survives with no separator');
+  ok(ten.includes('$10.00'), '…and still prints two decimal places for the shopper');
+
+  for (const [code, price] of [['BL-1-1', 1], ['BL-99999-12_25', 12.25]]) {
+    const out = psZpl(code, price);
+    ok(!/undefined|NaN/.test(out), `no undefined or NaN reaches the printer (${code})`);
+  }
+}
+
+// 🛑 THERE IS NO SILENT DEGRADE TO A LABEL WITHOUT A QR. The repo carries no QR encoder,
+// so when Browser Print is absent the browser cannot draw one — and a sticker with only
+// text on it does not scan, which is the precise failure this feature exists to prevent.
+// It says what to install instead. Printing something that fails at the till would be the
+// one outcome worse than refusing.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const fn = html.slice(html.indexOf('async function psPrint('), html.indexOf('window.psPrint'));
+  ok(/Browser Print is not running/.test(fn), 'an absent print agent is explained, not worked around');
+  ok(!/window\.print|@page|iframe/.test(fn), '🛑 …and no browser-print path quietly emits a QR-less label');
+  ok(/psZpl\(/.test(fn), 'the one print path builds ZPL');
+}
+
+// The button is a claim that the code resolves, so it stays disabled until the worker says so.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const row = html.slice(html.indexOf('function psStickerRow('), html.indexOf('async function psStickerCheck('));
+  ok(/id="ps-print"[^>]*disabled/.test(row), '🔑 Print starts DISABLED — enabled only once Clover confirms the code');
+  const chk = html.slice(html.indexOf('async function psStickerCheck('), html.indexOf('function psZpl('));
+  ok(/btn\.disabled = !a\.printable/.test(chk), '…and follows printable, never the mere presence of a price');
+  ok(/!== psStickerFor\) return/.test(chk),
+     '🔑 a late answer for a PREVIOUS item is dropped, so the button never describes the wrong scan');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
