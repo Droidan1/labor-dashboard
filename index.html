@@ -18082,8 +18082,13 @@
   // with it in the cell rather than living in a tooltip nobody opens.
   const MF_BASIS = { single:'single', multipack_div_n:'from a multipack', per_oz_scaled:'scaled by size',
                      same_line:'same line', msrp:'MSRP' };
+  // 🔑 The confidence word only started meaning anything once "high" became reachable —
+  // it used to print on 100% of rows, which is why it read as decoration. "sources
+  // disagree" is stated in words rather than as a grade, because it is the one a buyer
+  // should actually stop on.
   const mfBasis = (l) => [MF_BASIS[l.retail_basis] || l.retail_basis,
-                          l.retail_confidence && l.retail_confidence !== 'high' ? l.retail_confidence : null,
+                          (l.flags || []).includes('price conflict') ? 'sources disagree'
+                            : l.retail_confidence && l.retail_confidence !== 'high' ? l.retail_confidence : null,
                           l.retail_source].filter(Boolean).join(' · ');
 
   // A line with no retail price is not automatically a failure. "Not at big box" is the

@@ -1727,5 +1727,45 @@ console.log('Price Scan');
   globalThis.fetch = realFetch;
 }
 
+// ── 🛑 THE SCAN KEEPS THE PROVENANCE, NOT JUST THE NUMBER ──────────────────
+// It stored price, source and confidence and dropped basis, in-stock and the URL — so a
+// third of every cached row carries a price with no record of HOW it was derived, and a
+// manifest line inheriting one gets a confidence grade with nothing behind it. Both paths
+// write the same evidence about the same fact now.
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      return new Response(JSON.stringify({ results: [
+        { url: 'https://www.target.com/p/prov-item', title: 'Prov Item 6 ct', snippet: '$12.00' },
+      ] }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls++;
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+        title: 'Prov Item', brand: 'Prov', size: '8 oz',
+        prices: [{ url: 'https://www.target.com/p/prov-item', price: 12.0, pack: 6,
+                   in_stock: true, title: 'Prov Item 6 ct' }],
+      }) }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const r = await post('merch-scan', { identifier: '086600000015' }, 'u-mgr1');
+  eq(r.status, 200, 'the scan answers');
+  const row = db.prepare(`SELECT * FROM item_cache WHERE identifier='086600000015'`).get();
+  if (row && row.retail_price !== null) {
+    ok(row.retail_basis, '🔑 HOW the price was derived is kept, not just the number');
+    ok(row.retail_url, '🔑 …and where it came from, so it can be checked later');
+    ok(row.retail_in_stock !== null, '🔑 …and whether it was actually purchasable');
+    ok(row.retail_confidence, '…alongside the grade, as before');
+  } else {
+    ok(false, 'the scan should have priced this fixture');
+  }
+  globalThis.fetch = realFetch;
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

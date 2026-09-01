@@ -7941,8 +7941,18 @@ function retailDecide(line, cands, domains = [], opts = {}) {
   if (pick.basis === "per_oz_scaled") { confidence = "medium"; flags.push("size mismatch"); }
   if (conflict) confidence = "medium";
   if (pool.length === 1 && pick.in_stock !== true) confidence = confidence === "high" ? "medium" : "low";
-  // Nothing confirmed on a shelf anywhere is a weaker answer, and should read as one.
-  if (!inStore.length) confidence = confidence === "high" ? "medium" : confidence;
+  // 🛑 "NOTHING CONFIRMED ON A SHELF" USED TO CAP THIS AT medium, AND IT FIRED EVERY
+  // SINGLE TIME. Measured across every priced row we have ever stored: 94 of 94 were
+  // medium or low and NOT ONE was high, because `in_store` has never once been true —
+  // 0 of 94 in the cache, 0 of 8 on manifest lines. In-store availability lives behind a
+  // store-picker widget, not in the page text we read, so the rule was asking for
+  // evidence this pipeline structurally cannot collect.
+  //
+  // A confidence scale that can only ever emit "not high" measures our own plumbing, not
+  // the price. Worse, it makes every downstream consumer useless: the retail cell prints
+  // the caveat on 100% of rows, so it reads as decoration, and any gate built on "is this
+  // high" would refuse everything. `in_store` still does real work where it belongs —
+  // picking the pool above — which is the right place for a preference, not a ceiling.
   if (retailIsImport(line.identifier) && pick.basis !== "single") confidence = "low";
 
   // R7 — a vendor's claimed comp is stored to be contradicted, never used.
@@ -9961,6 +9971,29 @@ function manifestScore(lines, resolved, opts = {}) {
     const basisName = costPctRetail !== null ? "street retail"
       : notCarried ? "our ASP (not sold at big box)"
       : "our ASP";
+    // 🔑 HOW GOOD IS THE NUMBER THE TEST RESTS ON? The lookup already grades every price
+    // and flags the ones whose sources disagree, and scoring ignored all of it — so a
+    // clean "pass" could be computed from a price two retailers put 50% apart, and read
+    // exactly like a pass computed from a corroborated one.
+    //
+    // 🛑 IT DOES NOT BLOCK, AND MUST NOT. This is a liquidation retailer; refusing every
+    // line whose price is less than perfect would refuse the business. It is also only
+    // meaningful now that "high" is reachable at all — before, "not high" was true of
+    // every row ever stored and so said nothing.
+    //
+    // Only `low` and an outright conflict qualify. `medium` is the ordinary case — a
+    // single sound listing — and treating the ordinary case as a warning is how a signal
+    // becomes wallpaper.
+    const contested = lineFlags.includes("price conflict");
+    const evidence = costPctRetail === null ? null
+      : contested ? "contested"
+      : l.retail_confidence === "low" ? "weak"
+      : null;
+    const evidenceNote = evidence === "contested"
+      ? " — but the sources for that price disagree, so it is worth checking"
+      : evidence === "weak"
+        ? " — but that price rests on weak evidence, so it is worth checking"
+        : "";
     const marginPerUnit = suggested !== null ? roundCents(suggested - cost) : null;
     // Break-even sell-through: what share of the units has to sell to return the cash.
     const breakeven = suggested && suggested > 0 ? +((cost / suggested) * 100).toFixed(1) : null;
@@ -9973,7 +10006,7 @@ function manifestScore(lines, resolved, opts = {}) {
                 : "nothing to compare the cost against")
             : "no cost cap set" }
       : basisPct <= capPct
-        ? { verdict: "pass", note: `${basisPct}% of ${basisName}` }
+        ? { verdict: "pass", note: `${basisPct}% of ${basisName}${evidenceNote}` }
         : minMargin !== null && marginPerUnit !== null && marginPerUnit >= minMargin
           ? { verdict: "pass", note: `over the ${capPct}% cap, margin carries it` }
           : { verdict: "warn", note: `${basisPct}% of ${basisName}, over the ${capPct}% cap` };
@@ -10005,6 +10038,9 @@ function manifestScore(lines, resolved, opts = {}) {
     const daysToClear = l.velocity_l3 > 0 ? Math.round((Number(l.qty) || 0) / l.velocity_l3) : null;
 
     return { id: l.id, row_no: l.row_no, costPctAsp, costPctRetail, basisPct, basisName,
+             // 🔑 The verdict is untouched; this rides beside it. A buyer can see which
+             // passes are worth a second look without any line being refused for it.
+             evidence,
              marginPerUnit, breakeven, perStore, daysToClear, tests, verdict, hardFail };
   });
 
@@ -10047,6 +10083,10 @@ function manifestScore(lines, resolved, opts = {}) {
   const unjudgedNote = unjudged
     ? ` ${unjudged} line${unjudged === 1 ? "" : "s"} could not be judged at all — no category or no price to compare against.`
     : "";
+  const weakPasses = perLine.filter(l => l.evidence && l.tests?.cost?.verdict === "pass").length;
+  const weakNote = weakPasses
+    ? ` ${weakPasses} line${weakPasses === 1 ? "" : "s"} clear${weakPasses === 1 ? "s" : ""} the cost test on a street price worth checking.`
+    : "";
   const say = fails
     ? `Buy with edits — drop ${worst.filter(w => w.fail).map(w => w.category).join(", ") || "the failing lines"}.`
     : warns
@@ -10066,6 +10106,9 @@ function manifestScore(lines, resolved, opts = {}) {
       // explanation is indistinguishable from a parser that lost rows.
       noDetailLines,
       linesPriced: lines.filter(l => l.asp_l3).length,
+      // Countable, so the summary can say "and three of those passes rest on a price
+      // worth checking" without anyone reading every line.
+      weakEvidence: perLine.filter(l => l.evidence && l.tests?.cost?.verdict === "pass").length,
     },
     // What condition this load actually is. On the Clorox sheet Grade B is priced at 25%
     // of wholesale against 54% for pristine — a 2x swing on identical product — so "how
@@ -10081,7 +10124,7 @@ function manifestScore(lines, resolved, opts = {}) {
       }
       return MANIFEST_GRADES.filter(g => mix[g]).map(g => mix[g]);
     })(),
-    verdict, verdictText: say + unjudgedNote,
+    verdict, verdictText: say + unjudgedNote + weakNote,
     // Says what it actually is, per line count — a manifest half-priced from retail is
     // neither "scored against retail" nor "scored without it", and claiming either
     // would be the misrepresentation this whole slice exists to avoid.
@@ -18756,6 +18799,9 @@ export default {
         let retail = overridden ? Number(cached.retail_price_override) : (cached?.retail_price ?? null);
         let retailSource = overridden ? "set by hand" : (cached?.retail_source ?? null);
         let retailConf = overridden ? "high" : (cached?.retail_confidence ?? null);
+        let retailBasis = overridden ? "manual" : (cached?.retail_basis ?? null);
+        let retailInStock = cached?.retail_in_stock ?? null;
+        let retailUrl = cached?.retail_url ?? null;
         // 🛑 A CACHE READ IS NOT A NEW OBSERVATION. `fetched_at` was stamped with the
         // current time whenever a price was present — and on a cache hit the price came
         // FROM the cache, having cost nothing and proved nothing. The Manifest Scorer
@@ -18831,6 +18877,9 @@ export default {
             retail = r.decided.retail_price ?? null;
             retailSource = r.decided.retail_source || null;
             retailConf = r.decided.retail_confidence || null;
+            retailBasis = r.decided.retail_basis || null;
+            retailInStock = r.decided.retail_in_stock ?? null;
+            retailUrl = r.decided.retail_url || null;
             retailObserved = retail !== null && retail !== undefined;
             missFlags.push(...(r.decided.flags || []));
             // A search that resolved a real product NAME is worth as much as the price —
@@ -18882,9 +18931,15 @@ export default {
         if (identifier && (title || l3 || retail !== null) && !overridden) {
           const now = new Date().toISOString();
           await env.DB.prepare(
+            // 🛑 THE SCAN USED TO THROW THE PROVENANCE AWAY. It kept price, source and
+            // confidence and dropped basis, in-stock and the URL — so a third of cached
+            // rows carry a price with no record of HOW it was derived, and a manifest
+            // line inheriting one gets a confidence with nothing behind it. Both paths
+            // now preserve the same evidence about the same fact.
             `INSERT INTO item_cache (identifier, identifier_type, title, brand, size, l2, l3, l3_source,
-               retail_price, retail_source, retail_confidence, fetched_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+               retail_price, retail_source, retail_confidence, retail_basis, retail_in_stock,
+               retail_url, fetched_at, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(identifier, identifier_type) DO UPDATE SET
                title = COALESCE(excluded.title, item_cache.title),
                brand = COALESCE(excluded.brand, item_cache.brand),
@@ -18898,13 +18953,17 @@ export default {
                retail_price = COALESCE(excluded.retail_price, item_cache.retail_price),
                retail_source = COALESCE(excluded.retail_source, item_cache.retail_source),
                retail_confidence = COALESCE(excluded.retail_confidence, item_cache.retail_confidence),
+               retail_basis = COALESCE(excluded.retail_basis, item_cache.retail_basis),
+               retail_in_stock = COALESCE(excluded.retail_in_stock, item_cache.retail_in_stock),
+               retail_url = COALESCE(excluded.retail_url, item_cache.retail_url),
                fetched_at = COALESCE(excluded.fetched_at, item_cache.fetched_at),
                updated_at = excluded.updated_at`
           // 🔑 undefined is not bindable — sqlite takes null, and a `?.` on a missing cache
           // row yields undefined, not null. Coerced at the boundary rather than trusting
           // every expression above to have produced the right kind of empty.
           ).bind(...[identifier, identType, title, brand, size, l2, l3, l3Source,
-                     retail, retailSource, retailConf, retailObserved ? now : null, now]
+                     retail, retailSource, retailConf, retailBasis, retailInStock, retailUrl,
+                     retailObserved ? now : null, now]
                     .map(v => v === undefined ? null : v)).run();
         }
 
