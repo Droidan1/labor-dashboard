@@ -303,6 +303,27 @@ let mid;
   ok(s.lines.some(l => l.verdict === 'pass' || l.verdict === 'warn'), 'judged lines still get a real verdict');
 }
 
+// ── 🛑 A RETAIL-BACKED APPROVAL IS NOT RECORDED AS BLIND ────────────────────
+// The lookup sets scored_without_retail = 0 the moment it prices any line. Deciding used
+// to stomp it back to 1, so every approval in the history claimed it had been taken with
+// no street evidence — including the ones that had it. That flag is the provenance of the
+// numbers a buyer was shown; the endpoint recording a human's call does not know what
+// evidence the scoring used, and must not author it.
+{
+  const up = await post('manifest-upload', { vendor: 'RetailBacked', csv: CSV });
+  const rid = up.body.id;
+  // Stand in for a lookup that priced at least one line.
+  db.prepare(`UPDATE manifests SET scored_without_retail = 0 WHERE id = ?`).run(rid);
+  const r = await post('manifest-decide', { id: rid, status: 'approved', note: 'street prices checked' });
+  eq(r.status, 200, 'the decision is recorded');
+  const row = db.prepare(`SELECT * FROM manifests WHERE id=?`).get(rid);
+  eq(row.status, 'approved', 'status stored');
+  eq(row.scored_without_retail, 0,
+     '🛑 an approval taken WITH street retail is still recorded as having had it');
+  ok(row.criteria_version !== null, '🔑 …and the criteria version still comes along');
+  ok(row.decided_at, '…as does when it was decided');
+}
+
 // ── A decision records what it was measured against ─────────────────────────
 {
   const noNote = await post('manifest-decide', { id: mid, status: 'approved' });
@@ -314,7 +335,12 @@ let mid;
   const row = db.prepare(`SELECT * FROM manifests WHERE id=?`).get(mid);
   eq(row.status, 'approved_edits', 'status stored');
   ok(row.criteria_version !== null, '🔑 and the criteria version it was judged under');
-  eq(row.scored_without_retail, 1, '...and that it was judged without retail');
+  // 🛑 Right here for the WRONG REASON until now. This fixture genuinely was scored
+  // without retail — but manifest-decide hardcoded `scored_without_retail = 1` into its
+  // UPDATE, so this assertion passed no matter what the lookup had found. A test that
+  // holds whether or not the code is correct is what let the bug live. The property it
+  // was missing is asserted in its own block below.
+  eq(row.scored_without_retail, 1, '...and that this one really was judged without retail');
   const locked = await post('manifest-remap', { id: mid, csv: CSV, column_map: { description:'Item Description', qty:'Qty', cost:'Unit Cost' } });
   eq(locked.status, 409, 'a decided manifest cannot be silently remapped underneath the decision');
   const del = await post('manifest-delete', { id: mid });
@@ -1066,6 +1092,196 @@ let mid;
   eq(phantomCeiling, 0,
      '🛑 never reports a ceiling as binding when none is set — that crashed on ceiling.toFixed()');
   eq(offStep, 0, '🔑 every price lands on a rung its own rule declares — never on an arbitrary $2.14');
+}
+
+// ── 🛑 ONE RETAIL RUN PER MANIFEST, WHICHEVER DOOR IT CAME IN ──────────────
+// The drainer cron claimed a lock; the "Look up retail" button did not — and the cron
+// fires EVERY MINUTE. Pressing the button therefore started a 25-line batch beside a
+// drainer tick already working the same manifest. Both read the same pending set (neither
+// had written results yet) and both searched it: measured at 44 searches for 34 lines,
+// which is also what pushes us past TinyFish's 30/min and produces the 429s. Two runs can
+// also escalate the same line to Firecrawl and pay twice for one answer.
+{
+  const up = await post('manifest-upload', { vendor: 'LockTest', csv: CSV });
+  const lid = up.body.id;
+  env.TINYFISH_API_KEY = 'tf-test';
+
+  // A gate that holds the FIRST search open, so two runs are genuinely in flight at once
+  // rather than merely sequential.
+  let release, held = 0, searches = 0;
+  const gate = new Promise(r => { release = r; });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searches++;
+      if (searches === 1) { held++; await gate; }
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const first = post('manifest-retail', { id: lid, batch: 2 });
+  first.catch(() => {});          // a rejection here must not go unhandled
+  // Let the first run reach its gated search before the second arrives.
+  // 🔑 BOUNDED. An unbounded spin turns "the first run never started" into a hang rather
+  // than a failure, and a test that hangs reports nothing at all.
+  for (let i = 0; held === 0 && i < 20000; i++) await new Promise(r => setImmediate(r));
+  ok(held > 0, 'the first run reached its search and is holding the lock');
+  const second = await post('manifest-retail', { id: lid, batch: 2 });
+
+  eq(second.status, 200, 'the second press is answered, not failed');
+  eq(second.body.already_running, true,
+     '🛑 …and does not start a second run over the same lines');
+  eq(second.body.priced, 0, '…having done no work of its own');
+  ok(/already running/i.test(second.body.note || ''), '…and says so plainly');
+
+  release();
+  const a = await first;
+  eq(a.status, 200, 'the run that held the lock finishes normally');
+  ok(!a.body.already_running, '…and it is the one that did the work');
+
+  const row = db.prepare(`SELECT retail_lock_until FROM manifests WHERE id=?`).get(lid);
+  eq(row.retail_lock_until, null, '🔑 the lock is released when the run ends');
+  globalThis.fetch = realFetch;
+}
+
+// ── 🔑 THE RELEASE IS OWNER-CHECKED ────────────────────────────────────────
+// A run that overshoots its five-minute lease must not free the lock a DIFFERENT worker
+// has since taken. An unconditional `SET retail_lock_until = NULL` frees whatever is
+// there, so the slow run hands the queue to a third tick while the rightful holder is
+// still working — the exact double-run the lock exists to prevent.
+{
+  const up = await post('manifest-upload', { vendor: 'StealTest', csv: CSV });
+  const sid = up.body.id;
+  env.TINYFISH_API_KEY = 'tf-test';
+
+  const STOLEN = '2099-01-01T00:00:00.000Z';   // unmistakably not our lease
+  let stole = false, searches = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      // Mid-run, someone else takes the lock — as happens when our lease expires.
+      if (!stole) {
+        stole = true;
+        db.prepare(`UPDATE manifests SET retail_lock_until = ? WHERE id = ?`).run(STOLEN, sid);
+      }
+      searches++;
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const r = await post('manifest-retail', { id: sid, batch: 2 });
+  eq(r.status, 200, 'the run completes');
+  ok(stole, 'the lock really was taken mid-run');
+  const row = db.prepare(`SELECT retail_lock_until FROM manifests WHERE id=?`).get(sid);
+  eq(row.retail_lock_until, STOLEN,
+     '🛑 finishing does NOT clear a lock this run no longer owns');
+  globalThis.fetch = realFetch;
+}
+
+// ── 🛑 A THROTTLE IS NOT AN ANSWER ─────────────────────────────────────────
+// TinyFish answers 429 when asked faster than 30/min. That used to land on "lookup
+// failed", which is SETTLED — so a line that was never actually asked got written off
+// permanently and the drainer never offered it again. A throttle now aborts the run and
+// leaves the unreached lines exactly as they were: pending.
+{
+  const up = await post('manifest-upload', { vendor: 'ThrottleTest', csv: CSV });
+  const tid = up.body.id;
+  env.TINYFISH_API_KEY = 'tf-test';
+
+  let searches = 0, status = 429;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searches++;
+      if (status) return new Response('rate limited', { status });
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+
+  const r = await post('manifest-retail', { id: tid, batch: 5 });
+  eq(r.status, 200, 'the run answers');
+  eq(r.body.throttled, true, '🔑 and reports that it stopped because it was throttled');
+  eq(searches, 1, '🛑 it STOPS at the first 429 — the next search would be refused too');
+  ok(r.body.remaining > 0, '🔑 the lines it never reached are still counted as pending');
+
+  const flagged = db.prepare(
+    `SELECT flags FROM manifest_lines WHERE manifest_id=? AND flags IS NOT NULL`).all(tid);
+  const settled = flagged.filter(l => /lookup failed|no retail|not at big box/.test(l.flags || ''));
+  eq(settled.length, 0,
+     '🛑 NOT ONE line is written off — a question we never got to ask has no answer');
+
+  // 🔑 …and the proof it is not settled: the very next run asks again.
+  status = 0;
+  searches = 0;
+  const again = await post('manifest-retail', { id: tid, batch: 5 });
+  eq(again.status, 200, 'the next run goes ahead');
+  ok(searches > 0, '🛑 the throttled lines ARE re-asked once the provider recovers');
+  ok(!again.body.throttled, '…and it is not throttled this time');
+  globalThis.fetch = realFetch;
+}
+
+// ── 🛑 DO NOT PAY TO RENDER A PAGE WE WILL THROW AWAY ──────────────────────
+// A price on a category or search page belongs to the PAGE, not to the item — three
+// different Olay creams all came back at $24.94 off one Walmart keyword page. The parse
+// already refuses those, but that rule ran AFTER the escalation, so a Firecrawl credit
+// could be spent rendering a list page whose every price was then discarded. Every reason
+// a URL is unusable now applies BEFORE either the free fetch or the paid render.
+{
+  const up = await post('manifest-upload', { vendor: 'ListPageTest', csv: CSV });
+  const pid = up.body.id;
+  env.TINYFISH_API_KEY = 'tf-test';
+  env.FIRECRAWL_API_KEY = 'fc-test';
+
+  const LIST    = 'https://www.walmart.com/browse/snacks/chips/12345';
+  const SEARCH  = 'https://www.target.com/s?searchTerm=sour+cream+chips';
+  const PRODUCT = 'https://www.walmart.com/ip/Chips-Sour-Cream-Onion-8oz/998877';
+  const fetched = [], scraped = [];
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      // The list pages rank ABOVE the product page, as they routinely do.
+      return new Response(JSON.stringify({ results: [
+        { url: LIST,    title: 'Chips - Walmart.com',       snippet: 'Shop chips' },
+        { url: SEARCH,  title: 'sour cream chips : Target', snippet: 'Results' },
+        { url: PRODUCT, title: 'Chips Sour Cream & Onion 8oz', snippet: '' },
+      ] }), { status: 200 });
+    }
+    if (url.startsWith('https://api.fetch.tinyfish.ai')) {
+      fetched.push(...(JSON.parse(init.body).urls || []));
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }
+    if (url.includes('firecrawl')) {
+      scraped.push(JSON.parse(init.body).url);
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls.push(JSON.parse(init.body));
+      // No prices from the snippets, which is what forces the escalation.
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: '{"prices":[]}' }] }), { status: 200 });
+    }
+    throw new Error('unexpected egress: ' + url.slice(0, 60));
+  };
+
+  await post('manifest-retail', { id: pid, batch: 2 });
+
+  ok(fetched.length + scraped.length > 0,
+     'the escalation really ran — otherwise this test proves nothing');
+  eq(fetched.filter(u => u === LIST || u === SEARCH).length, 0,
+     '🛑 neither list page is even fetched for free');
+  eq(scraped.filter(u => u === LIST || u === SEARCH).length, 0,
+     '🛑 …and above all, no CREDIT is spent rendering one');
+  ok(fetched.includes(PRODUCT) || scraped.includes(PRODUCT),
+     '🔑 the real product page underneath them is still used');
+  globalThis.fetch = realFetch;
+  delete env.FIRECRAWL_API_KEY;
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

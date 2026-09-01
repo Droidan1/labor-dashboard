@@ -18075,6 +18075,19 @@
       for (;;) {
         const j = await mfApi('manifest-retail', { id: mfOpenId });
         priced += j.priced; cached += j.cached; skipped += j.skipped; rounds++;
+        // The every-minute drainer already holds this manifest. Nothing was lost and
+        // nothing is stuck — but reporting "0 priced" as if the run had FINISHED is a
+        // lie the old shape would have told, because remaining comes back empty.
+        if (j.already_running) {
+          mfSay('A lookup is already running for this manifest — it is finishing on its own. Reopen it in a minute to see the prices.');
+          break;
+        }
+        // 🛑 Asked faster than the provider allows. Looping straight back is what caused
+        // it, so the loop stops; the drainer picks the untouched lines up next minute.
+        if (j.throttled) {
+          mfSay(`${priced} priced before the price service asked us to slow down — the rest will keep going in the background.`);
+          break;
+        }
         if (!j.remaining) {
           mfSay(`${priced} priced, ${cached} from cache, ${skipped} with no first-party price.`);
           break;

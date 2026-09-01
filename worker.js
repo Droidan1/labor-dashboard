@@ -7480,6 +7480,17 @@ const RETAIL_MISS_FLAGS = ["not at big box", "marketplace only", "no price found
 // A search failure settles DELIBERATELY: retrying it inside the drainer spins the queue
 // forever instead of draining, which is the behaviour the old single-flag check had.
 const RETAIL_UNSETTLED_FLAGS = ["not looked up"];
+// 🛑 A THROTTLE IS NOT AN ANSWER. TinyFish allows 30 searches a minute and answers 429
+// when you exceed it; 503 means try again. Both used to land on "lookup failed", which is
+// SETTLED — so a line that was never actually asked was written off permanently, and the
+// drainer never offered it again.
+//
+// The bound that keeps this from spinning is not a per-line retry counter: it is that a
+// throttle ABORTS THE RUN. The next search would 429 too, so there is nothing to gain by
+// continuing, and the lines not reached keep no flag at all — they are simply still
+// pending, and the every-minute drainer is already the retry loop. A provider that stays
+// down means a manifest that stays unfinished, which is the truth.
+const RETAIL_THROTTLED = Object.freeze({ throttled: true });
 const RETAIL_SETTLED_FLAGS = RETAIL_MISS_FLAGS.filter(f => !RETAIL_UNSETTLED_FLAGS.includes(f));
 const RETAIL_OWNED_FLAGS = [...RETAIL_MISS_FLAGS, "price conflict", "size mismatch",
                             "comp overstated", "msrp above street", "needs agent", "fetch blocked",
@@ -7591,14 +7602,18 @@ async function retailSearch(env, query, domains, ctx = {}) {
   const t0 = Date.now();
   const url = `https://api.search.tinyfish.ai?query=${encodeURIComponent(query)}`
     + `&location=US&language=en&include_domains=${encodeURIComponent(domains.join(","))}`;
-  let res, body = null, ok = false;
+  let res, body = null, ok = false, threw = false;
   try {
     res = await fetch(url, { headers: { "X-API-Key": env.TINYFISH_API_KEY } });
     ok = res.ok;
     if (ok) body = await res.json();
-  } catch (_) { ok = false; }
+  } catch (_) { ok = false; threw = true; }
   await retailLog(env, { ...ctx, provider: "tinyfish_search", detail: query,
     ok, status: res?.status ?? null, ms: Date.now() - t0 });
+  // Asked too fast, or the provider is briefly unwell — and a network throw is a timeout
+  // or a reset, which is the same kind of "ask again" as a 429. None of these are the
+  // answer to the question, so none may settle the line.
+  if (!ok && (threw || res?.status === 429 || res?.status === 503)) return RETAIL_THROTTLED;
   if (!ok) return null;
   return (body?.results || []).filter(r => retailHostAllowed(r.url, domains));
 }
@@ -7970,6 +7985,9 @@ function retailDecide(line, cands, domains = [], opts = {}) {
 // price.amount and availability.inStock as STRUCTURED data, so a fetched page no longer
 // has to go through the model to yield a price — which is where a third of the Alliance
 // run's parses died with a bare HTTP 400.
+// One end-to-end budget for a paid scrape. Firecrawl is told the shorter figure so it
+// answers before we stop listening; the headroom on top is transit, not patience.
+const FIRECRAWL_BUDGET_MS = 20000;
 async function firecrawlScrape(env, url, budget, ctx = {}) {
   if (!env.FIRECRAWL_API_KEY) return null;
   if (!budget || budget.credits <= 0) return null;
@@ -7985,13 +8003,15 @@ async function firecrawlScrape(env, url, budget, ctx = {}) {
         onlyMainContent: true,
         proxy: "auto",          // retries through enhanced proxies for the 403-ing sites
         maxAge: 172800000,      // a two-day-old price is still the price, and costs less
-        timeout: 30000,
+        timeout: FIRECRAWL_BUDGET_MS,
         location: { country: "US", languages: ["en-US"] },
       }),
-      // Firecrawl's own timeout is what IT waits for the page; this is what WE wait for
-      // Firecrawl, and one has been logged at 55s. Nothing follows it, so a miss here
-      // just means no street price — which the screen already says plainly.
-      signal: AbortSignal.timeout(20000),
+      // 🛑 THE TWO DEADLINES HAVE TO AGREE, AND OURS HAS TO BE THE LONGER ONE. The body
+      // said Firecrawl could work for 30s while we hung up at 20s, so anything it returned
+      // in between was thrown away — and the credit was still spent, because a scrape is
+      // billed whether or not we are still listening. Firecrawl now gives up first and we
+      // wait out the transit, so every credit we pay for is a credit we can read.
+      signal: AbortSignal.timeout(FIRECRAWL_BUDGET_MS + 5000),
     });
     ok = res.ok;
     if (ok) body = await res.json();
@@ -8299,6 +8319,7 @@ async function retailPriceLine(env, line, budget, ctx, searchName, ident = null)
   const query = String(searchName || line.description || line.identifier || "").slice(0, 180);
   if (!query) return { skipped: "no description" };
   const results = await retailSearch(env, query, domains, ctx);
+  if (results === RETAIL_THROTTLED) return { skipped: "throttled" };
   if (results === null) return { skipped: "search failed" };
   // Zero results across every allowed domain lands on "not at big box" via retailDecide.
   if (!results.length) return { decided: retailDecide(line, [], domains, { resultUrls: [], scan: !!ctx.scan }) };
@@ -8314,7 +8335,13 @@ async function retailPriceLine(env, line, budget, ctx, searchName, ident = null)
     && Math.max(...cands.map(c => c.price)) > Math.min(...cands.map(c => c.price)) * 1.5;
   if ((!cands.length || spread) && budget.fetches > 0) {
     budget.fetches--;
-    const urls = results.slice(0, 3).map(r => r.url).filter(u => !RETAIL_MARKETPLACE.test(u));
+    // 🛑 A LIST PAGE IS NOT EVIDENCE, SO DO NOT PAY TO RENDER ONE. The parse already
+    // refuses a price that came off a category or search page — it belongs to the page,
+    // not to this item — but that rule ran AFTER the escalation, so a credit could be
+    // spent on a Walgreens `/store/category/` page whose every price was then discarded.
+    // Every reason a URL is unusable is now applied before either fetch or paid render.
+    const urls = results.slice(0, 3).map(r => r.url)
+      .filter(u => u && !RETAIL_MARKETPLACE.test(u) && !retailIsListPage(u));
     if (urls.length) {
       const pages = await retailFetch(env, urls, ctx);
 
@@ -8450,7 +8477,11 @@ async function retailRunManifest(env, manifestId, opts = {}) {
        retail_in_stock=excluded.retail_in_stock, retail_url=excluded.retail_url,
        fetched_at=excluded.fetched_at, updated_at=excluded.updated_at`);
 
-  let priced = 0, cached = 0, skipped = 0, partial = false;
+  let priced = 0, cached = 0, skipped = 0, partial = false, throttled = false;
+  // Lines that reached a terminal state — a price, or a flag saying why not. A run that
+  // aborts on a throttle leaves the rest untouched, and `remaining` has to count them or
+  // the caller clears auto_retail and the manifest silently stops draining.
+  let processed = 0;
   const seen = new Map();   // identifier → decision, so a repeat costs nothing
 
   for (const line of lines) {
@@ -8485,8 +8516,14 @@ async function retailRunManifest(env, manifestId, opts = {}) {
       const r = await retailPriceLine(env, line, budget,
         { manifest_id: manifestId, line_id: line.id }, searchName,
         known ? { brand: known.brand, size: known.size } : null);
+      if (r.skipped === "throttled") {
+        // Stop here. The next search would be refused too, and a line we never asked
+        // about must not be written off as unanswerable.
+        throttled = true; partial = true;
+        break;
+      }
       if (r.skipped) {
-        skipped++;
+        skipped++; processed++;
         if (r.skipped === "budget") partial = true;
         const skipFlag = r.skipped === "budget" ? "not looked up"
           : r.skipped === "no description" ? "no description"
@@ -8516,10 +8553,11 @@ async function retailRunManifest(env, manifestId, opts = {}) {
       await upCache.bind(line.identifier, line.identifier_type, d.retail_price, d.retail_source,
         d.retail_basis, d.retail_confidence, d.retail_in_stock ?? null, d.retail_url, now, now).run();
     }
+    processed++;
   }
-  return { priced, cached, skipped, partial,
+  return { priced, cached, skipped, partial, throttled,
            creditsSpent: Math.max(0, budgetNum(opts.maxCredits, 10) - budget.credits),
-           remaining: Math.max(0, pending.length - lines.length),
+           remaining: Math.max(0, pending.length - processed),
            lookedAt: lines.length, total: allLines.length,
            searchesLeft: budget.searches };
 }
@@ -9454,6 +9492,36 @@ async function merchShelfStates(env, aspByL3) {
 // thirteen rounds of a progress bar.
 //
 // Kill switch: set KV `merch:retail-auto` to "off" and this stops without a deploy.
+// Claim one manifest's retail run, do the work, release it — for BOTH entry points.
+//
+// 🛑 THE BUTTON DID NOT TAKE THIS LOCK. Only the cron did, and the cron fires EVERY
+// MINUTE, so pressing "Look up retail" started a 25-line batch alongside a drainer tick
+// already working the same manifest. Both read the same pending set — neither had written
+// results yet — and both searched it: roughly 46 searches a minute against TinyFish's 30,
+// which is what produced the 429s in the first place, and two runs can escalate the same
+// line to Firecrawl and pay twice for one answer.
+//
+// 🔑 THE RELEASE IS OWNER-CHECKED, and the lease timestamp is the owner token — no column
+// needed. An unconditional `SET retail_lock_until = NULL` frees whatever lock is there,
+// including one a DIFFERENT worker took after this one's lease expired mid-run. Matching
+// on the exact expiry this call wrote means a run that overshoots its lease releases
+// nothing, and the holder keeps it.
+async function withRetailLock(env, manifestId, fn) {
+  const until = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const claim = await env.DB.prepare(
+    `UPDATE manifests SET retail_lock_until = ?
+      WHERE id = ? AND (retail_lock_until IS NULL OR retail_lock_until < ?)`
+  ).bind(until, manifestId, new Date().toISOString()).run();
+  if (!claim?.meta?.changes) return null;          // someone else is on it
+  try {
+    return await fn();
+  } finally {
+    await env.DB.prepare(
+      `UPDATE manifests SET retail_lock_until = NULL WHERE id = ? AND retail_lock_until = ?`
+    ).bind(manifestId, until).run();
+  }
+}
+
 async function retailDrainQueue(env) {
   if (!env.TINYFISH_API_KEY || !env.DB || !env.SALES_SNAPSHOTS) return { skipped: "not configured" };
   const sw = await env.SALES_SNAPSHOTS.get("merch:retail-auto");
@@ -9473,21 +9541,8 @@ async function retailDrainQueue(env) {
   // escalate the same line to Firecrawl, which spends real credits twice for one answer.
   //
   // The WHERE clause re-checks the lock, so of two ticks racing here exactly one wins.
-  const until = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-  const claim = await env.DB.prepare(
-    `UPDATE manifests SET retail_lock_until = ?
-      WHERE id = ? AND (retail_lock_until IS NULL OR retail_lock_until < ?)`
-  ).bind(until, m.id, new Date().toISOString()).run();
-  if (!claim?.meta?.changes) return { skipped: "already running" };
-
-  let out;
-  try {
-    out = await retailRunManifest(env, m.id, { batch: 10 });
-  } finally {
-    // Released either way. A lock that outlives a crash stalls the queue for its full
-    // five minutes, which is a slower failure but still a failure.
-    await env.DB.prepare(`UPDATE manifests SET retail_lock_until = NULL WHERE id = ?`).bind(m.id).run();
-  }
+  const out = await withRetailLock(env, m.id, () => retailRunManifest(env, m.id, { batch: 10 }));
+  if (!out) return { skipped: "already running" };
   // Clear the flag the moment there is nothing left, so a finished manifest stops being
   // picked up and the queue drains to empty rather than spinning on it.
   if (!out.remaining) {
@@ -17816,13 +17871,21 @@ export default {
         // Pressing the button is the consent. The first batch runs now so there is
         // something to look at, and the every-minute drainer finishes the rest.
         await env.DB.prepare(`UPDATE manifests SET auto_retail = 1 WHERE id = ?`).bind(m.id).run();
-        const out = await retailRunManifest(env, m.id, {
+        const out = await withRetailLock(env, m.id, () => retailRunManifest(env, m.id, {
           batch: Number(body?.batch) || 25,
           maxSearches: body?.max_searches ? Math.min(Number(body.max_searches), 60) : undefined,
           maxClassSearches: body?.max_class_searches !== undefined
             ? Math.min(Number(body.max_class_searches), 60) : undefined,
           maxCredits: body?.max_credits !== undefined ? Number(body.max_credits) : undefined,
-        });
+        }));
+        // The drainer already has it. auto_retail is on either way, so the work IS
+        // happening — this reports that rather than racing it or failing the button.
+        if (!out) {
+          return new Response(JSON.stringify({ ok: true, priced: 0, cached: 0, skipped: 0,
+            partial: true, remaining: null, already_running: true,
+            note: "A lookup is already running for this manifest — it will keep going on its own.",
+          }), { headers: corsJson });
+        }
         if (!out.remaining) {
           await env.DB.prepare(`UPDATE manifests SET auto_retail = 0 WHERE id = ?`).bind(m.id).run();
         }
@@ -17838,6 +17901,12 @@ export default {
     // POST ?action=manifest-decide { id, status, note }
     // Records the call AND the criteria version it was taken under, because "we approved
     // this" is only meaningful alongside what it was measured against.
+    //
+    // 🛑 IT DOES NOT TOUCH scored_without_retail. It used to hardcode that to 1, so a
+    // manifest whose lines HAD been priced from street retail — the lookup sets the column
+    // to 0 when it prices any — was recorded as having been judged blind the moment
+    // someone approved it. The decision endpoint has no idea what evidence the scoring
+    // used and must not claim to: whoever wrote the evidence owns the flag.
     // POST ?action=manifest-costs { id, freight_cost, defect_pct } — the two load-level
     // figures that turn an invoice price into what the goods actually cost us.
     // Editable while a manifest is still open; a decided one is frozen like any other
@@ -17905,7 +17974,7 @@ export default {
         const { live } = await merchVersions(env);
         await env.DB.prepare(
           `UPDATE manifests SET status = ?, decision_note = ?, decided_by = ?, decided_at = ?,
-             criteria_version = ?, scored_at = ?, scored_without_retail = 1 WHERE id = ?`
+             criteria_version = ?, scored_at = ? WHERE id = ?`
         ).bind(body.status, String(body.note).trim(), currentUser?.email || currentUser?.name || null,
                new Date().toISOString(), live?.version ?? null, new Date().toISOString(), m.id).run();
         return new Response(JSON.stringify({ ok: true, status: body.status, criteria_version: live?.version ?? null }), { headers: corsJson });
@@ -18626,6 +18695,15 @@ export default {
         let retail = overridden ? Number(cached.retail_price_override) : (cached?.retail_price ?? null);
         let retailSource = overridden ? "set by hand" : (cached?.retail_source ?? null);
         let retailConf = overridden ? "high" : (cached?.retail_confidence ?? null);
+        // 🛑 A CACHE READ IS NOT A NEW OBSERVATION. `fetched_at` was stamped with the
+        // current time whenever a price was present — and on a cache hit the price came
+        // FROM the cache, having cost nothing and proved nothing. The Manifest Scorer
+        // treats anything fetched inside 90 days as current, so a price that happened to
+        // be scanned every couple of months stayed "fresh" indefinitely while drifting
+        // arbitrarily far from the shelf.
+        //
+        // This is true only when a lookup actually came back with a price.
+        let retailObserved = false;
         const missFlags = [];
 
         // ── STEP 1: WHAT IS IT? ───────────────────────────────────────────────
@@ -18692,6 +18770,7 @@ export default {
             retail = r.decided.retail_price ?? null;
             retailSource = r.decided.retail_source || null;
             retailConf = r.decided.retail_confidence || null;
+            retailObserved = retail !== null && retail !== undefined;
             missFlags.push(...(r.decided.flags || []));
             // A search that resolved a real product NAME is worth as much as the price —
             // it is what makes the next scan of this UPC instant.
@@ -18764,7 +18843,7 @@ export default {
           // row yields undefined, not null. Coerced at the boundary rather than trusting
           // every expression above to have produced the right kind of empty.
           ).bind(...[identifier, identType, title, brand, size, l2, l3, l3Source,
-                     retail, retailSource, retailConf, retail !== null && retail !== undefined ? now : null, now]
+                     retail, retailSource, retailConf, retailObserved ? now : null, now]
                     .map(v => v === undefined ? null : v)).run();
         }
 

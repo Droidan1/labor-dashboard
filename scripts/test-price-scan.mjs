@@ -1366,7 +1366,21 @@ console.log('Price Scan');
     const fetchFn = src.slice(src.indexOf('async function retailFetch('), src.indexOf('\n}', src.indexOf('async function retailFetch(')));
     ok(/AbortSignal\.timeout\(10000\)/.test(fetchFn), '🛑 the free fetch gives up at 10s and lets the escalation run');
     const fc = src.slice(src.indexOf('async function firecrawlScrape('), src.indexOf('\n}', src.indexOf('async function firecrawlScrape(')));
-    ok(/AbortSignal\.timeout\(20000\)/.test(fc), '🛑 …and the paid one at 20s');
+    // 🛑 THE TWO DEADLINES ON A PAID SCRAPE MUST AGREE, AND OURS MUST BE THE LONGER ONE.
+    // This used to pin our abort at a bare 20000 while the request body told Firecrawl it
+    // had 30s — so a result arriving in between was discarded AND billed. Asserting the
+    // relationship rather than either number is what makes that unrepresentable: any
+    // future retuning of the budget has to move both ends together.
+    const theirs = Number((fc.match(/timeout:\s*(?:FIRECRAWL_BUDGET_MS|(\d+))/) || [])[1]
+                          ?? (src.match(/FIRECRAWL_BUDGET_MS\s*=\s*(\d+)/) || [])[1]);
+    const ours = Number((fc.match(/AbortSignal\.timeout\(\s*(?:FIRECRAWL_BUDGET_MS\s*\+\s*(\d+)|(\d+))/) || [])
+                        .slice(1).find(v => v !== undefined));
+    const oursMs = /FIRECRAWL_BUDGET_MS\s*\+/.test(fc) ? theirs + ours : ours;
+    ok(Number.isFinite(theirs) && theirs > 0, 'the paid scrape sets a deadline for Firecrawl');
+    ok(Number.isFinite(oursMs) && oursMs > 0, '…and one for ourselves');
+    ok(oursMs > theirs,
+       `🛑 we wait LONGER than we let Firecrawl work (${oursMs}ms vs ${theirs}ms) — otherwise a valid result is thrown away and the credit still spent`);
+    ok(oursMs <= 40000, '…and still bounded, because a manager is holding the item');
   }
 }
 
@@ -1645,6 +1659,71 @@ console.log('Price Scan');
   // 🛑 Identity searched a WIDER net than pricing does and found nothing. Running the
   // price search anyway spends a lookup to reach a conclusion already in hand.
   eq(searchCalls - before, 2, '🔑 two identity spellings tried, and no price search after them');
+  globalThis.fetch = realFetch;
+}
+
+// ── 🛑 A CACHE READ IS NOT A NEW OBSERVATION ───────────────────────────────
+// `fetched_at` is the age of the EVIDENCE, and the Manifest Scorer trusts anything under
+// 90 days old. The scan used to stamp it with the current time whenever a price was
+// present — including when that price had just been read out of the cache, costing
+// nothing and proving nothing. A price scanned every couple of months therefore stayed
+// "fresh" forever while drifting arbitrarily far from the shelf.
+{
+  const stale = '2020-01-01T00:00:00.000Z';
+  db.prepare(`INSERT INTO item_cache (identifier, identifier_type, title, brand, size, l3,
+                retail_price, retail_source, retail_confidence, fetched_at, updated_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    .run('076808005202', 'upc', 'Pringles Original', 'Pringles', '5.2 oz',
+         'FG BL CONSUMABLES - FOOD - SNACKS', 2.5, 'walmart.com', 'high', stale, stale);
+
+  const before = searchCalls;
+  const r = await post('merch-scan', { identifier: '076808005202' }, 'u-mgr1');
+  eq(r.status, 200, 'the cached item scans');
+  eq(r.body.retail, 2.5, '…and answers from the cache');
+  eq(searchCalls - before, 0, '🔑 …having looked nothing up');
+
+  const row = db.prepare(`SELECT * FROM item_cache WHERE identifier='076808005202'`).get();
+  eq(row.fetched_at, stale,
+     '🛑 the observation time is UNTOUCHED by a read — a free lookup cannot renew the 90-day clock');
+  ok(row.updated_at !== stale,
+     '🔑 …while updated_at still moves, so "when did we last see this" is still recorded');
+
+  // 🛑 And the scorer must agree: this row is OUTSIDE its 90-day window, so a manifest
+  // carrying the same UPC re-prices it rather than inheriting a six-year-old price.
+  const cutoff = new Date(Date.now() - 90 * 86400e3).toISOString();
+  ok(row.fetched_at < cutoff, '…which is what puts it back outside the scorer’s freshness window');
+}
+
+// …and the other half: a price that WAS just observed does stamp the clock.
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      return new Response(JSON.stringify({ results: [
+        { url: 'https://www.walmart.com/ip/Fresh-Item/1', title: 'Fresh Item 12 oz', snippet: '$4.00' },
+      ] }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls++;
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
+        title: 'Fresh Item', brand: 'Fresh', size: '12 oz',
+        prices: [{ url: 'https://www.walmart.com/ip/Fresh-Item/1', price: 4.0, in_stock: true, title: 'Fresh Item 12 oz' }],
+      }) }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+  const r = await post('merch-scan', { identifier: '024100113170' }, 'u-mgr1');
+  eq(r.status, 200, 'a never-seen barcode scans');
+  const row = db.prepare(`SELECT * FROM item_cache WHERE identifier='024100113170'`).get();
+  if (row && row.retail_price !== null) {
+    ok(row.fetched_at && row.fetched_at > '2026-01-01',
+       '🔑 a price that really was fetched DOES stamp the observation time');
+  } else {
+    ok(row === undefined || row.fetched_at === null,
+       '🔑 …and a scan that found no price stamps no observation time either');
+  }
   globalThis.fetch = realFetch;
 }
 
