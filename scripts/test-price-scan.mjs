@@ -2388,6 +2388,41 @@ console.log('Price Scan');
 }
 
 
+// ── The editor names the fault instead of saying "Forbidden" ─────────────────
+// 🛑 REPORTED FROM THE SCREEN: "Could not load the template: Forbidden." The response
+// carried code: UNCLASSIFIED_ACTION, which does NOT mean "you may not" -- it means the
+// worker predates the feature and the fix is a deploy. psStickerFault had said exactly that
+// to the person at the scanner since the day it was written; this panel read past it and
+// sent someone hunting a permissions problem that did not exist.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const src = sliceOrNull(html, '  const stFault = (status, j) =>', '  const stField =');
+  ok(src, 'stFault is where the test expects it');
+  const stFault = buildOrStub('stFault', 'const F = ' + (src || '').replace(/^\s*const stFault = /, ''),
+    [], [], 'F');
+
+  ok(/wrangler deploy/.test(stFault(403, { error: 'Forbidden', code: 'UNCLASSIFIED_ACTION' })),
+     '🛑 an unclassified action names the missing DEPLOY, not a permission');
+  ok(/superuser/.test(stFault(403, { error: 'Forbidden', code: 'NEED_SUPERUSER' })),
+     'a superuser-only refusal says which right it wants');
+  ok(/manager/.test(stFault(403, { error: 'Forbidden', code: 'NEED_MANAGER' })), '…and so does a manager one');
+  ok(/session has expired/.test(stFault(401, {})), 'a 401 is a sign-in problem, not a permission one');
+  ok(/500/.test(stFault(500, { error: 'boom' })), 'anything unrecognised still carries its status');
+
+  // 🛑 The whole point: a bare `error` string must never be the last word again.
+  const codes = ['UNCLASSIFIED_ACTION', 'NEED_SUPERUSER', 'NEED_MANAGER', 'NO_BUSINESS_ACCESS', 'NO_FINANCIAL_ACCESS'];
+  const said = codes.map(c => stFault(403, { error: 'Forbidden', code: c }));
+  eq(new Set(said).size, codes.length, 'every code gets its OWN sentence — none collapses to another');
+  ok(said.every(t => !/^Forbidden/.test(t)), '…and none of them is just the word Forbidden');
+
+  const block = sliceOrNull(html, '  async function stLoad() {', '  window.stReset = stReset;');
+  eq((block.match(/throw new Error\(stFault\(r\.status, j\)\)/g) || []).length, 3,
+     'load, save and reset all report through it');
+  ok(!/throw new Error\(j\.error \|\| /.test(block || ''),
+     '🛑 …and none of them still throws the bare error string');
+}
+
+
 // ── The sticker template ─────────────────────────────────────────────────────
 // \🛑 THE ONE THAT MATTERS: A NULL TEMPLATE MUST EMIT THE OLD BYTES. Shipping a
 // configurable layout must not move a single dot on any shelf in the chain until somebody
