@@ -10673,14 +10673,30 @@ const stickerCode = (categoryCode, price) => {
 // sells, so the map is derived by reading them and is correct by construction.
 //
 // Cached because it is a full inventory page and it changes about never.
-const STICKER_CODES_KEY = "sticker:category-codes";
+// 🛑 THE STORE IS PART OF THE KEY. This was one KV entry, "sticker:category-codes",
+// shared by all six stores — so whichever store swept last owned the map, and every other
+// store read its numbers. Combined with the endpoint defaulting an absent store to BL1,
+// a manager scanning at BL4 was verifying against BL1's catalogue: it could refuse a code
+// that exists locally, or — the direction that matters — approve one that does not, which
+// is a sticker that fails at the register in front of a customer. The entire feature
+// exists to prevent exactly that.
+const stickerCodesKey = (store) => `sticker:category-codes:${store}`;
 const STICKER_CODES_TTL = 86400;
+
+// Resolve and VALIDATE the store, or answer null. Never fall back to a default: guessing
+// which building someone is standing in is how the bug above happened.
+const stickerStore = (store) => {
+  const s = String(store || "").trim().toUpperCase();
+  return ALL_STORES.includes(s) ? s : null;
+};
+
 async function stickerCategoryCodes(env, store, opts = {}) {
-  const cached = await env.SALES_SNAPSHOTS?.get(STICKER_CODES_KEY, "json");
+  const s = stickerStore(store);
+  if (!s) return null;
+  const cached = await env.SALES_SNAPSHOTS?.get(stickerCodesKey(s), "json");
   if (!opts.force && cached?.map && cached.at && (Date.now() - Date.parse(cached.at)) < STICKER_CODES_TTL * 1000) {
     return { map: cached.map, field: cached.field || "code", codes: cached.codes || [] };
   }
-  const s = String(store || "BL1").toUpperCase();
   const mId = env[`${s}_MERCHANT_ID`], tok = env[`${s}_API_TOKEN`];
   if (!mId || !tok) return { map: cached?.map || {}, field: cached?.field || "code", codes: cached?.codes || [] };
 
@@ -10745,7 +10761,7 @@ async function stickerCategoryCodes(env, store, opts = {}) {
     return cached?.map ? { map: cached.map, field: cached.field || "code", codes: cached.codes || [] }
                        : { map: {}, field: "code", codes: [] };
   }
-  await env.SALES_SNAPSHOTS?.put(STICKER_CODES_KEY,
+  await env.SALES_SNAPSHOTS?.put(stickerCodesKey(s),
     JSON.stringify({ map, field, codes, at: new Date().toISOString() }));
   return { map, field, codes };
 }
@@ -19187,7 +19203,17 @@ export default {
           return new Response(JSON.stringify({ ok: true, printable: false, reason: "no price",
             detail: "There is no price to put on a sticker." }), { headers: corsJson });
         }
-        const codeMap = await stickerCategoryCodes(env, body?.store);
+        // 🛑 NO DEFAULT STORE. This read `body?.store || "BL1"`, so an absent store meant a
+        // manager at BL4 was answered from BL1's catalogue — silently, and in the direction
+        // that approves a code which does not resolve at the register they are standing at.
+        // The app cannot know which building someone is in, so it asks rather than assumes.
+        const store = stickerStore(body?.store);
+        if (!store) {
+          return new Response(JSON.stringify({ ok: true, printable: false, reason: "no store",
+            detail: "Pick the store you are printing for — sticker numbers are per store." }),
+            { headers: corsJson });
+        }
+        const codeMap = await stickerCategoryCodes(env, store);
         if (!codeMap) {
           // 🛑 SAY WHICH QUESTION WENT UNANSWERED. Both Clover calls refuse with the
           // same `reason`, and giving them the same `detail` too put us straight back where
@@ -19207,7 +19233,6 @@ export default {
           }), { headers: corsJson });
         }
         const code = stickerCode(catCode, price);
-        const store = String(body?.store || "BL1").toUpperCase();
         const found = await stickerCodeExists(env, store, code, codeMap.codes);
         const exists = found.exists;
         if (exists === null) {

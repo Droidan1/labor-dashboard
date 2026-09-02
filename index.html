@@ -2247,6 +2247,11 @@
         .ps-btn:disabled{opacity:.5;cursor:default}
         .ps-row{display:flex;gap:9px}
         #ps-sticker{display:flex;flex-direction:column;gap:7px}
+        .ps-print-row{display:flex;gap:8px;align-items:stretch}
+        .ps-print-row #ps-print{flex:1}
+        .ps-store{font-size:13px;padding:0 8px;border-radius:8px;border:1px solid #d9d2c2;
+          background:#fff;color:#3f3a2f}
+        .dark .ps-store{border-color:#33415c;background:#0f172a;color:#e2e8f0}
         .ps-stat{font-size:12px;line-height:1.4;color:#6b6453}
         .dark .ps-stat{color:#8893a7}
         .ps-stat.no{color:#9a3412}
@@ -18941,12 +18946,61 @@
   let psSticker = null;      // { printable, code, detail } for the item on screen
   let psStickerFor = null;   // which identifier that answer belongs to
 
+  // 🛑 PINNED TO THE WORKER'S ALL_STORES BY TEST. SC_ALL_STORES a few hundred lines up is
+  // missing BL8, and the note by the Inventory modal records that index.html has drifted
+  // from the worker's store list before. Here the two failure modes are both bad: a list
+  // that is short refuses a whole store outright, and one that is long offers a store the
+  // worker will reject. test-price-scan asserts these agree, so they cannot drift silently.
+  const PS_STORES = ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'];
+  const PS_STORE_KEY = 'ps-sticker-store';
+
+  // Which stores THIS account may print for. `currentUser.stores` is the effective scope:
+  // null means every store, an array is a restriction.
+  function psStickerStores() {
+    const scoped = currentUser && currentUser.stores;
+    return Array.isArray(scoped) ? scoped.filter(x => PS_STORES.includes(x)) : PS_STORES.slice();
+  }
+
+  // 🔑 NO DEFAULT WHEN THERE IS A CHOICE. Sticker numbers are per store, and the app cannot
+  // know which building someone is standing in — so with more than one store it asks, and
+  // the Print button stays disabled until it is answered. Defaulting to BL1 is what made a
+  // scan at BL4 verify against BL1's catalogue. Remembered per device, so it is asked once.
+  function psStickerStore() {
+    const allowed = psStickerStores();
+    if (allowed.length === 1) return allowed[0];
+    let saved = null;
+    try { saved = localStorage.getItem(PS_STORE_KEY); } catch (_) { /* private window */ }
+    return allowed.includes(saved) ? saved : null;
+  }
+
+  function psStoreChanged() {
+    const sel = el('ps-store');
+    if (!sel) return;
+    try { localStorage.setItem(PS_STORE_KEY, sel.value); } catch (_) { /* private window */ }
+    // The previous answer belonged to a different store, so it is not merely stale — it is
+    // about somewhere else. Drop it and ask again.
+    psSticker = null;
+    const btn = el('ps-print'), note = el('ps-print-note');
+    if (btn) btn.disabled = true;
+    if (note) { note.className = 'ps-stat'; note.textContent = 'Checking the sticker code…'; }
+    if (psLast) psStickerCheck(psLast);
+  }
+  window.psStoreChanged = psStoreChanged;
+
   function psStickerRow(j) {
     if (!psCanOverride()) return '';
     if (j.price === null || j.price === undefined) return '';
+    const allowed = psStickerStores();
+    const chosen = psStickerStore();
+    const picker = allowed.length > 1
+      ? `<select class="ps-store" id="ps-store" onchange="psStoreChanged()" aria-label="Store to print for">
+           <option value=""${chosen ? '' : ' selected'}>Store…</option>
+           ${allowed.map(x => `<option value="${x}"${x === chosen ? ' selected' : ''}>${x}</option>`).join('')}
+         </select>`
+      : '';
     return `<div id="ps-sticker">
-      <button class="ps-btn ghost" id="ps-print" type="button" disabled onclick="psPrint()">Print sticker</button>
-      <div class="ps-stat" id="ps-print-note">Checking the sticker code…</div>
+      <div class="ps-print-row">${picker}<button class="ps-btn ghost" id="ps-print" type="button" disabled onclick="psPrint()">Print sticker</button></div>
+      <div class="ps-stat" id="ps-print-note">${chosen ? 'Checking the sticker code…' : 'Pick the store you are printing for.'}</div>
     </div>`;
   }
 
@@ -18955,11 +19009,18 @@
   async function psStickerCheck(j) {
     if (!el('ps-print')) return;
     psSticker = null; psStickerFor = j.identifier || j.title || null;
+    // The worker refuses without a store anyway; asking first would spend a round trip to
+    // be told what the picker on screen already says.
+    if (!psStickerStore()) {
+      const note = el('ps-print-note');
+      if (note) { note.className = 'ps-stat'; note.textContent = 'Pick the store you are printing for.'; }
+      return;
+    }
     try {
       const r = await fetch(`${WORKER_BASE}?action=sticker-check`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ l3: j.l3, price: j.price }),
+        body: JSON.stringify({ l3: j.l3, price: j.price, store: psStickerStore() }),
       });
       const a = await r.json().catch(() => ({}));
       // The screen moved on while we were asking — say nothing about the old item.
