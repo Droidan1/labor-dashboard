@@ -1881,10 +1881,17 @@ console.log('Price Scan');
     // This one is a ternary, not a literal `reason:` — the code exists, the item does not.
     ['no clover item',   /"no clover item"/],
   ]) ok(re.test(h), `refusal is named: ${why}`);
-  eq((h.match(/printable: false/g) || []).length, 4,
-     '🔑 every refusal says printable:false — four of them, one per way this can fail');
+  eq((h.match(/printable: false/g) || []).length, 5,
+     '🔑 every refusal says printable:false — five sites across the four named reasons');
+  // 🔑 "clover unreachable" is TWO sites because there are two Clover round trips: the
+  // category-code map and the existence check. Both must refuse; an outage at either one
+  // leaves us unable to prove the code resolves, which is the whole bar for printing.
+  eq((h.match(/reason: "clover unreachable"/g) || []).length, 2,
+     '🛑 BOTH Clover round trips refuse on an outage — the map read and the existence check');
   ok(/exists === null/.test(h) && /cannot confirm/.test(h),
      '🛑 an unreachable Clover refuses too — unknown is not permission to print');
+  ok(/if \(!codeMap\)/.test(h),
+     '🛑 …including a map read that THREW, which used to escape as a 500');
   ok(!/nearest|snap|round/i.test(h),
      '🛑 …and nothing anywhere near this snaps the price to make a label scan');
 }
@@ -1943,6 +1950,103 @@ console.log('Price Scan');
   ok(/btn\.disabled = !a\.printable/.test(chk), '…and follows printable, never the mere presence of a price');
   ok(/!== psStickerFor\) return/.test(chk),
      '🔑 a late answer for a PREVIOUS item is dropped, so the button never describes the wrong scan');
+}
+
+// ── A fault is not a refusal ───────────────────────────────────────────────────
+// 🛑 THE BUG THIS PINS COST A LIVE DEBUGGING SESSION. The screen showed "This cannot be
+// printed yet." for a LIFEWTR scan, and that sentence was the front-end's generic
+// fallback — not one of the four refusals, which all carry a `detail`. Every 403 on this
+// worker answers { error, code } and a thrown handler answers { error }: no `detail` on
+// either, so an undeployed worker, a missing grant and a Clover outage all rendered as
+// the same dead sentence with nothing to tell them apart.
+//
+// Two independent holes made that possible, and both are fixed here:
+//   1. stickerCategoryCodes had no catch, so an unreachable Clover THREW (cloverFetch
+//      awaits fetch() directly) and escaped as a 500 rather than the "clover unreachable"
+//      refusal the endpoint had already been written to give.
+//   2. psStickerCheck never looked at r.ok, so it read any error body as a refusal.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const fnSrc = src.slice(src.indexOf('async function stickerCategoryCodes('),
+                          src.indexOf('// Does this exact code exist in Clover?'));
+  const build = (cloverFetch) => new Function(
+    'cloverFetch', 'STICKER_CODES_KEY', 'STICKER_CODES_TTL',
+    fnSrc + '\n; return stickerCategoryCodes;',
+  )(cloverFetch, 'sticker:category-codes', 86400);
+
+  const kv = (stored) => ({ SALES_SNAPSHOTS: {
+    get: async () => stored,
+    put: async () => {},
+  }, BL1_MERCHANT_ID: 'M1', BL1_API_TOKEN: 't' });
+
+  const throws = build(async () => { throw new TypeError('network error'); });
+  // 🔑 CAUGHT, NOT AWAITED BARE. Without the fix these calls REJECT, and an unhandled
+  // rejection kills the process — aborting the other 50 suites and reporting the
+  // regression as a stack trace instead of a named failure. Which is the same shape as
+  // the bug under test: a throw escaping where an answer was owed.
+  const answer = async (env) => { try { return await throws(env, 'BL1'); }
+                                  catch (e) { return `THREW: ${e.message}`; } };
+
+  // Nothing cached: there is no answer to give, only a fault. null says so.
+  eq(await answer(kv(null)), null,
+     '🛑 a THROWN Clover read returns null — it no longer escapes as a 500');
+
+  // Something cached but stale: a map from yesterday still answers correctly for every
+  // category whose number has not changed, which on any normal day is all of them.
+  const stale = { map: { Beverages: '50008' }, field: 'sku',
+                  at: new Date(Date.now() - 90 * 86400 * 1000).toISOString() };
+  const back = await answer(kv(stale));
+  eq(back?.map?.Beverages, '50008', '…but a stale cached map is served rather than nothing');
+  eq(back?.field, 'sku', '…and it keeps the field the map was built from');
+
+  // The fresh-cache path must not be reached through the network at all.
+  const fresh = { map: { Beverages: '50009' }, field: 'code', at: new Date().toISOString() };
+  const boom = build(async () => { throw new Error('must not be called'); });
+  eq((await boom(kv(fresh), 'BL1'))?.map?.Beverages, '50009',
+     'a fresh cache answers without touching Clover, so an outage is invisible for a day');
+}
+
+// The screen must name the fault, because the fixes differ completely: an undeployed
+// worker needs a deploy, a missing grant needs an admin, an expired session needs a
+// sign-in — and none of those are anything the person holding the scanner can guess.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const chk = html.slice(html.indexOf('async function psStickerCheck('),
+                         html.indexOf('function psStickerFault('));
+  ok(/if \(!r\.ok \|\| \(!a\.printable && !a\.detail\)\)/.test(chk),
+     '🔑 a non-OK response, or a body with no detail, is handled as a FAULT not a refusal');
+  ok(/psSticker = null/.test(chk),
+     '🛑 …and clears the stored answer, so Print cannot fire on a fault');
+  ok(!/This cannot be printed yet/.test(html),
+     '🛑 the sentence that hid all of this is gone — a refusal now always shows its own detail');
+
+  ok(html.includes('function psStickerFault('),
+     '🔑 psStickerFault exists at all — without it every fault renders as the old blank');
+  const fnSrc = html.slice(html.indexOf('function psStickerFault('),
+                           html.indexOf('// ZPL, because the printer draws'));
+  // Same reasoning as the worker block above: name the regression, do not die on it.
+  let psStickerFault;
+  try { psStickerFault = new Function(fnSrc + '\n; return psStickerFault;')(); }
+  catch (e) { psStickerFault = () => `UNBUILDABLE: ${e.message}`; }
+
+  // The one that matters most: the worker half of the deploy never landed.
+  ok(/deploy/i.test(psStickerFault(403, { code: 'UNCLASSIFIED_ACTION' })),
+     '🔑 UNCLASSIFIED_ACTION says the WORKER is behind — the fix is a deploy, not a permission');
+  ok(/Bargain Lane/.test(psStickerFault(403, { code: 'NO_BUSINESS_ACCESS' })),
+     'a missing business grant is named as one');
+  ok(/admin/i.test(psStickerFault(403, { code: 'NEED_ADMIN' })),
+     'NEED_ADMIN asks for an admin');
+  ok(/admin/i.test(psStickerFault(403, { code: 'NEED_SUPERUSER' })),
+     '…and so does NEED_SUPERUSER, which the same row can produce');
+  ok(/sign in/i.test(psStickerFault(401, {})),
+     'a 401 is an expired session, which the person CAN fix themselves');
+  ok(/500/.test(psStickerFault(500, { error: 'boom' })) && /boom/.test(psStickerFault(500, { error: 'boom' })),
+     '🔑 an unrecognised fault still shows the status and the server text, never a blank');
+
+  // Every branch must say something. A fault that renders empty is the original bug.
+  for (const [st, body] of [[403, {}], [500, {}], [0, {}], [502, { error: '' }], [403, { code: 'NOPE' }]])
+    ok((psStickerFault(st, body) || '').length > 10,
+       `no fault renders blank: ${st} ${JSON.stringify(body)}`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
