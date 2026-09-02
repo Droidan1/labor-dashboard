@@ -2305,13 +2305,27 @@ console.log('Price Scan');
   ok(/allowed\.length === 1/.test(row),
      'a single-store account needs no picker — the answer is not in doubt');
   ok(/localStorage\.getItem\(PS_STORE_KEY\)/.test(row) && /catch \(_\)/.test(row),
-     '…a multi-store one is asked once per device, and a private window does not throw');
+     '…a multi-store one is remembered per device, and a private window does not throw');
   ok(/allowed\.includes\(saved\)/.test(row),
      '🛑 a remembered store the account may no longer print for is discarded, not trusted');
-  ok(/Pick the store you are printing for/.test(row),
-     '…and with no answer the row says so rather than checking anything');
+
+  // 🔑 DEFAULTS, DOES NOT DEMAND. This first answered null until a multi-store account
+  // picked one, which blocked Print on the first scan of every day. The stores carry the
+  // SAME inventory, so a check against any of them gives the same answer — the demand
+  // bought no safety, and it bought no correctness either, since a manager at BL4 who
+  // leaves the picker on BL1 gets BL1's answer whether or not they were made to touch it.
+  ok(/: allowed\[0\]/.test(row),
+     '🔑 a multi-store account falls back to a store rather than to null');
+  ok(!/return allowed\.includes\(saved\) \? saved : null/.test(row),
+     '🛑 …so Print is never blocked waiting for an answer the app can supply');
   ok(/psSticker = null/.test(row),
      '🔑 changing store DROPS the previous answer — it was about somewhere else, not merely stale');
+
+  // What DOES protect against the inventories ever diverging is that the store is visible.
+  // The original code silently meant BL1; naming it is the actual improvement.
+  const chk0 = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  ok(/Prints <span class="ps-code">\$\{psEsc\(a\.code\)\}<\/span> for \$\{psEsc\(a\.store/.test(chk0),
+     '🔑 the answer says WHICH STORE it is for, so an assumption is visible rather than silent');
 
   const chk = html.slice(html.indexOf('async function psStickerCheck('),
                          html.indexOf('function psStickerFault('));
