@@ -1958,7 +1958,8 @@ console.log('Price Scan');
 {
   const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
   const fn = html.slice(html.indexOf('async function psPrint('), html.indexOf('window.psPrint'));
-  ok(/Browser Print is not running/.test(fn), 'an absent print agent is explained, not worked around');
+  ok(/Browser Print is not answering/.test(fn) && /Install it/.test(fn),
+     'an absent print agent is explained, not worked around');
   ok(!/window\.print|@page|iframe/.test(fn), '🛑 …and no browser-print path quietly emits a QR-less label');
   ok(/psZpl\(/.test(fn), 'the one print path builds ZPL');
 }
@@ -2108,6 +2109,63 @@ console.log('Price Scan');
   const down = await build(async () => null)({}, 'BL1', 'BL-50002-1_5', []);
   eq(down.exists, null, 'an unreachable Clover on the re-read is unknown');
   ok(/Clover did not answer/.test(down.why || ''), '…and says so');
+}
+
+// ── Printing says which thing failed ───────────────────────────────────────────
+// 🛑 CONFIRMED AGAINST A REAL ZD410. Browser Print was installed, running, and reporting
+// the printer over GET /available — and the screen still said it was not running, because
+// one `catch (_)` wrapped the probe, the missing-device throw and the write alike.
+//
+// 🔑 THE ACTUAL BUG WAS ONE HEADER. GET /available is a CORS-"simple" request and sails
+// through. POST /write with Content-Type: application/json is NOT simple, so the browser
+// sends an OPTIONS preflight first, and Browser Print does not answer one for this origin
+// — the POST died before it was ever sent. text/plain is safelisted, so no preflight goes
+// out; the agent parses the body as JSON either way. Verified in production: json failed,
+// text/plain printed the label.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const fn = html.slice(html.indexOf('async function psPrint()'), html.indexOf('window.psPrint = psPrint;'));
+
+  ok(/'Content-Type': 'text\/plain'/.test(fn),
+     '🔑 the write posts text/plain, so no CORS preflight is triggered');
+  // 🔑 Strip whole-line comments first: they NAME the header and the catch they warn
+  // against, so a naive grep matches the explanation and calls it the bug.
+  const code = fn.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
+  ok(!/application\/json/.test(code),
+     '🛑 …and application/json is gone from this path entirely — it is what broke it');
+  ok(/JSON\.stringify\(\{ device: dev, data:/.test(fn),
+     '…while the BODY is still JSON, which is what the agent actually parses');
+  ok(/preflight/i.test(fn),
+     'the reason is written down, because the header looks wrong to anyone who has not hit this');
+
+  // Each failure names itself. The old message was a confident claim that was simply false.
+  const claims = fn.match(/is not answering|reports no printer|Could not send|refused the label/g) || [];
+  eq(claims.length, 4, '🔑 four distinct failures, four distinct sentences');
+  ok(!/catch \(_\)/.test(code),
+     '🛑 no blanket catch — the one that swallowed three failures into one wrong answer');
+  ok(/if \(!r\.ok\)/.test(fn),
+     '🛑 a refused label is NOT reported as sent — 2xx is the only evidence it was accepted');
+  ok(/r\.status/.test(fn),
+     '…and the status is shown, so the failure can be looked up rather than guessed at');
+
+  // Only the success line interpolates into innerHTML; every failure goes through
+  // textContent, because some of them carry text straight from the agent.
+  const successes = fn.match(/note\.innerHTML/g) || [];
+  eq(successes.length, 1, 'only the success message builds HTML');
+  ok(/note\.textContent = msg/.test(fn),
+     '🛑 …every failure renders as text, since some carry wording from the agent itself');
+}
+
+// The label geometry, now that a real printer has been identified.
+// The attached unit reports as "ZTC ZD410-203dpi ZPL", so 203 dots is one inch and a
+// 1x1 sticker is exactly ^PW203 / ^LL203. Pinned because a 300dpi unit would need 300,
+// and the symptom (a label two thirds the intended size) is easy to misread as a
+// media or driver problem rather than as these two numbers.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const fn = html.slice(html.indexOf('function psZpl('), html.indexOf('async function psZebraDevice('));
+  ok(/\^PW203/.test(fn) && /\^LL203/.test(fn),
+     '🔑 203 dots square — one inch on the 203dpi ZD410 this prints to');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -19045,25 +19045,48 @@
     const btn = el('ps-print'), note = el('ps-print-note');
     if (btn) btn.disabled = true;
     if (note) { note.className = 'ps-stat'; note.textContent = 'Printing…'; }
+    // textContent, not innerHTML: some of these carry text straight from the agent.
+    const fail = (msg) => { if (note) { note.className = 'ps-stat no'; note.textContent = msg; } };
     try {
-      const dev = await psZebraDevice();
-      if (!dev) throw new Error('no-agent');
-      await fetch('http://127.0.0.1:9100/write', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device: dev, data: psZpl(a.code, psLast.price) }),
-        signal: AbortSignal.timeout(5000),
-      });
-      if (note) note.innerHTML = `Sent <span class="ps-code">${psEsc(a.code)}</span> to ${psEsc(dev.name || 'the printer')}.`;
-    } catch (_) {
-      // 🛑 NO SILENT FALLBACK TO A LABEL WITHOUT A QR. Nothing in the browser here can
-      // draw one — the repo carries no QR encoder — and a sticker with only text on it
-      // does not scan, which is the exact failure this whole feature exists to prevent.
-      // Saying what to install is more use than printing something that fails at the till.
-      if (note) {
-        note.className = 'ps-stat no';
-        note.textContent = 'Zebra Browser Print is not running on this machine, so the QR cannot be drawn. '
-          + 'Install it, or print from a machine that has it.';
+      let dev;
+      try {
+        dev = await psZebraDevice();
+      } catch (e) {
+        // 🛑 ONLY THIS FAILURE MEANS THE AGENT IS ABSENT, and it used to be the message for
+        // all of them. One `catch (_)` wrapped the probe, the missing-device throw AND the
+        // write, so a working agent that refused the POST reported itself as not installed
+        // — a confident sentence that was simply false, and it cost a round trip to catch.
+        return fail('Zebra Browser Print is not answering on this machine, so the QR cannot be drawn. '
+          + 'Install it, or print from a machine that has it.');
       }
+      if (!dev) {
+        return fail('Zebra Browser Print is running, but reports no printer attached. '
+          + 'Check the printer is powered on and connected.');
+      }
+      let r;
+      try {
+        r = await fetch('http://127.0.0.1:9100/write', {
+          // 🔑 text/plain, NOT application/json — AND THE BODY IS STILL JSON. A POST with a
+          // Content-Type outside the CORS safelist stops being a "simple" request, so the
+          // browser sends an OPTIONS preflight first; Browser Print does not answer one for
+          // this origin, so the POST died before it was ever sent while GET /available (a
+          // simple request, no preflight) worked perfectly. text/plain is safelisted, so no
+          // preflight is sent. The agent parses the body as JSON regardless of this header.
+          method: 'POST', headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify({ device: dev, data: psZpl(a.code, psLast.price) }),
+          signal: AbortSignal.timeout(5000),
+        });
+      } catch (e) {
+        return fail(`Could not send the label to Browser Print: ${e.message}`);
+      }
+      // A 2xx is the only evidence the label was accepted. Saying "Sent" without checking
+      // means a refused label reads as a printed one, and the next person goes looking at
+      // the printer instead of at us.
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        return fail(`Browser Print refused the label (${r.status})${txt ? ': ' + txt.slice(0, 120) : '.'}`);
+      }
+      if (note) note.innerHTML = `Sent <span class="ps-code">${psEsc(a.code)}</span> to ${psEsc(dev.name || 'the printer')}.`;
     } finally {
       if (btn) btn.disabled = false;
     }
