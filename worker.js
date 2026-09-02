@@ -19109,8 +19109,14 @@ export default {
         }
         const codeMap = await stickerCategoryCodes(env, body?.store);
         if (!codeMap) {
+          // 🛑 SAY WHICH QUESTION WENT UNANSWERED. Both Clover calls refuse with the
+          // same `reason`, and giving them the same `detail` too put us straight back where
+          // the last fix started: one sentence for two failures that need different work.
+          // This one means the inventory sweep did not complete, so there is no map and no
+          // code — which is why the body below carries no `code` field and this one cannot.
           return new Response(JSON.stringify({ ok: true, printable: false, reason: "clover unreachable",
-            detail: "Clover did not answer, so we cannot confirm this code exists. Try again." }), { headers: corsJson });
+            stage: "category map",
+            detail: "Clover did not answer when we asked which sticker number this category uses. Try again." }), { headers: corsJson });
         }
         const { map: codes, field } = codeMap;
         // merchLabel is what Clover's category is actually called; L3 keys are ours.
@@ -19127,7 +19133,8 @@ export default {
           // Clover did not answer. Unknown is NOT permission to print — the whole
           // guarantee is that a printed code resolves, and we cannot claim that here.
           return new Response(JSON.stringify({ ok: true, printable: false, reason: "clover unreachable",
-            code, detail: "Clover did not answer, so we cannot confirm this code exists. Try again." }), { headers: corsJson });
+            code, stage: "code lookup",
+            detail: `Clover did not answer when we checked whether ${code} exists. Try again.` }), { headers: corsJson });
         }
         return new Response(JSON.stringify({
           ok: true, printable: exists, code, category_code: catCode, price_code: priceCode, store,
