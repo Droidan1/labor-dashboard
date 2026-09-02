@@ -2247,11 +2247,6 @@
         .ps-btn:disabled{opacity:.5;cursor:default}
         .ps-row{display:flex;gap:9px}
         #ps-sticker{display:flex;flex-direction:column;gap:7px}
-        .ps-print-row{display:flex;gap:8px;align-items:stretch}
-        .ps-print-row #ps-print{flex:1}
-        .ps-store{font-size:13px;padding:0 8px;border-radius:8px;border:1px solid #d9d2c2;
-          background:#fff;color:#3f3a2f}
-        .dark .ps-store{border-color:#33415c;background:#0f172a;color:#e2e8f0}
         #ps-recent{margin-top:14px}
         .ps-recent-h{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
           color:#6b6453;margin-bottom:6px}
@@ -19003,32 +18998,24 @@
     return allowed.includes(saved) ? saved : allowed[0];
   }
 
-  function psStoreChanged() {
-    const sel = el('ps-store');
-    if (!sel) return;
-    try { localStorage.setItem(PS_STORE_KEY, sel.value); } catch (_) { /* private window */ }
-    // The previous answer belonged to a different store, so it is not merely stale — it is
-    // about somewhere else. Drop it and ask again.
-    psSticker = null;
-    const btn = el('ps-print'), note = el('ps-print-note');
-    if (btn) btn.disabled = true;
-    if (note) { note.className = 'ps-stat'; note.textContent = 'Checking the sticker code…'; }
-    if (psLast) psStickerCheck(psLast);
-  }
-  window.psStoreChanged = psStoreChanged;
 
+  // 🛑 NO STORE ON SCREEN. There was a picker here, and the note read "for BL1". Both were
+  // wrong for this business: the stores carry the SAME inventory, so the store a check ran
+  // against changes nothing an associate can act on — while a manager at BL4 reading "BL1"
+  // reasonably concludes something is misconfigured and goes looking, or starts changing
+  // the picker to fix a system that was already right. Surfacing a detail that cannot be
+  // acted on, in a way that looks like a fault, is worse than not surfacing it.
+  //
+  // 🔑 THE STORE IS STILL EXPLICIT UNDERNEATH — resolved, sent, validated by the worker and
+  // cached under its own key. That is what fixed the real bug, where one KV entry was shared
+  // by all six stores and whichever swept last owned the map. None of that needed a control.
+  // If the inventories ever diverge this becomes a question worth asking; until they do,
+  // asking it invents a problem.
   function psStickerRow(j) {
     if (!psCanOverride()) return '';
     if (j.price === null || j.price === undefined) return '';
-    const allowed = psStickerStores();
-    const chosen = psStickerStore();
-    const picker = allowed.length > 1
-      ? `<select class="ps-store" id="ps-store" onchange="psStoreChanged()" aria-label="Store to print for">
-           ${allowed.map(x => `<option value="${x}"${x === chosen ? ' selected' : ''}>${x}</option>`).join('')}
-         </select>`
-      : '';
     return `<div id="ps-sticker">
-      <div class="ps-print-row">${picker}<button class="ps-btn ghost" id="ps-print" type="button" disabled onclick="psPrint()">Print sticker</button></div>
+      <button class="ps-btn ghost" id="ps-print" type="button" disabled onclick="psPrint()">Print sticker</button>
       <div class="ps-stat" id="ps-print-note">Checking the sticker code…</div>
     </div>`;
   }
@@ -19073,7 +19060,7 @@
       btn.disabled = !a.printable;
       note.className = 'ps-stat' + (a.printable ? '' : ' no');
       note.innerHTML = a.printable
-        ? `Prints <span class="ps-code">${psEsc(a.code)}</span> for ${psEsc(a.store || '')}`
+        ? `Prints <span class="ps-code">${psEsc(a.code)}</span>`
         : psEsc(a.detail);
     } catch (_) {
       const note = el('ps-print-note');
@@ -19247,7 +19234,7 @@
       <div class="ps-recent-row">
         <div class="ps-recent-main">
           <div class="ps-recent-title">${psEsc(p.title || psL3Tail(p.l3) || p.code)}</div>
-          <div class="ps-recent-sub"><span class="ps-code">${psEsc(p.code)}</span> · ${psEsc(p.store)} · ${psEsc(psRecentWhen(p.printed_at))}</div>
+          <div class="ps-recent-sub"><span class="ps-code">${psEsc(p.code)}</span> · ${psEsc(psRecentWhen(p.printed_at))}</div>
         </div>
         <button class="ps-btn ghost" type="button" onclick="psReprint(${i})">Reprint</button>
       </div>`).join('');

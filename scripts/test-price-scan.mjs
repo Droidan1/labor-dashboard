@@ -2296,43 +2296,43 @@ console.log('Price Scan');
      '🔑 PS_STORES matches the worker ALL_STORES exactly — order included');
 }
 
-// The picker, and what it refuses to do without an answer.
+// The store is resolved and sent, and never shown.
+// 🛑 THERE WAS A PICKER HERE AND A NOTE READING "for BL1". Both were wrong for this
+// business: the stores carry the SAME inventory, so which store a check ran against
+// changes nothing an associate can act on — while a manager at BL4 reading "BL1"
+// reasonably concludes something is misconfigured and goes looking, or "fixes" a system
+// that was already right. A detail that cannot be acted on, surfaced in a way that looks
+// like a fault, is worse than one not surfaced.
 {
   const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
-  const row = html.slice(html.indexOf('function psStickerStores()'),
-                         html.indexOf('// 🔑 ASKED AFTER RENDER'));
+  const row = sliceOrNull(html, 'function psStickerStores()', '// 🔑 ASKED AFTER RENDER');
+  ok(row, 'index.html resolves a store for the sticker check');
 
-  ok(/allowed\.length === 1/.test(row),
-     'a single-store account needs no picker — the answer is not in doubt');
-  ok(/localStorage\.getItem\(PS_STORE_KEY\)/.test(row) && /catch \(_\)/.test(row),
-     '…a multi-store one is remembered per device, and a private window does not throw');
-  ok(/allowed\.includes\(saved\)/.test(row),
+  ok(/allowed\.length === 1/.test(row || ''),
+     'a single-store account resolves to its own store');
+  ok(/localStorage\.getItem\(PS_STORE_KEY\)/.test(row || '') && /catch \(_\)/.test(row || ''),
+     '…a remembered choice still wins, and a private window does not throw');
+  ok(/allowed\.includes\(saved\)/.test(row || ''),
      '🛑 a remembered store the account may no longer print for is discarded, not trusted');
+  ok(/: allowed\[0\]/.test(row || ''),
+     '🔑 and it always resolves to A store — Print is never blocked on an answer we can supply');
 
-  // 🔑 DEFAULTS, DOES NOT DEMAND. This first answered null until a multi-store account
-  // picked one, which blocked Print on the first scan of every day. The stores carry the
-  // SAME inventory, so a check against any of them gives the same answer — the demand
-  // bought no safety, and it bought no correctness either, since a manager at BL4 who
-  // leaves the picker on BL1 gets BL1's answer whether or not they were made to touch it.
-  ok(/: allowed\[0\]/.test(row),
-     '🔑 a multi-store account falls back to a store rather than to null');
-  ok(!/return allowed\.includes\(saved\) \? saved : null/.test(row),
-     '🛑 …so Print is never blocked waiting for an answer the app can supply');
-  ok(/psSticker = null/.test(row),
-     '🔑 changing store DROPS the previous answer — it was about somewhere else, not merely stale');
+  // Nothing about the store reaches the screen.
+  ok(!/id="ps-store"/.test(html),
+     '🛑 no store picker — it asked a question that changes no answer here');
+  ok(!/psStoreChanged/.test(html),
+     '…and no handler left behind for a control that no longer exists');
+  ok(!/\bfor \$\{psEsc\(a\.store/.test(html),
+     '🛑 the note does not name the store — "for BL1" reads as a fault at the other five');
+  ok(!/psEsc\(p\.store\)/.test(html),
+     '…nor does the reprint list, for the same reason');
 
-  // What DOES protect against the inventories ever diverging is that the store is visible.
-  // The original code silently meant BL1; naming it is the actual improvement.
-  const chk0 = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
-  ok(/Prints <span class="ps-code">\$\{psEsc\(a\.code\)\}<\/span> for \$\{psEsc\(a\.store/.test(chk0),
-     '🔑 the answer says WHICH STORE it is for, so an assumption is visible rather than silent');
-
-  const chk = html.slice(html.indexOf('async function psStickerCheck('),
-                         html.indexOf('function psStickerFault('));
-  ok(/store: psStickerStore\(\)/.test(chk),
-     '🔑 the check sends the store — it never did, which is why every scan read BL1');
-  ok(/if \(!psStickerStore\(\)\)/.test(chk),
-     '…and does not spend a round trip to be told what the screen already says');
+  // 🔑 But it is still explicit in the request. This is what fixed the real bug, where one
+  // KV entry was shared by all six stores and whichever swept last owned the map — and
+  // none of that ever needed a control on screen.
+  const chk = sliceOrNull(html, 'async function psStickerCheck(', 'function psStickerFault(');
+  ok(/store: psStickerStore\(\)/.test(chk || ''),
+     '🔑 the check still SENDS the store — invisible to the user, load-bearing for the cache');
 }
 
 // ── Reprinting re-asks the question ────────────────────────────────────────────
