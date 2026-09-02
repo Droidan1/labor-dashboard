@@ -18961,21 +18961,56 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ l3: j.l3, price: j.price }),
       });
-      const a = await r.json();
+      const a = await r.json().catch(() => ({}));
       // The screen moved on while we were asking — say nothing about the old item.
       if ((j.identifier || j.title || null) !== psStickerFor) return;
-      psSticker = a;
       const btn = el('ps-print'), note = el('ps-print-note');
       if (!btn || !note) return;
+      // 🛑 A SERVER ERROR IS NOT A REFUSAL. Every 403 on this worker answers
+      // { error, code } with no `detail`, and a thrown handler answers { error } —
+      // so treating any non-printable body as a refusal made an undeployed worker,
+      // a missing grant and a Clover outage all read as the same dead sentence,
+      // with nothing on screen to tell them apart. The four real refusals ALWAYS
+      // carry a detail; a body without one is a fault, and the status is the story.
+      if (!r.ok || (!a.printable && !a.detail)) {
+        psSticker = null;
+        btn.disabled = true;
+        note.className = 'ps-stat no';
+        note.textContent = psStickerFault(r.status, a);
+        return;
+      }
+      psSticker = a;
       btn.disabled = !a.printable;
       note.className = 'ps-stat' + (a.printable ? '' : ' no');
       note.innerHTML = a.printable
         ? `Prints <span class="ps-code">${psEsc(a.code)}</span>`
-        : psEsc(a.detail || 'This cannot be printed yet.');
+        : psEsc(a.detail);
     } catch (_) {
       const note = el('ps-print-note');
       if (note) { note.className = 'ps-stat no'; note.textContent = 'Could not check the sticker code.'; }
     }
+  }
+
+  // Name the fault instead of dressing it as a refusal. UNCLASSIFIED_ACTION matters most:
+  // it means this worker predates the feature, i.e. the front-end shipped without its
+  // worker half — which is indistinguishable from a permissions problem unless said out
+  // loud, and the fix is a deploy rather than anything the person at the scanner can do.
+  function psStickerFault(status, a) {
+    switch (a && a.code) {
+      case 'UNCLASSIFIED_ACTION':
+        return 'This worker does not know how to check sticker codes yet, so the worker half of the deploy is missing.';
+      case 'NO_BUSINESS_ACCESS':
+        return 'Your account has no Bargain Lane access, so it cannot check sticker codes.';
+      case 'NEED_ADMIN':
+      case 'NEED_SUPERUSER':
+        return 'Printing stickers needs an admin account.';
+      case 'NO_FINANCIAL_ACCESS':
+        return 'Your account cannot see cost data, so it cannot check sticker codes.';
+    }
+    if (status === 401) return 'Your session has expired — sign in again.';
+    if (status === 403) return 'The sticker check was refused, and did not say why.';
+    return 'The sticker check failed' + (status ? ' (' + status + ')' : '')
+      + (a && a.error ? ': ' + a.error : '.');
   }
 
   // ZPL, because the printer draws the QR itself at its own resolution — no rasterising,

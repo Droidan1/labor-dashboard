@@ -10643,25 +10643,39 @@ async function stickerCategoryCodes(env, store) {
   // Which field won is REMEMBERED, because the existence check filters on a named field
   // and has to ask about the same one the map was built from.
   const tally = {}, fieldHits = { code: 0, sku: 0 };
-  for (let offset = 0; offset < 5000; offset += 1000) {
-    const r = await cloverFetch(
-      `https://api.clover.com/v3/merchants/${mId}/items?expand=categories&limit=1000&offset=${offset}`,
-      { headers: { Authorization: `Bearer ${tok}` } });
-    if (!r?.ok) break;
-    const rows = (await r.json())?.elements || [];
-    for (const it of rows) {
-      const field = /^BL-\d+-/.test(String(it?.code || "")) ? "code"
-                  : /^BL-\d+-/.test(String(it?.sku || "")) ? "sku" : null;
-      if (!field) continue;
-      fieldHits[field]++;
-      const m = /^BL-(\d+)-/.exec(String(it[field]));
-      for (const c of (it?.categories?.elements || [])) {
-        const name = String(c?.name || "").trim();
-        if (!name) continue;
-        (tally[name] ||= {})[m[1]] = (tally[name][m[1]] || 0) + 1;
+  // 🛑 A THROWN FETCH IS THE SAME EVENT AS AN EMPTY READ AND MUST LAND THE SAME WAY.
+  // cloverFetch awaits fetch() directly, so Clover being unreachable THROWS rather than
+  // returning a non-ok response, and the `!r?.ok` break below never sees it. Uncaught, it
+  // escaped to the endpoint's 500 handler, which answers { error } with no `detail` —
+  // and the screen renders a body with no detail as its generic refusal. So a Clover blip
+  // presented as a permanent "cannot be printed", with nothing to distinguish the two.
+  // Returning null lets the endpoint give the refusal it already wrote for exactly this.
+  try {
+    for (let offset = 0; offset < 5000; offset += 1000) {
+      const r = await cloverFetch(
+        `https://api.clover.com/v3/merchants/${mId}/items?expand=categories&limit=1000&offset=${offset}`,
+        { headers: { Authorization: `Bearer ${tok}` } });
+      if (!r?.ok) break;
+      const rows = (await r.json())?.elements || [];
+      for (const it of rows) {
+        const field = /^BL-\d+-/.test(String(it?.code || "")) ? "code"
+                    : /^BL-\d+-/.test(String(it?.sku || "")) ? "sku" : null;
+        if (!field) continue;
+        fieldHits[field]++;
+        const m = /^BL-(\d+)-/.exec(String(it[field]));
+        for (const c of (it?.categories?.elements || [])) {
+          const name = String(c?.name || "").trim();
+          if (!name) continue;
+          (tally[name] ||= {})[m[1]] = (tally[name][m[1]] || 0) + 1;
+        }
       }
+      if (rows.length < 1000) break;
     }
-    if (rows.length < 1000) break;
+  } catch (_) {
+    // A stale map still answers correctly for every category that has not changed number,
+    // which is all of them on any normal day — the same trade the empty-read path below
+    // already makes. With nothing cached there is no answer to give, only a fault.
+    return cached?.map ? { map: cached.map, field: cached.field || "code" } : null;
   }
   // Count per category rather than taking the first seen: one mis-keyed item should not
   // be able to redefine a whole category's number.
@@ -19093,7 +19107,12 @@ export default {
           return new Response(JSON.stringify({ ok: true, printable: false, reason: "no price",
             detail: "There is no price to put on a sticker." }), { headers: corsJson });
         }
-        const { map: codes, field } = await stickerCategoryCodes(env, body?.store);
+        const codeMap = await stickerCategoryCodes(env, body?.store);
+        if (!codeMap) {
+          return new Response(JSON.stringify({ ok: true, printable: false, reason: "clover unreachable",
+            detail: "Clover did not answer, so we cannot confirm this code exists. Try again." }), { headers: corsJson });
+        }
+        const { map: codes, field } = codeMap;
         // merchLabel is what Clover's category is actually called; L3 keys are ours.
         const catCode = codes[l3] || codes[merchLabel(l3)] || null;
         if (!catCode) {

@@ -912,3 +912,54 @@ seen the old dates, and reasonably concluded the fix did not work.
    report a policy denial rather than route around it — so report it, then reason from the
    repo (the SW strategy) instead of asserting the deploy is fine because a job was green.
 </rules>
+
+## The fallback string that ate the status code (2026-09-02)
+
+**What happened:** Brian scanned a LIFEWTR bottle to test the new sticker button and got
+`This cannot be printed yet.` That sentence was not any of the four refusals I had designed —
+it was the `||` fallback in `psStickerCheck`:
+
+```js
+: psEsc(a.detail || 'This cannot be printed yet.');
+```
+
+Every real refusal carries a `detail`, so the fallback could only ever fire on a body that was
+not a refusal at all. And on this worker there are four such bodies — `UNCLASSIFIED_ACTION`,
+`NO_BUSINESS_ACCESS`, `NEED_ADMIN`, `NO_FINANCIAL_ACCESS`, plus a thrown handler's
+`{ error }` — all of which answer with no `detail`. `psStickerCheck` never looked at `r.ok`,
+so it rendered all five as the same dead sentence. An undeployed worker, a missing grant and
+a Clover outage were indistinguishable on screen.
+
+I had spent real care on the refusals — four named reasons, each saying which part was
+missing, tests pinning all four — and then wrote the fault path as a `||` default. The
+premise of the whole feature ("a refusal always names what is missing") stopped at the
+boundary of the cases I had thought of.
+
+Second hole, found while looking: `stickerCategoryCodes` had no `try`. `cloverFetch` awaits
+`fetch()` directly, so an unreachable Clover **throws** rather than returning a non-ok
+response, and the `if (!r?.ok) break` guard never sees it. It escaped to the 500 handler —
+so the endpoint's own `"clover unreachable"` refusal, written for exactly this, could not be
+reached from the map read. Only the existence check could produce it.
+
+<rules>
+1. **A fault is not a refusal, and must never be rendered as one.** If a response can carry a
+   reason, then a response WITHOUT one is a different kind of event. Branch on that, do not
+   `||` past it.
+2. **Check `r.ok` before reading a body as a domain answer.** `await r.json()` on a 403 gives
+   a perfectly valid object that means nothing you designed.
+3. **Never write a default message that discards the status code.** If the fallback fires, it
+   is firing on a case I did not anticipate — which is exactly when the status and the server's
+   own `error` text are the only information anyone has.
+4. **`await fetch()` inside a helper THROWS; a `!resp.ok` guard does not catch it.** Every
+   caller of `cloverFetch` that treats "Clover is down" as a handled outcome needs a `try`,
+   not just an ok-check. Grep the other call sites before assuming they are fine.
+5. **Design the error path with the same care as the success path.** I enumerated four
+   refusals and zero faults. Enumerate both, and write a test that asserts no branch renders
+   blank.
+</rules>
+
+**Repeat offence:** #162 also shipped 116 lines of `index.html` without bumping `CACHE_NAME`
+— the exact mistake the 2026-09-01 lesson above was written about, one day later. Reading a
+lesson is not the same as running it. Before opening ANY PR that touches `index.html`, run
+`git diff --name-only origin/main | grep -q index.html && git diff --name-only origin/main | grep -q sw.js` —
+if index.html is in the diff and sw.js is not, the PR is not ready.
