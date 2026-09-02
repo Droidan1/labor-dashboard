@@ -460,3 +460,38 @@ have nothing to scan.
   people printing shelf stickers are largely not admins, and `sticker-history` itself is
   only business-level on the worker. Left exactly as found, because widening who can see
   print history is a permissions decision, not a layout one.
+
+
+---
+
+## The reprint row, as photographed
+
+> "fix the ui misalignment and add what the product name was and our price"
+
+The tab shipped with the row broken, and the screenshot showed it: the code wrapped down a
+three-character column while the Reprint button spanned the panel.
+
+**`.ps-btn` is `width:100%`.** It is built for the full-width "Scan" and "Look it up"
+buttons. Dropped into a flex row it demanded the whole width, `.ps-recent-main` collapsed,
+and `.ps-recent-title` — which is `white-space:nowrap` — was clipped to nothing. The product
+name looked absent. It was squeezed. The text that appeared to wrap was the sub-line, which
+has no `nowrap`; that is the tell.
+
+- [x] `.ps-recent-row .ps-btn{width:auto;flex:none}` — a button in a row sizes to its label.
+- [x] `.ps-recent-row:first-child{border-top:none}` — with the heading gone, the first rule
+      was a line under nothing. That is the stray line at the top of the screenshot.
+- [x] Product name is the row's title, falling back to the category tail rather than
+      repeating the code that is already in the sub-line.
+- [x] Our price, right-aligned in tabular figures. `sticker-history` has returned `price`
+      since the table was created and nothing ever drew it.
+- [x] Formatted with the page-wide `psMoney`, not a second formatter. The first attempt
+      declared one and the syntax check caught the collision — `psMoney` already existed.
+
+### Still open
+
+- **The gate.** Asked for: everyone who prints can reprint. Needs a decision first, because
+  `sticker-check` — the print itself — is `requireAdminAccess`, the same gate as the history.
+  So under today's rules everyone who *can* print already can reprint, and the ask only means
+  something if printing itself moves to the gate the price lookup uses (`canSeeFinancials`:
+  manager and up, never staff). That widens who can print shelf labels, so it is being put to
+  Brian rather than assumed.

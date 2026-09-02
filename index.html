@@ -2257,13 +2257,24 @@
         .ps-btn:disabled{opacity:.5;cursor:default}
         .ps-row{display:flex;gap:9px}
         #ps-sticker{display:flex;flex-direction:column;gap:7px}
-        #ps-recent{margin-top:14px}
+        #ps-recent{margin-top:0}
         .ps-recent-empty{font-size:13px;color:#6b6453;padding:10px 0 2px}
         .dark .ps-recent-empty{color:#7c899e}
-        .ps-recent-row{display:flex;align-items:center;gap:10px;padding:7px 0;
+        .ps-recent-row{display:flex;align-items:center;gap:10px;padding:9px 0;
           border-top:1px solid #e7e1d3}
         .dark .ps-recent-row{border-top-color:#1e293b}
+        /* The rule separates rows; above the first one it is a line under nothing. */
+        .ps-recent-row:first-child{border-top:none}
         .ps-recent-main{flex:1;min-width:0}
+        /* 🛑 .ps-btn IS width:100%. It is built for the full-width Scan and Look it up
+           buttons, and dropping one into a flex row made it demand the whole row -- which
+           collapsed .ps-recent-main to about three characters and left the title, which is
+           white-space:nowrap, clipped to nothing. The name looked missing; it was squeezed.
+           A button in a row sizes to its label. */
+        .ps-recent-row .ps-btn{width:auto;flex:none;padding:8px 13px;font-size:13px;border-radius:9px}
+        .ps-recent-price{font-size:13.5px;font-weight:700;flex:none;color:#3f3a2f;
+          font-variant-numeric:tabular-nums}
+        .dark .ps-recent-price{color:#e2e8f0}
         .ps-recent-title{font-size:13px;color:#3f3a2f;overflow:hidden;text-overflow:ellipsis;
           white-space:nowrap}
         .dark .ps-recent-title{color:#e2e8f0}
@@ -19339,12 +19350,15 @@
         + 'it will show up here to reprint without scanning again.</div>';
       return;
     }
+    // What it was, what we priced it at, then the label's own code and when it went out.
+    // A code alone told you nothing you could check against the shelf you are standing at.
     box.innerHTML = psRecent.map((p, i) => `
       <div class="ps-recent-row">
         <div class="ps-recent-main">
-          <div class="ps-recent-title">${psEsc(p.title || psL3Tail(p.l3) || p.code)}</div>
+          <div class="ps-recent-title">${psEsc(p.title || psL3Tail(p.l3) || 'Unnamed item')}</div>
           <div class="ps-recent-sub"><span class="ps-code">${psEsc(p.code)}</span> · ${psEsc(psRecentWhen(p.printed_at))}</div>
         </div>
+        <div class="ps-recent-price">${psEsc(psMoney(p.price))}</div>
         <button class="ps-btn ghost" type="button" onclick="psReprint(${i})">Reprint</button>
       </div>`).join('');
   }
@@ -19353,6 +19367,11 @@
   // its tail segment (`l3.split(' - ').pop()`), so a print row reads the same way rather
   // than spelling out FG BL CONSUMABLES - FOOD - BEVERAGES on a phone-width line.
   const psL3Tail = (l3) => String(l3 || '').split(' - ').pop();
+
+  // 🔑 The price is drawn with psMoney, the formatter this page already uses everywhere
+  // else -- a second one would drift. sticker-history has returned `price` since the table
+  // was created and nothing ever drew it; a row you cannot check against the shelf in front
+  // of you is a row you reprint just to read.
 
   function psRecentWhen(iso) {
     const t = Date.parse(iso);

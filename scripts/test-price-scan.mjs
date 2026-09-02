@@ -2146,6 +2146,64 @@ console.log('Price Scan');
   ok(/Clover did not answer/.test(down.why || ''), '…and says so');
 }
 
+// ── The reprint row shows what it was, and what we priced it at ───────────────
+// \U0001f6d1 SHIPPED BROKEN AND PHOTOGRAPHED. .ps-btn is width:100% -- it is built for the
+// full-width "Scan" and "Look it up" buttons. Dropped into a flex row it demanded the whole
+// width, .ps-recent-main collapsed to about three characters, and .ps-recent-title (which is
+// white-space:nowrap) got clipped to nothing. The product name looked ABSENT; it was
+// squeezed. The wrapping text in the screenshot was the sub-line, which has no nowrap.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+
+  ok(/\.ps-btn\{[^}]*width:100%/.test(html),
+     'the base button is still width:100% -- this is the rule being overridden, not removed');
+  ok(/\.ps-recent-row \.ps-btn\{[^}]*width:auto[^}]*flex:none/.test(html),
+     '\U0001f6d1 …and a button inside a reprint row sizes to its label instead of eating it');
+  ok(html.indexOf('.ps-recent-row .ps-btn{') > html.indexOf('.ps-btn{'),
+     '…declared after it, so source order agrees with the specificity that already wins');
+  ok(/\.ps-recent-row:first-child\{border-top:none\}/.test(html),
+     'no rule above the first row -- with the heading gone it was a line under nothing');
+
+  const src = sliceOrNull(html, '  function psRecentRender()', '  const psL3Tail =');
+  ok(src, 'psRecentRender is where the test expects it');
+
+  const box = { innerHTML: '', style: {} };
+  const reBtn = { style: {} }, n = { textContent: '' };
+  const els = { 'ps-recent': box, 'ps-tab-reprint': reBtn, 'ps-tab-reprint-n': n };
+  const rows = [
+    { code: 'BL-50002-1_5', title: 'LIFEWTR Purified Water 1L', l3: 'FG BL CONSUMABLES - FOOD - BEVERAGES',
+      price: 1.5, printed_at: '2026-09-02T15:00:00Z' },
+    { code: 'BL-50002-3', title: '', l3: 'FG BL CONSUMABLES - FOOD - BEVERAGES',
+      price: 3, printed_at: '2026-09-02T15:00:00Z' },
+  ];
+  const render = buildOrStub('psRecentRender', src,
+    ['el', 'psEsc', 'psL3Tail', 'psMoney', 'psRecentWhen', 'psCanOverride', 'psRecent'],
+    [(id) => els[id] || null,
+     (v) => String(v == null ? '' : v),
+     (l3) => String(l3 || '').split(' - ').pop(),
+     (v) => (v === null || v === undefined || v === '') ? '—' : `$${Number(v).toFixed(2)}`,
+     () => '5m ago', () => true, rows],
+    'psRecentRender');
+  render();
+
+  ok(/LIFEWTR Purified Water 1L/.test(box.innerHTML),
+     '\U0001f511 the product name is on the row -- the thing you check against the shelf');
+  ok(/ps-recent-price">\$1\.50</.test(box.innerHTML),
+     '\U0001f511 …and OUR price, which sticker-history has returned all along and nobody drew');
+  ok(/\$3\.00</.test(box.innerHTML), 'a whole-dollar price still shows its cents');
+  ok(/BL-50002-1_5/.test(box.innerHTML), 'the label code is still there, in the sub-line');
+  ok(/5m ago/.test(box.innerHTML), '…with when it went out');
+  ok(/BEVERAGES/.test(box.innerHTML),
+     'a row with no stored name falls back to its category tail, not to the code again');
+  eq(n.textContent, '2', 'the tab carries the count');
+
+  // The price must never be the bare number: 1.5 on a shelf label row reads as $1.05 at a
+  // glance, and this page already has one formatter for exactly that reason.
+  ok(/psMoney\(p\.price\)/.test(src || ''),
+     '\U0001f6d1 formatted with the page-wide psMoney, not a second formatter that can drift');
+}
+
+
 // ── Reprint is a tab, and one thing decides what the body shows ───────────────
 // \U0001f6d1 THE HIDING TRAP THIS FILE HAS ALREADY SHIPPED ONCE. `#ps-tabs{display:flex}` is an
 // ID selector; `.hidden` is a single class. The ID wins on specificity whatever the source
