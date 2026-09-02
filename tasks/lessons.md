@@ -963,3 +963,53 @@ reached from the map read. Only the existence check could produce it.
 lesson is not the same as running it. Before opening ANY PR that touches `index.html`, run
 `git diff --name-only origin/main | grep -q index.html && git diff --name-only origin/main | grep -q sw.js` —
 if index.html is in the diff and sw.js is not, the PR is not ready.
+
+## Four layers, one mistake, ninety minutes (2026-09-02)
+
+**What happened:** the sticker feature worked correctly on the first deploy. The category
+map derived `50002` for Beverages from live Clover with no hardcoded table, `$1.50` encoded
+to `1_5` matching 240 real codes, and `BL-50002-1_5` existed on the shelf system. It still
+took roughly ninety minutes and four deploys to find that out, because **every layer between
+the failure and the screen threw away what it knew**:
+
+| Layer | What it discarded | What the screen said |
+|---|---|---|
+| `psStickerCheck` | the HTTP status, via `a.detail \|\| 'This cannot be printed yet.'` | "This cannot be printed yet." |
+| `stickerCategoryCodes` | a thrown fetch, escaping as a 500 | "This cannot be printed yet." |
+| `stickerCodeExists` | Clover's 400 and its body, via `if (!r?.ok) return null` | "Clover did not answer" |
+| my own shell command | curl's error and grep's result, via `-s` and `-q` | nothing at all |
+
+The actual cause was one line: Clover has no `code` filter, and answers
+`400 {"message":"'code' is not a supported field for this filter."}` to every such request.
+The moment one layer was made to repeat what Clover said, the bug was obvious in a single
+scan.
+
+<rules>
+1. **A fault is not a refusal.** If a response can carry a reason, a response WITHOUT one is
+   a different kind of event. Branch on it. Never `||` past it into a friendly sentence.
+2. **Check `r.ok` before reading a body as a domain answer.** `await r.json()` on a 403
+   returns a perfectly valid object that means nothing you designed.
+3. **`if (!resp.ok) return null` is a bug unless the caller can ask why.** Return
+   `{ value }` or `{ value: null, why }`. The person holding the scanner has no console.
+4. **`await fetch()` inside a helper THROWS; an ok-check does not catch it.** Every caller
+   treating "the API is down" as handled needs a `try`, not just `if (!r.ok)`.
+5. **Chain deploy steps with `&&`, never newlines, and never with `-s` or `-q`.** I handed
+   over four newline-separated lines; the `git pull` failed, zsh ran the next line anyway,
+   and `wrangler` cheerfully deployed a checkout two commits stale while reporting success.
+   A silent guard is worse than no guard — it looks like it ran.
+6. **Reuse is not evidence of correctness.** I justified the broken filter in a commit
+   message as "reuses the same `filter=code=` lookup that create-clover-item already uses as
+   its duplicate check." That lookup had never worked either. Copying a pattern from
+   elsewhere in the repo copies its bugs, and citing the precedent makes the bug look
+   deliberate. `create-clover-item` still creates the duplicates it exists to prevent.
+7. **Probe with the real key, not the display label.** I tested `sticker-check` with
+   `l3: 'Beverages'` — what the UI renders — when `l3` is `FG BL CONSUMABLES - FOOD -
+   BEVERAGES`. The truthful "no category code" reply sent us hunting a join bug that did not
+   exist. Read how a field is keyed before hand-crafting a request against it.
+8. **`raw.githubusercontent.com` caches branch refs for minutes.** A `main` URL fetched
+   right after a merge can hand back the previous commit. Use the commit SHA; it is
+   immutable and cannot be stale.
+</rules>
+
+**The cost was not the bug, it was the silence.** Four separate deploys went out to learn
+things that one honest error message would have said the first time.
