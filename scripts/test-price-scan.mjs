@@ -2434,6 +2434,75 @@ console.log('Price Scan');
 }
 
 
+// ── The preview actually runs ────────────────────────────────────────────────
+// 🛑 SHIPPED HALF-WORKING. A block rewrite deleted stTextW and stQrDots and left the
+// calls behind, so stPreview threw ReferenceError on its first line. stDraw sets the control
+// rows' innerHTML BEFORE calling stPreview, so the panel rendered fine and the preview
+// simply never appeared -- harder to notice than an outright break, and no grep-shaped
+// assertion would have seen it. Run the function.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+
+  // The cheap general guard for "a rewrite took a helper with it": every st* helper the
+  // editor CALLS must be defined somewhere in the file.
+  const editor = sliceOrNull(html, '  let stTpl = null, stDefaults = null', '  window.stTest = stTest;');
+  ok(editor, 'the editor block is where the test expects it');
+  const called = new Set(editor.match(/\bst[A-Z]\w*(?=\()/g) || []);
+  const missing = [...called].filter(n =>
+    !new RegExp(`(const|let|function)\\s+${n}\\b`).test(html) && !new RegExp(`window\\.${n}\\s*=`).test(html));
+  eq(missing.join(', '), '', '🛑 every st* helper the editor calls is actually defined');
+
+  // …and then run the preview for real. Extract only the pieces it needs: slicing the whole
+  // editor sweeps in code that touches window and fetch at build time.
+  const one = (from, to) => sliceOrNull(html, from, to) || '';
+  const src = [
+    one('  const stTextW =', '\n'),
+    one('  const stQrDots = (f, payload)', '\n'),
+    one('  const stField = (k)', '\n'),
+    one('  function stPreview() {', '\n  }\n') + '\n  }\n',
+    one('  function stMarkPreviewUri(im) {', '\n  }\n') + '\n  }\n',
+  ].join('\n');
+  ok(/function stPreview\(\)/.test(src) && /const stTextW/.test(src), 'the preview pieces are extractable');
+
+  const host = { innerHTML: '' }, warn = { className: '', innerHTML: '' };
+  const els = { 'st-preview': host, 'st-warn': warn };
+  const defaults = { fields: {
+    qr:     { on: true,  x: 104, y: 10,  mag: 4 },
+    mark:   { on: true,  x: 12,  y: 18,  h: 74, w: 74, font: '0', text: '$', mode: 'text' },
+    code:   { on: true,  x: 10,  y: 116, h: 20, w: 20, font: '0' },
+    price:  { on: true,  x: 10,  y: 142, h: 54, w: 54, font: '0' },
+    retail: { on: false, x: 10,  y: 96,  h: 18, w: 18, font: '0', prefix: 'Compare at ' } } };
+
+  const run = (fields, image) => {
+    const fn = buildOrStub('stPreview', src,
+      ['el', 'psEsc', 'stTpl', 'stDefaults', 'stImage', 'stImgEl', 'stCut'],
+      [(id) => els[id] || null, (v) => String(v == null ? '' : v),
+       { id: null, name: '', fields }, defaults, image, null, 150],
+      'stPreview');
+    host.innerHTML = ''; warn.className = ''; warn.innerHTML = '';
+    fn();
+  };
+
+  run(JSON.parse(JSON.stringify(defaults.fields)), null);
+  ok(/^<svg /.test(host.innerHTML), '🛑 the preview renders an SVG rather than throwing');
+  ok(/viewBox="0 0 203 203"/.test(host.innerHTML), "…at the label's true 203-dot scale");
+  ok(/BL-50008-2_5/.test(host.innerHTML), '…showing the sample code');
+  ok(/\$2\.50/.test(host.innerHTML), '…and the sample price');
+  eq(warn.className, 'hidden mt-4', 'the stock layout raises no overflow warning');
+
+  const over = JSON.parse(JSON.stringify(defaults.fields));
+  over.price.x = 190;
+  run(over, null);
+  eq(warn.className, 'mt-4', 'a field pushed off the edge shows the warning');
+  ok(/Our price/.test(warn.innerHTML), '…and names which field it is');
+
+  const imgFields = JSON.parse(JSON.stringify(defaults.fields));
+  imgFields.mark.mode = 'image';
+  run(imgFields, null);
+  ok(!/<image/.test(host.innerHTML), 'image mode with no image stored draws no <image> element');
+  ok(/stroke-dasharray/.test(host.innerHTML), '…it outlines the empty slot instead');
+}
+
 // ── The mark can be a bitmap, and the bitmap must be exact ───────────────────
 // 🛑 A SHORT PAYLOAD HANGS THE PRINTER. ^GFA declares its own byte count twice; the
 // printer then reads exactly that many hex bytes. Give it fewer and it waits for bytes that

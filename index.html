@@ -19267,6 +19267,20 @@
   let stCut = 150;         // luminance cut; the badge's green sits near 134
   let stLimits = { maxTemplates: 10, markMaxSide: 150, markMaxBytes: 4000 };
 
+  // 🛑 THESE TWO WERE DELETED BY A BLOCK REWRITE AND THE CALLS WERE LEFT BEHIND. stPreview
+  // threw ReferenceError on its first line, so the control rows rendered (innerHTML is set
+  // before the preview runs) and the preview simply never appeared — a half-working panel,
+  // which is harder to spot than a broken one.
+  //
+  // Font 0 glyphs average well under the width parameter; 0.6 is the ratio that has matched
+  // the real printer closely enough to catch an overflow. It is an ESTIMATE and the copy on
+  // screen says so — it drives a warning, never a refusal to save.
+  const stTextW = (str, w) => Math.round(String(str || '').length * w * 0.6);
+  // A byte-mode payload up to 17 bytes is QR version 1 (21 modules); past that it steps to
+  // version 2 (25). Our codes run 10-14 characters, so version 1 in practice -- but the
+  // preview should not start lying if a category number ever grows.
+  const stQrDots = (f, payload) => (String(payload || '').length <= 17 ? 21 : 25) * (f.mag || 4);
+
   async function stLoad() {
     if (!el('st-fields')) return;
     try {

@@ -1192,3 +1192,36 @@ What caught it was the test suite's structural extraction:
    allowed. Both are refused at 1,600 bytes. A comment with wrong arithmetic in it is worse
    than none, and I had written that exact lesson earlier the same day.
 </rules>
+
+
+---
+
+## A block rewrite takes whatever was inside the block
+
+Rewriting the sticker editor, I replaced everything from `let stTpl = null` to
+`window.stTest = stTest;`. Two helpers — `stTextW` and `stQrDots` — lived inside that range
+and were not in my replacement. The **calls to them survived**, in `stPreview`.
+
+So `stPreview()` threw `ReferenceError` on its first line. And because `stDraw()` sets the
+control rows' `innerHTML` *before* calling `stPreview()`, the panel rendered perfectly and the
+preview simply never appeared. **A half-working surface is harder to notice than a broken
+one** — everything you look at first works.
+
+Nothing caught it: `node --check` passes, the inline-script check passes (the code parses
+fine, it just references something absent), and every assertion I had was grep-shaped.
+
+<rules>
+1. **Before replacing a range, list what is defined inside it.** One `grep -n` for
+   `const|let|function` between the two boundaries would have shown both helpers.
+2. **Rewrite the whole unit or patch surgically — never a range chosen by convenience.** I
+   picked the start line because it was easy to match, not because it was a boundary of
+   anything.
+3. **Assert that every helper a module calls is defined.** Six lines: collect
+   `/\bst[A-Z]\w*(?=\()/` from the block, check each has a declaration somewhere. It catches
+   the whole class, not this instance.
+4. **Then run the function.** The definedness check finds a missing helper; only executing
+   `stPreview` against a fake DOM proves it still produces an `<svg>`. Both are in the suite
+   now, and both were verified by deleting each helper again and watching them fail.
+5. **Render order hides errors.** If A populates the visible thing and then calls B, a throw
+   in B is invisible. When something renders "mostly", check the console before believing it.
+</rules>
