@@ -2146,6 +2146,115 @@ console.log('Price Scan');
   ok(/Clover did not answer/.test(down.why || ''), '…and says so');
 }
 
+// ── Reprint is a tab, and one thing decides what the body shows ───────────────
+// \U0001f6d1 THE HIDING TRAP THIS FILE HAS ALREADY SHIPPED ONCE. `#ps-tabs{display:flex}` is an
+// ID selector; `.hidden` is a single class. The ID wins on specificity whatever the source
+// order, so toggling `hidden` leaves the tabs on screen -- exactly how the barcode controls
+// stayed visible in furniture mode. style.display is the only thing that works here.
+//
+// \U0001f511 AND ONE AUTHORITY DECIDES. Furniture mode takes the whole body over, so psApplyTab
+// stands down entirely while it is open and the body is handed back on the way out. Two
+// writers on one element is the bug, not the symptom.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const src = sliceOrNull(html, "  let psTabName = 'scan';", '  function psRecentRender()');
+  ok(src, 'the tab block is where the test expects it');
+
+  ok(!/id="ps-tabs"[^>]*class="[^"]*\bhidden\b/.test(html),
+     '\U0001f6d1 the tab bar is never hidden with the `hidden` class -- an ID selector outranks it');
+  ok(/id="ps-recent" style="display:none"/.test(html),
+     '\U0001f6d1 …and neither is the reprint panel, for the same reason');
+  ok(/id="ps-tab-reprint"[\s\S]{0,160}style="display:none"/.test(html),
+     'the reprint tab starts hidden and is revealed only once the right is confirmed');
+
+  const mkEl = () => {
+    const ids = ['ps-tab-scan', 'ps-tab-reprint', 'ps-barcode-mode', 'ps-result', 'ps-recent'];
+    const map = {};
+    for (const id of ids) map[id] = { id, style: {}, className: '' };
+    return map;
+  };
+
+  const build = (map, fnState, spy) => buildOrStub('psTab', src,
+    ['el', 'fn', 'psStopScan', 'psRecentLoad', 'window'],
+    [(id) => map[id] || null, fnState, () => { spy.stopped++; }, () => { spy.loaded++; }, {}],
+    '{ psApplyTab, psTab }');
+
+  {
+    const map = mkEl(), spy = { stopped: 0, loaded: 0 };
+    const m = build(map, { open: false }, spy);
+    m.psApplyTab();
+    eq(map['ps-barcode-mode'].style.display, 'flex', 'Scan shows the barcode controls');
+    eq(map['ps-recent'].style.display, 'none', '…and hides the reprint list');
+    eq(map['ps-tab-scan'].className, 'ps-tab on', '…with the Scan tab lit');
+
+    m.psTab('reprint');
+    eq(map['ps-barcode-mode'].style.display, 'none', 'Reprint hides the barcode controls');
+    eq(map['ps-result'].style.display, 'none', '…and the scan result, which belongs to Scan');
+    eq(map['ps-recent'].style.display, '', '…and shows the list');
+    eq(map['ps-tab-reprint'].className, 'ps-tab on', '…with the Reprint tab lit');
+    eq(map['ps-tab-scan'].className, 'ps-tab', '…and Scan no longer lit');
+    eq(spy.stopped, 1, '\U0001f6d1 leaving Scan stops the camera -- battery and privacy, not cosmetics');
+    eq(spy.loaded, 1, '…and the list is refreshed, because other people print too');
+
+    spy.stopped = 0;
+    m.psTab('reprint');
+    eq(spy.stopped, 0, 'selecting the tab already on does nothing');
+  }
+
+  {
+    // Furniture owns the body. psApplyTab must not fight it for the same elements.
+    const map = mkEl(), spy = { stopped: 0, loaded: 0 };
+    const m = build(map, { open: true }, spy);
+    m.psApplyTab();
+    eq(map['ps-barcode-mode'].style.display, undefined,
+       '\U0001f511 while furniture is open the tab writes NOTHING to the body');
+    eq(map['ps-tab-scan'].className, 'ps-tab on', '…though the bar still reflects the selection');
+  }
+}
+
+// ── The reprint tab is offered only to whoever the list would load for ────────
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const load = sliceOrNull(html, '  async function psRecentLoad()', '  function psRecentRender()');
+  const render = sliceOrNull(html, '  function psRecentRender()', '  // merchLabel lives in the worker');
+
+  ok(/psCanOverride\(\)/.test(load || ''), 'the fetch still refuses without the right');
+  ok(/psRecentRender\(\);\s*return;/.test(load || ''),
+     '\U0001f6d1 …but it now RENDERS on the way out. A bare return left the tab button on screen');
+  ok(/reBtn\.style\.display = psCanOverride\(\)/.test(render || ''),
+     'the tab is shown or hidden by the same right that gates the data');
+  ok(/ps-recent-empty/.test(render || ''),
+     'an empty list gets a sentence -- a clickable tab that renders nothing reads as broken');
+  ok(!/ps-recent-h/.test(html),
+     'the "Recently printed" heading is gone: the tab is the heading now');
+}
+
+// ── Contrast, computed against the real panel, not eyeballed ──────────────────
+// \U0001f6d1 #8a8371 was 3.77:1 on #ps-card's white. It survived as a footnote under a scan
+// result; promoting it to a tab's primary content is what made it worth fixing.
+{
+  const css = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const lin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const lum = (h) => {
+    const n = parseInt(h.slice(1), 16);
+    return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  };
+  const ratio = (a, b) => {
+    const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  };
+  ok(!/color:#8a8371/.test(css), '\U0001f6d1 the 3.77:1 dim is gone from the file');
+  ok(/\.ps-recent-sub\{font-size:11\.5px;color:#6b6453/.test(css),
+     '…replaced by a dim already in this file, not a new token');
+  ok(ratio('#6b6453', '#ffffff') >= 4.5,
+     `the reprint sub-line clears 4.5:1 on the light panel (${ratio('#6b6453', '#ffffff').toFixed(2)}:1)`);
+  ok(ratio('#7c899e', '#101826') >= 4.5,
+     `…and on the dark one (${ratio('#7c899e', '#101826').toFixed(2)}:1)`);
+  ok(ratio('#6b6453', '#fafaf6') >= 4.5, 'an idle tab is legible on the light bar');
+  ok(ratio('#8893a7', '#16203a') >= 4.5, '…and on the dark bar');
+}
+
+
 // ── An empty printer list is not proof there is no printer ────────────────────
 // 🛑 REPORTED FROM THE FLOOR, after the feature had already printed successfully and
 // with the probe byte-for-byte unchanged: "Browser Print is running, but reports no printer
@@ -2514,8 +2623,15 @@ console.log('Price Scan');
      '🔑 recording is best-effort — the label is already out, so a failed row is not a failed print');
 
   // The panel must survive a scan, because not scanning is the entire point of it.
-  ok(/<div id="ps-recent" class="hidden"><\/div>/.test(html),
-     '🔑 the list lives OUTSIDE #ps-result, which every scan wipes');
+  // 🛑 ASSERT THE PROPERTY, NOT A SNAPSHOT OF THE MARKUP. This pinned the literal
+  // string `<div id="ps-recent" class="hidden"></div>` and broke the moment the hiding
+  // mechanism changed -- while never once testing the containment it is named after.
+  // #ps-result is empty in source (psRender owns its contents and wipes them wholesale),
+  // so anything after that closing tag is a sibling of it rather than a child.
+  const resAt = html.indexOf('<div id="ps-result"></div>');
+  const recAt = html.indexOf('<div id="ps-recent"');
+  ok(resAt > 0, '#ps-result is empty in source -- psRender fills and clears it wholesale');
+  ok(recAt > resAt, '🔑 the list lives OUTSIDE #ps-result, which every scan wipes');
   ok(/psRecentLoad\(\);\n\s*setTimeout/.test(html),
      '…and loads with the page, not with a result');
   ok(!/merchLabel\(/.test(sliceOrNull(html, 'function psRecentRender()', 'function psRecentWhen') || ''),

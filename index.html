@@ -2235,6 +2235,16 @@
         .dark #ps-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
         .ps-lbl{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#6b6453}
         .dark .ps-lbl{color:#8893a7}
+        /* Lifted from .pr-tab on Merch Products next door -- same green, same shape -- but at
+           .ps-lbl's 11px/.09em, because that is the type it stands beside in this bar. */
+        #ps-tabs{display:flex;align-items:center;gap:6px}
+        .ps-tab{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+          border-radius:8px;padding:6px 11px;cursor:pointer;border:none;background:transparent;
+          color:#6b6453;font-family:inherit}
+        .dark .ps-tab{color:#8893a7}
+        .ps-tab.on{background:rgba(34,197,94,.16);color:#1c7a33}
+        .dark .ps-tab.on{color:#5fd170}
+        .ps-tab .n{font-variant-numeric:tabular-nums;opacity:.72;margin-left:5px}
         #ps-body{padding:16px;display:flex;flex-direction:column;gap:14px}
         .ps-in{width:100%;border:1px solid rgba(20,16,8,.18);border-radius:10px;padding:12px 13px;
           font-size:16px;background:#fff;color:#14110a;font-variant-numeric:tabular-nums}
@@ -2248,9 +2258,8 @@
         .ps-row{display:flex;gap:9px}
         #ps-sticker{display:flex;flex-direction:column;gap:7px}
         #ps-recent{margin-top:14px}
-        .ps-recent-h{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
-          color:#6b6453;margin-bottom:6px}
-        .dark .ps-recent-h{color:#8893a7}
+        .ps-recent-empty{font-size:13px;color:#6b6453;padding:10px 0 2px}
+        .dark .ps-recent-empty{color:#7c899e}
         .ps-recent-row{display:flex;align-items:center;gap:10px;padding:7px 0;
           border-top:1px solid #e7e1d3}
         .dark .ps-recent-row{border-top-color:#1e293b}
@@ -2258,7 +2267,10 @@
         .ps-recent-title{font-size:13px;color:#3f3a2f;overflow:hidden;text-overflow:ellipsis;
           white-space:nowrap}
         .dark .ps-recent-title{color:#e2e8f0}
-        .ps-recent-sub{font-size:11.5px;color:#8a8371;margin-top:1px}
+        /* 🛑 #8a8371 was 3.77:1 on this panel's white -- under the 4.5 floor. It passed
+           unnoticed as a footnote under a scan result; it is a tab's primary content now.
+           #6b6453 is the dim already in this file (.ps-lbl) and computes 5.88:1. */
+        .ps-recent-sub{font-size:11.5px;color:#6b6453;margin-top:1px}
         .dark .ps-recent-sub{color:#7c899e}
         .ps-stat{font-size:12px;line-height:1.4;color:#6b6453}
         .dark .ps-stat{color:#8893a7}
@@ -2400,7 +2412,17 @@
         <div id="ps-status" class="text-sm text-opl-inkDim dark:text-op-inkDim"></div>
         <div id="ps-card">
           <div id="ps-bar">
-            <span id="ps-mode-lbl" class="ps-lbl">Scan</span>
+            <!-- 🛑 style.display, NEVER the `hidden` class. #ps-tabs is an ID selector and
+                 .hidden is one class, so hidden LOSES on specificity and the tabs would stay
+                 on screen -- the same bug .ps-row shipped a few lines below. -->
+            <div id="ps-tabs">
+              <button class="ps-tab on" id="ps-tab-scan" type="button" onclick="psTab('scan')">Scan</button>
+              <button class="ps-tab" id="ps-tab-reprint" type="button" style="display:none"
+                      onclick="psTab('reprint')">Reprint<span class="n" id="ps-tab-reprint-n"></span></button>
+            </div>
+            <!-- Furniture is a mode, not a tab: it takes the whole body over. The label is
+                 how the bar says so, and it only speaks while that mode is on. -->
+            <span id="ps-mode-lbl" class="ps-lbl" style="display:none">Scan</span>
             <span id="ps-count" class="ps-lbl" style="margin-left:auto"></span>
             <!-- The mode switch belongs up here, not in the body. In the body it was the
                  first thing on the screen, and the first thing should be the work. -->
@@ -2463,7 +2485,7 @@
             <!-- 🔑 OUTSIDE #ps-result on purpose. The result is wiped by every scan, and the
                  whole value of a reprint is not having to scan — a peeled label means the
                  item is already on the shelf. -->
-            <div id="ps-recent" class="hidden"></div>
+            <div id="ps-recent" style="display:none"></div>
             <div id="fn-panel" class="hidden"></div>
           </div>
         </div>
@@ -18270,6 +18292,8 @@
     // every iPhone — 4 of the 6 installed devices — which is why it looked missing.
     el('ps-photo').value = '';
     psStopScan();   // never re-enter the page with a camera still running
+    psTabName = 'scan';   // and never on a tab the last visit left behind
+    psApplyTab();
     // The reprint list is the one thing here that is useful BEFORE a scan — a peeled label
     // means the item is already on the shelf — so it loads with the page, not with a result.
     psRecentLoad();
@@ -18432,7 +18456,14 @@
     const b = el('ps-furniture');
     if (b) b.textContent = on ? 'Barcodes' : 'Furniture';
     const t = el('ps-mode-lbl');
-    if (t) t.textContent = on ? 'Furniture' : 'Scan';
+    if (t) { t.textContent = 'Furniture'; t.style.display = on ? '' : 'none'; }
+    const tabs = el('ps-tabs');
+    if (tabs) tabs.style.display = on ? 'none' : 'flex';
+    // Opening furniture hides the reprint list; closing it hands the body back to whichever
+    // tab was selected, rather than assuming Scan.
+    const box = el('ps-recent');
+    if (on && box) box.style.display = 'none';
+    if (!on) psApplyTab();
     // The blurb under the title describes barcodes, which is wrong the moment there is
     // no barcode to read.
     const sub = el('ps-sub');
@@ -19254,7 +19285,10 @@
 
   async function psRecentLoad() {
     const box = el('ps-recent');
-    if (!box || !psCanOverride()) return;
+    if (!box) return;
+    // Still refuses to fetch for anyone without the right -- but it now falls through to
+    // the render, which is what hides the tab. Returning here left the button visible.
+    if (!psCanOverride()) { psRecent = []; psRecentRender(); return; }
     try {
       const r = await fetch(`${WORKER_BASE}?action=sticker-history&limit=8`, { credentials: 'include' });
       const a = await r.json().catch(() => ({}));
@@ -19263,12 +19297,49 @@
     psRecentRender();
   }
 
+  // 🔑 ONE AUTHORITY FOR WHAT THE BODY SHOWS. The barcode controls once had two writers
+  // and ended up on screen in furniture mode; this function is the only thing that decides,
+  // and it stands down completely while furniture owns the body.
+  let psTabName = 'scan';
+
+  function psApplyTab() {
+    const on = psTabName === 'reprint';
+    const scanBtn = el('ps-tab-scan'), reBtn = el('ps-tab-reprint');
+    if (scanBtn) scanBtn.className = 'ps-tab' + (on ? '' : ' on');
+    if (reBtn) reBtn.className = 'ps-tab' + (on ? ' on' : '');
+    if (fn.open) return;                      // furniture mode owns the body while it is open
+    const m = el('ps-barcode-mode'); if (m) m.style.display = on ? 'none' : 'flex';
+    const res = el('ps-result'); if (res) res.style.display = on ? 'none' : '';
+    const box = el('ps-recent'); if (box) box.style.display = on ? '' : 'none';
+  }
+
+  function psTab(name) {
+    if (psTabName === name) return;
+    psTabName = name;
+    // 🛑 A camera left running behind a hidden panel is a battery and a privacy problem,
+    // not a cosmetic one. Leaving the Scan tab stops it for the same reason leaving the
+    // page does.
+    if (name !== 'scan') psStopScan();
+    psApplyTab();
+    if (name === 'reprint') psRecentLoad();   // it is a list of what OTHERS printed too
+  }
+  window.psTab = psTab;
+
   function psRecentRender() {
     const box = el('ps-recent');
     if (!box) return;
-    if (!psRecent.length) { box.className = 'hidden'; box.innerHTML = ''; return; }
-    box.className = '';
-    box.innerHTML = `<div class="ps-recent-h">Recently printed</div>` + psRecent.map((p, i) => `
+    // The tab is offered only to whoever psRecentLoad would actually load for. An empty
+    // tab you can click reads as broken; a tab that is not there asks no questions.
+    const reBtn = el('ps-tab-reprint');
+    if (reBtn) reBtn.style.display = psCanOverride() ? '' : 'none';
+    const n = el('ps-tab-reprint-n');
+    if (n) n.textContent = psRecent.length ? String(psRecent.length) : '';
+    if (!psRecent.length) {
+      box.innerHTML = '<div class="ps-recent-empty">Nothing printed yet. Print a sticker and '
+        + 'it will show up here to reprint without scanning again.</div>';
+      return;
+    }
+    box.innerHTML = psRecent.map((p, i) => `
       <div class="ps-recent-row">
         <div class="ps-recent-main">
           <div class="ps-recent-title">${psEsc(p.title || psL3Tail(p.l3) || p.code)}</div>
