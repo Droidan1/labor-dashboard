@@ -10692,16 +10692,37 @@ async function stickerCategoryCodes(env, store) {
 
 // Does this exact code exist in Clover? Reuses the same `filter=code=` lookup that
 // create-clover-item already uses as its duplicate check.
+// Returns { exists } when Clover answered, or { exists: null, why } when it did not.
+//
+// 🛑 THE `why` IS THE WHOLE POINT OF THE SHAPE. This used to `return null` on any non-ok
+// response, discarding the status and body — and that cost a live debugging session: the
+// derivation was correct, BL-50002-1_5 was derived and DOES exist in Clover, and the only
+// thing between us and a printed sticker was one failed lookup that refused to say what
+// went wrong. Every layer of this feature has now made the same mistake once. A caller
+// that cannot report the reason cannot be debugged from the floor, where the person
+// holding the scanner has no console.
 async function stickerCodeExists(env, store, code, field = "code") {
   const s = String(store).toUpperCase();
   const mId = env[`${s}_MERCHANT_ID`], tok = env[`${s}_API_TOKEN`];
-  if (!mId || !tok) return null;
+  if (!mId || !tok) return { exists: null, why: `${s} has no merchant id or API token configured` };
   const f = field === "sku" ? "sku" : "code";
-  const r = await cloverFetch(
-    `https://api.clover.com/v3/merchants/${mId}/items?filter=${f}%3D${encodeURIComponent(code)}&limit=5`,
-    { headers: { Authorization: `Bearer ${tok}` } });
-  if (!r?.ok) return null;
-  return ((await r.json())?.elements || []).length > 0;
+  const url = `https://api.clover.com/v3/merchants/${mId}/items?filter=${f}%3D${encodeURIComponent(code)}&limit=5`;
+  let r;
+  // cloverFetch awaits fetch() directly, so an unreachable Clover throws rather than
+  // returning a non-ok response — the same trap stickerCategoryCodes fell into.
+  try {
+    r = await cloverFetch(url, { headers: { Authorization: `Bearer ${tok}` } });
+  } catch (e) {
+    return { exists: null, why: `the request itself failed: ${e.message}` };
+  }
+  if (!r?.ok) {
+    // 🔑 The body is where Clover explains itself — a 401 names the token, a 400 names the
+    // malformed filter, a 429 says slow down. Truncated because it goes on a screen.
+    const body = await r.text().catch(() => "");
+    return { exists: null, status: r.status, field: f,
+             why: `Clover answered ${r.status}${body ? ` — ${body.slice(0, 200)}` : ""}` };
+  }
+  return { exists: ((await r.json())?.elements || []).length > 0 };
 }
 
 function merchTree() {
@@ -19128,13 +19149,14 @@ export default {
         }
         const code = stickerCode(catCode, price);
         const store = String(body?.store || "BL1").toUpperCase();
-        const exists = await stickerCodeExists(env, store, code, field);
+        const found = await stickerCodeExists(env, store, code, field);
+        const exists = found.exists;
         if (exists === null) {
           // Clover did not answer. Unknown is NOT permission to print — the whole
           // guarantee is that a printed code resolves, and we cannot claim that here.
           return new Response(JSON.stringify({ ok: true, printable: false, reason: "clover unreachable",
-            code, stage: "code lookup",
-            detail: `Clover did not answer when we checked whether ${code} exists. Try again.` }), { headers: corsJson });
+            code, stage: "code lookup", clover_status: found.status ?? null,
+            detail: `Clover did not answer when we checked whether ${code} exists — ${found.why}` }), { headers: corsJson });
         }
         return new Response(JSON.stringify({
           ok: true, printable: exists, code, category_code: catCode, price_code: priceCode, store,
