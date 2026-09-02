@@ -1336,6 +1336,55 @@ async function cloverFetch(url, options) {
   }
 }
 
+// ─── Is this item code already in use at a store? ───────────────────────
+//
+// 🛑 CLOVER CANNOT FILTER ITEMS BY `code`. It answers every such request with
+//   400 {"message":"'code' is not a supported field for this filter."}
+// which is how create-clover-item's duplicate guard came to be decorative: it asked
+// exactly that, read the response only inside `if (dupResp.ok)`, and so never once
+// entered the block. The 400 fell straight through and the handler created the duplicate
+// the check exists to prevent. Confirmed against live Clover on 2026-09-02; the same
+// filter is what broke the sticker existence check, which now avoids the call entirely.
+//
+// 🔑 SO PAGE THE CATALOGUE. It is two requests at BL1's ~1,100 items, on an admin action
+// that creates inventory — not a hot path, and correct without depending on which fields
+// Clover will filter on this week.
+//
+// 🔑 `code` OR `sku`, because create-clover-item writes the same string to BOTH, and a
+// duplicate sitting in either field is still a duplicate at the register.
+//
+// 🛑 AND IT ANSWERS null RATHER THAN false WHEN IT COULD NOT LOOK. A guard that treats
+// "I could not check" as "no duplicate" is the exact failure being fixed here, just
+// arrived at more honestly. The caller must refuse to create on null.
+const CLOVER_CODE_SCAN_PAGES = 20;
+
+async function cloverCodeInUse(env, store, code, headers) {
+  const mId = env[`${String(store).toUpperCase()}_MERCHANT_ID`];
+  if (!mId) return { inUse: null, why: `${store} has no merchant id configured` };
+  const want = String(code);
+  try {
+    for (let page = 0; page < CLOVER_CODE_SCAN_PAGES; page++) {
+      const r = await cloverFetch(
+        `https://api.clover.com/v3/merchants/${mId}/items?limit=1000&offset=${page * 1000}`, { headers });
+      if (!r?.ok) {
+        const txt = await r.text().catch(() => "");
+        return { inUse: null, why: `Clover answered ${r?.status}${txt ? ` — ${txt.slice(0, 160)}` : ""}` };
+      }
+      const rows = (await r.json())?.elements || [];
+      const hit = rows.find(it => String(it?.code || "") === want || String(it?.sku || "") === want);
+      if (hit) return { inUse: true, existingId: hit.id, existingName: String(hit?.name || "") };
+      // A short page is the end of the catalogue, which makes "absent" a fact rather than
+      // an assumption. Only here may this return false.
+      if (rows.length < 1000) return { inUse: false };
+    }
+  } catch (e) {
+    // cloverFetch awaits fetch() directly, so an unreachable Clover throws rather than
+    // returning a non-ok response — an ok-check alone would never see it.
+    return { inUse: null, why: `the request failed: ${e.message}` };
+  }
+  return { inUse: null,
+    why: `stopped after ${CLOVER_CODE_SCAN_PAGES * 1000} items without reaching the end of the catalogue` };
+}
 // ─── Resolve or create a Clover category by name (case-insensitive) ──────
 async function resolveCloverCategory(s, categoryName, env) {
   const mId = env[`${s}_MERCHANT_ID`];
@@ -16085,17 +16134,18 @@ export default {
           if (!mId || !tok) return { store: s, ok: false, error: "Store not configured", stage: "config" };
           const headers = { "Authorization": `Bearer ${tok}`, "Content-Type": "application/json" };
 
-          // Duplicate check: look for existing item with same code
-          const dupResp = await cloverFetch(
-            `https://api.clover.com/v3/merchants/${mId}/items?filter=code%3D${encodeURIComponent(code)}&limit=5`,
-            { headers }
-          );
-          if (dupResp.ok) {
-            const dupData = await dupResp.json();
-            if ((dupData.elements || []).length > 0) {
-              const existing = dupData.elements[0];
-              return { store: s, ok: false, duplicate: true, existingId: existing.id, error: "Item with this code already exists" };
-            }
+          // 🛑 FAIL CLOSED. This used to run a filter Clover rejects with a 400 and read the
+          // reply only `if (dupResp.ok)`, so the check never ran and the duplicate was
+          // created anyway — the guard has never once blocked anything. An unanswerable
+          // duplicate check must refuse to create, not shrug and carry on.
+          const dup = await cloverCodeInUse(env, s, code, headers);
+          if (dup.inUse === null) {
+            return { store: s, ok: false, stage: "duplicate-check",
+              error: `Could not check whether ${code} is already in use — ${dup.why}. Nothing was created.` };
+          }
+          if (dup.inUse) {
+            return { store: s, ok: false, duplicate: true, existingId: dup.existingId,
+              error: `Item with code ${code} already exists${dup.existingName ? ` (${dup.existingName})` : ""}` };
           }
 
           const { categoryId, created: categoryCreated } = await resolveCloverCategory(s, l3, env);
