@@ -18315,6 +18315,17 @@
     ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
   const psMoney = (v) => (v === null || v === undefined || v === '') ? '—' : `$${Number(v).toFixed(2)}`;
 
+  // 🔑 IDENTICAL TO THE WORKER'S gtinCheckOk, and test-price-scan asserts it. The screen
+  // refuses the same codes the worker refuses, so a mistyped or misread digit is caught
+  // here instead of after a round trip. Not for 8 digits: a UPC-E's check digit belongs to
+  // its expanded 12-digit form, so the plain formula would refuse real ones.
+  function gtinCheckOk(d) {
+    if (![12, 13, 14].includes(d.length)) return true;
+    let sum = 0;
+    for (let i = 0; i < d.length - 1; i++) sum += ((d.length - 2 - i) % 2 === 0 ? 3 : 1) * Number(d[i]);
+    return (10 - (sum % 10)) % 10 === Number(d[d.length - 1]);
+  }
+
   function initPriceScan() {
     psStatus('');
     el('ps-result').innerHTML = '';
@@ -18427,11 +18438,15 @@
     // straight away instead of waiting on a round trip.
     const digits = raw.replace(/[\s-]/g, '');
     const isCode = /^[0-9]+$/.test(digits);
-    if (isCode && ![8, 12, 13, 14].includes(digits.length)) {
+    if (isCode && (![8, 12, 13, 14].includes(digits.length) || !gtinCheckOk(digits))) {
       // Clear the last result first: a rejected scan next to the PREVIOUS item's price is
       // exactly the confusion this whole fix exists to stop.
       el('ps-result').innerHTML = '';
-      psStatus(`That is ${digits.length} digits — a barcode is 12, or 13 with the country digit. Check the number, or type what the item is.`);
+      // 🛑 The last digit is a checksum. RID-X was retyped one digit off and, with only the
+      // length checked, was filed under a barcode that cannot exist.
+      psStatus([8, 12, 13, 14].includes(digits.length)
+        ? 'That barcode does not check out — one digit is misread or mistyped. Scan it again, or type what the item is.'
+        : `That is ${digits.length} digits — a barcode is 12, or 13 with the country digit. Check the number, or type what the item is.`);
       el('ps-input').focus();
       el('ps-input').select();
       return;
