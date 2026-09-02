@@ -1888,10 +1888,32 @@ console.log('Price Scan');
   // leaves us unable to prove the code resolves, which is the whole bar for printing.
   eq((h.match(/reason: "clover unreachable"/g) || []).length, 2,
      '🛑 BOTH Clover round trips refuse on an outage — the map read and the existence check');
-  ok(/exists === null/.test(h) && /cannot confirm/.test(h),
+  ok(/exists === null/.test(h) && /Clover did not answer/.test(h),
      '🛑 an unreachable Clover refuses too — unknown is not permission to print');
   ok(/if \(!codeMap\)/.test(h),
      '🛑 …including a map read that THREW, which used to escape as a 500');
+  // 🔑 SAME REASON, DIFFERENT SENTENCE. Two round trips refusing with one identical
+  // `detail` is the bug the previous commit existed to remove, re-made: an operator
+  // reading "Clover did not answer" could not tell a failed inventory sweep (nothing
+  // works, and the fix is ours) from a failed single-item lookup (the map is fine and
+  // the fix is a retry). Each names the question that went unanswered, and carries a
+  // `stage` — the field this file already uses for exactly this, see the create-item
+  // and category-assign handlers.
+  {
+    const details = [...h.matchAll(/detail: [`"]([^`"]*Clover did not answer[^`"]*)/g)].map(m => m[1]);
+    eq(details.length, 2, 'both Clover refusals still say Clover did not answer');
+    ok(details[0] !== details[1],
+       '🛑 …but they do NOT say the same thing — one names the map, the other the lookup');
+    ok(/category|number/i.test(details[0]) && /exists|\$\{code\}/.test(details[1]),
+       '…and each names the question it could not get answered');
+  }
+  eq((h.match(/stage: "/g) || []).length, 2,
+     'each carries a stage, so the two are distinguishable in the body as well as on screen');
+  // The map-read refusal cannot carry a `code`: it failed before there was one to report.
+  // That asymmetry is load-bearing — it is what let us tell the two apart in production
+  // BEFORE this commit existed, and it must not be papered over with a placeholder.
+  ok(/stage: "category map",\n\s*detail:/.test(h),
+     '🔑 the map-read refusal reports NO code, because at that point there is none');
   ok(!/nearest|snap|round/i.test(h),
      '🛑 …and nothing anywhere near this snaps the price to make a label scan');
 }
@@ -2047,6 +2069,50 @@ console.log('Price Scan');
   for (const [st, body] of [[403, {}], [500, {}], [0, {}], [502, { error: '' }], [403, { code: 'NOPE' }]])
     ok((psStickerFault(st, body) || '').length > 10,
        `no fault renders blank: ${st} ${JSON.stringify(body)}`);
+}
+
+// ── The lookup has to say why it failed ────────────────────────────────────────
+// 🛑 THIS IS THE THIRD LAYER OF THIS FEATURE TO THROW AN ERROR AWAY, and it is the one
+// that cost the most. In production the derivation was entirely correct — BL-50002-1_5
+// was derived for Beverages at $1.50, and that item genuinely exists in Clover — and the
+// only thing between us and a printed sticker was `if (!r?.ok) return null`, which
+// discarded the status and the body. On the floor there is no console: whatever this
+// function declines to say is simply not knowable.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const fnSrc = src.slice(src.indexOf('async function stickerCodeExists('),
+                          src.indexOf('function merchTree('));
+  const build = (cloverFetch) => new Function('cloverFetch', fnSrc + '\n; return stickerCodeExists;')(cloverFetch);
+  const env = { BL1_MERCHANT_ID: 'M1', BL1_API_TOKEN: 't' };
+  const resp = (status, body, json) => ({ ok: status >= 200 && status < 300, status,
+                                          text: async () => body, json: async () => json });
+
+  const found = await build(async () => resp(401, '{"message":"401 Unauthorized"}'))(env, 'BL1', 'BL-50002-1_5');
+  eq(found.exists, null, 'a refused lookup is still UNKNOWN, never permission to print');
+  eq(found.status, 401, '…and the status survives');
+  ok(/401/.test(found.why) && /Unauthorized/.test(found.why),
+     '🔑 the WHY carries both the status and what Clover actually said');
+
+  const rate = await build(async () => resp(429, 'rate limit exceeded'))(env, 'BL1', 'BL-50002-1_5');
+  ok(/429/.test(rate.why) && /rate limit/.test(rate.why),
+     '…a 429 reads as a rate limit rather than as a missing item');
+
+  // A throw is the same event as a refusal here, and cloverFetch throws rather than
+  // returning a non-ok response when Clover is unreachable.
+  const threw = await build(async () => { throw new TypeError('network error'); })(env, 'BL1', 'BL-50002-1_5')
+    .catch(e => ({ exists: 'ESCAPED: ' + e.message }));
+  eq(threw.exists, null, '🛑 a thrown fetch is caught, not left to escape as a 500');
+  ok(/network error/.test(threw.why || ''), '…and it says what threw');
+
+  // The happy paths still answer plainly.
+  const hit = await build(async () => resp(200, '', { elements: [{ id: 'x' }] }))(env, 'BL1', 'BL-50002-1_5');
+  eq(hit.exists, true, 'a found item is exists:true');
+  const miss = await build(async () => resp(200, '', { elements: [] }))(env, 'BL1', 'BL-50002-9_99');
+  eq(miss.exists, false, '…and a genuinely absent one is false, NOT unknown');
+
+  const unconf = await build(async () => resp(200, '', { elements: [] }))({}, 'BL1', 'BL-50002-1_5');
+  eq(unconf.exists, null, 'an unconfigured store is unknown too');
+  ok(/token|merchant/i.test(unconf.why), '…and says so rather than blaming Clover');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
