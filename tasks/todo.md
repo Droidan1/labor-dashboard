@@ -423,3 +423,40 @@ Three real bugs surfaced along the way, all now fixed:
   One character, waiting on evidence rather than a guess.
 - **Whether duplicates already exist in Clover** from the years the guard did nothing. A
   read-only scan would count items sharing a `code`; nobody has run it.
+
+
+---
+
+## Reprint becomes a tab, not a panel under the scan
+
+> "add the reprint as a new tab on the page not the button"
+
+The reprint history was a block hanging under `#ps-result`, appearing only once something
+had been printed. A tab makes it a place you can go, which is what it was always for: a
+peeled label means the item is already on the shelf, so reprinting is the case where you
+have nothing to scan.
+
+### Plan
+
+- [x] Extend `.pr-tab` (Merch Products, next door) rather than invent a tab look. Same
+      green, same shape; `.ps-lbl`'s 11px/.09em type, because it sits in `#ps-bar` beside it.
+- [x] `#ps-tabs` toggled by `style.display`, never the `hidden` class — `#ps-tabs{display:flex}`
+      is an ID selector and `.hidden` is one class, so `hidden` loses on specificity. This
+      file already shipped that exact bug once on `.ps-row`.
+- [x] `psApplyTab()` is the single authority for what the body shows, and it defers entirely
+      while furniture mode is open. Two writers on one element is how the barcode controls
+      stayed on screen last time.
+- [x] Switching to Reprint calls `psStopScan()` — a camera left running behind a hidden
+      panel is a battery and privacy problem, not a cosmetic one.
+- [x] Empty state on the tab. A tab you can click that renders nothing reads as broken.
+- [x] The tab is hidden for anyone `psCanOverride()` is false for, which is exactly who
+      `psRecentLoad()` already refused to load for. Same gate, no widening.
+- [x] Contrast computed against the real `#ps-bar` background in both themes.
+
+### Still open
+
+- **The reprint history is gated on `psCanOverride()`** — superuser/admin, the *price
+  override* right. That is not obviously the right gate for "show me what I printed": the
+  people printing shelf stickers are largely not admins, and `sticker-history` itself is
+  only business-level on the worker. Left exactly as found, because widening who can see
+  print history is a permissions decision, not a layout one.
