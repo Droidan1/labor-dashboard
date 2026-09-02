@@ -365,9 +365,51 @@ not a coding one:
 - **Leave it.** Browser Print is a one-time install per machine, and the ZPL path is the
   one that produces the crisp sticker in the photo anyway.
 
-### ⏸ The ZPL geometry is unverified
+### ✅ The ZPL geometry is verified
 
-`^PW203`/`^LL203` and the field positions are laid out to match the photographed sticker at
-203 dpi, but nothing has been through a real printer. **Print one before trusting a roll to
-it** — particularly the QR magnification (`^BQN,2,4`), which decides whether it scans at
-one inch.
+`^PW203`/`^LL203` was laid out to match the photographed sticker at 203 dpi on the
+assumption the printer was a 203 dpi unit. It is: Browser Print reports
+`ZTC ZD410-203dpi ZPL`, so 203 dots is exactly one inch. A label printed, and **the QR
+scanned at the register** — the magnification (`^BQN,2,4`) resolves at one inch.
+
+## Review — 2026-09-02
+
+Working end to end on BL1, every link verified against real hardware and real data:
+
+| Step | Verified by |
+|---|---|
+| category → number | `50002` derived from live Clover, no hardcoded table |
+| price → code | `1_5`, matching 240 live underscore codes in the catalogue |
+| code exists | found in the swept catalogue |
+| ZPL → printer | label came off the ZD410 |
+| QR → POS | **scanned at the register** |
+
+The feature was correct on its first deploy. Roughly two hours went into discovering that,
+because every layer between the failure and the screen discarded what it knew — four in the
+app and two in the deploy commands. `tasks/lessons.md` carries the full account; the short
+version is that `if (!resp.ok) return null` is a bug unless the caller can ask why.
+
+Three real bugs surfaced along the way, all now fixed:
+
+- **Clover has no `code` filter.** It 400s every such request. That broke the sticker
+  existence check (#165, replaced by a catalogue sweep) and, far worse, `create-clover-item`
+  (#168), whose duplicate guard read the reply only `if (dupResp.ok)` and had therefore
+  never blocked a duplicate in its life.
+- **CORS preflight on `POST /write`.** `application/json` is not a safelisted content type,
+  so the browser sent an `OPTIONS` Browser Print does not answer, and the POST died before
+  it left the browser. `text/plain` fixed it (#166); the body is still JSON.
+- **A 1500 ms probe deadline** that a cold agent could not meet (#167).
+
+### Still open
+
+- **`BL-10389-3_50`** — one item in Clover keeps a trailing zero where all 240 other
+  underscore codes drop it. A $3.50 item in that category will refuse to print until that
+  item is renamed. A data fix, not a code one; teaching the encoder two spellings of one
+  price would be worse.
+- **Only BL1 has been exercised.** The map is derived per store, so the others should work,
+  but nothing has proven it.
+- **Multi-label registration.** `^MNN` declares continuous media. If the 1x1 stock is
+  die-cut with gaps, `^MNY` is correct and labels will otherwise creep out of position.
+  One character, waiting on evidence rather than a guess.
+- **Whether duplicates already exist in Clover** from the years the guard did nothing. A
+  read-only scan would count items sharing a `code`; nobody has run it.
