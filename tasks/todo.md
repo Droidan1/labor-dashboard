@@ -569,3 +569,38 @@ and an optional street-price line.
   close enough to trust. Only a test label settles a tight layout.
 - Image logos, per-store templates, saved presets and label sizes other than 1×1 in are all
   out of scope and none is needed for what was asked.
+
+
+---
+
+## Image corner mark + named templates
+
+The corner slot takes a bitmap as well as text, the image is replaceable from Admin Tools,
+and templates are now named and saved in multiples with one in use.
+
+- [x] `^GFA` inline, packed in the browser (it has a canvas; the printer does not) and
+      **validated on the worker**, which re-derives bytes-per-row and total from the declared
+      geometry. A payload shorter than the count `^GFA` declares does not misdraw — it makes
+      the printer wait for bytes that never arrive and the label stops.
+- [x] The mark is one slot with two fillings — `mode: text | image` — not two overlapping
+      fields that could both be set.
+- [x] Image mode with no stored image draws **nothing**, and does not fall back to the `$`.
+      The image lives on its own key and can be removed while a template still asks for it.
+- [x] Threshold slider, because ZPL is one bit: there is no grey, so the cut *is* the
+      rendering. The preview unpacks the stored hex rather than re-rasterising the source,
+      so it shows what will actually print.
+- [x] One image shared by every template — the corner slot is the same slot on all of them.
+- [x] Named templates, capped at 10, one active. Deleting the active one falls back to
+      another, or to the stock label.
+- [x] **The legacy `sticker:template` key is still read** and carried across as a named item,
+      so a layout saved before today is not silently discarded.
+- [x] A null template still emits the old bytes exactly — pinned, unchanged.
+
+### Still open
+
+- **Nothing is deployed.** Worker first (new actions and a new KV key), then the front end.
+- **The `$` badge is 74x74 = 740 bytes**, well under the 1,600-byte cap. A larger or wider
+  mark is allowed up to 110x110 or 150x80.
+- **Only the corner slot takes an image.** The banner layout was mocked and rejected: a
+  circular badge does not stretch, and giving the top 50 dots to it pushes the price into
+  the QR.
