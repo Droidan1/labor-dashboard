@@ -1923,7 +1923,11 @@ console.log('Price Scan');
 // resolution — nothing to rasterise, nothing for a driver to soften.
 {
   const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
-  const fn = html.slice(html.indexOf('function psZpl('), html.indexOf('async function psZebraDevice('));
+  // 🛑 Bound this on psZpl's OWN closing brace, not on whatever comes next. Bounding it on
+  // `async function psZebraDevice(` swept a const declared between the two into the slice,
+  // and eval('(' + fn + ')') died on it — a test breaking because unrelated code moved.
+  const psZplAt = html.indexOf('function psZpl(');
+  const fn = html.slice(psZplAt, html.indexOf('\n  }\n', psZplAt) + 5);
   const psZpl = eval('(' + fn.slice(fn.indexOf('function psZpl(')).replace(/\n\s*\/\/[^\n]*/g, '') + ')');
 
   const z = psZpl('BL-50008-2_5', 2.50);
@@ -1958,7 +1962,7 @@ console.log('Price Scan');
 {
   const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
   const fn = html.slice(html.indexOf('async function psPrint('), html.indexOf('window.psPrint'));
-  ok(/Browser Print is not answering/.test(fn) && /Install it/.test(fn),
+  ok(/Browser Print is not answering/.test(fn) && /Check it is running/.test(fn),
      'an absent print agent is explained, not worked around');
   ok(!/window\.print|@page|iframe/.test(fn), '🛑 …and no browser-print path quietly emits a QR-less label');
   ok(/psZpl\(/.test(fn), 'the one print path builds ZPL');
@@ -2139,8 +2143,19 @@ console.log('Price Scan');
      'the reason is written down, because the header looks wrong to anyone who has not hit this');
 
   // Each failure names itself. The old message was a confident claim that was simply false.
-  const claims = fn.match(/is not answering|reports no printer|Could not send|refused the label/g) || [];
-  eq(claims.length, 4, '🔑 four distinct failures, four distinct sentences');
+  const claims = fn.match(/did not answer within|is not answering|reports no printer|Could not send|refused the label/g) || [];
+  eq(claims.length, 5, '🔑 five distinct failures, five distinct sentences');
+
+  // 🛑 THE PROBE FAILURE SPLITS IN TWO, and getting this wrong cost a round trip of its own.
+  // I bound `e` in the probe catch and then did not use it, so a slow agent and an absent
+  // one produced the same sentence — one says try again, the other says go install
+  // software you already have. The browser names them apart; the screen must too.
+  ok(/e\?\.name === 'TimeoutError'/.test(fn),
+     '🔑 a TimeoutError is told apart from a request that never landed');
+  ok(/e\?\.message/.test(fn),
+     '🛑 …and the non-timeout branch reports what actually threw, rather than assuming');
+  ok(/PS_ZEBRA_PROBE_MS \/ 1000/.test(fn),
+     '…quoting the real deadline, so the message cannot drift from the constant');
   ok(!/catch \(_\)/.test(code),
      '🛑 no blanket catch — the one that swallowed three failures into one wrong answer');
   ok(/if \(!r\.ok\)/.test(fn),
@@ -2156,6 +2171,18 @@ console.log('Price Scan');
      '🛑 …every failure renders as text, since some carry wording from the agent itself');
 }
 
+// The probe deadline is a named constant with room for a cold agent.
+// 1500ms was measured too tight against the real ZD410: TimeoutError every time, while the
+// same probe with no deadline answered 200 with one printer. The agent is there, it is just
+// slower than that on a cold call.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const ms = Number((html.match(/const PS_ZEBRA_PROBE_MS = (\d+)/) || [])[1]);
+  ok(ms >= 5000, `🔑 the probe allows a cold agent time to answer (got ${ms}ms)`);
+  ok(/AbortSignal\.timeout\(PS_ZEBRA_PROBE_MS\)/.test(html),
+     '…and the probe uses the constant, not a second copy of the number');
+}
+
 // The label geometry, now that a real printer has been identified.
 // The attached unit reports as "ZTC ZD410-203dpi ZPL", so 203 dots is one inch and a
 // 1x1 sticker is exactly ^PW203 / ^LL203. Pinned because a 300dpi unit would need 300,
@@ -2163,7 +2190,11 @@ console.log('Price Scan');
 // media or driver problem rather than as these two numbers.
 {
   const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
-  const fn = html.slice(html.indexOf('function psZpl('), html.indexOf('async function psZebraDevice('));
+  // 🛑 Bound this on psZpl's OWN closing brace, not on whatever comes next. Bounding it on
+  // `async function psZebraDevice(` swept a const declared between the two into the slice,
+  // and eval('(' + fn + ')') died on it — a test breaking because unrelated code moved.
+  const psZplAt = html.indexOf('function psZpl(');
+  const fn = html.slice(psZplAt, html.indexOf('\n  }\n', psZplAt) + 5);
   ok(/\^PW203/.test(fn) && /\^LL203/.test(fn),
      '🔑 203 dots square — one inch on the 203dpi ZD410 this prints to');
 }
