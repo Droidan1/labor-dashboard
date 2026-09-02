@@ -523,11 +523,12 @@ and an optional street-price line.
 - [x] Editing is superuser (it changes every label the chain prints); reading the template is
       the print gate, because everyone who prints needs it.
 
-### Still open
+- [x] `migration-057.sql` applied to staging and production, verified each: column present,
+      nullable, 5 existing prod rows intact, manifests and users untouched.
+- [x] The panel names its faults. It shipped reporting a bare "Forbidden" for
+      `UNCLASSIFIED_ACTION`, which means the WORKER IS BEHIND, not that anyone lacks a right.
 
-- **`migration-057.sql` has NOT been applied.** Needs Brian's explicit go-ahead, then staging,
-  then prod, verified each. Until it is applied the worker's INSERT fails and print history
-  silently stops recording — printing itself is unaffected.
+### Still open
 - **Deploy order is migration → worker → front end**, which is stricter than usual because the
   worker writes a column that does not exist yet.
 - **The preview's width estimate is `chars × w × 0.6`.** Close enough to catch an overflow, not

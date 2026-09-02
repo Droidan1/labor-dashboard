@@ -1127,3 +1127,33 @@ Both assertions were about the right lines. Neither was about the right thing.
    after a real ZD410 had verified it and the QR had scanned at the register. The next person
    to read it re-runs a check that is already done.
 </rules>
+
+
+---
+
+## A new surface does not inherit the old surface's honesty
+
+The sticker editor shipped and immediately reported **"Could not load the template: Forbidden."**
+The response carried `code: "UNCLASSIFIED_ACTION"` — which does not mean *you may not*. It means
+**this worker predates the feature** and the fix is a deploy, not a permission.
+
+`psStickerFault` has said exactly that sentence, on the same page, since the day it was written:
+*"the worker half of the deploy is missing."* The new panel used `j.error || \`HTTP ${r.status}\``
+and read straight past it — so a two-word answer sent someone hunting a role problem that did
+not exist.
+
+This is the third time in one session that a refusal discarded what it already knew. The first
+two were `catch (_)` swallowing three distinct failures, and a bound `e` that went unused.
+
+<rules>
+1. **When you add a panel, ask what the existing panels do with a 403 — and copy it.** The
+   mapper was 100 lines away. A new surface starts with none of the hard-won error handling
+   around it unless you go and get it.
+2. **`j.error` is the generic half of the response. `j.code` is the useful half.** If a worker
+   bothers to return a code, showing only the error is throwing away the diagnosis.
+3. **Every distinct code deserves a distinct sentence — assert that.** The test that catches a
+   collapse is `new Set(messages).size === codes.length`, not five separate greps.
+4. **Scope a find-and-replace and count first.** `if (!r.ok) throw new Error(j.error || …)`
+   appears fourteen times in this file. A blanket replace would have rewritten eleven unrelated
+   features. Slice to the block, assert the count is what you expect, and diff before trusting.
+</rules>

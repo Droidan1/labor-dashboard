@@ -19249,7 +19249,7 @@
     try {
       const r = await fetch(`${WORKER_BASE}?action=sticker-template`, { credentials: 'include' });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error(stFault(r.status, j));
       stDefaults = j.defaults;
       stTpl = JSON.parse(JSON.stringify(j.template || j.defaults));
       stStatus(j.template
@@ -19262,6 +19262,30 @@
   }
 
   const stStatus = (msg) => { const n = el('st-status'); if (n) n.textContent = msg; };
+
+  // 🛑 THE PANEL THREW AWAY THE ONE FIELD THAT EXPLAINED THE REFUSAL. It reported a bare
+  // "Forbidden" while the response carried code: UNCLASSIFIED_ACTION -- which does not mean
+  // "you may not", it means THIS WORKER PREDATES THE FEATURE and the fix is a deploy, not a
+  // permission. psStickerFault has said exactly that to the person at the scanner since the
+  // day it was written; this editor read past it and sent someone hunting a role problem.
+  // Third time in one session that a refusal discarded what it already knew.
+  const stFault = (status, j) => {
+    switch (j && j.code) {
+      case 'UNCLASSIFIED_ACTION':
+        return 'This worker does not know about sticker templates yet — the worker half of the '
+             + 'deploy has not landed. Run npx wrangler deploy from main, then reload.';
+      case 'NEED_SUPERUSER':
+        return 'Editing the sticker template needs a superuser account.';
+      case 'NEED_MANAGER':
+        return 'Reading the sticker template needs a manager account or above.';
+      case 'NO_BUSINESS_ACCESS':
+        return 'Your account has no Bargain Lane access, so it cannot read the sticker template.';
+      case 'NO_FINANCIAL_ACCESS':
+        return 'Your account cannot see cost data, so it cannot read the sticker template.';
+    }
+    if (status === 401) return 'Your session has expired — sign in again.';
+    return (j && j.error) ? `${j.error} (${status})` : `HTTP ${status}`;
+  };
   const stField = (k) => Object.assign({}, (stDefaults && stDefaults.fields[k]) || {}, (stTpl && stTpl.fields[k]) || {});
 
   function stSet(k, prop, raw) {
@@ -19351,7 +19375,7 @@
         body: JSON.stringify({ fields: stTpl.fields }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error(stFault(r.status, j));
       // The worker clamps, so what came back is what will print — adopt it rather than
       // keeping the numbers that were typed. Otherwise the screen shows one label and the
       // printer draws another.
@@ -19372,7 +19396,7 @@
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reset: true }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error(stFault(r.status, j));
       stDefaults = j.defaults; stTpl = JSON.parse(JSON.stringify(j.defaults)); psTpl = null;
       stDraw();
       stStatus('Back to the stock template.');
