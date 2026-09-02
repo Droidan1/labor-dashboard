@@ -19033,8 +19033,14 @@
 
   // Zebra Browser Print listens on loopback, and a loopback origin is treated as
   // trustworthy even from an https page — so this needs no SDK script and no CDN.
+  // 🔑 1500ms was too tight to be sure of. The agent answers a warm probe instantly, but a
+  // cold one — first call after launch, or after the machine wakes — has been seen to take
+  // longer, and a TimeoutError there is indistinguishable from an absent agent unless the
+  // message says which it was. Raised to 5s and named, because psPrint quotes it.
+  const PS_ZEBRA_PROBE_MS = 5000;
+
   async function psZebraDevice() {
-    const r = await fetch('http://127.0.0.1:9100/available', { signal: AbortSignal.timeout(1500) });
+    const r = await fetch('http://127.0.0.1:9100/available', { signal: AbortSignal.timeout(PS_ZEBRA_PROBE_MS) });
     const d = await r.json();
     return (d?.printer || []).find(p => p?.uid) || null;
   }
@@ -19052,12 +19058,23 @@
       try {
         dev = await psZebraDevice();
       } catch (e) {
-        // 🛑 ONLY THIS FAILURE MEANS THE AGENT IS ABSENT, and it used to be the message for
-        // all of them. One `catch (_)` wrapped the probe, the missing-device throw AND the
+        // 🛑 ONLY THIS FAILURE MEANS THE AGENT MIGHT BE ABSENT, and it used to be the message
+        // for all of them. One `catch (_)` wrapped the probe, the missing-device throw AND the
         // write, so a working agent that refused the POST reported itself as not installed
         // — a confident sentence that was simply false, and it cost a round trip to catch.
-        return fail('Zebra Browser Print is not answering on this machine, so the QR cannot be drawn. '
-          + 'Install it, or print from a machine that has it.');
+        //
+        // 🔑 AND THEN I BOUND `e` HERE AND DID NOT USE IT, which cost a SECOND round trip on
+        // the very next attempt. The two causes need opposite responses and the browser
+        // already distinguishes them by name: TimeoutError means the agent is there and slow
+        // (ours to fix, not theirs), anything else means the request never landed. Guessing
+        // between them from a fixed sentence is the whole mistake, made twice.
+        const slow = e?.name === 'TimeoutError';
+        return fail(slow
+          ? `Zebra Browser Print did not answer within ${PS_ZEBRA_PROBE_MS / 1000}s. It is probably `
+            + 'starting up — try Print again in a moment.'
+          : `Zebra Browser Print is not answering on this machine (${e?.name || 'error'}: `
+            + `${e?.message || 'no detail'}), so the QR cannot be drawn. Check it is running, `
+            + 'or print from a machine that has it.');
       }
       if (!dev) {
         return fail('Zebra Browser Print is running, but reports no printer attached. '
