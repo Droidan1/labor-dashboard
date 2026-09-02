@@ -495,3 +495,42 @@ has no `nowrap`; that is the tell.
   `merch-scan` already requires to reach the screen at all. Applied to all three sticker
   actions and to the three front-end call sites, under a new `psCanPrint` so it can never
   again be confused with `psCanOverride`, which did not move.
+
+
+---
+
+## Sticker template editor (Admin Tools)
+
+An admin surface for what the shelf sticker prints and where: font, size and position for each
+text field, position and magnification for the QR, the corner `$` off or replaced with text,
+and an optional street-price line.
+
+- [x] Worker owns the model and the validation. A browser-side check guards a stale tab from
+      nothing; the endpoint is what a replayed request or a curl reaches.
+- [x] **A null template emits the old bytes exactly.** Pinned on three codes. Shipping this
+      must not move a dot on any shelf until someone deliberately moves one.
+- [x] The QR cannot be switched off and cannot go below magnification 4 — refused outright,
+      not clamped. It is the only part of the label the register reads.
+- [x] Coordinates and sizes clamp instead of failing a save; a slider that overshoots is not
+      worth losing a layout over.
+- [x] `^` and `~` stripped in both directions. An injected `^XZ` would otherwise end the label.
+- [x] `migration-057.sql` adds `retail_cents`, so a reprint draws the same street price the
+      original had rather than silently dropping the field.
+- [x] Null street price draws **nothing** — not `$0.00`, not a dash. "No street price found"
+      is a real scan outcome and every pre-migration row has none.
+- [x] Live SVG preview at true 203-dot scale, labelled an approximation, with **Print test
+      label** for ground truth. The preview samples the worst realistic case, not the prettiest.
+- [x] Editing is superuser (it changes every label the chain prints); reading the template is
+      the print gate, because everyone who prints needs it.
+
+### Still open
+
+- **`migration-057.sql` has NOT been applied.** Needs Brian's explicit go-ahead, then staging,
+  then prod, verified each. Until it is applied the worker's INSERT fails and print history
+  silently stops recording — printing itself is unaffected.
+- **Deploy order is migration → worker → front end**, which is stricter than usual because the
+  worker writes a column that does not exist yet.
+- **The preview's width estimate is `chars × w × 0.6`.** Close enough to catch an overflow, not
+  close enough to trust. Only a test label settles a tight layout.
+- Image logos, per-store templates, saved presets and label sizes other than 1×1 in are all
+  out of scope and none is needed for what was asked.

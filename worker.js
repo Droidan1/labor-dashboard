@@ -3933,6 +3933,8 @@ const ACTION_BUSINESS = new Map([
   ["sticker-check", "bl"],
   ["sticker-printed", "bl"],
   ["sticker-history", "bl"],
+  ["sticker-template", "bl"],
+  ["sticker-template-set", "bl"],
   ["manifest-upload", "bl"],
   ["manifest-remap", "bl"],
   ["manifest-classify", "bl"],
@@ -10799,6 +10801,99 @@ async function stickerCodeExists(env, store, code, known) {
     return { exists: null, why: "Clover did not answer when we re-read the item list to be sure" };
   }
   return { exists: (again.codes || []).includes(code), rechecked: true };
+}
+
+// ── What the sticker looks like ──────────────────────────────────────────────
+//
+// \U0001f6d1 THE DEFAULTS ARE TODAY'S LABEL, TO THE DOT. An unset template must emit the exact
+// bytes the hardcoded psZpl emitted, or turning this feature on silently reprices the
+// geometry of every shelf in the chain. A test pins that byte-for-byte.
+//
+// \U0001f511 AND THE VALIDATION LIVES HERE, NOT ONLY IN THE EDITOR. A stale tab, a replayed
+// request or a hand-rolled curl all reach this endpoint; a browser-side check guards none of
+// them. The printer accepts nonsense silently -- a field off the edge just does not appear,
+// and a QR too small stops scanning at the register in front of a customer, which is the one
+// failure this whole feature exists to prevent.
+const STICKER_TEMPLATE_KEY = "sticker:template";
+const STICKER_LABEL_DOTS = 203;          // 1 inch at 203 dpi -- the ZD410 this prints to
+const STICKER_QR_MIN_MAG = 4;            // proven at the register; below this is unproven
+const STICKER_QR_MAX_MAG = 8;
+const STICKER_TEXT_MIN = 8;
+const STICKER_TEXT_MAX = 150;
+// Font 0 is the scalable one and the only one where the size fields mean exactly what they
+// say. A-G are bitmap fonts that quantise to integer multiples; allowed, because a printer
+// that has them renders them crisply at small sizes.
+const STICKER_FONTS = new Set(["0", "A", "B", "D", "E", "F", "G"]);
+
+const STICKER_TEMPLATE_DEFAULT = Object.freeze({
+  v: 1,
+  fields: {
+    qr:     { on: true,  x: 104, y: 10,  mag: 4 },
+    mark:   { on: true,  x: 12,  y: 18,  h: 74, w: 74, font: "0", text: "$" },
+    code:   { on: true,  x: 10,  y: 116, h: 20, w: 20, font: "0" },
+    price:  { on: true,  x: 10,  y: 142, h: 54, w: 54, font: "0" },
+    retail: { on: false, x: 10,  y: 96,  h: 18, w: 18, font: "0", prefix: "Compare at " },
+  },
+});
+
+const stickerInt = (v, lo, hi, fallback) => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
+};
+const stickerText = (v, fallback) => {
+  if (v === undefined || v === null) return fallback;
+  return String(v).replace(/[\^~]/g, "").trim().slice(0, 24);   // ^ and ~ are ZPL control prefixes
+};
+
+// Returns { tpl } on success or { error } with a sentence naming what was refused.
+// Coordinates and sizes are CLAMPED (a slider that overshoots is not worth a failed save),
+// but the two things that break a label at the register are REFUSED outright.
+function sanitizeStickerTemplate(body) {
+  const inF = (body && typeof body === "object" && body.fields && typeof body.fields === "object")
+    ? body.fields : {};
+  const d = STICKER_TEMPLATE_DEFAULT.fields;
+  const qrIn = (inF.qr && typeof inF.qr === "object") ? inF.qr : {};
+
+  // \U0001f6d1 The QR is not optional. Everything else on the label is for a human; this is the
+  // only part the register reads, and a sticker it cannot read is the failure this feature
+  // exists to prevent. Move it, resize it, never remove it.
+  if (qrIn.on === false) {
+    return { error: "The QR code cannot be removed - it is the only part of the label the register reads." };
+  }
+  const mag = stickerInt(qrIn.mag, STICKER_QR_MIN_MAG, STICKER_QR_MAX_MAG, d.qr.mag);
+  if (Number.isFinite(Number(qrIn.mag)) && Math.round(Number(qrIn.mag)) < STICKER_QR_MIN_MAG) {
+    return { error: `QR magnification below ${STICKER_QR_MIN_MAG} is refused - ${STICKER_QR_MIN_MAG} is what scans at the register today, and smaller is unproven.` };
+  }
+
+  const hi = STICKER_LABEL_DOTS - 1;
+  const textField = (key) => {
+    const src = (inF[key] && typeof inF[key] === "object") ? inF[key] : {};
+    const def = d[key];
+    const out = {
+      on: src.on === undefined ? def.on : !!src.on,
+      x: stickerInt(src.x, 0, hi, def.x),
+      y: stickerInt(src.y, 0, hi, def.y),
+      h: stickerInt(src.h, STICKER_TEXT_MIN, STICKER_TEXT_MAX, def.h),
+      w: stickerInt(src.w, STICKER_TEXT_MIN, STICKER_TEXT_MAX, def.w),
+      font: STICKER_FONTS.has(String(src.font)) ? String(src.font) : def.font,
+    };
+    if (def.text !== undefined) out.text = stickerText(src.text, def.text);
+    if (def.prefix !== undefined) out.prefix = stickerText(src.prefix, def.prefix);
+    return out;
+  };
+
+  return {
+    tpl: {
+      v: 1,
+      fields: {
+        qr: { on: true, x: stickerInt(qrIn.x, 0, hi, d.qr.x), y: stickerInt(qrIn.y, 0, hi, d.qr.y), mag },
+        mark: textField("mark"),
+        code: textField("code"),
+        price: textField("price"),
+        retail: textField("retail"),
+      },
+    },
+  };
 }
 
 function merchTree() {
@@ -19180,6 +19275,53 @@ export default {
       }
     }
 
+    // GET ?action=sticker-template
+    // Anyone who can print needs to read it, so this is the print gate, not the edit gate.
+    if (url.searchParams.get("action") === "sticker-template" && request.method === "GET") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const t = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get(STICKER_TEMPLATE_KEY, "json") : null;
+        // \U0001f511 `template: null` is a real answer, not a failure: it means nobody has changed
+        // anything and the caller should draw the defaults. Returning the defaults here
+        // instead would make "never configured" and "configured back to stock" identical.
+        return new Response(JSON.stringify({ ok: true, template: t || null, defaults: STICKER_TEMPLATE_DEFAULT }),
+          { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=sticker-template-set  — superuser only.
+    // \U0001f6d1 EDITING IS NOT PRINTING. This changes every label the chain prints from here on,
+    // which is a different act from putting one on a shelf. It matches the gate on the page
+    // it lives on (Admin Tools is superuser-only) rather than the gate on the Print button.
+    if (url.searchParams.get("action") === "sticker-template-set" && request.method === "POST") {
+      if (!currentUser || currentUser.role !== "superuser") {
+        return new Response(JSON.stringify({ error: "Superuser required", code: "NEED_SUPERUSER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.SALES_SNAPSHOTS) return new Response(JSON.stringify({ error: "Storage unavailable" }), { status: 503, headers: corsJson });
+      try {
+        const body = await request.json();
+        if (body && body.reset === true) {
+          await env.SALES_SNAPSHOTS.delete(STICKER_TEMPLATE_KEY);
+          return new Response(JSON.stringify({ ok: true, template: null, defaults: STICKER_TEMPLATE_DEFAULT }), { headers: corsJson });
+        }
+        const clean = sanitizeStickerTemplate(body);
+        if (clean.error) {
+          return new Response(JSON.stringify({ error: clean.error }), { status: 400, headers: corsJson });
+        }
+        const template = { ...clean.tpl,
+          updatedAt: new Date().toISOString(),
+          updatedBy: (currentUser && currentUser.email) || "superuser" };
+        await env.SALES_SNAPSHOTS.put(STICKER_TEMPLATE_KEY, JSON.stringify(template));
+        return new Response(JSON.stringify({ ok: true, template }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     // ── Can we print a shelf sticker for this? ────────────────────────────────
     //    POST ?action=sticker-check  { l3, price, store? }
     //
@@ -19301,10 +19443,16 @@ export default {
           return new Response(JSON.stringify({ error: "A print record needs a store, category, price and code" }),
             { status: 400, headers: corsJson });
         }
+        // 🔑 The street price is stored, not re-derived. sticker-check never returns it and
+        // the history row is all a reprint has, so without this column a reprint would draw a
+        // label MISSING a field the original had -- two different stickers for one shelf.
+        // Null is a normal value here: "No street price found" is a real outcome of a scan.
+        const retailNum = Number(body?.retail);
+        const retailCents = Number.isFinite(retailNum) && retailNum > 0 ? Math.round(retailNum * 100) : null;
         await env.DB.prepare(
-          `INSERT INTO sticker_prints (store, l3, price_cents, code, title, printed_by, printed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
-        ).bind(store, l3, cents, code, String(body?.title || "").slice(0, 200) || null,
+          `INSERT INTO sticker_prints (store, l3, price_cents, code, title, retail_cents, printed_by, printed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(store, l3, cents, code, String(body?.title || "").slice(0, 200) || null, retailCents,
                (currentUser && currentUser.email) || "unknown", new Date().toISOString()).run();
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {
@@ -19331,7 +19479,7 @@ export default {
         // prints are not a thing this screen can act on, and showing them invites a manager
         // to reprint a label for a shelf they are not standing at.
         const rows = await env.DB.prepare(
-          `SELECT id, store, l3, price_cents, code, title, printed_at
+          `SELECT id, store, l3, price_cents, code, title, retail_cents, printed_at
              FROM sticker_prints WHERE printed_by = ?
             ORDER BY printed_at DESC LIMIT ?`
         ).bind((currentUser && currentUser.email) || "unknown", limit).all();
@@ -19341,6 +19489,10 @@ export default {
             id: r.id, store: r.store, l3: r.l3, code: r.code,
             title: r.title || "", printed_at: r.printed_at,
             price: (Number(r.price_cents) || 0) / 100,
+            // Null stays null. A row printed before this column existed, or an item with no
+            // street price, must not become 0.00 -- that would print "Compare at $0.00".
+            retail: r.retail_cents === null || r.retail_cents === undefined
+              ? null : Number(r.retail_cents) / 100,
           })),
         }), { headers: corsJson });
       } catch (e) {
