@@ -1157,3 +1157,38 @@ two were `catch (_)` swallowing three distinct failures, and a bound `e` that we
    appears fourteen times in this file. A blanket replace would have rewritten eleven unrelated
    features. Slice to the block, assert the count is what you expect, and diff before trusting.
 </rules>
+
+
+---
+
+## A syntax check is not a structure check
+
+I inserted three new helpers into `worker.js` using an anchor that sat **inside**
+`sanitizeStickerTemplate`, splitting the function in half and nesting the helpers within it.
+
+`node --check` passed. It is legal JavaScript — nested function declarations are fine — so
+nothing complained. But the helpers were now scoped to that function, invisible to the request
+handlers that call them, and **every template read would have thrown `ReferenceError` in
+production**.
+
+What caught it was the test suite's structural extraction:
+`/function sanitizeStickerTemplate\(body\) \{[\s\S]*?\n\}/` grabbed up to the first
+`\n}`, which was now the middle of the function, and `new Function` refused to parse it.
+
+<rules>
+1. **Anchor an insertion on a boundary you have SEEN, not one you assume.** I anchored on
+   `return {\n    tpl: {` believing it followed the function. It was inside it. Two lines of
+   `sed` before the edit would have shown that.
+2. **After inserting a top-level declaration, assert it IS top level.** A regex anchored on
+   `^function name(` costs one line and catches the whole class. It is now in the suite for
+   all four sticker helpers.
+3. **`node --check` proves parseability, nothing more.** It cannot see scope, reachability, or
+   whether a function ended up somewhere useless. Structural extraction in tests can, and did.
+4. **A cap that cannot bind is decoration.** `STICKER_MARK_MAX_BYTES = 4000` with a 150-dot
+   side limit was unreachable: the largest possible pack is 2,850. It read as protection and
+   enforced nothing — the same shape as the Clover duplicate guard that sat broken for years.
+   Compute the extreme case and check your limit is on the near side of it.
+5. **Then make the comment match the numbers.** My first fix claimed 113x113 and 150x85 were
+   allowed. Both are refused at 1,600 bytes. A comment with wrong arithmetic in it is worse
+   than none, and I had written that exact lesson earlier the same day.
+</rules>

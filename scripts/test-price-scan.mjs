@@ -2415,11 +2415,170 @@ console.log('Price Scan');
   eq(new Set(said).size, codes.length, 'every code gets its OWN sentence — none collapses to another');
   ok(said.every(t => !/^Forbidden/.test(t)), '…and none of them is just the word Forbidden');
 
-  const block = sliceOrNull(html, '  async function stLoad() {', '  window.stReset = stReset;');
-  eq((block.match(/throw new Error\(stFault\(r\.status, j\)\)/g) || []).length, 3,
-     'load, save and reset all report through it');
+  // 🛑 ASSERT THE PROPERTY, NOT THE COUNT. This pinned "exactly 3" and failed the moment
+  // the image paths started reporting properly too -- a test that breaks when the code gets
+  // BETTER is a test measuring the wrong thing. Every throw in the editor must go through
+  // the mapper; how many there are is not the point.
+  const block = sliceOrNull(html, '  async function stLoad() {', '  window.stTest = stTest;');
+  const throws = (block.match(/throw new Error\(/g) || []).length;
+  // …and not literal about variable names either: one call site works on a second response
+  // and passes r2/j2. Matching `stFault(r.status, j)` exactly said that path was unmapped
+  // when it plainly was. Match the CALL, not the spelling of its arguments.
+  const mapped = (block.match(/throw new Error\(stFault\(/g) || []).length;
+  ok(throws >= 3, 'the editor has failure paths to report');
+  eq(mapped, throws, '🛑 every one of them reports through stFault');
   ok(!/throw new Error\(j\.error \|\| /.test(block || ''),
-     '🛑 …and none of them still throws the bare error string');
+     '…and none still throws the bare error string');
+}
+
+
+// ── The mark can be a bitmap, and the bitmap must be exact ───────────────────
+// 🛑 A SHORT PAYLOAD HANGS THE PRINTER. ^GFA declares its own byte count twice; the
+// printer then reads exactly that many hex bytes. Give it fewer and it waits for bytes that
+// never arrive -- the label does not misdraw, it stops. So the worker re-derives the
+// geometry and refuses anything whose hex length disagrees with its own dimensions.
+{
+  const worker = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const grab = (re, what) => { const m = worker.match(re); ok(m, `${what} is extractable`); return m ? m[0] : ''; };
+  const decls = [
+    grab(/const STICKER_MARK_MAX_SIDE = [\s\S]*?\n/, 'STICKER_MARK_MAX_SIDE'),
+    grab(/const STICKER_MARK_MAX_BYTES = [\s\S]*?\n/, 'STICKER_MARK_MAX_BYTES'),
+    grab(/const stickerText = [\s\S]*?\n\};/, 'stickerText'),
+    grab(/function sanitizeStickerMarkImage\(body\) \{[\s\S]*?\n\}/, 'sanitizeStickerMarkImage'),
+  ].join('\n');
+  const clean = new Function(`${decls}; return sanitizeStickerMarkImage;`)();
+  const hexFor = (w, h) => 'AB'.repeat(Math.ceil(w / 8) * h);
+
+  const good = clean({ w: 74, h: 74, hex: hexFor(74, 74) });
+  eq(good.image?.total, 740, 'a 74x74 mark packs to 740 bytes');
+  eq(good.image?.bpr, 10, '…at 10 bytes a row');
+
+  ok(/needs exactly/.test(clean({ w: 74, h: 74, hex: hexFor(74, 73) }).error || ''),
+     '🛑 hex one row short is REFUSED — that is the payload that hangs the printer');
+  ok(/needs exactly/.test(clean({ w: 74, h: 74, hex: hexFor(74, 75) }).error || ''), '…and one row long too');
+  ok(/not valid hex/.test(clean({ w: 8, h: 8, hex: 'ZZZZZZZZZZZZZZZZ' }).error || ''), 'non-hex is refused');
+  ok(/between 8 and/.test(clean({ w: 4, h: 4, hex: 'ABABABAB' }).error || ''), 'a mark under 8 dots is refused');
+  ok(/between 8 and/.test(clean({ w: 400, h: 10, hex: '' }).error || ''), '…and one over the side limit');
+  ok(/limit is/.test(clean({ w: 150, h: 150, hex: hexFor(150, 150) }).error || ''),
+     'a mark that packs past the byte cap is refused before it reaches KV');
+  // Lower case in, upper case stored: ^GFA is not case-sensitive but the stored value should
+  // be one thing, so a byte-for-byte comparison of two uploads means something.
+  eq(clean({ w: 8, h: 8, hex: 'ab'.repeat(8) }).image?.hex, 'AB'.repeat(8), 'hex is normalised to upper case');
+}
+
+// ── The packer is bit-exact, including the ragged last byte ──────────────────
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const src = sliceOrNull(html, '  function stPack(canvas) {', '  function stImageChosen(');
+  ok(src, 'stPack is where the test expects it');
+  const stPack = new Function(src + '; return stPack;')();
+  const fake = (w, h, on) => ({ width: w, height: h, getContext: () => ({ getImageData: () => {
+    const d = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < w * h; i++) { const v = on(i % w, Math.floor(i / w)) ? 0 : 255;
+      d[i*4] = d[i*4+1] = d[i*4+2] = v; d[i*4+3] = 255; }
+    return { data: d }; } }) });
+
+  for (const [w, h, on, name] of [
+    [8, 8, (x, y) => x === y, 'diagonal, byte-aligned'],
+    [74, 74, (x, y) => (x * y) % 7 === 0, 'the real corner-mark size'],
+    [11, 5, (x) => x < 3, '🔑 a width that is NOT a multiple of 8'],
+  ]) {
+    const p = stPack(fake(w, h, on));
+    const bpr = Math.ceil(w / 8);
+    eq(p.bpr, bpr, `${name}: bytes per row`);
+    eq(p.hex.length, bpr * h * 2, `${name}: hex length matches the declared byte count`);
+    let wrong = 0, padInk = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < bpr * 8; x++) {
+      const byte = parseInt(p.hex.substr((y * bpr + (x >> 3)) * 2, 2), 16);
+      const bit = (byte >> (7 - (x & 7))) & 1;
+      if (x < w) { if (bit !== (on(x, y) ? 1 : 0)) wrong++; }
+      else if (bit) padInk++;
+    }
+    eq(wrong, 0, `${name}: every dot round-trips`);
+    eq(padInk, 0, `${name}: 🛑 the padding bits past the edge are blank, not stray ink`);
+  }
+}
+
+// ── psZpl draws the bitmap, and degrades safely without one ──────────────────
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const at = html.indexOf('function psZpl(');
+  const psZpl = eval('(' + html.slice(at, html.indexOf('\n  }\n', at) + 5).replace(/\n\s*\/\/[^\n]*/g, '') + ')');
+  const img = { w: 74, h: 74, bpr: 10, total: 740, hex: 'AB'.repeat(740) };
+  const tplImg = { markImage: img, fields: { mark: { on: true, mode: 'image', x: 12, y: 18 } } };
+
+  const out = psZpl('BL-1-1', 1, {}, tplImg);
+  ok(out.includes(`^FO12,18^GFA,740,740,10,${img.hex}`), '🔑 the mark is emitted as a ^GFA bitmap');
+  ok(!/\^A0N,74,74\^FD/.test(out), '…and the $ glyph is NOT also drawn — one slot, one filling');
+
+  // 🛑 Image mode with nothing stored must draw NOTHING, not a broken ^GFA. The image
+  // lives on its own key and can be removed while a template still asks for it.
+  const orphan = psZpl('BL-1-1', 1, {}, { fields: { mark: { on: true, mode: 'image' } } });
+  ok(!/GFA/.test(orphan), 'image mode with no image stored emits no ^GFA');
+  ok(orphan.startsWith('^XA') && orphan.trim().endsWith('^XZ'), '…and the label is still a valid, framed job');
+  ok(!/\^FD\$\^FS/.test(orphan), '…and does not silently fall back to the $ glyph');
+
+  const textMode = psZpl('BL-1-1', 1, {}, { markImage: img, fields: { mark: { on: true, mode: 'text', text: 'BL' } } });
+  ok(!/GFA/.test(textMode) && textMode.includes('^FDBL^FS'),
+     'a stored image is ignored while the mark is in text mode');
+}
+
+// ── Many named templates, one in use ─────────────────────────────────────────
+{
+  const worker = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+
+  // 🛑 THE HELPERS MUST BE TOP LEVEL. I inserted these three INSIDE
+  // sanitizeStickerTemplate by mistake. That is legal JavaScript -- node --check passed --
+  // but it scopes them to that function, so every template read would have thrown
+  // ReferenceError in production. Only the structural extraction below caught it.
+  for (const fn of ['loadStickerTemplates', 'activeStickerTemplate', 'sanitizeStickerMarkImage', 'sanitizeStickerTemplate']) {
+    ok(new RegExp(`^(async )?function ${fn}\\(`, 'm').test(worker),
+       `${fn} is declared at the top level, not nested inside another function`);
+  }
+
+  const decls = ['const STICKER_TEMPLATE_KEY = "sticker:template";',
+                 'const STICKER_TEMPLATES_KEY = "sticker:templates";',
+                 (worker.match(/async function loadStickerTemplates\(env\) \{[\s\S]*?\n\}/) || [''])[0],
+                 (worker.match(/function activeStickerTemplate\(coll\) \{[\s\S]*?\n\}/) || [''])[0]].join('\n');
+  const m = new Function(`${decls}; return { loadStickerTemplates, activeStickerTemplate };`)();
+
+  const kv = (store) => ({ SALES_SNAPSHOTS: { get: async (k) => store[k] || null } });
+  const fields = { price: { x: 1 } };
+
+  // 🛑 A LAYOUT SAVED UNDER THE OLD KEY MUST SURVIVE. Switching keys without carrying it
+  // across would quietly discard somebody's work and print the stock label instead.
+  const legacy = await m.loadStickerTemplates(kv({ 'sticker:template': { fields, updatedBy: 'brian' } }));
+  eq(legacy.items.length, 1, 'a legacy single template is carried across');
+  eq(legacy.active, 'legacy', '…and is the one in use');
+  eq(legacy.items[0].updatedBy, 'brian', '…keeping who last changed it');
+
+  const fresh = await m.loadStickerTemplates(kv({}));
+  eq(fresh.items.length, 0, 'nothing stored means no templates');
+  eq(m.activeStickerTemplate(fresh), null, '…and no active one, which means the stock label');
+
+  const coll = { active: 'b', items: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] };
+  eq(m.activeStickerTemplate(coll).name, 'B', 'the active one resolves by id');
+  eq(m.activeStickerTemplate({ active: 'gone', items: [{ id: 'a' }] }), null,
+     'an active id pointing at a deleted template resolves to null, not to a random one');
+
+  const codeOnly = (t) => t.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
+  const setAt = worker.indexOf('url.searchParams.get("action") === "sticker-template-set"');
+  const set = codeOnly(worker.slice(setAt, setAt + 5200));
+  ok(/op === "reset"/.test(set) && /op === "activate" \|\| op === "delete"/.test(set),
+     'save, activate, delete and reset are all handled');
+  ok(/STICKER_MAX_TEMPLATES/.test(set), 'the number of saved templates is capped');
+  ok(/Give the template a name/.test(set), 'a template must be named');
+  ok(/coll\.active = coll\.items\.length \? coll\.items\[0\]\.id : null/.test(set),
+     '🔑 deleting the one in use falls back to another, or to the stock label');
+  ok(/\.delete\(STICKER_TEMPLATE_KEY\)/.test(set),
+     'reset clears the legacy key too, or the old layout reappears on the next read');
+
+  const imgAt = worker.indexOf('url.searchParams.get("action") === "sticker-mark-image"');
+  ok(imgAt > 0, 'the mark-image endpoint exists');
+  const imgH = codeOnly(worker.slice(imgAt, imgAt + 2000));
+  ok(/currentUser\.role !== "superuser"/.test(imgH), 'replacing the image is superuser only');
+  ok(/sanitizeStickerMarkImage/.test(imgH), '…and nothing is stored without validation');
+  ok(/body\?\.clear === true/.test(imgH), '…and it can be removed again');
 }
 
 

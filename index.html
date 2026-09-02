@@ -3743,6 +3743,8 @@
         <div class="bg-opl-panel dark:bg-op-panel rounded-xl border border-[rgba(20,16,8,0.08)] dark:border-op-border p-5">
           <h2 class="text-base font-bold text-opl-ink dark:text-op-ink mb-1">Sticker template</h2>
           <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-5">What the shelf sticker prints, and where. Positions and sizes are dots on a 1&nbsp;inch square label at 203&nbsp;dpi, so 203 is the far edge. Saving applies to every store the next time anyone prints.</p>
+          <div id="st-bar" class="mb-5"></div>
+          <input id="st-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" class="hidden" onchange="stImageChosen(this)">
           <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_232px]">
             <div id="st-fields" class="space-y-5"></div>
             <div>
@@ -3752,9 +3754,8 @@
           </div>
           <div id="st-warn" class="hidden mt-4"></div>
           <div class="flex flex-wrap gap-3 mt-5">
-            <button onclick="stSave()" class="px-4 py-2 text-sm font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">Save template</button>
             <button onclick="stTest()" class="px-4 py-2 text-sm font-semibold rounded-lg border border-[rgba(20,16,8,0.14)] dark:border-op-border text-opl-ink dark:text-op-ink hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)] transition-colors">Print test label</button>
-            <button onclick="stReset()" class="px-4 py-2 text-sm font-semibold rounded-lg border border-[rgba(20,16,8,0.14)] dark:border-op-border text-opl-ink dark:text-op-ink hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)] transition-colors">Reset to default</button>
+            <button onclick="stReset()" class="px-4 py-2 text-sm font-semibold rounded-lg border border-[rgba(20,16,8,0.14)] dark:border-op-border text-opl-ink dark:text-op-ink hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)] transition-colors">Delete all &amp; use stock</button>
           </div>
           <div id="st-status" class="text-xs text-opl-inkDim dark:text-op-inkDim mt-3"></div>
         </div>
@@ -19176,7 +19177,7 @@
     // shipping a configurable layout must not silently move a single dot on any shelf.
     const D = {
       qr:     { on: true,  x: 104, y: 10,  mag: 4 },
-      mark:   { on: true,  x: 12,  y: 18,  h: 74, w: 74, font: '0', text: '$' },
+      mark:   { on: true,  x: 12,  y: 18,  h: 74, w: 74, font: '0', text: '$', mode: 'text' },
       code:   { on: true,  x: 10,  y: 116, h: 20, w: 20, font: '0' },
       price:  { on: true,  x: 10,  y: 142, h: 54, w: 54, font: '0' },
       retail: { on: false, x: 10,  y: 96,  h: 18, w: 18, font: '0', prefix: 'Compare at ' },
@@ -19194,7 +19195,17 @@
     // and the worker refuses to store a template that turns it off; this agrees with that
     // rather than trusting it.
     out.push(`^FO${qr.x},${qr.y}^BQN,2,${qr.mag}^FDLA,${safe(code)}^FS`);
-    if (mark.on && mark.text) out.push(line(mark, mark.text));
+    // 🔑 THE MARK IS ONE SLOT WITH TWO FILLINGS. ^GFA carries the bitmap inline: it declares
+    // its own byte count twice and its bytes-per-row once, and the printer reads exactly that
+    // many hex bytes. A payload shorter than the declared count leaves the printer waiting
+    // for bytes that never come -- it hangs the label rather than drawing it wrong, which is
+    // why the worker refuses any image whose hex length does not match its own geometry.
+    const mk = tpl && tpl.markImage;
+    if (mark.on && mark.mode === 'image' && mk && mk.hex) {
+      out.push(`^FO${mark.x},${mark.y}^GFA,${mk.total},${mk.total},${mk.bpr},${mk.hex}`);
+    } else if (mark.on && mark.mode !== 'image' && mark.text) {
+      out.push(line(mark, mark.text));
+    }
     if (cd.on) out.push(line(cd, code));
     if (pr.on) out.push(line(pr, money));
     // 🔑 NO STREET PRICE IS A NORMAL ANSWER, not a gap to paper over. "No street price found"
@@ -19214,7 +19225,9 @@
     try {
       const r = await fetch(`${WORKER_BASE}?action=sticker-template`, { credentials: 'include' });
       const j = await r.json().catch(() => ({}));
-      psTpl = (r.ok && j.template) ? j.template : null;
+      // The image lives on its own key, shared by every template; the print path needs it
+      // merged in, because psZpl reads one object and nothing else.
+      psTpl = (r.ok && j.template) ? { ...j.template, markImage: j.markImage || null } : null;
     } catch (_) { psTpl = null; }
   }
 
@@ -19233,16 +19246,11 @@
     { k: 'retail', name: 'Street price', note: 'Prints nothing when an item has no street price.' },
   ];
   const ST_FONTS = [['0', 'Scalable'], ['A', 'A · small'], ['B', 'B'], ['D', 'D'], ['E', 'E'], ['F', 'F'], ['G', 'G · large']];
-  let stTpl = null, stDefaults = null;
-
-  // Font 0 glyphs average well under the width parameter; 0.6 is the ratio that has matched
-  // the real printer closely enough to catch an overflow. It is an ESTIMATE and the copy on
-  // screen says so — this drives a warning, never a refusal to save.
-  const stTextW = (str, w) => Math.round(String(str || '').length * w * 0.6);
-  // A byte-mode payload up to 17 bytes is QR version 1 (21 modules); past that it steps to
-  // version 2 (25). Our codes run 10-14 characters, so version 1 in practice -- but the
-  // preview should not start lying if a category number ever grows.
-  const stQrDots = (f, payload) => (String(payload || '').length <= 17 ? 21 : 25) * (f.mag || 4);
+  let stTpl = null, stDefaults = null, stColl = { active: null, templates: [] };
+  let stImage = null;      // the stored, packed bitmap (what actually prints)
+  let stImgEl = null;      // the source image, kept so the threshold can be re-run live
+  let stCut = 150;         // luminance cut; the badge's green sits near 134
+  let stLimits = { maxTemplates: 10, markMaxSide: 150, markMaxBytes: 4000 };
 
   async function stLoad() {
     if (!el('st-fields')) return;
@@ -19251,10 +19259,15 @@
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(stFault(r.status, j));
       stDefaults = j.defaults;
-      stTpl = JSON.parse(JSON.stringify(j.template || j.defaults));
+      stLimits = j.limits || stLimits;
+      stColl = { active: j.active || null, templates: j.templates || [] };
+      stImage = j.markImage || null;
+      stTpl = j.template
+        ? { id: j.template.id, name: j.template.name, fields: JSON.parse(JSON.stringify(j.template.fields)) }
+        : { id: null, name: '', fields: JSON.parse(JSON.stringify(j.defaults.fields)) };
       stStatus(j.template
-        ? `Last changed ${j.template.updatedBy || 'unknown'}, ${j.template.updatedAt ? new Date(j.template.updatedAt).toLocaleString() : ''}.`
-        : 'Stock template — nothing has been changed.');
+        ? `Active: ${j.template.name}. Last changed ${j.template.updatedBy || 'unknown'}.`
+        : 'Stock layout — nothing saved yet.');
       stDraw();
     } catch (e) {
       stStatus(`Could not load the template: ${e.message}`);
@@ -19268,7 +19281,6 @@
   // "you may not", it means THIS WORKER PREDATES THE FEATURE and the fix is a deploy, not a
   // permission. psStickerFault has said exactly that to the person at the scanner since the
   // day it was written; this editor read past it and sent someone hunting a role problem.
-  // Third time in one session that a refusal discarded what it already knew.
   const stFault = (status, j) => {
     switch (j && j.code) {
       case 'UNCLASSIFIED_ACTION':
@@ -19286,15 +19298,124 @@
     if (status === 401) return 'Your session has expired — sign in again.';
     return (j && j.error) ? `${j.error} (${status})` : `HTTP ${status}`;
   };
+
   const stField = (k) => Object.assign({}, (stDefaults && stDefaults.fields[k]) || {}, (stTpl && stTpl.fields[k]) || {});
 
   function stSet(k, prop, raw) {
     if (!stTpl) return;
-    const v = prop === 'on' ? !!raw : (prop === 'text' || prop === 'prefix' || prop === 'font') ? raw : Number(raw);
+    const v = prop === 'on' ? !!raw
+      : ['text', 'prefix', 'font', 'mode'].includes(prop) ? raw : Number(raw);
     stTpl.fields[k] = Object.assign({}, stField(k), { [prop]: v });
     stDraw();
   }
   window.stSet = stSet;
+
+  const stNameSet = (v) => { if (stTpl) stTpl.name = v; };
+  window.stNameSet = stNameSet;
+
+  // ── The image: rasterise, threshold, pack ────────────────────────────────
+  //
+  // 🔑 ZPL IS ONE BIT. There is no grey and no anti-aliasing — every dot is on or off — so
+  // the threshold is not a nicety, it IS the rendering. It gets a slider because the right
+  // cut depends entirely on the artwork, and a wrong one either fattens the strokes into a
+  // blob or eats them entirely.
+  function stRaster(img, w, h, cut) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const x = c.getContext('2d');
+    x.fillStyle = '#fff'; x.fillRect(0, 0, w, h);
+    const r = Math.min(w / img.naturalWidth, h / img.naturalHeight);
+    const dw = img.naturalWidth * r, dh = img.naturalHeight * r;
+    x.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    const d = x.getImageData(0, 0, w, h);
+    for (let i = 0; i < w * h; i++) {
+      const p = i * 4, a = d.data[p + 3] / 255;
+      const lum = (0.299 * d.data[p] + 0.587 * d.data[p + 1] + 0.114 * d.data[p + 2]) * a + 255 * (1 - a);
+      const v = lum < cut ? 0 : 255;
+      d.data[p] = d.data[p + 1] = d.data[p + 2] = v; d.data[p + 3] = 255;
+    }
+    x.putImageData(d, 0, 0);
+    return c;
+  }
+
+  // ^GFA packing: 8 dots to a byte, most significant bit leftmost, 1 = a black dot, every
+  // row padded out to a whole byte. The worker re-derives these counts and refuses the
+  // upload if they disagree, because a short payload hangs the printer rather than
+  // misdrawing — it sits waiting for bytes that never arrive.
+  function stPack(canvas) {
+    const w = canvas.width, h = canvas.height;
+    const d = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+    const bpr = Math.ceil(w / 8);
+    let hex = '';
+    for (let y = 0; y < h; y++) {
+      for (let b = 0; b < bpr; b++) {
+        let byte = 0;
+        for (let bit = 0; bit < 8; bit++) {
+          const x = b * 8 + bit;
+          const on = x < w && d[(y * w + x) * 4] < 128 ? 1 : 0;
+          byte = (byte << 1) | on;
+        }
+        hex += byte.toString(16).toUpperCase().padStart(2, '0');
+      }
+    }
+    return { hex, bpr, total: bpr * h, w, h };
+  }
+
+  function stImageChosen(input) {
+    const f = input && input.files && input.files[0];
+    if (!f) return;
+    if (f.size > 4 * 1024 * 1024) { input.value = ''; return stStatus('That image is over 4 MB — shrink it first.'); }
+    const fr = new FileReader();
+    fr.onload = () => {
+      const img = new Image();
+      img.onload = () => { stImgEl = img; input.value = ''; stDraw(); stStatus('Set the threshold, then Save image.'); };
+      img.onerror = () => { input.value = ''; stStatus('That file could not be read as an image.'); };
+      img.src = fr.result;
+    };
+    fr.onerror = () => { input.value = ''; stStatus('That file could not be read.'); };
+    fr.readAsDataURL(f);
+  }
+  window.stImageChosen = stImageChosen;
+  window.stPickImage = () => { const f = el('st-file'); if (f) f.click(); };
+  window.stCutSet = (v) => { stCut = Number(v) || 150; stDraw(); };
+
+  async function stImageSave() {
+    if (!stImgEl) return stStatus('Choose an image first.');
+    const f = stField('mark');
+    const packed = stPack(stRaster(stImgEl, f.w, f.h, stCut));
+    if (packed.total > stLimits.markMaxBytes) {
+      return stStatus(`That packs to ${packed.total} bytes; the limit is ${stLimits.markMaxBytes}. Make the mark smaller.`);
+    }
+    stStatus('Saving image…');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=sticker-mark-image`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'logo', w: packed.w, h: packed.h, hex: packed.hex }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(stFault(r.status, j));
+      stImage = j.markImage; stImgEl = null;
+      if (psTpl) psTpl.markImage = stImage;
+      stDraw();
+      stStatus(`Image saved (${stImage.w}x${stImage.h} dots, ${stImage.total} bytes). Set the corner mark to Image and save the template.`);
+    } catch (e) { stStatus(`Image not saved: ${e.message}`); }
+  }
+  window.stImageSave = stImageSave;
+
+  async function stImageClear() {
+    if (!await uiConfirm('Remove the stored mark image? Any template set to Image will fall back to printing nothing in that corner.')) return;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=sticker-mark-image`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clear: true }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(stFault(r.status, j));
+      stImage = null; stImgEl = null;
+      if (psTpl) psTpl.markImage = null;
+      stDraw(); stStatus('Image removed.');
+    } catch (e) { stStatus(`Not removed: ${e.message}`); }
+  }
+  window.stImageClear = stImageClear;
 
   const stNum = (k, prop, label, min, max) => {
     const f = stField(k);
@@ -19303,11 +19424,40 @@
         class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></label>`;
   };
 
+  const ST_BTN = 'px-3 py-1.5 text-xs font-semibold rounded-lg border border-[rgba(20,16,8,0.14)] dark:border-op-border text-opl-ink dark:text-op-ink hover:bg-[rgba(20,16,8,0.04)] dark:hover:bg-[rgba(255,255,255,0.04)] transition-colors';
+  const ST_INPUT = 'text-sm rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green';
+
+  function stBar() {
+    const host = el('st-bar');
+    if (!host || !stTpl) return;
+    const isNew = !stTpl.id;
+    const active = stColl.active;
+    host.innerHTML = `
+      <div class="flex flex-wrap items-end gap-2">
+        <label class="block"><span class="block text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Template</span>
+          <select onchange="stPick(this.value)" class="${ST_INPUT} font-semibold">
+            ${stColl.templates.map(t => `<option value="${psEsc(t.id)}" ${t.id === stTpl.id ? 'selected' : ''}>${psEsc(t.name)}${t.id === active ? ' · in use' : ''}</option>`).join('')}
+            <option value="" ${isNew ? 'selected' : ''}>${isNew ? 'New template' : '+ New template…'}</option>
+          </select></label>
+        <label class="block flex-1 min-w-[160px]"><span class="block text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Name</span>
+          <input type="text" maxlength="40" value="${psEsc(stTpl.name || '')}" placeholder="e.g. Shelf edge, big price"
+            oninput="stNameSet(this.value)" class="${ST_INPUT} w-full"></label>
+        <button onclick="stSave()" class="px-3 py-1.5 text-xs font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg transition-colors">${isNew ? 'Save as new' : 'Save changes'}</button>
+        ${!isNew && stTpl.id !== active ? `<button onclick="stActivate()" class="${ST_BTN}">Use this one</button>` : ''}
+        ${!isNew ? `<button onclick="stDelete()" class="${ST_BTN}">Delete</button>` : ''}
+      </div>
+      <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-2">
+        ${stColl.templates.length} of ${stLimits.maxTemplates} saved.
+        ${active ? 'The one marked <b>in use</b> is what every store prints.' : 'None is in use yet, so the stock label prints.'}
+      </p>`;
+  }
+
   function stDraw() {
     const host = el('st-fields');
     if (!host || !stTpl) return;
+    stBar();
     host.innerHTML = ST_ROWS.map(row => {
-      const f = stField(row.k), isQr = row.k === 'qr';
+      const f = stField(row.k), isQr = row.k === 'qr', isMark = row.k === 'mark';
       const head = `<div class="flex items-center justify-between gap-3">
           <div><div class="text-sm font-semibold text-opl-ink dark:text-op-ink">${row.name}</div>
           ${row.note ? `<div class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-0.5">${row.note}</div>` : ''}</div>
@@ -19321,15 +19471,44 @@
           ${isQr ? stNum(row.k, 'mag', 'Size (4–8)', 4, 8)
                  : stNum(row.k, 'h', 'Height', 8, 150) + stNum(row.k, 'w', 'Width', 8, 150)}
           ${isQr ? '' : `<label class="block"><span class="block text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Font</span>
-            <select onchange="stSet('${row.k}','font',this.value)" class="w-full text-sm font-semibold rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green">
+            <select onchange="stSet('${row.k}','font',this.value)" class="w-full ${ST_INPUT} font-semibold">
             ${ST_FONTS.map(([v, n]) => `<option value="${v}" ${f.font === v ? 'selected' : ''}>${n}</option>`).join('')}</select></label>`}
-          ${text ? `<label class="block col-span-2"><span class="block text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim mb-1">${text === 'text' ? 'Text' : 'Prefix'}</span>
+          ${text && !(isMark && f.mode === 'image') ? `<label class="block col-span-2"><span class="block text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim mb-1">${text === 'text' ? 'Text' : 'Prefix'}</span>
             <input type="text" maxlength="24" value="${psEsc(f[text] || '')}" oninput="stSet('${row.k}','${text}',this.value)"
-              class="w-full text-sm rounded-[8px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-ink dark:text-op-ink px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-green"></label>` : ''}
+              class="w-full ${ST_INPUT}"></label>` : ''}
         </div>`;
-      return `<div class="pb-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border last:border-0 last:pb-0">${head}${body}</div>`;
+      return `<div class="pb-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border last:border-0 last:pb-0">${head}${body}${isMark ? stMarkImage(f) : ''}</div>`;
     }).join('');
     stPreview();
+  }
+
+  function stMarkImage(f) {
+    const mode = f.mode === 'image' ? 'image' : 'text';
+    const pending = !!stImgEl;
+    const have = !!stImage;
+    return `<div class="mt-3 rounded-lg border border-[rgba(20,16,8,0.08)] dark:border-op-border p-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <span class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim">Fill with</span>
+        ${['text', 'image'].map(m => `<label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="radio" name="st-mark-mode" ${mode === m ? 'checked' : ''} onchange="stSet('mark','mode','${m}')" class="accent-[#3BB54A]">
+          <span class="text-xs font-semibold text-opl-ink dark:text-op-ink">${m === 'text' ? 'Text' : 'Image'}</span></label>`).join('')}
+        ${mode === 'image' ? `<button onclick="stPickImage()" class="${ST_BTN}">${have || pending ? 'Replace image' : 'Choose image'}</button>
+          ${have ? `<button onclick="stImageClear()" class="${ST_BTN}">Remove</button>` : ''}` : ''}
+      </div>
+      ${mode === 'image' ? `
+        <div class="flex flex-wrap items-center gap-3 mt-3">
+          <label class="flex items-center gap-2 flex-1 min-w-[200px]">
+            <span class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">Threshold ${stCut}</span>
+            <input type="range" min="20" max="235" value="${stCut}" oninput="stCutSet(this.value)" class="flex-1 accent-[#3BB54A]"></label>
+          ${pending ? `<button onclick="stImageSave()" class="px-3 py-1.5 text-xs font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg">Save image</button>` : ''}
+        </div>
+        <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-2 leading-snug">
+          ${pending ? 'New image loaded — drag the threshold until the preview looks right, then <b>Save image</b>.'
+            : have ? `Stored: ${stImage.w}x${stImage.h} dots, ${stImage.total} bytes. Changing the threshold needs the image chosen again.`
+            : 'No image stored, so this corner prints nothing. Choose one.'}
+          There is no grey on a label — every dot is black or white.
+        </p>` : ''}
+    </div>`;
   }
 
   // Sample values chosen to be the WORST realistic case, not the prettiest: the longest code
@@ -19340,17 +19519,30 @@
     if (!host || !stTpl) return;
     const sample = { code: 'BL-50008-2_5', price: '$2.50', retail: '$29.99' };
     const over = [];
+    let g = '';
     const box = (f, body, key) => {
       const w = stTextW(body, f.w), h = f.h;
       if (f.x + w > 203 || f.y + h > 203) over.push(key);
       return `<rect x="${f.x}" y="${f.y}" width="${w}" height="${h}" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 2"/>
         <text x="${f.x}" y="${f.y + h * 0.82}" font-size="${h}" font-family="ui-monospace,monospace" fill="currentColor">${psEsc(body)}</text>`;
     };
-    let g = '';
     const qr = stField('qr'), d = stQrDots(qr, sample.code);
     if (qr.x + d > 203 || qr.y + d > 203) over.push('QR code');
     g += `<rect x="${qr.x}" y="${qr.y}" width="${d}" height="${d}" fill="currentColor" opacity="0.82"/>`;
-    const mk = stField('mark'); if (mk.on && mk.text) g += box(mk, mk.text, 'Corner mark');
+
+    const mk = stField('mark');
+    if (mk.on && mk.mode === 'image') {
+      if (mk.x + mk.w > 203 || mk.y + mk.h > 203) over.push('Corner mark');
+      // 🔑 The preview shows the ACTUAL one-bit result, not the source art. Nothing else
+      // would tell you whether the threshold is right, which is the only thing to judge.
+      const src = stImgEl ? stRaster(stImgEl, mk.w, mk.h, stCut).toDataURL()
+                : stImage ? stMarkPreviewUri(stImage) : null;
+      g += src
+        ? `<image x="${mk.x}" y="${mk.y}" width="${mk.w}" height="${mk.h}" href="${src}" style="image-rendering:pixelated"/>`
+        : `<rect x="${mk.x}" y="${mk.y}" width="${mk.w}" height="${mk.h}" fill="none" stroke="#e11d48" stroke-width="1" stroke-dasharray="4 3"/>`;
+    } else if (mk.on && mk.text) {
+      g += box(mk, mk.text, 'Corner mark');
+    }
     const cd = stField('code'); if (cd.on) g += box(cd, sample.code, 'Sticker code');
     const pr = stField('price'); if (pr.on) g += box(pr, sample.price, 'Our price');
     const rt = stField('retail'); if (rt.on) g += box(rt, (rt.prefix || '') + sample.retail, 'Street price');
@@ -19365,42 +19557,84 @@
     }
   }
 
-  async function stSave() {
-    if (!stTpl) return;
+  // Unpack the stored ^GFA hex back into pixels so the preview shows what is really stored,
+  // rather than re-rasterising the source and hoping the two agree.
+  function stMarkPreviewUri(im) {
+    try {
+      const c = document.createElement('canvas'); c.width = im.w; c.height = im.h;
+      const x = c.getContext('2d'), d = x.createImageData(im.w, im.h);
+      for (let y = 0; y < im.h; y++) for (let px = 0; px < im.w; px++) {
+        const byte = parseInt(im.hex.substr((y * im.bpr + (px >> 3)) * 2, 2), 16);
+        const on = (byte >> (7 - (px & 7))) & 1;
+        const p = (y * im.w + px) * 4;
+        d.data[p] = d.data[p + 1] = d.data[p + 2] = on ? 0 : 255; d.data[p + 3] = 255;
+      }
+      x.putImageData(d, 0, 0);
+      return c.toDataURL();
+    } catch (_) { return null; }
+  }
+
+  window.stPick = (id) => {
+    if (!id) { stTpl = { id: null, name: '', fields: JSON.parse(JSON.stringify(stDefaults.fields)) }; stDraw(); return; }
+    stStatus('Loading…');
+    fetch(`${WORKER_BASE}?action=sticker-template`, { credentials: 'include' })
+      .then(r => r.json()).then(j => {
+        const full = (j.templates || []).find(t => t.id === id);
+        // The list endpoint returns names only; the fields come from the save response or
+        // the active template, so switching re-reads rather than guessing.
+        return fetch(`${WORKER_BASE}?action=sticker-template-set`, {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ op: 'activate', id }),
+        }).then(r2 => r2.json().then(j2 => ({ r2, j2, full })));
+      })
+      .then(({ r2, j2 }) => {
+        if (!r2.ok) throw new Error(stFault(r2.status, j2));
+        stColl = { active: j2.active, templates: j2.templates || [] };
+        const t = (j2.items || []).find(x => x.id === j2.active);
+        if (t) stTpl = { id: t.id, name: t.name, fields: JSON.parse(JSON.stringify(t.fields)) };
+        psTpl = j2.template ? { ...j2.template, markImage: stImage } : null;
+        stDraw(); stStatus(`Now using ${t ? t.name : 'the stock layout'}.`);
+      })
+      .catch(e => stStatus(`Could not switch: ${e.message}`));
+  };
+
+  async function stPost(body, okMsg) {
     stStatus('Saving…');
     try {
       const r = await fetch(`${WORKER_BASE}?action=sticker-template-set`, {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields: stTpl.fields }),
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(stFault(r.status, j));
-      // The worker clamps, so what came back is what will print — adopt it rather than
-      // keeping the numbers that were typed. Otherwise the screen shows one label and the
-      // printer draws another.
-      stTpl = JSON.parse(JSON.stringify(j.template));
-      psTpl = j.template;
-      stDraw();
-      stStatus('Saved. Every store prints this from the next label on.');
+      stColl = { active: j.active || null, templates: j.templates || [] };
+      const mine = (j.items || []).find(t => t.id === (body.id || j.active)) || (j.items || []).find(t => t.id === j.active);
+      // 🔑 The worker clamps, so adopt what came BACK rather than keeping what was typed.
+      // Otherwise the screen shows one label and the printer draws another.
+      if (mine) stTpl = { id: mine.id, name: mine.name, fields: JSON.parse(JSON.stringify(mine.fields)) };
+      else if (!j.active) stTpl = { id: null, name: '', fields: JSON.parse(JSON.stringify(stDefaults.fields)) };
+      psTpl = j.template ? { ...j.template, markImage: stImage } : null;
+      stDraw(); stStatus(okMsg);
     } catch (e) { stStatus(`Not saved: ${e.message}`); }
   }
+
+  const stSave = () => {
+    if (!stTpl) return;
+    if (!String(stTpl.name || '').trim()) return stStatus('Give the template a name first.');
+    stPost({ op: 'save', id: stTpl.id || undefined, name: stTpl.name, fields: stTpl.fields, activate: !stTpl.id && !stColl.active },
+      'Saved. The one marked in use is what every store prints.');
+  };
   window.stSave = stSave;
+  window.stActivate = () => stTpl && stTpl.id && stPost({ op: 'activate', id: stTpl.id }, 'Every store prints this one from the next label on.');
+  window.stDelete = async () => {
+    if (!stTpl || !stTpl.id) return;
+    if (!await uiConfirm(`Delete “${stTpl.name}”? If it is the one in use, the next one takes over — or the stock label if none is left.`)) return;
+    stPost({ op: 'delete', id: stTpl.id }, 'Deleted.');
+  };
 
   async function stReset() {
-    if (!await uiConfirm('Put the sticker back to the stock layout? Anyone printing after this gets the original label.')) return;
-    stStatus('Resetting…');
-    try {
-      const r = await fetch(`${WORKER_BASE}?action=sticker-template-set`, {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reset: true }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(stFault(r.status, j));
-      stDefaults = j.defaults; stTpl = JSON.parse(JSON.stringify(j.defaults)); psTpl = null;
-      stDraw();
-      stStatus('Back to the stock template.');
-    } catch (e) { stStatus(`Not reset: ${e.message}`); }
+    if (!await uiConfirm('Delete every saved template and go back to the stock layout? The mark image is kept.')) return;
+    stPost({ op: 'reset' }, 'All templates deleted — back to the stock label.');
   }
   window.stReset = stReset;
 
@@ -19417,10 +19651,18 @@
         : `Zebra Browser Print is not answering on this machine (${(e && e.name) || 'error'}), so no test label can be printed.`);
     }
     if (!probe.dev) return stStatus(psNoPrinter(probe.saw));
+    // An unsaved image still prints on the test, packed on the spot — otherwise you would
+    // have to commit it to every store before you could see it on a real label.
+    let mark = stImage;
+    if (stImgEl) {
+      const f = stField('mark');
+      mark = stPack(stRaster(stImgEl, f.w, f.h, stCut));
+    }
     try {
       const r = await fetch('http://127.0.0.1:9100/write', {
         method: 'POST', headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ device: probe.dev, data: psZpl('BL-50008-2_5', 2.5, { retail: 29.99 }, stTpl) }),
+        body: JSON.stringify({ device: probe.dev,
+          data: psZpl('BL-50008-2_5', 2.5, { retail: 29.99 }, { ...stTpl, markImage: mark }) }),
         signal: AbortSignal.timeout(5000),
       });
       if (!r.ok) return stStatus(`Browser Print refused the label (${r.status}).`);

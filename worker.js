@@ -3935,6 +3935,7 @@ const ACTION_BUSINESS = new Map([
   ["sticker-history", "bl"],
   ["sticker-template", "bl"],
   ["sticker-template-set", "bl"],
+  ["sticker-mark-image", "bl"],
   ["manifest-upload", "bl"],
   ["manifest-remap", "bl"],
   ["manifest-classify", "bl"],
@@ -10814,7 +10815,21 @@ async function stickerCodeExists(env, store, code, known) {
 // them. The printer accepts nonsense silently -- a field off the edge just does not appear,
 // and a QR too small stops scanning at the register in front of a customer, which is the one
 // failure this whole feature exists to prevent.
-const STICKER_TEMPLATE_KEY = "sticker:template";
+const STICKER_TEMPLATE_KEY = "sticker:template";        // legacy single template, still read
+const STICKER_TEMPLATES_KEY = "sticker:templates";      // { active, items: [...] }
+const STICKER_MARK_IMAGE_KEY = "sticker:mark-image";    // one packed 1-bit bitmap, shared
+const STICKER_MAX_TEMPLATES = 10;
+const STICKER_NAME_MAX = 40;
+// A 1-bit bitmap is (ceil(w/8) * h) bytes, and it is inlined in EVERY label.
+// 🛑 THE BYTE CAP HAS TO BIND, OR IT IS DECORATION. At a 150-dot side the largest
+// possible pack is 19 x 150 = 2,850 bytes, so a 4,000-byte cap could never once have fired
+// -- a check that reads like protection and enforces nothing, which is exactly the shape of
+// the Clover duplicate guard that sat broken in this file for years. 1,600 bytes is the real
+// constraint, and it is the one that actually decides the answer; it keeps what goes down
+// the wire per label under two kilobytes. It allows 110x110 (1,540), 104x120 (1,560) or
+// 150x80 (1,520) for a wide mark -- comfortably more than the 74x74 the corner slot uses.
+const STICKER_MARK_MAX_SIDE = 150;
+const STICKER_MARK_MAX_BYTES = 1600;
 const STICKER_LABEL_DOTS = 203;          // 1 inch at 203 dpi -- the ZD410 this prints to
 const STICKER_QR_MIN_MAG = 4;            // proven at the register; below this is unproven
 const STICKER_QR_MAX_MAG = 8;
@@ -10829,7 +10844,7 @@ const STICKER_TEMPLATE_DEFAULT = Object.freeze({
   v: 1,
   fields: {
     qr:     { on: true,  x: 104, y: 10,  mag: 4 },
-    mark:   { on: true,  x: 12,  y: 18,  h: 74, w: 74, font: "0", text: "$" },
+    mark:   { on: true,  x: 12,  y: 18,  h: 74, w: 74, font: "0", text: "$", mode: "text" },
     code:   { on: true,  x: 10,  y: 116, h: 20, w: 20, font: "0" },
     price:  { on: true,  x: 10,  y: 142, h: 54, w: 54, font: "0" },
     retail: { on: false, x: 10,  y: 96,  h: 18, w: 18, font: "0", prefix: "Compare at " },
@@ -10840,6 +10855,8 @@ const stickerInt = (v, lo, hi, fallback) => {
   const n = Math.round(Number(v));
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
 };
+const stickerName = (v) => String(v === null || v === undefined ? "" : v)
+  .replace(/[\^~]/g, "").trim().slice(0, STICKER_NAME_MAX);
 const stickerText = (v, fallback) => {
   if (v === undefined || v === null) return fallback;
   return String(v).replace(/[\^~]/g, "").trim().slice(0, 24);   // ^ and ~ are ZPL control prefixes
@@ -10879,6 +10896,10 @@ function sanitizeStickerTemplate(body) {
     };
     if (def.text !== undefined) out.text = stickerText(src.text, def.text);
     if (def.prefix !== undefined) out.prefix = stickerText(src.prefix, def.prefix);
+    // 🔑 "image" is a MODE, not a second field. The corner slot has one position and one
+    // size; what fills it is text or a bitmap. Two overlapping fields would let a template
+    // ask for both and leave the printer to decide.
+    if (def.mode !== undefined) out.mode = ["text", "image"].includes(String(src.mode)) ? String(src.mode) : def.mode;
     return out;
   };
 
@@ -10894,6 +10915,58 @@ function sanitizeStickerTemplate(body) {
       },
     },
   };
+}
+
+// A packed 1-bit bitmap, ready for ^GFA. The browser does the rasterising and thresholding
+// -- it has a canvas and the printer does not -- but the WORKER decides what may be stored.
+// 🛑 The hex length is not a formality: ^GFA declares its own byte count, and a payload
+// shorter than the declared count makes the printer wait for bytes that never arrive, which
+// hangs the label rather than misdrawing it.
+// ── The template collection ──────────────────────────────────────────────────
+//
+// 🛑 THE OLD SINGLE-TEMPLATE KEY IS STILL READ. Somebody may already have saved a layout
+// under sticker:template; switching keys without carrying it across would quietly discard
+// their work and print the stock label instead. Read it once, wrap it as a named item, and
+// let the next save move it to the new key.
+async function loadStickerTemplates(env) {
+  const stored = await env.SALES_SNAPSHOTS?.get(STICKER_TEMPLATES_KEY, "json");
+  if (stored && Array.isArray(stored.items)) return stored;
+  const legacy = await env.SALES_SNAPSHOTS?.get(STICKER_TEMPLATE_KEY, "json");
+  if (legacy && legacy.fields) {
+    return { active: "legacy", items: [{
+      id: "legacy", name: "Saved layout", fields: legacy.fields,
+      updatedAt: legacy.updatedAt || null, updatedBy: legacy.updatedBy || null,
+    }] };
+  }
+  return { active: null, items: [] };
+}
+
+const stickerTemplateId = () => `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+// The active template, resolved. Null means "nobody has saved one", which every caller
+// treats as "draw the stock label" -- not as an error.
+function activeStickerTemplate(coll) {
+  if (!coll || !Array.isArray(coll.items) || !coll.items.length) return null;
+  return coll.items.find(t => t.id === coll.active) || null;
+}
+
+function sanitizeStickerMarkImage(body) {
+  const w = Math.round(Number(body?.w)), h = Math.round(Number(body?.h));
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w < 8 || h < 8
+      || w > STICKER_MARK_MAX_SIDE || h > STICKER_MARK_MAX_SIDE) {
+    return { error: `The mark image must be between 8 and ${STICKER_MARK_MAX_SIDE} dots on each side.` };
+  }
+  const hex = String(body?.hex || "").replace(/\s+/g, "").toUpperCase();
+  if (!/^[0-9A-F]*$/.test(hex)) return { error: "The mark image is not valid hex." };
+  const bpr = Math.ceil(w / 8);
+  const total = bpr * h;
+  if (total > STICKER_MARK_MAX_BYTES) {
+    return { error: `That image packs to ${total} bytes; the limit is ${STICKER_MARK_MAX_BYTES}.` };
+  }
+  if (hex.length !== total * 2) {
+    return { error: `The mark image is ${hex.length / 2} bytes but ${w}x${h} needs exactly ${total}.` };
+  }
+  return { image: { name: stickerText(body?.name, "") || "logo", w, h, bpr, total, hex } };
 }
 
 function merchTree() {
@@ -19282,21 +19355,30 @@ export default {
         return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
       }
       try {
-        const t = env.SALES_SNAPSHOTS ? await env.SALES_SNAPSHOTS.get(STICKER_TEMPLATE_KEY, "json") : null;
-        // \U0001f511 `template: null` is a real answer, not a failure: it means nobody has changed
-        // anything and the caller should draw the defaults. Returning the defaults here
-        // instead would make "never configured" and "configured back to stock" identical.
-        return new Response(JSON.stringify({ ok: true, template: t || null, defaults: STICKER_TEMPLATE_DEFAULT }),
-          { headers: corsJson });
+        const coll = await loadStickerTemplates(env);
+        const markImage = await env.SALES_SNAPSHOTS?.get(STICKER_MARK_IMAGE_KEY, "json");
+        // 🔑 `template: null` is a real answer, not a failure: nobody has saved one and the
+        // caller should draw the defaults. Returning the defaults here instead would make
+        // "never configured" and "configured back to stock" indistinguishable.
+        return new Response(JSON.stringify({
+          ok: true,
+          template: activeStickerTemplate(coll),
+          active: coll.active || null,
+          templates: (coll.items || []).map(t => ({ id: t.id, name: t.name, updatedAt: t.updatedAt, updatedBy: t.updatedBy })),
+          markImage: markImage || null,
+          defaults: STICKER_TEMPLATE_DEFAULT,
+          limits: { maxTemplates: STICKER_MAX_TEMPLATES, markMaxSide: STICKER_MARK_MAX_SIDE, markMaxBytes: STICKER_MARK_MAX_BYTES },
+        }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
     }
 
     // POST ?action=sticker-template-set  — superuser only.
-    // \U0001f6d1 EDITING IS NOT PRINTING. This changes every label the chain prints from here on,
+    // 🛑 EDITING IS NOT PRINTING. This changes every label the chain prints from here on,
     // which is a different act from putting one on a shelf. It matches the gate on the page
     // it lives on (Admin Tools is superuser-only) rather than the gate on the Print button.
+    // ops: save {id?, name, fields} | activate {id} | delete {id} | reset
     if (url.searchParams.get("action") === "sticker-template-set" && request.method === "POST") {
       if (!currentUser || currentUser.role !== "superuser") {
         return new Response(JSON.stringify({ error: "Superuser required", code: "NEED_SUPERUSER" }), { status: 403, headers: corsJson });
@@ -19304,33 +19386,81 @@ export default {
       if (!env.SALES_SNAPSHOTS) return new Response(JSON.stringify({ error: "Storage unavailable" }), { status: 503, headers: corsJson });
       try {
         const body = await request.json();
-        if (body && body.reset === true) {
-          await env.SALES_SNAPSHOTS.delete(STICKER_TEMPLATE_KEY);
-          return new Response(JSON.stringify({ ok: true, template: null, defaults: STICKER_TEMPLATE_DEFAULT }), { headers: corsJson });
+        const op = String(body?.op || (body?.reset ? "reset" : "save"));
+        const coll = await loadStickerTemplates(env);
+        const stamp = { updatedAt: new Date().toISOString(), updatedBy: (currentUser && currentUser.email) || "superuser" };
+
+        if (op === "reset") {
+          await env.SALES_SNAPSHOTS.delete(STICKER_TEMPLATES_KEY);
+          await env.SALES_SNAPSHOTS.delete(STICKER_TEMPLATE_KEY);   // the legacy key too, or it comes back
+          return new Response(JSON.stringify({ ok: true, template: null, active: null, templates: [], defaults: STICKER_TEMPLATE_DEFAULT }), { headers: corsJson });
         }
-        const clean = sanitizeStickerTemplate(body);
-        if (clean.error) {
-          return new Response(JSON.stringify({ error: clean.error }), { status: 400, headers: corsJson });
+
+        if (op === "activate" || op === "delete") {
+          const id = String(body?.id || "");
+          const at = (coll.items || []).findIndex(t => t.id === id);
+          if (at < 0) return new Response(JSON.stringify({ error: "No template with that id." }), { status: 404, headers: corsJson });
+          if (op === "activate") coll.active = id;
+          else {
+            coll.items.splice(at, 1);
+            // Deleting the active one falls back to whatever is left, or to the stock label.
+            if (coll.active === id) coll.active = coll.items.length ? coll.items[0].id : null;
+          }
+        } else {
+          const clean = sanitizeStickerTemplate(body);
+          if (clean.error) return new Response(JSON.stringify({ error: clean.error }), { status: 400, headers: corsJson });
+          const name = stickerName(body?.name);
+          if (!name) return new Response(JSON.stringify({ error: "Give the template a name." }), { status: 400, headers: corsJson });
+          const id = String(body?.id || "");
+          const at = (coll.items || []).findIndex(t => t.id === id);
+          if (at >= 0) {
+            coll.items[at] = { ...coll.items[at], name, fields: clean.tpl.fields, ...stamp };
+          } else {
+            if ((coll.items || []).length >= STICKER_MAX_TEMPLATES) {
+              return new Response(JSON.stringify({ error: `That is ${STICKER_MAX_TEMPLATES} templates already — delete one first.` }), { status: 400, headers: corsJson });
+            }
+            const fresh = { id: stickerTemplateId(), name, fields: clean.tpl.fields, ...stamp };
+            coll.items = [...(coll.items || []), fresh];
+            if (!coll.active) coll.active = fresh.id;
+            if (body?.activate) coll.active = fresh.id;
+          }
         }
-        const template = { ...clean.tpl,
-          updatedAt: new Date().toISOString(),
-          updatedBy: (currentUser && currentUser.email) || "superuser" };
-        await env.SALES_SNAPSHOTS.put(STICKER_TEMPLATE_KEY, JSON.stringify(template));
-        return new Response(JSON.stringify({ ok: true, template }), { headers: corsJson });
+
+        await env.SALES_SNAPSHOTS.put(STICKER_TEMPLATES_KEY, JSON.stringify(coll));
+        return new Response(JSON.stringify({
+          ok: true, active: coll.active || null, template: activeStickerTemplate(coll),
+          templates: coll.items.map(t => ({ id: t.id, name: t.name, updatedAt: t.updatedAt, updatedBy: t.updatedBy })),
+          items: coll.items, defaults: STICKER_TEMPLATE_DEFAULT,
+        }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
     }
 
-    // ── Can we print a shelf sticker for this? ────────────────────────────────
-    //    POST ?action=sticker-check  { l3, price, store? }
-    //
-    // 🛑 THIS REFUSES RATHER THAN GUESSES, and that is the point of it. The QR is a
-    // lookup key the POS resolves; a code with no Clover item behind it is a sticker
-    // that fails at the register with a customer waiting. So the answer is only ever
-    // "yes, this exact code exists" or "no, and here is which part is missing" —
-    // never a nearby price that happens to scan, because silently repricing an item
-    // to suit the label is the one outcome worse than not printing.
+    // POST ?action=sticker-mark-image  — superuser only. { name, w, h, hex } or { clear: true }
+    // One image, shared by every template: the corner slot is the same slot on all of them,
+    // and a per-template copy of the same logo is four copies to keep in step by hand.
+    if (url.searchParams.get("action") === "sticker-mark-image" && request.method === "POST") {
+      if (!currentUser || currentUser.role !== "superuser") {
+        return new Response(JSON.stringify({ error: "Superuser required", code: "NEED_SUPERUSER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.SALES_SNAPSHOTS) return new Response(JSON.stringify({ error: "Storage unavailable" }), { status: 503, headers: corsJson });
+      try {
+        const body = await request.json();
+        if (body?.clear === true) {
+          await env.SALES_SNAPSHOTS.delete(STICKER_MARK_IMAGE_KEY);
+          return new Response(JSON.stringify({ ok: true, markImage: null }), { headers: corsJson });
+        }
+        const clean = sanitizeStickerMarkImage(body);
+        if (clean.error) return new Response(JSON.stringify({ error: clean.error }), { status: 400, headers: corsJson });
+        const markImage = { ...clean.image, updatedAt: new Date().toISOString(), updatedBy: (currentUser && currentUser.email) || "superuser" };
+        await env.SALES_SNAPSHOTS.put(STICKER_MARK_IMAGE_KEY, JSON.stringify(markImage));
+        return new Response(JSON.stringify({ ok: true, markImage }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     if (url.searchParams.get("action") === "sticker-check" && request.method === "POST") {
       // 🛑 PRINTING IS NOT OVERRIDING. This was requireAdminAccess -> canAccessInventory,
       // which is superuser and admin ONLY -- so the people who actually put labels on
