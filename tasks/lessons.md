@@ -1013,3 +1013,43 @@ scan.
 
 **The cost was not the bug, it was the silence.** Four separate deploys went out to learn
 things that one honest error message would have said the first time.
+
+---
+
+## An empty answer is a fault, not a fact
+
+The sticker feature printed successfully, was merged, and was hard-reloaded — and then the
+screen said *"Zebra Browser Print is running, but reports no printer attached."* The probe
+was byte-for-byte the code that had printed an hour earlier. Nothing had regressed.
+
+The defect was that a **single** `{"printer":[]}` was treated as settled fact, and the
+sentence built from it named the printer as the cause. So the answer to a transient was a
+trip to the back room to check a cable that was fine.
+
+This is [MEMORY.md](../MEMORY.md) rule 4 — *"assume Clover degrades by returning LESS, not by
+erroring"* — arriving from a completely different vendor. I had the rule, I had written a
+test suite around it for Clover, and I did not carry it across the loopback boundary to
+Zebra. The rule is not about Clover. It is about **every** remote that answers.
+
+<rules>
+1. **A well-formed empty result is the weakest evidence there is.** It looks identical
+   whether the thing is absent, still starting, asleep, or was never asked properly. Ask
+   again before building a sentence on it, and say in the sentence how many times you asked.
+2. **Any probe of live device or service state must be `cache: 'no-store'`.** A runtime
+   `fetch` is not covered by the page's hard reload. An agent that sends no freshness headers
+   lets the browser heuristically cache a 200 — so one empty answer can outlive the printer
+   coming back, and every retry replays it.
+3. **Do not reject a thing the remote listed because a field you do not own is missing.**
+   The remote's own refusal is better evidence than a client-side guess. Prefer the
+   well-formed entry, fall back to the one that is there, and let the write speak.
+4. **"It worked before and the code has not changed" is a finding, not a dead end.** It
+   rules out regression and points straight at what the code assumes about the world. Check
+   the diff FIRST — three commits and one `git log -S` cost a minute and stopped me from
+   "fixing" code that was fine.
+5. **Report the count, not the conclusion.** "Answered twice, both times with no printer
+   attached (1 non-printer device seen)" tells the next person whether the agent is
+   enumerating at all. "No printer attached" tells them to go find a cable.
+6. **Mutation-test a guard the same session you add it.** Three one-line mutations proved the
+   retry, the no-store and the uid fallback each fail loudly when removed. A green suite
+   proves the code runs; only a red one proves the test is load-bearing.
+</rules>

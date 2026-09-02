@@ -399,9 +399,19 @@ Three real bugs surfaced along the way, all now fixed:
   so the browser sent an `OPTIONS` Browser Print does not answer, and the POST died before
   it left the browser. `text/plain` fixed it (#166); the body is still JSON.
 - **A 1500 ms probe deadline** that a cold agent could not meet (#167).
+- **An empty printer list read as a fact.** Reported from the floor after a clean merge and
+  hard reload, with the probe byte-for-byte the build that had printed an hour earlier — so
+  nothing had regressed. A single `{"printer":[]}` was taken as settled and named the printer
+  as the cause. Now the probe asks twice, sends `cache: 'no-store'` so one empty answer
+  cannot outlive the printer coming back, offers a device the agent lists but gives no uid
+  rather than discarding it, and quotes what was counted instead of asserting a cause.
+  This is MEMORY.md rule 4 reaching us from a second vendor.
 
 ### Still open
 
+- **Whether the ZD410 was genuinely asleep** on the report above, or whether the agent was
+  mid-enumeration. The retry and the new counts settle it on the next occurrence; until one
+  happens, the cause is unproven and the fix is a fix for both.
 - **`BL-10389-3_50`** — one item in Clover keeps a trailing zero where all 240 other
   underscore codes drop it. A $3.50 item in that category will refuse to print until that
   item is renamed. A data fix, not a code one; teaching the encoder two spellings of one
