@@ -2146,6 +2146,120 @@ console.log('Price Scan');
   ok(/Clover did not answer/.test(down.why || ''), '…and says so');
 }
 
+// ── An empty printer list is not proof there is no printer ────────────────────
+// 🛑 REPORTED FROM THE FLOOR, after the feature had already printed successfully and
+// with the probe byte-for-byte unchanged: "Browser Print is running, but reports no printer
+// attached." The old code took a single {"printer":[]} as settled fact and named the printer
+// as the cause — sending someone to the back room to check a cable that was fine.
+//
+// 🔑 THE SAME SHAPE AS MEMORY.md RULE 4, from a different vendor. Clover degrades by
+// returning LESS rather than by erroring, and so does this agent: it starts answering before
+// it has finished enumerating USB, so a well-formed empty list means "not yet" at least as
+// often as it means "nothing there". Three things follow, and all three are asserted below:
+// ask twice, never let the answer be cached, and say what was actually counted.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  // Bounded on psPrint, the declaration immediately after — not on a distant marker.
+  const src = sliceOrNull(html, '  const PS_ZEBRA_PROBE_MS', '  async function psPrint()');
+  ok(src, 'the probe block is where the test expects it');
+
+  ok(/cache: 'no-store'/.test(src || ''),
+     '🛑 the probe is uncacheable — one empty answer must not outlive the printer returning');
+
+  let seen = [];
+  // Answers are consumed in order; the last one repeats, so a one-element list is a
+  // printer that stays absent however many times it is asked.
+  const agent = (...answers) => {
+    seen = [];
+    return async (url, opts) => {
+      seen.push({ url, cache: opts?.cache });
+      const a = answers[Math.min(seen.length - 1, answers.length - 1)];
+      if (a instanceof Error) throw a;
+      return { json: async () => a };
+    };
+  };
+  const build = (fetchImpl) => buildOrStub('psZebraDevice', src,
+    ['fetch', 'AbortSignal', 'setTimeout'],
+    [fetchImpl, { timeout: () => null }, (f) => f()],
+    '{ psZebraDevice, psNoPrinter }');
+
+  const ZD410 = { uid: 'ZTC-50J213311631', name: 'ZTC ZD410-203dpi ZPL', connection: 'usb' };
+
+  {
+    const m = build(agent({ printer: [ZD410] }));
+    const got = await m.psZebraDevice();
+    eq(got.dev?.uid, ZD410.uid, 'a listed printer comes straight back');
+    eq(seen.length, 1, '…on ONE call — a warm agent is not made to answer twice');
+    eq(seen[0].cache, 'no-store', '…and even the first ask refuses the HTTP cache');
+  }
+
+  {
+    // The whole point. This is the sequence the floor hit.
+    const m = build(agent({ printer: [] }, { printer: [ZD410] }));
+    const got = await m.psZebraDevice();
+    eq(got.dev?.uid, ZD410.uid,
+       '🔑 an agent still enumerating USB gets asked again, and the label prints');
+    eq(seen.length, 2, '…which took the second ask');
+  }
+
+  {
+    const m = build(agent({ printer: [], otherDevices: [{ name: 'a scale' }] }));
+    const got = await m.psZebraDevice();
+    eq(got.dev, undefined, 'twice empty is reported as no device');
+    eq(got.saw.printers, 0, '…carrying the printer count the agent gave');
+    eq(got.saw.others, 1, '…and the non-printers, which say the agent is enumerating fine');
+    eq(seen.length, 2, '…after asking twice, which is what lets the message say so');
+    eq(seen[1].cache, 'no-store', '…and the RETRY is uncached too, or it is not a retry');
+  }
+
+  {
+    // 🛑 A device the agent lists but gives no uid used to be discarded silently, and the
+    // screen then claimed no printer was attached. The agent refusing our write is better
+    // evidence than our guess about a field we do not own.
+    const m = build(agent({ printer: [{ name: 'ZD410', connection: 'usb' }] }));
+    const got = await m.psZebraDevice();
+    eq(got.dev?.name, 'ZD410', 'a printer without a uid is offered, not thrown away');
+  }
+
+  {
+    const m = build(agent({ printer: [null] }));
+    const got = await m.psZebraDevice();
+    eq(got.dev, undefined, 'a junk entry is not offered as a device');
+    eq(got.saw.printers, 1, '…but it IS counted, so the message can say listed-yet-unusable');
+  }
+
+  {
+    const m = build(agent({}, {}));
+    const got = await m.psZebraDevice();
+    eq(got.saw.printers, 0, 'an answer with no printer key at all does not throw');
+  }
+
+  {
+    // The probe throwing means the agent is absent or slow, which psPrint reports
+    // separately. Folding it in here would rebuild the blanket catch this feature
+    // has already been bitten by twice.
+    const boom = Object.assign(new Error('signal timed out'), { name: 'TimeoutError' });
+    const m = build(agent(boom));
+    let threw = null;
+    try { await m.psZebraDevice(); } catch (e) { threw = e; }
+    eq(threw?.name, 'TimeoutError', '🛑 a probe that throws still throws — it is a different fault');
+  }
+
+  {
+    const m = build(agent({ printer: [] }));
+    const none = m.psNoPrinter({ printers: 0, others: 0 });
+    const some = m.psNoPrinter({ printers: 2, others: 0 });
+    ok(/answered twice/.test(none),
+       '🔑 the refusal says it asked twice — the fact that makes the next report decisive');
+    ok(/powered on/.test(none), '…and only THEN suggests looking at the printer');
+    ok(/Restart Browser Print/.test(some),
+       'a listed-but-unaddressable device points at the agent, not at the hardware');
+    ok(/\b2 printer/.test(some), '…quoting the count, rather than asserting a cause');
+    ok(none !== some, 'the two causes do not share a sentence');
+    ok(!/\(0 non-printer/.test(none), 'a zero count is left out rather than printed as noise');
+  }
+}
+
 // ── Printing says which thing failed ───────────────────────────────────────────
 // 🛑 CONFIRMED AGAINST A REAL ZD410. Browser Print was installed, running, and reporting
 // the printer over GET /available — and the screen still said it was not running, because
@@ -2174,8 +2288,10 @@ console.log('Price Scan');
      'the reason is written down, because the header looks wrong to anyone who has not hit this');
 
   // Each failure names itself. The old message was a confident claim that was simply false.
-  const claims = fn.match(/did not answer within|is not answering|reports no printer|Could not send|refused the label/g) || [];
-  eq(claims.length, 5, '🔑 five distinct failures, five distinct sentences');
+  const claims = fn.match(/did not answer within|is not answering|Could not send|refused the label/g) || [];
+  eq(claims.length, 4, '🔑 four distinct failures here, four distinct sentences');
+  ok(/return fail\(psNoPrinter\(probe\.saw\)\)/.test(fn),
+     '…and the fifth defers to psNoPrinter, which splits again on what the agent counted');
 
   // 🛑 THE PROBE FAILURE SPLITS IN TWO, and getting this wrong cost a round trip of its own.
   // I bound `e` in the probe catch and then did not use it, so a slow agent and an absent

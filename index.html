@@ -19115,12 +19115,52 @@
   // longer, and a TimeoutError there is indistinguishable from an absent agent unless the
   // message says which it was. Raised to 5s and named, because psPrint quotes it.
   const PS_ZEBRA_PROBE_MS = 5000;
+  // 🛑 AN EMPTY DEVICE LIST IS NOT PROOF THERE IS NO PRINTER. It is the degradation
+  // MEMORY.md rule 4 records for Clover, from a different vendor: the thing answers, on time,
+  // with LESS. The agent starts serving before it has finished enumerating USB, so a probe
+  // landing in that window gets a perfectly well-formed {"printer":[]}. One short re-ask
+  // turns that transient into a print, and it is what earns the refusal below the right to
+  // say "twice" and mean it.
+  const PS_ZEBRA_RETRY_MS = 800;
 
+  // Returns { dev } once a printer is listed, else { saw } — the counts the agent actually
+  // reported. Never a bare null: "no printer" and "no answer" send someone to two different
+  // places, and only the agent knows which one this is.
   async function psZebraDevice() {
-    const r = await fetch('http://127.0.0.1:9100/available', { signal: AbortSignal.timeout(PS_ZEBRA_PROBE_MS) });
-    const d = await r.json();
-    return (d?.printer || []).find(p => p?.uid) || null;
+    let saw = { printers: 0, others: 0 };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt) await new Promise(done => setTimeout(done, PS_ZEBRA_RETRY_MS));
+      const r = await fetch('http://127.0.0.1:9100/available', {
+        // 🛑 no-store, or ONE empty answer outlives the printer coming back. This is a
+        // runtime fetch, so the page's hard reload does not cover it, and the agent sends no
+        // freshness headers — which leaves the browser free to heuristically cache the 200,
+        // after which every retry, reload and reprint replays that same empty list.
+        cache: 'no-store',
+        signal: AbortSignal.timeout(PS_ZEBRA_PROBE_MS),
+      });
+      const d = await r.json();
+      const printers = Array.isArray(d?.printer) ? d.printer : [];
+      // Prefer a device the agent has given a uid; do not REFUSE one it has not. Its own
+      // answer to a write is better evidence than our guess about a field we do not own,
+      // and a listed-but-unaddressable device is a different fault, with a different fix.
+      const dev = printers.find(p => p?.uid) || printers[0] || null;
+      if (dev) return { dev };
+      const others = Array.isArray(d?.otherDevices) ? d.otherDevices : [];
+      saw = { printers: printers.length, others: others.length };
+    }
+    return { saw };
   }
+
+  // 🔑 Two causes, two sentences, and both quote what was counted instead of asserting a
+  // cause. The one line this replaces named the printer as the culprit on evidence that never
+  // told it apart from an agent still starting up — and it reads as an instruction to go
+  // check cables, which is a trip to the back room to confirm something already true.
+  const psNoPrinter = (saw) => saw.printers
+    ? `Browser Print lists ${saw.printers} printer(s), but the agent gave none of them an id `
+      + 'to print to. Restart Browser Print.'
+    : 'Browser Print is running and answered twice, both times with no printer attached'
+      + (saw.others ? ` (${saw.others} non-printer device(s) seen)` : '')
+      + '. Check the printer is powered on, awake, and on USB.';
 
   async function psPrint() {
     const a = psSticker;
@@ -19131,9 +19171,9 @@
     // textContent, not innerHTML: some of these carry text straight from the agent.
     const fail = (msg) => { if (note) { note.className = 'ps-stat no'; note.textContent = msg; } };
     try {
-      let dev;
+      let probe;
       try {
-        dev = await psZebraDevice();
+        probe = await psZebraDevice();
       } catch (e) {
         // 🛑 ONLY THIS FAILURE MEANS THE AGENT MIGHT BE ABSENT, and it used to be the message
         // for all of them. One `catch (_)` wrapped the probe, the missing-device throw AND the
@@ -19153,10 +19193,8 @@
             + `${e?.message || 'no detail'}), so the QR cannot be drawn. Check it is running, `
             + 'or print from a machine that has it.');
       }
-      if (!dev) {
-        return fail('Zebra Browser Print is running, but reports no printer attached. '
-          + 'Check the printer is powered on and connected.');
-      }
+      if (!probe.dev) return fail(psNoPrinter(probe.saw));
+      const dev = probe.dev;
       let r;
       try {
         r = await fetch('http://127.0.0.1:9100/write', {
@@ -19278,8 +19316,9 @@
       });
       const a = await r.json().catch(() => ({}));
       if (!r.ok || !a.printable) { say(a.detail || psStickerFault(r.status, a)); return; }
-      const dev = await psZebraDevice();
-      if (!dev) { say('Browser Print reports no printer attached.'); return; }
+      const probe = await psZebraDevice();
+      if (!probe.dev) { say(psNoPrinter(probe.saw)); return; }
+      const dev = probe.dev;
       const w = await fetch('http://127.0.0.1:9100/write', {
         method: 'POST', headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ device: dev, data: psZpl(a.code, p.price) }),
