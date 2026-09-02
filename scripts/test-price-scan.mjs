@@ -2147,13 +2147,13 @@ console.log('Price Scan');
 }
 
 // ── Printing is not overriding ────────────────────────────────────────────────
-// \U0001f6d1 THE STICKER FEATURE WAS INVISIBLE TO THE PEOPLE WHO USE IT. Every sticker action
+// \🛑 THE STICKER FEATURE WAS INVISIBLE TO THE PEOPLE WHO USE IT. Every sticker action
 // -- check, record, history -- ran through requireAdminAccess, which resolves to
 // canAccessInventory: superuser and admin ONLY. And the front end gated the Print button and
 // the Reprint tab on psCanOverride, the right to change what an item is worth for every
 // store, forever. Two different jobs wearing one right.
 //
-// \U0001f511 A SHELF LABEL IS NOT A PRICE OVERRIDE. It carries the code and the retail price that
+// \🔑 A SHELF LABEL IS NOT A PRICE OVERRIDE. It carries the code and the retail price that
 // merch-scan already computed -- and merch-scan requires canSeeFinancials, with the comment
 // "Managers use this on the floor, so it cannot be admin-only." The sticker now matches the
 // scan that produces it instead of out-ranking it. Still never staff.
@@ -2169,9 +2169,9 @@ console.log('Price Scan');
     ok(at > 0, `${action} has a handler`);
     const gate = codeOnly(worker.slice(at, at + 1400));
     ok(/if \(!isAdminSecret && !canSeeFinancials\(currentUser\)\)/.test(gate),
-       `\U0001f511 ${action} gates on canSeeFinancials -- the gate the scan itself uses`);
+       `\🔑 ${action} gates on canSeeFinancials -- the gate the scan itself uses`);
     ok(!/requireAdminAccess/.test(gate),
-       `\U0001f6d1 …and no longer on requireAdminAccess, which is superuser+admin only`);
+       `\🛑 …and no longer on requireAdminAccess, which is superuser+admin only`);
     ok(/NEED_MANAGER/.test(gate), `…refusing with NEED_MANAGER, which the screen can explain`);
   }
 
@@ -2183,10 +2183,10 @@ console.log('Price Scan');
   const canSee = new Function(`${roles[0]}\n${fn[0]}\n; return canSeeFinancials;`)();
   const U = (role) => ({ email: 'u@x.com', role });
 
-  ok(canSee(U('manager')), '\U0001f511 a manager can print -- the whole point of the change');
+  ok(canSee(U('manager')), '\🔑 a manager can print -- the whole point of the change');
   ok(canSee(U('executive')), '…and an executive');
   ok(canSee(U('admin')) && canSee(U('superuser')), '…and everyone who already could');
-  ok(!canSee(U('staff')), '\U0001f6d1 …but NOT staff. This widens the gate, it does not remove it');
+  ok(!canSee(U('staff')), '\🛑 …but NOT staff. This widens the gate, it does not remove it');
   ok(!canSee(null), '…and not an unauthenticated caller');
 
   // The front end must ask the same question, under its own name.
@@ -2196,7 +2196,7 @@ console.log('Price Scan');
   ok(/if \(!psCanPrint\(\)\) return ''/.test(row || ''),
      'the Print button is offered on the print right');
 
-  // \U0001f6d1 The two rights must stay SEPARATE. Collapsing them the other way would hand the
+  // \🛑 The two rights must stay SEPARATE. Collapsing them the other way would hand the
   // price-override control to every manager, which is the actual dangerous direction.
   // 🛑 EXISTING IS NOT ENOUGH -- a mutation that redefined psCanOverride as
   // canSeeFinancials passed this suite. That is the DANGEROUS direction: it would hand the
@@ -2215,14 +2215,14 @@ console.log('Price Scan');
   eq(managerMayOverride, false,
      '🛑 …and a manager who can now PRINT still cannot OVERRIDE a price');
   ok(/\$\{psCanOverride\(\) \? '<button class="ps-link" onclick="psOverride\(\)"/.test(html),
-     '\U0001f511 …and still guards the price override, which did NOT move');
+     '\🔑 …and still guards the price override, which did NOT move');
   ok(/case 'NEED_MANAGER':/.test(html),
      'a manager-gated refusal is explained, not shown as an unexplained 403');
 }
 
 
 // ── The reprint row shows what it was, and what we priced it at ───────────────
-// \U0001f6d1 SHIPPED BROKEN AND PHOTOGRAPHED. .ps-btn is width:100% -- it is built for the
+// \🛑 SHIPPED BROKEN AND PHOTOGRAPHED. .ps-btn is width:100% -- it is built for the
 // full-width "Scan" and "Look it up" buttons. Dropped into a flex row it demanded the whole
 // width, .ps-recent-main collapsed to about three characters, and .ps-recent-title (which is
 // white-space:nowrap) got clipped to nothing. The product name looked ABSENT; it was
@@ -2233,7 +2233,7 @@ console.log('Price Scan');
   ok(/\.ps-btn\{[^}]*width:100%/.test(html),
      'the base button is still width:100% -- this is the rule being overridden, not removed');
   ok(/\.ps-recent-row \.ps-btn\{[^}]*width:auto[^}]*flex:none/.test(html),
-     '\U0001f6d1 …and a button inside a reprint row sizes to its label instead of eating it');
+     '\🛑 …and a button inside a reprint row sizes to its label instead of eating it');
   ok(html.indexOf('.ps-recent-row .ps-btn{') > html.indexOf('.ps-btn{'),
      '…declared after it, so source order agrees with the specificity that already wins');
   ok(/\.ps-recent-row:first-child\{border-top:none\}/.test(html),
@@ -2262,9 +2262,9 @@ console.log('Price Scan');
   render();
 
   ok(/LIFEWTR Purified Water 1L/.test(box.innerHTML),
-     '\U0001f511 the product name is on the row -- the thing you check against the shelf');
+     '\🔑 the product name is on the row -- the thing you check against the shelf');
   ok(/ps-recent-price">\$1\.50</.test(box.innerHTML),
-     '\U0001f511 …and OUR price, which sticker-history has returned all along and nobody drew');
+     '\🔑 …and OUR price, which sticker-history has returned all along and nobody drew');
   ok(/\$3\.00</.test(box.innerHTML), 'a whole-dollar price still shows its cents');
   ok(/BL-50002-1_5/.test(box.innerHTML), 'the label code is still there, in the sub-line');
   ok(/5m ago/.test(box.innerHTML), '…with when it went out');
@@ -2275,17 +2275,17 @@ console.log('Price Scan');
   // The price must never be the bare number: 1.5 on a shelf label row reads as $1.05 at a
   // glance, and this page already has one formatter for exactly that reason.
   ok(/psMoney\(p\.price\)/.test(src || ''),
-     '\U0001f6d1 formatted with the page-wide psMoney, not a second formatter that can drift');
+     '\🛑 formatted with the page-wide psMoney, not a second formatter that can drift');
 }
 
 
 // ── Reprint is a tab, and one thing decides what the body shows ───────────────
-// \U0001f6d1 THE HIDING TRAP THIS FILE HAS ALREADY SHIPPED ONCE. `#ps-tabs{display:flex}` is an
+// \🛑 THE HIDING TRAP THIS FILE HAS ALREADY SHIPPED ONCE. `#ps-tabs{display:flex}` is an
 // ID selector; `.hidden` is a single class. The ID wins on specificity whatever the source
 // order, so toggling `hidden` leaves the tabs on screen -- exactly how the barcode controls
 // stayed visible in furniture mode. style.display is the only thing that works here.
 //
-// \U0001f511 AND ONE AUTHORITY DECIDES. Furniture mode takes the whole body over, so psApplyTab
+// \🔑 AND ONE AUTHORITY DECIDES. Furniture mode takes the whole body over, so psApplyTab
 // stands down entirely while it is open and the body is handed back on the way out. Two
 // writers on one element is the bug, not the symptom.
 {
@@ -2294,9 +2294,9 @@ console.log('Price Scan');
   ok(src, 'the tab block is where the test expects it');
 
   ok(!/id="ps-tabs"[^>]*class="[^"]*\bhidden\b/.test(html),
-     '\U0001f6d1 the tab bar is never hidden with the `hidden` class -- an ID selector outranks it');
+     '\🛑 the tab bar is never hidden with the `hidden` class -- an ID selector outranks it');
   ok(/id="ps-recent" style="display:none"/.test(html),
-     '\U0001f6d1 …and neither is the reprint panel, for the same reason');
+     '\🛑 …and neither is the reprint panel, for the same reason');
   ok(/id="ps-tab-reprint"[\s\S]{0,160}style="display:none"/.test(html),
      'the reprint tab starts hidden and is revealed only once the right is confirmed');
 
@@ -2326,7 +2326,7 @@ console.log('Price Scan');
     eq(map['ps-recent'].style.display, '', '…and shows the list');
     eq(map['ps-tab-reprint'].className, 'ps-tab on', '…with the Reprint tab lit');
     eq(map['ps-tab-scan'].className, 'ps-tab', '…and Scan no longer lit');
-    eq(spy.stopped, 1, '\U0001f6d1 leaving Scan stops the camera -- battery and privacy, not cosmetics');
+    eq(spy.stopped, 1, '\🛑 leaving Scan stops the camera -- battery and privacy, not cosmetics');
     eq(spy.loaded, 1, '…and the list is refreshed, because other people print too');
 
     spy.stopped = 0;
@@ -2340,7 +2340,7 @@ console.log('Price Scan');
     const m = build(map, { open: true }, spy);
     m.psApplyTab();
     eq(map['ps-barcode-mode'].style.display, undefined,
-       '\U0001f511 while furniture is open the tab writes NOTHING to the body');
+       '\🔑 while furniture is open the tab writes NOTHING to the body');
     eq(map['ps-tab-scan'].className, 'ps-tab on', '…though the bar still reflects the selection');
   }
 }
@@ -2353,7 +2353,7 @@ console.log('Price Scan');
 
   ok(/psCanPrint\(\)/.test(load || ''), 'the fetch still refuses without the right');
   ok(/psRecentRender\(\);\s*return;/.test(load || ''),
-     '\U0001f6d1 …but it now RENDERS on the way out. A bare return left the tab button on screen');
+     '\🛑 …but it now RENDERS on the way out. A bare return left the tab button on screen');
   ok(/reBtn\.style\.display = psCanPrint\(\)/.test(render || ''),
      'the tab is shown or hidden by the same right that gates the data');
   ok(/ps-recent-empty/.test(render || ''),
@@ -2363,7 +2363,7 @@ console.log('Price Scan');
 }
 
 // ── Contrast, computed against the real panel, not eyeballed ──────────────────
-// \U0001f6d1 #8a8371 was 3.77:1 on #ps-card's white. It survived as a footnote under a scan
+// \🛑 #8a8371 was 3.77:1 on #ps-card's white. It survived as a footnote under a scan
 // result; promoting it to a tab's primary content is what made it worth fixing.
 {
   const css = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
@@ -2376,7 +2376,7 @@ console.log('Price Scan');
     const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
     return (x + 0.05) / (y + 0.05);
   };
-  ok(!/color:#8a8371/.test(css), '\U0001f6d1 the 3.77:1 dim is gone from the file');
+  ok(!/color:#8a8371/.test(css), '\🛑 the 3.77:1 dim is gone from the file');
   ok(/\.ps-recent-sub\{font-size:11\.5px;color:#6b6453/.test(css),
      '…replaced by a dim already in this file, not a new token');
   ok(ratio('#6b6453', '#ffffff') >= 4.5,
@@ -2387,6 +2387,175 @@ console.log('Price Scan');
   ok(ratio('#8893a7', '#16203a') >= 4.5, '…and on the dark bar');
 }
 
+
+// ── The sticker template ─────────────────────────────────────────────────────
+// \🛑 THE ONE THAT MATTERS: A NULL TEMPLATE MUST EMIT THE OLD BYTES. Shipping a
+// configurable layout must not move a single dot on any shelf in the chain until somebody
+// deliberately moves one. Everything else in this block is secondary to that.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const at = html.indexOf('function psZpl(');
+  const fn = html.slice(at, html.indexOf('\n  }\n', at) + 5);
+  const psZpl = eval('(' + fn.replace(/\n\s*\/\/[^\n]*/g, '') + ')');
+
+  // The hardcoded label, transcribed from what it emitted before the template existed.
+  const legacy = (code, price) => {
+    const money = '$' + Number(price).toFixed(2);
+    return ['^XA', '^PW203', '^LL203', '^MNN', '^LH0,0',
+      `^FO104,10^BQN,2,4^FDLA,${code}^FS`, '^FO12,18^A0N,74,74^FD$^FS',
+      `^FO10,116^A0N,20,20^FD${code}^FS`, `^FO10,142^A0N,54,54^FD${money}^FS`, '^XZ'].join('\n');
+  };
+  for (const [c, p] of [['BL-50008-2_5', 2.5], ['BL-50002-10', 10], ['BL-99999-12_25', 12.25]]) {
+    eq(psZpl(c, p, {}, null), legacy(c, p),
+       `\🛑 a null template prints the OLD label byte for byte (${c})`);
+  }
+  eq(psZpl('BL-1-1', 1, { retail: 9.99 }, null), legacy('BL-1-1', 1),
+     '\🔑 …even with a street price available, because that field ships OFF');
+
+  // \🛑 NO STREET PRICE IS A NORMAL ANSWER. "No street price found" is a real scan outcome
+  // and every row printed before the column existed has none. It must vanish, not print
+  // "Compare at $0.00" or a bare dash on a shelf.
+  const withRetail = { fields: { retail: { on: true, x: 10, y: 96, h: 18, w: 18, font: '0', prefix: 'Compare at ' } } };
+  for (const v of [null, undefined, 0, '', NaN, 'x']) {
+    const out = psZpl('BL-1-1', 1, { retail: v }, withRetail);
+    ok(!/Compare|null|NaN|undefined|\$0\.00/.test(out), `a street price of ${JSON.stringify(v)} draws nothing at all`);
+  }
+  ok(psZpl('BL-1-1', 1, { retail: 29.99 }, withRetail).includes('^FO10,96^A0N,18,18^FDCompare at $29.99^FS'),
+     '…and a real one draws with its prefix');
+
+  // \🛑 ^ AND ~ OPEN ZPL COMMANDS. One inside an admin's prefix would end the field and
+  // print garbage, or be obeyed. A saved template is admin-authored, but the product title
+  // and the code are not, so this is stripped on the way out regardless.
+  const evil = psZpl('BL-1-1', 1, { retail: 5 },
+    { fields: { retail: { on: true, x: 10, y: 96, h: 18, w: 18, font: '0', prefix: '^XZ~ ' } } });
+  eq((evil.match(/\^XZ/g) || []).length, 1, '\🛑 an injected ^XZ cannot terminate the label early');
+  ok(!/~/.test(evil), '…and ~ is stripped too');
+
+  const moved = psZpl('BL-1-1', 1, {}, { fields: {
+    qr: { on: true, x: 60, y: 40, mag: 6 }, mark: { on: false }, price: { on: true, x: 4, y: 150, h: 40, w: 24, font: 'B' } } });
+  ok(moved.includes('^FO60,40^BQN,2,6^FDLA,BL-1-1^FS'), 'the QR moves and resizes');
+  ok(!/\^FD\$\^FS/.test(moved), 'the corner mark can be switched off');
+  ok(moved.includes('^FO4,150^ABN,40,24^FD$1.00^FS'), 'a text field takes its own font, height and width');
+  ok(moved.includes('^BQN'), '\🛑 the QR is drawn even when a template tries to omit it');
+}
+
+// ── The defaults exist twice, and cannot drift ───────────────────────────────
+// psZpl carries its own copy so it stays a pure function of its arguments and keeps working
+// when the template fetch fails. The worker carries the copy it validates against. Two
+// copies is the right call; two copies that disagree is a shelf full of wrong labels.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const worker = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+
+  const wDef = worker.match(/const STICKER_TEMPLATE_DEFAULT = Object\.freeze\(\{[\s\S]*?\n\}\);/);
+  ok(wDef, 'the worker defaults are extractable');
+  const W = new Function(`${wDef[0]}; return STICKER_TEMPLATE_DEFAULT;`)();
+
+  const at = html.indexOf('function psZpl(');
+  const body = html.slice(at, html.indexOf('\n  }\n', at) + 5);
+  const dSrc = body.match(/const D = \{[\s\S]*?\n    \};/);
+  ok(dSrc, "psZpl's defaults are extractable");
+  const D = new Function(`${dSrc[0]}; return D;`)();
+
+  eq(JSON.stringify(D), JSON.stringify(W.fields),
+     '\🛑 psZpl and the worker agree on every default, field for field');
+}
+
+// ── The worker refuses what a bad label is made of ───────────────────────────
+{
+  const worker = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const grab = (re, what) => { const m = worker.match(re); ok(m, `${what} is extractable`); return m ? m[0] : ''; };
+  const decls = [
+    grab(/const STICKER_LABEL_DOTS = [\s\S]*?\n/, 'STICKER_LABEL_DOTS'),
+    grab(/const STICKER_QR_MIN_MAG = [\s\S]*?\n/, 'STICKER_QR_MIN_MAG'),
+    grab(/const STICKER_QR_MAX_MAG = [\s\S]*?\n/, 'STICKER_QR_MAX_MAG'),
+    grab(/const STICKER_TEXT_MIN = [\s\S]*?\n/, 'STICKER_TEXT_MIN'),
+    grab(/const STICKER_TEXT_MAX = [\s\S]*?\n/, 'STICKER_TEXT_MAX'),
+    grab(/const STICKER_FONTS = new Set\(\[[\s\S]*?\]\);/, 'STICKER_FONTS'),
+    grab(/const STICKER_TEMPLATE_DEFAULT = Object\.freeze\(\{[\s\S]*?\n\}\);/, 'defaults'),
+    grab(/const stickerInt = [\s\S]*?\n\};/, 'stickerInt'),
+    grab(/const stickerText = [\s\S]*?\n\};/, 'stickerText'),
+    grab(/function sanitizeStickerTemplate\(body\) \{[\s\S]*?\n\}/, 'sanitizeStickerTemplate'),
+  ].join('\n');
+  const clean = new Function(`${decls}; return sanitizeStickerTemplate;`)();
+
+  // \🛑 THE QR IS NOT OPTIONAL. Everything else on the label is for a human; this is the
+  // only part the register reads, and a sticker it cannot read is the exact failure the
+  // whole feature exists to prevent.
+  ok(/cannot be removed/.test(clean({ fields: { qr: { on: false } } }).error || ''),
+     '\🛑 a template that turns the QR off is refused, not quietly corrected');
+  ok(/refused/.test(clean({ fields: { qr: { mag: 3 } } }).error || ''),
+     '\🛑 …and magnification below 4 is refused — 4 is what scans at the register today');
+  eq(clean({ fields: { qr: { mag: 6 } } }).tpl.fields.qr.mag, 6, '…while 6 is fine');
+  eq(clean({ fields: { qr: { mag: 99 } } }).tpl.fields.qr.mag, 8, '…and an absurd one clamps rather than failing');
+
+  // Coordinates CLAMP. A slider that overshoots is not worth refusing a save over.
+  eq(clean({ fields: { price: { x: 9999, y: -40 } } }).tpl.fields.price.x, 202, 'x clamps to the label');
+  eq(clean({ fields: { price: { x: 9999, y: -40 } } }).tpl.fields.price.y, 0, '…and y clamps at zero');
+  eq(clean({ fields: { price: { h: 1, w: 900 } } }).tpl.fields.price.h, 8, 'sizes clamp low');
+  eq(clean({ fields: { price: { h: 1, w: 900 } } }).tpl.fields.price.w, 150, '…and high');
+  eq(clean({ fields: { price: { x: 'abc' } } }).tpl.fields.price.x, 10, 'garbage falls back to the default');
+  eq(clean({ fields: { price: { font: 'Q' } } }).tpl.fields.price.font, '0', 'an unknown font falls back, not through');
+  eq(clean({ fields: { price: { font: 'B' } } }).tpl.fields.price.font, 'B', '…a real one is kept');
+
+  // \🛑 Same stripping as psZpl, on the way IN as well as out. Belt and braces: the stored
+  // value should never contain a ZPL control character in the first place.
+  const t = clean({ fields: { mark: { text: '  ^XZ~evil  ' } } }).tpl.fields.mark.text;
+  ok(!/[\^~]/.test(t), 'ZPL control characters are stripped before storage');
+  eq(clean({ fields: { mark: { text: 'x'.repeat(80) } } }).tpl.fields.mark.text.length, 24, 'text is length-capped');
+
+  eq(clean({}).tpl.fields.price.x, 10, 'an empty body yields the defaults');
+  eq(clean(null).tpl.fields.code.h, 20, '…and so does no body at all');
+  eq(clean({ fields: { mark: { on: false } } }).tpl.fields.mark.on, false, 'the corner mark CAN be switched off');
+}
+
+// ── Gates, and the street price surviving a reprint ──────────────────────────
+{
+  const worker = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const codeOnly = (t) => t.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
+  // 🛑 ANCHOR ON THE HANDLER, NOT THE ACTION NAME. Every one of these strings appears
+  // FIRST in the ACTION_BUSINESS registry hundreds of lines earlier, so slicing between bare
+  // names silently produced empty strings and six assertions "passed" against nothing until
+  // the emoji in their labels gave the game away.
+  const handler = (action, len) => {
+    const at = worker.indexOf(`url.searchParams.get("action") === "${action}"`);
+    ok(at > 0, `${action} has a handler`);
+    return at > 0 ? codeOnly(worker.slice(at, at + len)) : '';
+  };
+
+  const get = handler('sticker-template', 1200);
+  ok(/canSeeFinancials\(currentUser\)/.test(get),
+     'reading the template uses the PRINT gate -- everyone who prints needs it');
+  const set = handler('sticker-template-set', 2000);
+  ok(/currentUser\.role !== "superuser"/.test(set),
+     '🛑 …but EDITING it is superuser only. Changing every label the chain prints is not printing one.');
+  ok(/sanitizeStickerTemplate/.test(set), '…and nothing is stored without going through the validator');
+  ok(/\.delete\(STICKER_TEMPLATE_KEY\)/.test(set), 'reset removes the key rather than storing a copy of the defaults');
+
+  const printed = handler('sticker-printed', 3200);
+  ok(/retail_cents/.test(printed), 'a print records the street price it was made with');
+  ok(/INSERT INTO sticker_prints[\s\S]*retail_cents/.test(printed), '…in the INSERT, not just computed and dropped');
+  const hist = handler('sticker-history', 2400);
+  // 🛑 RUN IT, DO NOT GREP IT. Asserting the CONDITION `r.retail_cents === null` passed
+  // unchanged when the returned VALUE was mutated from null to 0 -- which would print
+  // "Compare at $0.00" on a shelf. The same shape of gap as pinning a function's name and
+  // calling it a behaviour. Extract the real expression and give it real rows.
+  const mapSrc = hist.match(/retail: r\.retail_cents[\s\S]*?\/ 100,/);
+  ok(mapSrc, 'the street-price mapping is extractable');
+  const mapRetail = new Function('r', `return (${(mapSrc || [''])[0].replace(/^retail:\s*/, '').replace(/,$/, '')});`);
+  eq(mapRetail({ retail_cents: null }), null,
+     '🛑 a null street price stays null -- 0.00 would print "Compare at $0.00" on a shelf');
+  eq(mapRetail({}), null, '…and a row from before the column existed does too');
+  eq(mapRetail({ retail_cents: 299 }), 2.99, '…while a real one comes back in dollars');
+  ok(/SELECT[\s\S]*retail_cents/.test(hist), '…and it is actually selected');
+
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  ok(/retail: j\.retail/.test(html), 'the front end sends the street price when recording a print');
+  ok(/psZpl\(a\.code, psLast\.price, \{ retail: psLast\.retail \}, psTpl\)/.test(html),
+     'the print path passes both the street price and the template');
+  ok(/let psTpl = null;/.test(html),
+     '🔑 the template starts null, so a failed fetch prints the stock label rather than nothing');
+}
 
 // ── An empty printer list is not proof there is no printer ────────────────────
 // 🛑 REPORTED FROM THE FLOOR, after the feature had already printed successfully and
@@ -2744,8 +2913,9 @@ console.log('Price Scan');
      '…from the stored INPUTS, so a renumbered category reprints under its new number');
   ok(/!a\.printable/.test(rp || ''),
      '🛑 …and prints only what comes back printable');
-  ok(/psZpl\(a\.code, p\.price\)/.test(rp || ''),
-     '🛑 the label carries the code the check JUST returned, never the stored one');
+  ok(/psZpl\(a\.code, p\.price, \{ retail: p\.retail \}, psTpl\)/.test(rp || ''),
+     '🛑 the label carries the code the check JUST returned, never the stored one -- and the '
+     + 'STORED street price, so a reprint is the same label the shelf already has');
   ok(/'Content-Type': 'text\/plain'/.test(rp || ''),
      '…and posts text/plain, so it does not trip the CORS preflight the main path already hit');
   ok(/if \(!w\.ok\)/.test(rp || ''), '…and a refused write is not reported as reprinted');

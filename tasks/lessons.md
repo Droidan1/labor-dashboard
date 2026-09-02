@@ -1094,3 +1094,36 @@ three more times because the first one looked deliberate.
 **The tell was in the screenshot.** A tab that renders for almost nobody looks identical to a
 tab that works. It took a user saying "everyone who prints" to surface a gate nobody had
 chosen.
+
+
+---
+
+## Grepping a name is not testing a behaviour
+
+Twice in one day, a mutation walked straight through a green suite.
+
+`psCanOverride` redefined as `canSeeFinancials` — which would have handed price overrides to
+every manager — passed a suite whose assertion was `ok(/psCanOverride/.test(html))`. And
+`retail: … ? null : …` mutated to `? 0 :` passed an assertion that read
+`ok(/r\.retail_cents === null/.test(hist))`, because the *condition* was untouched; only the
+value it returned changed. That one would have printed **"Compare at $0.00"** on a shelf.
+
+Both assertions were about the right lines. Neither was about the right thing.
+
+<rules>
+1. **If the thing under test is a value, produce the value.** Extract the real expression and
+   run it. `new Function('r', 'return (' + expr + ')')` over a matched source range costs three
+   lines and cannot be fooled by an edit that leaves the surrounding text intact.
+2. **A regex over source can only ever pin syntax.** It is fine for "this call site passes the
+   template" and useless for "this returns null". Know which one you are writing.
+3. **Mutate in the direction you did NOT go.** Both gaps were found by mutating toward the
+   dangerous outcome — widening a right, filling in a null — not by breaking the happy path.
+4. **Anchor slices on the handler, not the action name.** Every sticker action name appears
+   FIRST in the `ACTION_BUSINESS` registry hundreds of lines above its handler, so slicing
+   between bare names produced empty strings and six assertions passed against nothing. Only
+   an unrelated typo in a label revealed it. Anchor on
+   `url.searchParams.get("action") === "x"`, and assert the slice is non-empty.
+5. **A stale warning is worse than none.** `⏸ THE GEOMETRY IS UNVERIFIED` sat above psZpl long
+   after a real ZD410 had verified it and the QR had scanned at the register. The next person
+   to read it re-runs a check that is already done.
+</rules>
