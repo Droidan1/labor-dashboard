@@ -2247,6 +2247,24 @@
         .ps-btn:disabled{opacity:.5;cursor:default}
         .ps-row{display:flex;gap:9px}
         #ps-sticker{display:flex;flex-direction:column;gap:7px}
+        .ps-print-row{display:flex;gap:8px;align-items:stretch}
+        .ps-print-row #ps-print{flex:1}
+        .ps-store{font-size:13px;padding:0 8px;border-radius:8px;border:1px solid #d9d2c2;
+          background:#fff;color:#3f3a2f}
+        .dark .ps-store{border-color:#33415c;background:#0f172a;color:#e2e8f0}
+        #ps-recent{margin-top:14px}
+        .ps-recent-h{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+          color:#6b6453;margin-bottom:6px}
+        .dark .ps-recent-h{color:#8893a7}
+        .ps-recent-row{display:flex;align-items:center;gap:10px;padding:7px 0;
+          border-top:1px solid #e7e1d3}
+        .dark .ps-recent-row{border-top-color:#1e293b}
+        .ps-recent-main{flex:1;min-width:0}
+        .ps-recent-title{font-size:13px;color:#3f3a2f;overflow:hidden;text-overflow:ellipsis;
+          white-space:nowrap}
+        .dark .ps-recent-title{color:#e2e8f0}
+        .ps-recent-sub{font-size:11.5px;color:#8a8371;margin-top:1px}
+        .dark .ps-recent-sub{color:#7c899e}
         .ps-stat{font-size:12px;line-height:1.4;color:#6b6453}
         .dark .ps-stat{color:#8893a7}
         .ps-stat.no{color:#9a3412}
@@ -2447,6 +2465,10 @@
                              font-size:18px;line-height:1;cursor:pointer">&#9728;</button>
             </div>
             <div id="ps-result"></div>
+            <!-- 🔑 OUTSIDE #ps-result on purpose. The result is wiped by every scan, and the
+                 whole value of a reprint is not having to scan — a peeled label means the
+                 item is already on the shelf. -->
+            <div id="ps-recent" class="hidden"></div>
             <div id="fn-panel" class="hidden"></div>
           </div>
         </div>
@@ -18253,6 +18275,9 @@
     // every iPhone — 4 of the 6 installed devices — which is why it looked missing.
     el('ps-photo').value = '';
     psStopScan();   // never re-enter the page with a camera still running
+    // The reprint list is the one thing here that is useful BEFORE a scan — a peeled label
+    // means the item is already on the shelf — so it loads with the page, not with a result.
+    psRecentLoad();
     setTimeout(() => { try { el('ps-input').focus(); } catch (e) {} }, 60);
   }
   window.initPriceScan = initPriceScan;
@@ -18941,12 +18966,61 @@
   let psSticker = null;      // { printable, code, detail } for the item on screen
   let psStickerFor = null;   // which identifier that answer belongs to
 
+  // 🛑 PINNED TO THE WORKER'S ALL_STORES BY TEST. SC_ALL_STORES a few hundred lines up is
+  // missing BL8, and the note by the Inventory modal records that index.html has drifted
+  // from the worker's store list before. Here the two failure modes are both bad: a list
+  // that is short refuses a whole store outright, and one that is long offers a store the
+  // worker will reject. test-price-scan asserts these agree, so they cannot drift silently.
+  const PS_STORES = ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'];
+  const PS_STORE_KEY = 'ps-sticker-store';
+
+  // Which stores THIS account may print for. `currentUser.stores` is the effective scope:
+  // null means every store, an array is a restriction.
+  function psStickerStores() {
+    const scoped = currentUser && currentUser.stores;
+    return Array.isArray(scoped) ? scoped.filter(x => PS_STORES.includes(x)) : PS_STORES.slice();
+  }
+
+  // 🔑 NO DEFAULT WHEN THERE IS A CHOICE. Sticker numbers are per store, and the app cannot
+  // know which building someone is standing in — so with more than one store it asks, and
+  // the Print button stays disabled until it is answered. Defaulting to BL1 is what made a
+  // scan at BL4 verify against BL1's catalogue. Remembered per device, so it is asked once.
+  function psStickerStore() {
+    const allowed = psStickerStores();
+    if (allowed.length === 1) return allowed[0];
+    let saved = null;
+    try { saved = localStorage.getItem(PS_STORE_KEY); } catch (_) { /* private window */ }
+    return allowed.includes(saved) ? saved : null;
+  }
+
+  function psStoreChanged() {
+    const sel = el('ps-store');
+    if (!sel) return;
+    try { localStorage.setItem(PS_STORE_KEY, sel.value); } catch (_) { /* private window */ }
+    // The previous answer belonged to a different store, so it is not merely stale — it is
+    // about somewhere else. Drop it and ask again.
+    psSticker = null;
+    const btn = el('ps-print'), note = el('ps-print-note');
+    if (btn) btn.disabled = true;
+    if (note) { note.className = 'ps-stat'; note.textContent = 'Checking the sticker code…'; }
+    if (psLast) psStickerCheck(psLast);
+  }
+  window.psStoreChanged = psStoreChanged;
+
   function psStickerRow(j) {
     if (!psCanOverride()) return '';
     if (j.price === null || j.price === undefined) return '';
+    const allowed = psStickerStores();
+    const chosen = psStickerStore();
+    const picker = allowed.length > 1
+      ? `<select class="ps-store" id="ps-store" onchange="psStoreChanged()" aria-label="Store to print for">
+           <option value=""${chosen ? '' : ' selected'}>Store…</option>
+           ${allowed.map(x => `<option value="${x}"${x === chosen ? ' selected' : ''}>${x}</option>`).join('')}
+         </select>`
+      : '';
     return `<div id="ps-sticker">
-      <button class="ps-btn ghost" id="ps-print" type="button" disabled onclick="psPrint()">Print sticker</button>
-      <div class="ps-stat" id="ps-print-note">Checking the sticker code…</div>
+      <div class="ps-print-row">${picker}<button class="ps-btn ghost" id="ps-print" type="button" disabled onclick="psPrint()">Print sticker</button></div>
+      <div class="ps-stat" id="ps-print-note">${chosen ? 'Checking the sticker code…' : 'Pick the store you are printing for.'}</div>
     </div>`;
   }
 
@@ -18955,11 +19029,18 @@
   async function psStickerCheck(j) {
     if (!el('ps-print')) return;
     psSticker = null; psStickerFor = j.identifier || j.title || null;
+    // The worker refuses without a store anyway; asking first would spend a round trip to
+    // be told what the picker on screen already says.
+    if (!psStickerStore()) {
+      const note = el('ps-print-note');
+      if (note) { note.className = 'ps-stat'; note.textContent = 'Pick the store you are printing for.'; }
+      return;
+    }
     try {
       const r = await fetch(`${WORKER_BASE}?action=sticker-check`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ l3: j.l3, price: j.price }),
+        body: JSON.stringify({ l3: j.l3, price: j.price, store: psStickerStore() }),
       });
       const a = await r.json().catch(() => ({}));
       // The screen moved on while we were asking — say nothing about the old item.
@@ -19104,11 +19185,119 @@
         return fail(`Browser Print refused the label (${r.status})${txt ? ': ' + txt.slice(0, 120) : '.'}`);
       }
       if (note) note.innerHTML = `Sent <span class="ps-code">${psEsc(a.code)}</span> to ${psEsc(dev.name || 'the printer')}.`;
+      psRecordPrint(a, psLast);
     } finally {
       if (btn) btn.disabled = false;
     }
   }
   window.psPrint = psPrint;
+
+  // ── What was printed, and printing it again ──────────────────────────────────
+  //
+  // 🔑 A REPRINT RE-ASKS THE QUESTION. The stored row keeps store + category + price —
+  // the inputs sticker-check consumes — and a reprint runs that check again rather than
+  // replaying the stored code. So a category renumbered in Clover reprints under its NEW
+  // number, and a code deleted since is refused exactly as a fresh scan would be.
+  // Replaying the stored code would be one fewer round trip and would, eventually, put a
+  // sticker on a shelf that no longer resolves at the register. A convenience feature must
+  // not reintroduce the failure the feature exists to prevent.
+  let psRecent = [];
+
+  // Recording is best-effort and deliberately silent. The label is already out of the
+  // printer; telling someone their print "failed" because a history row did not save
+  // would be false, and would send them to reprint something they are holding.
+  async function psRecordPrint(a, j) {
+    try {
+      await fetch(`${WORKER_BASE}?action=sticker-printed`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ store: a.store, l3: j.l3, price: j.price, code: a.code,
+                               title: j.title || j.identifier || '' }),
+      });
+    } catch (_) { /* the sticker printed; the record is not worth an alarm */ }
+    psRecentLoad();
+  }
+
+  async function psRecentLoad() {
+    const box = el('ps-recent');
+    if (!box || !psCanOverride()) return;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=sticker-history&limit=8`, { credentials: 'include' });
+      const a = await r.json().catch(() => ({}));
+      psRecent = (r.ok && Array.isArray(a.prints)) ? a.prints : [];
+    } catch (_) { psRecent = []; }
+    psRecentRender();
+  }
+
+  function psRecentRender() {
+    const box = el('ps-recent');
+    if (!box) return;
+    if (!psRecent.length) { box.className = 'hidden'; box.innerHTML = ''; return; }
+    box.className = '';
+    box.innerHTML = `<div class="ps-recent-h">Recently printed</div>` + psRecent.map((p, i) => `
+      <div class="ps-recent-row">
+        <div class="ps-recent-main">
+          <div class="ps-recent-title">${psEsc(p.title || psL3Tail(p.l3) || p.code)}</div>
+          <div class="ps-recent-sub"><span class="ps-code">${psEsc(p.code)}</span> · ${psEsc(p.store)} · ${psEsc(psRecentWhen(p.printed_at))}</div>
+        </div>
+        <button class="ps-btn ghost" type="button" onclick="psReprint(${i})">Reprint</button>
+      </div>`).join('');
+  }
+
+  // merchLabel lives in the worker, not here. The Manifest table already shows an L3 by
+  // its tail segment (`l3.split(' - ').pop()`), so a print row reads the same way rather
+  // than spelling out FG BL CONSUMABLES - FOOD - BEVERAGES on a phone-width line.
+  const psL3Tail = (l3) => String(l3 || '').split(' - ').pop();
+
+  function psRecentWhen(iso) {
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return '';
+    const mins = Math.floor((Date.now() - t) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+    return `${Math.floor(mins / 1440)}d ago`;
+  }
+
+  // 🛑 THE SAME CHECK, NOT A SHORTCUT. This asks sticker-check with the stored inputs and
+  // prints only what comes back printable — so every refusal a fresh scan can give, a
+  // reprint gives too, in the same words.
+  async function psReprint(i) {
+    const p = psRecent[i];
+    if (!p) return;
+    const box = el('ps-recent');
+    const btns = box ? box.querySelectorAll('button') : [];
+    btns.forEach(b => { b.disabled = true; });
+    const say = (msg) => {
+      const row = box && box.querySelectorAll('.ps-recent-row')[i];
+      const sub = row && row.querySelector('.ps-recent-sub');
+      if (sub) sub.textContent = msg;
+    };
+    say('Checking…');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=sticker-check`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ l3: p.l3, price: p.price, store: p.store }),
+      });
+      const a = await r.json().catch(() => ({}));
+      if (!r.ok || !a.printable) { say(a.detail || psStickerFault(r.status, a)); return; }
+      const dev = await psZebraDevice();
+      if (!dev) { say('Browser Print reports no printer attached.'); return; }
+      const w = await fetch('http://127.0.0.1:9100/write', {
+        method: 'POST', headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ device: dev, data: psZpl(a.code, p.price) }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!w.ok) { say(`Browser Print refused the label (${w.status}).`); return; }
+      say(`Reprinted ${a.code}.`);
+    } catch (e) {
+      say(`Could not reprint: ${e.message}`);
+    } finally {
+      btns.forEach(b => { b.disabled = false; });
+    }
+  }
+  window.psReprint = psReprint;
 
   // Scanning and overriding are different rights: a manager prices items all day, but only
   // an admin may permanently change what an item is worth for every store. The worker

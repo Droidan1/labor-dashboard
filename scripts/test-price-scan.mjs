@@ -22,6 +22,29 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL: ' + m)
 const eq = (a, b, m) => ok(a === b, `${m} (got ${JSON.stringify(a)}, want ${JSON.stringify(b)})`);
 const near = (a, b, m) => ok(a !== null && Math.abs(a - b) < 0.05, `${m} (got ${JSON.stringify(a)}, want ~${b})`);
 
+// 🛑 A TEST MUST NAME A REGRESSION, NOT DIE ON IT. Several suites here lift a function out
+// of the source by slicing between markers and building it with `new Function`. When the
+// source regresses past a marker, indexOf returns -1, the slice is nonsense, and the build
+// throws — killing the process and taking every later suite with it, so the very thing
+// under test is reported as a stack trace rather than a named failure. That has happened
+// three times while writing this file. These two are the one answer to it.
+const sliceOrNull = (src, from, to) => {
+  const a = src.indexOf(from);
+  if (a < 0) return null;
+  const b = to ? src.indexOf(to, a) : -1;
+  return src.slice(a, b > a ? b : undefined);
+};
+// Returns the built function, or one that answers a sentinel every assertion will fail on
+// by name. `what` appears in that sentinel so the reason is legible from the output alone.
+const buildOrStub = (what, body, argNames, argVals, ret) => {
+  if (!body) return () => ({ MISSING: what });
+  try {
+    return new Function(...argNames, body + `\n; return ${ret};`)(...argVals);
+  } catch (e) {
+    return () => ({ UNBUILDABLE: `${what}: ${e.message}` });
+  }
+};
+
 const worker = await loadWorker(repo);
 const { db, env } = makeEnv(repo);
 for (const m of ['migration-041.sql', 'migration-042.sql', 'migration-043.sql'])
@@ -1871,7 +1894,10 @@ console.log('Price Scan');
   // 🛑 Search FORWARD from the handler for the end marker. `merch-scan` is mentioned in
   // an earlier comment too, so a bare indexOf picks that one and slices backwards to "".
   const at = src.indexOf('action") === "sticker-check"');
-  const h = src.slice(at, src.indexOf('POST ?action=merch-scan', at));
+  // 🛑 Bound on the NEXT handler, not a distant one. Adding sticker-printed between this
+  // handler and merch-scan swept its Math.round into the slice and tripped the guard that
+  // proves nothing here rounds a price to make a label scan. Same shape as the psZpl slice.
+  const h = src.slice(at, src.indexOf('action") === "sticker-printed"', at));
   ok(h.length > 500, 'the handler slice actually found the handler');
   for (const [why, re] of [
     ['no category',      /reason: "no category"/],
@@ -1881,8 +1907,10 @@ console.log('Price Scan');
     // This one is a ternary, not a literal `reason:` — the code exists, the item does not.
     ['no clover item',   /"no clover item"/],
   ]) ok(re.test(h), `refusal is named: ${why}`);
-  eq((h.match(/printable: false/g) || []).length, 5,
-     '🔑 every refusal says printable:false — five sites across the four named reasons');
+  eq((h.match(/printable: false/g) || []).length, 6,
+     '🔑 every refusal says printable:false — six sites across the five named reasons');
+  ok(/reason: "no store"/.test(h),
+     '…the newest being a store that was not named, which used to silently mean BL1');
   // 🔑 "clover unreachable" is TWO sites because there are two Clover round trips: the
   // category-code map and the existence check. Both must refuse; an outage at either one
   // leaves us unable to prove the code resolves, which is the whole bar for printing.
@@ -1994,12 +2022,15 @@ console.log('Price Scan');
 //   2. psStickerCheck never looked at r.ok, so it read any error body as a refusal.
 {
   const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
-  const fnSrc = src.slice(src.indexOf('async function stickerCategoryCodes('),
-                          src.indexOf('// Does this exact code exist in Clover?'));
-  const build = (cloverFetch) => new Function(
-    'cloverFetch', 'STICKER_CODES_KEY', 'STICKER_CODES_TTL',
-    fnSrc + '\n; return stickerCategoryCodes;',
-  )(cloverFetch, 'sticker:category-codes', 86400);
+  // 🔑 Slice from the KEY HELPER, not from the function. stickerCategoryCodes now resolves
+  // the store through stickerStore and scopes the cache through stickerCodesKey, both
+  // declared just above it — building it with stubs for those would test something else.
+  const fnSrc = sliceOrNull(src, 'const stickerCodesKey = (store)',
+                            '// Does this exact code exist in Clover?');
+  ok(fnSrc, 'worker.js still scopes the sticker cache key by store');
+  const build = (cloverFetch) => buildOrStub('stickerCategoryCodes', fnSrc,
+    ['cloverFetch', 'ALL_STORES'], [cloverFetch, ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16']],
+    'stickerCategoryCodes');
 
   const kv = (stored) => ({ SALES_SNAPSHOTS: {
     get: async () => stored,
@@ -2197,6 +2228,168 @@ console.log('Price Scan');
   const fn = html.slice(psZplAt, html.indexOf('\n  }\n', psZplAt) + 5);
   ok(/\^PW203/.test(fn) && /\^LL203/.test(fn),
      '🔑 203 dots square — one inch on the 203dpi ZD410 this prints to');
+}
+
+// ── Sticker numbers are per store ──────────────────────────────────────────────
+// 🛑 THE BUG THIS CLOSES SHIPPED AND WAS LIVE. The KV cache key was one string,
+// "sticker:category-codes", shared by all six stores — so whichever store swept last owned
+// the map and every other store read its numbers. The endpoint compounded it by defaulting
+// an absent store to BL1, and the front end never sent one at all. A manager scanning at
+// BL4 was therefore answered from BL1's catalogue: it could refuse a code that exists
+// locally, or approve one that does not — a sticker that fails at the register in front of
+// a customer, which is the single failure this whole feature exists to prevent.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+
+  ok(/const stickerCodesKey = \(store\) => `sticker:category-codes:\$\{store\}`/.test(src),
+     '🔑 the cache key carries the store, so one store cannot serve another its map');
+  ok(!/get\(STICKER_CODES_KEY/.test(src) && !/put\(STICKER_CODES_KEY/.test(src),
+     '…and the shared key is gone from both the read and the write');
+
+  // Resolve-and-validate, executed rather than grepped.
+  const vSrc = sliceOrNull(src, 'const stickerStore = (store)',
+                           'async function stickerCategoryCodes(');
+  ok(vSrc, 'worker.js declares stickerStore — without it there is nothing validating a store');
+  const stickerStore = buildOrStub('stickerStore', vSrc,
+    ['ALL_STORES'], [['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16']], 'stickerStore');
+  eq(stickerStore('BL4'), 'BL4', 'a real store resolves');
+  eq(stickerStore('bl4'), 'BL4', '…case-insensitively');
+  eq(stickerStore(' BL4 '), 'BL4', '…and trimmed');
+  eq(stickerStore(''), null, '🛑 an ABSENT store is null, never a default');
+  eq(stickerStore(undefined), null, '…however it is absent');
+  eq(stickerStore('BL99'), null, '🛑 an unknown store is null, not silently accepted');
+  eq(stickerStore('BL1; DROP'), null, '…and nothing that is not exactly a store name passes');
+
+  // The endpoint refuses before it does any work on a guess.
+  const at = src.indexOf('action") === "sticker-check"');
+  // 🛑 Bound on the NEXT handler, not a distant one. Adding sticker-printed between this
+  // handler and merch-scan swept its Math.round into the slice and tripped the guard that
+  // proves nothing here rounds a price to make a label scan. Same shape as the psZpl slice.
+  const h = src.slice(at, src.indexOf('action") === "sticker-printed"', at));
+  // Strip whole-line comments first — the comment explaining the fallback necessarily
+  // quotes it, so a naive grep matches the explanation and calls it the bug. Third time
+  // this has caught me; the rule is match the code, never the prose about the code.
+  const hCode = h.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
+  ok(!/body\?\.store \|\| "BL1"/.test(hCode),
+     '🛑 the BL1 fallback is gone — it is what made a BL4 scan read BL1');
+  ok(/reason: "no store"/.test(h),
+     '…replaced by a named refusal that says to pick one');
+  const storeAt = h.indexOf('const store = stickerStore(body?.store)');
+  const mapAt = h.indexOf('await stickerCategoryCodes(env, store)');
+  ok(storeAt > 0 && mapAt > storeAt,
+     '🔑 the store is validated BEFORE the catalogue is read, not after');
+}
+
+// 🔑 THE TWO STORE LISTS MUST AGREE, and index.html has drifted from the worker before —
+// SC_ALL_STORES a few hundred lines from PS_STORES is still missing BL8. A short list
+// refuses a whole store outright; a long one offers a store the worker will reject with
+// "no store", which reads as a bug in the picker rather than in the list.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const parse = (m) => m ? m[1].split(',').map(x => x.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean) : null;
+  const worker = parse(src.match(/const ALL_STORES = \[([^\]]+)\]/));
+  const front = parse(html.match(/const PS_STORES = \[([^\]]+)\]/));
+  ok(worker && worker.length, 'worker.js declares ALL_STORES');
+  ok(front && front.length, 'index.html declares PS_STORES');
+  eq((front || []).join(','), (worker || []).join(','),
+     '🔑 PS_STORES matches the worker ALL_STORES exactly — order included');
+}
+
+// The picker, and what it refuses to do without an answer.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const row = html.slice(html.indexOf('function psStickerStores()'),
+                         html.indexOf('// 🔑 ASKED AFTER RENDER'));
+
+  ok(/allowed\.length === 1/.test(row),
+     'a single-store account needs no picker — the answer is not in doubt');
+  ok(/localStorage\.getItem\(PS_STORE_KEY\)/.test(row) && /catch \(_\)/.test(row),
+     '…a multi-store one is asked once per device, and a private window does not throw');
+  ok(/allowed\.includes\(saved\)/.test(row),
+     '🛑 a remembered store the account may no longer print for is discarded, not trusted');
+  ok(/Pick the store you are printing for/.test(row),
+     '…and with no answer the row says so rather than checking anything');
+  ok(/psSticker = null/.test(row),
+     '🔑 changing store DROPS the previous answer — it was about somewhere else, not merely stale');
+
+  const chk = html.slice(html.indexOf('async function psStickerCheck('),
+                         html.indexOf('function psStickerFault('));
+  ok(/store: psStickerStore\(\)/.test(chk),
+     '🔑 the check sends the store — it never did, which is why every scan read BL1');
+  ok(/if \(!psStickerStore\(\)\)/.test(chk),
+     '…and does not spend a round trip to be told what the screen already says');
+}
+
+// ── Reprinting re-asks the question ────────────────────────────────────────────
+// 🔑 THE ROW STORES THE INPUTS, NOT THE ANSWER. sticker_prints keeps store + l3 +
+// price_cents — what sticker-check consumes — and `code` only so the list can show what
+// came out. A reprint runs the check again from those inputs, so a category renumbered in
+// Clover reprints under its NEW number and a code deleted since is refused exactly as a
+// fresh scan would be. Replaying the stored code would be one round trip cheaper and would
+// eventually put a sticker on a shelf that no longer resolves at the register — the single
+// failure this feature exists to prevent, reintroduced by a convenience.
+{
+  const sql = fs.readFileSync(path.join(repo, 'migration-056.sql'), 'utf8');
+  ok(/CREATE TABLE IF NOT EXISTS sticker_prints/.test(sql), 'the migration is additive');
+  for (const col of ['store', 'l3', 'price_cents', 'code', 'printed_by', 'printed_at'])
+    ok(new RegExp(`\\n  ${col}\\s`).test(sql), `sticker_prints keeps ${col}`);
+  ok(/price_cents INTEGER/.test(sql),
+     '🛑 cents, not a float — the price is what BOTH $1.50 and the 1_5 in the code come from');
+  ok(/CREATE INDEX IF NOT EXISTS idx_sticker_prints_by_user/.test(sql),
+     'the only query it serves — my prints, newest first — is indexed');
+
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const rec = sliceOrNull(src, 'action") === "sticker-printed"', 'action") === "sticker-history"');
+  ok(rec, 'worker.js records prints');
+  ok(/stickerStore\(body\?\.store\)/.test(rec || ''),
+     '🔑 the recorded store is validated, not taken on trust — a bad one poisons every reprint');
+  ok(/Math\.round\(Number\(body\?\.price\) \* 100\)/.test(rec || ''),
+     '…and the price is stored as cents');
+  ok(/cents <= 0/.test(rec || ''), '…a zero or negative price is refused, as everywhere else');
+
+  const hist = sliceOrNull(src, 'action") === "sticker-history"', 'POST ?action=merch-scan');
+  ok(hist, 'worker.js lists them');
+  ok(/WHERE printed_by = \?/.test(hist || ''),
+     '🔑 scoped to the caller — reprinting someone else’s label is for a shelf you are not at');
+  ok(/ORDER BY printed_at DESC LIMIT \?/.test(hist || ''), '…newest first, and bounded');
+  ok(/Math\.min\(Math\.max\(parseInt/.test(hist || ''),
+     '…with the limit clamped, so a crafted query cannot ask for the whole table');
+
+  // Both actions must be classified, or the gate 403s them on first production use — which
+  // is exactly what happened to sticker-check in #162.
+  ok(/\["sticker-printed", "bl"\]/.test(src) && /\["sticker-history", "bl"\]/.test(src),
+     '🛑 both actions are classified in ACTION_BUSINESS');
+}
+
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const rp = sliceOrNull(html, 'async function psReprint(i)', 'window.psReprint = psReprint;');
+  ok(rp, 'index.html defines psReprint');
+  ok(/action=sticker-check/.test(rp || ''),
+     '🔑 a reprint runs the SAME check — every refusal a fresh scan gives, it gives too');
+  ok(/l3: p\.l3, price: p\.price, store: p\.store/.test(rp || ''),
+     '…from the stored INPUTS, so a renumbered category reprints under its new number');
+  ok(/!a\.printable/.test(rp || ''),
+     '🛑 …and prints only what comes back printable');
+  ok(/psZpl\(a\.code, p\.price\)/.test(rp || ''),
+     '🛑 the label carries the code the check JUST returned, never the stored one');
+  ok(/'Content-Type': 'text\/plain'/.test(rp || ''),
+     '…and posts text/plain, so it does not trip the CORS preflight the main path already hit');
+  ok(/if \(!w\.ok\)/.test(rp || ''), '…and a refused write is not reported as reprinted');
+
+  const rec = sliceOrNull(html, 'async function psRecordPrint(', 'async function psRecentLoad(');
+  ok(rec, 'index.html records a print');
+  ok(/catch \(_\)/.test(rec || '') && /not worth an alarm/.test(rec || ''),
+     '🔑 recording is best-effort — the label is already out, so a failed row is not a failed print');
+
+  // The panel must survive a scan, because not scanning is the entire point of it.
+  ok(/<div id="ps-recent" class="hidden"><\/div>/.test(html),
+     '🔑 the list lives OUTSIDE #ps-result, which every scan wipes');
+  ok(/psRecentLoad\(\);\n\s*setTimeout/.test(html),
+     '…and loads with the page, not with a result');
+  ok(!/merchLabel\(/.test(sliceOrNull(html, 'function psRecentRender()', 'function psRecentWhen') || ''),
+     '🛑 no merchLabel here — it is worker-side, and calling it would throw on every row');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
