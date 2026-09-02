@@ -1842,10 +1842,10 @@ console.log('Price Scan');
                        src.indexOf('async function stickerCodeExists('));
   ok(/it\?\.sku/.test(fn) && /it\?\.code/.test(fn),
      'the map is derived from code OR sku, the way the Inventory page already reads them');
-  ok(/field === "sku" \? "sku" : "code"/.test(src),
-     '…and the existence check filters on whichever field the map was built from');
-  ok(/return \{ map, field \}/.test(fn),
-     '…so the choice travels with the map rather than being guessed twice');
+  ok(/return \{ map, field, codes \}/.test(fn),
+     '…and the codes fall out of the same pass, so existence needs no second Clover call');
+  ok(/seen\.add\(String\(it\[field\]\)\)/.test(fn),
+     '🔑 the recorded code is the one from the field that matched, not a guess between two');
 }
 
 // 🛑 THE STICKER CODE MAP IS NOT IM_TO_L2, however much they look alike. Both are numeric
@@ -2071,48 +2071,43 @@ console.log('Price Scan');
        `no fault renders blank: ${st} ${JSON.stringify(body)}`);
 }
 
-// ── The lookup has to say why it failed ────────────────────────────────────────
-// 🛑 THIS IS THE THIRD LAYER OF THIS FEATURE TO THROW AN ERROR AWAY, and it is the one
-// that cost the most. In production the derivation was entirely correct — BL-50002-1_5
-// was derived for Beverages at $1.50, and that item genuinely exists in Clover — and the
-// only thing between us and a printed sticker was `if (!r?.ok) return null`, which
-// discarded the status and the body. On the floor there is no console: whatever this
-// function declines to say is simply not knowable.
+// ── Existence is a set lookup, and a miss re-reads before it refuses ───────────
+// 🛑 CLOVER HAS NO `code` FILTER. The old check asked items?filter=code=BL-50002-1_5 and
+// got 400 "'code' is not a supported field for this filter" every single time, so it could
+// never have succeeded — and it discarded the body, so all it said was "Clover did not
+// answer". The sweep already reads every item and extracts every BL- string to build the
+// map, so the set of live codes is free and the network call goes away entirely.
 {
   const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
   const fnSrc = src.slice(src.indexOf('async function stickerCodeExists('),
                           src.indexOf('function merchTree('));
-  const build = (cloverFetch) => new Function('cloverFetch', fnSrc + '\n; return stickerCodeExists;')(cloverFetch);
-  const env = { BL1_MERCHANT_ID: 'M1', BL1_API_TOKEN: 't' };
-  const resp = (status, body, json) => ({ ok: status >= 200 && status < 300, status,
-                                          text: async () => body, json: async () => json });
+  ok(!/filter=/.test(fnSrc),
+     '🔑 nothing here asks Clover to filter — the field that 400s is gone from this path');
+  const build = (sweep) => new Function('stickerCategoryCodes', fnSrc + '\n; return stickerCodeExists;')(sweep);
 
-  const found = await build(async () => resp(401, '{"message":"401 Unauthorized"}'))(env, 'BL1', 'BL-50002-1_5');
-  eq(found.exists, null, 'a refused lookup is still UNKNOWN, never permission to print');
-  eq(found.status, 401, '…and the status survives');
-  ok(/401/.test(found.why) && /Unauthorized/.test(found.why),
-     '🔑 the WHY carries both the status and what Clover actually said');
+  // A hit answers from the set WITHOUT re-reading. That is the whole point of the change.
+  let sweeps = 0;
+  const counting = build(async () => { sweeps++; return { codes: [] }; });
+  const hit = await counting({}, 'BL1', 'BL-50002-1_5', ['BL-50002-1', 'BL-50002-1_5']);
+  eq(hit.exists, true, 'a code in the set exists');
+  eq(sweeps, 0, '🔑 …and answering it costs no Clover call at all');
 
-  const rate = await build(async () => resp(429, 'rate limit exceeded'))(env, 'BL1', 'BL-50002-1_5');
-  ok(/429/.test(rate.why) && /rate limit/.test(rate.why),
-     '…a 429 reads as a rate limit rather than as a missing item');
+  // 🛑 A MISS MUST RE-READ BEFORE REFUSING. A manager who just created a price point in
+  // Clover expects to print it now, not when a 24h cache turns over — and the cached set
+  // is exactly as old as the last sweep.
+  const created = build(async () => ({ codes: ['BL-50002-2_25'] }));
+  const late = await created({}, 'BL1', 'BL-50002-2_25', []);
+  eq(late.exists, true, 'a code created since the sweep is found by the forced re-read');
+  eq(late.rechecked, true, '…and says it had to look again');
 
-  // A throw is the same event as a refusal here, and cloverFetch throws rather than
-  // returning a non-ok response when Clover is unreachable.
-  const threw = await build(async () => { throw new TypeError('network error'); })(env, 'BL1', 'BL-50002-1_5')
-    .catch(e => ({ exists: 'ESCAPED: ' + e.message }));
-  eq(threw.exists, null, '🛑 a thrown fetch is caught, not left to escape as a 500');
-  ok(/network error/.test(threw.why || ''), '…and it says what threw');
+  const absent = await build(async () => ({ codes: [] }))({}, 'BL1', 'BL-50002-9_99', []);
+  eq(absent.exists, false,
+     '🛑 a genuinely absent code is FALSE, not unknown — never refuse a real miss as an outage');
 
-  // The happy paths still answer plainly.
-  const hit = await build(async () => resp(200, '', { elements: [{ id: 'x' }] }))(env, 'BL1', 'BL-50002-1_5');
-  eq(hit.exists, true, 'a found item is exists:true');
-  const miss = await build(async () => resp(200, '', { elements: [] }))(env, 'BL1', 'BL-50002-9_99');
-  eq(miss.exists, false, '…and a genuinely absent one is false, NOT unknown');
-
-  const unconf = await build(async () => resp(200, '', { elements: [] }))({}, 'BL1', 'BL-50002-1_5');
-  eq(unconf.exists, null, 'an unconfigured store is unknown too');
-  ok(/token|merchant/i.test(unconf.why), '…and says so rather than blaming Clover');
+  // The re-read can itself fail, and unknown is still not permission to print.
+  const down = await build(async () => null)({}, 'BL1', 'BL-50002-1_5', []);
+  eq(down.exists, null, 'an unreachable Clover on the re-read is unknown');
+  ok(/Clover did not answer/.test(down.why || ''), '…and says so');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

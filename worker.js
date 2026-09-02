@@ -10626,14 +10626,14 @@ const stickerCode = (categoryCode, price) => {
 // Cached because it is a full inventory page and it changes about never.
 const STICKER_CODES_KEY = "sticker:category-codes";
 const STICKER_CODES_TTL = 86400;
-async function stickerCategoryCodes(env, store) {
+async function stickerCategoryCodes(env, store, opts = {}) {
   const cached = await env.SALES_SNAPSHOTS?.get(STICKER_CODES_KEY, "json");
-  if (cached?.map && cached.at && (Date.now() - Date.parse(cached.at)) < STICKER_CODES_TTL * 1000) {
-    return { map: cached.map, field: cached.field || "code" };
+  if (!opts.force && cached?.map && cached.at && (Date.now() - Date.parse(cached.at)) < STICKER_CODES_TTL * 1000) {
+    return { map: cached.map, field: cached.field || "code", codes: cached.codes || [] };
   }
   const s = String(store || "BL1").toUpperCase();
   const mId = env[`${s}_MERCHANT_ID`], tok = env[`${s}_API_TOKEN`];
-  if (!mId || !tok) return { map: cached?.map || {}, field: cached?.field || "code" };
+  if (!mId || !tok) return { map: cached?.map || {}, field: cached?.field || "code", codes: cached?.codes || [] };
 
   // 🔑 `code` OR `sku` — the Inventory page's own dupKey() treats them as one field, so
   // this must too. Looking only at `code` when a store keeps its numbers in `sku` finds
@@ -10642,7 +10642,12 @@ async function stickerCategoryCodes(env, store) {
   //
   // Which field won is REMEMBERED, because the existence check filters on a named field
   // and has to ask about the same one the map was built from.
-  const tally = {}, fieldHits = { code: 0, sku: 0 };
+  // 🔑 THE CODES COME FREE. This pass already extracts every BL- string in order to build
+  // the category map, so keeping them costs one array — and it is what lets the existence
+  // check be a set lookup instead of a second Clover call. Clover has no filter for `code`
+  // at all (it answers 400: "'code' is not a supported field for this filter"), so the
+  // lookup this replaces could never have worked. See the comment on stickerCodeExists.
+  const tally = {}, fieldHits = { code: 0, sku: 0 }, seen = new Set();
   // 🛑 A THROWN FETCH IS THE SAME EVENT AS AN EMPTY READ AND MUST LAND THE SAME WAY.
   // cloverFetch awaits fetch() directly, so Clover being unreachable THROWS rather than
   // returning a non-ok response, and the `!r?.ok` break below never sees it. Uncaught, it
@@ -10662,6 +10667,7 @@ async function stickerCategoryCodes(env, store) {
                     : /^BL-\d+-/.test(String(it?.sku || "")) ? "sku" : null;
         if (!field) continue;
         fieldHits[field]++;
+        seen.add(String(it[field]));
         const m = /^BL-(\d+)-/.exec(String(it[field]));
         for (const c of (it?.categories?.elements || [])) {
           const name = String(c?.name || "").trim();
@@ -10675,7 +10681,7 @@ async function stickerCategoryCodes(env, store) {
     // A stale map still answers correctly for every category that has not changed number,
     // which is all of them on any normal day — the same trade the empty-read path below
     // already makes. With nothing cached there is no answer to give, only a fault.
-    return cached?.map ? { map: cached.map, field: cached.field || "code" } : null;
+    return cached?.map ? { map: cached.map, field: cached.field || "code", codes: cached.codes || [] } : null;
   }
   // Count per category rather than taking the first seen: one mis-keyed item should not
   // be able to redefine a whole category's number.
@@ -10684,45 +10690,48 @@ async function stickerCategoryCodes(env, store) {
     map[name] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
   }
   const field = fieldHits.sku > fieldHits.code ? "sku" : "code";
+  const codes = [...seen];
   // An empty read is a Clover hiccup, not proof the codes vanished — keep what we had.
-  if (!Object.keys(map).length) return cached?.map ? { map: cached.map, field: cached.field || "code" } : { map: {}, field: "code" };
-  await env.SALES_SNAPSHOTS?.put(STICKER_CODES_KEY, JSON.stringify({ map, field, at: new Date().toISOString() }));
-  return { map, field };
+  if (!Object.keys(map).length) {
+    return cached?.map ? { map: cached.map, field: cached.field || "code", codes: cached.codes || [] }
+                       : { map: {}, field: "code", codes: [] };
+  }
+  await env.SALES_SNAPSHOTS?.put(STICKER_CODES_KEY,
+    JSON.stringify({ map, field, codes, at: new Date().toISOString() }));
+  return { map, field, codes };
 }
 
 // Does this exact code exist in Clover? Reuses the same `filter=code=` lookup that
 // create-clover-item already uses as its duplicate check.
-// Returns { exists } when Clover answered, or { exists: null, why } when it did not.
+// Returns { exists } when we know, or { exists: null, why } when we could not find out.
 //
-// 🛑 THE `why` IS THE WHOLE POINT OF THE SHAPE. This used to `return null` on any non-ok
-// response, discarding the status and body — and that cost a live debugging session: the
-// derivation was correct, BL-50002-1_5 was derived and DOES exist in Clover, and the only
-// thing between us and a printed sticker was one failed lookup that refused to say what
-// went wrong. Every layer of this feature has now made the same mistake once. A caller
-// that cannot report the reason cannot be debugged from the floor, where the person
-// holding the scanner has no console.
-async function stickerCodeExists(env, store, code, field = "code") {
-  const s = String(store).toUpperCase();
-  const mId = env[`${s}_MERCHANT_ID`], tok = env[`${s}_API_TOKEN`];
-  if (!mId || !tok) return { exists: null, why: `${s} has no merchant id or API token configured` };
-  const f = field === "sku" ? "sku" : "code";
-  const url = `https://api.clover.com/v3/merchants/${mId}/items?filter=${f}%3D${encodeURIComponent(code)}&limit=5`;
-  let r;
-  // cloverFetch awaits fetch() directly, so an unreachable Clover throws rather than
-  // returning a non-ok response — the same trap stickerCategoryCodes fell into.
-  try {
-    r = await cloverFetch(url, { headers: { Authorization: `Bearer ${tok}` } });
-  } catch (e) {
-    return { exists: null, why: `the request itself failed: ${e.message}` };
+// 🛑 CLOVER CANNOT FILTER ON `code` AT ALL. This used to ask
+// `items?filter=code=BL-50002-1_5`, which every single time answered
+//   400 {"message":"'code' is not a supported field for this filter."}
+// so the check could never succeed — and because it discarded the body, all it ever said
+// was "Clover did not answer". The same broken filter is create-clover-item's duplicate
+// guard, where the failure is worse than useless: that handler only inspects the response
+// `if (dupResp.ok)`, so the 400 falls through and it creates the duplicate it was there
+// to prevent.
+//
+// 🔑 SO STOP ASKING. The category sweep already reads every item and already extracts
+// every BL- string to build the map; the set of existing codes falls out of a pass we
+// were making anyway. That removes the network call, the filter syntax and this entire
+// class of failure from the hot path.
+//
+// 🛑 THE ONE THING THIS TRADES is freshness on DELETION: a code removed from Clover since
+// the last sweep still reads as present until the cache turns over, so a sticker could be
+// printed for an item that has just been deleted. Creation is handled — a miss forces a
+// re-read, because a manager who adds a price point expects to print it now rather than
+// tomorrow — and creation is the direction this actually moves in. Deletion of a price
+// point is rare, and the alternative on offer is a check that refuses 100% of the time.
+async function stickerCodeExists(env, store, code, known) {
+  if ((known || []).includes(code)) return { exists: true };
+  const again = await stickerCategoryCodes(env, store, { force: true });
+  if (!again) {
+    return { exists: null, why: "Clover did not answer when we re-read the item list to be sure" };
   }
-  if (!r?.ok) {
-    // 🔑 The body is where Clover explains itself — a 401 names the token, a 400 names the
-    // malformed filter, a 429 says slow down. Truncated because it goes on a screen.
-    const body = await r.text().catch(() => "");
-    return { exists: null, status: r.status, field: f,
-             why: `Clover answered ${r.status}${body ? ` — ${body.slice(0, 200)}` : ""}` };
-  }
-  return { exists: ((await r.json())?.elements || []).length > 0 };
+  return { exists: (again.codes || []).includes(code), rechecked: true };
 }
 
 function merchTree() {
@@ -19139,7 +19148,7 @@ export default {
             stage: "category map",
             detail: "Clover did not answer when we asked which sticker number this category uses. Try again." }), { headers: corsJson });
         }
-        const { map: codes, field } = codeMap;
+        const codes = codeMap.map;
         // merchLabel is what Clover's category is actually called; L3 keys are ours.
         const catCode = codes[l3] || codes[merchLabel(l3)] || null;
         if (!catCode) {
@@ -19149,7 +19158,7 @@ export default {
         }
         const code = stickerCode(catCode, price);
         const store = String(body?.store || "BL1").toUpperCase();
-        const found = await stickerCodeExists(env, store, code, field);
+        const found = await stickerCodeExists(env, store, code, codeMap.codes);
         const exists = found.exists;
         if (exists === null) {
           // Clover did not answer. Unknown is NOT permission to print — the whole
