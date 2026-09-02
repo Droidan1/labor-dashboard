@@ -3931,6 +3931,8 @@ const ACTION_BUSINESS = new Map([
   ["merch-scan", "bl"],
   ["merch-scan-save", "bl"],
   ["sticker-check", "bl"],
+  ["sticker-printed", "bl"],
+  ["sticker-history", "bl"],
   ["manifest-upload", "bl"],
   ["manifest-remap", "bl"],
   ["manifest-classify", "bl"],
@@ -19247,6 +19249,72 @@ export default {
           reason: exists ? null : "no clover item",
           detail: exists ? null
             : `No Clover item with code ${code}. Create it first, then this will print.`,
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── What was printed, and printing it again ───────────────────────────────
+    //    POST ?action=sticker-printed   { store, l3, price, code, title? }
+    //    GET  ?action=sticker-history[&limit=]
+    //
+    // 🔑 THE HISTORY STORES THE QUESTION, NOT THE ANSWER. Rows keep store + l3 + price,
+    // the three inputs sticker-check consumes; `code` is recorded only so the list can
+    // show what came out. A reprint re-runs sticker-check from the inputs, so a category
+    // renumbered in Clover reprints under its NEW number and a code deleted since is
+    // refused exactly as a fresh scan would be. Replaying a stored code verbatim would be
+    // faster and would eventually put a sticker on a shelf that no longer resolves at the
+    // register — the one outcome this feature exists to prevent. A convenience must not
+    // reintroduce the thing the feature is for.
+    if (url.searchParams.get("action") === "sticker-printed" && request.method === "POST") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const store = stickerStore(body?.store);
+        const l3 = String(body?.l3 || "").trim();
+        const code = String(body?.code || "").trim();
+        // 🛑 Cents, not a float. The price is what both the printed $1.50 and the encoded
+        // 1_5 come from; a value that stringifies as 1.4999999 corrupts the code itself.
+        const cents = Math.round(Number(body?.price) * 100);
+        if (!store || !l3 || !code || !Number.isFinite(cents) || cents <= 0) {
+          return new Response(JSON.stringify({ error: "A print record needs a store, category, price and code" }),
+            { status: 400, headers: corsJson });
+        }
+        await env.DB.prepare(
+          `INSERT INTO sticker_prints (store, l3, price_cents, code, title, printed_by, printed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).bind(store, l3, cents, code, String(body?.title || "").slice(0, 200) || null,
+               (currentUser && currentUser.email) || "unknown", new Date().toISOString()).run();
+        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    if (url.searchParams.get("action") === "sticker-history" && request.method === "GET") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
+      if (unauth) return unauth;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "8", 10) || 8, 1), 25);
+        // 🔑 Scoped to the caller. A reprint list is "what I just printed" — someone else's
+        // prints are not a thing this screen can act on, and showing them invites a manager
+        // to reprint a label for a shelf they are not standing at.
+        const rows = await env.DB.prepare(
+          `SELECT id, store, l3, price_cents, code, title, printed_at
+             FROM sticker_prints WHERE printed_by = ?
+            ORDER BY printed_at DESC LIMIT ?`
+        ).bind((currentUser && currentUser.email) || "unknown", limit).all();
+        return new Response(JSON.stringify({
+          ok: true,
+          prints: (rows?.results || []).map(r => ({
+            id: r.id, store: r.store, l3: r.l3, code: r.code,
+            title: r.title || "", printed_at: r.printed_at,
+            price: (Number(r.price_cents) || 0) / 100,
+          })),
         }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });

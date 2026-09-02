@@ -1894,7 +1894,10 @@ console.log('Price Scan');
   // 🛑 Search FORWARD from the handler for the end marker. `merch-scan` is mentioned in
   // an earlier comment too, so a bare indexOf picks that one and slices backwards to "".
   const at = src.indexOf('action") === "sticker-check"');
-  const h = src.slice(at, src.indexOf('POST ?action=merch-scan', at));
+  // 🛑 Bound on the NEXT handler, not a distant one. Adding sticker-printed between this
+  // handler and merch-scan swept its Math.round into the slice and tripped the guard that
+  // proves nothing here rounds a price to make a label scan. Same shape as the psZpl slice.
+  const h = src.slice(at, src.indexOf('action") === "sticker-printed"', at));
   ok(h.length > 500, 'the handler slice actually found the handler');
   for (const [why, re] of [
     ['no category',      /reason: "no category"/],
@@ -2259,7 +2262,10 @@ console.log('Price Scan');
 
   // The endpoint refuses before it does any work on a guess.
   const at = src.indexOf('action") === "sticker-check"');
-  const h = src.slice(at, src.indexOf('POST ?action=merch-scan', at));
+  // 🛑 Bound on the NEXT handler, not a distant one. Adding sticker-printed between this
+  // handler and merch-scan swept its Math.round into the slice and tripped the guard that
+  // proves nothing here rounds a price to make a label scan. Same shape as the psZpl slice.
+  const h = src.slice(at, src.indexOf('action") === "sticker-printed"', at));
   // Strip whole-line comments first — the comment explaining the fallback necessarily
   // quotes it, so a naive grep matches the explanation and calls it the bug. Third time
   // this has caught me; the rule is match the code, never the prose about the code.
@@ -2313,6 +2319,77 @@ console.log('Price Scan');
      '🔑 the check sends the store — it never did, which is why every scan read BL1');
   ok(/if \(!psStickerStore\(\)\)/.test(chk),
      '…and does not spend a round trip to be told what the screen already says');
+}
+
+// ── Reprinting re-asks the question ────────────────────────────────────────────
+// 🔑 THE ROW STORES THE INPUTS, NOT THE ANSWER. sticker_prints keeps store + l3 +
+// price_cents — what sticker-check consumes — and `code` only so the list can show what
+// came out. A reprint runs the check again from those inputs, so a category renumbered in
+// Clover reprints under its NEW number and a code deleted since is refused exactly as a
+// fresh scan would be. Replaying the stored code would be one round trip cheaper and would
+// eventually put a sticker on a shelf that no longer resolves at the register — the single
+// failure this feature exists to prevent, reintroduced by a convenience.
+{
+  const sql = fs.readFileSync(path.join(repo, 'migration-056.sql'), 'utf8');
+  ok(/CREATE TABLE IF NOT EXISTS sticker_prints/.test(sql), 'the migration is additive');
+  for (const col of ['store', 'l3', 'price_cents', 'code', 'printed_by', 'printed_at'])
+    ok(new RegExp(`\\n  ${col}\\s`).test(sql), `sticker_prints keeps ${col}`);
+  ok(/price_cents INTEGER/.test(sql),
+     '🛑 cents, not a float — the price is what BOTH $1.50 and the 1_5 in the code come from');
+  ok(/CREATE INDEX IF NOT EXISTS idx_sticker_prints_by_user/.test(sql),
+     'the only query it serves — my prints, newest first — is indexed');
+
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const rec = sliceOrNull(src, 'action") === "sticker-printed"', 'action") === "sticker-history"');
+  ok(rec, 'worker.js records prints');
+  ok(/stickerStore\(body\?\.store\)/.test(rec || ''),
+     '🔑 the recorded store is validated, not taken on trust — a bad one poisons every reprint');
+  ok(/Math\.round\(Number\(body\?\.price\) \* 100\)/.test(rec || ''),
+     '…and the price is stored as cents');
+  ok(/cents <= 0/.test(rec || ''), '…a zero or negative price is refused, as everywhere else');
+
+  const hist = sliceOrNull(src, 'action") === "sticker-history"', 'POST ?action=merch-scan');
+  ok(hist, 'worker.js lists them');
+  ok(/WHERE printed_by = \?/.test(hist || ''),
+     '🔑 scoped to the caller — reprinting someone else’s label is for a shelf you are not at');
+  ok(/ORDER BY printed_at DESC LIMIT \?/.test(hist || ''), '…newest first, and bounded');
+  ok(/Math\.min\(Math\.max\(parseInt/.test(hist || ''),
+     '…with the limit clamped, so a crafted query cannot ask for the whole table');
+
+  // Both actions must be classified, or the gate 403s them on first production use — which
+  // is exactly what happened to sticker-check in #162.
+  ok(/\["sticker-printed", "bl"\]/.test(src) && /\["sticker-history", "bl"\]/.test(src),
+     '🛑 both actions are classified in ACTION_BUSINESS');
+}
+
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const rp = sliceOrNull(html, 'async function psReprint(i)', 'window.psReprint = psReprint;');
+  ok(rp, 'index.html defines psReprint');
+  ok(/action=sticker-check/.test(rp || ''),
+     '🔑 a reprint runs the SAME check — every refusal a fresh scan gives, it gives too');
+  ok(/l3: p\.l3, price: p\.price, store: p\.store/.test(rp || ''),
+     '…from the stored INPUTS, so a renumbered category reprints under its new number');
+  ok(/!a\.printable/.test(rp || ''),
+     '🛑 …and prints only what comes back printable');
+  ok(/psZpl\(a\.code, p\.price\)/.test(rp || ''),
+     '🛑 the label carries the code the check JUST returned, never the stored one');
+  ok(/'Content-Type': 'text\/plain'/.test(rp || ''),
+     '…and posts text/plain, so it does not trip the CORS preflight the main path already hit');
+  ok(/if \(!w\.ok\)/.test(rp || ''), '…and a refused write is not reported as reprinted');
+
+  const rec = sliceOrNull(html, 'async function psRecordPrint(', 'async function psRecentLoad(');
+  ok(rec, 'index.html records a print');
+  ok(/catch \(_\)/.test(rec || '') && /not worth an alarm/.test(rec || ''),
+     '🔑 recording is best-effort — the label is already out, so a failed row is not a failed print');
+
+  // The panel must survive a scan, because not scanning is the entire point of it.
+  ok(/<div id="ps-recent" class="hidden"><\/div>/.test(html),
+     '🔑 the list lives OUTSIDE #ps-result, which every scan wipes');
+  ok(/psRecentLoad\(\);\n\s*setTimeout/.test(html),
+     '…and loads with the page, not with a result');
+  ok(!/merchLabel\(/.test(sliceOrNull(html, 'function psRecentRender()', 'function psRecentWhen') || ''),
+     '🛑 no merchLabel here — it is worker-side, and calling it would throw on every row');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
