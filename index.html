@@ -18981,16 +18981,26 @@
     return Array.isArray(scoped) ? scoped.filter(x => PS_STORES.includes(x)) : PS_STORES.slice();
   }
 
-  // 🔑 NO DEFAULT WHEN THERE IS A CHOICE. Sticker numbers are per store, and the app cannot
-  // know which building someone is standing in — so with more than one store it asks, and
-  // the Print button stays disabled until it is answered. Defaulting to BL1 is what made a
-  // scan at BL4 verify against BL1's catalogue. Remembered per device, so it is asked once.
+  // 🔑 DEFAULT, DO NOT DEMAND — AND SAY WHICH STORE THE ANSWER IS FOR.
+  //
+  // This first refused to answer at all until a multi-store account picked one, reasoning
+  // that the app cannot know which building someone is standing in. True, but the wrong
+  // conclusion: the stores carry the SAME inventory, so BL-50002-1_5 exists at every one of
+  // them and a check against any store gives the same answer. Demanding the pick bought no
+  // safety and cost every manager a disabled button on their first scan of the day.
+  //
+  // It does not even buy correctness against future drift: a manager at BL4 who leaves the
+  // picker on BL1 gets BL1's answer whether or not they were forced to touch it. What
+  // actually protects against drift is that the store is now EXPLICIT — sent, validated,
+  // cached under its own key, and shown next to the code — so if the inventories ever
+  // diverge the screen says which store it asked, instead of quietly meaning BL1.
   function psStickerStore() {
     const allowed = psStickerStores();
+    if (!allowed.length) return null;
     if (allowed.length === 1) return allowed[0];
     let saved = null;
     try { saved = localStorage.getItem(PS_STORE_KEY); } catch (_) { /* private window */ }
-    return allowed.includes(saved) ? saved : null;
+    return allowed.includes(saved) ? saved : allowed[0];
   }
 
   function psStoreChanged() {
@@ -19014,13 +19024,12 @@
     const chosen = psStickerStore();
     const picker = allowed.length > 1
       ? `<select class="ps-store" id="ps-store" onchange="psStoreChanged()" aria-label="Store to print for">
-           <option value=""${chosen ? '' : ' selected'}>Store…</option>
            ${allowed.map(x => `<option value="${x}"${x === chosen ? ' selected' : ''}>${x}</option>`).join('')}
          </select>`
       : '';
     return `<div id="ps-sticker">
       <div class="ps-print-row">${picker}<button class="ps-btn ghost" id="ps-print" type="button" disabled onclick="psPrint()">Print sticker</button></div>
-      <div class="ps-stat" id="ps-print-note">${chosen ? 'Checking the sticker code…' : 'Pick the store you are printing for.'}</div>
+      <div class="ps-stat" id="ps-print-note">Checking the sticker code…</div>
     </div>`;
   }
 
@@ -19064,7 +19073,7 @@
       btn.disabled = !a.printable;
       note.className = 'ps-stat' + (a.printable ? '' : ' no');
       note.innerHTML = a.printable
-        ? `Prints <span class="ps-code">${psEsc(a.code)}</span>`
+        ? `Prints <span class="ps-code">${psEsc(a.code)}</span> for ${psEsc(a.store || '')}`
         : psEsc(a.detail);
     } catch (_) {
       const note = el('ps-print-note');
