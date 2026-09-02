@@ -1,3 +1,37 @@
+# Price Scan: a barcode that no allowlisted retailer indexes gets a junk identity (2026-09-02)
+
+Reported: "a few products I scanned showed no data". Four barcodes scanned 1–2 Sept were cached with
+a Walmart employee-portal page title (one.walmart.com "own-your-wellbeing") or a bare part number as
+the product name, so every rescan re-priced the junk and never re-identified.
+
+## Plan
+- [x] Block intranet subdomains (one., wlfc.) in RETAIL_HOST_BLOCK
+- [x] retailIdentify: only a result that actually carries the barcode digits may name the product
+- [x] retailIdentify: drop the raw-page-title fallback when the normaliser declines
+- [x] GTIN check digit validated at both doors (worker isPlausibleBarcode, index.html psScan) for 12/13/14 digits
+- [x] Tests for each, existing scan stubs updated to carry the barcode in the snippet
+- [x] npm test green
+- [x] Backup, then clean the five prod item_cache rows (confirmed by user)
+- [x] Commit, push, draft PR
+
+## Review
+- `worker.js`: `RETAIL_HOST_BLOCK` now refuses `one.`/`wlfc.`/`corporate.`/`careers.`; `retailMentionsCode`
+  drops any identify result that does not print the barcode (title, snippet or URL, spaced digits
+  joined, digit boundaries both sides); `retailIdentify` returns null instead of a raw page title when
+  the normaliser declines; `gtinCheckOk` (12/13/14 only — a UPC-E's check belongs to its expanded form)
+  is folded into `isPlausibleBarcode`, the scan door says "one digit is wrong" rather than quoting
+  lengths, and a photo whose read code fails the check falls back to the name read off the same photo.
+- `index.html`: `psScan` runs the identical `gtinCheckOk` before the round trip.
+- `scripts/test-price-scan.mjs`: nine fabricated test barcodes renamed to valid check digits; identify
+  stubs now carry the code (as real product-database URLs and retailer snippets do); three new blocks
+  pin the intranet page, the declined normaliser, and the check digit at both doors (worker/screen
+  text asserted identical). Run against HEAD's worker the new blocks fail; against this branch 664 pass.
+- `sw.js` CACHE_NAME v156 → v157 and the shell-cache fixture refreshed (index.html changed).
+- Prod `item_cache`, after a JSON backup of all five rows: deleted 895697005724, 062338995038,
+  019200780513 (junk), 032187618549 (junk); moved the RID-X row from 019200780511 (invalid check
+  digit, a retype) to 019200780513 (its real barcode). Confirmed by the user in chat first.
+- Not done: no deploy. The worker change ships when the PR merges and deploys as usual.
+
 # Retail lookup: unit semantics + free Fetch scoping
 
 Follow-on from the TinyFish Agent review. The Agent stays OFF; these are the free fixes

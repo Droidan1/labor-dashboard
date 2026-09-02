@@ -558,10 +558,10 @@ console.log('Price Scan');
   eq(typed.body.l3_label, 'Snacks', '…with a readable label');
   ok(typed.body.price !== null, '…and therefore prices, because ASP needs a category');
 
-  const scanned = await post('merch-scan', { identifier: '012345679900', description: 'Some snack bag' });
+  const scanned = await post('merch-scan', { identifier: '012345679902', description: 'Some snack bag' });
   eq(scanned.body.l3, SNACKS, '…and a barcode still works exactly as before');
   // The barcode path ALSO caches, so the next scan of it is free; a typed name cannot.
-  const row = db.prepare(`SELECT l3 FROM item_cache WHERE identifier='012345679900'`).get();
+  const row = db.prepare(`SELECT l3 FROM item_cache WHERE identifier='012345679902'`).get();
   eq(row.l3, SNACKS, '…and only the barcode path leaves something behind for next time');
 }
 
@@ -709,9 +709,9 @@ console.log('Price Scan');
     if (url.startsWith('https://api.search.tinyfish.ai')) {
       searchCalls++;
       const q = decodeURIComponent(url);
-      if (/038000293100/.test(q)) {
+      if (/038000293108/.test(q)) {
         return new Response(JSON.stringify({ results: [
-          { position: 1, url: 'https://world.openfoodfacts.org/product/x', title: 'Pringles Everything Bagel – 5.5oz', snippet: 'Pringles 5.5oz' },
+          { position: 1, url: 'https://world.openfoodfacts.org/product/038000293108/x', title: 'Pringles Everything Bagel – 5.5oz', snippet: 'Pringles 5.5oz' },
         ] }), { status: 200 });
       }
       priceQuery = q;
@@ -737,7 +737,7 @@ console.log('Price Scan');
     return realFetch(u, init);
   };
 
-  const r = await post('merch-scan', { identifier: '038000293100' });
+  const r = await post('merch-scan', { identifier: '038000293108' });
   eq(r.body.size, '5.5 oz', 'the size is resolved');
   ok(/5\.5/.test(priceQuery || ''),
      '🔑 …and it is IN the price query, so a multipack cannot answer for a single can');
@@ -878,9 +878,9 @@ console.log('Price Scan');
     if (url.startsWith('https://api.search.tinyfish.ai')) {
       searchCalls++;
       const q = decodeURIComponent(url);
-      if (/038000293133/.test(q)) {
+      if (/038000293139/.test(q)) {
         return new Response(JSON.stringify({ results: [
-          { position: 1, url: 'https://world.openfoodfacts.org/product/y', title: 'Pringles Ranch – 5.5oz', snippet: 'Pringles 5.5oz' },
+          { position: 1, url: 'https://world.openfoodfacts.org/product/038000293139/y', title: 'Pringles Ranch – 5.5oz', snippet: 'Pringles 5.5oz' },
         ] }), { status: 200 });
       }
       return new Response(JSON.stringify({ results: [
@@ -908,7 +908,7 @@ console.log('Price Scan');
     return realFetch(u, init);
   };
 
-  const r = await post('merch-scan', { identifier: '0038000293133' });
+  const r = await post('merch-scan', { identifier: '0038000293139' });
   near(r.body.retail, 2.68, '🔑 a normal SKU price stands — $2.68 is not resale inflation');
   ok(!(r.body.flags || []).includes('priced as brand + size'), '…and nothing claims a substitution');
   globalThis.fetch = realFetch;
@@ -1061,7 +1061,7 @@ console.log('Price Scan');
       if (/query=012345000065\b/.test(q)) return new Response(JSON.stringify({ results: [] }), { status: 200 });
       if (/0012345000065/.test(q)) {
         return new Response(JSON.stringify({ results: [
-          { position: 1, url: 'https://world.openfoodfacts.org/product/z', title: 'Test Beans 16oz', snippet: 'Brands: Testco' },
+          { position: 1, url: 'https://world.openfoodfacts.org/product/0012345000065/z', title: 'Test Beans 16oz', snippet: 'Brands: Testco' },
         ] }), { status: 200 });
       }
       return new Response(JSON.stringify({ results: [] }), { status: 200 });
@@ -1177,13 +1177,13 @@ console.log('Price Scan');
        l3_source, retail_price, retail_source, updated_at)
      VALUES (?,'upc',?,?, '12oz','Consumable Food',?, 'claude', 3.49,'target.com',?)`)
     .run(id, brand, title, SNACKS, now);
-  add('090000000011', 'Bench Scanned Crisps', 'Benchco');
-  add('090000000022', 'Manifest Only Beans', 'Loadco');
+  add('090000000018', 'Bench Scanned Crisps', 'Benchco');
+  add('090000000025', 'Manifest Only Beans', 'Loadco');
   // The ONLY thing that makes a row "from a manifest" is a manifest line pointing at it.
   db.prepare(`INSERT INTO manifests (id,vendor,uploaded_at,sell_as,units_per_case,status)
               VALUES ('pmf','V','2026-08-20T00:00:00Z','each',1,'draft')`).run();
   db.prepare(`INSERT INTO manifest_lines (manifest_id,row_no,identifier,identifier_type,description,qty,cost,flags)
-              VALUES ('pmf',1,'090000000022','upc','MANIFEST BEANS',10,1.0,'[]')`).run();
+              VALUES ('pmf',1,'090000000025','upc','MANIFEST BEANS',10,1.0,'[]')`).run();
 
   // ── who may look ──
   eq((await get('merch-products', 'u-mgr1')).status, 403,
@@ -1196,23 +1196,23 @@ console.log('Price Scan');
   // and retroactively, from the manifest lines themselves; "scanned" is everything else,
   // which is sound because those two are the only writers.
   const ids = (b) => (b.rows || []).map(r => r.identifier);
-  ok(ids(asAdmin.body).includes('090000000011'), '🔑 a bench-scanned item is under Scanned');
-  ok(!ids(asAdmin.body).includes('090000000022'), '…and a manifest item is NOT');
+  ok(ids(asAdmin.body).includes('090000000018'), '🔑 a bench-scanned item is under Scanned');
+  ok(!ids(asAdmin.body).includes('090000000025'), '…and a manifest item is NOT');
   const mf = await get('merch-products&tab=manifest', 'u-admin');
-  ok(ids(mf.body).includes('090000000022'), '🔑 …while it IS under Manifests');
-  ok(!ids(mf.body).includes('090000000011'), '…and the bench item is not');
+  ok(ids(mf.body).includes('090000000025'), '🔑 …while it IS under Manifests');
+  ok(!ids(mf.body).includes('090000000018'), '…and the bench item is not');
   ok(asAdmin.body.counts.scanned > 0 && mf.body.counts.manifest > 0, 'both tabs carry a count');
 
   // Search reaches the barcode as well as the words, because that is what is on the box.
-  ok(ids((await get('merch-products&tab=scanned&q=Benchco', 'u-admin')).body).includes('090000000011'), 'search finds a brand');
-  ok(ids((await get('merch-products&tab=scanned&q=090000000011', 'u-admin')).body).includes('090000000011'), '…and a barcode');
+  ok(ids((await get('merch-products&tab=scanned&q=Benchco', 'u-admin')).body).includes('090000000018'), 'search finds a brand');
+  ok(ids((await get('merch-products&tab=scanned&q=090000000018', 'u-admin')).body).includes('090000000018'), '…and a barcode');
   eq(((await get('merch-products&tab=scanned&q=zzzznope', 'u-admin')).body.rows || []).length, 0, '…and finds nothing when there is nothing');
 
   // ── editing ──
-  eq((await post('merch-product-save', { identifier: '090000000011', title: 'X' }, 'u-mgr1')).status, 403,
+  eq((await post('merch-product-save', { identifier: '090000000018', title: 'X' }, 'u-mgr1')).status, 403,
      '🛑 a manager may not edit');
   const saved = await post('merch-product-save',
-    { identifier: '090000000011', title: 'Bench Crisps, Salted', l3: CANNED, retail_price_override: '2.25' }, 'u-admin');
+    { identifier: '090000000018', title: 'Bench Crisps, Salted', l3: CANNED, retail_price_override: '2.25' }, 'u-admin');
   eq(saved.status, 200, 'an admin may');
   eq(saved.body.row.title, 'Bench Crisps, Salted', 'the name is written');
   eq(saved.body.row.l3, CANNED, 'the category is written');
@@ -1227,22 +1227,22 @@ console.log('Price Scan');
   // ── blank clears, absent leaves alone ──
   // Collapsing those two would make an override impossible to REMOVE once set.
   const cleared = await post('merch-product-save',
-    { identifier: '090000000011', retail_price_override: '' }, 'u-admin');
+    { identifier: '090000000018', retail_price_override: '' }, 'u-admin');
   eq(cleared.body.row.retail_price_override, null, '🔑 a blank price CLEARS the override');
   eq(cleared.body.row.title, 'Bench Crisps, Salted', '…and a field not sent is left alone');
   eq(cleared.body.row.retail_override_by, null, '…and the attribution goes with it');
 
   // ── refusals ──
-  eq((await post('merch-product-save', { identifier: '090000000011', l3: 'NOT A REAL CATEGORY' }, 'u-admin')).status, 400,
+  eq((await post('merch-product-save', { identifier: '090000000018', l3: 'NOT A REAL CATEGORY' }, 'u-admin')).status, 400,
      '🛑 a category we do not use is refused, not stored');
-  eq((await post('merch-product-save', { identifier: '090000000011', retail_price_override: 'abc' }, 'u-admin')).status, 400,
+  eq((await post('merch-product-save', { identifier: '090000000018', retail_price_override: 'abc' }, 'u-admin')).status, 400,
      '🛑 …and so is a price that is not a number');
-  eq((await post('merch-product-save', { identifier: '099999999999', title: 'ghost' }, 'u-admin')).status, 404,
+  eq((await post('merch-product-save', { identifier: '099999999990', title: 'ghost' }, 'u-admin')).status, 404,
      'editing a product we have never seen is a 404, not a silent insert');
 
   // 🔑 The 13-digit spelling of a barcode edits the SAME row as the 12 — the canonical
   // form is applied here too, or an edit would create a phantom that nothing reads.
-  const viaLong = await post('merch-product-save', { identifier: '0090000000011', size: '14oz' }, 'u-admin');
+  const viaLong = await post('merch-product-save', { identifier: '0090000000018', size: '14oz' }, 'u-admin');
   eq(viaLong.status, 200, '🔑 a 13-digit spelling reaches the row stored under 12');
   eq(viaLong.body.row.size, '14oz', '…and edits it');
 }
@@ -1339,9 +1339,9 @@ console.log('Price Scan');
         searchCalls++;
         const q = decodeURIComponent(url);
         const at = Date.now() - t0;
-        if (/038000299000/.test(q)) {
+        if (/038000299001/.test(q)) {
           return new Response(JSON.stringify({ results: [
-            { position: 1, url: 'https://world.openfoodfacts.org/p/x', title: 'Testo Beans 16oz', snippet: 'Brands: Testo' }]}), { status: 200 });
+            { position: 1, url: 'https://world.openfoodfacts.org/product/038000299001/x', title: 'Testo Beans 16oz', snippet: 'Brands: Testo' }]}), { status: 200 });
         }
         if (/Testo Beans/.test(q)) skuAt = at; else classAt = at;
         started.push(q);
@@ -1369,7 +1369,7 @@ console.log('Price Scan');
     };
 
     t0 = Date.now();
-    const r = await post('merch-scan', { identifier: '038000299000' });
+    const r = await post('merch-scan', { identifier: '038000299001' });
     eq(r.status, 200, 'the scan answers');
     ok(skuAt !== null && classAt !== null, 'both the SKU and the class search ran');
     // 🔑 TIMED, not counted. Each search stalls 40ms before answering, so sequential means
@@ -1425,9 +1425,9 @@ console.log('Price Scan');
     if (url.startsWith('https://api.search.tinyfish.ai')) {
       searchCalls++;
       const q = decodeURIComponent(url);
-      if (/0?12345600001/.test(q)) {
+      if (/0?12345600005/.test(q)) {
         return new Response(JSON.stringify({ results: [
-          { position: 1, url: 'https://world.openfoodfacts.org/p/c', title: "Nature's Truth Collagen 60 ct", snippet: "Nature's Truth" }]}), { status: 200 });
+          { position: 1, url: 'https://world.openfoodfacts.org/product/012345600005/c', title: "Nature's Truth Collagen 60 ct", snippet: "Nature's Truth" }]}), { status: 200 });
       }
       return new Response(JSON.stringify({ results: [
         { position: 1, url: 'https://www.walmart.com/ip/collagen/1', title: "Nature's Truth Collagen Gummies 60 Count", snippet: '$15.99' }]}), { status: 200 });
@@ -1450,7 +1450,7 @@ console.log('Price Scan');
     return realFetch(u, init);
   };
 
-  const r = await post('merch-scan', { identifier: '012345600001' });
+  const r = await post('merch-scan', { identifier: '012345600005' });
   eq(r.body.size, '60 ct', 'the size really does say 60 ct');
   near(r.body.retail, 15.99,
      '🛑 a scanned bottle is ONE bottle — its own count is not a multipack');
@@ -1535,9 +1535,9 @@ console.log('Price Scan');
     if (url.startsWith('https://api.search.tinyfish.ai')) {
       searchCalls++;
       const q = decodeURIComponent(url);
-      if (/0?12345600002/.test(q)) {
+      if (/0?12345600012/.test(q)) {
         return new Response(JSON.stringify({ results: [
-          { position: 1, url: 'https://world.openfoodfacts.org/p/z', title: 'Listy Soap 4 oz', snippet: 'Brands: Listy' }]}), { status: 200 });
+          { position: 1, url: 'https://world.openfoodfacts.org/product/012345600012/z', title: 'Listy Soap 4 oz', snippet: 'Brands: Listy' }]}), { status: 200 });
       }
       return new Response(JSON.stringify({ results: [
         { position: 1, url: 'https://www.target.com/s/listy+soap', title: 'Listy Soap search', snippet: '$8.99' }]}), { status: 200 });
@@ -1558,7 +1558,7 @@ console.log('Price Scan');
     }
     return realFetch(u, init);
   };
-  const r = await post('merch-scan', { identifier: '012345600002' });
+  const r = await post('merch-scan', { identifier: '012345600012' });
   eq(r.body.retail, null, '🛑 a price that exists only on a search page is not used');
   ok((r.body.flags || []).includes('only listing pages'),
      '🔑 …and it says WHICH kind of nothing this is — the item is carried, the page was wrong');
@@ -1737,13 +1737,14 @@ console.log('Price Scan');
     if (url.startsWith('https://api.search.tinyfish.ai')) {
       searchCalls++;
       return new Response(JSON.stringify({ results: [
-        { url: 'https://www.walmart.com/ip/Fresh-Item/1', title: 'Fresh Item 12 oz', snippet: '$4.00' },
+        { url: 'https://www.walmart.com/ip/Fresh-Item/1', title: 'Fresh Item 12 oz', snippet: '$4.00 · UPC 024100113170' },
       ] }), { status: 200 });
     }
     if (url.includes('api.anthropic.com')) {
       modelCalls++;
       return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
         title: 'Fresh Item', brand: 'Fresh', size: '12 oz',
+        items: [{ row: 1, brand: 'Fresh', title: 'Fresh Item', size: '12 oz' }],
         prices: [{ url: 'https://www.walmart.com/ip/Fresh-Item/1', price: 4.0, in_stock: true, title: 'Fresh Item 12 oz' }],
       }) }] }), { status: 200 });
     }
@@ -1788,13 +1789,14 @@ console.log('Price Scan');
     if (url.startsWith('https://api.search.tinyfish.ai')) {
       searchCalls++;
       return new Response(JSON.stringify({ results: [
-        { url: 'https://www.target.com/p/prov-item', title: 'Prov Item 6 ct', snippet: '$12.00' },
+        { url: 'https://www.target.com/p/prov-item', title: 'Prov Item 6 ct', snippet: '$12.00 · UPC 086600000015' },
       ] }), { status: 200 });
     }
     if (url.includes('api.anthropic.com')) {
       modelCalls++;
       return new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify({
         title: 'Prov Item', brand: 'Prov', size: '8 oz',
+        items: [{ row: 1, brand: 'Prov', title: 'Prov Item', size: '8 oz' }],
         prices: [{ url: 'https://www.target.com/p/prov-item', price: 12.0, pack: 6,
                    in_stock: true, title: 'Prov Item 6 ct' }],
       }) }] }), { status: 200 });
@@ -3133,6 +3135,126 @@ console.log('Price Scan');
      '…and loads with the page, not with a result');
   ok(!/merchLabel\(/.test(sliceOrNull(html, 'function psRecentRender()', 'function psRecentWhen') || ''),
      '🛑 no merchLabel here — it is worker-side, and calling it would throw on every row');
+}
+
+// ── 🛑 A PAGE THAT DOES NOT PRINT THE BARCODE IS NOT ABOUT IT ──────────────
+// Live, 2026-09-02: three barcodes no allowlisted retailer indexes (062338995038,
+// 895697005724, 019200780513) did not come back empty. The provider returned its nearest
+// page on an allowed domain — Walmart's employee intranet, one.walmart.com — and its
+// title, "own-your-wellbeing - One Walmart portal", was cached as the product name. Every
+// rescan then re-priced the intranet for a Firecrawl credit, and identity never ran again.
+{
+  const realFetch = globalThis.fetch;
+  const searchQueries = [];
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      searchQueries.push(decodeURIComponent(url));
+      return new Response(JSON.stringify({ results: [
+        { position: 1, url: 'https://one.walmart.com/content/uswire/en_us/me/health/health-programs/own-your-wellbeing.html',
+          title: 'own-your-wellbeing - One Walmart portal',
+          snippet: "Your apps and work related links will be available next time you're back on." },
+        // The same kind of page on the PUBLIC host: the host block is not what saves this,
+        // the missing number is.
+        { position: 2, url: 'https://www.walmart.com/content/uswire/en_us/me/health.html',
+          title: 'Health - One Walmart', snippet: 'Walmart policies. Click "MANAGE" to personalize your snapshots' },
+      ] }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls++;
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: '{"items":[],"rows":[],"prices":[]}' }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+  const before = searchCalls;
+  const r = await post('merch-scan', { identifier: '062338995038' }, 'u-mgr1');
+  eq(r.status, 200, 'a barcode the provider can only guess at still answers');
+  eq(r.body.title, null, '🛑 …and the intranet page title is NOT the product name');
+  ok((r.body.flags || []).includes('barcode not recognised'), '🔑 it says the code was not recognised');
+  eq(searchCalls - before, 2, '🔑 two identity spellings, and NO price search on a page title');
+  ok(!searchQueries.some(q => /wellbeing|portal/i.test(q)), '🛑 the page title is never searched as a product');
+  eq(db.prepare(`SELECT COUNT(*) n FROM item_cache WHERE identifier='062338995038'`).get().n, 0,
+     '🔑 nothing is cached, so the next scan tries again instead of inheriting junk');
+  globalThis.fetch = realFetch;
+
+  // The hosts themselves are also out, wherever they turn up.
+  const wsrc = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const hb = sliceOrNull(wsrc, 'const RETAIL_HOST_BLOCK =', '\n');
+  const hf = sliceOrNull(wsrc, 'function retailHostAllowed(url, domains) {', '\n}\n');
+  const allowed = buildOrStub('retailHostAllowed', (hb || '') + '\n' + (hf || '') + '\n}', [], [], 'retailHostAllowed');
+  eq(allowed('https://one.walmart.com/content/uswire/en_us/me/health.html', ['walmart.com']), false,
+     '🛑 the employee intranet is not a retailer');
+  eq(allowed('https://wlfc.walmart.com/content/usone/en_us/me/health.html', ['walmart.com']), false, '…nor its other host');
+  eq(allowed('https://www.walmart.com/ip/RID-X-Platinum/995791537', ['walmart.com']), true, '…while the store still is');
+}
+
+// ── 🛑 THE NORMALISER SAYING "NO PRODUCT HERE" IS THE ANSWER, NOT A FALLBACK ─
+// "Item #61854 (00518HDHY)" was cached as the product name for 032187618549 because the
+// normaliser declined and the raw page title was used instead. A page that prints the
+// barcode but whose title has no product in it is still not a product.
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      searchCalls++;
+      return new Response(JSON.stringify({ results: [
+        { position: 1, url: 'https://www.publix.com/pd/item-61854/RIO-PDET-123',
+          title: 'Item #61854 (00518HDHY)', snippet: 'UPC 032187618549 · see store for details' },
+      ] }), { status: 200 });
+    }
+    if (url.includes('api.anthropic.com')) {
+      modelCalls++;
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: '{"items":[],"rows":[],"prices":[]}' }] }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+  const r = await post('merch-scan', { identifier: '032187618549' }, 'u-mgr1');
+  eq(r.status, 200, 'the scan answers');
+  eq(r.body.title, null, '🛑 a title the normaliser found no product in is not used raw');
+  ok((r.body.flags || []).includes('barcode not recognised'), '…and it reads as an unrecognised code');
+  eq(db.prepare(`SELECT COUNT(*) n FROM item_cache WHERE identifier='032187618549'`).get().n, 0, '…with nothing cached');
+  globalThis.fetch = realFetch;
+}
+
+// ── 🛑 THE LAST DIGIT IS A CHECKSUM ────────────────────────────────────────
+// RID-X Platinum is 019200780513. Retyped as 019200780511 — one digit off — it was
+// accepted on length alone, the search fuzzy-matched it, and RID-X was cached under a
+// barcode that cannot exist. Both doors now refuse it.
+{
+  const r = await post('merch-scan', { identifier: '019200780511' }, 'u-mgr1');
+  eq(r.status, 400, '🛑 a UPC whose check digit does not add up is refused');
+  eq(r.body.code, 'BAD_BARCODE', '…with the code the screen already acts on');
+  ok(/digit/i.test(r.body.error) && !/an EAN is 13/.test(r.body.error), '…and says a DIGIT is wrong, not the length');
+  eq(db.prepare(`SELECT COUNT(*) n FROM item_cache WHERE identifier='019200780511'`).get().n, 0, '…and nothing is stored under it');
+
+  // The real code, its 13-digit spelling, a true EAN-13 and an 8-digit code all pass.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    if (String(u).startsWith('https://api.search.tinyfish.ai')) { searchCalls++; return new Response('{"results":[]}', { status: 200 }); }
+    if (String(u).includes('api.anthropic.com')) { modelCalls++; return new Response(JSON.stringify({ content: [{ type: 'text', text: '{}' }] }), { status: 200 }); }
+    return realFetch(u, init);
+  };
+  for (const code of ['019200780513', '0019200780513', '4006381333931', '01234565'])
+    eq((await post('merch-scan', { identifier: code }, 'u-mgr1')).status, 200, `${code} checks out`);
+  globalThis.fetch = realFetch;
+
+  // 🔑 The screen runs the SAME function, so a mistyped digit never costs a round trip.
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const wsrc = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const grab = (src) => (src.match(/function gtinCheckOk\(d\) \{[\s\S]*?\n\s*\}/) || [null])[0];
+  const wf = grab(wsrc), hf = grab(html);
+  ok(wf && hf, 'gtinCheckOk exists in both worker.js and index.html');
+  eq((hf || '').replace(/\s+/g, ' ').trim(), (wf || '').replace(/\s+/g, ' ').trim(),
+     '🔑 the screen and the worker check digits IDENTICALLY');
+  const check = buildOrStub('gtinCheckOk (index.html)', hf, [], [], 'gtinCheckOk');
+  eq(check('019200780511'), false, 'the screen refuses the retyped RID-X');
+  eq(check('019200780513'), true, '…and accepts the real one');
+  eq(check('062338995038'), true, '…and the Air Wick refill');
+  eq(check('01234565'), true, '…and leaves 8 digits alone');
+  ok(/gtinCheckOk\(digits\)/.test(sliceOrNull(html, 'async function psScan()', 'window.psScan') || ''),
+     '🔑 …and psScan actually calls it before the round trip');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

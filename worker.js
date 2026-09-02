@@ -7688,7 +7688,10 @@ async function retailLog(env, row) {
 // marked up over shelf and labelled "approximate" on the page itself. Allowing any
 // subdomain let both through, because the rule was written to admit shop.kroger.com and
 // never distinguished a store from a wholesaler.
-const RETAIL_HOST_BLOCK = /^(business|beta|sameday|wholesale|b2b|bulk|pro|dev|staging|test)\./i;
+// 🛑 `one.` and `wlfc.` are Walmart's EMPLOYEE INTRANET. Found live 2026-09-02: a bare
+// barcode search returned one.walmart.com/…/own-your-wellbeing.html as its nearest page,
+// and that page title became a product name. The intranet sells nothing and names nothing.
+const RETAIL_HOST_BLOCK = /^(business|beta|sameday|wholesale|b2b|bulk|pro|dev|staging|test|one|wlfc|corporate|careers)\./i;
 
 // 🛑 A SEARCH PAGE IS NOT A PRODUCT PAGE, AND ITS PRICE BELONGS TO WHATEVER IT LISTED.
 //
@@ -8348,9 +8351,25 @@ async function manifestNormalize(env, lines) {
 // 🔑 Only the SCAN path is held to this. A manifest legitimately carries vendor SKUs of
 // any length; there the number is whatever the vendor wrote, not a claim about a barcode.
 const GTIN_LENGTHS = new Set([8, 12, 13, 14]);
+// 🔑 THE LAST DIGIT IS A CHECKSUM, and every real UPC-A, EAN-13 and GTIN-14 carries one.
+// Measured on the floor 2026-09-02: RID-X Platinum is 019200780513. It was retyped as
+// 019200780511 — one digit off, a number no product can have — and because only the
+// LENGTH was checked, the search fuzzy-matched it anyway and RID-X was filed under a
+// barcode that does not exist. The check digit refuses that at the door, so the manager
+// rescans instead of the cache learning a wrong number.
+// 🛑 NOT for 8 digits. A UPC-E's check digit belongs to its EXPANDED 12-digit form, so
+// the plain GTIN formula rejects genuine UPC-E codes. Length alone there, as before.
+// Identical in index.html (gtinCheckOk); test-price-scan asserts the two cannot drift.
+function gtinCheckOk(d) {
+  if (![12, 13, 14].includes(d.length)) return true;
+  let sum = 0;
+  for (let i = 0; i < d.length - 1; i++) sum += ((d.length - 2 - i) % 2 === 0 ? 3 : 1) * Number(d[i]);
+  return (10 - (sum % 10)) % 10 === Number(d[d.length - 1]);
+}
 function isPlausibleBarcode(raw) {
   const d = String(raw || "").replace(/\D/g, "");
-  return d.length > 0 && d.length === String(raw || "").trim().length && GTIN_LENGTHS.has(d.length);
+  return d.length > 0 && d.length === String(raw || "").trim().length && GTIN_LENGTHS.has(d.length)
+    && gtinCheckOk(d);
 }
 
 function merchCanonicalUpc(raw) {
@@ -8368,6 +8387,21 @@ function merchIdForms(raw) {
   const forms = [c];
   if (c.length === 12) forms.push("0" + c);
   return forms;
+}
+
+// Does this search result actually print the barcode it was searched for? Every legal
+// spelling counts — a product database shows the GTIN-14 of a UPC — and a printed code
+// may be spaced the way it is under the bars ("0 62338 99503 8"), so runs of digits are
+// joined before looking. A digit boundary on both sides: this code inside a longer
+// number is a different number.
+function retailMentionsCode(r, identifier) {
+  const c = merchCanonicalUpc(identifier);
+  if (!c) return false;
+  const forms = new Set([c, "0" + c]);
+  if (c.length === 12) forms.add("00" + c);
+  const text = `${r?.title || ""} ${r?.snippet || ""} ${r?.url || ""}`
+    .replace(/(\d)[\s\u00a0-](?=\d)/g, "$1");
+  return [...forms].some(f => new RegExp(`(^|\\D)${f}(?!\\d)`).test(text));
 }
 
 async function retailIdentify(env, identifier, ctx) {
@@ -8391,12 +8425,22 @@ async function retailIdentify(env, identifier, ctx) {
   // twelve-digit form found the beans where the thirteen-digit form returned nothing at
   // all. Rather than pick a winner and be wrong half the time, ask the other way round
   // when the first comes back empty. Costs a second free search only on a miss.
-  let results = null;
+  // 🛑 A RESULT THAT DOES NOT CARRY THE NUMBER IS NOT AN ANSWER ABOUT IT. Measured
+  // 2026-09-02: three barcodes no allowlisted retailer indexes did not come back empty —
+  // the provider returned its nearest page on an allowed domain, which was Walmart's
+  // employee intranet (one.walmart.com "own-your-wellbeing"). That page title became the
+  // product name, was cached, and every rescan re-priced it for a Firecrawl credit. A page
+  // that names this barcode prints it — in the title, the snippet or, for a product
+  // database, the URL — so anything that does not is the provider guessing, and is dropped
+  // before it can name anything. Blocking the intranet host alone would only move the
+  // guess to the next nearest page.
+  let results = [];
   for (const form of merchIdForms(identifier)) {
-    results = await retailSearch(env, form, idDomains, ctx);
-    if (results && results.length) break;
+    const got = await retailSearch(env, form, idDomains, ctx);
+    results = Array.isArray(got) ? got.filter(r => retailMentionsCode(r, identifier)) : [];
+    if (results.length) break;
   }
-  if (!results || !results.length) return null;
+  if (!results.length) return null;
 
   // A first-party title is preferred where one exists — it is the least likely to be a
   // multipack mislabelled with a single unit's barcode — but any credible source beats
@@ -8418,8 +8462,13 @@ async function retailIdentify(env, identifier, ctx) {
   const first = norm.get(1) || norm.get(2) || norm.get(3) || null;
   if (first?.title) return { brand: first.brand || null, title: first.title, size: first.size || null };
 
-  // Normalisation failed but a first-party title is still better than a bare number.
-  return { brand: null, title: titles[0].slice(0, 200), size: null };
+  // 🛑 NO RAW PAGE TITLE AS A FALLBACK. The normaliser is prompted never to invent a
+  // product, so when it declines it has read the title and found no product in it — and
+  // that title is then exactly what must NOT be cached. "Item #61854 (00518HDHY)" went in
+  // this way and priced nothing, on every rescan. A miss here reads as "barcode not
+  // recognised", nothing is written, and the next scan tries again; a page title that is
+  // not a product would have stuck for good.
+  return null;
 }
 
 // ─── The class price: what the SHELF equivalent costs, not what a reseller wants ──
@@ -19707,6 +19756,9 @@ export default {
           try { got = JSON.parse((txt.match(/\{[\s\S]*\}/) || ["{}"])[0]); } catch (_) {}
           rawId = String(got.upc || "").replace(/\D/g, "").trim();
           desc = String(got.name || "").trim().slice(0, 400);
+          // A digit misread off the photo is a barcode that does not check out. The name
+          // read from the same photo is still good, so price by that rather than refuse.
+          if (rawId && !isPlausibleBarcode(rawId)) rawId = "";
           if (!rawId && !desc) {
             return new Response(JSON.stringify({
               error: "Could not make out a product in that photo. Try filling more of the frame, or type what it is.",
@@ -19725,10 +19777,10 @@ export default {
         // what a barcode can be. Anything else typed here is a product name and goes down
         // the description path untouched.
         if (rawId && /^\d+$/.test(rawId) && !isPlausibleBarcode(rawId)) {
-          return new Response(JSON.stringify({
-            error: `${rawId.length} digits is not a barcode — a UPC is 12, an EAN is 13, and a short code is 8. Check the number, or type what the item is.`,
-            code: "BAD_BARCODE",
-          }), { status: 400, headers: corsJson });
+          const error = GTIN_LENGTHS.has(rawId.length)
+            ? "That barcode does not check out — one digit is misread or mistyped. Scan it again, or type what the item is."
+            : `${rawId.length} digits is not a barcode — a UPC is 12, an EAN is 13, and a short code is 8. Check the number, or type what the item is.`;
+          return new Response(JSON.stringify({ error, code: "BAD_BARCODE" }), { status: 400, headers: corsJson });
         }
         const identifier = rawId ? (merchCanonicalUpc(rawId) || rawId) : null;
         const identType = identifier ? manifestIdentType(identifier) : "none";
