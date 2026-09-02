@@ -19190,8 +19190,17 @@ export default {
     // never a nearby price that happens to scan, because silently repricing an item
     // to suit the label is the one outcome worse than not printing.
     if (url.searchParams.get("action") === "sticker-check" && request.method === "POST") {
-      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
-      if (unauth) return unauth;
+      // 🛑 PRINTING IS NOT OVERRIDING. This was requireAdminAccess -> canAccessInventory,
+      // which is superuser and admin ONLY -- so the people who actually put labels on
+      // shelves could not print one, and the reprint tab was invisible to them. A shelf
+      // sticker carries the code and the retail price; it is not the right to change what
+      // an item is worth for every store. canSeeFinancials is the gate merch-scan already
+      // requires to reach this screen at all ("Managers use this on the floor, so it cannot
+      // be admin-only"), so the sticker now matches the scan that produces it rather than
+      // out-ranking it. Still narrower than business access: never staff.
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
       try {
         const body = await request.json();
         const l3 = String(body?.l3 || "").trim();
@@ -19268,8 +19277,17 @@ export default {
     // register — the one outcome this feature exists to prevent. A convenience must not
     // reintroduce the thing the feature is for.
     if (url.searchParams.get("action") === "sticker-printed" && request.method === "POST") {
-      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
-      if (unauth) return unauth;
+      // 🛑 PRINTING IS NOT OVERRIDING. This was requireAdminAccess -> canAccessInventory,
+      // which is superuser and admin ONLY -- so the people who actually put labels on
+      // shelves could not print one, and the reprint tab was invisible to them. A shelf
+      // sticker carries the code and the retail price; it is not the right to change what
+      // an item is worth for every store. canSeeFinancials is the gate merch-scan already
+      // requires to reach this screen at all ("Managers use this on the floor, so it cannot
+      // be admin-only"), so the sticker now matches the scan that produces it rather than
+      // out-ranking it. Still narrower than business access: never staff.
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       try {
         const body = await request.json();
@@ -19295,8 +19313,17 @@ export default {
     }
 
     if (url.searchParams.get("action") === "sticker-history" && request.method === "GET") {
-      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { allowAdminMutation: true });
-      if (unauth) return unauth;
+      // 🛑 PRINTING IS NOT OVERRIDING. This was requireAdminAccess -> canAccessInventory,
+      // which is superuser and admin ONLY -- so the people who actually put labels on
+      // shelves could not print one, and the reprint tab was invisible to them. A shelf
+      // sticker carries the code and the retail price; it is not the right to change what
+      // an item is worth for every store. canSeeFinancials is the gate merch-scan already
+      // requires to reach this screen at all ("Managers use this on the floor, so it cannot
+      // be admin-only"), so the sticker now matches the scan that produces it rather than
+      // out-ranking it. Still narrower than business access: never staff.
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       try {
         const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "8", 10) || 8, 1), 25);

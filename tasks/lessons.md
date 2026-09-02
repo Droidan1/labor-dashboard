@@ -1053,3 +1053,44 @@ Zebra. The rule is not about Clover. It is about **every** remote that answers.
    retry, the no-store and the uid fallback each fail loudly when removed. A green suite
    proves the code runs; only a red one proves the test is load-bearing.
 </rules>
+
+
+---
+
+## One right wearing two jobs
+
+The shelf-sticker feature was invisible to the people whose job it is. Every sticker action —
+check, record, history — ran through `requireAdminAccess`, which resolves to
+`canAccessInventory`: **superuser and admin only**. The front end matched it with
+`psCanOverride`, the right to change what an item is worth for every store, forever.
+
+Nobody decided that printing a label required the authority to reprice the chain. It was
+inherited, once, from whatever was nearby when the endpoint was written — and then copied
+three more times because the first one looked deliberate.
+
+<rules>
+1. **Name the right after the job, not after the nearest existing helper.** `psCanPrint` and
+   `psCanOverride` can share an implementation today and diverge tomorrow; `psCanOverride`
+   doing double duty cannot be changed for one caller without silently changing the other.
+2. **A gate copied from the handler above it is not a decision.** Ask what the action
+   actually exposes. A sticker carries a code and a retail price the scan already showed;
+   it is not the override it was gated like.
+3. **Check the whole chain before claiming who can do what.** `requireAdminAccess` does not
+   mean "admin" — it resolves through `allowAdminMutation` to `canAccessInventory`. I nearly
+   described the gate from its name. Two greps settled it.
+4. **When widening a permission, test the direction you did NOT go.** My first suite proved
+   managers could print and staff could not — and passed unchanged when I mutated
+   `psCanOverride` into `canSeeFinancials`, which would have handed price overrides to every
+   manager. Widening tests catch under-widening; only a pin on the untouched right catches
+   over-widening.
+5. **`ok(/functionName/.test(src))` proves a name, not a behaviour.** It passed while the
+   body did the opposite of what the assertion was named for. Pin the role list, and run the
+   function.
+6. **A probe that throws must fail, not crash.** Building a function that reaches for a free
+   variable succeeds; calling it throws. Wrap the call, and compare against `false` rather
+   than truthiness, or a dead suite reads as a passing one.
+</rules>
+
+**The tell was in the screenshot.** A tab that renders for almost nobody looks identical to a
+tab that works. It took a user saying "everyone who prints" to surface a gate nobody had
+chosen.

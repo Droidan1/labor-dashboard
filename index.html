@@ -19054,7 +19054,7 @@
   // If the inventories ever diverge this becomes a question worth asking; until they do,
   // asking it invents a problem.
   function psStickerRow(j) {
-    if (!psCanOverride()) return '';
+    if (!psCanPrint()) return '';
     if (j.price === null || j.price === undefined) return '';
     return `<div id="ps-sticker">
       <button class="ps-btn ghost" id="ps-print" type="button" disabled onclick="psPrint()">Print sticker</button>
@@ -19120,6 +19120,8 @@
         return 'This worker does not know how to check sticker codes yet, so the worker half of the deploy is missing.';
       case 'NO_BUSINESS_ACCESS':
         return 'Your account has no Bargain Lane access, so it cannot check sticker codes.';
+      case 'NEED_MANAGER':
+        return 'Printing stickers needs a manager account or above.';
       case 'NEED_ADMIN':
       case 'NEED_SUPERUSER':
         return 'Printing stickers needs an admin account.';
@@ -19299,7 +19301,7 @@
     if (!box) return;
     // Still refuses to fetch for anyone without the right -- but it now falls through to
     // the render, which is what hides the tab. Returning here left the button visible.
-    if (!psCanOverride()) { psRecent = []; psRecentRender(); return; }
+    if (!psCanPrint()) { psRecent = []; psRecentRender(); return; }
     try {
       const r = await fetch(`${WORKER_BASE}?action=sticker-history&limit=8`, { credentials: 'include' });
       const a = await r.json().catch(() => ({}));
@@ -19342,7 +19344,7 @@
     // The tab is offered only to whoever psRecentLoad would actually load for. An empty
     // tab you can click reads as broken; a tab that is not there asks no questions.
     const reBtn = el('ps-tab-reprint');
-    if (reBtn) reBtn.style.display = psCanOverride() ? '' : 'none';
+    if (reBtn) reBtn.style.display = psCanPrint() ? '' : 'none';
     const n = el('ps-tab-reprint-n');
     if (n) n.textContent = psRecent.length ? String(psRecent.length) : '';
     if (!psRecent.length) {
@@ -19427,6 +19429,14 @@
   // Scanning and overriding are different rights: a manager prices items all day, but only
   // an admin may permanently change what an item is worth for every store. The worker
   // enforces this; hiding the control keeps the screen honest about what it will accept.
+  // 🛑 PRINTING IS NOT OVERRIDING, AND CONFLATING THEM HID THE FEATURE. psCanOverride is
+  // the right to change what an item is worth for every store, forever -- superuser and
+  // admin. It was standing in for the right to put a label on a shelf, so the managers who
+  // print stickers all day saw no Print button and no Reprint tab. Different jobs, different
+  // rights. This mirrors the worker's canSeeFinancials, which merch-scan already requires to
+  // reach this screen at all -- so the sticker matches the scan that produced it.
+  function psCanPrint() { return canSeeFinancials(currentUser); }
+
   function psCanOverride() {
     return ['superuser', 'admin'].includes(currentUser && currentUser.role);
   }

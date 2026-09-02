@@ -2146,6 +2146,81 @@ console.log('Price Scan');
   ok(/Clover did not answer/.test(down.why || ''), '…and says so');
 }
 
+// ── Printing is not overriding ────────────────────────────────────────────────
+// \U0001f6d1 THE STICKER FEATURE WAS INVISIBLE TO THE PEOPLE WHO USE IT. Every sticker action
+// -- check, record, history -- ran through requireAdminAccess, which resolves to
+// canAccessInventory: superuser and admin ONLY. And the front end gated the Print button and
+// the Reprint tab on psCanOverride, the right to change what an item is worth for every
+// store, forever. Two different jobs wearing one right.
+//
+// \U0001f511 A SHELF LABEL IS NOT A PRICE OVERRIDE. It carries the code and the retail price that
+// merch-scan already computed -- and merch-scan requires canSeeFinancials, with the comment
+// "Managers use this on the floor, so it cannot be admin-only." The sticker now matches the
+// scan that produces it instead of out-ranking it. Still never staff.
+{
+  const worker = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  // Comments below NAME requireAdminAccess to explain what they replaced, so a naive grep
+  // matches the explanation and calls it the bug. Strip whole-line comments first.
+  const codeOnly = (t) => t.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l.trim() ? l : 'x')).join('\n');
+
+  for (const action of ['sticker-check', 'sticker-printed', 'sticker-history']) {
+    const at = worker.indexOf(`url.searchParams.get("action") === "${action}"`);
+    ok(at > 0, `${action} has a handler`);
+    const gate = codeOnly(worker.slice(at, at + 1400));
+    ok(/if \(!isAdminSecret && !canSeeFinancials\(currentUser\)\)/.test(gate),
+       `\U0001f511 ${action} gates on canSeeFinancials -- the gate the scan itself uses`);
+    ok(!/requireAdminAccess/.test(gate),
+       `\U0001f6d1 …and no longer on requireAdminAccess, which is superuser+admin only`);
+    ok(/NEED_MANAGER/.test(gate), `…refusing with NEED_MANAGER, which the screen can explain`);
+  }
+
+  // Extract the REAL role set rather than restating it: a harness that reimplements the
+  // thing it tests will agree with itself while production disagrees.
+  const roles = worker.match(/const FINANCIAL_ROLES = new Set\(\[[\s\S]*?\]\);/);
+  const fn = worker.match(/function canSeeFinancials\(user\) \{[\s\S]*?\n\}/);
+  ok(roles && fn, 'canSeeFinancials is extractable from worker.js');
+  const canSee = new Function(`${roles[0]}\n${fn[0]}\n; return canSeeFinancials;`)();
+  const U = (role) => ({ email: 'u@x.com', role });
+
+  ok(canSee(U('manager')), '\U0001f511 a manager can print -- the whole point of the change');
+  ok(canSee(U('executive')), '…and an executive');
+  ok(canSee(U('admin')) && canSee(U('superuser')), '…and everyone who already could');
+  ok(!canSee(U('staff')), '\U0001f6d1 …but NOT staff. This widens the gate, it does not remove it');
+  ok(!canSee(null), '…and not an unauthenticated caller');
+
+  // The front end must ask the same question, under its own name.
+  ok(/function psCanPrint\(\) \{ return canSeeFinancials\(currentUser\); \}/.test(html),
+     'the screen mirrors the worker gate rather than inventing a second role list');
+  const row = sliceOrNull(html, '  function psStickerRow(j) {', '  function psStickerCheck');
+  ok(/if \(!psCanPrint\(\)\) return ''/.test(row || ''),
+     'the Print button is offered on the print right');
+
+  // \U0001f6d1 The two rights must stay SEPARATE. Collapsing them the other way would hand the
+  // price-override control to every manager, which is the actual dangerous direction.
+  // 🛑 EXISTING IS NOT ENOUGH -- a mutation that redefined psCanOverride as
+  // canSeeFinancials passed this suite. That is the DANGEROUS direction: it would hand the
+  // price-override control to every manager. Pin the role list, and prove a manager is
+  // refused, rather than checking the function is still spelled the same.
+  const ovr = sliceOrNull(html, '  function psCanOverride() {', '\n  }');
+  ok(/\['superuser', 'admin'\]\.includes/.test(ovr || ''),
+     'psCanOverride is still superuser+admin -- overriding a price did NOT move');
+  // A body that reaches for something it was not given throws at CALL time, not build
+  // time, so catch it here: a probe that dies is a failed assertion, not a dead suite.
+  let managerMayOverride;
+  try {
+    managerMayOverride = !!buildOrStub('psCanOverride', ovr + '\n  }',
+      ['currentUser'], [{ role: 'manager' }], 'psCanOverride')();
+  } catch (e) { managerMayOverride = `threw: ${e.message}`; }
+  eq(managerMayOverride, false,
+     '🛑 …and a manager who can now PRINT still cannot OVERRIDE a price');
+  ok(/\$\{psCanOverride\(\) \? '<button class="ps-link" onclick="psOverride\(\)"/.test(html),
+     '\U0001f511 …and still guards the price override, which did NOT move');
+  ok(/case 'NEED_MANAGER':/.test(html),
+     'a manager-gated refusal is explained, not shown as an unexplained 403');
+}
+
+
 // ── The reprint row shows what it was, and what we priced it at ───────────────
 // \U0001f6d1 SHIPPED BROKEN AND PHOTOGRAPHED. .ps-btn is width:100% -- it is built for the
 // full-width "Scan" and "Look it up" buttons. Dropped into a flex row it demanded the whole
@@ -2177,7 +2252,7 @@ console.log('Price Scan');
       price: 3, printed_at: '2026-09-02T15:00:00Z' },
   ];
   const render = buildOrStub('psRecentRender', src,
-    ['el', 'psEsc', 'psL3Tail', 'psMoney', 'psRecentWhen', 'psCanOverride', 'psRecent'],
+    ['el', 'psEsc', 'psL3Tail', 'psMoney', 'psRecentWhen', 'psCanPrint', 'psRecent'],
     [(id) => els[id] || null,
      (v) => String(v == null ? '' : v),
      (l3) => String(l3 || '').split(' - ').pop(),
@@ -2276,10 +2351,10 @@ console.log('Price Scan');
   const load = sliceOrNull(html, '  async function psRecentLoad()', '  function psRecentRender()');
   const render = sliceOrNull(html, '  function psRecentRender()', '  // merchLabel lives in the worker');
 
-  ok(/psCanOverride\(\)/.test(load || ''), 'the fetch still refuses without the right');
+  ok(/psCanPrint\(\)/.test(load || ''), 'the fetch still refuses without the right');
   ok(/psRecentRender\(\);\s*return;/.test(load || ''),
      '\U0001f6d1 …but it now RENDERS on the way out. A bare return left the tab button on screen');
-  ok(/reBtn\.style\.display = psCanOverride\(\)/.test(render || ''),
+  ok(/reBtn\.style\.display = psCanPrint\(\)/.test(render || ''),
      'the tab is shown or hidden by the same right that gates the data');
   ok(/ps-recent-empty/.test(render || ''),
      'an empty list gets a sentence -- a clickable tab that renders nothing reads as broken');

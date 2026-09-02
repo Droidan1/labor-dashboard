@@ -489,9 +489,9 @@ has no `nowrap`; that is the tell.
 
 ### Still open
 
-- **The gate.** Asked for: everyone who prints can reprint. Needs a decision first, because
-  `sticker-check` — the print itself — is `requireAdminAccess`, the same gate as the history.
-  So under today's rules everyone who *can* print already can reprint, and the ask only means
-  something if printing itself moves to the gate the price lookup uses (`canSeeFinancials`:
-  manager and up, never staff). That widens who can print shelf labels, so it is being put to
-  Brian rather than assumed.
+- [x] **The gate — decided and done.** The ask only bit if printing itself moved, because
+  `sticker-check` was on the same `requireAdminAccess` as the history. Brian chose
+  `canSeeFinancials`: superuser, admin, executive, manager, never staff — the gate
+  `merch-scan` already requires to reach the screen at all. Applied to all three sticker
+  actions and to the three front-end call sites, under a new `psCanPrint` so it can never
+  again be confused with `psCanOverride`, which did not move.
