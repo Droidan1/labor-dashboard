@@ -2257,13 +2257,24 @@
         .ps-btn:disabled{opacity:.5;cursor:default}
         .ps-row{display:flex;gap:9px}
         #ps-sticker{display:flex;flex-direction:column;gap:7px}
-        #ps-recent{margin-top:14px}
+        #ps-recent{margin-top:0}
         .ps-recent-empty{font-size:13px;color:#6b6453;padding:10px 0 2px}
         .dark .ps-recent-empty{color:#7c899e}
-        .ps-recent-row{display:flex;align-items:center;gap:10px;padding:7px 0;
+        .ps-recent-row{display:flex;align-items:center;gap:10px;padding:9px 0;
           border-top:1px solid #e7e1d3}
         .dark .ps-recent-row{border-top-color:#1e293b}
+        /* The rule separates rows; above the first one it is a line under nothing. */
+        .ps-recent-row:first-child{border-top:none}
         .ps-recent-main{flex:1;min-width:0}
+        /* 🛑 .ps-btn IS width:100%. It is built for the full-width Scan and Look it up
+           buttons, and dropping one into a flex row made it demand the whole row -- which
+           collapsed .ps-recent-main to about three characters and left the title, which is
+           white-space:nowrap, clipped to nothing. The name looked missing; it was squeezed.
+           A button in a row sizes to its label. */
+        .ps-recent-row .ps-btn{width:auto;flex:none;padding:8px 13px;font-size:13px;border-radius:9px}
+        .ps-recent-price{font-size:13.5px;font-weight:700;flex:none;color:#3f3a2f;
+          font-variant-numeric:tabular-nums}
+        .dark .ps-recent-price{color:#e2e8f0}
         .ps-recent-title{font-size:13px;color:#3f3a2f;overflow:hidden;text-overflow:ellipsis;
           white-space:nowrap}
         .dark .ps-recent-title{color:#e2e8f0}
@@ -19043,7 +19054,7 @@
   // If the inventories ever diverge this becomes a question worth asking; until they do,
   // asking it invents a problem.
   function psStickerRow(j) {
-    if (!psCanOverride()) return '';
+    if (!psCanPrint()) return '';
     if (j.price === null || j.price === undefined) return '';
     return `<div id="ps-sticker">
       <button class="ps-btn ghost" id="ps-print" type="button" disabled onclick="psPrint()">Print sticker</button>
@@ -19109,6 +19120,8 @@
         return 'This worker does not know how to check sticker codes yet, so the worker half of the deploy is missing.';
       case 'NO_BUSINESS_ACCESS':
         return 'Your account has no Bargain Lane access, so it cannot check sticker codes.';
+      case 'NEED_MANAGER':
+        return 'Printing stickers needs a manager account or above.';
       case 'NEED_ADMIN':
       case 'NEED_SUPERUSER':
         return 'Printing stickers needs an admin account.';
@@ -19288,7 +19301,7 @@
     if (!box) return;
     // Still refuses to fetch for anyone without the right -- but it now falls through to
     // the render, which is what hides the tab. Returning here left the button visible.
-    if (!psCanOverride()) { psRecent = []; psRecentRender(); return; }
+    if (!psCanPrint()) { psRecent = []; psRecentRender(); return; }
     try {
       const r = await fetch(`${WORKER_BASE}?action=sticker-history&limit=8`, { credentials: 'include' });
       const a = await r.json().catch(() => ({}));
@@ -19331,7 +19344,7 @@
     // The tab is offered only to whoever psRecentLoad would actually load for. An empty
     // tab you can click reads as broken; a tab that is not there asks no questions.
     const reBtn = el('ps-tab-reprint');
-    if (reBtn) reBtn.style.display = psCanOverride() ? '' : 'none';
+    if (reBtn) reBtn.style.display = psCanPrint() ? '' : 'none';
     const n = el('ps-tab-reprint-n');
     if (n) n.textContent = psRecent.length ? String(psRecent.length) : '';
     if (!psRecent.length) {
@@ -19339,12 +19352,15 @@
         + 'it will show up here to reprint without scanning again.</div>';
       return;
     }
+    // What it was, what we priced it at, then the label's own code and when it went out.
+    // A code alone told you nothing you could check against the shelf you are standing at.
     box.innerHTML = psRecent.map((p, i) => `
       <div class="ps-recent-row">
         <div class="ps-recent-main">
-          <div class="ps-recent-title">${psEsc(p.title || psL3Tail(p.l3) || p.code)}</div>
+          <div class="ps-recent-title">${psEsc(p.title || psL3Tail(p.l3) || 'Unnamed item')}</div>
           <div class="ps-recent-sub"><span class="ps-code">${psEsc(p.code)}</span> · ${psEsc(psRecentWhen(p.printed_at))}</div>
         </div>
+        <div class="ps-recent-price">${psEsc(psMoney(p.price))}</div>
         <button class="ps-btn ghost" type="button" onclick="psReprint(${i})">Reprint</button>
       </div>`).join('');
   }
@@ -19353,6 +19369,11 @@
   // its tail segment (`l3.split(' - ').pop()`), so a print row reads the same way rather
   // than spelling out FG BL CONSUMABLES - FOOD - BEVERAGES on a phone-width line.
   const psL3Tail = (l3) => String(l3 || '').split(' - ').pop();
+
+  // 🔑 The price is drawn with psMoney, the formatter this page already uses everywhere
+  // else -- a second one would drift. sticker-history has returned `price` since the table
+  // was created and nothing ever drew it; a row you cannot check against the shelf in front
+  // of you is a row you reprint just to read.
 
   function psRecentWhen(iso) {
     const t = Date.parse(iso);
@@ -19408,6 +19429,14 @@
   // Scanning and overriding are different rights: a manager prices items all day, but only
   // an admin may permanently change what an item is worth for every store. The worker
   // enforces this; hiding the control keeps the screen honest about what it will accept.
+  // 🛑 PRINTING IS NOT OVERRIDING, AND CONFLATING THEM HID THE FEATURE. psCanOverride is
+  // the right to change what an item is worth for every store, forever -- superuser and
+  // admin. It was standing in for the right to put a label on a shelf, so the managers who
+  // print stickers all day saw no Print button and no Reprint tab. Different jobs, different
+  // rights. This mirrors the worker's canSeeFinancials, which merch-scan already requires to
+  // reach this screen at all -- so the sticker matches the scan that produced it.
+  function psCanPrint() { return canSeeFinancials(currentUser); }
+
   function psCanOverride() {
     return ['superuser', 'admin'].includes(currentUser && currentUser.role);
   }

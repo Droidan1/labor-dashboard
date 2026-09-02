@@ -460,3 +460,38 @@ have nothing to scan.
   people printing shelf stickers are largely not admins, and `sticker-history` itself is
   only business-level on the worker. Left exactly as found, because widening who can see
   print history is a permissions decision, not a layout one.
+
+
+---
+
+## The reprint row, as photographed
+
+> "fix the ui misalignment and add what the product name was and our price"
+
+The tab shipped with the row broken, and the screenshot showed it: the code wrapped down a
+three-character column while the Reprint button spanned the panel.
+
+**`.ps-btn` is `width:100%`.** It is built for the full-width "Scan" and "Look it up"
+buttons. Dropped into a flex row it demanded the whole width, `.ps-recent-main` collapsed,
+and `.ps-recent-title` — which is `white-space:nowrap` — was clipped to nothing. The product
+name looked absent. It was squeezed. The text that appeared to wrap was the sub-line, which
+has no `nowrap`; that is the tell.
+
+- [x] `.ps-recent-row .ps-btn{width:auto;flex:none}` — a button in a row sizes to its label.
+- [x] `.ps-recent-row:first-child{border-top:none}` — with the heading gone, the first rule
+      was a line under nothing. That is the stray line at the top of the screenshot.
+- [x] Product name is the row's title, falling back to the category tail rather than
+      repeating the code that is already in the sub-line.
+- [x] Our price, right-aligned in tabular figures. `sticker-history` has returned `price`
+      since the table was created and nothing ever drew it.
+- [x] Formatted with the page-wide `psMoney`, not a second formatter. The first attempt
+      declared one and the syntax check caught the collision — `psMoney` already existed.
+
+### Still open
+
+- [x] **The gate — decided and done.** The ask only bit if printing itself moved, because
+  `sticker-check` was on the same `requireAdminAccess` as the history. Brian chose
+  `canSeeFinancials`: superuser, admin, executive, manager, never staff — the gate
+  `merch-scan` already requires to reach the screen at all. Applied to all three sticker
+  actions and to the three front-end call sites, under a new `psCanPrint` so it can never
+  again be confused with `psCanOverride`, which did not move.
