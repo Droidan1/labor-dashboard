@@ -598,7 +598,8 @@ and templates are now named and saved in multiples with one in use.
 
 ### Still open
 
-- **Nothing is deployed.** Worker first (new actions and a new KV key), then the front end.
+- [x] ~~Nothing is deployed.~~ **Shipped.** Worker deployed, front end merged as `553323c`,
+      and confirmed working on the floor with Round 4's fixes on top.
 - **The `$` badge is 74x74 = 740 bytes**, well under the 1,600-byte cap. A larger or wider
   mark is allowed up to 110x110 or 150x80.
 - **Only the corner slot takes an image.** The banner layout was mocked and rejected: a
@@ -638,9 +639,16 @@ on-screen template. Four separate faults, found by running the editor rather tha
 - Contrast recomputed against the real panel backgrounds: `#8a5a00` on `#ffffff` = 5.93:1,
   `#f0b849` on `#101826` = 9.87:1.
 
+### Shipped and confirmed
+
+Worker deployed, front end merged as `553323c` (cache key `v160`). Reported working after a
+hard reload: typing lands whole numbers, "Save as new" keeps the new template on screen, and
+an image-mode corner mark prints — which is the `^FS` fix confirmed on real hardware, the one
+thing no test here can prove.
+
 ### Still open
 
-- **Deploy the worker first** — it adds `savedId` and lowers the magnification floor, both
-  backward compatible. The front end is the half that starts relying on them.
-- **Magnification 3 is unproven at a register.** Print a test label and scan it at a till
-  before committing a roll.
+- **Magnification 3 has still never been read by a register.** The code allows it and the
+  editor warns about it; nobody has held a mag-3 label under a scanner at a till. That is a
+  physical check, and it is not covered by "everything is working" — the default is 4 and
+  nothing has moved off it. Do it before any store commits a roll to 3.
