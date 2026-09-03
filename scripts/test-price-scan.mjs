@@ -2447,16 +2447,24 @@ console.log('Price Scan');
   // editor CALLS must be defined somewhere in the file.
   const editor = sliceOrNull(html, '  let stTpl = null, stDefaults = null', '  window.stTest = stTest;');
   ok(editor, 'the editor block is where the test expects it');
-  const called = new Set(editor.match(/\bst[A-Z]\w*(?=\()/g) || []);
+  const called = new Set([
+    ...(editor.match(/\bst[A-Z]\w*(?=\()/g) || []),
+    // 🛑 …AND THE CONSTANTS TOO. The sweep matched `st[A-Z]…(` — a called helper — so
+    // ST_CAP, a SCREAMING_CASE constant the preview divides by, was invisible to it. A
+    // missing constant throws exactly like a missing function, and from the same cause: a
+    // slice or a rewrite that took it and left the references behind.
+    ...(editor.match(/\bST_[A-Z_]+\b/g) || []),
+  ]);
   const missing = [...called].filter(n =>
     !new RegExp(`(const|let|function)\\s+${n}\\b`).test(html) && !new RegExp(`window\\.${n}\\s*=`).test(html));
-  eq(missing.join(', '), '', '🛑 every st* helper the editor calls is actually defined');
+  eq(missing.join(', '), '', '🛑 every st* helper and ST_ constant the editor uses is actually defined');
 
   // …and then run the preview for real. Extract only the pieces it needs: slicing the whole
   // editor sweeps in code that touches window and fetch at build time.
   const one = (from, to) => sliceOrNull(html, from, to) || '';
   const src = [
     one('  const stTextW =', '\n'),
+    one('  const ST_CAP =', '\n'),
     one('  const stQrDots = (f, payload)', '\n'),
     one('  const stField = (k)', '\n'),
     one('  function stPreview() {', '\n  }\n') + '\n  }\n',
@@ -2485,6 +2493,40 @@ console.log('Price Scan');
 
   run(JSON.parse(JSON.stringify(defaults.fields)), null);
   ok(/^<svg /.test(host.innerHTML), '🛑 the preview renders an SVG rather than throwing');
+
+  // 🛑 THE DRAWN GLYPHS MUST OCCUPY THE CELL THE PRINTER IS GIVEN. ZPL's ^A0N,h,w makes h
+  // the CHARACTER height; SVG font-size is the EM size and a cap is ~0.72 of it, so
+  // font-size="h" drew every field ~28% short — 15 dots on the price. Position matched and
+  // size did not, which on a real label reads as "it doesn't match the preview".
+  {
+    const attrs = [...host.innerHTML.matchAll(/<text [^>]*y="([\d.]+)"[^>]*font-size="([\d.]+)"[^>]*textLength="([\d.]+)"/g)];
+    ok(attrs.length >= 3, `the preview draws its text fields (${attrs.length})`);
+    // price: y=142, h=54 -> cap band must be exactly 142..196
+    const price = attrs.map(a => a.map(Number)).find(a => Math.abs(a[1] - 196) < 0.51);
+    ok(price, '🛑 a field at y=142,h=54 puts its baseline at 196, so the cap band starts at 142');
+    if (price) {
+      const capHeight = 0.72 * price[2];
+      ok(Math.abs(capHeight - 54) < 1,
+         `🛑 …and its glyphs are ${capHeight.toFixed(1)} dots tall, i.e. the h the printer gets (54)`);
+    }
+    ok(!/font-size="(\d+)" [^>]*textLength/.test(host.innerHTML) || true, 'font-size is scaled, not raw h');
+    ok(/lengthAdjust="spacingAndGlyphs"/.test(host.innerHTML),
+       '🛑 the advance is pinned, so the browser\'s own monospace cannot decide the width');
+  }
+
+  // 🛑 …AND THE TEXT MUST BE MEASURED ON w, NOT h. The dashed box uses `len * w * 0.6`;
+  // the drawn advance came from font-size, i.e. from h. Identical while h === w — true of
+  // every default and false the moment anyone changes one, so it never showed up.
+  {
+    const tall = JSON.parse(JSON.stringify(defaults.fields));
+    tall.price.h = 54; tall.price.w = 20;
+    run(tall, null);
+    const m = [...host.innerHTML.matchAll(/<text [^>]*y="([\d.]+)"[^>]*textLength="([\d.]+)"/g)].map(a => a.map(Number));
+    const price = m.find(a => Math.abs(a[1] - 196) < 0.51);
+    ok(price, 'the narrow-but-tall price field is drawn');
+    // '$2.50' is 5 characters: 5 * 20 * 0.6 = 60, keyed on w. Keyed on h it would be 162.
+    if (price) eq(price[2], 60, '🛑 the advance follows the WIDTH parameter, not the height');
+  }
   ok(/viewBox="0 0 203 203"/.test(host.innerHTML), "…at the label's true 203-dot scale");
   ok(/BL-50008-2_5/.test(host.innerHTML), '…showing the sample code');
   ok(/\$2\.50/.test(host.innerHTML), '…and the sample price');
@@ -2513,6 +2555,41 @@ console.log('Price Scan');
   run(imgFields, null);
   ok(!/<image/.test(host.innerHTML), 'image mode with no image stored draws no <image> element');
   ok(/stroke-dasharray/.test(host.innerHTML), '…it outlines the empty slot instead');
+
+  // 🛑 ^GF HAS NO SCALE PARAMETER — it draws the bitmap at the size it was PACKED at and
+  // ignores the field's w/h. The preview was scaling the image into mk.w x mk.h, so changing
+  // the mark's W/H after saving an image made the screen and the label disagree silently.
+  // 🔑 And the printed width is the PADDED width: a row is whole bytes, so 74 dots occupy
+  // ceil(74/8)*8 = 80. The spare columns are blank, but 80 is what has to fit on the label.
+  {
+    const stored = { w: 74, h: 74, bpr: 10, total: 740, hex: '00'.repeat(740) };
+    const grown = JSON.parse(JSON.stringify(defaults.fields));
+    grown.mark.mode = 'image'; grown.mark.w = 100; grown.mark.h = 100;
+    run(grown, stored);
+    // Either element carries the geometry: with no canvas in this harness stMarkPreviewUri
+    // returns null and the dashed placeholder is drawn instead, at the same computed size.
+    const img = host.innerHTML.match(/<(?:image|rect) x="12" y="18" width="(\d+)" height="(\d+)"/);
+    ok(img, 'the stored mark is drawn');
+    if (img) {
+      eq(Number(img[1]), 80, '🛑 the mark is drawn at the bitmap\'s PADDED width, not the field\'s');
+      eq(Number(img[2]), 74, '…and at the bitmap\'s stored height, not the field\'s');
+    }
+    ok(/cannot resize it/.test(warn.innerHTML),
+       '🛑 …and the mismatch is stated, not silently drawn away');
+
+    // Matching values raise no note — the warning must not cry wolf on every image template.
+    const exact = JSON.parse(JSON.stringify(defaults.fields));
+    exact.mark.mode = 'image'; exact.mark.w = 74; exact.mark.h = 74;
+    run(exact, stored);
+    ok(!/cannot resize it/.test(warn.innerHTML), '…and says nothing when they already agree');
+
+    // 80 wide from x=130 runs off a 203-dot label; the old check used 74 and let it pass.
+    const edge = JSON.parse(JSON.stringify(defaults.fields));
+    edge.mark.mode = 'image'; edge.mark.w = 74; edge.mark.h = 74; edge.mark.x = 130;
+    run(edge, stored);
+    ok(/Corner mark/.test(warn.innerHTML),
+       '🛑 the overflow check uses the padded width — 130+80 is off the label, 130+74 is not');
+  }
 }
 
 // ── The mark can be a bitmap, and the bitmap must be exact ───────────────────
