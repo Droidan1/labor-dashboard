@@ -1225,3 +1225,48 @@ fine, it just references something absent), and every assertion I had was grep-s
 5. **Render order hides errors.** If A populates the visible thing and then calls B, a throw
    in B is invisible. When something renders "mostly", check the console before believing it.
 </rules>
+
+## "It isn't saving" was four different bugs, and none of them was the save
+
+The user reported the sticker template not saving and test printing not working. My first
+instinct was the worker validator, so I extracted it and ran the exact on-screen values
+through it. It **accepted them** — the payload was fine, and had always been fine. Every
+assertion I had was about that payload.
+
+What was actually wrong sat on either side of it:
+
+1. **`stSet` called `stDraw()` on every `oninput`.** `stDraw` assigns `#st-fields.innerHTML`,
+   which destroys the input the caret is in. Typing `113` into a coordinate box landed the
+   `1` and threw the other two characters on the floor. Same bug in `stCutSet`, so the
+   threshold slider was destroyed under the finger dragging it.
+2. **After "Save as new", the editor picked which template to show from `active`.** A new
+   template is not necessarily the active one, so the screen swapped to the *other* template
+   the instant the save succeeded — while printing "Saved". The work was on the server the
+   whole time and the screen threw it away.
+3. **`^GFA` was emitted with no `^FS`.** `^FS` ends a field definition and commits it. It was
+   the only line on the label without one, so an image mark never printed. Text-mode
+   templates printed fine right beside it, which is why it read as "test printing is broken".
+4. **`stickerText`'s `.trim()` ate the retail prefix's trailing space**, printing
+   `Compare at$29.99` on a shelf. The prefix is concatenated straight onto `$29.99`, so that
+   space is the separator — the one character a trim is guaranteed to remove.
+
+<rules>
+1. **When a report says "X isn't working", verify X is where the failure is before fixing X.**
+   Ten minutes proving the validator accepted the payload told me the bug was somewhere else
+   and saved me from "hardening" a function that was already correct.
+2. **A test that inspects the payload cannot see whether the number reached the payload.**
+   Drive the UI: type character by character, click the button, read what came back. Both
+   1 and 2 above are invisible to every possible assertion about the request body.
+3. **`innerHTML =` on an `oninput` handler is always a bug.** It destroys the element the
+   event came from. Redraw only what changed structure; move the rest.
+4. **Never infer identity from a neighbouring field.** The client guessed "which row did I
+   just write" from `active`. The server knew; it just wasn't saying. One `savedId` field
+   ended the guess. If the caller has to infer it, the API is missing it.
+5. **When one line in a generated format is built differently from its siblings, check the
+   terminator.** Four `^FO...^FS` lines and one `^FO...` — the odd one out was the bug, and
+   it was visible in the test's own expected string, which had been written to match.
+6. **Don't slice a fixed number of characters out of source to test it.** `worker.slice(at,
+   at + 1200)` failed a test because I added a five-line comment inside the handler. The
+   same trap passes silently in the other direction, pulling the *next* handler into view.
+   Slice to a real boundary.
+</rules>

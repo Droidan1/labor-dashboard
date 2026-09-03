@@ -604,3 +604,43 @@ and templates are now named and saved in multiples with one in use.
 - **Only the corner slot takes an image.** The banner layout was mocked and rejected: a
   circular badge does not stretch, and giving the top 50 dots to it pushes the price into
   the QR.
+
+## Round 4 — the four bugs behind "the template isn't saving"
+
+Reported: *"The template isn't saving and test printing isn't working. also allow the qr
+code to be size 3"*. The worker validator was **not** the problem — it accepted the exact
+on-screen template. Four separate faults, found by running the editor rather than reading it:
+
+- [x] **`stSet` redrew the whole panel on every keystroke.** `stDraw` assigns
+      `#st-fields.innerHTML`, destroying the focused input — typing `113` landed a `1`.
+      Now only `mode` (which changes *which* controls exist) redraws; everything else
+      refreshes the preview. `stCutSet` had the same fault: the threshold slider was
+      replaced mid-drag. Its reading updates in place now.
+- [x] **"Save as new" swapped the screen to the wrong template.** The editor resolved which
+      row it had written from `active`, and a new template is not necessarily active. The
+      worker now returns `savedId`; there is nothing left to infer.
+- [x] **`^GFA` shipped without its `^FS`.** The graphic field never closed, so an image
+      corner mark never printed — while a text mark printed perfectly beside it.
+- [x] **`stickerText`'s `.trim()` ate the retail prefix's separator**, printing
+      `Compare at$29.99`. Whitespace now collapses to single spaces but is never removed
+      from the ends.
+- [x] **QR magnification 3 is allowed**, worker and editor both (they are two independent
+      floors; a `min="4"` input refuses 3 before any request is made). 2 is still refused.
+      The editor states on screen that 3 is **not** the size proven at a register.
+
+### Verified
+
+- 3,185 assertions across 53 suites, all passing.
+- Eight mutations applied and reverted one at a time — each fix reverted, each caught by a
+  named failure, including the editor's own `min="3"`.
+- The editor is now driven end to end in the suite: typing character by character, saving a
+  first template, saving a second while the first is in use, and printing a test label.
+- Contrast recomputed against the real panel backgrounds: `#8a5a00` on `#ffffff` = 5.93:1,
+  `#f0b849` on `#101826` = 9.87:1.
+
+### Still open
+
+- **Deploy the worker first** — it adds `savedId` and lowers the magnification floor, both
+  backward compatible. The front end is the half that starts relying on them.
+- **Magnification 3 is unproven at a register.** Print a test label and scan it at a till
+  before committing a roll.

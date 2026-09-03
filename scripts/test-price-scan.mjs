@@ -2493,8 +2493,20 @@ console.log('Price Scan');
   const over = JSON.parse(JSON.stringify(defaults.fields));
   over.price.x = 190;
   run(over, null);
-  eq(warn.className, 'mt-4', 'a field pushed off the edge shows the warning');
+  eq(warn.className, 'mt-4 space-y-2', 'a field pushed off the edge shows the warning');
   ok(/Our price/.test(warn.innerHTML), '…and names which field it is');
+
+  // 🛑 3 IS ALLOWED, NOT VOUCHED FOR, AND THE SCREEN IS THE ONLY PLACE THAT CAN SAY SO.
+  // The worker now stores magnification 3; nothing about it has been read at a register.
+  // The failure lands on a customer at the till, so the editor has to state it where the
+  // number is set rather than leaving the size to look as ordinary as 4.
+  const small = JSON.parse(JSON.stringify(defaults.fields));
+  small.qr.mag = 3;
+  run(small, null);
+  eq(warn.className, 'mt-4 space-y-2', 'a QR below the proven size raises a note');
+  ok(/proven at the register/.test(warn.innerHTML), '…and says it has not been proven at a register');
+  run(JSON.parse(JSON.stringify(defaults.fields)), null);
+  ok(!/proven at the register/.test(warn.innerHTML), '…while magnification 4 raises nothing');
 
   const imgFields = JSON.parse(JSON.stringify(defaults.fields));
   imgFields.mark.mode = 'image';
@@ -2579,7 +2591,15 @@ console.log('Price Scan');
   const tplImg = { markImage: img, fields: { mark: { on: true, mode: 'image', x: 12, y: 18 } } };
 
   const out = psZpl('BL-1-1', 1, {}, tplImg);
-  ok(out.includes(`^FO12,18^GFA,740,740,10,${img.hex}`), '🔑 the mark is emitted as a ^GFA bitmap');
+  ok(out.includes(`^FO12,18^GFA,740,740,10,${img.hex}^FS`), '🔑 the mark is emitted as a ^GFA bitmap');
+  // 🛑 SHIPPED WITHOUT ITS TERMINATOR AND THE LABEL NEVER PRINTED. ^FS ends a field
+  // definition and commits it; ^GFA was the only line on the label emitted without one, so
+  // the graphic field stayed open. Text-mode templates printed perfectly right beside it,
+  // which is why it read as "test printing is broken" rather than as a missing character.
+  // Assert it on the ^GFA line specifically -- a file-wide count of ^FS would not have seen it.
+  ok(/\^GFA,[^\n]*\^FS$/m.test(out), '🛑 …and the graphic field is CLOSED with ^FS, or it never prints');
+  eq(out.split('\n').filter(l => l.startsWith('^FO')).every(l => l.endsWith('^FS')), true,
+     '🛑 every field on the label is terminated, the bitmap included');
   ok(!/\^A0N,74,74\^FD/.test(out), '…and the $ glyph is NOT also drawn — one slot, one filling');
 
   // 🛑 Image mode with nothing stored must draw NOTHING, not a broken ^GFA. The image
@@ -2749,8 +2769,11 @@ console.log('Price Scan');
   // whole feature exists to prevent.
   ok(/cannot be removed/.test(clean({ fields: { qr: { on: false } } }).error || ''),
      '\🛑 a template that turns the QR off is refused, not quietly corrected');
-  ok(/refused/.test(clean({ fields: { qr: { mag: 3 } } }).error || ''),
-     '\🛑 …and magnification below 4 is refused — 4 is what scans at the register today');
+  // 3 is allowed because it was asked for; 4 is the size proven at a register. The floor
+  // still binds one step down, and the EDITOR is what says 3 is unproven (asserted below).
+  eq(clean({ fields: { qr: { mag: 3 } } }).tpl?.fields.qr.mag, 3, 'magnification 3 is allowed');
+  ok(/refused/.test(clean({ fields: { qr: { mag: 2 } } }).error || ''),
+     '\🛑 …and 2 is still refused — a module that small reads nowhere');
   eq(clean({ fields: { qr: { mag: 6 } } }).tpl.fields.qr.mag, 6, '…while 6 is fine');
   eq(clean({ fields: { qr: { mag: 99 } } }).tpl.fields.qr.mag, 8, '…and an absurd one clamps rather than failing');
 
@@ -2769,6 +2792,15 @@ console.log('Price Scan');
   ok(!/[\^~]/.test(t), 'ZPL control characters are stripped before storage');
   eq(clean({ fields: { mark: { text: 'x'.repeat(80) } } }).tpl.fields.mark.text.length, 24, 'text is length-capped');
 
+  // 🛑 .trim() PRINTED "Compare at$29.99" ON A SHELF. psZpl builds the line as
+  // `${prefix}$${amount}`, so the prefix's trailing space is the space between the words --
+  // the single character a trim is guaranteed to remove. Assert the printed RESULT, not the
+  // stored string, because that is where the missing space was visible.
+  eq(clean({ fields: { retail: { prefix: 'Compare at ' } } }).tpl.fields.retail.prefix, 'Compare at ',
+     '🛑 the retail prefix keeps its trailing space');
+  eq(clean({ fields: { retail: { prefix: 'Was  \n at   ' } } }).tpl.fields.retail.prefix, 'Was at ',
+     '…runs of whitespace collapse to one, but the ends survive');
+
   eq(clean({}).tpl.fields.price.x, 10, 'an empty body yields the defaults');
   eq(clean(null).tpl.fields.code.h, 20, '…and so does no body at all');
   eq(clean({ fields: { mark: { on: false } } }).tpl.fields.mark.on, false, 'the corner mark CAN be switched off');
@@ -2782,25 +2814,35 @@ console.log('Price Scan');
   // FIRST in the ACTION_BUSINESS registry hundreds of lines earlier, so slicing between bare
   // names silently produced empty strings and six assertions "passed" against nothing until
   // the emoji in their labels gave the game away.
-  const handler = (action, len) => {
+  // 🛑 …AND DO NOT SLICE A FIXED NUMBER OF CHARACTERS. This took `at + 1200`, so adding a
+  // five-line comment inside a handler pushed the code the assertion was looking for out of
+  // the window and failed a test that had nothing to do with the change. Worse, the same
+  // trap silently PASSES the other way: a shrinking handler pulls the NEXT one into view.
+  // Each handler runs until the next one starts, so take exactly that, then drop comments —
+  // in that order, or a comment above the next handler can satisfy an assertion on its own.
+  const NEXT = /url\.searchParams\.get\("action"\) === "/g;
+  const handler = (action) => {
     const at = worker.indexOf(`url.searchParams.get("action") === "${action}"`);
     ok(at > 0, `${action} has a handler`);
-    return at > 0 ? codeOnly(worker.slice(at, at + len)) : '';
+    if (at < 0) return '';
+    NEXT.lastIndex = at + 1;
+    const m = NEXT.exec(worker);
+    return codeOnly(worker.slice(at, m ? m.index : worker.length));
   };
 
-  const get = handler('sticker-template', 1200);
+  const get = handler('sticker-template');
   ok(/canSeeFinancials\(currentUser\)/.test(get),
      'reading the template uses the PRINT gate -- everyone who prints needs it');
-  const set = handler('sticker-template-set', 2000);
+  const set = handler('sticker-template-set');
   ok(/currentUser\.role !== "superuser"/.test(set),
      '🛑 …but EDITING it is superuser only. Changing every label the chain prints is not printing one.');
   ok(/sanitizeStickerTemplate/.test(set), '…and nothing is stored without going through the validator');
   ok(/\.delete\(STICKER_TEMPLATE_KEY\)/.test(set), 'reset removes the key rather than storing a copy of the defaults');
 
-  const printed = handler('sticker-printed', 3200);
+  const printed = handler('sticker-printed');
   ok(/retail_cents/.test(printed), 'a print records the street price it was made with');
   ok(/INSERT INTO sticker_prints[\s\S]*retail_cents/.test(printed), '…in the INSERT, not just computed and dropped');
-  const hist = handler('sticker-history', 2400);
+  const hist = handler('sticker-history');
   // 🛑 RUN IT, DO NOT GREP IT. Asserting the CONDITION `r.retail_cents === null` passed
   // unchanged when the returned VALUE was mutated from null to 0 -- which would print
   // "Compare at $0.00" on a shelf. The same shape of gap as pinning a function's name and
@@ -3324,6 +3366,158 @@ console.log('Price Scan');
   eq(check('01234565'), true, '…and leaves 8 digits alone');
   ok(/gtinCheckOk\(digits\)/.test(sliceOrNull(html, 'async function psScan()', 'window.psScan') || ''),
      '🔑 …and psScan actually calls it before the round trip');
+}
+
+// ── The editor, driven the way a person drives it ────────────────────────────
+// 🛑 TWO BUGS SHIPPED THAT NO GREP-SHAPED TEST COULD SEE, and both read to the user as
+// "the template isn't saving":
+//   1. stSet called stDraw on every oninput. stDraw assigns #st-fields innerHTML, which
+//      destroys the input the caret is in -- so typing "113" into a box landed a 1 and threw
+//      the rest away. Every assertion about the SAVE PAYLOAD passed; the payload was fine.
+//      What was broken was that the number never got into it.
+//   2. After "Save as new", the editor picked which template to show from `active`. A new
+//      template is not necessarily the active one, so the screen swapped to the OTHER
+//      template while reporting "Saved" -- the work was on the server and gone from view.
+// The only test that catches either is one that types and clicks. So: run the editor.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const editorSrc = sliceOrNull(html, '  const ST_ROWS = [', '  window.stTest = stTest;');
+  ok(editorSrc, 'the editor block is extractable');
+  const pa = html.indexOf('  function psZpl(code, price, extras, tpl) {');
+  const psZplSrc = html.slice(pa, html.indexOf('\n  }\n', pa) + 4);
+
+  const DEF = { v: 1, fields: {
+    qr:     { on: true,  x: 104, y: 10,  mag: 4 },
+    mark:   { on: true,  x: 12,  y: 18,  h: 74, w: 74, font: '0', text: '$', mode: 'text' },
+    code:   { on: true,  x: 10,  y: 116, h: 20, w: 20, font: '0' },
+    price:  { on: true,  x: 10,  y: 142, h: 54, w: 54, font: '0' },
+    retail: { on: false, x: 10,  y: 96,  h: 18, w: 18, font: '0', prefix: 'Compare at ' } } };
+
+  // A KV-shaped stand-in for the worker: it stores, it answers, and it reports savedId the
+  // way the real handler does. It deliberately does NOT clamp -- clamping is tested against
+  // the real validator elsewhere, and mixing the two would hide which half broke.
+  let store = { active: null, items: [] }, nextId = 1;
+  const writes = [];
+  const fakeFetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes('sticker-template-set')) {
+      const body = JSON.parse(opts.body);
+      const op = body.op || 'save';
+      let savedId = null;
+      if (op === 'save') {
+        const at = store.items.findIndex(t => t.id === String(body.id || ''));
+        const fields = JSON.parse(JSON.stringify(body.fields));
+        if (at >= 0) { store.items[at] = { ...store.items[at], name: body.name, fields }; savedId = store.items[at].id; }
+        else {
+          const fresh = { id: 't' + (nextId++), name: body.name, fields };
+          store.items.push(fresh); savedId = fresh.id;
+          if (!store.active) store.active = fresh.id;
+          if (body.activate) store.active = fresh.id;
+        }
+      } else if (op === 'activate') { store.active = body.id; savedId = body.id; }
+      const active = store.items.find(t => t.id === store.active) || null;
+      return { ok: true, status: 200, json: async () => ({
+        ok: true, active: store.active, savedId, template: active, items: store.items,
+        templates: store.items.map(t => ({ id: t.id, name: t.name })), defaults: DEF }) };
+    }
+    if (u.includes('sticker-template')) {
+      const active = store.items.find(t => t.id === store.active) || null;
+      return { ok: true, status: 200, json: async () => ({
+        ok: true, active: store.active, template: active, markImage: null, defaults: DEF,
+        templates: store.items.map(t => ({ id: t.id, name: t.name })),
+        limits: { maxTemplates: 10, markMaxSide: 150, markMaxBytes: 1600 } }) };
+    }
+    if (u.includes('9100/write')) { writes.push(JSON.parse(opts.body)); return { ok: true, status: 200 }; }
+    throw new Error('unexpected fetch ' + u);
+  };
+
+  const node = () => ({ innerHTML: '', textContent: '', className: '', value: '' });
+  const nodes = {};
+  for (const id of ['st-bar', 'st-fields', 'st-preview', 'st-warn', 'st-status', 'st-file', 'st-cut']) nodes[id] = node();
+  const ctx = {
+    el: (id) => nodes[id] || null,
+    psEsc: (v) => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])),
+    document: { createElement: () => { throw new Error('no canvas here'); } },
+    uiConfirm: async () => true,
+    WORKER_BASE: 'https://worker.test',
+    window: {},
+    fetch: fakeFetch,
+    AbortSignal: { timeout: () => null },
+    psZebraDevice: async () => ({ dev: { name: 'ZD410' } }),
+    psNoPrinter: () => 'no printer',
+    PS_ZEBRA_PROBE_MS: 5000,
+  };
+  const names = Object.keys(ctx);
+  const api = buildOrStub('the editor', `${psZplSrc}\n${editorSrc}`, names, names.map(n => ctx[n]),
+    '{ get stTpl(){return stTpl}, stLoad, stTest, window }');
+  const flush = () => new Promise(r => setTimeout(r, 0));
+
+  await api.stLoad();
+  ok(api.stTpl && api.stTpl.fields, 'the editor loads a template to edit');
+
+  // 🛑 THE WORKER ACCEPTING 3 IS USELESS IF THE BOX WILL NOT TAKE IT. These are two
+  // independent floors and only one of them was moved for a long minute; a number input with
+  // min="4" refuses 3 in the browser before any request is made.
+  ok(/min="3" max="8"[^>]*stSet\('qr','mag'/.test(nodes['st-fields'].innerHTML),
+     '🛑 the QR magnification box accepts 3, matching the worker');
+  ok(/Size \(3–8\)/.test(nodes['st-fields'].innerHTML), '…and its label says so');
+
+  // 1. TYPE. A browser fires oninput with the box's running value, and only while the box
+  // still exists. Rebuilding #st-fields mid-word is what ate the other two characters.
+  let alive = true, typed = '';
+  for (const ch of '113') {
+    if (!alive) break;
+    typed += ch;
+    const real = nodes['st-fields'];
+    let rebuilt = false;
+    nodes['st-fields'] = { get innerHTML() { return real.innerHTML; },
+                           set innerHTML(v) { rebuilt = true; real.innerHTML = v; },
+                           textContent: '', className: '', value: '' };
+    api.window.stSet('qr', 'x', typed);
+    nodes['st-fields'] = real;
+    if (rebuilt) alive = false;
+  }
+  eq(api.stTpl.fields.qr.x, 113, '🛑 typing a three-digit coordinate lands all three digits');
+
+  // …and dragging the threshold must not replace the slider under the finger either.
+  {
+    const real = nodes['st-fields'];
+    let rebuilt = false;
+    nodes['st-fields'] = { get innerHTML() { return real.innerHTML; },
+                           set innerHTML(v) { rebuilt = true; real.innerHTML = v; },
+                           textContent: '', className: '', value: '' };
+    api.window.stCutSet(90);
+    nodes['st-fields'] = real;
+    eq(rebuilt, false, '🛑 the threshold slider is not destroyed mid-drag');
+    ok(/90/.test(nodes['st-cut'].textContent), '…and its reading updates in place');
+  }
+
+  // 2. SAVE THE FIRST ONE.
+  api.window.stNameSet('Big price');
+  await api.window.stSave(); await flush();
+  eq(api.stTpl.name, 'Big price', 'the first template saves and stays on screen');
+  eq(api.stTpl.fields.qr.x, 113, '…carrying the number that was typed');
+  ok(api.stTpl.id, '…and comes back with an id');
+
+  // 3. SAVE A SECOND ONE WHILE THE FIRST IS IN USE. This is the case that broke.
+  api.window.stPick('');
+  api.window.stSet('price', 'y', 40);
+  api.window.stNameSet('With mascot');
+  await api.window.stSave(); await flush();
+  eq(api.stTpl.name, 'With mascot', '🛑 "Save as new" leaves the NEW template on screen…');
+  eq(api.stTpl.fields.price.y, 40, '…with the edit that was just made…');
+  eq(store.items.length, 2, '…and both templates exist on the server');
+  eq(store.active, store.items[0].id, '…while the one in use is untouched, as asked');
+  ok(/Saved/.test(nodes['st-status'].textContent), '…and it says so');
+
+  // 4. PRINT A TEST LABEL. It prints what is ON SCREEN, not what is active.
+  writes.length = 0;
+  await api.stTest();
+  eq(writes.length, 1, 'the test label reaches Browser Print');
+  const zpl = writes[0] ? writes[0].data : '';
+  ok(/\^FO10,40\^A0N,54,54\^FD\$2\.50\^FS/.test(zpl),
+     '🔑 …drawn from the template on screen, not the one in use');
+  ok(zpl.startsWith('^XA') && zpl.trim().endsWith('^XZ'), '…and it is a framed job');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
