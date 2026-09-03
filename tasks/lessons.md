@@ -1270,3 +1270,47 @@ What was actually wrong sat on either side of it:
    same trap passes silently in the other direction, pulling the *next* handler into view.
    Slice to a real boundary.
 </rules>
+
+## A whitelist of the wrong half, and a default that fails silently
+
+I added a `Show` select to the sticker template editor and wired it to `stSet('code','show',…)`.
+`stSet` listed the STRING properties and fell through to `Number()`:
+
+```js
+const v = prop === 'on' ? !!raw
+  : ['text', 'prefix', 'font', 'mode'].includes(prop) ? raw : Number(raw);
+```
+
+`show` was not in that list, so the value became `Number('number')` = **NaN**. What followed
+was four silent steps and no error anywhere:
+
+1. `NaN === 'number'` is false, so the preview never redrew — it looked like the control did nothing.
+2. `JSON.stringify` turns NaN into `null`.
+3. The worker's `["full","number"].includes(String(null))` is false, so it substituted the default.
+4. The editor adopts the response, so the select **snapped back to Full code**.
+
+The user saw "the preview isn't changing and when I hit save it reverts" — two symptoms, one
+missing string in a list, and every test I had passed.
+
+The tests I had written the day before were the right SHAPE — they drove the editor by typing
+into fields — but they only exercised the controls that existed when I wrote them. A new
+control is exactly what a hand-kept list forgets.
+
+<rules>
+1. **Whitelist the closed set, not the open one.** The numeric properties are `x, y, h, w, mag`
+   and there will not be a sixth. The string ones grow every time a feature is added. I named
+   the growing half, so adding to it required remembering — which is the definition of a
+   latent bug.
+2. **`Number()` is not a safe default.** It cannot fail; it returns NaN, which is a number, is
+   falsy in `===` against everything, and JSON-serialises to null. Coercion that can't fail
+   loudly should never be the fall-through branch.
+3. **Derive the list of things to test from the artefact, not from memory.** The new guard
+   scrapes `stSet('x','y'` out of the rendered HTML and round-trips every one. It cannot go
+   stale, because adding a control adds a case automatically.
+4. **Assert the stored TYPE, not just presence.** NaN is a number. Any check of the form "is
+   it a number" passes on the bug. `Object.is(got, want)` catches it.
+5. **"It reverts on save" usually means the server rejected it and you adopted the answer.**
+   Adopting the server's response is right — it is how clamping stays honest — but it also
+   means a client-side corruption presents as a server-side refusal, and you will go looking
+   in the wrong file. Check what the client actually put on the wire first.
+</rules>
