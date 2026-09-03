@@ -1,3 +1,98 @@
+# L3 rules: name a bracketed row without touching which L2 it books to (2026-09-03)
+
+Follow-up to #186. Measured chain-wide over the 13 weeks to 2026-09-02, all six stores,
+546 snapshots (none missing, no per-day truncation): **$68,778.71 net in `Other / unmapped`,
+2.63% of $2,619,990.88.** By the tier that decided the L2, from `fallbackItems` gross:
+
+| tier | name shape | gross | items |
+|---|---|---:|---:|
+| `im` | has IM# | $31,712.24 | 199 |
+| `override` | no IM# | $15,385.75 | 25 |
+| `heuristic` | no IM# | $14,298.25 | 70 |
+| everything else | | $566.75 | 7 |
+
+#186 covers the `override` slice (add an L3 to the entry that already decided the L2).
+It cannot reach the other 74% without one item override per product — 276 of them.
+
+**Adding an L3 to pattern rules would have fixed $30.00.** Pattern rules are Tier 6.5, AFTER
+`IM_TO_L2` (Tier 5) and after the heuristic ladder (Tier 6). Every one of the 27 IM clusters is
+already in the built-in `IM_TO_L2` (14160 Hardlines, 14279 Seasonal, 50375 Home, 10385
+Softline - Apparel, …), so those lines resolve as `l2Source: "im"` and never reach the pattern
+matcher at all. That was my error in recommending it; this plan replaces it.
+
+## The shape
+
+Decouple naming the row from the tier that won the L2. A new `l3Rules` list in
+`item-overrides:global` is consulted ONLY when `l3Key` would fold into `Other / unmapped`,
+and ONLY where the rule's L3 belongs to the line's own resolved L2.
+
+    l3Rules: [ { type: "id"|"name"|"im-number"|"prefix"|"contains", value, l3 } ]
+
+Two guards make it unable to do harm:
+- it can only REPLACE a synthetic bracketed label, never a real Clover L3, never a raw item
+  name on Custom Sales / Refund;
+- the L2 is already decided when it runs, and a rule whose L3 belongs elsewhere is skipped —
+  so no rule can move a dollar between L2s, whatever an admin types.
+
+One IM rule covers every product name sharing that IM number: 27 clusters span 178 names.
+
+## Plan
+- [x] `l3Rules` schema + `matchL3Rule` (first match wins, mirrors matchOverridePattern)
+- [x] Rescue pass after the `l3Key` chain, before the fallbackItems capture, so a rescued item
+      drops off the editor list on its own
+- [x] Same pass in the cross-day refund mirror
+- [x] `costL3` sees the rescued L3, so the row and its cost name one category
+- [x] POST validation: type in the set, value non-empty, L3 must EXIST; the L2 match is a
+      READ-time condition (a rule is not bound to one L2), and GET reports each rule's owning L2
+      so a rule that can never fire is visible rather than silent
+- [x] Settings: "Also add rule" column on the Other / unmapped table (IM number or prefix),
+      and a list of existing rules with a remove checkbox
+- [x] `scripts/test-l3-rules.mjs` driving the real routes
+- [x] sw.js bump, npm test green, commit, push, draft PR stacked on #186
+
+## Review
+
+- **`worker.js`** — `matchL3Rule` walks `l3Rules` first-match-wins and returns an L3, refusing any
+  rule whose L3 does not belong to the L2 already chosen. The rescue pass sits immediately after the
+  `l3Key` if-chain and fires ONLY when `normalizeL3Key(l3Key) === L3_OTHER`, so a real Clover L3, a
+  name-matched L3, an override that already named one, and the raw item name Custom Sales / Refund
+  keep are all structurally out of reach. Placing it before the `fallbackItems` capture means a
+  rescued item records its real `l3Key` and drops off the admin's list with no extra bookkeeping.
+  Same call in the cross-day refund mirror; `costL3` reads `ovL3 || ruleL3 || l3 || l3CostKey`.
+- **`extractImNumber`** — the IM regex pair was written out three times and a fourth was needed. One
+  copy now, because two of the three were the aggregator and its refund mirror: the pair whose
+  duplicated precedence ladder is what let the l3Map bug live 53 days.
+- **Validation split, deliberately.** POST checks the type, a non-blank value, and that the L3
+  EXISTS. It does NOT check the L2, because a rule is not bound to one — it applies to whatever line
+  matches. Refusing at write time would be wrong; silence would be worse, so GET returns
+  `l3RuleOwners` and the editor prints the firing L2 per rule, or "never fires" when the L3 does not
+  resolve at all.
+- **`index.html`** — an "Also add rule" checkbox on each Other / unmapped row, offering the item's IM
+  number (or a numeric prefix), which turns one L3 pick into a rule covering every sibling name. New
+  rules are UNSHIFTED, not pushed: first match wins, so a rule just written for a specific product
+  should beat a broad one added earlier. Plus an "L3 rules" table showing evaluation order, the
+  match, the named L3, the firing L2, and a remove checkbox.
+- **Verification** — `scripts/test-l3-rules.mjs`, 34 assertions on the real routes. Blocks 1-2 pin
+  the correction this PR exists for: an im-number PATTERN rule does NOT change these rows, because
+  Tier 6.5 sits after IM_TO_L2. Blocks 5-8 pin the safety properties (real L3 untouched, no
+  cross-L2 movement, Custom Sales untouched, item override wins). 15 assertions fail against the
+  branch base. Full suite **3367 across 55 suites, all passing**. The page driven in Chromium over a
+  stubbed API: both renders list the rules in order with their firing L2, flag an unresolvable L3 as
+  "never fires", offer IM 14160 on the appliance row and nothing on a name without one, and Save
+  posts the new rule first, drops the one ticked for removal, keeps the untouched one, and writes the
+  same L3 onto the item override — 16 assertions, no page errors.
+- `sw.js` v164 -> v165, shell-cache fixture refreshed.
+
+### Found while building, not fixed here
+- **The target categories exist for the top offenders**: `APPLIANCES - BL STORES`,
+  `FG BL HOME - RUGS`, `FG BL HOME - BEDDING & PILLOWS`. Those three cover the $4,640 rug item,
+  the $3,820 bedding item and the $8,455 IM 14160 appliance cluster.
+- **`FG BL SOFTLINES - ACCESSORIES` has a live sibling spelled `Accesories`** in L3_TO_L2. All three
+  Softline L2s carry only two categories each, so $24,195 of unmapped Softline can be filed but only
+  into a bucket barely finer than its L2. That is a Clover catalog gap, not a code one.
+- **No re-snapshot**, same reasoning as #186: rules apply to snapshots written after the change, and
+  the 13-week window reaches past Clover's ~90-day retention.
+
 # Item overrides can assign an L3, not just an L2 (2026-09-03)
 
 Reported: "why is some product going to Other / unmapped beside the right L3", then

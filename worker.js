@@ -2583,7 +2583,8 @@ async function rollupWeekSummariesIfReady(env, todayStr) {
 //   {
 //     items:   { "id:<cloverItemId>"|"name:<normalized>": "<L2>" | {l2,l3} },
 //     patterns:[{type,value,category}],
-//     l3Map:   { "<clover-L3-category-name>": "<L2>" }
+//     l3Map:   { "<clover-L3-category-name>": "<L2>" },
+//     l3Rules: [{type,value,l3}]
 //   }
 // pattern type ∈ "prefix" | "contains" | "im-number".
 // l3Map catches items that DO have a Clover catalog category but that L3 name
@@ -2598,8 +2599,75 @@ async function rollupWeekSummariesIfReady(env, todayStr) {
 // here fixes a product no matter WHICH of them would otherwise have claimed it.
 // Read entries through readItemOverride — never index `items` directly, or the
 // legacy string shape becomes an object-property read that returns undefined.
+
+// ─── l3Rules: naming a row, decoupled from the tier that won its L2 ─────────
+//
+// `l3Key` has always been a byproduct of `l2Source` — HOW a line resolved rather
+// than WHAT it resolved to — so every override / IM / heuristic / pattern hit
+// renders a bracketed label and normalizeL3Key folds all of them into
+// "Other / unmapped". Per-item overrides can now carry an L3, but that is one
+// admin action per PRODUCT, and the money does not sit in products: measured
+// across all six stores for the 13 weeks to 2026-09-02, $31,712 of the $68,779
+// unmapped is 199 items resolved at the IM tier, and 178 of those names share
+// just 27 IM numbers (14160 alone is twelve names — "14160 mini dryer",
+// "14160-690", "frigidaire gas range with quick boil. 14160", …).
+//
+// So the rule list is keyed the way the products actually cluster, and it names
+// the ROW without touching which L2 the line books to. Two properties keep it
+// from being able to do damage, and both are structural rather than a check an
+// admin can typo past:
+//
+//   1. It only ever REPLACES a synthetic bracketed label. A real Clover L3, a
+//      name-matched L3, and the raw item name kept by Custom Sales / Refund /
+//      Uncategorized are all left exactly as they are.
+//   2. The L2 is already decided before it runs, and a rule whose L3 belongs to
+//      a different L2 is skipped. No rule can move a dollar between buckets.
+//
+// NB the L2 test is a READ-time condition, not a write-time one: a rule is not
+// bound to an L2, it applies to whatever line matches. `l3RuleOwners` reports
+// each rule's owning L2 on GET so a rule that can never fire is visible in the
+// editor rather than silently inert.
+const L3_RULE_TYPES = new Set(["id", "name", "im-number", "prefix", "contains"]);
+
+// First match wins, so more specific rules belong earlier — same contract as
+// matchOverridePattern, which this deliberately mirrors. Returns the L3 string
+// or null. `l2` is the bucket the ladder already chose; `ovL3Map` resolves which
+// L2 a candidate L3 belongs to.
+function matchL3Rule(rawName, itemId, imNum, l2, rules, ovL3Map) {
+  if (!rules || !rules.length) return null;
+  const norm = normalizeItemName(rawName);
+  for (const r of rules) {
+    if (!r || !L3_RULE_TYPES.has(r.type) || !r.value || !r.l3) continue;
+    // A rule may only name a category that lives in THIS line's L2.
+    if (resolveL3ToL2(r.l3, ovL3Map) !== l2) continue;
+    const v = String(r.value).trim().toLowerCase();
+    if (!v) continue;
+    if (r.type === "id") {
+      if (itemId && String(itemId).toLowerCase() === v) return r.l3;
+    } else if (r.type === "name") {
+      if (norm && norm === normalizeItemName(r.value)) return r.l3;
+    } else if (r.type === "im-number") {
+      if (imNum && String(imNum) === String(r.value).trim()) return r.l3;
+    } else if (r.type === "prefix") {
+      if (norm.startsWith(v)) return r.l3;
+    } else if (r.type === "contains") {
+      if (norm.includes(v)) return r.l3;
+    }
+  }
+  return null;
+}
+
+// Which L2 each rule's L3 belongs to — the editor shows this so a rule that can
+// never fire (its L3 lives in another L2) is obvious on sight.
+function l3RuleOwners(rules, ovL3Map) {
+  return (rules || []).map(r => ({
+    type: r?.type || null, value: r?.value ?? null, l3: r?.l3 || null,
+    l2: r?.l3 ? resolveL3ToL2(r.l3, ovL3Map) : null,
+  }));
+}
+
 const ITEM_OVERRIDES_KEY = "item-overrides:global";
-const EMPTY_OVERRIDES = { items: {}, patterns: [], l3Map: {} };
+const EMPTY_OVERRIDES = { items: {}, patterns: [], l3Map: {}, l3Rules: [] };
 const VALID_L2 = new Set([
   "Softline - Apparel", "Softline - Shoes", "Softline - Accessories",
   "Home", "Furniture", "Hardlines",
@@ -2716,6 +2784,17 @@ function normalizeItemName(s) {
     .replace(/\s+/g, " ");
 }
 
+// The IM (item-master) number carried in a line-item's name: "BL-14160-1000",
+// "BL 50008", or a bare 4-5 digit run. Prefixed form wins so "BL-14160-1000"
+// reads 14160 and not 1000. Written out three times before an L3 rule needed it
+// a fourth; one copy now, because two of the three were in the aggregator and
+// its refund mirror — the pair that has already drifted apart once.
+function extractImNumber(name) {
+  const s = name || "";
+  const bl = s.match(/BL[-\s]*(\d{4,5})/i);
+  return bl ? bl[1] : (s.match(/\b(\d{4,5})\b/)?.[1]);
+}
+
 async function fetchItemOverrides(env) {
   if (!env.SALES_SNAPSHOTS) return EMPTY_OVERRIDES;
   const val = await env.SALES_SNAPSHOTS.get(ITEM_OVERRIDES_KEY, "json");
@@ -2724,6 +2803,7 @@ async function fetchItemOverrides(env) {
     items: val.items && typeof val.items === "object" ? val.items : {},
     patterns: Array.isArray(val.patterns) ? val.patterns : [],
     l3Map: val.l3Map && typeof val.l3Map === "object" ? val.l3Map : {},
+    l3Rules: Array.isArray(val.l3Rules) ? val.l3Rules : [],
   };
 }
 
@@ -2816,6 +2896,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
   const ov = overrides || EMPTY_OVERRIDES;
   const ovItems = ov.items || {};
   const ovPatterns = ov.patterns || [];
+  const ovL3Rules = ov.l3Rules || [];
   const ic = itemCosts || EMPTY_ITEM_COSTS;
   const icItems = ic.items || {};
   const icCats = ic.categories || {};   // L3 Clover category → flat $/unit cost (fallback)
@@ -2959,9 +3040,7 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       // of which categorization tier resolves L2) and for the Tier-6 IM_TO_L2
       // fallback below. Pulled out of the deeply-nested if-ladder so the value
       // is available at line-item scope.
-      const blMatchEarly = (li.name || "").match(/BL[-\s]*(\d{4,5})/i);
-      const bareMatchEarly = !blMatchEarly && (li.name || "").match(/\b(\d{4,5})\b/);
-      const imNum = blMatchEarly?.[1] || bareMatchEarly?.[1];
+      const imNum = extractImNumber(li.name);
 
       // Tier 0: admin-assigned per-item override (id: or name: key). Skips all
       // downstream heuristics so Settings UI edits take effect immediately.
@@ -3172,6 +3251,24 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         l3Key = "[Other] " + l2;
       }
 
+      // ── L3 rescue pass ────────────────────────────────────────
+      // Everything above decides the label from HOW the line resolved. This is
+      // the one place that asks WHAT it is, and it runs only where the answer
+      // above was "we don't know" — i.e. a bracketed label bound for
+      // "Other / unmapped". It cannot touch a real Clover L3, a name-matched
+      // L3, an override that already named one, or the raw item name Custom
+      // Sales / Refund keep, because none of those normalize to L3_OTHER.
+      //
+      // `l2` is already fixed at this point and matchL3Rule refuses any rule
+      // whose L3 lives elsewhere, so this can rename a row but never re-bucket
+      // one. It runs BEFORE the fallbackItems capture below so a rescued item
+      // records its real l3Key and drops off the admin's list on its own.
+      let ruleL3 = null;
+      if (normalizeL3Key(l3Key) === L3_OTHER) {
+        ruleL3 = matchL3Rule(li.name, itemId, imNum, l2, ovL3Rules, ov.l3Map);
+        if (ruleL3) l3Key = ruleL3;
+      }
+
       // Capture the ITEM behind every fallback-resolved row (see fallbackItems
       // above). "custom" is excluded because those already keep the raw item
       // name as their L3 and are tracked by noCategory.
@@ -3239,11 +3336,11 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       //   3. 0 — renders `—` in the CPU/Ext Cost columns.
       const costRecord = imNum ? icItems[imNum] : null;
       let unitCost = 0, costSource = "none";
-      // An override L3 wins over the Clover L3: it is the category the row is
-      // REPORTED under, and a row costed from a category it is not filed under
-      // would put a wrong GPM on a right-looking line. Falls back to the Clover
-      // L3, then the name-matched L3 string.
-      const costL3 = ovL3 || l3 || l3CostKey;
+      // An override or rule L3 wins over the Clover L3: it is the category the
+      // row is REPORTED under, and a row costed from a category it is not filed
+      // under would put a wrong GPM on a right-looking line. Falls back to the
+      // Clover L3, then the name-matched L3 string.
+      const costL3 = ovL3 || ruleL3 || l3 || l3CostKey;
       if (costRecord && Number.isFinite(Number(costRecord.cost))) {
         unitCost = Number(costRecord.cost);
         costSource = "item";
@@ -3353,11 +3450,10 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
         else if (/KAYAK|BIKE|GRILL|TOOL|ELECTRONICS|TOY|FIRE PIT/i.test(n)) l2 = "Hardlines";
       }
 
+      const imNum = extractImNumber(li.name);
+
       // Tier 3: admin pattern rules
       if (!l2) {
-        const blM = (li.name || "").match(/BL[-\s]*(\d{4,5})/i);
-        const bareM = !blM && (li.name || "").match(/\b(\d{4,5})\b/);
-        const imNum = blM?.[1] || bareM?.[1];
         const patternL2 = matchOverridePattern(li.name, imNum, ovPatterns);
         if (patternL2) l2 = patternL2;
       }
@@ -3365,11 +3461,13 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       // Fallback
       if (!l2) l2 = "Custom Sales";
 
-      // An override L3 lands the refund on the same real row the sale went to.
-      // Only the override case is folded back here: giving these rows the Clover
+      // An override or rule L3 lands the refund on the same real row the sale
+      // went to. Only those are folded back here: giving these rows the Clover
       // L3 as well would move existing cross-day refund dollars out of
       // "Other / unmapped" onto real rows, which is a separate change.
-      const l3Key = ovL3 || ("[Cross-day refund source] " + l2);
+      const l3Key = ovL3
+        || matchL3Rule(li.name, itemId, imNum, l2, ovL3Rules, ov.l3Map)
+        || ("[Cross-day refund source] " + l2);
       let arr = orderLineItemMap.get(order.id);
       if (!arr) { arr = []; orderLineItemMap.set(order.id, arr); }
       arr.push({ l2, l3Key, grossCents: priceCents });
@@ -16164,6 +16262,11 @@ export default {
           // entry for the L2 the admin picked, so it can only ever offer a pair
           // the POST validator below would accept.
           l3Options: l3OptionsByL2(current.l3Map),
+          // Each l3Rule with the L2 its L3 belongs to. A rule only fires on a
+          // line already booked to that L2, so this is what says whether a rule
+          // can ever match — the editor shows it rather than leaving a rule
+          // silently inert.
+          l3RuleOwners: l3RuleOwners(current.l3Rules, current.l3Map),
         }), { headers: corsJson });
       }
 
@@ -16177,6 +16280,7 @@ export default {
           items: existing.items || {},
           patterns: existing.patterns || [],
           l3Map: existing.l3Map || {},
+          l3Rules: existing.l3Rules || [],
         };
 
         // An item's L3 is checked against the l3Map this same request is writing
@@ -16266,6 +16370,25 @@ export default {
             }), { status: 409, headers: corsJson });
           }
           next.l3Map = body.l3Map;
+        }
+
+        if (Array.isArray(body?.l3Rules)) {
+          for (const r of body.l3Rules) {
+            if (!r || !L3_RULE_TYPES.has(r.type) || r.value == null || String(r.value).trim() === "" || !r.l3) {
+              return new Response(JSON.stringify({
+                error: `Each L3 rule needs {type: ${[...L3_RULE_TYPES].join("|")}, value, l3}`
+              }), { status: 400, headers: corsJson });
+            }
+            // The L3 must be real. Which L2 it belongs to is NOT checked here —
+            // a rule is not bound to an L2, and matchL3Rule skips it on any line
+            // booked elsewhere. GET's l3RuleOwners is what surfaces that.
+            if (!resolveL3ToL2(r.l3, effectiveL3Map)) {
+              return new Response(JSON.stringify({
+                error: `Unknown L3 category "${r.l3}" in an L3 rule — pick one that already exists.`
+              }), { status: 400, headers: corsJson });
+            }
+          }
+          next.l3Rules = body.l3Rules;
         }
 
         await env.SALES_SNAPSHOTS.put(ITEM_OVERRIDES_KEY, JSON.stringify(next));
