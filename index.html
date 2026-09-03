@@ -19215,9 +19215,14 @@
     // many hex bytes. A payload shorter than the declared count leaves the printer waiting
     // for bytes that never come -- it hangs the label rather than drawing it wrong, which is
     // why the worker refuses any image whose hex length does not match its own geometry.
+    //
+    // 🛑 AND IT SHIPPED WITHOUT ITS ^FS. ^FS is what ENDS a field definition and commits it;
+    // every other line here has one and this one did not, so the graphic field stayed open
+    // and the label never printed. It looked like "test printing is broken" rather than like
+    // a missing terminator, because a text-mode template printed perfectly right beside it.
     const mk = tpl && tpl.markImage;
     if (mark.on && mark.mode === 'image' && mk && mk.hex) {
-      out.push(`^FO${mark.x},${mark.y}^GFA,${mk.total},${mk.total},${mk.bpr},${mk.hex}`);
+      out.push(`^FO${mark.x},${mark.y}^GFA,${mk.total},${mk.total},${mk.bpr},${mk.hex}^FS`);
     } else if (mark.on && mark.mode !== 'image' && mark.text) {
       out.push(line(mark, mark.text));
     }
@@ -19330,12 +19335,19 @@
 
   const stField = (k) => Object.assign({}, (stDefaults && stDefaults.fields[k]) || {}, (stTpl && stTpl.fields[k]) || {});
 
+  // 🛑 THIS REDREW THE WHOLE PANEL ON EVERY KEYSTROKE, AND THE KEYSTROKES WENT WITH IT.
+  // stDraw assigns #st-fields innerHTML, which destroys every input under it -- including
+  // the one the caret is sitting in. So typing "113" into a coordinate box landed the 1,
+  // lost the focus, and threw the other two characters on the floor; the box snapped back
+  // to a single digit and the whole editor read as "it will not save what I type".
+  // Only `mode` changes WHICH controls exist (text input versus the image block). Every
+  // other property just moves something, so refresh the picture and leave the inputs alone.
   function stSet(k, prop, raw) {
     if (!stTpl) return;
     const v = prop === 'on' ? !!raw
       : ['text', 'prefix', 'font', 'mode'].includes(prop) ? raw : Number(raw);
     stTpl.fields[k] = Object.assign({}, stField(k), { [prop]: v });
-    stDraw();
+    if (prop === 'mode') stDraw(); else stPreview();
   }
   window.stSet = stSet;
 
@@ -19405,7 +19417,13 @@
   }
   window.stImageChosen = stImageChosen;
   window.stPickImage = () => { const f = el('st-file'); if (f) f.click(); };
-  window.stCutSet = (v) => { stCut = Number(v) || 150; stDraw(); };
+  // Same trap as stSet: a full redraw would replace the slider under the finger dragging
+  // it, so the reading updates in place and only the preview is rebuilt.
+  window.stCutSet = (v) => {
+    stCut = Number(v) || 150;
+    const n = el('st-cut'); if (n) n.textContent = `Threshold ${stCut}`;
+    stPreview();
+  };
 
   async function stImageSave() {
     if (!stImgEl) return stStatus('Choose an image first.');
@@ -19497,7 +19515,7 @@
       const text = row.k === 'mark' ? 'text' : row.k === 'retail' ? 'prefix' : null;
       const body = `<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
           ${stNum(row.k, 'x', 'X', 0, 202)}${stNum(row.k, 'y', 'Y', 0, 202)}
-          ${isQr ? stNum(row.k, 'mag', 'Size (4–8)', 4, 8)
+          ${isQr ? stNum(row.k, 'mag', 'Size (3–8)', 3, 8)
                  : stNum(row.k, 'h', 'Height', 8, 150) + stNum(row.k, 'w', 'Width', 8, 150)}
           ${isQr ? '' : `<label class="block"><span class="block text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Font</span>
             <select onchange="stSet('${row.k}','font',this.value)" class="w-full ${ST_INPUT} font-semibold">
@@ -19527,7 +19545,7 @@
       ${mode === 'image' ? `
         <div class="flex flex-wrap items-center gap-3 mt-3">
           <label class="flex items-center gap-2 flex-1 min-w-[200px]">
-            <span class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">Threshold ${stCut}</span>
+            <span id="st-cut" class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">Threshold ${stCut}</span>
             <input type="range" min="20" max="235" value="${stCut}" oninput="stCutSet(this.value)" class="flex-1 accent-[#3BB54A]"></label>
           ${pending ? `<button onclick="stImageSave()" class="px-3 py-1.5 text-xs font-semibold bg-[#3BB54A] hover:bg-[#32a040] text-white rounded-lg">Save image</button>` : ''}
         </div>
@@ -19577,12 +19595,23 @@
     const rt = stField('retail'); if (rt.on) g += box(rt, (rt.prefix || '') + sample.retail, 'Street price');
 
     host.innerHTML = `<svg viewBox="0 0 203 203" width="100%" style="aspect-ratio:1;border-radius:8px;background:#fff;color:#14110a;border:1px solid rgba(20,16,8,.18)" role="img" aria-label="Approximate preview of the printed sticker">${g}</svg>`;
+    // 🛑 MAGNIFICATION 3 IS ALLOWED, NOT VOUCHED FOR. 4 is the size that has been printed
+    // and scanned at the register; 3 puts a module at roughly 0.37 mm, which is inside what
+    // most laser scanners claim and outside any margin. The failure mode is a customer
+    // standing at the till, so the one place it can be said is the screen that sets it.
+    const notes = [];
+    if (over.length) {
+      notes.push(`Off the edge of the label at this size: <b>${over.join(', ')}</b>. The printer will clip it without complaining. `
+        + 'Saving is still allowed — the width here is an estimate, so check a test label before deciding.');
+    }
+    if (Number(qr.mag) < 4) {
+      notes.push(`QR size <b>${Number(qr.mag)}</b> is smaller than the size proven at the register. Print a test label and `
+        + 'scan it at a till before you commit a roll to it — a code that will not read is the one failure this label exists to prevent.');
+    }
     const warn = el('st-warn');
     if (warn) {
-      warn.className = over.length ? 'mt-4' : 'hidden mt-4';
-      warn.innerHTML = over.length
-        ? `<div class="text-xs text-[#8a5a00] dark:text-[#f0b849]">Off the edge of the label at this size: <b>${over.join(', ')}</b>. The printer will clip it without complaining. Saving is still allowed — the width here is an estimate, so check a test label before deciding.</div>`
-        : '';
+      warn.className = notes.length ? 'mt-4 space-y-2' : 'hidden mt-4';
+      warn.innerHTML = notes.map(n => `<div class="text-xs text-[#8a5a00] dark:text-[#f0b849]">${n}</div>`).join('');
     }
   }
 
@@ -19637,7 +19666,14 @@
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(stFault(r.status, j));
       stColl = { active: j.active || null, templates: j.templates || [] };
-      const mine = (j.items || []).find(t => t.id === (body.id || j.active)) || (j.items || []).find(t => t.id === j.active);
+      // 🛑 THIS FOLLOWED `active` AND LANDED ON THE WRONG TEMPLATE. "Save as new" sends no id
+      // and does not necessarily become the active one, so `body.id || j.active` resolved to
+      // whichever template was ALREADY in use -- and the editor swapped to it the instant the
+      // save succeeded. The work was on the server the whole time; the screen threw it away
+      // and said "Saved" while doing it, which is the worst possible pairing. The worker now
+      // names the row it wrote, so there is nothing left to infer.
+      const want = j.savedId || body.id || j.active;
+      const mine = (j.items || []).find(t => t.id === want) || (j.items || []).find(t => t.id === j.active);
       // 🔑 The worker clamps, so adopt what came BACK rather than keeping what was typed.
       // Otherwise the screen shows one label and the printer draws another.
       if (mine) stTpl = { id: mine.id, name: mine.name, fields: JSON.parse(JSON.stringify(mine.fields)) };
@@ -19650,7 +19686,7 @@
   const stSave = () => {
     if (!stTpl) return;
     if (!String(stTpl.name || '').trim()) return stStatus('Give the template a name first.');
-    stPost({ op: 'save', id: stTpl.id || undefined, name: stTpl.name, fields: stTpl.fields, activate: !stTpl.id && !stColl.active },
+    return stPost({ op: 'save', id: stTpl.id || undefined, name: stTpl.name, fields: stTpl.fields, activate: !stTpl.id && !stColl.active },
       'Saved. The one marked in use is what every store prints.');
   };
   window.stSave = stSave;

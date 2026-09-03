@@ -10880,7 +10880,12 @@ const STICKER_NAME_MAX = 40;
 const STICKER_MARK_MAX_SIDE = 150;
 const STICKER_MARK_MAX_BYTES = 1600;
 const STICKER_LABEL_DOTS = 203;          // 1 inch at 203 dpi -- the ZD410 this prints to
-const STICKER_QR_MIN_MAG = 4;            // proven at the register; below this is unproven
+// 3 is the floor because it was asked for, not because it is proven. At 203 dpi a
+// magnification-3 module is 3 dots = 0.37 mm, above the ~0.33 mm most laser scanners
+// need but with none of the margin 4 has, and nothing here can tell you whether the
+// register reads it -- only a test label held under the scanner can. The editor says so
+// out loud whenever a template drops below 4.
+const STICKER_QR_MIN_MAG = 3;
 const STICKER_QR_MAX_MAG = 8;
 const STICKER_TEXT_MIN = 8;
 const STICKER_TEXT_MAX = 150;
@@ -10906,9 +10911,14 @@ const stickerInt = (v, lo, hi, fallback) => {
 };
 const stickerName = (v) => String(v === null || v === undefined ? "" : v)
   .replace(/[\^~]/g, "").trim().slice(0, STICKER_NAME_MAX);
+// \U0001f6d1 .trim() ATE THE SEPARATOR AND PRINTED "Compare at$29.99" ON A SHELF. The prefix is
+// prepended straight onto "$29.99", so its trailing space is not decoration -- it IS the
+// space between the two words, and it is the one character trimming is guaranteed to take.
+// Whitespace is collapsed to single spaces (a stray tab or newline would still be nonsense
+// in a ZPL field) but never removed from the ends. ^ and ~ are ZPL control prefixes.
 const stickerText = (v, fallback) => {
   if (v === undefined || v === null) return fallback;
-  return String(v).replace(/[\^~]/g, "").trim().slice(0, 24);   // ^ and ~ are ZPL control prefixes
+  return String(v).replace(/[\^~]/g, "").replace(/\s+/g, " ").slice(0, 24);
 };
 
 // Returns { tpl } on success or { error } with a sentence naming what was refused.
@@ -10928,7 +10938,7 @@ function sanitizeStickerTemplate(body) {
   }
   const mag = stickerInt(qrIn.mag, STICKER_QR_MIN_MAG, STICKER_QR_MAX_MAG, d.qr.mag);
   if (Number.isFinite(Number(qrIn.mag)) && Math.round(Number(qrIn.mag)) < STICKER_QR_MIN_MAG) {
-    return { error: `QR magnification below ${STICKER_QR_MIN_MAG} is refused - ${STICKER_QR_MIN_MAG} is what scans at the register today, and smaller is unproven.` };
+    return { error: `QR magnification below ${STICKER_QR_MIN_MAG} is refused - at ${STICKER_QR_MIN_MAG} a module is already under 0.4 mm, and below that no scanner is going to read it.` };
   }
 
   const hi = STICKER_LABEL_DOTS - 1;
@@ -19438,6 +19448,11 @@ export default {
         const op = String(body?.op || (body?.reset ? "reset" : "save"));
         const coll = await loadStickerTemplates(env);
         const stamp = { updatedAt: new Date().toISOString(), updatedBy: (currentUser && currentUser.email) || "superuser" };
+        // \U0001f6d1 THE CALLER CANNOT WORK OUT WHICH ROW IT JUST WROTE. A "save as new" sends no id
+        // and the new template is not necessarily the active one, so the editor was left guessing
+        // from `active` -- and guessed the OTHER template, snapping the screen back to it the
+        // instant the save succeeded. Saying which id was written is one field and ends the guess.
+        let savedId = null;
 
         if (op === "reset") {
           await env.SALES_SNAPSHOTS.delete(STICKER_TEMPLATES_KEY);
@@ -19449,7 +19464,7 @@ export default {
           const id = String(body?.id || "");
           const at = (coll.items || []).findIndex(t => t.id === id);
           if (at < 0) return new Response(JSON.stringify({ error: "No template with that id." }), { status: 404, headers: corsJson });
-          if (op === "activate") coll.active = id;
+          if (op === "activate") { coll.active = id; savedId = id; }
           else {
             coll.items.splice(at, 1);
             // Deleting the active one falls back to whatever is left, or to the stock label.
@@ -19464,12 +19479,14 @@ export default {
           const at = (coll.items || []).findIndex(t => t.id === id);
           if (at >= 0) {
             coll.items[at] = { ...coll.items[at], name, fields: clean.tpl.fields, ...stamp };
+            savedId = id;
           } else {
             if ((coll.items || []).length >= STICKER_MAX_TEMPLATES) {
               return new Response(JSON.stringify({ error: `That is ${STICKER_MAX_TEMPLATES} templates already — delete one first.` }), { status: 400, headers: corsJson });
             }
             const fresh = { id: stickerTemplateId(), name, fields: clean.tpl.fields, ...stamp };
             coll.items = [...(coll.items || []), fresh];
+            savedId = fresh.id;
             if (!coll.active) coll.active = fresh.id;
             if (body?.activate) coll.active = fresh.id;
           }
@@ -19477,7 +19494,7 @@ export default {
 
         await env.SALES_SNAPSHOTS.put(STICKER_TEMPLATES_KEY, JSON.stringify(coll));
         return new Response(JSON.stringify({
-          ok: true, active: coll.active || null, template: activeStickerTemplate(coll),
+          ok: true, active: coll.active || null, savedId, template: activeStickerTemplate(coll),
           templates: coll.items.map(t => ({ id: t.id, name: t.name, updatedAt: t.updatedAt, updatedBy: t.updatedBy })),
           items: coll.items, defaults: STICKER_TEMPLATE_DEFAULT,
         }), { headers: corsJson });
