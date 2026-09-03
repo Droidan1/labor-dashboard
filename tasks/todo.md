@@ -652,3 +652,42 @@ thing no test here can prove.
   editor warns about it; nobody has held a mag-3 label under a scanner at a till. That is a
   physical check, and it is not covered by "everything is working" — the default is 4 and
   nothing has moved off it. Do it before any store commits a roll to 3.
+
+## Round 5 — the printed code line can be just the number
+
+Asked for: *"on the sticker I don't want it to print out BL-50008-2_50, we only need the
+50008 number."* Chosen as a **template option**, not a hardcoded change, so it is reversible
+without a deploy and one store can keep the long form if it ever wants it.
+
+- [x] `code.show` — `"full"` (today's `BL-50008-2_5`) or `"number"` (`50008`). Default stays
+      **full**, so no shelf changes until somebody picks it in the editor.
+- [x] **The number was already there.** `sticker-check` has returned `category_code`
+      alongside `code` all along; it was simply unused. Nothing parses the formatted string.
+- [x] **The QR is never shortened.** Both the print and reprint paths keep sending the whole
+      key to `^BQ`; only the human-readable `^FO10,116` line changes.
+- [x] **A missing number falls back to the full code** — never an empty field, never the
+      string `undefined`. A caller that has not been updated still prints something usable.
+- [x] Editor gets a **Show** select on the Sticker code row, offering exactly the two values
+      the worker will store; the preview and the test label both honour it.
+
+### Why not split the string on its dashes
+
+The price segment has three shapes, confirmed against real codes: `2_5` (trailing zero
+dropped), `2_75`, and **`10` with no separator at all** for a round dollar amount. A regex
+over the tail works until someone prices something at $10.00 — and that discovery happens on
+a shelf. The number is handed over as a value instead.
+
+### Verified
+
+- 3,211 assertions across 53 suites.
+- Seven mutations, each reverted one at a time and each caught by a named failure —
+  including shortening the **QR itself**, which is the one that would still look right on
+  the label and stop scanning at a till.
+- Three older assertions were pinning the exact source text of the `psZpl(...)` calls, so
+  wrapping one argument broke them. Rewritten to match a whitespace-flattened copy: the
+  assertion is about which arguments are passed, not how they are laid out.
+
+### Still open
+
+- **Nobody has scanned a magnification-3 label at a till** (carried from Round 4). Unrelated
+  to this change; the default is still 4.

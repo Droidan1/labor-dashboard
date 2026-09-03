@@ -10899,7 +10899,7 @@ const STICKER_TEMPLATE_DEFAULT = Object.freeze({
   fields: {
     qr:     { on: true,  x: 104, y: 10,  mag: 4 },
     mark:   { on: true,  x: 12,  y: 18,  h: 74, w: 74, font: "0", text: "$", mode: "text" },
-    code:   { on: true,  x: 10,  y: 116, h: 20, w: 20, font: "0" },
+    code:   { on: true,  x: 10,  y: 116, h: 20, w: 20, font: "0", show: "full" },
     price:  { on: true,  x: 10,  y: 142, h: 54, w: 54, font: "0" },
     retail: { on: false, x: 10,  y: 96,  h: 18, w: 18, font: "0", prefix: "Compare at " },
   },
@@ -10959,6 +10959,13 @@ function sanitizeStickerTemplate(body) {
     // size; what fills it is text or a bitmap. Two overlapping fields would let a template
     // ask for both and leave the printer to decide.
     if (def.mode !== undefined) out.mode = ["text", "image"].includes(String(src.mode)) ? String(src.mode) : def.mode;
+    // 🔑 WHAT THE HUMAN LINE SAYS, NOT WHAT THE QR CARRIES. "full" prints the whole lookup
+    // key (BL-50008-2_5); "number" prints just the category number (50008). The QR is
+    // untouched by this either way -- it is the only part the register reads, and shortening
+    // what a person can read must never shorten what a scanner gets. Nothing is lost at
+    // "number" either: the price is on the label in large type, so 50008 + $2.50
+    // reconstructs the key by hand if a scanner ever fails.
+    if (def.show !== undefined) out.show = ["full", "number"].includes(String(src.show)) ? String(src.show) : def.show;
     return out;
   };
 
