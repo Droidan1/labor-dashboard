@@ -746,10 +746,19 @@ printer's font is proportional and the preview's is not.
   invisible to a regex that only matched called functions, and a missing constant throws
   exactly like a missing function.
 
+### And a second one the photo turned up
+
+- [x] **`^GF` has no scale parameter.** It draws the bitmap at the size it was *packed* at
+      and ignores the field's width and height entirely — so the preview scaling the image
+      into `mk.w x mk.h` was drawing a size the printer will never produce. Change the mark's
+      W/H after saving an image and the two diverge silently.
+- [x] **The printed width is the PADDED width.** A row is whole bytes, so a 74-dot image
+      occupies `ceil(74/8)*8 = 80`. The spare columns are blank so it *looks* like 74, but 80
+      is what has to fit on the label — the overflow check was under-reporting by up to 7 dots.
+- [x] The preview now draws the mark at its true printed footprint, and says so when the
+      field's W/H disagree with the stored image (they move it; they cannot resize it —
+      re-choosing the image re-packs it).
+
 ### Still open
 
-- **Whether this was the whole complaint.** The preview cannot account for a physical
-  offset: `^MNN` sets continuous-media tracking, so the printer does not align to a die-cut
-  label's gap. If the print is shifted bodily on the stock rather than mis-sized, that is
-  media calibration, not this.
 - Nobody has scanned a magnification-3 label at a till (carried).

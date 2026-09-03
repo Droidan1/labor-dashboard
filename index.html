@@ -19602,6 +19602,7 @@
     if (!host || !stTpl) return;
     const sample = { code: 'BL-50008-2_5', number: '50008', price: '$2.50', retail: '$29.99' };
     const over = [];
+    let stale = '';
     let g = '';
     // 🛑 THE GLYPHS HAVE TO FILL THE CELL THE PRINTER WILL USE, and they did not. Three
     // separate reasons, all making the drawn text disagree with the box drawn around it:
@@ -19633,14 +19634,35 @@
 
     const mk = stField('mark');
     if (mk.on && mk.mode === 'image') {
-      if (mk.x + mk.w > 203 || mk.y + mk.h > 203) over.push('Corner mark');
-      // 🔑 The preview shows the ACTUAL one-bit result, not the source art. Nothing else
-      // would tell you whether the threshold is right, which is the only thing to judge.
-      const src = stImgEl ? stRaster(stImgEl, mk.w, mk.h, stCut).toDataURL()
-                : stImage ? stMarkPreviewUri(stImage) : null;
-      g += src
-        ? `<image x="${mk.x}" y="${mk.y}" width="${mk.w}" height="${mk.h}" href="${src}" style="image-rendering:pixelated"/>`
-        : `<rect x="${mk.x}" y="${mk.y}" width="${mk.w}" height="${mk.h}" fill="none" stroke="#e11d48" stroke-width="1" stroke-dasharray="4 3"/>`;
+      // 🛑 ^GF HAS NO SCALE PARAMETER. It draws the bitmap at the size it was PACKED at and
+      // ignores the field's width and height completely — so the preview scaling the image
+      // into mk.w x mk.h was drawing a size the printer will never produce. Change the mark's
+      // W/H after saving an image and the two silently diverge; the screen showed 100x100
+      // while the label carried 80x74.
+      //
+      // 🔑 AND THE PRINTED WIDTH IS THE PADDED WIDTH. A row is whole bytes, so a 74-dot image
+      // occupies ceil(74/8)*8 = 80 dots. The extra columns are blank, so it LOOKS like 74 —
+      // but it is 80 that has to fit on the label, and the overflow check has to use that.
+      const packedW = (w) => Math.ceil(w / 8) * 8;
+      const shot = stImgEl
+        ? { w: packedW(mk.w), h: mk.h, src: stRaster(stImgEl, mk.w, mk.h, stCut).toDataURL() }
+        : stImage
+          ? { w: stImage.bpr * 8, h: Math.round(stImage.total / stImage.bpr), src: stMarkPreviewUri(stImage) }
+          : null;
+      const bw = shot ? shot.w : packedW(mk.w), bh = shot ? shot.h : mk.h;
+      if (mk.x + bw > 203 || mk.y + bh > 203) over.push('Corner mark');
+      // The preview shows the ACTUAL one-bit result, not the source art. Nothing else would
+      // tell you whether the threshold is right, which is the only thing to judge.
+      g += shot && shot.src
+        ? `<image x="${mk.x}" y="${mk.y}" width="${bw}" height="${bh}" href="${shot.src}" style="image-rendering:pixelated"/>`
+        : `<rect x="${mk.x}" y="${mk.y}" width="${bw}" height="${bh}" fill="none" stroke="#e11d48" stroke-width="1" stroke-dasharray="4 3"/>`;
+      // Say it out loud rather than quietly drawing the truth and leaving the W/H boxes
+      // looking like they still mean something.
+      if (stImage && !stImgEl && (stImage.w !== mk.w || stImage.h !== mk.h)) {
+        stale = `The stored image is <b>${stImage.w}&times;${stImage.h}</b> dots and prints at that size — `
+          + `Width ${mk.w} and Height ${mk.h} move the corner mark but cannot resize it. `
+          + 'Choose the image again to re-pack it at the new size.';
+      }
     } else if (mk.on && mk.text) {
       g += box(mk, mk.text, 'Corner mark');
     }
@@ -19658,6 +19680,7 @@
     // most laser scanners claim and outside any margin. The failure mode is a customer
     // standing at the till, so the one place it can be said is the screen that sets it.
     const notes = [];
+    if (stale) notes.push(stale);
     if (over.length) {
       notes.push(`Off the edge of the label at this size: <b>${over.join(', ')}</b>. The printer will clip it without complaining. `
         + 'Saving is still allowed — the width here is an estimate, so check a test label before deciding.');

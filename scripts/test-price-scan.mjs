@@ -2555,6 +2555,41 @@ console.log('Price Scan');
   run(imgFields, null);
   ok(!/<image/.test(host.innerHTML), 'image mode with no image stored draws no <image> element');
   ok(/stroke-dasharray/.test(host.innerHTML), '…it outlines the empty slot instead');
+
+  // 🛑 ^GF HAS NO SCALE PARAMETER — it draws the bitmap at the size it was PACKED at and
+  // ignores the field's w/h. The preview was scaling the image into mk.w x mk.h, so changing
+  // the mark's W/H after saving an image made the screen and the label disagree silently.
+  // 🔑 And the printed width is the PADDED width: a row is whole bytes, so 74 dots occupy
+  // ceil(74/8)*8 = 80. The spare columns are blank, but 80 is what has to fit on the label.
+  {
+    const stored = { w: 74, h: 74, bpr: 10, total: 740, hex: '00'.repeat(740) };
+    const grown = JSON.parse(JSON.stringify(defaults.fields));
+    grown.mark.mode = 'image'; grown.mark.w = 100; grown.mark.h = 100;
+    run(grown, stored);
+    // Either element carries the geometry: with no canvas in this harness stMarkPreviewUri
+    // returns null and the dashed placeholder is drawn instead, at the same computed size.
+    const img = host.innerHTML.match(/<(?:image|rect) x="12" y="18" width="(\d+)" height="(\d+)"/);
+    ok(img, 'the stored mark is drawn');
+    if (img) {
+      eq(Number(img[1]), 80, '🛑 the mark is drawn at the bitmap\'s PADDED width, not the field\'s');
+      eq(Number(img[2]), 74, '…and at the bitmap\'s stored height, not the field\'s');
+    }
+    ok(/cannot resize it/.test(warn.innerHTML),
+       '🛑 …and the mismatch is stated, not silently drawn away');
+
+    // Matching values raise no note — the warning must not cry wolf on every image template.
+    const exact = JSON.parse(JSON.stringify(defaults.fields));
+    exact.mark.mode = 'image'; exact.mark.w = 74; exact.mark.h = 74;
+    run(exact, stored);
+    ok(!/cannot resize it/.test(warn.innerHTML), '…and says nothing when they already agree');
+
+    // 80 wide from x=130 runs off a 203-dot label; the old check used 74 and let it pass.
+    const edge = JSON.parse(JSON.stringify(defaults.fields));
+    edge.mark.mode = 'image'; edge.mark.w = 74; edge.mark.h = 74; edge.mark.x = 130;
+    run(edge, stored);
+    ok(/Corner mark/.test(warn.innerHTML),
+       '🛑 the overflow check uses the padded width — 130+80 is off the label, 130+74 is not');
+  }
 }
 
 // ── The mark can be a bitmap, and the bitmap must be exact ───────────────────
