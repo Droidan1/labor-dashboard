@@ -19193,7 +19193,7 @@
     const D = {
       qr:     { on: true,  x: 104, y: 10,  mag: 4 },
       mark:   { on: true,  x: 12,  y: 18,  h: 74, w: 74, font: '0', text: '$', mode: 'text' },
-      code:   { on: true,  x: 10,  y: 116, h: 20, w: 20, font: '0' },
+      code:   { on: true,  x: 10,  y: 116, h: 20, w: 20, font: '0', show: 'full' },
       price:  { on: true,  x: 10,  y: 142, h: 54, w: 54, font: '0' },
       retail: { on: false, x: 10,  y: 96,  h: 18, w: 18, font: '0', prefix: 'Compare at ' },
     };
@@ -19226,7 +19226,19 @@
     } else if (mark.on && mark.mode !== 'image' && mark.text) {
       out.push(line(mark, mark.text));
     }
-    if (cd.on) out.push(line(cd, code));
+    // 🔑 THIS SHORTENS WHAT A PERSON READS, NEVER WHAT THE SCANNER GETS. The ^BQ above
+    // always carries the whole key; `show: 'number'` only swaps the printed line for the
+    // category number. And it FALLS BACK to the full code when no number was supplied --
+    // a caller that does not pass one (an older worker response, a path not updated) must
+    // print a usable code, not an empty field and not the string "undefined".
+    //
+    // 🛑 DO NOT BE TEMPTED TO SPLIT `code` ON THE DASHES INSTEAD. The price segment has
+    // three shapes -- 2_5, 2_75, and a round dollar amount that carries NO separator at
+    // all (10) -- so the tail is not reliably one field, and sticker-check already returns
+    // the number as its own value. Parsing a string we were handed the parts of is how the
+    // third shape gets discovered on a shelf.
+    const catNo = extras && extras.categoryCode;
+    if (cd.on) out.push(line(cd, cd.show === 'number' && catNo ? String(catNo) : code));
     if (pr.on) out.push(line(pr, money));
     // 🔑 NO STREET PRICE IS A NORMAL ANSWER, not a gap to paper over. "No street price found"
     // is a real outcome of a scan, and a row printed before the column existed has none. The
@@ -19261,7 +19273,7 @@
   const ST_ROWS = [
     { k: 'qr',     name: 'QR code',      note: 'Cannot be switched off — it is the only part the register reads.' },
     { k: 'mark',   name: 'Corner mark',  note: 'The big $ in the corner. Off, or any short text.' },
-    { k: 'code',   name: 'Sticker code', note: 'The human-readable version of what the QR carries.' },
+    { k: 'code',   name: 'Sticker code', note: 'The human-readable line. The QR always carries the whole code either way.' },
     { k: 'price',  name: 'Our price' },
     { k: 'retail', name: 'Street price', note: 'Prints nothing when an item has no street price.' },
   ];
@@ -19513,6 +19525,13 @@
             <span class="text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim">Print it</span></label>`}
         </div>`;
       const text = row.k === 'mark' ? 'text' : row.k === 'retail' ? 'prefix' : null;
+      // The QR is never affected by this, so the copy says so where the choice is made
+      // rather than leaving someone to wonder whether they just shortened the scan.
+      const show = row.k !== 'code' ? '' : `<label class="block col-span-2"><span class="block text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Show</span>
+          <select onchange="stSet('code','show',this.value)" class="w-full ${ST_INPUT} font-semibold">
+            <option value="full" ${f.show !== 'number' ? 'selected' : ''}>Full code — BL-50008-2_5</option>
+            <option value="number" ${f.show === 'number' ? 'selected' : ''}>Number only — 50008</option>
+          </select></label>`;
       const body = `<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
           ${stNum(row.k, 'x', 'X', 0, 202)}${stNum(row.k, 'y', 'Y', 0, 202)}
           ${isQr ? stNum(row.k, 'mag', 'Size (3–8)', 3, 8)
@@ -19520,6 +19539,7 @@
           ${isQr ? '' : `<label class="block"><span class="block text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Font</span>
             <select onchange="stSet('${row.k}','font',this.value)" class="w-full ${ST_INPUT} font-semibold">
             ${ST_FONTS.map(([v, n]) => `<option value="${v}" ${f.font === v ? 'selected' : ''}>${n}</option>`).join('')}</select></label>`}
+          ${show}
           ${text && !(isMark && f.mode === 'image') ? `<label class="block col-span-2"><span class="block text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim mb-1">${text === 'text' ? 'Text' : 'Prefix'}</span>
             <input type="text" maxlength="24" value="${psEsc(f[text] || '')}" oninput="stSet('${row.k}','${text}',this.value)"
               class="w-full ${ST_INPUT}"></label>` : ''}
@@ -19564,7 +19584,7 @@
   function stPreview() {
     const host = el('st-preview');
     if (!host || !stTpl) return;
-    const sample = { code: 'BL-50008-2_5', price: '$2.50', retail: '$29.99' };
+    const sample = { code: 'BL-50008-2_5', number: '50008', price: '$2.50', retail: '$29.99' };
     const over = [];
     let g = '';
     const box = (f, body, key) => {
@@ -19590,7 +19610,11 @@
     } else if (mk.on && mk.text) {
       g += box(mk, mk.text, 'Corner mark');
     }
-    const cd = stField('code'); if (cd.on) g += box(cd, sample.code, 'Sticker code');
+    // The preview draws the SHORTER string when that is what will print — the whole point
+    // of the option is that the field takes less room, and a preview still showing the long
+    // form would keep warning about an overflow that is no longer going to happen.
+    const cd = stField('code');
+    if (cd.on) g += box(cd, cd.show === 'number' ? sample.number : sample.code, 'Sticker code');
     const pr = stField('price'); if (pr.on) g += box(pr, sample.price, 'Our price');
     const rt = stField('retail'); if (rt.on) g += box(rt, (rt.prefix || '') + sample.retail, 'Street price');
 
@@ -19727,7 +19751,8 @@
       const r = await fetch('http://127.0.0.1:9100/write', {
         method: 'POST', headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ device: probe.dev,
-          data: psZpl('BL-50008-2_5', 2.5, { retail: 29.99 }, { ...stTpl, markImage: mark }) }),
+          data: psZpl('BL-50008-2_5', 2.5, { retail: 29.99, categoryCode: '50008' },
+            { ...stTpl, markImage: mark }) }),
         signal: AbortSignal.timeout(5000),
       });
       if (!r.ok) return stStatus(`Browser Print refused the label (${r.status}).`);
@@ -19833,7 +19858,8 @@
           // simple request, no preflight) worked perfectly. text/plain is safelisted, so no
           // preflight is sent. The agent parses the body as JSON regardless of this header.
           method: 'POST', headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify({ device: dev, data: psZpl(a.code, psLast.price, { retail: psLast.retail }, psTpl) }),
+          body: JSON.stringify({ device: dev,
+            data: psZpl(a.code, psLast.price, { retail: psLast.retail, categoryCode: a.category_code }, psTpl) }),
           signal: AbortSignal.timeout(5000),
         });
       } catch (e) {
@@ -20000,7 +20026,8 @@
       const dev = probe.dev;
       const w = await fetch('http://127.0.0.1:9100/write', {
         method: 'POST', headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ device: dev, data: psZpl(a.code, p.price, { retail: p.retail }, psTpl) }),
+        body: JSON.stringify({ device: dev,
+          data: psZpl(a.code, p.price, { retail: p.retail, categoryCode: a.category_code }, psTpl) }),
         signal: AbortSignal.timeout(5000),
       });
       if (!w.ok) { say(`Browser Print refused the label (${w.status}).`); return; }

@@ -2858,8 +2858,14 @@ console.log('Price Scan');
 
   const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
   ok(/retail: j\.retail/.test(html), 'the front end sends the street price when recording a print');
-  ok(/psZpl\(a\.code, psLast\.price, \{ retail: psLast\.retail \}, psTpl\)/.test(html),
-     'the print path passes both the street price and the template');
+  // 🛑 MATCH ON A FLATTENED COPY. These pinned the call's exact source text, so wrapping
+  // one argument onto a second line broke three assertions that were describing behaviour
+  // that had not changed. Collapsing whitespace first keeps the assertion about WHICH
+  // arguments are passed, which is the thing worth pinning, and stops the formatter from
+  // being able to fail the build.
+  const flat = (t) => String(t || '').replace(/\s+/g, ' ');
+  ok(/psZpl\(a\.code, psLast\.price, \{ retail: psLast\.retail, categoryCode: a\.category_code \}, psTpl\)/.test(flat(html)),
+     'the print path passes the street price, the category number and the template');
   ok(/let psTpl = null;/.test(html),
      '🔑 the template starts null, so a failed fetch prints the stock label rather than nothing');
 }
@@ -3000,7 +3006,7 @@ console.log('Price Scan');
   const code = fn.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
   ok(!/application\/json/.test(code),
      '🛑 …and application/json is gone from this path entirely — it is what broke it');
-  ok(/JSON\.stringify\(\{ device: dev, data:/.test(fn),
+  ok(/JSON\.stringify\(\{ device: dev, data:/.test(fn.replace(/\s+/g, ' ')),
      '…while the BODY is still JSON, which is what the agent actually parses');
   ok(/preflight/i.test(fn),
      'the reason is written down, because the header looks wrong to anyone who has not hit this');
@@ -3220,7 +3226,7 @@ console.log('Price Scan');
      '…from the stored INPUTS, so a renumbered category reprints under its new number');
   ok(/!a\.printable/.test(rp || ''),
      '🛑 …and prints only what comes back printable');
-  ok(/psZpl\(a\.code, p\.price, \{ retail: p\.retail \}, psTpl\)/.test(rp || ''),
+  ok(/psZpl\(a\.code, p\.price, \{ retail: p\.retail, categoryCode: a\.category_code \}, psTpl\)/.test(String(rp || '').replace(/\s+/g, ' ')),
      '🛑 the label carries the code the check JUST returned, never the stored one -- and the '
      + 'STORED street price, so a reprint is the same label the shelf already has');
   ok(/'Content-Type': 'text\/plain'/.test(rp || ''),
@@ -3518,6 +3524,87 @@ console.log('Price Scan');
   ok(/\^FO10,40\^A0N,54,54\^FD\$2\.50\^FS/.test(zpl),
      '🔑 …drawn from the template on screen, not the one in use');
   ok(zpl.startsWith('^XA') && zpl.trim().endsWith('^XZ'), '…and it is a framed job');
+}
+
+// ── The code line can be shortened; the QR never is ──────────────────────────
+// 🛑 THE WHOLE RISK OF THIS OPTION IS SHORTENING THE WRONG THING. What a person reads and
+// what the register reads come off the same variable, one line apart, and an option that
+// trimmed both would still LOOK right on the label — it would just stop scanning at a till.
+// So every case below re-checks the ^BQ payload, not only the text field.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const at = html.indexOf('function psZpl(');
+  const psZpl = eval('(' + html.slice(at, html.indexOf('\n  }\n', at) + 5).replace(/\n\s*\/\/[^\n]*/g, '') + ')');
+  const CODE = 'BL-50008-2_5';
+  const qrOf = (z) => (z.match(/\^BQN,2,\d+\^FDLA,([^\^]*)\^FS/) || [])[1];
+  const codeLine = (z) => (z.split('\n').find(l => /\^FO10,116\^A0N,20,20/.test(l)) || '');
+
+  const full = psZpl(CODE, 2.5, { categoryCode: '50008' }, null);
+  eq(qrOf(full), CODE, 'the QR carries the whole key by default');
+  ok(codeLine(full).includes(`^FD${CODE}^FS`), '…and the printed line does too');
+
+  const short = psZpl(CODE, 2.5, { categoryCode: '50008' },
+                      { fields: { code: { on: true, show: 'number' } } });
+  ok(codeLine(short).includes('^FD50008^FS'), '🔑 show:number prints only the category number');
+  ok(!codeLine(short).includes('BL-'), '…with none of the key left on the line');
+  eq(qrOf(short), CODE, '🛑 …and the QR STILL carries the whole key — the register is untouched');
+
+  // 🛑 A MISSING NUMBER MUST DEGRADE TO THE FULL CODE, NOT TO NOTHING. A caller that does
+  // not pass one -- a path not updated, an older worker response -- would otherwise print an
+  // empty field or the literal "undefined" on a shelf label, and neither is recoverable by
+  // the person holding it. The long code always works.
+  const orphan = psZpl(CODE, 2.5, {}, { fields: { code: { on: true, show: 'number' } } });
+  ok(codeLine(orphan).includes(`^FD${CODE}^FS`), '🛑 no number supplied falls back to the full code');
+  ok(!/undefined|\^FD\^FS/.test(orphan), '…never "undefined" and never an empty field');
+  eq(qrOf(psZpl(CODE, 2.5, {}, { fields: { code: { on: false, show: 'number' } } })), CODE,
+     'and turning the printed line off entirely still leaves the QR whole');
+
+  // The number is handed over as a value, never re-derived from the string. The price
+  // segment has three shapes and the third carries no separator at all, so a split on
+  // dashes would work until somebody priced something at a round dollar.
+  const round = psZpl('BL-50008-10', 10, { categoryCode: '50008' },
+                      { fields: { code: { on: true, show: 'number' } } });
+  ok(codeLine(round).includes('^FD50008^FS'),
+     '🛑 a round-dollar code (no underscore at all) shortens correctly too');
+  eq(qrOf(round), 'BL-50008-10', '…and its QR is intact');
+}
+
+// ── The worker validates `show`, and the two defaults still agree ────────────
+{
+  const worker = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const grab = (re, what) => { const m = worker.match(re); ok(m, `${what} is extractable`); return m ? m[0] : ''; };
+  const decls = [
+    grab(/const STICKER_LABEL_DOTS = [\s\S]*?\n/, 'STICKER_LABEL_DOTS'),
+    grab(/const STICKER_QR_MIN_MAG = [\s\S]*?\n/, 'STICKER_QR_MIN_MAG'),
+    grab(/const STICKER_QR_MAX_MAG = [\s\S]*?\n/, 'STICKER_QR_MAX_MAG'),
+    grab(/const STICKER_TEXT_MIN = [\s\S]*?\n/, 'STICKER_TEXT_MIN'),
+    grab(/const STICKER_TEXT_MAX = [\s\S]*?\n/, 'STICKER_TEXT_MAX'),
+    grab(/const STICKER_FONTS = new Set\(\[[\s\S]*?\]\);/, 'STICKER_FONTS'),
+    grab(/const STICKER_TEMPLATE_DEFAULT = Object\.freeze\(\{[\s\S]*?\n\}\);/, 'defaults'),
+    grab(/const stickerInt = [\s\S]*?\n\};/, 'stickerInt'),
+    grab(/const stickerText = [\s\S]*?\n\};/, 'stickerText'),
+    grab(/function sanitizeStickerTemplate\(body\) \{[\s\S]*?\n\}/, 'sanitizeStickerTemplate'),
+  ].join('\n');
+  const clean = new Function(`${decls}; return sanitizeStickerTemplate;`)();
+
+  eq(clean({}).tpl.fields.code.show, 'full', 'the stock label still prints the whole code');
+  eq(clean({ fields: { code: { show: 'number' } } }).tpl.fields.code.show, 'number', 'number is accepted');
+  // 🛑 An unknown value must fall back to the LONG form. Falling back to "number" would let
+  // a typo silently shorten every label in the chain.
+  eq(clean({ fields: { code: { show: 'nmber' } } }).tpl.fields.code.show, 'full',
+     '🛑 a typo falls back to the full code, never to the short one');
+  eq(clean({ fields: { code: { show: { evil: 1 } } } }).tpl.fields.code.show, 'full',
+     '…and so does a non-string');
+  // `show` belongs to the code field alone — it is not a general text-field property.
+  eq(clean({ fields: { price: { show: 'number' } } }).tpl.fields.price.show, undefined,
+     'show is not silently accepted on other fields');
+
+  // The editor offers it, and offers only the two the worker will store.
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const editor = sliceOrNull(html, '  const ST_ROWS = [', '  window.stTest = stTest;') || '';
+  const offered = [...editor.matchAll(/stSet\('code','show'[\s\S]{0,400}?<\/select>/g)]
+    .flatMap(m => [...m[0].matchAll(/<option value="(\w+)"/g)].map(o => o[1]));
+  eq(offered.sort().join(','), 'full,number', '🛑 the editor offers exactly the values the worker accepts');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
