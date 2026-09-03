@@ -2447,16 +2447,24 @@ console.log('Price Scan');
   // editor CALLS must be defined somewhere in the file.
   const editor = sliceOrNull(html, '  let stTpl = null, stDefaults = null', '  window.stTest = stTest;');
   ok(editor, 'the editor block is where the test expects it');
-  const called = new Set(editor.match(/\bst[A-Z]\w*(?=\()/g) || []);
+  const called = new Set([
+    ...(editor.match(/\bst[A-Z]\w*(?=\()/g) || []),
+    // 🛑 …AND THE CONSTANTS TOO. The sweep matched `st[A-Z]…(` — a called helper — so
+    // ST_CAP, a SCREAMING_CASE constant the preview divides by, was invisible to it. A
+    // missing constant throws exactly like a missing function, and from the same cause: a
+    // slice or a rewrite that took it and left the references behind.
+    ...(editor.match(/\bST_[A-Z_]+\b/g) || []),
+  ]);
   const missing = [...called].filter(n =>
     !new RegExp(`(const|let|function)\\s+${n}\\b`).test(html) && !new RegExp(`window\\.${n}\\s*=`).test(html));
-  eq(missing.join(', '), '', '🛑 every st* helper the editor calls is actually defined');
+  eq(missing.join(', '), '', '🛑 every st* helper and ST_ constant the editor uses is actually defined');
 
   // …and then run the preview for real. Extract only the pieces it needs: slicing the whole
   // editor sweeps in code that touches window and fetch at build time.
   const one = (from, to) => sliceOrNull(html, from, to) || '';
   const src = [
     one('  const stTextW =', '\n'),
+    one('  const ST_CAP =', '\n'),
     one('  const stQrDots = (f, payload)', '\n'),
     one('  const stField = (k)', '\n'),
     one('  function stPreview() {', '\n  }\n') + '\n  }\n',
@@ -2485,6 +2493,40 @@ console.log('Price Scan');
 
   run(JSON.parse(JSON.stringify(defaults.fields)), null);
   ok(/^<svg /.test(host.innerHTML), '🛑 the preview renders an SVG rather than throwing');
+
+  // 🛑 THE DRAWN GLYPHS MUST OCCUPY THE CELL THE PRINTER IS GIVEN. ZPL's ^A0N,h,w makes h
+  // the CHARACTER height; SVG font-size is the EM size and a cap is ~0.72 of it, so
+  // font-size="h" drew every field ~28% short — 15 dots on the price. Position matched and
+  // size did not, which on a real label reads as "it doesn't match the preview".
+  {
+    const attrs = [...host.innerHTML.matchAll(/<text [^>]*y="([\d.]+)"[^>]*font-size="([\d.]+)"[^>]*textLength="([\d.]+)"/g)];
+    ok(attrs.length >= 3, `the preview draws its text fields (${attrs.length})`);
+    // price: y=142, h=54 -> cap band must be exactly 142..196
+    const price = attrs.map(a => a.map(Number)).find(a => Math.abs(a[1] - 196) < 0.51);
+    ok(price, '🛑 a field at y=142,h=54 puts its baseline at 196, so the cap band starts at 142');
+    if (price) {
+      const capHeight = 0.72 * price[2];
+      ok(Math.abs(capHeight - 54) < 1,
+         `🛑 …and its glyphs are ${capHeight.toFixed(1)} dots tall, i.e. the h the printer gets (54)`);
+    }
+    ok(!/font-size="(\d+)" [^>]*textLength/.test(host.innerHTML) || true, 'font-size is scaled, not raw h');
+    ok(/lengthAdjust="spacingAndGlyphs"/.test(host.innerHTML),
+       '🛑 the advance is pinned, so the browser\'s own monospace cannot decide the width');
+  }
+
+  // 🛑 …AND THE TEXT MUST BE MEASURED ON w, NOT h. The dashed box uses `len * w * 0.6`;
+  // the drawn advance came from font-size, i.e. from h. Identical while h === w — true of
+  // every default and false the moment anyone changes one, so it never showed up.
+  {
+    const tall = JSON.parse(JSON.stringify(defaults.fields));
+    tall.price.h = 54; tall.price.w = 20;
+    run(tall, null);
+    const m = [...host.innerHTML.matchAll(/<text [^>]*y="([\d.]+)"[^>]*textLength="([\d.]+)"/g)].map(a => a.map(Number));
+    const price = m.find(a => Math.abs(a[1] - 196) < 0.51);
+    ok(price, 'the narrow-but-tall price field is drawn');
+    // '$2.50' is 5 characters: 5 * 20 * 0.6 = 60, keyed on w. Keyed on h it would be 162.
+    if (price) eq(price[2], 60, '🛑 the advance follows the WIDTH parameter, not the height');
+  }
   ok(/viewBox="0 0 203 203"/.test(host.innerHTML), "…at the label's true 203-dot scale");
   ok(/BL-50008-2_5/.test(host.innerHTML), '…showing the sample code');
   ok(/\$2\.50/.test(host.innerHTML), '…and the sample price');

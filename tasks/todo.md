@@ -712,3 +712,44 @@ it reverts back."* One line, both symptoms.
 - 3,216 assertions across 53 suites.
 - Three mutations, each caught by name: the original bug restored, a numeric property dropped
   from the set, and everything treated as a string. Each failure names the field and value.
+
+## Round 7 — the preview drew text 28% short
+
+Reported: *"what it prints doesn't match the preview, the placement doesn't match."* Three
+defects in `stPreview`, all making the drawn glyphs disagree with the box drawn around them
+and with the printer:
+
+- [x] **SVG `font-size` is the EM size**; a digit's cap is ~0.72 of it. ZPL's `^A0N,h,w`
+      makes `h` the CHARACTER height. `font-size="${h}"` drew every field ~28% short — 15
+      dots on the price, 21 on the corner mark, on a 203-dot label. Position was right and
+      size was not, which is exactly what reads as "it doesn't match".
+- [x] **The advance came from `h`, the box from `w`.** The dashed rect is `len * w * 0.6`
+      (correct — `w` is the ZPL width parameter) but the text's advance followed font-size,
+      i.e. `h`. Identical while `h === w`, which is true of every default and false the
+      moment anyone changes one, so it never showed.
+- [x] **No `textLength`**, so the browser's own monospace decided the width — SF Mono on a
+      Mac, Consolas on Windows. The same template previewed differently per machine.
+
+Fixed by scaling font-size by the cap ratio, dropping the baseline a full `h` (so the cap
+band lands exactly on `f.y .. f.y+h`), and pinning the advance with
+`textLength` + `lengthAdjust="spacingAndGlyphs"`.
+
+The caption no longer says a flat "Approximate": **positions and heights are exact** — they
+are the same dots the printer is given — and **widths remain an estimate**, because the
+printer's font is proportional and the preview's is not.
+
+### Verified
+
+- 3,223 assertions across 53 suites.
+- Three mutations, each caught by name, plus a control edit that correctly does not fail.
+- The definedness sweep now covers `ST_` constants as well as `st*` helpers — `ST_CAP` was
+  invisible to a regex that only matched called functions, and a missing constant throws
+  exactly like a missing function.
+
+### Still open
+
+- **Whether this was the whole complaint.** The preview cannot account for a physical
+  offset: `^MNN` sets continuous-media tracking, so the printer does not align to a die-cut
+  label's gap. If the print is shifted bodily on the stock rather than mis-sized, that is
+  media calibration, not this.
+- Nobody has scanned a magnification-3 label at a till (carried).

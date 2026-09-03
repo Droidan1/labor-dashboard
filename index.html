@@ -3749,7 +3749,7 @@
             <div id="st-fields" class="space-y-5"></div>
             <div>
               <div id="st-preview"></div>
-              <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-2 leading-snug">Approximate. The printer draws its own font at its own metrics, so this shows position and footprint, not exact glyphs. Print a test label before trusting a roll to it.</p>
+              <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-2 leading-snug"><b>Positions and heights are exact</b> &mdash; they are the same dots the printer is given. <b>Widths are an estimate</b>: the printer's font is proportional and this one is not, so a line may run shorter or longer than shown. Print a test label before trusting a roll to it.</p>
             </div>
           </div>
           <div id="st-warn" class="hidden mt-4"></div>
@@ -19293,6 +19293,10 @@
   // the real printer closely enough to catch an overflow. It is an ESTIMATE and the copy on
   // screen says so — it drives a warning, never a refusal to save.
   const stTextW = (str, w) => Math.round(String(str || '').length * w * 0.6);
+  // Cap height as a fraction of em, for the preview only. Digits in a typical monospace sit
+  // at ~0.72em; ZPL's height parameter is the character height itself, so the preview has to
+  // divide by this to draw a glyph that is actually `h` dots tall.
+  const ST_CAP = 0.72;
   // A byte-mode payload up to 17 bytes is QR version 1 (21 modules); past that it steps to
   // version 2 (25). Our codes run 10-14 characters, so version 1 in practice -- but the
   // preview should not start lying if a category number ever grows.
@@ -19599,11 +19603,29 @@
     const sample = { code: 'BL-50008-2_5', number: '50008', price: '$2.50', retail: '$29.99' };
     const over = [];
     let g = '';
+    // 🛑 THE GLYPHS HAVE TO FILL THE CELL THE PRINTER WILL USE, and they did not. Three
+    // separate reasons, all making the drawn text disagree with the box drawn around it:
+    //
+    //   1. SVG `font-size` is the EM size and a digit's cap height is about 0.72 of it.
+    //      ZPL's ^A0N,h,w makes `h` the CHARACTER height. So font-size="${h}" drew every
+    //      field ~28% short -- 15 dots on the price, 21 on the corner mark, on a 203-dot
+    //      label. Position was right and size was not, which reads as "it does not match".
+    //   2. The dashed box is `len * w * 0.6` wide (keyed on the WIDTH parameter, correctly),
+    //      but the text's advance came from font-size, i.e. from `h`. They agree only while
+    //      h === w, which is true of every default and false the moment anyone changes one.
+    //   3. No textLength, so the browser's own monospace decided the width -- SF Mono on a
+    //      Mac, Consolas on Windows. The same template previewed differently per machine.
+    //
+    // ST_CAP is the cap-height ratio; font-size is scaled up by it and the baseline dropped
+    // a full `h`, which puts the cap band exactly on f.y..f.y+h. textLength then pins the
+    // advance to the same estimate the overflow check uses, so what is drawn and what is
+    // measured can no longer disagree.
     const box = (f, body, key) => {
       const w = stTextW(body, f.w), h = f.h;
       if (f.x + w > 203 || f.y + h > 203) over.push(key);
       return `<rect x="${f.x}" y="${f.y}" width="${w}" height="${h}" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 2"/>
-        <text x="${f.x}" y="${f.y + h * 0.82}" font-size="${h}" font-family="ui-monospace,monospace" fill="currentColor">${psEsc(body)}</text>`;
+        <text x="${f.x}" y="${f.y + h}" font-size="${(h / ST_CAP).toFixed(2)}" textLength="${w}" lengthAdjust="spacingAndGlyphs"
+          font-family="ui-monospace,monospace" fill="currentColor">${psEsc(body)}</text>`;
     };
     const qr = stField('qr'), d = stQrDots(qr, sample.code);
     if (qr.x + d > 203 || qr.y + d > 203) over.push('QR code');
