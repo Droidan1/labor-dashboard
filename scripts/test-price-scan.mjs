@@ -3485,6 +3485,44 @@ console.log('Price Scan');
   }
   eq(api.stTpl.fields.qr.x, 113, '🛑 typing a three-digit coordinate lands all three digits');
 
+  // 🛑 EVERY CONTROL THE EDITOR RENDERS MUST SURVIVE stSet, and the list is DERIVED from the
+  // rendered HTML rather than written out here — a hand-kept list is exactly what failed.
+  // `show` was added to the markup and not to stSet's string whitelist, so it became
+  // Number('number') = NaN: the preview silently stopped matching, JSON.stringify sent null,
+  // the worker refused it and substituted the default, and the select snapped back. Nothing
+  // errored anywhere along that path. Assert the stored TYPE, because NaN is a number and
+  // any assertion that only checked "is it a number" would have passed.
+  {
+    // The sweep writes to every field, so put the model back afterwards — the assertions
+    // below check the values that were actually typed.
+    const before = JSON.parse(JSON.stringify(api.stTpl.fields));
+    const rendered = nodes['st-fields'].innerHTML + nodes['st-bar'].innerHTML;
+    const controls = [...new Set([...rendered.matchAll(/stSet\('(\w+)','(\w+)'/g)].map(m => `${m[1]}.${m[2]}`))];
+    ok(controls.length >= 6, `the editor renders controls to check (${controls.length})`);
+    const NUMERIC = new Set(['x', 'y', 'h', 'w', 'mag']);
+    const sample = { on: true, font: 'B', mode: 'image', show: 'number', text: '$', prefix: 'Was ' };
+    const broken = [];
+    for (const id of controls) {
+      const [k, prop] = id.split('.');
+      const raw = NUMERIC.has(prop) ? '42' : sample[prop];
+      if (raw === undefined) { broken.push(`${id} (no sample value — new property?)`); continue; }
+      api.window.stSet(k, prop, raw);
+      const got = api.stTpl.fields[k][prop];
+      const want = prop === 'on' ? true : NUMERIC.has(prop) ? 42 : raw;
+      if (!Object.is(got, want)) broken.push(`${id} stored ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`);
+    }
+    eq(broken.join(' | '), '', '🛑 every rendered control round-trips through stSet with its own type');
+    for (const k of Object.keys(before)) api.stTpl.fields[k] = before[k];
+  }
+
+  // …and the one that actually shipped broken, spelled out, so the failure names itself.
+  api.window.stSet('code', 'show', 'number');
+  eq(api.stTpl.fields.code.show, 'number', '🛑 the Show select stores "number", not NaN');
+  eq(JSON.parse(JSON.stringify(api.stTpl.fields.code)).show, 'number',
+     '…and survives JSON.stringify, which is what turned NaN into null on the way out');
+  api.window.stSet('code', 'show', 'full');
+  eq(api.stTpl.fields.qr.x, 113, '…and the sweep left the typed values alone');
+
   // …and dragging the threshold must not replace the slider under the finger either.
   {
     const real = nodes['st-fields'];

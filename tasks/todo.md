@@ -691,3 +691,24 @@ a shelf. The number is handed over as a value instead.
 
 - **Nobody has scanned a magnification-3 label at a till** (carried from Round 4). Unrelated
   to this change; the default is still 4.
+
+## Round 6 — the Show select stored NaN
+
+Reported: *"set it to number only, the preview isn't changing and then when I hit save changes
+it reverts back."* One line, both symptoms.
+
+- [x] `stSet` whitelisted the STRING properties and fell through to `Number()`, so `show`
+      became `Number('number')` = **NaN**. NaN fails every `===` in the preview, JSON-encodes
+      to `null`, the worker refuses `null` and substitutes the default, and the editor adopts
+      the response — so the select snapped back. No error at any step.
+- [x] Inverted it: `ST_NUMERIC = {x, y, h, w, mag}` is the **closed** set, and everything else
+      is left as the string it already is. Adding a control no longer requires remembering.
+- [x] New guard **derives** the control list from the rendered HTML and round-trips every one,
+      asserting the stored type with `Object.is` (NaN is a number, so a looser check passes on
+      the bug). It cannot go stale — a new control adds its own case.
+
+### Verified
+
+- 3,216 assertions across 53 suites.
+- Three mutations, each caught by name: the original bug restored, a numeric property dropped
+  from the set, and everything treated as a string. Each failure names the field and value.

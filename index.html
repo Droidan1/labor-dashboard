@@ -19354,12 +19354,24 @@
   // to a single digit and the whole editor read as "it will not save what I type".
   // Only `mode` changes WHICH controls exist (text input versus the image block). Every
   // other property just moves something, so refresh the picture and leave the inputs alone.
+  // 🛑 THIS LISTED THE STRING PROPERTIES AND FELL THROUGH TO Number(), SO ADDING A CONTROL
+  // MEANT REMEMBERING TO EDIT IT — and adding `show` and not remembering turned the value
+  // into Number('number') = NaN. NaN silently fails every === in the preview (so it never
+  // redrew), then JSON.stringify turns it into null, which the worker refuses and replaces
+  // with the default — so the select snapped back to Full code and the whole option looked
+  // like it had never been wired up. A default of "coerce to number" is the wrong default:
+  // NaN is indistinguishable from a value until it reaches a shelf.
+  //
+  // 🔑 THE NUMERIC PROPERTIES ARE THE CLOSED SET, so name THOSE. They are the coordinates
+  // and sizes and there will not be a sixth; every other property is text the printer or
+  // the validator reads verbatim, and a string left alone is always recoverable.
+  const ST_NUMERIC = new Set(['x', 'y', 'h', 'w', 'mag']);
+
   function stSet(k, prop, raw) {
     if (!stTpl) return;
-    const v = prop === 'on' ? !!raw
-      : ['text', 'prefix', 'font', 'mode'].includes(prop) ? raw : Number(raw);
+    const v = prop === 'on' ? !!raw : ST_NUMERIC.has(prop) ? Number(raw) : raw;
     stTpl.fields[k] = Object.assign({}, stField(k), { [prop]: v });
-    if (prop === 'mode') stDraw(); else stPreview();
+    if (prop === 'mode') stDraw(); else stPreview();   // only `mode` changes WHICH controls exist
   }
   window.stSet = stSet;
 
