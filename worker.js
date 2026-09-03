@@ -2581,13 +2581,23 @@ async function rollupWeekSummariesIfReady(env, todayStr) {
 // ─── Admin-managed item categorization overrides ────────────────
 // Stored globally (all stores share) in KV key `item-overrides:global` as:
 //   {
-//     items:   { "id:<cloverItemId>"|"name:<normalized>": "<L2>" },
+//     items:   { "id:<cloverItemId>"|"name:<normalized>": "<L2>" | {l2,l3} },
 //     patterns:[{type,value,category}],
 //     l3Map:   { "<clover-L3-category-name>": "<L2>" }
 //   }
 // pattern type ∈ "prefix" | "contains" | "im-number".
 // l3Map catches items that DO have a Clover catalog category but that L3 name
 // isn't in the built-in L3_TO_L2 map — these otherwise route to "Uncategorized".
+//
+// 🔑 An `items` entry is EITHER a bare "<L2>" string (the original shape, and
+// still most of them) OR { l2, l3 }. The object form is the only way a product
+// can reach a real L3 row when Clover has no category for it: `l3Key` is chosen
+// from `l2Source`, so an override / IM / heuristic / pattern hit renders as a
+// bracketed label and `normalizeL3Key` folds every one of those into
+// "Other / unmapped". Tier 0 runs before all the other tiers, so setting an L3
+// here fixes a product no matter WHICH of them would otherwise have claimed it.
+// Read entries through readItemOverride — never index `items` directly, or the
+// legacy string shape becomes an object-property read that returns undefined.
 const ITEM_OVERRIDES_KEY = "item-overrides:global";
 const EMPTY_OVERRIDES = { items: {}, patterns: [], l3Map: {} };
 const VALID_L2 = new Set([
@@ -2618,6 +2628,69 @@ function resolveL3ToL2(l3, ovL3Map) {
   const ov = ovL3Map && ovL3Map[l3];
   if (ov && VALID_L2.has(ov)) return ov;
   return L3_TO_L2[l3] || null;
+}
+
+// Read one `items` entry in either stored shape. Returns { l2, l3 } or null —
+// null both for "no entry" and for "entry names an L2 that isn't real", so every
+// caller can simply fall through to the next tier the way the string-shaped
+// `VALID_L2.has(...)` guard used to.
+function readItemOverride(entry) {
+  if (!entry) return null;
+  if (typeof entry === "string") return VALID_L2.has(entry) ? { l2: entry, l3: null } : null;
+  if (typeof entry !== "object") return null;
+  if (!VALID_L2.has(entry.l2)) return null;
+  return { l2: entry.l2, l3: (typeof entry.l3 === "string" && entry.l3) ? entry.l3 : null };
+}
+
+// The ONE rule for finding a line item's override: id: key first, then name:.
+// A miss on the id key falls through to the name key — including when the id
+// entry exists but names a bogus L2 — which is what the two hand-written copies
+// of this ladder did. They are now one function for the same reason
+// resolveL3ToL2 is: the aggregator and its cross-day refund mirror held
+// duplicate precedence ladders, and that is exactly how the l3Map bug survived
+// (see test-l3map-precedence.mjs).
+function lookupItemOverride(ovItems, itemId, nameKey) {
+  if (!ovItems) return null;
+  return (itemId ? readItemOverride(ovItems["id:" + itemId]) : null)
+      || (nameKey ? readItemOverride(ovItems["name:" + nameKey]) : null)
+      || null;
+}
+
+// Guard for an item override's L3. Two ways to get this wrong, and only the
+// first is obvious:
+//   1. A category that does not exist — a typo mints a phantom L3 row that sums
+//      into its L2 and matches no real category. This repo has shipped exactly
+//      that class of bug twice (MEMORY.md: the `|| "Hardlines"` default).
+//   2. A REAL category belonging to a DIFFERENT L2 — "Consumable HBA" carrying
+//      a Seasonal L3 renders a Seasonal-named row inside HBA. L3 rows would stop
+//      being a partition of their parent, which is the single invariant the T13
+//      card rests on ("L3 must sum to its L2 exactly, and it does, to the cent").
+// Returns an error string, or null when the pair is sound.
+function itemOverrideL3Error(l2, l3, ovL3Map) {
+  if (!l3) return null;
+  const owner = resolveL3ToL2(l3, ovL3Map);
+  if (!owner) return `Unknown L3 category "${l3}" — pick one that already exists.`;
+  if (owner !== l2) return `L3 "${l3}" belongs to L2 "${owner}", not "${l2}".`;
+  return null;
+}
+
+// Every assignable L3, grouped by the L2 that owns it, so the editor can only
+// offer pairs itemOverrideL3Error would accept. Built through resolveL3ToL2 so
+// an l3Map entry that re-homes a built-in category is listed under the L2 the
+// engine actually books it to — the editor showing one answer while the engine
+// used another is the drift that hid FG BL SOFTLINES - APPAREL for 53 days.
+function l3OptionsByL2(ovL3Map) {
+  const out = {};
+  const add = (l3, l2) => { (out[l2] || (out[l2] = [])).push(l3); };
+  for (const l3 of Object.keys(L3_TO_L2)) {
+    const l2 = resolveL3ToL2(l3, ovL3Map);
+    if (l2) add(l3, l2);
+  }
+  for (const [l3, l2] of Object.entries(ovL3Map || {})) {
+    if (!L3_TO_L2[l3] && VALID_L2.has(l2)) add(l3, l2);
+  }
+  for (const l2 of Object.keys(out)) out[l2].sort();
+  return out;
 }
 
 // Every l3Map entry that CONTRADICTS the built-in map. An override is allowed to
@@ -2896,11 +2969,16 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       const nameKey = normalizeItemName(li.name);
       let l2 = null;
       let l2Source = null;  // "override" | "clover-l3" | "name" | "im" | "heuristic" | "pattern" | "custom"
-      if (itemId && ovItems["id:" + itemId] && VALID_L2.has(ovItems["id:" + itemId])) {
-        l2 = ovItems["id:" + itemId];
-        l2Source = "override";
-      } else if (nameKey && ovItems["name:" + nameKey] && VALID_L2.has(ovItems["name:" + nameKey])) {
-        l2 = ovItems["name:" + nameKey];
+      // L3 the override assigned, if any. Checked at write time against the L2
+      // it sits under. A later l3Map edit can leave that label stale, but never
+      // cross-contaminating: the l2 lives in the SAME entry, so a stale L3 is a
+      // wrong-looking row name inside the right bucket, not money in the wrong
+      // one — the L3-sums-to-L2 invariant holds either way.
+      let ovL3 = null;
+      const ovHit = lookupItemOverride(ovItems, itemId, nameKey);
+      if (ovHit) {
+        l2 = ovHit.l2;
+        ovL3 = ovHit.l3;
         l2Source = "override";
       }
 
@@ -3056,7 +3134,10 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       if (l2Source === "clover-l3" && l3) {
         l3Key = l3;
       } else if (l2Source === "override") {
-        l3Key = "[Override] " + l2;
+        // An override that names an L3 reports under that real category. Without
+        // one there is nothing to report under, so it keeps the synthetic label
+        // and folds into "Other / unmapped" the way it always has.
+        l3Key = ovL3 || ("[Override] " + l2);
       } else if (l2Source === "name") {
         // A name match means the item's NAME *is* a real L3 category string —
         // this merchant names one item per price point after its category. So
@@ -3096,8 +3177,13 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       // name as their L3 and are tracked by noCategory.
       if (l2Source && l2Source !== "clover-l3" && l2Source !== "custom") {
         const fbKey = li.name || "(unnamed)";
+        // `l3Key` rides along so a reader can ask normalizeL3Key whether this
+        // item actually lands in "Other / unmapped" instead of re-deriving the
+        // rule from `source`. That re-derivation is already wrong for "name"
+        // (it resolves to a real L3) and would go wrong again for an override
+        // that carries an L3.
         const fb = fallbackItems[fbKey] ||
-          { qty: 0, gross: 0, itemId: itemId || null, source: l2Source, l2 };
+          { qty: 0, gross: 0, itemId: itemId || null, source: l2Source, l2, l3Key };
         fb.qty += qty;
         // GROSS line revenue (signed, so refunds net out). Deliberately not
         // called "net": discounts/refunds are applied to the L2/L3 rows later,
@@ -3153,7 +3239,11 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       //   3. 0 — renders `—` in the CPU/Ext Cost columns.
       const costRecord = imNum ? icItems[imNum] : null;
       let unitCost = 0, costSource = "none";
-      const costL3 = l3 || l3CostKey;   // real Clover L3, or name-matched L3 string
+      // An override L3 wins over the Clover L3: it is the category the row is
+      // REPORTED under, and a row costed from a category it is not filed under
+      // would put a wrong GPM on a right-looking line. Falls back to the Clover
+      // L3, then the name-matched L3 string.
+      const costL3 = ovL3 || l3 || l3CostKey;
       if (costRecord && Number.isFinite(Number(costRecord.cost))) {
         unitCost = Number(costRecord.cost);
         costSource = "item";
@@ -3230,13 +3320,11 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       const itemId = li.item?.id;
       const nameKey = normalizeItemName(li.name);
       let l2 = null;
+      let ovL3 = null;
 
-      // Tier 0: admin override (id: or name: key)
-      if (itemId && ovItems["id:" + itemId] && VALID_L2.has(ovItems["id:" + itemId])) {
-        l2 = ovItems["id:" + itemId];
-      } else if (nameKey && ovItems["name:" + nameKey] && VALID_L2.has(ovItems["name:" + nameKey])) {
-        l2 = ovItems["name:" + nameKey];
-      }
+      // Tier 0: admin override (id: or name: key) — same helper as the main loop.
+      const ovHit = lookupItemOverride(ovItems, itemId, nameKey);
+      if (ovHit) { l2 = ovHit.l2; ovL3 = ovHit.l3; }
 
       // Tier 1: Clover L3 → L2
       if (!l2 && itemId && itemCatMap[itemId]) {
@@ -3277,7 +3365,11 @@ function aggregateItemSales(allElements, itemCatMap, store, dateStr, overrides, 
       // Fallback
       if (!l2) l2 = "Custom Sales";
 
-      const l3Key = "[Cross-day refund source] " + l2;
+      // An override L3 lands the refund on the same real row the sale went to.
+      // Only the override case is folded back here: giving these rows the Clover
+      // L3 as well would move existing cross-day refund dollars out of
+      // "Other / unmapped" onto real rows, which is a separate change.
+      const l3Key = ovL3 || ("[Cross-day refund source] " + l2);
       let arr = orderLineItemMap.get(order.id);
       if (!arr) { arr = []; orderLineItemMap.set(order.id, arr); }
       arr.push({ l2, l3Key, grossCents: priceCents });
@@ -15995,8 +16087,19 @@ export default {
           if (Number(snap._debug.fallbackItemsTotal) > Object.keys(fbs).length) fbTruncated = true;
           for (const [name, val] of Object.entries(fbs)) {
             if (!val || typeof val !== "object") continue;
+            // `unmapped` is the question the editor actually asks: does this
+            // item land in "Other / unmapped"? Answered by the same
+            // normalizeL3Key the reports use. Snapshots written before `l3Key`
+            // was recorded fall back to "every source but name was bracketed",
+            // which is exactly what was true when they were written.
+            const unmapped = val.l3Key != null
+              ? normalizeL3Key(val.l3Key) === L3_OTHER
+              : val.source !== "name";
             const prior = fbAgg[name] ||
-              { name, itemId: null, qty: 0, gross: 0, source: val.source || null, l2: val.l2 || null, stores: [] };
+              { name, itemId: null, qty: 0, gross: 0, source: val.source || null, l2: val.l2 || null, unmapped, stores: [] };
+            // One bad day is enough to need fixing: an item that is bracketed on
+            // any day in range stays listed, even if a later day resolved it.
+            if (unmapped) prior.unmapped = true;
             prior.qty += Number(val.qty) || 0;
             prior.gross += Number(val.gross) || 0;
             if (!prior.itemId && val.itemId) prior.itemId = val.itemId;
@@ -16019,14 +16122,20 @@ export default {
         .map(i => ({ ...i, qty: Math.round(i.qty), gross: roundCents(i.gross) }))
         .sort((a, b) => b.gross - a.gross);
       const fallbackGross = roundCents(fallbackItems.reduce((t, i) => t + i.gross, 0));
+      const unmappedItems = fallbackItems.filter(i => i.unmapped);
 
       return new Response(JSON.stringify({
         store: storeParam, start, end, datesScanned, items, l3Categories,
-        // Products landing in the "Other" bucket, biggest revenue first.
-        // `source` says which fallback fired: override | im | name | heuristic | pattern.
+        // Every product resolved by a fallback rather than a Clover category,
+        // biggest revenue first. `source` says which one fired: override | im |
+        // name | heuristic | pattern. `unmapped` says whether it actually lands
+        // in the "Other / unmapped" L3 row — a "name" hit resolves to a real L3
+        // and an override may now carry one, so source alone does not tell you.
         // NOTE: `gross` is pre-discount line revenue — a ranking signal, not a
         // reported figure. It runs above the netSales shown on the dashboard.
         fallbackItems, fallbackGross, fallbackTruncated: fbTruncated,
+        // The subset the "Other / unmapped" editor lists, and what it is worth.
+        unmappedItems, unmappedGross: roundCents(unmappedItems.reduce((t, i) => t + i.gross, 0)),
       }), { headers: corsJson });
     }
 
@@ -16051,6 +16160,10 @@ export default {
         return new Response(JSON.stringify({
           ...current,
           conflicts: l3MapConflicts(current.l3Map),
+          // L2 -> [assignable L3]. The editor's L3 select is filled from the
+          // entry for the L2 the admin picked, so it can only ever offer a pair
+          // the POST validator below would accept.
+          l3Options: l3OptionsByL2(current.l3Map),
         }), { headers: corsJson });
       }
 
@@ -16066,13 +16179,36 @@ export default {
           l3Map: existing.l3Map || {},
         };
 
+        // An item's L3 is checked against the l3Map this same request is writing
+        // (falling back to the stored one), so an admin can add a new category
+        // and file an item under it in a single save. A rejected l3Map below
+        // aborts the whole request, so nothing can persist against a map that
+        // was never accepted.
+        const effectiveL3Map = (body && typeof body.l3Map === "object" && body.l3Map !== null)
+          ? body.l3Map : (existing.l3Map || {});
+
         if (body && typeof body.items === "object" && body.items !== null) {
-          // Validate every L2 before persisting. Reject wholesale on first bad
+          // Validate every entry before persisting. Reject wholesale on first bad
           // value so admins don't silently write a typo that kills categorization.
           for (const [k, v] of Object.entries(body.items)) {
-            if (!VALID_L2.has(v)) {
+            // Accept both stored shapes: a bare "<L2>" string, or {l2, l3}.
+            const entry = typeof v === "string" ? { l2: v, l3: null }
+                        : (v && typeof v === "object") ? { l2: v.l2, l3: v.l3 || null }
+                        : null;
+            if (!entry) {
               return new Response(JSON.stringify({
-                error: `Invalid L2 "${v}" for item "${k}". Allowed: ${[...VALID_L2].join(", ")}`
+                error: `Item "${k}" must be an L2 string or an { l2, l3 } object.`
+              }), { status: 400, headers: corsJson });
+            }
+            if (!VALID_L2.has(entry.l2)) {
+              return new Response(JSON.stringify({
+                error: `Invalid L2 "${entry.l2}" for item "${k}". Allowed: ${[...VALID_L2].join(", ")}`
+              }), { status: 400, headers: corsJson });
+            }
+            const l3Err = itemOverrideL3Error(entry.l2, entry.l3, effectiveL3Map);
+            if (l3Err) {
+              return new Response(JSON.stringify({
+                error: `Item "${k}": ${l3Err}`
               }), { status: 400, headers: corsJson });
             }
           }

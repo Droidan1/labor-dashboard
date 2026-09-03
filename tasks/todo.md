@@ -1,3 +1,87 @@
+# Item overrides can assign an L3, not just an L2 (2026-09-03)
+
+Reported: "why is some product going to Other / unmapped beside the right L3", then
+"I want to start getting these items into an L3 for better reporting".
+
+`Other / unmapped` is a remainder: `normalizeL3Key` folds every bracketed L3 row into it, and the
+bracket is chosen from `l2Source` — HOW a line resolved — not from what it resolved to. So an
+override / IM / heuristic / pattern hit can never reach a real L3 row, however well the admin knows
+which category it belongs to. `ov.items` maps item -> **L2 only**, so there is no place to say.
+
+Measured on BL1 · Consumable HBA, 13 wk (2026-06-04 .. 09-02), from the 91 KV snapshots:
+`Other / unmapped` = **$1,029.03 / 590 u = 2.76%** of the L2, in six rows —
+`[Heuristic]` $753.47 (Hemp Oil Foot Mask, 50401 Nail Polish), `[IM 10398]` $121.89 (nicorette,
+meds), `[IM 10394]` $100.00 (wheelchair), `[Override]` $55.64 (item named "PAIN"),
+`[IM 50028]` $3.50 (dry shampoo), `[Cross-day refund source]` -$5.47.
+
+Tier 0 runs before every other tier, so extending the per-item override to carry an L3 fixes all
+five bracket sources with one mechanism — including the three items that have no Clover catalog
+item id at all, since `name:` keys need no itemId.
+
+## Plan
+- [x] `items` entry accepts `{l2, l3}` beside the legacy bare `"<L2>"` string; one reader for both
+- [x] One lookup helper for the id:/name: precedence, so the aggregator and its refund mirror
+      cannot drift apart again (the l3Map bug's root cause, per test-l3map-precedence.mjs)
+- [x] Tier 0 in `aggregateItemSales` carries the override L3 into `l3Key`
+- [x] Cost lookup prefers the override L3, so the row and its cost name the same category
+- [x] The cross-day refund mirror honours the override L3 too
+- [x] POST validation: L3 must EXIST and must belong to the SAME L2 the override assigns —
+      otherwise L3 rows stop being a partition of their L2
+- [x] GET returns `l3Options` (L2 -> [L3]) so the UI cannot offer an invalid pair
+- [x] Settings: render the unmapped items (the endpoint already returned them; nothing rendered them),
+      with Assign L2 + a dependent Assign L3 select
+- [x] `scripts/test-item-override-l3.mjs` driving the real routes
+- [x] sw.js cache bump, npm test green, commit, push, draft PR
+
+## Review
+
+- **`worker.js`** — `readItemOverride` reads an `items` entry in either shape (bare `"<L2>"` string
+  or `{l2, l3}`), returning null for both "absent" and "bogus L2" so callers fall through exactly as
+  the old inline `VALID_L2.has(...)` guard did. `lookupItemOverride` is the single id:-then-name:
+  ladder, replacing the two hand-written copies in `aggregateItemSales` and its cross-day refund
+  mirror — the same duplication that let the l3Map precedence bug live. Tier 0 now carries `ovL3`
+  into `l3Key` (`ovL3 || "[Override] " + l2`), into the cross-day refund `l3Key`, and into `costL3`
+  ahead of the Clover L3 so a row is costed from the category it is filed under.
+- **Write guard** — `itemOverrideL3Error` refuses an L3 that does not exist AND one that belongs to a
+  different L2. The second is the one membership checking cannot catch, and is the same shape as the
+  `FG BL SOFTLINES - APPAREL` incident: a perfectly valid L2, just the wrong one. Without it, L3 rows
+  would stop being a partition of their L2. Items are validated against the l3Map the SAME request is
+  writing, so an admin can add a category and file an item under it in one save.
+- **`l3OptionsByL2`** is built through `resolveL3ToL2`, so a category the l3Map re-homes is offered
+  under the L2 the engine actually books it to. The editor showing one answer while the engine used
+  another is precisely what hid that incident for 53 days.
+- **`unmapped` / `unmappedItems`** — `fallbackItems` snapshot records now carry their `l3Key`, and the
+  endpoint asks `normalizeL3Key` whether the item really lands in `Other / unmapped` instead of
+  re-deriving it from `source`. That re-derivation was already wrong for `name` (it resolves to a real
+  L3 via `l3CostKey`) and would have gone wrong again for an override carrying an L3. Pre-`l3Key`
+  snapshots fall back to "every source but name was bracketed", which is what was true when they were
+  written. An item bracketed on ANY day in range stays listed.
+- **`index.html`** — new "Items in Other / unmapped" table, fed by `unmappedItems`; the endpoint has
+  returned this data all along and nothing rendered it. Each row pre-selects the L2 the engine already
+  resolved (the L2 is not in doubt for these rows, only the L3, and re-picking it invites a typo into a
+  bucket that is currently right) and offers a dependent L3 select filled from `l3Options[l2]`, so an
+  invalid pair cannot be constructed. The same L3 column is added to the Custom Sales table. Save
+  writes `{l2, l3}` only when an L3 is picked, so the stored map stays diffable.
+- **Verification** — `scripts/test-item-override-l3.mjs`, 35 assertions through the real routes with KV
+  seeded. Run against HEAD's `worker.js`, 11 of them fail; against this branch the full suite is
+  **3299 assertions across 54 suites, all passing**. The page itself was driven in Chromium against a
+  stubbed API: both renders (DESIGN.md §4.8 trap 8) produce the rows, pre-select the L2, fill and
+  enable the dependent L3, offer no cross-L2 category, label the item with no Clover id, and emit
+  `{l2, l3}` vs. a bare string correctly — 16 assertions, no page errors.
+- `sw.js` CACHE_NAME v163 → v164 and the shell-cache fixture refreshed (index.html changed).
+
+### Not done, deliberately
+- **No re-snapshot.** Overrides only affect snapshots written after the change. Re-pulling the 13-week
+  window to relabel $1,029 would re-fetch days at/past Clover's ~90-day order retention (2026-06-04 is
+  91 days back), which is rule 1 in CLAUDE.md and three incidents in MEMORY.md. Fix forward.
+- **Cross-day refund rows still bracket without an override.** Giving them the Clover L3 too would move
+  existing refund dollars out of `Other / unmapped` onto real rows — a separate, money-moving change.
+- **The three BL1 IM one-offs have no Clover item id** (`10398-2_5 nicorette lozenge`,
+  `10394 general wheelchair`, `50028 dry shampoo`). They are reachable only by `name:` key, which this
+  supports; a catalog item would be the durable fix.
+- **The `name:pain` override at BL1 needs an L3 adding**, not removing — it is now the mechanism, not
+  the obstacle.
+
 # Price Scan: a barcode that no allowlisted retailer indexes gets a junk identity (2026-09-02)
 
 Reported: "a few products I scanned showed no data". Four barcodes scanned 1–2 Sept were cached with

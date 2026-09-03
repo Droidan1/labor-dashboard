@@ -4069,6 +4069,7 @@
                         <th class="px-3 py-2 text-right">Qty</th>
                         <th class="px-3 py-2 text-right">Net</th>
                         <th class="px-3 py-2 text-left">Assign L2</th>
+                        <th class="px-3 py-2 text-left">Assign L3</th>
                         <th class="px-3 py-2 text-left">Also add rule</th>
                       </tr>
                     </thead>
@@ -4076,6 +4077,28 @@
                   </table>
                 </div>
                 <p id="overrides-items-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No Custom Sales items in this range.</p>
+              </div>
+
+              <div id="overrides-fallback-section">
+                <h3 class="text-sm font-semibold text-opl-ink dark:text-op-ink mb-2">Items in "Other / unmapped"</h3>
+                <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-3">These reached the right L2 by a guess — a name rule, an IM number, a pattern, or an existing override — so they have no real L3 and fold into the <em>Other / unmapped</em> row. Assign an L3 to give each one a home. Ranked by gross line revenue, which runs above the net shown on the dashboard.</p>
+                <div class="overflow-x-auto border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-xl">
+                  <table class="min-w-full text-sm">
+                    <thead class="bg-[rgba(20,16,8,0.03)] dark:bg-op-panelHi text-xs text-opl-inkDim dark:text-op-inkDim uppercase">
+                      <tr>
+                        <th class="px-3 py-2 text-left">Item Name</th>
+                        <th class="px-3 py-2 text-left">Matched by</th>
+                        <th class="px-3 py-2 text-right">Qty</th>
+                        <th class="px-3 py-2 text-right">Gross</th>
+                        <th class="px-3 py-2 text-left">Assign L2</th>
+                        <th class="px-3 py-2 text-left">Assign L3</th>
+                      </tr>
+                    </thead>
+                    <tbody id="overrides-fallback-tbody" class="divide-y divide-[rgba(20,16,8,0.08)] dark:divide-op-border"></tbody>
+                  </table>
+                </div>
+                <p id="overrides-fallback-empty" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim italic">No fallback-resolved items in this range.</p>
+                <p id="overrides-fallback-note" class="hidden text-xs text-opl-inkDim dark:text-op-inkDim mt-2"></p>
               </div>
 
               <div id="overrides-l3-section">
@@ -13013,6 +13036,25 @@
     'Seasonal', 'Bin Products', 'Gift Cards',
   ];
 
+  // { L2: [assignable L3] }, served by ?action=item-overrides so the worker's
+  // L3_TO_L2 stays the single source of truth. Refilled on every
+  // loadUncategorized() so a category added since page load is offerable, and
+  // so the second render is populated as well as the first.
+  let OVERRIDE_L3_OPTIONS = {};
+
+  // The L3 select for one row. Empty (and disabled) until an L2 is chosen,
+  // because an L3 only means anything under its own parent — the worker rejects
+  // a mismatched pair, and offering one would be an error the admin only finds
+  // out about at Save.
+  function fillOverrideL3Select(sel, l2, keep) {
+    const opts = (l2 && OVERRIDE_L3_OPTIONS[l2]) || [];
+    sel.innerHTML = ['<option value="">— none —</option>']
+      .concat(opts.map(l3 => `<option value="${escHtml(l3)}">${escHtml(l3)}</option>`))
+      .join('');
+    sel.disabled = !opts.length;
+    if (keep && opts.includes(keep)) sel.value = keep;
+  }
+
   // ── Client-side API response cache (5-minute TTL) ────────────────────────────
   // Keyed by full URL string. Only caches successful, non-error responses.
   // Mutations and auth calls always bypass this via raw fetch().
@@ -13058,6 +13100,20 @@
     statusEl.innerHTML = msg;
   }
 
+  // Bind each row's L3 select to its L2 select, then fill it once for the L2 the
+  // row already carries (the fallback table pre-selects one). Called after every
+  // render — the rows are rebuilt wholesale, so a listener bound to the old ones
+  // would be gone on the second load.
+  function wireOverrideL3Selects(root) {
+    for (const l2Sel of root.querySelectorAll('select.override-l2')) {
+      const row = l2Sel.closest('tr');
+      const l3Sel = row && row.querySelector('select.override-item-l3');
+      if (!l3Sel) continue;
+      fillOverrideL3Select(l3Sel, l2Sel.value, '');
+      l2Sel.addEventListener('change', () => fillOverrideL3Select(l3Sel, l2Sel.value, l3Sel.value));
+    }
+  }
+
   async function loadUncategorized() {
     const store = document.getElementById('overrides-store').value;
     const start = document.getElementById('overrides-start').value;
@@ -13069,12 +13125,22 @@
 
     try {
       const url = `${WORKER_BASE}?action=noncategorized-items&store=${encodeURIComponent(store)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
-      const resp = await fetch(url, { credentials: 'include' });
+      // The override map comes along for its `l3Options` — refetched here rather
+      // than cached at load so a category added since then is offerable.
+      const [resp, ovResp] = await Promise.all([
+        fetch(url, { credentials: 'include' }),
+        fetch(`${WORKER_BASE}?action=item-overrides`, { credentials: 'include' }),
+      ]);
       const data = await resp.json();
       if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+      OVERRIDE_L3_OPTIONS = ovResp.ok ? ((await ovResp.json()).l3Options || {}) : {};
 
       const items = Array.isArray(data.items) ? data.items : [];
       const l3s = Array.isArray(data.l3Categories) ? data.l3Categories : [];
+      // Only the ones that really land in "Other / unmapped" — a "name" hit is
+      // in fallbackItems too but already reports under a real L3, and offering
+      // it here would invite an override onto a row that is not broken.
+      const fallbacks = Array.isArray(data.unmappedItems) ? data.unmappedItems : [];
 
       // Items table
       const tbody = document.getElementById('overrides-tbody');
@@ -13108,8 +13174,62 @@
                       data-name="${it.name.replace(/"/g, '&quot;')}"
                       data-item-id="${it.itemId || ''}">${optionsHtml}</select>
             </td>
+            <td class="px-3 py-2 align-top">
+              <select class="override-item-l3 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1 disabled:opacity-50" disabled></select>
+            </td>
             <td class="px-3 py-2 align-top">${ruleCell}</td>`;
           tbody.appendChild(tr);
+        }
+        wireOverrideL3Selects(tbody);
+      }
+
+      // Fallback-resolved items — the contents of "Other / unmapped".
+      const fbTbody = document.getElementById('overrides-fallback-tbody');
+      const fbEmpty = document.getElementById('overrides-fallback-empty');
+      const fbNote = document.getElementById('overrides-fallback-note');
+      fbTbody.innerHTML = '';
+      fbNote.classList.add('hidden');
+      if (!fallbacks.length) {
+        fbEmpty.classList.remove('hidden');
+      } else {
+        fbEmpty.classList.add('hidden');
+        const optionsHtml = ['<option value="">— pick —</option>']
+          .concat(OVERRIDE_L2_OPTIONS.map(l => `<option value="${l}">${l}</option>`))
+          .join('');
+        for (const it of fallbacks) {
+          const tr = document.createElement('tr');
+          // Pre-select the L2 the engine already resolved: for these rows the L2
+          // is not in doubt, only the L3 is, so making the admin re-pick it would
+          // invite a typo into a bucket that is currently right.
+          const l2Html = it.l2 && OVERRIDE_L2_OPTIONS.includes(it.l2)
+            ? optionsHtml.replace(`<option value="${it.l2}">`, `<option value="${it.l2}" selected>`)
+            : optionsHtml;
+          tr.innerHTML = `
+            <td class="px-3 py-2 align-top text-gray-900 dark:text-gray-100">
+              <div class="font-medium break-all">${escHtml(it.name)}</div>
+              ${it.itemId
+                ? `<div class="text-[11px] text-gray-400 dark:text-gray-500 font-mono">${escHtml(it.itemId)}</div>`
+                : `<div class="text-[11px] text-opl-inkDim dark:text-op-inkDim italic">no Clover item — name rule only</div>`}
+              ${Array.isArray(it.stores) && it.stores.length > 1
+                ? `<div class="text-[11px] text-opl-inkDim dark:text-op-inkDim">${escHtml(it.stores.join(', '))}</div>` : ''}
+            </td>
+            <td class="px-3 py-2 align-top text-gray-700 dark:text-gray-300">${escHtml(it.source || '—')}</td>
+            <td class="px-3 py-2 align-top text-right tabular-nums text-gray-700 dark:text-gray-300">${(it.qty || 0).toLocaleString()}</td>
+            <td class="px-3 py-2 align-top text-right tabular-nums text-gray-700 dark:text-gray-300">$${(it.gross || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+            <td class="px-3 py-2 align-top">
+              <select class="override-l2 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1"
+                      data-name="${escHtml(it.name)}"
+                      data-item-id="${escHtml(it.itemId || '')}">${l2Html}</select>
+            </td>
+            <td class="px-3 py-2 align-top">
+              <select class="override-item-l3 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 px-2 py-1 disabled:opacity-50" disabled></select>
+            </td>`;
+          fbTbody.appendChild(tr);
+        }
+        wireOverrideL3Selects(fbTbody);
+        if (data.fallbackTruncated) {
+          fbNote.textContent = 'Showing the top items per day — some smaller ones are not listed.';
+          fbNote.classList.remove('hidden');
         }
       }
 
@@ -13141,11 +13261,12 @@
       }
 
       document.getElementById('overrides-table-wrap').classList.remove('hidden');
-      if (!items.length && !l3s.length) {
+      if (!items.length && !l3s.length && !fallbacks.length) {
         setOverridesStatus(`No uncategorized items or L3 categories in snapshots for ${store} · ${start} → ${end}.`, 'ok');
       } else {
         const parts = [];
         if (items.length) parts.push(`${items.length} item${items.length === 1 ? '' : 's'}`);
+        if (fallbacks.length) parts.push(`${fallbacks.length} in Other / unmapped`);
         if (l3s.length) parts.push(`${l3s.length} L3 categor${l3s.length === 1 ? 'y' : 'ies'}`);
         setOverridesStatus(`Loaded ${parts.join(' · ')} from ${data.datesScanned.length} day${data.datesScanned.length === 1 ? '' : 's'}. Assign each to an L2 and Save.`, 'ok');
       }
@@ -13172,18 +13293,24 @@
     const l3Map = Object.assign({}, existing.l3Map || {});
     const seenPrefixes = new Set(patterns.filter(p => p.type === 'prefix').map(p => String(p.value).toLowerCase()));
 
-    let assigned = 0, newRules = 0, l3Assigned = 0;
+    let assigned = 0, newRules = 0, l3Assigned = 0, l3ItemAssigned = 0;
     for (const sel of document.querySelectorAll('select.override-l2')) {
       const l2 = sel.value;
       if (!l2) continue;
       const name = sel.dataset.name || '';
       const itemId = sel.dataset.itemId || '';
       const key = itemId ? `id:${itemId}` : `name:${name.trim().toLowerCase().replace(/\u2013|\u2014/g, '-').replace(/\s+/g, ' ')}`;
-      items[key] = l2;
+      // Store the bare L2 string unless an L3 was picked. Both shapes are read
+      // by the worker's readItemOverride; keeping the plain one for the common
+      // case leaves the stored map diffable against what is already there.
+      const row = sel.closest('tr');
+      const l3Sel = row && row.querySelector('select.override-item-l3');
+      const l3 = (l3Sel && l3Sel.value) || '';
+      items[key] = l3 ? { l2, l3 } : l2;
+      if (l3) l3ItemAssigned++;
       assigned++;
 
       // Row-level "also add prefix rule" checkbox
-      const row = sel.closest('tr');
       const ruleCb = row ? row.querySelector('input.override-rule-cb') : null;
       if (ruleCb && ruleCb.checked && ruleCb.dataset.prefix) {
         const prefix = ruleCb.dataset.prefix.toLowerCase();
@@ -13219,7 +13346,8 @@
       const data = await resp.json();
       if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
       const parts = [];
-      if (assigned) parts.push(`${assigned} item assignment${assigned === 1 ? '' : 's'}`);
+      if (assigned) parts.push(`${assigned} item assignment${assigned === 1 ? '' : 's'}`
+        + (l3ItemAssigned ? ` (${l3ItemAssigned} with an L3)` : ''));
       if (l3Assigned) parts.push(`${l3Assigned} L3 assignment${l3Assigned === 1 ? '' : 's'}`);
       if (newRules) parts.push(`${newRules} new prefix rule${newRules === 1 ? '' : 's'}`);
       setOverridesStatus(
