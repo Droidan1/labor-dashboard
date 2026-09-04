@@ -1,3 +1,100 @@
+# Today's auction is dropped on six surfaces, not one (2026-09-04)
+
+## The ask
+
+"Fix the auction chip" — the store-detail hero's current-week auction chip, flagged in
+#189 and #190 as still open.
+
+## What it actually is
+
+`loadStoreFromD1` (`index.html:4989`) nulls `aAuction` on TODAY's row and keeps the value
+in `auctionRaw`, because the nulling exists to stop a double-count against live Clover —
+and auction is not a Clover channel, so live never supplies it and `auctionRaw` is the only
+field where today's auction survives. Its own comment says exactly that.
+
+Six call sites read `aAuction` off a row they have already identified as today's. Every one
+of them therefore reads `null` and silently drops today's auction:
+
+| # | site | surface |
+|---|---|---|
+| 1 | `5663` `computeNotifications` | pace / milestone alerts undercount today |
+| 2 | `6047` All Stores headline, live branch | chain auction total misses today |
+| 3 | `6274` combined budget card | month-to-date actual misses today (the live boost after it adjusts only `aTotal`) |
+| 4 | `6891` `renderCards` | store card's Net **and** its Auction tile |
+| 5 | `7176` `getStoreMetrics.storeAuction` | the hero chip — and the hero's week total |
+| 6 | `8474` `buildHourlyCard` | Hourly Snapshot sales |
+
+Site 4's comment is the tell: *"Today's stored auction is nulled in loadStoreFromD1, so this
+is the only source"* — correct intent, sitting directly above a read of the nulled field.
+
+`index.html:24021` already does it right (`auctionRaw`, with a comment saying why), so the
+correct pattern is known in this codebase and was applied in exactly one place.
+
+## Why not just the chip
+
+After #189 the Daily tab DOES pick up today's auction, via `rowAuction()`. Fixing only the
+hero would leave the store card's Auction tile, the chain headline, the hourly card and the
+pace alerts each reporting a different number for the same day — the exact failure #189 and
+#190 were about. One defect, one fix, six call sites.
+
+## Impact
+
+Latent for the Drive feeder: 145 auction rows, **zero** posted on the same day as the sale
+(141 later, 4 next morning), so the feed never populates today. Reachable through the manual
+override, which is demonstrably in use — 52 `is_manual_override` rows carry auction,
+$25,353.79. A manager entering today's auction sees it on the Daily tab and nowhere else.
+
+## Deliberately NOT touched
+
+- `4882` `sumRows` — excludes today by design so live can be added on top. Changing it
+  double-counts.
+- `6068` hist branch — `histSkipToday` (`5946`) already filters today's row out whenever the
+  selection includes today, so today never reaches it.
+- `7520` `buildAllStoresWeeklyTable` — documented "today keeps its live-POS behavior".
+  Arguably now inconsistent with the per-store Daily tab, but it is a deliberate documented
+  choice and changing it is a behaviour decision, not this bug fix.
+- `5981`, `6898`, `6925`, `8212`, `8227`, `24028` — read `sumRows` results or explicitly skip
+  today.
+
+## Steps
+
+- [x] Route all six through the existing `rowAuction()` helper
+- [x] Static invariant test: every `.aAuction` read is either `rowAuction`'s own fallback,
+      or in an allowlist that names why it is safe — so the next one cannot ship quietly
+- [x] Mutation-test that guard
+- [x] Full suite green; build clean; cache bump
+
+## Review
+
+**Shipped.** All six now call `rowAuction()`; the four deliberate direct reads keep reading
+`aAuction` and are named in the guard's allowlist with their reason.
+
+`scripts/test-today-auction-reads.mjs` (15 assertions) enforces the rule rather than the six
+instances of it: every direct `.aAuction` read must be a listed safe shape, the six fixed
+sites must still delegate, and `rowAuction` must still prefer `auctionRaw`. The allowlist is
+itself checked for staleness — an entry that stops matching real code fails, because a stale
+justification is how the next one slips through.
+
+**Mutation-tested, six ways, all caught:** reverting each of the hero chip, the store card,
+the Hourly Snapshot and the pace alerts; adding a *brand-new* `todayRow.aAuction` read
+elsewhere in the file; and making `rowAuction` itself stop preferring `auctionRaw`.
+
+Also parsed all four inline `<script>` blocks (1,152 KB) to prove six edits spread across six
+regions left the file syntactically whole — the extraction-based tests only cover the regions
+they slice.
+
+Full suite 3,427 assertions across 58 suites, green. `bash scripts/build.sh` clean. Cache
+v168 → v169.
+
+### What this does and does not change today
+
+Nothing visibly, most days. The Drive feeder has never posted an auction row on the same day
+as the sale (145 rows: 141 later, 4 next morning), so today's auction is normally absent and
+`null` was the right answer by accident. It changes what happens when someone enters today's
+auction by hand — a path in real use, 52 `is_manual_override` rows carrying $25,353.79. Before
+this, that figure appeared on the Daily tab (via #189) and on no other surface.
+
+
 # Daily Breakdown row: stop the sales figure painting over its budget (2026-09-04)
 
 Follow-up to #189, which flagged this and deliberately left it alone.

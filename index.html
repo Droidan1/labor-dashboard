@@ -5660,7 +5660,10 @@
       const dayBudget = todayRow?.bTotal ?? null;
       const live = liveCloverData[s];
       const liveTotal = (live && live.total > 0) ? live.total : 0;
-      const storeAuction = todayRow?.aAuction ?? 0;
+      // rowAuction, not aAuction: loadStoreFromD1 nulls aAuction on today's
+      // row and keeps the value in auctionRaw. Reading the nulled field made
+      // every pace alert undercount an auction store's day.
+      const storeAuction = rowAuction(todayRow) ?? 0;
       const sales = liveTotal + (storeAuction || 0);
 
       // ── PACE alerts (after grace hour) ──
@@ -6044,8 +6047,12 @@
         if (todayRow && todayRow.bTotal != null) {
           todayTotalBudget += todayRow.bTotal;
         }
-        if (todayRow && todayRow.aAuction != null) {
-          todayAuction += todayRow.aAuction;
+        // rowAuction: today's aAuction is nulled by loadStoreFromD1, so this
+        // branch added nothing. The hist branch below cannot double-count it —
+        // histSkipToday drops today's row whenever live is showing.
+        const todayRowAuction = rowAuction(todayRow);
+        if (todayRowAuction != null) {
+          todayAuction += todayRowAuction;
         }
       }
       el("today-total-card").classList.remove("hidden");
@@ -6271,7 +6278,10 @@
             if (r.date && r.date.getMonth() === refMonth && r.date.getFullYear() === refYear) {
               if (r.aTotal != null) mA += r.aTotal;
               // Fold auction into the monthly actual (same reason as weekly above).
-              if (r.aAuction != null) mA += r.aAuction;
+              // rowAuction so today's own auction lands too — the live boost below
+              // only replaces the POS half (aTotal), so this cannot double-count.
+              const rAuction = rowAuction(r);
+              if (rAuction != null) mA += rAuction;
               if (r.bTotal != null) mB += r.bTotal;
             }
           }
@@ -6887,8 +6897,10 @@
       const histAvgASP = histASPCount > 0 ? histASPTotal / histASPCount : null;
 
       // Today's manually-entered auction (only when showing live). Today's
-      // stored auction is nulled in loadStoreFromD1, so this is the only source.
-      const storeAuction = cardShowLive ? (getTodayRow(m.store)?.aAuction ?? null) : null;
+      // stored auction is nulled in loadStoreFromD1, so auctionRaw — which
+      // rowAuction prefers — is the only source. This read used to name the
+      // nulled field, so the card's Net and its Auction tile both lost today.
+      const storeAuction = cardShowLive ? rowAuction(getTodayRow(m.store)) : null;
 
       // Add live sales + manually-entered auction to the total. m.aAuction
       // sums non-today rows; storeAuction picks up today's auction when
@@ -7173,7 +7185,9 @@
       histAvgTxnSec: histTxnTimeCount > 0 ? Math.round(histTxnTimeTotal / histTxnTimeCount) : null,
       histAvgASP: histASPCount > 0 ? histASPTotal / histASPCount : null,
       todayBudget: isCurrentWeek ? (getTodayRow(storeName)?.bTotal ?? null) : null,
-      storeAuction: isCurrentWeek ? (getTodayRow(storeName)?.aAuction ?? null) : null,
+      // rowAuction: aAuction is nulled on today's row, so the hero's auction
+      // chip and its week total both read $0 for today.
+      storeAuction: isCurrentWeek ? rowAuction(getTodayRow(storeName)) : null,
     };
   }
 
@@ -8471,7 +8485,8 @@
     const rows = STORES.map(s => {
       const live = liveCloverData[s];
       const today = getTodayRow(s);
-      const auction = today?.aAuction || 0;
+      // rowAuction — aAuction is null on today's row, and this card is only ever today.
+      const auction = rowAuction(today) || 0;
       const sales  = (live?.total || 0) + auction;
       const budget = today?.bTotal || 0;
       if (live?.total != null) anyData = true;
