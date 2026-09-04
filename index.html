@@ -4860,6 +4860,18 @@
     return `<span class="${cls} text-[8px] font-semibold" title="vs ${label === 'LW' ? 'Last Week' : 'Last Year'}: ${isPositive ? '+' : ''}${pct.toFixed(1)}%"><span class="opacity-60">${label}</span> ${arrow}${Math.abs(pct).toFixed(1)}%</span>`;
   }
 
+  // A store-day's auction dollars, or null when the day has none.
+  //
+  // Prefers `auctionRaw` over `aAuction`. loadStoreFromD1 nulls `aAuction` on
+  // TODAY's row so renderCards can add the live Clover total without
+  // double-counting the stored one — but auction is not a Clover channel (it
+  // arrives on the Drive ingest), so live never supplies it and `auctionRaw` is
+  // the only field where today's auction survives. On every other date the two
+  // hold the same value, so this is a no-op there.
+  function rowAuction(r) {
+    return r?.auctionRaw ?? r?.aAuction ?? null;
+  }
+
   function sumRows(rows) {
     let aTotal = null, bTotal = null, aRetail = null, aBins = null, aAuction = null, laborNum = 0, laborDen = 0;
     for (const r of rows) {
@@ -7241,7 +7253,9 @@
     for (const r of data) {
       if (!r.date) continue;
       if (_ymKey(r.date) !== sdMonthFilter) continue;
-      if (r.aTotal != null) { mSales += r.aTotal; hasSales = true; }
+      // Net, matching the day rows below and the auction-inclusive budget.
+      const rAuction = rowAuction(r) || 0;
+      if (r.aTotal != null || rAuction !== 0) { mSales += (r.aTotal || 0) + rAuction; hasSales = true; }
       if (r.bTotal != null) { mBudget += r.bTotal; hasBudget = true; }
     }
     // Live boost — if today's date (ET) falls in this month
@@ -7316,13 +7330,37 @@
       : `${mo(firstDate)} ${firstDate.getDate()} – ${mo(lastDate)} ${lastDate.getDate()}`;
 
     let rowsHtml = '';
-    let wkSales = 0, wkBudget = 0, wkLaborNum = 0, wkLaborDen = 0;
+    let wkSales = 0, wkBudget = 0, wkAuction = 0, wkLaborNum = 0, wkLaborDen = 0;
+
+    // The Auction column only exists for a week that HAS auction. Two of the six
+    // stores never run one, and a column of em-dashes on every row of their
+    // breakdown is noise, not information. Decided up front so the grid template
+    // is the same on the rows and on the total row below them.
+    const hasAuction = sorted.some(r => (rowAuction(r) || 0) !== 0);
+    // A 4th track does not fit a phone — 60px + 64px + 80px leaves the sales
+    // figure and its budget colliding at 358px, the real content width inside
+    // this page's px-4 wrapper. So the column is a column from sm up, and folds
+    // to a line under the sales figure below that. Both class strings are
+    // written out in full: Tailwind scans index.html for literals.
+    const gridCols = hasAuction
+      ? 'grid-cols-[60px_1fr_auto] sm:grid-cols-[60px_1fr_auto_auto]'
+      : 'grid-cols-[60px_1fr_auto]';
 
     for (const r of sorted) {
       const dateKey = r.date.toISOString().slice(0, 10);
       const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
       const isFuture = dateKey > todayKey;
-      const sales = (isToday && liveTotal != null && liveTotal > 0) ? liveTotal : r.aTotal;
+      const pos = (isToday && liveTotal != null && liveTotal > 0) ? liveTotal : r.aTotal;
+      // `auctionRaw`, not `aAuction`: loadStoreFromD1 nulls aAuction on today's
+      // row so the live Clover figure can be added without double-counting, but
+      // auction is not a Clover channel — live never carries it, so auctionRaw
+      // is the only place today's value survives. They are equal on every
+      // other date.
+      const auction = rowAuction(r);
+      // The day figure is net = POS + auction, because the budget it is measured
+      // against includes auction. So do the hero above this table, the store
+      // cards, the combined daily table and the daily email.
+      const sales = (pos != null || auction != null) ? (pos ?? 0) + (auction ?? 0) : null;
       const dailyLabor = (r.aLabor != null && sales != null && sales > 0) ? normalizeLaborPct(r.aLabor) : null;
       const diff = (sales != null && r.bTotal != null) ? sales - r.bTotal : null;
       const diffPos = diff != null && diff >= 0;
@@ -7335,6 +7373,7 @@
 
       if (sales != null) wkSales += sales;
       if (r.bTotal != null) wkBudget += r.bTotal;
+      if (auction != null) wkAuction += auction;
       if (r.aLabor != null && sales != null) {
         const lp = normalizeLaborPct(r.aLabor);
         if (lp != null) { wkLaborNum += (lp / 100) * sales; wkLaborDen += sales; }
@@ -7364,9 +7403,30 @@
         ? `<span class="inline-flex items-center gap-1 text-[9.5px] font-bold tracking-[0.06em] uppercase text-accent-green ml-1.5"><span class="w-1.5 h-1.5 rounded-full bg-accent-green"></span>Live</span>`
         : '';
 
+      // The figure is net, so say what it is made of rather than leaving the
+      // reader to subtract the Auction column from it.
+      const salesTitle = (auction && pos != null)
+        ? ` title="POS ${fmtDollar(pos)} + auction ${fmtDollar(auction)}"`
+        : '';
       const salesHtml = sales != null
-        ? `<span class="text-base sm:text-lg font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(sales)}</span>${liveTag}`
+        ? `<span${salesTitle} class="text-base sm:text-lg font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(sales)}</span>${liveTag}`
         : `<span class="text-sm text-opl-inkDim dark:text-op-inkDim font-medium">—</span>`;
+
+      // Violet swatch + inkDim caption + ink value — the same vocabulary the
+      // Channel Mix panel already uses for auction. The swatch carries the
+      // colour so the value can stay ink: accent-violet measures 4.23:1 on
+      // opl-panel and 4.21:1 on op-panel, fine for a decorative chip (≥3:1) and
+      // short of AA for text in BOTH themes.
+      const aucCaption = `<span class="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim whitespace-nowrap"><span class="w-1.5 h-1.5 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction</span>`;
+      const aucValue = auction
+        ? `<span class="text-[12.5px] font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(auction)}</span>`
+        : '<span class="text-[12.5px] text-opl-inkDim dark:text-op-inkDim">—</span>';
+      // sm and up: its own column, stacked like the delta cell beside it.
+      const auctionHtml = !hasAuction ? '' : `
+          <div class="hidden sm:flex flex-col items-end gap-0.5 flex-shrink-0 min-w-[64px]">${aucCaption}${aucValue}</div>`;
+      // Below sm: a line under the bar, inside the sales column.
+      const auctionLine = !hasAuction ? '' : `
+              <div class="sm:hidden flex items-center gap-1.5">${aucCaption}${aucValue}</div>`;
 
       const deltaHtml = diff != null
         ? `<span class="text-[12.5px] font-bold tabular-nums ${diffPos ? 'text-accent-green' : 'text-op-bad'}">${diffPos ? '+' : '−'}${fmtDollar(Math.abs(diff))}</span>`
@@ -7377,7 +7437,7 @@
         : '<span class="text-[11px] text-opl-inkDimmer dark:text-op-inkDimmer">—</span>';
 
       rowsHtml += `
-        <div class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3 sm:py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border last:border-b-0 ${rowCls} transition-colors" style="grid-template-columns:60px 1fr auto">
+        <div class="grid items-center ${gridCols} gap-3 sm:gap-4 px-4 sm:px-5 py-3 sm:py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border last:border-b-0 ${rowCls} transition-colors">
           <div class="relative flex flex-col items-center justify-center py-1.5 rounded-[9px] border ${chipCls}">
             <span class="text-[9.5px] font-bold uppercase tracking-[0.05em] ${wdCls}">${wd}</span>
             <span class="text-[18px] font-extrabold leading-none tabular-nums ${dnCls}">${dn}</span>
@@ -7389,8 +7449,8 @@
             </div>
             <div class="h-1 rounded-full overflow-hidden bg-[rgba(20,16,8,0.06)] dark:bg-[rgba(255,255,255,0.06)]">
               <div class="h-full rounded-full transition-[width] duration-500 ${barCls}" style="width:${barW}%"></div>
-            </div>
-          </div>
+            </div>${auctionLine}
+          </div>${auctionHtml}
           <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
             ${deltaHtml}
             ${laborHtml}
@@ -7400,18 +7460,28 @@
 
     const wkDiff = wkSales - wkBudget, wkDiffPos = wkDiff >= 0;
     const wkLabor = wkLaborDen > 0 ? (wkLaborNum / wkLaborDen) * 100 : null;
+    // An auction-only day (no POS row yet, auction already in) is `reported`
+    // upstream — classifyReportingStatus returns 'reported' on auction > 0
+    // (worker.js) — and it now shows a figure in its row, so it has to count
+    // here too or the day count contradicts the rows above it.
     const reportedDays = sorted.filter(r => {
       const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
-      return r.aTotal != null || (isToday && liveTotal != null && liveTotal > 0);
+      return r.aTotal != null || (rowAuction(r) || 0) !== 0 || (isToday && liveTotal != null && liveTotal > 0);
     }).length;
 
     const totalRow = `
-      <div class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 border-t border-[rgba(20,16,8,0.16)] dark:border-op-borderHi bg-[rgba(20,16,8,0.02)] dark:bg-[rgba(255,255,255,0.025)]" style="grid-template-columns:60px 1fr auto">
+      <div class="grid items-center ${gridCols} gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 border-t border-[rgba(20,16,8,0.16)] dark:border-op-borderHi bg-[rgba(20,16,8,0.02)] dark:bg-[rgba(255,255,255,0.025)]">
         <div class="text-center text-[10px] font-bold uppercase tracking-[0.08em] text-opl-inkDim dark:text-op-inkDim leading-tight">Week ${escapeHtml(String(effectiveWeek))}<br/>Total</div>
         <div class="min-w-0">
           <div class="text-lg sm:text-xl font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(wkSales)}</div>
           <div class="mt-0.5 text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums">vs <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(wkBudget)}</b> · ${reportedDays} of ${sorted.length} days reported</div>
+          ${hasAuction ? `<div class="sm:hidden mt-1 flex items-center gap-1.5"><span class="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim whitespace-nowrap"><span class="w-1.5 h-1.5 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction</span><span class="text-[12.5px] font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(wkAuction)}</span></div>` : ''}
         </div>
+        ${hasAuction ? `
+        <div class="hidden sm:flex flex-col items-end gap-0.5 flex-shrink-0 min-w-[64px]">
+          <span class="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.05em] text-opl-inkDim dark:text-op-inkDim whitespace-nowrap"><span class="w-1.5 h-1.5 rounded-sm bg-accent-violet flex-shrink-0"></span>Auction</span>
+          <span class="text-[12.5px] font-bold tabular-nums text-opl-ink dark:text-op-ink">${fmtDollar(wkAuction)}</span>
+        </div>` : ''}
         <div class="flex flex-col items-end gap-1 flex-shrink-0 min-w-[80px]">
           <span class="text-[13px] font-bold tabular-nums ${wkDiffPos ? 'text-accent-green' : 'text-op-bad'}">${wkDiffPos ? '+' : '−'}${fmtDollar(Math.abs(wkDiff))}</span>
           ${wkLabor != null ? `<span class="text-[11px] font-bold tabular-nums px-1.5 py-0.5 rounded ${wkLabor > LABOR_TARGET ? 'text-op-bad bg-op-bad/10' : 'text-accent-green bg-accent-green/10'}">${fmtPct(wkLabor)}</span>` : ''}
@@ -7683,10 +7753,21 @@
     const todayStr = etTodayStr();
     const isCurrentWeek = selectedWeek === currentWeek;
     const liveTotal = isCurrentWeek ? (liveCloverData[storeName]?.total ?? null) : null;
+    // Net (POS + auction), matching the Daily tab beside this one and the
+    // budget series below. All three comparison series come from the same D1
+    // rows, so they move together and the comparison stays like-for-like — this
+    // is NOT the last_year_sales import, which carries no auction channel and
+    // is why the store card's LY pill drops auction from both sides.
+    const netOf = (r) => (r ? (r.aTotal || 0) + (rowAuction(r) || 0) : 0);
+    // A matched comparison day with no POS row AND no auction is absent, not a
+    // zero — the series has to break there rather than plot the floor.
+    const netOrNull = (r) => (r && (r.aTotal != null || (rowAuction(r) || 0) !== 0)) ? netOf(r) : null;
     const salesData = weekRows.map(r => {
       const dateKey = r.date && r.date.toISOString().slice(0, 10);
-      if (isCurrentWeek && dateKey === todayStr && liveTotal > 0) return liveTotal;
-      return r.aTotal || 0;
+      // Live Clover never carries auction, so today's auction is added on top
+      // rather than replaced by the live figure.
+      if (isCurrentWeek && dateKey === todayStr && liveTotal > 0) return liveTotal + (rowAuction(r) || 0);
+      return netOf(r);
     });
     // Position of "today" in the current labels — drives the TODAY marker.
     const todayIdx = isCurrentWeek
@@ -7697,14 +7778,14 @@
     const prevWeekRows = getLastWeekRows(storeName);
     const lastWeekData = weekRows.map(r => {
       const match = prevWeekRows.find(pr => pr.date && pr.date.getDay() === r.date.getDay());
-      return match?.aTotal ?? null;
+      return netOrNull(match);
     });
 
     // Last year data – 364-day offset match by day-of-week
     const lastYearRows = getLastYearRows(storeName);
     const lastYearData = weekRows.map(r => {
       const match = lastYearRows.find(lr => lr.date && lr.date.getDay() === r.date.getDay());
-      return match?.aTotal ?? null;
+      return netOrNull(match);
     });
 
     // Build the header + stats + legend HTML.

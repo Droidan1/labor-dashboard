@@ -1,3 +1,132 @@
+# Auction column on the store-detail Daily tab (2026-09-04)
+
+## The ask
+
+"Add the auction column to the daily tab" — the per-store day-by-day breakdown at
+`buildWeeklyTable` (`index.html:7290`), panel `#sd-content-weekly`, reached from a store
+card's "View Details →" then the **Daily** tab.
+
+## What is wrong there today
+
+The Daily tab is the only per-store day-by-day surface in the app, and it is the one place
+auction is missing entirely. Its per-day figure is `r.aTotal`, which is `daily_sales.total`
+— POS revenue only (`worker.js:2363-2366`). But `r.bTotal` is `daily_sales.budget`, which
+**does** include auction (`docs/API_HANDOVER.md:20`). So every auction store is measured
+against a target that assumes revenue the table refuses to count.
+
+Measured over August 2026 (prod D1), pace against budget, POS-only vs net:
+
+| store | POS-only | net (incl. auction) | understated by |
+|---|---:|---:|---:|
+| BL1 Coliseum | 76.4% | 82.2% | 5.8 pt |
+| BL14 Battle Creek | 109.7% | 114.8% | 5.1 pt |
+| BL16 Indy East | 86.1% | 88.3% | 2.2 pt |
+| BL2 South Bend | 84.3% | 85.9% | 1.6 pt |
+
+The same screen already contradicts itself: the store-detail hero's week total adds
+`m.aAuction` (`index.html:8146`), the Daily tab's own **Week N Total** row does not
+(`index.html:7336`). For an auction store the two disagree, and the day rows never sum to
+the hero.
+
+## The shape
+
+Add the Auction column, and put the panel on the same revenue basis as the hero above it,
+the store cards, the combined daily table (`index.html:7450`) and the daily email — all of
+which already count POS + auction.
+
+1. **`buildWeeklyTable` (`index.html:7290`)** — new 4th grid column between the sales block
+   and the delta block. Per-day auction, `—` when there is none. Day figure becomes
+   net = POS + auction, so the bar, the vs-budget line and the delta are measured against a
+   budget that includes auction. `title` on the figure carries the POS/auction split.
+2. **Week Total row (`index.html:7336`, `7407`)** — sums the auction column, so it matches
+   the hero and the day rows sum to it.
+3. **`_buildSdMonthSummary` (`index.html:7237`)** — same panel, directly above the day rows;
+   its month total is `aTotal`-only against the same auction-inclusive budget.
+4. **`renderDailySalesChart` (`index.html:7672`)** — the Chart tab sits next to Daily and
+   plots the same days. Left alone it would plot a different number than the table for the
+   same day. This-week, last-week and last-year series all move to net.
+
+## Which auction field
+
+`allStoreData` is built only by `loadStoreFromD1` (`index.html:4944`); `loadStore`, the
+Sheets reader, is dead (defined at `4903`, called nowhere). `loadStoreFromD1` nulls
+`aAuction` on today's row and keeps the value in `auctionRaw` — because the nulling exists
+to stop double-counting against live Clover, and **auction is not a Clover channel**, so
+today's auction is only reachable via `auctionRaw` (`index.html:4977-4985`). Read
+`r.auctionRaw ?? r.aAuction`.
+
+## Out of scope
+
+- All Stores → Daily tab — already auction-inclusive (`index.html:7450`).
+- Retail Summary, print report, WRS CSV.
+- `getStoreMetrics.storeAuction` (`index.html:7164`) reads `getTodayRow(...)?.aAuction`,
+  which `loadStoreFromD1` always nulls — so the hero's current-week auction chip is always
+  $0 for today. Pre-existing, separate, and near-zero impact in practice (the Drive feeder
+  posts yesterday's auction at ~06:00, so today's is null anyway). Noted, not fixed here.
+
+## Steps
+
+- [x] Auction column in the day row + net day figure + split tooltip
+- [x] Week Total row includes auction
+- [x] Month summary includes auction
+- [x] Chart tab series move to net (this week / last week / last year)
+- [x] Colours: reuse existing tokens only; verify ≥ 4.5:1 in BOTH themes by computing
+      against the real ground, per DESIGN.md trap 3/5/6
+- [x] Node test covering the row maths (net, auction fallback for today, week total)
+- [x] `bash scripts/build.sh` clean; existing suite green
+
+## Review
+
+**Shipped.** `scripts/test-daily-auction-column.mjs`, 28 assertions; full suite
+3,396 assertions across 56 suites, green. `bash scripts/build.sh` clean, and every
+class the column uses was confirmed present in the BUILT `dist/tailwind.css`, not the
+stale committed one — `sm:grid-cols-[60px_1fr_auto_auto]`, `min-w-[64px]`, `text-[9px]`,
+`text-[12.5px]`, `tracking-[0.05em]` all compile.
+
+**Verified against production numbers.** Rendered the real BL1 week 34 (2026-08-16 → 22)
+straight out of prod D1 through the shipped `buildWeeklyTable`, screenshotted in both
+themes at 900px and at 390px:
+
+| | |
+|---|---|
+| POS Σ | $55,582.99 |
+| auction Σ | $2,868.51 |
+| week total rendered | **$58,451.50** — rows sum to the total row, and the total now equals the hero above it |
+
+Dupont over the same week (no auction anywhere) renders byte-identically to before:
+three grid tracks, no caption, no dash column.
+
+**Mutation-tested** — the suite was re-run against five deliberately broken versions and
+caught all five: `rowAuction` ignoring `auctionRaw`; the day figure reverting to POS-only;
+the column gate stuck open; the week total dropping auction; the reported-day count
+ignoring auction-only days.
+
+**Contrast, computed not eyeballed**, against the four real row grounds per theme (panel,
+hover, today's `accent-green/5`, total-row wash):
+
+| | light | dark |
+|---|---|---|
+| caption `inkDim` | 5.63 | 5.32 |
+| value `ink` | 18.05 | 13.89 |
+| violet swatch (decorative, needs 3.0) | 4.06 | 3.89 |
+
+The first draft used `inkDimmer` for the empty-day dash, copied from the delta cell beside
+it. That measures **2.88 light / 2.77 dark** — DESIGN.md trap 5 exactly. Changed to
+`inkDim`, which is what the sales cell's own dash in the same row already uses.
+
+### Two things left alone, deliberately
+
+1. **The pre-existing mobile overlap.** At 390px the sales figure and its `vs $budget`
+   collide — in the auction card AND in the untouched no-auction control, so it predates
+   this change and lives in the middle column, not the new one. The Auction column is
+   responsive precisely so it does not add to that: a column from `sm` up, a line under
+   the bar below it. Worth its own fix.
+2. **`getStoreMetrics.storeAuction`** (`index.html:7164`) reads `getTodayRow(...)?.aAuction`,
+   the field `loadStoreFromD1` always nulls on today's row — so the hero's current-week
+   auction chip reads $0 for today. Near-zero impact (the Drive feeder posts yesterday's
+   auction at ~06:00, so today's is null anyway) and a separate surface. `rowAuction()`
+   is the helper that fixes it when someone picks it up.
+
 # L3 rules: name a bracketed row without touching which L2 it books to (2026-09-03)
 
 Follow-up to #186. Measured chain-wide over the 13 weeks to 2026-09-02, all six stores,
