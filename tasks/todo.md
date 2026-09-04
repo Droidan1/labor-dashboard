@@ -1,3 +1,54 @@
+# Daily Breakdown row: stop the sales figure painting over its budget (2026-09-04)
+
+Follow-up to #189, which flagged this and deliberately left it alone.
+
+## The fault
+
+The row's middle column puts the day's figure and its `vs $budget` on one flex
+line. The budget span is `whitespace-nowrap`, so it never shrinks; the figure's
+box carries `min-w-0`, so it does — below its own content width. With
+`flex-wrap: nowrap` the figure then overflows and paints on top of the budget.
+
+Measured on the shipped markup against the BUILT stylesheet, Coliseum's week of
+2026-08-16 (the widest figures in it):
+
+| viewport | rows overlapping | worst |
+|---|---:|---:|
+| 360px | 7 of 7 | **57px** |
+| 390px | 7 of 7 | 27px |
+| 414px | 2 of 7 | 3px |
+| 900px | 0 | — |
+
+Identical in the auction card and the no-auction control, which is what placed
+it in the shared middle column rather than in #189's new Auction column.
+
+## The fix
+
+`flex flex-wrap … gap-x-2 gap-y-0.5` in place of `flex … gap-2`, on BOTH
+renderers of this row — `buildWeeklyTable` (store detail → Daily) and
+`buildAllStoresWeeklyTable` (All Stores → Daily), which carry the identical
+markup one tap apart. The budget drops to its own line instead of the figure
+being squeezed, so no number is truncated. `gap-x-2` preserves the 8px
+horizontal gap desktop already had — a wider gap would make this a silent
+restyle of every row at every width.
+
+Rejected: `truncate` on the figure. It resolves the overlap by turning
+`$10,213.09` into `$10,213…`, which is worse than the bug on a money column.
+
+## Review
+
+Re-measured after the fix: **0 overlapping rows at 360 / 390 / 414 / 900px**,
+both cards. Desktop renders identically to before — the wrap never engages
+there. `scripts/test-daily-row-layout.mjs` (14 assertions) pins the invariant on
+both renderers and was mutation-tested against three regressions — reverting the
+line, dropping only `flex-wrap`, and widening the horizontal gap — all three
+caught. Full suite 3,411 assertions across 57 suites, green; build clean; cache
+v167 → v168.
+
+Still open from #189: `getStoreMetrics.storeAuction` (`index.html:7164`) reads
+`getTodayRow(...)?.aAuction`, which `loadStoreFromD1` always nulls on today's
+row, so the hero's current-week auction chip reads $0 for today.
+
 # Auction column on the store-detail Daily tab (2026-09-04)
 
 ## The ask
