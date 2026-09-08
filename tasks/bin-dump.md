@@ -206,10 +206,21 @@ needs `-e staging`. Wrangler warns about this; the warning is worth reading.
 - `sw.js` CACHE_NAME at **v175**, fixture in step
 
 **Databases.** `migration-058` applied to staging (1.74 MB) and production (5.10 MB).
-`migration-059` is **confirmed on production** — the ALTER returned
-`duplicate column name: sup_ref`. ⬜ **Staging has not been confirmed.** Nothing is broken
-without it, because staging's worker has not been deployed; it matters before the next
-`wrangler deploy -e staging`.
+`migration-059` is **applied on BOTH**, verified 2026-09-08 by reading the schema rather
+than inferring it — `pragma_table_info('bin_dumps')` returns the same 16 columns ending in
+`sup_ref` on each, at the sizes above:
+
+```
+STAGING     | cols: 16 | sup_ref: YES | 1.74 MB
+PRODUCTION  | cols: 16 | sup_ref: YES | 5.10 MB
+```
+
+🔑 **A Claude Code remote session can query D1 directly** — `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` are in its environment, and `npx wrangler d1 execute <uuid>
+--remote -y --json --command="..."` works. So the schema is a thing to **check**, never to
+deduce from whether a migration command errored. Address databases by **UUID**: the staging
+one lives under `[env.staging]` and a bare name does not resolve, and a UUID cannot be
+confused for the other database the way a name can.
 
 **Worker.** Version `c8fce7f8` for #192, later `217c7f9a`. Deploy output verified each
 time to still carry the `MEDIA` binding, `BL16_MERCHANT_ID` and all **6** crons — the
