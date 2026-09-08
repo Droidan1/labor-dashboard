@@ -63,6 +63,21 @@ Verify a colour change in BOTH themes by computing contrast against the real bac
 (≥ 4.5:1), never by looking at a screenshot — and never against the local `tailwind.css`,
 which is stale and carries no `dark:` variants.
 
+## Pull requests
+
+Arm **auto-merge immediately after pushing**, while the Cloudflare Pages checks are still
+running. GitHub refuses auto-merge on a PR that is already green — it only applies while
+something is still pending — so the window is roughly the first minute after the push.
+Armed in time, the PR lands on its own when both builds pass, with no click from Brian.
+
+⚠️ **Merging is not deploying — except for the frontend.** Pages rebuilds `main`
+automatically, so an auto-merged `index.html` change reaches www.retjghub.com with no
+further step. The worker and every migration still need an explicit `wrangler` run, and
+the Destructive Operations rules below apply to those in full and are not softened by
+this.
+
+Approving a PR remains out of scope.
+
 ## Destructive Operations (this repo has lost production data three times)
 
 <rules>
