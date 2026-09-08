@@ -4083,6 +4083,13 @@ const ACTION_BUSINESS = new Map([
   ["backfill", "bl"],
   ["backfill-category-orders", "bl"],
   ["backfill-items-snapshots", "bl"],
+  ["bin-dump-scan", "bl"],
+  ["bin-dump-log", "bl"],
+  ["bin-dump-recent", "bl"],
+  ["bin-dump-list", "bl"],
+  ["bin-dump-update", "bl"],
+  ["bin-dump-delete", "bl"],
+  ["bin-dump-photo", "bl"],
   ["cancel-sale-schedule", "bl"],
   ["category-costs", "bl"],
   ["channel-range", "bl"],
@@ -6650,6 +6657,151 @@ function autoWeekOf(d) {                       // Sunday that starts the retail 
   const u = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   u.setUTCDate(u.getUTCDate() - u.getUTCDay());
   return u.toISOString().slice(0, 10);
+}
+
+
+// ── Bin Dump: reading a pallet tag ──────────────────────────────────────────
+// The seven fields Brian asked for, in the order they read on the tag.
+const BIN_DUMP_FIELDS = ["barcode", "item_no", "pallet_name", "po", "units", "created_by_tag", "truck_no"];
+
+// How far back the soft duplicate check looks. One receiving session: a truck of
+// 30 pallets is unloaded over hours, and the duplicate this guards against is the
+// same tag scanned twice during that unload. Longer would start flagging a PO that
+// legitimately came back; shorter would miss the case it exists for.
+const BIN_DUMP_DUPLICATE_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+// 🛑 THE LAYOUT IS THE WHOLE PROBLEM. This tag prints its labels down the left and
+// its values right-aligned on the far side, with each value ONE LINE HIGHER than the
+// label it belongs to. Reading straight across from a label finds empty space and
+// then picks up the NEXT label's value, which shifts every field by one — item
+// becomes the PO, the PO becomes the unit count, the unit count becomes a person's
+// name. That failure is silent and entirely plausible on the page, which is why the
+// geometry is spelled out here and pinned by scripts/test-bin-dump.mjs.
+const BIN_TAG_PROMPT = [
+  "You are reading ONE printed pallet tag photographed in a warehouse.",
+  "",
+  'Return ONLY JSON, with exactly these keys: {"barcode":null,"item_no":null,"pallet_name":null,"po":null,"units":null,"created_by_tag":null,"truck_no":null}',
+  "",
+  "THE LAYOUT — READ THIS BEFORE YOU READ THE TAG.",
+  "Labels run down the LEFT. Values are RIGHT-ALIGNED on the far side of the tag, and",
+  "each value is printed ONE LINE HIGHER than the label it belongs to. A label and its",
+  "value therefore pair up DIAGONALLY, not straight across. Looking directly to the",
+  "right of a label finds blank space, and then the value belonging to the NEXT label",
+  "down — which shifts every single field by one. The tag looks like this:",
+  "",
+  "    PRM-10490-30                    50201     <- this 50201 belongs to Item:",
+  "    Item:",
+  "    PALLET AMAZON IND8                        <- this is the pallet name",
+  "                                     5036     <- this 5036 belongs to PO:",
+  "    PO:",
+  "                                        1     <- this 1 belongs to # of Units:",
+  "    # of Units:",
+  "                              Ranon Price     <- this belongs to Created By:",
+  "    Created By:",
+  "                                    10490     <- this 10490 belongs to Truck #:",
+  "    Truck #:",
+  "",
+  "THE FIELDS",
+  "- barcode: the text printed under the LARGE barcode at the top, e.g. PRM-10490-30.",
+  "  Copy it exactly, hyphens and letters included. It is NOT the item number.",
+  "- item_no: the bold number at the top right. It pairs with the label 'Item:'.",
+  "- pallet_name: the line of text directly BELOW 'Item:' — usually italic capitals,",
+  "  e.g. PALLET AMAZON IND8. This one really is below its label, not above.",
+  "- po: pairs with 'PO:'.",
+  "- units: pairs with '# of Units:'. Digits only, no commas.",
+  "- created_by_tag: pairs with 'Created By:'. A person's name, exactly as printed.",
+  "- truck_no: pairs with 'Truck #:'.",
+  "",
+  "CHECK YOURSELF BEFORE ANSWERING. created_by_tag must be a PERSON'S NAME and units",
+  "must be a COUNT. If you have ended up with a name in units, or a bare number in",
+  "created_by_tag, you have read the columns straight across — go back and pair each",
+  "label with the right-aligned value ABOVE it.",
+  "",
+  "IGNORE the 'Initialed By:' line, the small second barcode near the bottom, the",
+  "'Pallet N of M' line and the printed date and time. They are not being asked for.",
+  "",
+  "USE null FOR ANYTHING YOU CANNOT READ CONFIDENTLY — torn, blurred, under glare, or",
+  "simply not printed on this tag. A wrong value is far worse than a missing one here:",
+  "a blank is obvious and somebody types it, while a plausible wrong digit is copied",
+  "into the record and never questioned. Never invent a value to fill out the shape.",
+].join("\n");
+
+// The week a pallet belongs to, anchored to the STORE's day rather than UTC.
+// Every store is Eastern, and a pallet dumped at 9pm ET on a Saturday is already
+// 01:00 UTC on Sunday — so autoWeekOf() would file it under a week the store had
+// not started working yet, and the Saturday evening of a truck would land in the
+// next week's total. Derive the ET calendar date first, then take its Sunday.
+function binDumpWeekOf(iso) {
+  const et = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(iso));
+  return _weekStartOf(et);
+}
+
+// One tag field: a trimmed string, or null. Never "" — an empty string would be a
+// value that says "read, and empty", which is a different claim from "not read".
+function binDumpText(v, max) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  if (!s || s.toLowerCase() === "null" || s.toLowerCase() === "n/a") return null;
+  return s.slice(0, max || 120);
+}
+
+// Normalise whatever the model (or the client) hands back into the seven fields.
+// Shared by the scan, the log and the edit so all three agree on what a field is.
+function binDumpFields(raw) {
+  const units = (() => {
+    const v = raw?.units;
+    if (v === null || v === undefined || String(v).trim() === "") return null;
+    // "1,240" and "240 units" both appear on tags; keep the digits, drop the rest.
+    const n = parseInt(String(v).replace(/[^\d]/g, ""), 10);
+    return Number.isInteger(n) && n >= 0 ? n : null;
+  })();
+  return {
+    barcode: binDumpText(raw?.barcode, 60),
+    item_no: binDumpText(raw?.item_no, 40),
+    pallet_name: binDumpText(raw?.pallet_name, 160),
+    po: binDumpText(raw?.po, 40),
+    units,
+    created_by_tag: binDumpText(raw?.created_by_tag, 80),
+    truck_no: binDumpText(raw?.truck_no, 40),
+  };
+}
+
+// The barcode on Brian's tag is PRM + the truck number + this pallet's index
+// (PRM-10490-30, with "Pallet 30 of 30" printed at the foot). When it has that
+// shape, it is a free second reading of the truck number, so a disagreement means
+// one of the two was misread.
+//
+// 🔑 Returns null unless the barcode ACTUALLY matches that shape. Confirmed on one
+// tag, not on every vendor's — so a barcode shaped differently produces no hint at
+// all rather than warning on every pallet. It is a hint, never a refusal: the
+// manager can always submit either value.
+function binDumpTruckHint(fields) {
+  if (!fields.barcode || !fields.truck_no) return null;
+  const m = /^[A-Za-z]+-(\d+)-\d+$/.exec(fields.barcode);
+  if (!m) return null;
+  if (m[1] === fields.truck_no) return null;
+  return `The barcode reads truck ${m[1]}, but Truck # reads ${fields.truck_no}. One of them was misread.`;
+}
+
+// Store gate for every bin-dump action: a real store, one this user holds, and one
+// that still trades. A closed store has no bins to dump a pallet into, so a row
+// against one is meaningless data — the same reasoning shelf-count-save uses.
+function binDumpStoreGuard(storeRaw, currentUser, isAdminSecret, corsJson, opts) {
+  const store = String(storeRaw || "").trim().toUpperCase();
+  if (!ALL_STORES.includes(store)) {
+    return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+  }
+  if (!isAdminSecret && !canAccessStore(currentUser, store)) {
+    return new Response(JSON.stringify({ error: "Forbidden for this store", code: "NO_STORE_ACCESS" }), { status: 403, headers: corsJson });
+  }
+  // Reading back an existing row is still allowed for a store that has since closed —
+  // otherwise closing a store would hide history that was correct when it was written.
+  if (!opts?.allowClosed && STORE_CLOSED_FROM[store]) {
+    return new Response(JSON.stringify({
+      error: `${STORE_LABELS[store] || store} closed on ${STORE_CLOSED_FROM[store]} — there are no bins to dump into`,
+    }), { status: 409, headers: corsJson });
+  }
+  return null;
 }
 
 async function ensureAutoDraftForPhotos(env, store, now) {
@@ -19920,6 +20072,270 @@ export default {
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
+    }
+
+
+    // ── Bin Dump: pallet tag → log ──────────────────────────────────────
+    // A manager photographs a pallet tag, Claude reads seven fields off it, the
+    // manager confirms them, and the pallet is logged. tasks/bin-dump.md has the
+    // decisions; the layout trap below is the load-bearing part.
+    //
+    // Gating: these actions are deliberately NOT in NON_FINANCIAL_ACTIONS, so the
+    // financial gate above already admits exactly superuser/admin/executive/manager
+    // and refuses staff — the same way shelf-count-save is gated. Each handler then
+    // re-checks the store. ('district_manager' was retired by migration-029.)
+
+    if (url.searchParams.get("action") === "bin-dump-scan" && request.method === "POST") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.ANTHROPIC_API_KEY) {
+        return new Response(JSON.stringify({ error: "Tag reading is not configured on this environment" }), { status: 400, headers: corsJson });
+      }
+      try {
+        const body = await request.json();
+        const b64 = String(body?.image_b64 || "");
+        if (!b64) return new Response(JSON.stringify({ error: "No photo" }), { status: 400, headers: corsJson });
+        if (b64.length > 8_000_000) {
+          return new Response(JSON.stringify({ error: "That photo is too large — try again a little further back" }), { status: 400, headers: corsJson });
+        }
+        const mt = ["image/jpeg", "image/png", "image/webp"].includes(body?.media_type) ? body.media_type : "image/jpeg";
+
+        const t0 = Date.now();
+        let ok = false, got = {}, status = null;
+        try {
+          const vis = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+            body: JSON.stringify({
+              // Same model the other extraction endpoints use. If field accuracy ever
+              // proves short in the field, this is the one line to change — the prompt
+              // below already carries the whole of what makes this tag hard.
+              model: "claude-sonnet-4-6",
+              max_tokens: 500,
+              thinking: { type: "disabled" },
+              system: BIN_TAG_PROMPT,
+              messages: [{ role: "user", content: [
+                { type: "image", source: { type: "base64", media_type: mt, data: b64 } },
+                { type: "text", text: "Read this pallet tag." },
+              ]}],
+            }),
+          });
+          status = vis.status;
+          ok = vis.ok;
+          if (ok) {
+            const vj = await vis.json();
+            // stop_reason "refusal" yields no text at all; treat it as an unreadable
+            // photo rather than an error, so the manager still gets an editable form.
+            const txt = (vj.content || []).filter(c => c.type === "text").map(c => c.text).join("");
+            try { got = JSON.parse((txt.match(/\{[\s\S]*\}/) || ["{}"])[0]); } catch (_) { got = {}; }
+          } else {
+            // 174 unexplained 400s went by on another endpoint before it logged the body.
+            const err = await vis.text().catch(() => "");
+            console.error(`Bin tag scan API ${vis.status}: ${err.slice(0, 200)}`);
+          }
+        } catch (e) {
+          ok = false;
+          console.error("Bin tag scan failed:", (e && e.message) || e);
+        }
+        await retailLog(env, { provider: "claude", detail: "bin dump tag", ok, status, ms: Date.now() - t0 });
+        if (!ok) {
+          return new Response(JSON.stringify({ error: "Could not read that photo — try again, or type the tag in by hand" }),
+            { status: 502, headers: corsJson });
+        }
+        const fields = binDumpFields(got);
+        const read = BIN_DUMP_FIELDS.filter(k => fields[k] !== null).length;
+        return new Response(JSON.stringify({
+          ok: true, fields, read, of: BIN_DUMP_FIELDS.length,
+          // A soft hint, never a refusal — see binDumpTruckHint.
+          truck_hint: binDumpTruckHint(fields),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    if (url.searchParams.get("action") === "bin-dump-log" && request.method === "POST") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const denied = binDumpStoreGuard(body?.store, currentUser, isAdminSecret, corsJson);
+        if (denied) return denied;
+        const store = String(body.store).toUpperCase();
+
+        // 🔑 Re-validated here, not trusted from the popup. The verify step is a
+        // convenience for the person; it is not the boundary.
+        const fields = binDumpFields(body);
+        if (!fields.item_no && !fields.pallet_name && !fields.po && !fields.barcode) {
+          return new Response(JSON.stringify({
+            error: "A pallet needs at least one of: barcode, item number, pallet name or PO",
+          }), { status: 400, headers: corsJson });
+        }
+
+        let key = null, ctype = null;
+        const b64 = String(body?.image_b64 || "");
+        if (b64) {
+          if (b64.length > 8_000_000) {
+            return new Response(JSON.stringify({ error: "That photo is too large" }), { status: 400, headers: corsJson });
+          }
+          ctype = ["image/jpeg", "image/png", "image/webp"].includes(body?.media_type) ? body.media_type : "image/jpeg";
+          const now = new Date();
+          const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+          key = `bin-tags/${store}/${ym}/${crypto.randomUUID()}.${ctype === "image/png" ? "png" : ctype === "image/webp" ? "webp" : "jpg"}`;
+          await env.MEDIA.put(key, Uint8Array.from(atob(b64), c => c.charCodeAt(0)), { httpMetadata: { contentType: ctype } });
+        }
+
+        const at = new Date().toISOString();
+        const res = await env.DB.prepare(
+          `INSERT INTO bin_dumps (store, barcode, item_no, pallet_name, po, units,
+             created_by_tag, truck_no, r2_key, content_type, logged_by, logged_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+        ).bind(store, fields.barcode, fields.item_no, fields.pallet_name, fields.po, fields.units,
+               fields.created_by_tag, fields.truck_no, key, ctype,
+               (currentUser && currentUser.email) || "unknown", at).run();
+
+        return new Response(JSON.stringify({
+          ok: true, id: res.meta?.last_row_id ?? null, store, logged_at: at, week: binDumpWeekOf(at),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=bin-dump-recent&store=BL1&po=5036 — the soft duplicate check.
+    // Separate from the log so it can run while the manager is still looking at the
+    // popup, and so a slow or failed answer costs a warning, never the submission.
+    if (url.searchParams.get("action") === "bin-dump-recent" && request.method === "GET") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      const denied = binDumpStoreGuard(url.searchParams.get("store"), currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      const po = String(url.searchParams.get("po") || "").trim();
+      if (!po) return new Response(JSON.stringify({ ok: true, matches: [] }), { headers: corsJson });
+      const since = new Date(Date.now() - BIN_DUMP_DUPLICATE_WINDOW_MS).toISOString();
+      const { results } = await env.DB.prepare(
+        `SELECT id, pallet_name, units, logged_by, logged_at FROM bin_dumps
+          WHERE store = ? AND po = ? AND logged_at >= ? ORDER BY logged_at DESC LIMIT 5`
+      ).bind(String(url.searchParams.get("store")).toUpperCase(), po, since).all();
+      return new Response(JSON.stringify({ ok: true, matches: results || [] }), { headers: corsJson });
+    }
+
+    // GET ?action=bin-dump-list&store=BL1[&weeks=8]
+    if (url.searchParams.get("action") === "bin-dump-list" && request.method === "GET") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      const storeRaw = String(url.searchParams.get("store") || "").trim().toUpperCase();
+      const allow = currentUser ? allowedStores(currentUser) : null;
+      let q = `SELECT id, store, barcode, item_no, pallet_name, po, units, created_by_tag,
+                      truck_no, r2_key, logged_by, logged_at, edited_by, edited_at
+                 FROM bin_dumps WHERE 1=1`;
+      const binds = [];
+      if (storeRaw && storeRaw !== "ALL") {
+        const denied = binDumpStoreGuard(storeRaw, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+        q += " AND store = ?"; binds.push(storeRaw);
+      } else if (allow) {
+        // 🛑 "All stores" means all the stores THIS USER holds, never all stores.
+        // D1 caps bound params at 100; a user's store list is single digits.
+        if (!allow.length) return new Response(JSON.stringify({ ok: true, rows: [] }), { headers: corsJson });
+        q += ` AND store IN (${allow.map(() => "?").join(",")})`; binds.push(...allow);
+      }
+      const weeks = Math.min(Math.max(parseInt(url.searchParams.get("weeks") || "8", 10) || 8, 1), 52);
+      const since = new Date(Date.now() - weeks * 7 * 86400000).toISOString();
+      q += " AND logged_at >= ? ORDER BY logged_at DESC LIMIT 500";
+      binds.push(since);
+      const { results } = await env.DB.prepare(q).bind(...binds).all();
+      const rows = (results || []).map(r => ({
+        ...r,
+        r2_key: undefined,
+        has_photo: !!r.r2_key,
+        photo_url: r.r2_key ? `?action=bin-dump-photo&id=${r.id}` : null,
+        week: binDumpWeekOf(r.logged_at),
+      }));
+      return new Response(JSON.stringify({ ok: true, rows, weeks }), { headers: corsJson });
+    }
+
+    if (url.searchParams.get("action") === "bin-dump-update" && request.method === "POST") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const id = parseInt(body?.id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        const row = await env.DB.prepare("SELECT store FROM bin_dumps WHERE id = ?").bind(id).first();
+        if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        // The row's OWN store decides, not one the caller supplies — otherwise a
+        // caller could name a store they hold and edit a row belonging to another.
+        const denied = binDumpStoreGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+
+        const fields = binDumpFields(body);
+        if (!fields.item_no && !fields.pallet_name && !fields.po && !fields.barcode) {
+          return new Response(JSON.stringify({
+            error: "A pallet needs at least one of: barcode, item number, pallet name or PO",
+          }), { status: 400, headers: corsJson });
+        }
+        // 🔑 logged_at is NOT touched. A correction is a correction, not a re-receipt:
+        // moving the timestamp would silently move the pallet into a different week.
+        await env.DB.prepare(
+          `UPDATE bin_dumps SET barcode = ?, item_no = ?, pallet_name = ?, po = ?, units = ?,
+             created_by_tag = ?, truck_no = ?, edited_by = ?, edited_at = ?
+           WHERE id = ?`
+        ).bind(fields.barcode, fields.item_no, fields.pallet_name, fields.po, fields.units,
+               fields.created_by_tag, fields.truck_no,
+               (currentUser && currentUser.email) || "unknown", new Date().toISOString(), id).run();
+        return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // Delete is admin-only — a manager corrects a row, an admin removes one.
+    if (url.searchParams.get("action") === "bin-dump-delete" && request.method === "POST") {
+      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const id = parseInt(body?.id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        const row = await env.DB.prepare("SELECT r2_key FROM bin_dumps WHERE id = ?").bind(id).first();
+        if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        await env.DB.prepare("DELETE FROM bin_dumps WHERE id = ?").bind(id).run();
+        // The row is the record; a tag photo with nothing pointing at it is litter.
+        // Best-effort — a failed object delete must not fail the row delete.
+        if (row.r2_key && env.MEDIA) await env.MEDIA.delete(row.r2_key).catch(() => {});
+        return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    if (url.searchParams.get("action") === "bin-dump-photo" && request.method === "GET") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) return new Response("Forbidden", { status: 403, headers: corsHeaders });
+      if (!env.DB || !env.MEDIA) return new Response("Storage not configured", { status: 500, headers: corsHeaders });
+      const id = parseInt(url.searchParams.get("id") || "", 10);
+      if (!Number.isInteger(id)) return new Response("Invalid id", { status: 400, headers: corsHeaders });
+      const row = await env.DB.prepare("SELECT r2_key, content_type, store FROM bin_dumps WHERE id = ?").bind(id).first();
+      if (!row || !row.r2_key) return new Response("Not found", { status: 404, headers: corsHeaders });
+      const allow = currentUser ? allowedStores(currentUser) : null;
+      if (allow && !allow.includes(row.store)) return new Response("Forbidden", { status: 403, headers: corsHeaders });
+      const obj = await env.MEDIA.get(row.r2_key);
+      if (!obj) return new Response("Gone", { status: 404, headers: corsHeaders });
+      const h = new Headers(corsHeaders);
+      h.set("Content-Type", row.content_type || "image/jpeg");
+      // A tag photo never changes once written → cache hard in the browser.
+      h.set("Cache-Control", "private, max-age=2592000, immutable");
+      return new Response(obj.body, { headers: h });
     }
 
     if (url.searchParams.get("action") === "sticker-history" && request.method === "GET") {

@@ -762,6 +762,10 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
           <span class="nav-label">Inventory</span>
         </div>
+        <div id="nav-bin-dump" class="hidden nav-item" data-page="bin-dump" onclick="navigateToPage('bin-dump')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg></span>
+          <span class="nav-label">Bin Dump</span>
+        </div>
         <div id="nav-labor" class="hidden nav-item" data-page="labor" onclick="navigateToPage('labor')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg></span>
           <span class="nav-label">Labor</span>
@@ -885,6 +889,9 @@
         </button>
         <button id="more-inventory" onclick="navigateToPage('inventory');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>Inventory
+        </button>
+        <button id="more-bin-dump" onclick="navigateToPage('bin-dump');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
+          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>Bin Dump
         </button>
         <button id="more-supply" onclick="navigateToPage('supply-request');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>Supply Requests
@@ -1698,6 +1705,287 @@
 
       </div>
     </div><!-- end #page-inventory -->
+
+    <!-- ══ Bin Dump ══════════════════════════════════════════════════════ -->
+    <div id="page-bin-dump" class="hidden">
+      <style>
+        /* Bin Dump. DESIGN.md §4.8 panel + bar + legend, and its traps:
+           a <style> block cannot use the Tailwind token classes, so each colour
+           is the token's literal value with the token named in a comment, stated
+           for BOTH themes ON THE PANEL so nothing is inherited. Contrast was
+           computed against the real ground, not eyeballed: every pair below runs
+           ≥ 4.52:1. Note accent-green #22c55e is 2.28:1 on the light panel and
+           is therefore NOT used as text there — #166534 (7.13:1) is. */
+        /* The page heading. Every other page uses `text-accent-green`, which is
+           #22c55e — 7.81:1 on the dark panel but 2.28:1 on the light one, i.e.
+           a heading you cannot read in light mode. Dark keeps the accent; light
+           drops to green-800 (7.13:1). The same fault exists on the other page
+           headings and is theirs to fix, not this page's to inherit. */
+        .bd-h1{color:#166534}
+        .dark .bd-h1{color:#22c55e}
+        .bd-panel{
+          background:#ffffff;                      /* opl-panel */
+          border:1px solid rgba(20,16,8,.10);      /* hairline */
+          border-radius:14px;overflow:hidden;
+          color:#14110a;                           /* opl-ink — on the PANEL, not per child */
+          color-scheme:light;                      /* or the UA paints inputs from the OS theme */
+        }
+        .dark .bd-panel{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3;color-scheme:dark}
+
+        .bd-bar{background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10);
+          padding:11px 15px;display:flex;gap:11px;align-items:center;flex-wrap:wrap}
+        .dark .bd-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        .bd-lbl{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+          color:#6b6453}                           /* opl-inkDim — 5.62:1 on panelHi */
+        .dark .bd-lbl{color:#8893a7}
+        .bd-bar-right{margin-left:auto;display:flex;gap:7px;align-items:center}
+        .bd-sub{padding:9px 15px 0;font-size:12px;line-height:1.5;color:#6b6453}
+        .dark .bd-sub{color:#8893a7}
+        .bd-legend{border-top:1px solid rgba(20,16,8,.10);padding:10px 15px;
+          display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:#6b6453}
+        .dark .bd-legend{border-top-color:rgba(255,255,255,.09);color:#8893a7}
+        .bd-sw{width:22px;height:13px;border-radius:4px;border:1px solid rgba(20,16,8,.18);
+          display:inline-block;vertical-align:-2px;margin-right:6px}
+        .dark .bd-sw{border-color:rgba(255,255,255,.16)}
+
+        /* Capture */
+        .bd-cap{padding:28px 20px 24px;text-align:center}
+        .bd-glyph{width:58px;height:58px;margin:0 auto 13px;border-radius:16px;
+          background:rgba(34,197,94,.10);border:1px solid rgba(22,101,52,.28);
+          display:flex;align-items:center;justify-content:center;color:#166534}
+        .dark .bd-glyph{border-color:rgba(34,197,94,.28);color:#22c55e}
+        .bd-glyph svg{width:28px;height:28px}
+        .bd-cap-t{font-size:16px;font-weight:700}
+        .bd-cap-d{font-size:12.5px;color:#6b6453;margin:6px auto 17px;max-width:280px;line-height:1.55}
+        .dark .bd-cap-d{color:#8893a7}
+        .bd-btn{font:inherit;font-weight:700;border-radius:10px;cursor:pointer;
+          border:1px solid transparent;transition:filter .15s,background .15s;letter-spacing:.02em}
+        .bd-btn:disabled{opacity:.45;cursor:not-allowed}
+        .bd-primary{background:#166534;color:#fff;padding:11px 30px;font-size:14.5px}
+        .dark .bd-primary{background:#22c55e;color:#06210f}
+        .bd-primary:hover:not(:disabled){filter:brightness(1.08)}
+        .bd-primary.bd-big{padding:14px 44px;font-size:16px;border-radius:12px}
+        .bd-ghost{background:transparent;border-color:rgba(20,16,8,.18);color:#14110a;
+          padding:9px 15px;font-size:13px}
+        .dark .bd-ghost{border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .bd-ghost:hover:not(:disabled){background:#fafaf6}
+        .dark .bd-ghost:hover:not(:disabled){background:#16203a}
+        .bd-sm{padding:6px 11px;font-size:11.5px;border-radius:8px}
+
+        .bd-reading{padding:32px 20px;text-align:center}
+        .bd-spin{width:34px;height:34px;margin:0 auto 13px;border-radius:50%;
+          border:3px solid rgba(20,16,8,.10);border-top-color:#166534;animation:bd-sp .85s linear infinite}
+        .dark .bd-spin{border-color:rgba(255,255,255,.09);border-top-color:#22c55e}
+        @keyframes bd-sp{to{transform:rotate(360deg)}}
+        @media (prefers-reduced-motion:reduce){.bd-spin{animation-duration:2.4s}}
+
+        /* Status strip — the app's own idiom (invSetStatus), not a new toast. */
+        .bd-status{margin:0 15px 14px;border-radius:10px;padding:9px 12px;font-size:12.5px;
+          display:flex;align-items:center;gap:9px;border:1px solid}
+        .bd-status.ok{background:rgba(34,197,94,.10);border-color:rgba(22,101,52,.28);color:#14110a}
+        .dark .bd-status.ok{border-color:rgba(34,197,94,.28);color:#e7ecf3}
+        .bd-status.err{background:rgba(192,57,43,.10);border-color:rgba(192,57,43,.40);color:#14110a}
+        .dark .bd-status.err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.42);color:#e7ecf3}
+
+        /* Week tiles */
+        .bd-strip{display:flex;gap:9px}
+        .bd-tile{flex:1;background:#fff;border:1px solid rgba(20,16,8,.10);border-radius:12px;
+          padding:11px 13px;color:#14110a}
+        .dark .bd-tile{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3}
+        .bd-tile-cap{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b6453}
+        .dark .bd-tile-cap{color:#8893a7}
+        .bd-tile-n{font-size:23px;font-weight:700;line-height:1.15;margin-top:3px;
+          font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+        .bd-tile-s{font-size:11px;color:#6b6453;margin-top:1px}
+        .dark .bd-tile-s{color:#8893a7}
+
+        /* Week accordions */
+        .bd-wk{border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark .bd-wk{border-bottom-color:rgba(255,255,255,.09)}
+        .bd-wk:last-of-type{border-bottom:0}
+        .bd-wk-head{width:100%;background:transparent;border:0;font:inherit;cursor:pointer;
+          display:flex;align-items:center;gap:8px;padding:11px 15px;text-align:left;
+          color:inherit;flex-wrap:wrap;transition:background .15s}
+        .bd-wk-head:hover{background:#fafaf6}
+        .dark .bd-wk-head:hover{background:#16203a}
+        .bd-caret{width:9px;height:9px;flex-shrink:0;border-right:2px solid #6b6453;
+          border-bottom:2px solid #6b6453;transform:rotate(-45deg);transition:transform .22s}
+        .dark .bd-caret{border-color:#8893a7}
+        .bd-wk.open .bd-caret{transform:rotate(45deg)}
+        .bd-wk-name{font-size:13px;font-weight:600;white-space:nowrap}
+        .bd-badge{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+          padding:2px 6px;border-radius:5px;white-space:nowrap;
+          border:1px solid rgba(22,101,52,.28);background:rgba(34,197,94,.10);color:#166534}
+        .dark .bd-badge{border-color:rgba(34,197,94,.28);color:#22c55e}
+        .bd-wk-meta{margin-left:auto;font-size:11.5px;color:#6b6453;
+          font-variant-numeric:tabular-nums;white-space:nowrap}
+        .dark .bd-wk-meta{color:#8893a7}
+        .bd-wk-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows .26s cubic-bezier(.4,0,.2,1)}
+        .bd-wk.open .bd-wk-body{grid-template-rows:1fr}
+        .bd-wk-body > div{overflow:hidden}
+
+        /* The log table */
+        .bd-scroll{overflow-x:auto;background:#fff}
+        .dark .bd-scroll{background:#101826}
+        table.bd-tbl{border-collapse:collapse;width:100%;min-width:660px;font-variant-numeric:tabular-nums}
+        table.bd-tbl th{height:30px;padding:0 10px;font-size:10px;font-weight:700;letter-spacing:.05em;
+          text-transform:uppercase;text-align:left;background:#fafaf6;color:#6b6453;
+          white-space:nowrap;   /* "ITEM #" wraps to two lines without this */
+          border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark table.bd-tbl th{background:#16203a;color:#8893a7;border-bottom-color:rgba(255,255,255,.09)}
+        table.bd-tbl td{height:40px;padding:0 10px;font-size:12.5px;white-space:nowrap;
+          border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark table.bd-tbl td{border-bottom-color:rgba(255,255,255,.09)}
+        table.bd-tbl tr:last-child td{border-bottom:0}
+        table.bd-tbl .num{text-align:right}
+        table.bd-tbl .dim{color:#6b6453}
+        .dark table.bd-tbl .dim{color:#8893a7}
+        /* 🛑 A sticky column needs its OWN opaque background or the cells scroll under it. */
+        table.bd-tbl .stick{position:sticky;left:0;background:#fff;z-index:1}
+        .dark table.bd-tbl .stick{background:#101826}
+        table.bd-tbl th.stick{background:#fafaf6;z-index:2}
+        .dark table.bd-tbl th.stick{background:#16203a}
+        table.bd-tbl tr.edited td,table.bd-tbl tr.edited .stick{background:rgba(245,158,11,.16)}
+        .dark table.bd-tbl tr.edited td,.dark table.bd-tbl tr.edited .stick{background:rgba(245,158,11,.14)}
+        .bd-row-btn{background:transparent;border:1px solid rgba(20,16,8,.18);border-radius:6px;
+          color:#6b6453;font:inherit;font-size:10.5px;font-weight:700;padding:3px 8px;
+          cursor:pointer;letter-spacing:.05em}
+        .dark .bd-row-btn{border-color:rgba(255,255,255,.16);color:#8893a7}
+        .bd-row-btn:hover{color:#14110a;background:#fafaf6}
+        .dark .bd-row-btn:hover{color:#e7ecf3;background:#16203a}
+
+        /* Verify / edit form. Styled by CLASS, never input[type=text] — that
+           selector matches the ATTRIBUTE, so an input without an explicit type
+           renders as a browser-default white box in both themes. */
+        .bd-fld{margin-bottom:11px}
+        .bd-fld-l{display:flex;align-items:center;gap:7px;font-size:9.5px;font-weight:700;
+          letter-spacing:.08em;text-transform:uppercase;color:#6b6453;margin-bottom:4px}
+        .dark .bd-fld-l{color:#8893a7}
+        .bd-in{width:100%;font:inherit;font-size:14px;font-weight:600;padding:9px 11px;
+          border-radius:9px;background:#fafaf6;border:1px solid rgba(20,16,8,.18);
+          color:#14110a;font-variant-numeric:tabular-nums;transition:border-color .15s,box-shadow .15s}
+        .dark .bd-in{background:#16203a;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .bd-in:focus{outline:none;border-color:#166534;box-shadow:0 0 0 3px rgba(34,197,94,.16)}
+        .dark .bd-in:focus{border-color:#22c55e}
+        .bd-in::placeholder{color:#6b6453;font-weight:400}
+        .dark .bd-in::placeholder{color:#8893a7}
+        .bd-fld.warn .bd-in{background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45)}
+        .dark .bd-fld.warn .bd-in{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.45)}
+        .bd-fld.miss .bd-in{background:rgba(192,57,43,.10);border-color:rgba(192,57,43,.40)}
+        .dark .bd-fld.miss .bd-in{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.42)}
+        .bd-tag{font-size:9px;font-weight:700;letter-spacing:.06em;padding:1px 5px;border-radius:4px;border:1px solid}
+        .bd-fld.warn .bd-tag{background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45);color:#92400e}
+        .dark .bd-fld.warn .bd-tag{border-color:rgba(245,158,11,.45);color:#f59e0b}
+        .bd-fld.miss .bd-tag{background:rgba(192,57,43,.10);border-color:rgba(192,57,43,.40);color:#c0392b}
+        .dark .bd-fld.miss .bd-tag{border-color:rgba(239,68,68,.42);color:#f87171}  /* #ef4444 measured 4.45:1 on its own wash */
+        .bd-note{font-size:11px;color:#6b6453;margin-top:4px}
+        .dark .bd-note{color:#8893a7}
+        .bd-shot{display:flex;gap:12px;align-items:flex-start;margin-bottom:14px;
+          padding-bottom:13px;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark .bd-shot{border-bottom-color:rgba(255,255,255,.09)}
+        .bd-shot img{width:82px;flex-shrink:0;border-radius:9px;border:1px solid rgba(20,16,8,.18);
+          background:#fff;display:block}
+        .dark .bd-shot img{border-color:rgba(255,255,255,.16)}
+        .bd-empty{padding:22px 15px;text-align:center;font-size:12.5px;color:#6b6453}
+        .dark .bd-empty{color:#8893a7}
+      </style>
+
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-7xl mx-auto flex items-end gap-3 flex-wrap">
+          <div class="flex-1 min-w-0">
+            <h1 class="text-2xl font-brand bd-h1 uppercase tracking-wide">Bin Dump</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Log a pallet into the bins from its tag</p>
+          </div>
+          <select id="bd-store" onchange="bdStoreChange()" class="rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-sm px-3 py-2"></select>
+        </div>
+      </div>
+
+      <div class="max-w-7xl mx-auto px-6 py-6 space-y-4">
+        <div class="bd-panel">
+          <div id="bd-begin" class="bd-cap">
+            <div class="bd-glyph">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>
+            </div>
+            <div class="bd-cap-t">Scan a pallet tag</div>
+            <div class="bd-cap-d">Get the whole tag in frame, flat and well lit. You'll check every field before anything is logged.</div>
+            <button type="button" class="bd-btn bd-primary bd-big" onclick="bdBegin()">Begin</button>
+          </div>
+          <div id="bd-reading" class="bd-reading" hidden>
+            <div class="bd-spin"></div>
+            <div class="bd-cap-t">Reading tag…</div>
+            <div class="bd-cap-d" id="bd-reading-sub">Sending the photo to Claude</div>
+          </div>
+          <div id="bd-status" class="bd-status ok" hidden></div>
+        </div>
+
+        <div class="bd-strip">
+          <div class="bd-tile">
+            <div class="bd-tile-cap">This week</div>
+            <div class="bd-tile-n" id="bd-wk-pallets">—</div>
+            <div class="bd-tile-s">pallets dumped</div>
+          </div>
+          <div class="bd-tile">
+            <div class="bd-tile-cap">Units</div>
+            <div class="bd-tile-n" id="bd-wk-units">—</div>
+            <div class="bd-tile-s">on those pallets</div>
+          </div>
+        </div>
+
+        <div class="bd-panel">
+          <div class="bd-bar">
+            <span class="bd-lbl">Bin Dump Log</span>
+            <span class="bd-bar-right">
+              <button type="button" class="bd-btn bd-ghost bd-sm" onclick="bdExportCsv()">Export CSV</button>
+              <button type="button" class="bd-btn bd-ghost bd-sm" onclick="bdLoad()">Refresh</button>
+            </span>
+          </div>
+          <!-- 🛑 bd-log-status and bd-weeks are SEPARATE targets. Coverage put its
+               status line inside the div its render overwrites; it vanished on first
+               paint and every later refresh threw on it. A render target holds only
+               what that render owns. -->
+          <div class="bd-sub" id="bd-log-status">Loading…</div>
+          <div id="bd-weeks" class="mt-2"></div>
+          <div class="bd-legend">
+            <span><span class="bd-sw" style="background:rgba(34,197,94,.10);border-color:rgba(22,101,52,.28)"></span>Current week</span>
+            <span><span class="bd-sw" style="background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45)"></span>Edited after logging</span>
+            <span><span class="bd-sw" style="background:#fafaf6"></span>As first logged</span>
+          </div>
+        </div>
+      </div>
+
+      <input id="bd-photo" type="file" accept="image/*" capture="environment" class="hidden" onchange="bdPhoto(this)">
+
+      <!-- Inline display, not hidden+flex: those two Tailwind classes have equal
+           specificity and .hidden only wins on source order. -->
+      <div id="bd-modal" class="fixed inset-0 z-50 items-center justify-center bg-black/60 p-4" style="display:none">
+        <div class="bd-panel w-full max-w-md" style="max-height:92vh;overflow:auto" role="dialog" aria-modal="true" aria-labelledby="bd-m-title">
+          <div class="bd-bar" style="position:sticky;top:0;z-index:2">
+            <span class="bd-lbl" id="bd-m-title" style="font-size:12px">Verify pallet tag</span>
+            <span class="bd-bar-right">
+              <button type="button" class="bd-btn bd-ghost bd-sm" onclick="bdCloseModal()" aria-label="Close">&times;</button>
+            </span>
+          </div>
+          <div style="padding:14px 15px">
+            <div class="bd-shot" id="bd-m-shot">
+              <img id="bd-m-photo" alt="The pallet tag just photographed">
+              <span>
+                <span class="bd-cap-t" id="bd-m-read" style="font-size:12.5px"></span>
+                <span class="bd-note" id="bd-m-readsub" style="display:block;margin-top:4px"></span>
+              </span>
+            </div>
+            <div id="bd-m-fields"></div>
+            <div id="bd-m-warn" class="bd-status err" style="margin:0 0 11px" hidden></div>
+          </div>
+          <div class="bd-bar" style="border-bottom:0;border-top:1px solid rgba(20,16,8,.10);position:sticky;bottom:0">
+            <button type="button" class="bd-btn bd-ghost bd-sm" id="bd-m-retake" onclick="bdBegin()">Retake</button>
+            <span class="bd-bar-right">
+              <button type="button" class="bd-btn bd-ghost bd-sm" onclick="bdCloseModal()">Cancel</button>
+              <button type="button" class="bd-btn bd-primary bd-sm" id="bd-m-submit" onclick="bdSubmit()">Submit</button>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div><!-- end #page-bin-dump -->
 
     <div id="page-supply-request" class="hidden">
       <!-- Sticky header -->
@@ -8680,6 +8968,13 @@
       const allowed = ['superuser','admin','district_manager','manager'];
       if (!allowed.includes(role)) return;
     }
+    // Bin Dump: a manager receiving pallets, not an admin surface. The worker is
+    // the real gate; this only decides whether the shell opens.
+    if (page === 'bin-dump') {
+      const role = currentUser && currentUser.role;
+      const allowed = ['superuser', 'admin', 'executive', 'district_manager', 'manager'];
+      if (!allowed.includes(role)) return;
+    }
     // eBay Cases belongs to E-Commerce, so the guard is the business you hold,
     // not your role — mirroring the worker's fail-closed business gate, which is
     // the real boundary. Without this a stale deep link or history entry would
@@ -8800,6 +9095,9 @@
     }
     if (page === 'merch-shelf-count') {
       if (typeof initShelfCount === 'function') initShelfCount();
+    }
+    if (page === 'bin-dump') {
+      if (typeof initBinDump === 'function') initBinDump();
     }
     // Keep the Merchandising dropdown expanded while on any of its pages.
     if ((page === 'merch-scan' || page === 'merch-coverage' || page === 'merch-velocity' || page === 'merch-manifests' || page === 'merch-criteria' || page === 'merch-shelf-count' || page === 'merch-products') && typeof toggleMerchMenu === 'function') {
@@ -21630,6 +21928,390 @@
 
   // Supply Request's getUserStores/SR_LABELS live inside its own IIFE, so they are
   // deliberately re-stated here rather than reached into. Same rule, same roster.
+
+  // ── Bin Dump ──────────────────────────────────────────────────────────
+  // Photograph a pallet tag, Claude reads seven fields off it, confirm them,
+  // log the pallet. tasks/bin-dump.md has the decisions and the tag's layout.
+  const BD_LABELS = { BL1: 'Coliseum', BL2: 'South Bend', BL4: 'Dupont', BL8: 'Holland', BL14: 'Battle Creek', BL16: 'Indy East' };
+  // BL8 (Holland) and BL12 (Wyoming) are closed — the worker refuses a dump into
+  // either, so they are not offered.
+  const BD_ALL_STORES = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
+  const BD_FIELDS = [
+    { k: 'barcode',        label: 'Barcode' },
+    { k: 'item_no',        label: 'Item #' },
+    { k: 'pallet_name',    label: 'Pallet name' },
+    { k: 'po',             label: 'PO' },
+    { k: 'units',          label: '# of units', numeric: true },
+    { k: 'created_by_tag', label: 'Created by' },
+    { k: 'truck_no',       label: 'Truck #' },
+  ];
+  const bdState = { rows: [], openWeeks: new Set(), seeded: false, photo: null,
+                    photoType: 'image/jpeg', editingId: null, busy: false };
+
+  function bdStores() {
+    if (!currentUser) return [];
+    if (currentUser.role === 'superuser' || currentUser.role === 'admin') return BD_ALL_STORES;
+    const s = currentUser.stores;
+    const held = Array.isArray(s) ? s : (() => { try { return JSON.parse(s || '[]'); } catch (e) { return []; } })();
+    return held.filter(x => BD_ALL_STORES.includes(x));
+  }
+
+  // 🔑 j.code is the useful half of a refusal; j.error is the generic half. Showing
+  // only the error is how "Forbidden" once sent someone hunting a permission problem
+  // that was really a missing worker deploy.
+  function bdErr(j, r) {
+    switch (j && j.code) {
+      case 'UNCLASSIFIED_ACTION': return 'This dashboard is newer than the API — the worker half of the deploy is missing.';
+      case 'NEED_MANAGER':        return 'Your account cannot log bin dumps. Ask an admin for manager access.';
+      case 'NO_STORE_ACCESS':     return 'You are not assigned to that store.';
+      case 'NO_SESSION':          return 'Your session has expired — sign in again.';
+    }
+    return (j && j.error) || `HTTP ${r.status}`;
+  }
+
+  function bdSetStatus(msg, tone) {
+    const s = el('bd-status');
+    if (!s) return;
+    if (!msg) { s.hidden = true; return; }
+    s.className = 'bd-status ' + (tone === 'err' ? 'err' : 'ok');
+    s.textContent = msg;
+    s.hidden = false;
+  }
+
+  function bdShow(which) {
+    el('bd-begin').hidden = which !== 'begin';
+    el('bd-reading').hidden = which !== 'reading';
+  }
+
+  function initBinDump() {
+    const sel = el('bd-store');
+    const stores = bdStores();
+    const isAdmin = currentUser && (currentUser.role === 'superuser' || currentUser.role === 'admin');
+    sel.innerHTML = (stores.length > 1 ? ['<option value="ALL">All stores</option>'] : [])
+      .concat(stores.map(s => `<option value="${s}">${escapeHtml(BD_LABELS[s] || s)}</option>`)).join('');
+    // 🔑 An entry surface opens on the thing you are about to DO. A manager
+    // scanning a tag is standing in one store, so default to a single store even
+    // when they hold several; "All stores" is a reporting view and is one click away.
+    if (stores.length) sel.value = stores[0];
+    if (!stores.length) {
+      el('bd-log-status').textContent = 'No store is assigned to your account, so there is nothing to log.';
+      el('bd-weeks').innerHTML = '';
+      el('bd-begin').hidden = true;
+      return;
+    }
+    void isAdmin;
+    bdLoad();
+  }
+  window.initBinDump = initBinDump;
+
+  function bdStoreChange() { bdSetStatus(''); bdState.seeded = false; bdState.openWeeks.clear(); bdLoad(); }
+  window.bdStoreChange = bdStoreChange;
+
+  // The scan store is always a real one — "All stores" is a way of reading the log,
+  // never a place a pallet can be dumped into.
+  function bdScanStore() {
+    const v = el('bd-store').value;
+    if (v && v !== 'ALL') return v;
+    const s = bdStores();
+    return s.length ? s[0] : '';
+  }
+
+  function bdBegin() { bdCloseModal(); el('bd-photo').click(); }
+  window.bdBegin = bdBegin;
+
+  async function bdPhoto(input) {
+    const f = input.files && input.files[0];
+    input.value = '';                 // so the same file can be picked again
+    if (!f || bdState.busy) return;
+    bdState.busy = true;
+    bdSetStatus('');
+    bdShow('reading');
+    try {
+      // Shared with Price Scan: one downscaler, so EXIF orientation and the API's
+      // size cap are handled the same way on both surfaces.
+      const b64 = await psShrink(f);
+      bdState.photo = b64;
+      bdState.photoType = 'image/jpeg';
+      el('bd-reading-sub').textContent = 'Pulling the seven fields';
+      const r = await fetch(`${WORKER_BASE}?action=bin-dump-scan`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_b64: b64, media_type: 'image/jpeg' }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(bdErr(j, r));
+      bdOpenVerify(j);
+    } catch (e) {
+      // ⚠️ A failed read must not cost the pallet. Open the form empty so a torn
+      // or unreadable tag can still be keyed in by hand, and say what went wrong.
+      bdOpenVerify({ fields: {}, read: 0, of: BD_FIELDS.length },
+                   `Couldn't read the tag — ${(e && e.message) || e}. Type it in, or retake the photo.`);
+    } finally {
+      bdState.busy = false;
+      bdShow('begin');
+    }
+  }
+  window.bdPhoto = bdPhoto;
+
+  function bdFieldRow(f, val, state, note) {
+    const tag = state === 'miss' ? '<span class="bd-tag">NOT FOUND</span>'
+              : state === 'warn' ? '<span class="bd-tag">CHECK</span>' : '';
+    return `<div class="bd-fld ${state || ''}">
+      <label class="bd-fld-l" for="bd-f-${f.k}">${escapeHtml(f.label)}${tag}</label>
+      <input class="bd-in" type="text" id="bd-f-${f.k}" data-k="${f.k}"
+             value="${escapeHtml(val == null ? '' : String(val))}"
+             ${f.numeric ? 'inputmode="numeric"' : ''}
+             placeholder="${state === 'miss' ? 'not on the tag' : ''}">
+      ${note ? `<div class="bd-note">${escapeHtml(note)}</div>` : ''}
+    </div>`;
+  }
+
+  function bdOpenVerify(j, problem) {
+    bdState.editingId = null;
+    const fields = j.fields || {};
+    el('bd-m-title').textContent = 'Verify pallet tag';
+    el('bd-m-shot').hidden = false;
+    el('bd-m-retake').hidden = false;
+    el('bd-m-submit').textContent = 'Submit';
+    el('bd-m-photo').src = bdState.photo ? `data:${bdState.photoType};base64,${bdState.photo}` : '';
+    el('bd-m-read').textContent = problem ? "Couldn't read the tag" : `Read ${j.read} of ${j.of} fields`;
+    el('bd-m-readsub').textContent = problem
+      ? 'Nothing was logged. Type what you can see, or retake the photo.'
+      : (j.read === j.of ? 'Everything came through. Give it a glance and submit.'
+                         : 'Anything marked NOT FOUND needs you before this can be logged.');
+    el('bd-m-fields').innerHTML = BD_FIELDS
+      .map(f => bdFieldRow(f, fields[f.k], fields[f.k] == null ? 'miss' : '')).join('');
+    const warn = el('bd-m-warn');
+    const msg = problem || j.truck_hint || '';
+    warn.textContent = msg;
+    warn.hidden = !msg;
+    bdOpenModal();
+  }
+
+  function bdOpenEdit(id) {
+    const row = bdState.rows.find(r => r.id === id);
+    if (!row) return;
+    bdState.editingId = id;
+    el('bd-m-title').textContent = 'Edit logged pallet';
+    el('bd-m-retake').hidden = true;
+    el('bd-m-submit').textContent = 'Save changes';
+    if (row.has_photo) {
+      el('bd-m-shot').hidden = false;
+      el('bd-m-photo').src = `${WORKER_BASE}?action=bin-dump-photo&id=${row.id}`;
+      el('bd-m-read').textContent = 'The tag as photographed';
+      el('bd-m-readsub').textContent = `Logged ${bdWhen(row.logged_at)} by ${row.logged_by || 'unknown'}.`
+        + ' Editing keeps that timestamp.';
+    } else {
+      el('bd-m-shot').hidden = true;
+    }
+    el('bd-m-fields').innerHTML = BD_FIELDS.map(f => bdFieldRow(f, row[f.k], '')).join('');
+    el('bd-m-warn').hidden = true;
+    bdOpenModal();
+  }
+  window.bdOpenEdit = bdOpenEdit;
+
+  function bdOpenModal() { el('bd-modal').style.display = 'flex'; }
+  function bdCloseModal() { el('bd-modal').style.display = 'none'; }
+  window.bdCloseModal = bdCloseModal;
+
+  function bdReadFields() {
+    const out = {};
+    document.querySelectorAll('#bd-m-fields input[data-k]').forEach(i => { out[i.dataset.k] = i.value.trim(); });
+    return out;
+  }
+
+  async function bdSubmit() {
+    if (bdState.busy) return;
+    const v = bdReadFields();
+    if (!v.barcode && !v.item_no && !v.pallet_name && !v.po) {
+      el('bd-m-warn').textContent = 'Fill in at least one of: barcode, item number, pallet name or PO.';
+      el('bd-m-warn').hidden = false;
+      return;
+    }
+    const btn = el('bd-m-submit');
+    bdState.busy = true; btn.disabled = true;
+    try {
+      if (bdState.editingId != null) {
+        await bdPost('bin-dump-update', { id: bdState.editingId, ...v });
+        bdSetStatus('Changes saved.', 'ok');
+      } else {
+        const store = bdScanStore();
+        // ⚠️ A soft warning, never a block: a genuinely repeated PO does happen.
+        // A failed check costs the warning, never the submission.
+        if (v.po) {
+          const dup = await bdRecent(store, v.po);
+          if (dup.length) {
+            const d = dup[0];
+            const goOn = await uiConfirm(
+              `PO ${v.po} was already logged ${bdWhen(d.logged_at)} by ${d.logged_by || 'someone'}`
+              + `${d.pallet_name ? ` — ${d.pallet_name}` : ''}${d.units != null ? `, ${d.units} units` : ''}.`
+              + '\n\nLog this pallet as well?',
+              { title: 'Already logged?', okText: 'Log it anyway' });
+            if (!goOn) { bdState.busy = false; btn.disabled = false; return; }
+          }
+        }
+        await bdPost('bin-dump-log', {
+          store, ...v,
+          ...(bdState.photo ? { image_b64: bdState.photo, media_type: bdState.photoType } : {}),
+        });
+        const n = parseInt(String(v.units).replace(/[^\d]/g, ''), 10);
+        bdSetStatus(`Pallet logged${v.pallet_name ? ` · ${v.pallet_name}` : ''}`
+          + (Number.isInteger(n) ? ` · ${n} unit${n === 1 ? '' : 's'}` : '') + '.', 'ok');
+      }
+      bdState.photo = null;
+      bdCloseModal();
+      await bdLoad();
+    } catch (e) {
+      el('bd-m-warn').textContent = (e && e.message) || String(e);
+      el('bd-m-warn').hidden = false;
+    } finally {
+      bdState.busy = false; btn.disabled = false;
+    }
+  }
+  window.bdSubmit = bdSubmit;
+
+  async function bdPost(action, body) {
+    const r = await fetch(`${WORKER_BASE}?action=${action}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(bdErr(j, r));
+    return j;
+  }
+
+  async function bdRecent(store, po) {
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=bin-dump-recent&store=${encodeURIComponent(store)}&po=${encodeURIComponent(po)}`,
+        { credentials: 'include' });
+      const j = await r.json().catch(() => ({}));
+      return (r.ok && j.matches) || [];
+    } catch (e) { return []; }   // a duplicate hint is never worth failing a submit over
+  }
+
+  async function bdLoad() {
+    const sel = el('bd-store');
+    if (!sel || !sel.value) return;
+    el('bd-log-status').textContent = 'Loading…';
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=bin-dump-list&store=${encodeURIComponent(sel.value)}`,
+        { credentials: 'include' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error(bdErr(j, r));
+      bdState.rows = j.rows || [];
+      bdRenderLog();
+    } catch (e) {
+      bdState.rows = [];
+      el('bd-weeks').innerHTML = '';
+      el('bd-log-status').textContent = `Couldn't load the log — ${(e && e.message) || e}`;
+      el('bd-wk-pallets').textContent = '—';
+      el('bd-wk-units').textContent = '—';
+    }
+  }
+  window.bdLoad = bdLoad;
+
+  // 'YYYY-MM-DD' as a LOCAL date. new Date('2026-09-06') is UTC midnight, which
+  // renders as Sep 5 anywhere west of Greenwich — including every store.
+  function bdLocalDate(ymd) {
+    const p = String(ymd).split('-').map(Number);
+    return new Date(p[0], p[1] - 1, p[2]);
+  }
+  function bdWeekLabel(wk) {
+    const s = bdLocalDate(wk), e = new Date(s.getFullYear(), s.getMonth(), s.getDate() + 6);
+    const m = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return s.getMonth() === e.getMonth() ? `${m(s)} – ${e.getDate()}` : `${m(s)} – ${m(e)}`;
+  }
+  function bdWhen(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+      + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+  function bdThisWeek() {
+    const n = new Date();
+    const s = new Date(n.getFullYear(), n.getMonth(), n.getDate() - n.getDay());
+    return `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
+  }
+
+  function bdRenderLog() {
+    const groups = new Map();
+    for (const r of bdState.rows) {
+      if (!groups.has(r.week)) groups.set(r.week, []);
+      groups.get(r.week).push(r);
+    }
+    const keys = [...groups.keys()].sort().reverse();
+    // The current week opens on FIRST paint only. Re-seeding on every render would
+    // make it impossible to collapse — it would spring straight back open.
+    if (!bdState.seeded && keys.length) { bdState.openWeeks.add(keys[0]); bdState.seeded = true; }
+
+    const now = bdThisWeek();
+    const cur = groups.get(now) || [];
+    el('bd-wk-pallets').textContent = cur.length;
+    el('bd-wk-units').textContent = cur.reduce((s, r) => s + (Number(r.units) || 0), 0).toLocaleString();
+
+    el('bd-log-status').textContent = keys.length
+      ? `${bdState.rows.length} pallet${bdState.rows.length === 1 ? '' : 's'} across `
+        + `${keys.length} week${keys.length === 1 ? '' : 's'}. Tap a week to open it; tap Edit on a row to correct it.`
+      : 'No pallets logged yet. Press Begin to scan the first tag.';
+
+    const multi = el('bd-store').value === 'ALL';
+    el('bd-weeks').innerHTML = keys.map(k => {
+      const rows = groups.get(k);
+      const units = rows.reduce((s, r) => s + (Number(r.units) || 0), 0);
+      const open = bdState.openWeeks.has(k);
+      return `<section class="bd-wk ${open ? 'open' : ''}">
+        <button type="button" class="bd-wk-head" onclick="bdToggleWeek('${k}')" aria-expanded="${open}">
+          <span class="bd-caret"></span>
+          <span class="bd-wk-name">Week of ${escapeHtml(bdWeekLabel(k))}</span>
+          ${k === now ? '<span class="bd-badge">This week</span>' : ''}
+          <span class="bd-wk-meta">${rows.length} pallet${rows.length === 1 ? '' : 's'} · ${units.toLocaleString()} units</span>
+        </button>
+        <div class="bd-wk-body"><div><div class="bd-scroll"><table class="bd-tbl">
+          <thead><tr>
+            <th class="stick">When</th>${multi ? '<th>Store</th>' : ''}<th>Item #</th><th>Pallet</th>
+            <th class="num">Units</th><th>PO</th><th>Truck</th><th>Created by</th><th></th>
+          </tr></thead>
+          <tbody>${rows.map(r => `
+            <tr class="${r.edited_at ? 'edited' : ''}">
+              <td class="stick">${escapeHtml(bdWhen(r.logged_at))}</td>
+              ${multi ? `<td class="dim">${escapeHtml(BD_LABELS[r.store] || r.store)}</td>` : ''}
+              <td>${escapeHtml(r.item_no || '—')}</td>
+              <td style="font-weight:600">${escapeHtml(r.pallet_name || '—')}</td>
+              <td class="num">${r.units == null ? '—' : Number(r.units).toLocaleString()}</td>
+              <td class="dim">${escapeHtml(r.po || '—')}</td>
+              <td class="dim">${escapeHtml(r.truck_no || '—')}</td>
+              <td class="dim">${escapeHtml(r.created_by_tag || '—')}</td>
+              <td><button type="button" class="bd-row-btn" onclick="bdOpenEdit(${r.id})">EDIT</button></td>
+            </tr>`).join('')}</tbody>
+        </table></div></div></div>
+      </section>`;
+    }).join('');
+  }
+
+  function bdToggleWeek(k) {
+    if (bdState.openWeeks.has(k)) bdState.openWeeks.delete(k); else bdState.openWeeks.add(k);
+    bdRenderLog();
+  }
+  window.bdToggleWeek = bdToggleWeek;
+
+  function bdExportCsv() {
+    if (!bdState.rows.length) { bdSetStatus('Nothing to export yet.', 'err'); return; }
+    const cols = ['logged_at', 'store', 'week', 'barcode', 'item_no', 'pallet_name', 'po',
+                  'units', 'created_by_tag', 'truck_no', 'logged_by', 'edited_by', 'edited_at'];
+    const cell = v => {
+      const s = v == null ? '' : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [cols.join(',')].concat(bdState.rows.map(r => cols.map(c => cell(r[c])).join(','))).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `bin-dump-${el('bd-store').value}-${bdThisWeek()}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  window.bdExportCsv = bdExportCsv;
+
   const SC_LABELS = { BL1: 'Coliseum', BL2: 'South Bend', BL4: 'Dupont', BL8: 'Holland', BL14: 'Battle Creek', BL16: 'Indy East' };
   // Holland (BL8) closed 2026-07-25. It still carries its budget into the chain's
   // financial rollups on purpose, but it has no shelves to count — so it is absent from
@@ -23850,6 +24532,7 @@
     // direction — inside E-Commerce the whole sidebar simply emptied.
     'nav-ebay-cases': 'ecom',
     'nav-inventory': 'bl',
+    'nav-bin-dump': 'bl',
     'nav-labor': 'bl',
     'nav-supply-request': 'bl',
     'nav-users': 'bl',
@@ -24314,6 +24997,12 @@
     const ebNav = el('nav-ebay-cases');
     if (ebNav) ebNav.classList.toggle('hidden', !userBusinesses(user).some(b => b.id === 'ecom'));
     el('nav-inventory').classList.toggle('hidden', !isAdmin);
+    // Bin Dump is the one Inventory-adjacent surface a store manager needs — they
+    // are the ones receiving pallets. Mirrors the worker, which admits exactly
+    // FINANCIAL_ROLES here. ('district_manager' was retired by migration-029; it is
+    // listed alongside its neighbours so this reads the same as the guards nearby.)
+    const binDumpRoles = ['superuser', 'admin', 'executive', 'district_manager', 'manager'];
+    el('nav-bin-dump').classList.toggle('hidden', !binDumpRoles.includes(user.role));
     el('nav-supply-request').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');
     el('nav-users').classList.toggle('hidden', !isAdmin);
     el('nav-admin-settings').classList.toggle('hidden', !isSuperuser);
@@ -25734,6 +26423,7 @@
       gate('more-ebay-cases', vis('nav-ebay-cases'));                  // mirrors the sidebar item
       gate('more-merch-scan', !mgrBar && vis('nav-merch-scan'));       // managers have the bar tab
       gate('more-inventory', vis('nav-inventory'));                    // admin-only
+      gate('more-bin-dump', vis('nav-bin-dump'));                       // managers too
       gate('more-supply', !mgrBar && vis('nav-supply-request'));       // admins: Supply lives here
       gate('more-marketing', vis('nav-marketing-ads'));
       gate('more-users', vis('nav-users'));
@@ -25743,7 +26433,7 @@
       // active tab
       // 'ebay-cases' has no bar tab of its own, so without it here every tab
       // sits dim while you are standing on the page.
-      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1 };
+      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1, 'bin-dump': 1 };
       if (!mgrBar) morePages['submit-photos'] = 1; // no center button → page lives under More
       if (isAdminBar) { morePages['inventory'] = 1; morePages['supply-request'] = 1; } // admin: both under More
       else { morePages['flow-calendar'] = 1; morePages['content'] = 1; }               // no bar tab for these
