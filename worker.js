@@ -6662,7 +6662,7 @@ function autoWeekOf(d) {                       // Sunday that starts the retail 
 
 // ── Bin Dump: reading a pallet tag ──────────────────────────────────────────
 // The seven fields Brian asked for, in the order they read on the tag.
-const BIN_DUMP_FIELDS = ["barcode", "item_no", "pallet_name", "po", "units", "created_by_tag", "truck_no"];
+const BIN_DUMP_FIELDS = ["barcode", "item_no", "pallet_name", "sup_ref", "po", "units", "created_by_tag", "truck_no"];
 
 // How far back the soft duplicate check looks. One receiving session: a truck of
 // 30 pallets is unloaded over hours, and the duplicate this guards against is the
@@ -6670,60 +6670,78 @@ const BIN_DUMP_FIELDS = ["barcode", "item_no", "pallet_name", "po", "units", "cr
 // legitimately came back; shorter would miss the case it exists for.
 const BIN_DUMP_DUPLICATE_WINDOW_MS = 6 * 60 * 60 * 1000;
 
-// 🛑 THE LAYOUT IS THE WHOLE PROBLEM. This tag prints its labels down the left and
-// its values right-aligned on the far side, with each value ONE LINE HIGHER than the
-// label it belongs to. Reading straight across from a label finds empty space and
-// then picks up the NEXT label's value, which shifts every field by one — item
-// becomes the PO, the PO becomes the unit count, the unit count becomes a person's
-// name. That failure is silent and entirely plausible on the page, which is why the
-// geometry is spelled out here and pinned by scripts/test-bin-dump.mjs.
+// 🛑 PAIR LABEL TO VALUE BY ORDER, NOT BY POSITION. This prompt used to say the
+// value sits one line ABOVE its label. That was true of the first tag sampled and
+// EXACTLY BACKWARDS on the second: on Brian's 2026-08-26 tag every value renders
+// slightly BELOW its label instead. The two are mirror images, and a rule naming a
+// direction is right on one and actively misleading on the other. What holds on
+// both is the ORDER — the Nth right-aligned value belongs to the Nth label — so
+// that is what the prompt says now, with a meaning check behind it.
+//
+// Tag formats also differ in which fields exist: one carries "PO:" and a truck
+// number, the other "WO:" and a "Sup. Ref:" and no truck at all. Both spellings
+// land in `po`, and anything absent stays null.
 const BIN_TAG_PROMPT = [
   "You are reading ONE printed pallet tag photographed in a warehouse.",
   "",
-  'Return ONLY JSON, with exactly these keys: {"barcode":null,"item_no":null,"pallet_name":null,"po":null,"units":null,"created_by_tag":null,"truck_no":null}',
+  'Return ONLY JSON, with exactly these keys: {"barcode":null,"item_no":null,"pallet_name":null,"sup_ref":null,"po":null,"units":null,"created_by_tag":null,"truck_no":null}',
   "",
-  "THE LAYOUT — READ THIS BEFORE YOU READ THE TAG.",
-  "Labels run down the LEFT. Values are RIGHT-ALIGNED on the far side of the tag, and",
-  "each value is printed ONE LINE HIGHER than the label it belongs to. A label and its",
-  "value therefore pair up DIAGONALLY, not straight across. Looking directly to the",
-  "right of a label finds blank space, and then the value belonging to the NEXT label",
-  "down — which shifts every single field by one. The tag looks like this:",
+  "HOW THE TAG IS LAID OUT — READ THIS FIRST.",
+  "Labels run down the LEFT, each ending in a colon. Their values are RIGHT-ALIGNED",
+  "on the far side of the tag. A value is NOT reliably on the same line as its label:",
+  "depending on the tag it prints slightly above or slightly below it, and the drift",
+  "grows down the tag. Do not pair them by which line they sit on.",
   "",
-  "    PRM-10490-30                    50201     <- this 50201 belongs to Item:",
-  "    Item:",
-  "    PALLET AMAZON IND8                        <- this is the pallet name",
-  "                                     5036     <- this 5036 belongs to PO:",
-  "    PO:",
-  "                                        1     <- this 1 belongs to # of Units:",
-  "    # of Units:",
-  "                              Ranon Price     <- this belongs to Created By:",
-  "    Created By:",
-  "                                    10490     <- this 10490 belongs to Truck #:",
-  "    Truck #:",
+  "PAIR THEM BY ORDER. Read the labels top to bottom. Read the right-aligned values",
+  "top to bottom. The first value belongs to the first label, the second to the",
+  "second, and so on. Two real tags, both correct:",
+  "",
+  "    Item:                         Item:",
+  "                     50201                          50007",
+  "    PALLET AMAZON IND8            FG BL CONSUMABLES - FOOD -",
+  "                      5036        SNACKS",
+  "    PO:                           Sup. Ref:",
+  "                         1                            mix",
+  "    # of Units:                   WO:",
+  "               Ranon Price                          14373",
+  "    Created By:                   # of Units:",
+  "                     10490                            362",
+  "    Truck #:                      Created By:",
+  "                                                   Oo Aung",
+  "",
+  "  LEFT tag  -> item 50201, PO 5036, 1 unit, created by Ranon Price, truck 10490",
+  "  RIGHT tag -> item 50007, sup ref mix, WO 14373, 362 units, created by Oo Aung",
   "",
   "THE FIELDS",
-  "- barcode: the text printed under the LARGE barcode at the top, e.g. PRM-10490-30.",
-  "  Copy it exactly, hyphens and letters included. It is NOT the item number.",
-  "- item_no: the bold number at the top right. It pairs with the label 'Item:'.",
-  "- pallet_name: the line of text directly BELOW 'Item:' — usually italic capitals,",
-  "  e.g. PALLET AMAZON IND8. This one really is below its label, not above.",
-  "- po: pairs with 'PO:'.",
+  "- barcode: the text printed under the LARGE barcode at the top. It comes in more",
+  "  than one shape (PRM-10490-30, P-082626-725979). Copy it exactly, including",
+  "  letters and hyphens. It is NOT the item number.",
+  "- item_no: pairs with 'Item:'. Usually bold, near the top right.",
+  "- pallet_name: the description printed BELOW 'Item:', left-aligned rather than",
+  "  right. It is the one field that is genuinely under its label. It MAY WRAP ONTO",
+  "  TWO OR MORE LINES — join them with single spaces into one string, e.g.",
+  "  'FG BL CONSUMABLES - FOOD - SNACKS'.",
+  "- sup_ref: pairs with 'Sup. Ref:'. Absent on some tags.",
+  "- po: pairs with 'PO:' OR with 'WO:' — the two are the same field and a tag",
+  "  carries one or the other. Whichever it shows, put its value here.",
   "- units: pairs with '# of Units:'. Digits only, no commas.",
   "- created_by_tag: pairs with 'Created By:'. A person's name, exactly as printed.",
-  "- truck_no: pairs with 'Truck #:'.",
+  "- truck_no: pairs with 'Truck #:'. Absent on some tags.",
   "",
   "CHECK YOURSELF BEFORE ANSWERING. created_by_tag must be a PERSON'S NAME and units",
-  "must be a COUNT. If you have ended up with a name in units, or a bare number in",
-  "created_by_tag, you have read the columns straight across — go back and pair each",
-  "label with the right-aligned value ABOVE it.",
+  "must be a COUNT. If you have ended up with a name in units, or a bare number where",
+  "a name belongs, your pairing has slipped by one — go back and match the Nth value",
+  "to the Nth label.",
   "",
-  "IGNORE the 'Initialed By:' line, the small second barcode near the bottom, the",
-  "'Pallet N of M' line and the printed date and time. They are not being asked for.",
+  "IGNORE the 'Initialed By:' line, the small second barcode near the bottom, any",
+  "'Pallet N of M' line, the printed date and time, and any partial label from the",
+  "roll showing above or below this one.",
   "",
-  "USE null FOR ANYTHING YOU CANNOT READ CONFIDENTLY — torn, blurred, under glare, or",
-  "simply not printed on this tag. A wrong value is far worse than a missing one here:",
-  "a blank is obvious and somebody types it, while a plausible wrong digit is copied",
-  "into the record and never questioned. Never invent a value to fill out the shape.",
+  "USE null FOR ANYTHING THIS TAG DOES NOT SHOW OR YOU CANNOT READ CONFIDENTLY —",
+  "torn, blurred, under glare, or simply not part of this tag's format. Not every tag",
+  "has every field. A wrong value is far worse than a missing one: a blank is obvious",
+  "and somebody types it, while a plausible wrong digit is copied into the record and",
+  "never questioned. Never invent a value to fill out the shape.",
 ].join("\n");
 
 // The week a pallet belongs to, anchored to the STORE's day rather than UTC.
@@ -6759,6 +6777,7 @@ function binDumpFields(raw) {
     barcode: binDumpText(raw?.barcode, 60),
     item_no: binDumpText(raw?.item_no, 40),
     pallet_name: binDumpText(raw?.pallet_name, 160),
+    sup_ref: binDumpText(raw?.sup_ref, 60),
     po: binDumpText(raw?.po, 40),
     units,
     created_by_tag: binDumpText(raw?.created_by_tag, 80),
@@ -20171,7 +20190,7 @@ export default {
         const fields = binDumpFields(body);
         if (!fields.item_no && !fields.pallet_name && !fields.po && !fields.barcode) {
           return new Response(JSON.stringify({
-            error: "A pallet needs at least one of: barcode, item number, pallet name or PO",
+            error: "A pallet needs at least one of: barcode, item number, pallet name, or PO / WO",
           }), { status: 400, headers: corsJson });
         }
 
@@ -20190,10 +20209,10 @@ export default {
 
         const at = new Date().toISOString();
         const res = await env.DB.prepare(
-          `INSERT INTO bin_dumps (store, barcode, item_no, pallet_name, po, units,
+          `INSERT INTO bin_dumps (store, barcode, item_no, pallet_name, sup_ref, po, units,
              created_by_tag, truck_no, r2_key, content_type, logged_by, logged_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
-        ).bind(store, fields.barcode, fields.item_no, fields.pallet_name, fields.po, fields.units,
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        ).bind(store, fields.barcode, fields.item_no, fields.pallet_name, fields.sup_ref, fields.po, fields.units,
                fields.created_by_tag, fields.truck_no, key, ctype,
                (currentUser && currentUser.email) || "unknown", at).run();
 
@@ -20233,7 +20252,7 @@ export default {
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       const storeRaw = String(url.searchParams.get("store") || "").trim().toUpperCase();
       const allow = currentUser ? allowedStores(currentUser) : null;
-      let q = `SELECT id, store, barcode, item_no, pallet_name, po, units, created_by_tag,
+      let q = `SELECT id, store, barcode, item_no, pallet_name, sup_ref, po, units, created_by_tag,
                       truck_no, r2_key, logged_by, logged_at, edited_by, edited_at
                  FROM bin_dumps WHERE 1=1`;
       const binds = [];
@@ -20281,16 +20300,16 @@ export default {
         const fields = binDumpFields(body);
         if (!fields.item_no && !fields.pallet_name && !fields.po && !fields.barcode) {
           return new Response(JSON.stringify({
-            error: "A pallet needs at least one of: barcode, item number, pallet name or PO",
+            error: "A pallet needs at least one of: barcode, item number, pallet name, or PO / WO",
           }), { status: 400, headers: corsJson });
         }
         // 🔑 logged_at is NOT touched. A correction is a correction, not a re-receipt:
         // moving the timestamp would silently move the pallet into a different week.
         await env.DB.prepare(
-          `UPDATE bin_dumps SET barcode = ?, item_no = ?, pallet_name = ?, po = ?, units = ?,
+          `UPDATE bin_dumps SET barcode = ?, item_no = ?, pallet_name = ?, sup_ref = ?, po = ?, units = ?,
              created_by_tag = ?, truck_no = ?, edited_by = ?, edited_at = ?
            WHERE id = ?`
-        ).bind(fields.barcode, fields.item_no, fields.pallet_name, fields.po, fields.units,
+        ).bind(fields.barcode, fields.item_no, fields.pallet_name, fields.sup_ref, fields.po, fields.units,
                fields.created_by_tag, fields.truck_no,
                (currentUser && currentUser.email) || "unknown", new Date().toISOString(), id).run();
         return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });

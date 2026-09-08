@@ -28,10 +28,18 @@ globalThis.Date = class extends RealDate {
 
 const worker = await loadWorker(repo);
 
-// The seven fields as they actually read off Brian's tag (photo, 2026-09-08).
-const TAG = {
+// TWO REAL TAG FORMATS, both photographed by Brian. They differ in more than
+// content: tag A prints each value slightly ABOVE its label, tag B slightly BELOW,
+// they disagree on PO: vs WO:, and only one of them carries a Sup. Ref or a truck.
+// Anything asserted against only one of these proves less than it looks.
+const TAG = {   // A — 2026-09-08 photo
   barcode: 'PRM-10490-30', item_no: '50201', pallet_name: 'PALLET AMAZON IND8',
-  po: '5036', units: 1, created_by_tag: 'Ranon Price', truck_no: '10490',
+  sup_ref: null, po: '5036', units: 1, created_by_tag: 'Ranon Price', truck_no: '10490',
+};
+const TAG_B = { // B — 2026-08-26 photo: WO not PO, a Sup. Ref, no truck, wrapped name
+  barcode: 'P-082626-725979', item_no: '50007',
+  pallet_name: 'FG BL CONSUMABLES - FOOD - SNACKS',
+  sup_ref: 'mix', po: '14373', units: 362, created_by_tag: 'Oo Aung', truck_no: null,
 };
 
 function env0() {
@@ -70,9 +78,19 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   const m = /const BIN_TAG_PROMPT = \[([\s\S]*?)\]\.join\("\\n"\);/.exec(src);
   ok(!!m, 'BIN_TAG_PROMPT is a top-level const');
   const p = m ? m[1] : '';
-  ok(/ONE LINE HIGHER/.test(p), 'prompt says the value sits one line higher than its label');
-  ok(/DIAGONALLY/.test(p), 'prompt says the pairing is diagonal');
-  ok(/PRM-10490-30/.test(p) && /Ranon Price/.test(p), 'prompt shows the real tag as a worked example');
+  // 🛑 The prompt used to name a DIRECTION ("one line higher"). Tag B proved that
+  // wrong — its values sit below their labels — so a direction must never come back.
+  ok(!/ONE LINE HIGHER/.test(p), '🛑 the prompt does NOT claim the value is above its label');
+  ok(/PAIR THEM BY ORDER/.test(p), 'prompt pairs the Nth value with the Nth label');
+  ok(/above or slightly below/.test(p), 'prompt warns the drift goes both ways');
+  ok(/PRM-10490-30/.test(p) && /Ranon Price/.test(p), 'prompt shows tag A as a worked example');
+  ok(/P-082626-725979/.test(p) && /Oo Aung/.test(p), 'prompt shows tag B too — both formats');
+  ok(/'PO:' OR with 'WO:'/.test(p), 'prompt says PO and WO are the same field');
+  // Pin the ACTIONABLE half too. Asserting only "WRAP ONTO" left the instruction
+  // that says what to DO about it — join the lines — free to be deleted.
+  ok(/WRAP ONTO/.test(p), 'prompt says the pallet name can wrap onto more than one line');
+  ok(/join them with single spaces/.test(p), '...and says to join those lines into one string');
+  ok(/FG BL CONSUMABLES - FOOD - SNACKS/.test(p), '...with the joined result shown');
   ok(/null/.test(p) && /Never invent/.test(p), 'prompt forbids guessing and asks for null');
   ok(/person's name/i.test(p) && /COUNT/.test(p), 'prompt gives the self-check that catches a shifted read');
 }
@@ -84,7 +102,7 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   const r = await call('/?action=bin-dump-scan', { user: 'u-mgr1', method: 'POST', body: IMG, env });
   const j = await json(r);
   eq(r.status, 200, 'scan returns 200');
-  eq(j.read, 7, 'all seven fields read');
+  eq(j.read, 7, 'all seven fields tag A carries are read');
   for (const k of Object.keys(TAG)) eq(j.fields[k], TAG[k], `field ${k} passes through unaltered`);
   eq(sent.length, 1, 'exactly one model call');
   eq(sent[0].model, 'claude-sonnet-4-6', 'uses the house extraction model');
@@ -92,6 +110,35 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   const parts = sent[0].messages[0].content;
   eq(parts[0].type, 'image', 'the image is sent first');
   eq(parts[0].source.media_type, 'image/jpeg', 'media type carried through');
+}
+
+// ── 2b. The SECOND tag format survives the same path ───────────────────────
+{
+  const { env, db } = env0();
+  spy(textReply(JSON.stringify(TAG_B)));
+  const j = await json(await call('/?action=bin-dump-scan', { user: 'u-mgr1', method: 'POST', body: IMG, env }));
+  eq(j.fields.sup_ref, 'mix', 'Sup. Ref is read');
+  eq(j.fields.po, '14373', 'a WO lands in the same field a PO does');
+  eq(j.fields.units, 362, 'a real unit count, not the 1 of tag A');
+  eq(j.fields.pallet_name, 'FG BL CONSUMABLES - FOOD - SNACKS', 'a wrapped name arrives as one string');
+  eq(j.fields.truck_no, null, 'a tag with no Truck # line yields null, not a guess');
+  eq(j.read, 7, 'seven of eight — this format has no truck number to read');
+  eq(j.truck_hint, null, '🔑 a P-…-… barcode is not the PRM shape, so no truck hint is offered');
+
+  const logged = await json(await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
+    body: { store: 'BL1', ...TAG_B }, env }));
+  const row = db.prepare('SELECT * FROM bin_dumps WHERE id = ?').get(logged.id);
+  eq(row.sup_ref, 'mix', 'and Sup. Ref is stored');
+  eq(row.po, '14373', 'with the WO in po');
+  eq(row.truck_no, null, 'and no truck');
+
+  const list = await json(await call('/?action=bin-dump-list&store=BL1', { user: 'u-mgr1', env }));
+  eq(list.rows[0].sup_ref, 'mix', 'and comes back out of the log');
+
+  await call('/?action=bin-dump-update', { user: 'u-mgr1', method: 'POST',
+    body: { id: logged.id, ...TAG_B, sup_ref: 'assorted' }, env });
+  eq(db.prepare('SELECT sup_ref FROM bin_dumps WHERE id = ?').get(logged.id).sup_ref, 'assorted',
+     'and can be corrected');
 }
 
 // ── 3. THE FIELD-SHIFT CASE — a horizontally-read tag must not look healthy ─
@@ -118,7 +165,7 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   const j = await json(await call('/?action=bin-dump-scan', { user: 'u-mgr1', method: 'POST', body: IMG, env }));
   eq(j.fields.po, null, 'an unread PO stays null');
   eq(j.fields.truck_no, null, 'an empty string is null, not ""');
-  eq(j.read, 5, 'read count reflects the two missing fields');
+  eq(j.read, 5, 'read count reflects the missing fields');
 }
 
 // ── 5. Junk photo: an empty answer is still an editable form, not an error ──
@@ -129,7 +176,7 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   const j = await json(r);
   eq(r.status, 200, 'an unreadable photo is not an error — the tag can still be keyed by hand');
   eq(j.read, 0, 'nothing was read');
-  eq(Object.keys(j.fields).length, 7, 'all seven keys are present so the form renders');
+  eq(Object.keys(j.fields).length, 8, 'every key is present so the form renders');
 }
 
 // ── 6. Prose around the JSON is still parsed ───────────────────────────────

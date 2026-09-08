@@ -1875,7 +1875,7 @@
         /* The log table */
         .bd-scroll{overflow-x:auto;background:#fff}
         .dark .bd-scroll{background:#101826}
-        table.bd-tbl{border-collapse:collapse;width:100%;min-width:660px;font-variant-numeric:tabular-nums}
+        table.bd-tbl{border-collapse:collapse;width:100%;min-width:780px;font-variant-numeric:tabular-nums}
         table.bd-tbl th{height:30px;padding:0 10px;font-size:10px;font-weight:700;letter-spacing:.05em;
           text-transform:uppercase;text-align:left;background:#fafaf6;color:#6b6453;
           white-space:nowrap;   /* "ITEM #" wraps to two lines without this */
@@ -21997,11 +21997,16 @@
   // BL8 (Holland) and BL12 (Wyoming) are closed — the worker refuses a dump into
   // either, so they are not offered.
   const BD_ALL_STORES = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
+  // 🔑 'PO / WO' is ONE field. The two tag formats print one label or the other for
+  // the same thing (Brian, 2026-09-08), so they share a column rather than becoming
+  // two mostly-empty ones. Sup. Ref and Truck # each appear on only one format so
+  // far, which is why every field here is optional.
   const BD_FIELDS = [
     { k: 'barcode',        label: 'Barcode' },
     { k: 'item_no',        label: 'Item #' },
     { k: 'pallet_name',    label: 'Pallet name' },
-    { k: 'po',             label: 'PO' },
+    { k: 'sup_ref',        label: 'Sup. Ref' },
+    { k: 'po',             label: 'PO / WO' },
     { k: 'units',          label: '# of units', numeric: true },
     { k: 'created_by_tag', label: 'Created by' },
     { k: 'truck_no',       label: 'Truck #' },
@@ -22250,7 +22255,7 @@
     if (bdState.busy) return;
     const v = bdReadFields();
     if (!v.barcode && !v.item_no && !v.pallet_name && !v.po) {
-      el('bd-m-warn').textContent = 'Fill in at least one of: barcode, item number, pallet name or PO.';
+      el('bd-m-warn').textContent = 'Fill in at least one of: barcode, item number, pallet name, or PO / WO.';
       el('bd-m-warn').hidden = false;
       return;
     }
@@ -22397,7 +22402,7 @@
         <div class="bd-wk-body"><div><div class="bd-scroll"><table class="bd-tbl">
           <thead><tr>
             <th class="stick">When</th>${multi ? '<th>Store</th>' : ''}<th>Item #</th><th>Pallet</th>
-            <th class="num">Units</th><th>PO</th><th>Truck</th><th>Created by</th><th></th>
+            <th>Sup. Ref</th><th class="num">Units</th><th>PO / WO</th><th>Truck</th><th>Created by</th><th></th>
           </tr></thead>
           <tbody>${rows.map(r => `
             <tr class="${r.edited_at ? 'edited' : ''}">
@@ -22405,6 +22410,7 @@
               ${multi ? `<td class="dim">${escapeHtml(BD_LABELS[r.store] || r.store)}</td>` : ''}
               <td>${escapeHtml(r.item_no || '—')}</td>
               <td style="font-weight:600">${escapeHtml(r.pallet_name || '—')}</td>
+              <td class="dim">${escapeHtml(r.sup_ref || '—')}</td>
               <td class="num">${r.units == null ? '—' : Number(r.units).toLocaleString()}</td>
               <td class="dim">${escapeHtml(r.po || '—')}</td>
               <td class="dim">${escapeHtml(r.truck_no || '—')}</td>
@@ -22424,8 +22430,8 @@
 
   function bdExportCsv() {
     if (!bdState.rows.length) { bdSetStatus('Nothing to export yet.', 'err'); return; }
-    const cols = ['logged_at', 'store', 'week', 'barcode', 'item_no', 'pallet_name', 'po',
-                  'units', 'created_by_tag', 'truck_no', 'logged_by', 'edited_by', 'edited_at'];
+    const cols = ['logged_at', 'store', 'week', 'barcode', 'item_no', 'pallet_name', 'sup_ref',
+                  'po', 'units', 'created_by_tag', 'truck_no', 'logged_by', 'edited_by', 'edited_at'];
     const cell = v => {
       const s = v == null ? '' : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
