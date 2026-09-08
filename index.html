@@ -22275,7 +22275,7 @@
             const d = dup[0];
             const goOn = await uiConfirm(
               `PO ${v.po} was already logged ${bdWhen(d.logged_at)} by ${d.logged_by || 'someone'}`
-              + `${d.pallet_name ? ` — ${d.pallet_name}` : ''}${d.units != null ? `, ${d.units} units` : ''}.`
+              + `${d.pallet_name ? ` — ${d.pallet_name}` : ''}${d.units != null ? `, ${d.units} unit${d.units === 1 ? '' : 's'}` : ''}.`
               + '\n\nLog this pallet as well?',
               { title: 'Already logged?', okText: 'Log it anyway' });
             if (!goOn) { bdState.busy = false; btn.disabled = false; return; }
@@ -22397,7 +22397,7 @@
           <span class="bd-caret"></span>
           <span class="bd-wk-name">Week of ${escapeHtml(bdWeekLabel(k))}</span>
           ${k === now ? '<span class="bd-badge">This week</span>' : ''}
-          <span class="bd-wk-meta">${rows.length} pallet${rows.length === 1 ? '' : 's'} · ${units.toLocaleString()} units</span>
+          <span class="bd-wk-meta">${rows.length} pallet${rows.length === 1 ? '' : 's'} · ${units.toLocaleString()} unit${units === 1 ? '' : 's'}</span>
         </button>
         <div class="bd-wk-body"><div><div class="bd-scroll"><table class="bd-tbl">
           <thead><tr>
