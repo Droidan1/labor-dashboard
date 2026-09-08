@@ -1,11 +1,12 @@
 // Bin Dump — pallet tag scan, log, list, edit, delete.
 //
-// 🔑 THE POINT OF THIS SUITE is the field-shift case. The tag prints each value
-// one line ABOVE its label, so a horizontal read pairs every label with the next
-// one's value and produces a row that is wrong in a way nothing downstream can
-// detect: item becomes the PO, units becomes a person's name. The prompt states
-// the geometry; these tests pin that it still says so, and that a correct model
-// answer survives the whole path unaltered.
+// 🔑 THE POINT OF THIS SUITE is the field-shift case. Labels run down the left and
+// values sit right-aligned on the far side, and the two DO NOT line up: on one tag
+// each value prints slightly above its label, on the next slightly below. Pair them
+// by position and every field moves by one, producing a row that is wrong in a way
+// nothing downstream can detect — item becomes the PO, units becomes a person's
+// name. The prompt pairs them BY ORDER instead; these tests pin that it still says
+// so, and that a correct model answer survives the whole path unaltered.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -443,6 +444,124 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
               VALUES ('BL8','D','x@y.z','2026-09-07T14:00:00.000Z')`).run();
   eq((await call('/?action=bin-dump-list&store=BL8', { user: 'u-su', env })).status, 200,
      'a closed store can still be READ — closing it must not hide correct history');
+}
+
+// ── 18. The tag viewer: the zoom maths, and the wiring that reaches it ─────
+// The viewer exists so somebody can tell a 3 from an 8. Everything that can make
+// it useless — a picture that slides out from under a pinch, pan bounds that run
+// away, a panel that will not hide — is decided by the two pure functions and the
+// handful of structural facts asserted here.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+
+  // Slice to REAL boundaries, never a character count: a comment added inside the
+  // core would silently shift a fixed-length slice off the end of the function.
+  const from = html.indexOf('const BD_LB_MIN');
+  const to   = html.indexOf('// ── end pure core');
+  ok(from > 0 && to > from, 'the viewer’s pure core is still delimited in index.html');
+  const { bdLbClamp, bdLbZoomAt } =
+    new Function(html.slice(from, to) + '; return { bdLbClamp, bdLbZoomAt };')();
+
+  const near = (a, b, m, eps = 1e-9) => ok(Math.abs(a - b) < eps, `${m} (got ${a}, want ${b})`);
+  // Fit exactly: a 400×300 picture in a 400×300 stage has nothing to spare at 1×.
+  const G = { w: 400, h: 300, vw: 400, vh: 300 };
+  // Deliberately roomy, so clamping cannot mask a wrong anchor calculation.
+  const R = { w: 1000, h: 1000, vw: 200, vh: 200 };
+
+  // -- scale bounds --
+  eq(bdLbClamp({ s: 0.2, tx: 0, ty: 0 }, G).s, 1, 'cannot zoom out past fit');
+  eq(bdLbClamp({ s: 99,  tx: 0, ty: 0 }, G).s, 8, 'and not past 8×');
+  eq(bdLbZoomAt({ s: 1, tx: 0, ty: 0 }, G, 500, 0, 0).s, 8, 'zoomAt clamps too, not just clamp');
+
+  // -- pan bounds are the OVERHANG, so a fitted picture cannot be dragged at all --
+  let v = bdLbClamp({ s: 1, tx: 500, ty: -500 }, G);
+  eq(v.tx, 0, 'nothing overhangs at fit, so the picture stays centred horizontally');
+  eq(v.ty, 0, '…and vertically — it cannot be flung into a corner');
+
+  v = bdLbClamp({ s: 2, tx: 1e4, ty: 1e4 }, G);
+  eq(v.tx, 200, 'at 2× a 400-wide picture in a 400 stage overhangs 200 each side');
+  eq(v.ty, 150, '…and 150 top and bottom');
+  v = bdLbClamp({ s: 2, tx: -1e4, ty: -1e4 }, G);
+  eq(v.tx, -200, 'bounded the other way too');
+  eq(v.ty, -150, '…both axes');
+  v = bdLbClamp({ s: 2, tx: 50, ty: -20 }, G);
+  eq(v.tx, 50, 'a pan inside the bounds is left alone');
+  eq(v.ty, -20, '…on both axes');
+
+  // -- THE property: whatever is under the anchor stays under the anchor --
+  // Image-space position of the point currently under anchor a: p = (a − t)/s.
+  const under = (view, ax, ay) => ({ x: (ax - view.tx) / view.s, y: (ay - view.ty) / view.s });
+  {
+    const before = { s: 2, tx: 0, ty: 0 };
+    const [ax, ay] = [50, -30];
+    const p0 = under(before, ax, ay);
+    const after = bdLbZoomAt(before, R, 3, ax, ay);
+    const p1 = under(after, ax, ay);
+    near(p1.x, p0.x, '🔑 the point under a pinch does not move horizontally as it scales');
+    near(p1.y, p0.y, '🔑 …nor vertically. This is what stops the tag sliding away');
+  }
+  {
+    // Off-centre start, anchored on the stage centre — the button-zoom case.
+    const before = { s: 2, tx: 100, ty: -40 };
+    const p0 = under(before, 0, 0);
+    const after = bdLbZoomAt(before, R, 4, 0, 0);
+    near(under(after, 0, 0).x, p0.x, 'the + button keeps the middle of the screen still');
+    near(under(after, 0, 0).y, p0.y, '…on both axes, even from an off-centre pan');
+  }
+  {
+    // In and back out about the same anchor must land exactly where it started,
+    // or repeated pinching walks the picture across the screen.
+    const start = { s: 2, tx: 0, ty: 0 };
+    const [ax, ay] = [50, -30];
+    const back = bdLbZoomAt(bdLbZoomAt(start, R, 4, ax, ay), R, 2, ax, ay);
+    near(back.tx, 0, 'zoom in then out about one point round-trips exactly');
+    near(back.ty, 0, '…on both axes');
+  }
+
+  // Returning to fit re-centres, whatever the pan was.
+  v = bdLbZoomAt({ s: 4, tx: 300, ty: 200 }, G, 1, 0, 0);
+  eq(v.s, 1, 'zooming back out reaches fit');
+  eq(v.tx, 0, '…and re-centres, because at fit there is no overhang to keep');
+  eq(v.ty, 0, '…on both axes');
+
+  // A picture that has not decoded yet is 0×0. That must produce a centred view,
+  // not NaN — NaN in a transform silently blanks the element.
+  v = bdLbClamp({ s: 1, tx: 10, ty: 10 }, { w: 0, h: 0, vw: 300, vh: 300 });
+  ok(Number.isFinite(v.tx) && Number.isFinite(v.ty) && Number.isFinite(v.s),
+     'a not-yet-decoded (0×0) image still yields finite numbers, never NaN');
+  eq(v.tx, 0, '…and is treated as centred');
+
+  // -- the wiring, asserted structurally --
+  ok(/#page-bin-dump \[hidden\]\{display:none !important\}/.test(html),
+     '🔑 the [hidden] override still exists — .bd-lb sets display:flex and relies on it');
+  ok(/\.bd-lb\{[^}]*display:flex/.test(html), '.bd-lb is a flex column when shown');
+  ok(/<div id="bd-lb"[^>]*\shidden\b/.test(html),
+     'the viewer hides via the ATTRIBUTE, so the override above actually applies');
+  ok(!/<div id="bd-lb"[^>]*style="display:none/.test(html),
+     '…and not via an inline style, which that override could not beat');
+
+  const zi = html.match(/\.bd-lb\{[^}]*z-index:(\d+)/);
+  ok(zi && Number(zi[1]) > 50, 'the viewer sits above #bd-modal (z-50)');
+  ok(zi && Number(zi[1]) < 80, '…and below the uiConfirm overlays (z-80), so a delete confirm wins');
+
+  ok(/id="bd-m-photo"[\s\S]{0,240}onclick="bdLbOpen\(\)"/.test(html),
+     'the thumbnail opens the viewer');
+  ok(/id="bd-m-photo"[\s\S]{0,240}role="button"/.test(html) &&
+     /id="bd-m-photo"[\s\S]{0,240}tabindex="0"/.test(html),
+     '…and is reachable and announced as a control, not a decorative image');
+  ok(/id="bd-m-photo"[\s\S]{0,320}onkeydown="[^"]*bdLbOpen\(\)/.test(html),
+     '…and opens from the keyboard, since a tabbable thing that only takes a mouse is a trap');
+
+  ok(/function bdCloseModal\(\) \{ bdLbClose\(\);/.test(html),
+     'closing the edit modal also closes the viewer — no orphaned overlay over a dead modal');
+
+  const geo = html.slice(html.indexOf('function bdLbGeo'), html.indexOf('function bdLbApply'));
+  ok(/offsetWidth/.test(geo) && !/getBoundingClientRect/.test(geo),
+     '🛑 geometry is measured with offsetWidth; the rect of a scaled node is the SCALED box '
+     + 'and would multiply the scale into the pan bounds on every gesture');
+
+  ok(/const lb = el\('bd-lb'\);\s*\n\s*if \(!lb \|\| lb\.hidden\) return;/.test(html),
+     'the Escape handler is guarded on the viewer being open, so it cannot swallow the key');
 }
 
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".
