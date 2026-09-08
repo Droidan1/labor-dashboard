@@ -303,18 +303,57 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
       body: { id: 99999, ...TAG }, env })).status, 404, 'a missing row is a 404');
 }
 
-// ── 16. Deleting is admin-only, and takes the photo with it ────────────────
+// ── 16. Deleting: a manager may, but only at a store they hold ─────────────
 {
   const { env, db } = env0();
-  const j = await json(await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
-    body: { store: 'BL1', ...TAG, ...IMG }, env }));
-  const key = db.prepare('SELECT r2_key FROM bin_dumps WHERE id = ?').get(j.id).r2_key;
-  eq((await call('/?action=bin-dump-delete', { user: 'u-mgr1', method: 'POST', body: { id: j.id }, env })).status, 403,
-     'a manager cannot delete');
-  eq((await call('/?action=bin-dump-delete', { user: 'u-su', method: 'POST', body: { id: j.id }, env })).status, 200,
-     'a superuser can');
-  eq(db.prepare('SELECT COUNT(*) c FROM bin_dumps WHERE id = ?').get(j.id).c, 0, 'the row is gone');
-  ok(!env.MEDIA._store.has(key), 'and its tag photo with it — no orphan left behind');
+  const mk = async (user, store) => (await json(await call('/?action=bin-dump-log',
+    { user, method: 'POST', body: { store, ...TAG, ...IMG }, env }))).id;
+  const keyOf = id => db.prepare('SELECT r2_key FROM bin_dumps WHERE id = ?').get(id).r2_key;
+
+  // A manager deletes their own store's pallet — the case this exists for.
+  const own = await mk('u-mgr1', 'BL1');
+  const ownKey = keyOf(own);
+  eq((await call('/?action=bin-dump-delete', { user: 'u-mgr1', method: 'POST', body: { id: own }, env })).status, 200,
+     'a manager may delete a pallet at a store they hold');
+  eq(db.prepare('SELECT COUNT(*) c FROM bin_dumps WHERE id = ?').get(own).c, 0, 'the row is gone');
+  ok(!env.MEDIA._store.has(ownKey), 'and its tag photo with it — no orphan left behind');
+
+  // 🛑 THE ONE THAT MATTERS. Delete is addressed by id, so without the row's own
+  // store deciding, any manager could destroy any store's pallet by guessing a
+  // number. This assertion is the guard; it fails the moment the check is dropped.
+  const other = await mk('u-mgr2', 'BL4');
+  const otherKey = keyOf(other);
+  const r = await call('/?action=bin-dump-delete', { user: 'u-mgr1', method: 'POST', body: { id: other }, env });
+  eq(r.status, 403, "🛑 a manager cannot delete another store's pallet by id");
+  eq((await json(r)).code, 'NO_STORE_ACCESS', 'and is told it is the store, not the role');
+  eq(db.prepare('SELECT COUNT(*) c FROM bin_dumps WHERE id = ?').get(other).c, 1, 'the row survives the refusal');
+  ok(env.MEDIA._store.has(otherKey), '🛑 and so does its photo — a refused delete destroys nothing');
+
+  // 🛑 ...AND A SPOOFED STORE DOES NOT HELP. Without this, a guard written as
+  // `body?.store || row.store` passes every other assertion here, because none of
+  // them ever sends a store. The caller does not get to nominate the store.
+  const spoof = await call('/?action=bin-dump-delete', { user: 'u-mgr1', method: 'POST',
+    body: { id: other, store: 'BL1' }, env });
+  eq(spoof.status, 403, "🛑 naming a store you DO hold does not delete another store's row");
+  eq(db.prepare('SELECT COUNT(*) c FROM bin_dumps WHERE id = ?').get(other).c, 1, 'and the row still survives');
+
+  // Staff are out on the ROLE, so the row has to be one they could otherwise reach —
+  // refusing them a BL4 row would prove only that the store guard works. (The global
+  // financial gate is the primary boundary here; the handler's own check backs it up.)
+  const staffReach = await mk('u-mgr1', 'BL1');
+  eq((await call('/?action=bin-dump-delete', { user: 'u-staff', method: 'POST', body: { id: staffReach }, env })).status, 403,
+     'staff cannot delete even in their own store — it is the role, not the store');
+  eq(db.prepare('SELECT COUNT(*) c FROM bin_dumps WHERE id = ?').get(staffReach).c, 1, 'that row survives too');
+
+  // An admin still reaches every store.
+
+  eq((await call('/?action=bin-dump-delete', { user: 'u-su', method: 'POST', body: { id: other }, env })).status, 200,
+     'a superuser reaches any store');
+
+  eq((await call('/?action=bin-dump-delete', { user: 'u-su', method: 'POST', body: { id: 99999 }, env })).status, 404,
+     'a missing row is a 404');
+  eq((await call('/?action=bin-dump-delete', { user: 'u-su', method: 'POST', body: { id: 'x' }, env })).status, 400,
+     'a non-numeric id is refused at validation');
 }
 
 // ── 17. The log: scoping and week grouping ─────────────────────────────────
