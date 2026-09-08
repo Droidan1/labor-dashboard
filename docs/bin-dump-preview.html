@@ -500,9 +500,11 @@ tr.edited .stick{background:var(--amberWash);}
   <div class="sect">
     <div class="sect-h"><span class="sect-n">2</span><span class="sect-t">What gets read off the tag</span></div>
     <p class="sect-d">
-      Seven fields, in the order you listed them. The mock tag below is my guess at the layout —
-      <b>please correct it</b>, because the extraction prompt is written against the real tag's
-      wording and position, not against a generic "read this label".
+      Redrawn from the real tag. <b>The layout has a trap in it:</b> every value is right-aligned
+      and printed one line <i>above</i> its own label, so a label and its value pair up
+      <b>diagonally</b>, not across. The dotted lines show it. A prompt told to "read what is to the
+      right of <code>PO:</code>" finds nothing on that line and shifts every field by one — which is
+      why this is worth drawing rather than describing.
     </p>
     <div class="stage" style="align-items:flex-start">
       <div style="flex:0 0 300px"><div id="tag-annotated"></div></div>
@@ -515,8 +517,15 @@ tr.edited .stick{background:var(--amberWash);}
               <tbody id="fieldmap"></tbody>
             </table>
           </div>
-          <div class="panel-legend">
-            <span>Every field is editable before submit. Nothing is stored until you press Submit.</span>
+          <div class="panel-legend" style="display:block;line-height:1.65">
+            <div><b>The barcode is not the item number</b> — it is
+            <code>PRM</code> + the truck # + this pallet's index
+            (<code>PRM-10490-30</code>, and the footer reads "Pallet 30 of 30").
+            That gives two free cross-checks: the truck # read off the tag should match the
+            middle of the barcode, and a mismatch is worth flagging rather than silently
+            accepting.</div>
+            <div style="margin-top:7px">Every field stays editable before submit, and nothing is
+            stored until you press it.</div>
           </div>
         </div>
       </div>
@@ -525,17 +534,20 @@ tr.edited .stick{background:var(--amberWash);}
 
   <!-- ══════════════ 3. QUESTIONS ══════════════ -->
   <div class="sect">
-    <div class="sect-h"><span class="sect-n">3</span><span class="sect-t">Questions before I build it</span></div>
+    <div class="sect-h"><span class="sect-n">3</span><span class="sect-t">Decided</span></div>
+    <p class="sect-d">Settled, and the build follows these.</p>
+    <div class="qa" id="decided" style="margin-bottom:26px"></div>
+
+    <div class="sect-h"><span class="sect-n">4</span><span class="sect-t">Still open</span></div>
     <p class="sect-d">
-      Each one changes the build. Where I have a recommendation I've said so — if you agree with
-      all of them, "go with your defaults" is a complete answer.
+      What the real tag raised. The defaults below apply unless you say otherwise.
     </p>
     <div class="qa" id="qa"></div>
   </div>
 
   <!-- ══════════════ 4. HOW IT'S BUILT ══════════════ -->
   <div class="sect">
-    <div class="sect-h"><span class="sect-n">4</span><span class="sect-t">How it would be built</span></div>
+    <div class="sect-h"><span class="sect-n">5</span><span class="sect-t">How it would be built</span></div>
     <p class="sect-d">
       For the record, so the review covers the plumbing and not just the pixels.
     </p>
@@ -574,66 +586,98 @@ wWide.onclick  = () => setWide(true);
 
 /* ── The mock pallet tag, as SVG ─────────────────────────────────────── */
 function tagSVG(opts){
-  const o = Object.assign({w:300, rough:false, annotate:false}, opts);
-  const bars = (() => {              /* a plausible Code-128 look */
-    let x = 26, out = '', seed = 7;
-    while (x < 274){
+  const o = Object.assign({rough:false, annotate:false}, opts);
+  const W = o.annotate ? 348 : 300;
+  const bars = (seed0, x0, x1, y, h) => {   /* a plausible Code-128 look */
+    let x = x0, out = '', seed = seed0;
+    while (x < x1){
       seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      const w = 1 + (seed >> 16) % 4;
-      if ((seed >> 8) % 3) out += `<rect x="${x}" y="18" width="${w}" height="42" fill="#111"/>`;
-      x += w + 1 + ((seed >> 12) % 3);
+      const w = 1 + (seed >> 16) % 3;
+      if ((seed >> 8) % 3) out += `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#111"/>`;
+      x += w + 1 + ((seed >> 12) % 2);
     }
     return out;
-  })();
-  const A = (y, label) => o.annotate
-    ? `<g><line x1="240" y1="${y}" x2="278" y2="${y}" stroke="#22c55e" stroke-width="1.4"/>
-         <circle cx="278" cy="${y}" r="9" fill="#22c55e"/>
-         <text x="278" y="${y+3.4}" font-family="Geist,sans-serif" font-size="10"
-               font-weight="700" fill="#06210f" text-anchor="middle">${label}</text></g>`
-    : '';
+  };
+  /* Label on the left, value RIGHT-aligned one line ABOVE it — the pairing
+     runs diagonally. Each row is [labelY, valueY, label, value]. */
+  const L = (y, t, extra='') =>
+    `<text x="22" y="${y}" font-family="Geist,Arial,sans-serif" font-size="13.5"
+           font-weight="700" fill="#111" ${extra}>${t}</text>`;
+  const V = (y, t, size=15, weight=400, fill='#111') =>
+    `<text x="278" y="${y}" font-family="Geist,Arial,sans-serif" font-size="${size}"
+           font-weight="${weight}" fill="${fill}" text-anchor="end">${t}</text>`;
+  /* The callout links the LABEL to its value, because that diagonal is the
+     whole point — a horizontal read shifts every field by one. */
+  const A = (ly, vy, n) => o.annotate
+    ? `<path d="M96 ${ly-4} L300 ${vy-4}" stroke="#22c55e" stroke-width="1.1"
+             stroke-dasharray="2.5 2.5" fill="none" opacity=".85"/>
+       <circle cx="322" cy="${vy-4}" r="9.5" fill="#22c55e"/>
+       <text x="322" y="${vy-0.5}" font-family="Geist,Arial,sans-serif" font-size="10.5"
+             font-weight="700" fill="#06210f" text-anchor="middle">${n}</text>` : '';
+
+  const poVal = V(203, '5036');
   const glare = o.rough
-    ? `<rect x="16" y="150" width="180" height="26" fill="#ffffff" opacity="0.82"/>
-       <rect x="16" y="150" width="180" height="26" fill="#e9edf2" opacity="0.5"/>` : '';
+    ? `<rect x="150" y="188" width="132" height="22" fill="#fff" opacity=".8"/>
+       <rect x="150" y="188" width="132" height="22" fill="#e6eaf0" opacity=".55"/>` : '';
   const crease = o.rough
-    ? `<path d="M0 96 L300 118" stroke="#c9ced6" stroke-width="2.5" opacity=".85"/>` : '';
-  const truck = o.rough
-    ? `<text x="16" y="248" font-family="Geist,sans-serif" font-size="12" fill="#9aa3ae">Truck #:</text>`
-    : `<text x="16" y="248" font-family="Geist,sans-serif" font-size="12" fill="#333">Truck #:</text>
-       <text x="74" y="248" font-family="Geist,sans-serif" font-size="14" font-weight="700" fill="#111">88123</text>`;
+    ? `<path d="M0 262 L300 286" stroke="#c9ced6" stroke-width="2.5" opacity=".9"/>` : '';
+  const truckVal = o.rough ? '' : V(307, '10490');
+
   return `
-  <svg viewBox="0 0 ${o.annotate?300:300} 268" xmlns="http://www.w3.org/2000/svg"
+  <svg viewBox="0 0 ${W} 452" xmlns="http://www.w3.org/2000/svg"
        style="width:100%;height:auto;background:#fff;display:block">
-    <rect width="300" height="268" fill="#ffffff"/>
-    <rect x="6" y="6" width="288" height="256" fill="none" stroke="#d7dbe0" stroke-width="1.5"/>
-    ${bars}
-    <text x="150" y="74" font-family="Geist,sans-serif" font-size="13" font-weight="600"
-          fill="#111" text-anchor="middle" letter-spacing="2">100234998812</text>
-    ${A(40,'1')}
-    <line x1="16" y1="86" x2="284" y2="86" stroke="#e3e6ea" stroke-width="1"/>
+    <rect width="${W}" height="452" fill="#ffffff"/>
+    <rect x="7" y="7" width="286" height="438" rx="10" fill="none" stroke="#d7dbe0" stroke-width="1.4"/>
 
-    <text x="16" y="110" font-family="Geist,sans-serif" font-size="12" fill="#333">Item:</text>
-    <text x="62" y="111" font-family="Geist,sans-serif" font-size="17" font-weight="700" fill="#111">5478912</text>
-    ${A(106,'2')}
+    ${bars(7, 26, 274, 26, 74)}
+    <text x="150" y="129" font-family="Geist,Arial,sans-serif" font-size="15"
+          fill="#111" text-anchor="middle" letter-spacing=".6">PRM-10490-30</text>
+    ${o.annotate ? `<circle cx="322" cy="99" r="9.5" fill="#22c55e"/>
+       <text x="322" y="102.5" font-family="Geist,Arial,sans-serif" font-size="10.5"
+             font-weight="700" fill="#06210f" text-anchor="middle">1</text>
+       <path d="M215 126 L300 100" stroke="#22c55e" stroke-width="1.1"
+             stroke-dasharray="2.5 2.5" fill="none" opacity=".85"/>` : ''}
 
-    <text x="16" y="136" font-family="Geist,sans-serif" font-size="15" font-weight="700"
-          fill="#111" letter-spacing=".4">HARDLINES MIXED GM</text>
-    ${A(132,'3')}
+    ${V(136, '50201', 19, 700)}
+    ${L(160, 'Item:')}
+    ${A(160, 136, 2)}
 
-    <text x="16" y="168" font-family="Geist,sans-serif" font-size="12" fill="#333">PO:</text>
-    <text x="52" y="169" font-family="Geist,sans-serif" font-size="15" font-weight="700" fill="#111">4478821</text>
-    ${glare}
-    ${A(164,'4')}
+    <text x="22" y="184" font-family="Geist,Arial,sans-serif" font-size="14.5"
+          font-style="italic" fill="#111">PALLET AMAZON IND8</text>
+    ${o.annotate ? `<circle cx="322" cy="180" r="9.5" fill="#22c55e"/>
+       <text x="322" y="183.5" font-family="Geist,Arial,sans-serif" font-size="10.5"
+             font-weight="700" fill="#06210f" text-anchor="middle">3</text>
+       <path d="M170 180 L300 180" stroke="#22c55e" stroke-width="1.1"
+             stroke-dasharray="2.5 2.5" fill="none" opacity=".85"/>` : ''}
 
-    <text x="16" y="196" font-family="Geist,sans-serif" font-size="12" fill="#333"># of units:</text>
-    <text x="88" y="197" font-family="Geist,sans-serif" font-size="15" font-weight="700" fill="#111">240</text>
-    ${A(192,'5')}
+    ${poVal}${glare}
+    ${L(222, 'PO:')}
+    ${A(222, 203, 4)}
 
-    <text x="16" y="222" font-family="Geist,sans-serif" font-size="12" fill="#333">Created By:</text>
-    <text x="90" y="223" font-family="Geist,sans-serif" font-size="14" font-weight="700" fill="#111">J. SMITH</text>
-    ${A(218,'6')}
+    ${V(240, '1')}
+    ${L(258, '# of Units:')}
+    ${A(258, 240, 5)}
 
-    ${truck}
-    ${A(244,'7')}
+    ${V(276, 'Ranon Price', 14.5)}
+    ${L(294, 'Created By:')}
+    ${A(294, 276, 6)}
+
+    ${truckVal}
+    ${L(330, 'Truck #:')}
+    ${A(330, 307, 7)}
+
+    <text x="22" y="378" font-family="Geist,Arial,sans-serif" font-size="13"
+          font-weight="700" fill="#111">Initialed By:</text>
+    <line x1="112" y1="381" x2="276" y2="381" stroke="#111" stroke-width="1.2"/>
+
+    ${bars(31, 108, 192, 392, 20)}
+    <text x="150" y="422" font-family="Geist,Arial,sans-serif" font-size="8"
+          fill="#8b9099" text-anchor="middle" letter-spacing=".5">UNKNOWN</text>
+
+    <text x="22" y="440" font-family="Geist,Arial,sans-serif" font-size="12"
+          fill="#111">Pallet 30 of 30</text>
+    <text x="278" y="440" font-family="Geist,Arial,sans-serif" font-size="11.5"
+          font-style="italic" fill="#111" text-anchor="end">09/08/2026 10:22 AM</text>
     ${crease}
   </svg>`;
 }
@@ -645,13 +689,13 @@ function paintTags(){
 
 /* ── Field definitions ───────────────────────────────────────────────── */
 const FIELDS = [
-  {k:'barcode',  label:'Barcode',    from:'The digits printed under the bar pattern',      type:'text, digits'},
-  {k:'item',     label:'Item #',     from:'Right of the label <b>Item:</b>',               type:'text'},
-  {k:'pallet',   label:'Pallet name',from:'The line directly under <b>Item:</b>',          type:'text'},
-  {k:'po',       label:'PO',         from:'Right of <b>PO:</b>',                           type:'text'},
-  {k:'units',    label:'# of units', from:'Right of <b># of units</b>',                    type:'whole number'},
-  {k:'createdBy',label:'Created by', from:'Right of <b>Created By:</b>',                   type:'text'},
-  {k:'truck',    label:'Truck #',    from:'Right of <b>Truck #</b>',                       type:'text'},
+  {k:'barcode',  label:'Barcode',    from:'The text under the big barcode',                type:'text'},
+  {k:'item',     label:'Item #',     from:'Bold, top right &mdash; pairs with <b>Item:</b>', type:'text'},
+  {k:'pallet',   label:'Pallet name',from:'The italic line under <b>Item:</b>',            type:'text'},
+  {k:'po',       label:'PO',         from:'Right-aligned, one line above <b>PO:</b>',      type:'text'},
+  {k:'units',    label:'# of units', from:'Right-aligned, above <b># of Units:</b>',       type:'whole number'},
+  {k:'createdBy',label:'Created by', from:'Right-aligned, above <b>Created By:</b>',       type:'text'},
+  {k:'truck',    label:'Truck #',    from:'Right-aligned, above <b>Truck #:</b>',          type:'text'},
 ];
 document.getElementById('fieldmap').innerHTML = FIELDS.map((f,i) =>
   `<tr><td class="stick"><b>${i+1}. ${f.label}</b></td><td class="dim">${f.from}</td><td class="dim">${f.type}</td></tr>`
@@ -662,17 +706,17 @@ const SAMPLES = {
   clean: {
     photo: () => tagSVG({}),
     read: 7, of: 7,
-    sub: 'Every field came through. Give it a glance and submit.',
-    v: {barcode:'100234998812', item:'5478912', pallet:'HARDLINES MIXED GM',
-        po:'4478821', units:'240', createdBy:'J. SMITH', truck:'88123'},
+    sub: 'Every field came through, and the truck # agrees with the barcode.',
+    v: {barcode:'PRM-10490-30', item:'50201', pallet:'PALLET AMAZON IND8',
+        po:'5036', units:'1', createdBy:'Ranon Price', truck:'10490'},
     state: {},
   },
   rough: {
     photo: () => tagSVG({rough:true}),
     read: 5, of: 7,
-    sub: 'Two fields need you. The PO is under glare and no truck number is printed.',
-    v: {barcode:'100234998812', item:'5478912', pallet:'HARDLINES MIXED GM',
-        po:'4478B21', units:'240', createdBy:'J. SMITH', truck:''},
+    sub: 'Two fields need you &mdash; the PO is under glare and the truck # did not print.',
+    v: {barcode:'PRM-10490-30', item:'50201', pallet:'PALLET AMAZON IND8',
+        po:'5O36', units:'1', createdBy:'Ranon Price', truck:''},
     state: {po:'warn', truck:'miss'},
   },
 };
@@ -691,22 +735,25 @@ function fmtWeek(sun){
 function fmtTime(d){ return d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); }
 function fmtDay(d){ return d.toLocaleDateString('en-US',{weekday:'short'}); }
 
-const NAMES = ['HARDLINES MIXED GM','SEASONAL DECOR','APPAREL MIXED','HOME TEXTILES',
-               'TOYS ASSORTED','PET SUPPLIES','KITCHEN ELECTRICS','FOOTWEAR MIXED'];
-const PEOPLE = ['J. SMITH','R. ORTIZ','D. NGUYEN','M. HALE'];
+const NAMES = ['PALLET AMAZON IND8','PALLET AMAZON IND9','PALLET TARGET RTV',
+               'PALLET AMAZON MIXED','PALLET WALMART GM','PALLET AMAZON APPAREL',
+               'PALLET HOME MIXED','PALLET AMAZON IND8'];
+const PEOPLE = ['Ranon Price','J. Alvarez','D. Nguyen','M. Hale'];
 let seq = 5100000, uid = 1;
 function mkEntry(when, i){
   seq += 1237;
+  // The barcode is PRM + truck # + pallet index, exactly as on the real tag.
+  const truck = String(10400 + (i*13) % 90);
   return {
     id: uid++,
     at: when,
-    barcode: String(100234000000 + seq * 7),
-    item: String(seq),
+    barcode: `PRM-${truck}-${1 + (i % 30)}`,
+    item: String(50100 + (seq % 400)),
     pallet: NAMES[(i*3+2) % NAMES.length],
-    po: String(4470000 + seq % 9000),
-    units: 120 + ((i*37) % 260),
+    po: String(5000 + (seq % 90)),
+    units: 1 + ((i*7) % 4),
     createdBy: PEOPLE[i % PEOPLE.length],
-    truck: String(88000 + (i*211) % 900),
+    truck,
     edited: false,
   };
 }
@@ -897,7 +944,8 @@ document.getElementById('m-submit').onclick = () => {
       {units: Number(v.units) || 0, at: new Date(), edited: false, id: uid++}));
     LOG.sort((a,b) => b.at - a.at);
     openWeeks.add(weekKey(new Date()));
-    toast(`Pallet logged · ${v.pallet || 'unnamed'} · ${Number(v.units)||0} units`);
+    const n = Number(v.units) || 0;
+    toast(`Pallet logged · ${v.pallet || 'unnamed'} · ${n} unit${n === 1 ? '' : 's'}`);
   }
   closeModal();
   renderLog();
@@ -916,29 +964,31 @@ document.getElementById('btn-csv').onclick = () => toast('CSV export — one row
 document.getElementById('reset').onclick = () => location.reload();
 
 /* ── Questions + build notes ─────────────────────────────────────────── */
+const DECIDED = [
+  ['Its own page, open to managers',
+   'Not a card buried on Inventory. Its own sidebar entry and mobile row, reachable by managers and district managers as well as admins — Inventory itself stays admin-only, so a card there could not be used by the people actually dumping pallets. Price Scan is already gated exactly this way, so the pattern exists.'],
+  ['The current design language',
+   'What you are looking at — the tokens eBay, Marketing and Merchandising use, and what DESIGN.md &sect;4.8 prescribes for a dense table. The Inventory page is still on the older chrome, but it is on the list to be converted, and matching a look on its way out means building this twice.'],
+  ['The tag photo is kept',
+   'Stored in the existing media bucket, openable from its log row. It is the only way to settle a disputed count months later, or to tell a misread from a mistyped correction.'],
+  ['Edit in place, marked as edited',
+   'A corrected row keeps its original timestamp and shows the amber state you see in the log. Delete stays admin-only.'],
+];
+document.getElementById('decided').innerHTML = DECIDED.map(([q,a]) =>
+  `<div class="qa-row"><span class="qa-n" style="background:var(--greenWash);border-color:var(--greenEdge);color:var(--accent)">&check;</span>
+   <span><span class="qa-q">${q}</span><span class="qa-a">${a}</span></span></div>`).join('');
+
 const QUESTIONS = [
-  ['Which chrome should it wear?',
-   'This preview is drawn in the app\'s <b>current</b> design language (the "V1 Operator" tokens the eBay, Marketing and Merchandising pages use). But the <b>Inventory page has not been converted yet</b> — its cards are still the older <code>bg-white / dark:bg-gray-800 / rounded-xl</code> chrome. So a Bin Dump card dropped onto Inventory today would not match its neighbours. <b>My recommendation: build it in the new language anyway</b> (what you see here) — DESIGN.md already lists Inventory as pending conversion, and matching a look that is on its way out means rebuilding it twice. Say the word if you would rather it blend in with the page as it stands.'],
-  ['A card on the Inventory page, or its own page?',
-   'It matters more than it sounds. <b>A card on Inventory</b> is the smallest change — no nav, no routing, no permission work. But Inventory is currently <b>admin / superuser only</b>, and it is also the flag the mobile bottom bar reads to decide whether to show the admin layout. <b>Its own page</b> costs a sidebar item, a mobile row and a permission gate, but it can be opened to whoever actually dumps bins. <b>My recommendation: its own page</b>, reachable from Inventory too. Which, and <b>who should be able to see it?</b>'],
-  ['One store, or all of them?',
-   'Everything else in the app is scoped by store, and the API refuses a store you are not assigned to. I would stamp each entry with the store you are on and show that store\'s log, with an <b>All stores</b> view for you and other admins. Right — or is a pallet storeless?'],
-  ['Is the barcode the same number as the Item #?',
-   'On my mock they differ (<code>100234998812</code> vs <code>5478912</code>). If the barcode <i>encodes</i> the item number, I can cross-check them and flag a mismatch — a real guard against a misread digit, and the app already does exactly this trick when reading a price-scan barcode. If they are unrelated, I just read both.'],
-  ['What happens right after Submit?',
-   'My default: the confirmation appears and the page drops <b>straight back to Begin</b>, so the next pallet is one tap away — a truck is many pallets in a row, not one. The alternative is landing on the log row you just made. Which?'],
-  ['Do you want the tag photo kept?',
-   'Default <b>yes</b> — the photo goes to R2 (the same bucket the marketing photos use) and a log row can open its tag, so a disputed unit count can be checked against the tag months later. It is the only way to audit a bad read. Say if you would rather it be discarded once the fields are extracted.'],
-  ['Duplicate pallets — warn, block, or allow?',
-   'The same tag photographed twice (two people, or a re-scan after a stumble) would silently become two pallets and double the unit count. My default is a <b>soft warning in the verify popup</b> — "this PO was logged 20 minutes ago, log it anyway?" — never a hard block, because a genuinely repeated PO does happen.'],
-  ['Who can edit a logged pallet, and can anything be deleted?',
-   'Default: <b>anyone who can see the page can edit</b>, every edit is marked in the log (the amber row) and keeps its original timestamp, and <b>delete is admin-only</b>. Do you want a <b>void</b> state instead of a hard delete, so a mistake stays visible rather than vanishing?'],
-  ['Weeks run Sunday → Saturday?',
-   'That matches <code>autoWeekOf()</code>, the helper the marketing auto-draft already groups by, and it is deliberately derived from the date rather than from the Flow Calendar — whose weeks run out on 2026-12-26. Confirm, or say if bins follow a different week.'],
-  ['What should a bad photo do?',
-   'If Claude reads nothing usable I show the popup <b>empty and editable</b> with a plain "couldn\'t read the tag" line, rather than failing outright — so a torn or faded tag can still be keyed by hand, and Retake is right there. Reasonable?'],
-  ['Is my mock tag right, and is anything missing?',
-   'Section 2 above is my guess at the layout. <b>A photo of a real tag would materially improve the extraction</b> — the prompt is written against the tag\'s exact wording and where each label sits. Tags often also carry a date, a destination store, a department or a weight; if any of those matter, adding them now is nearly free and adding them later is a migration.'],
+  ['Your example reads <b># of Units: 1</b> — is that usual?',
+   'If most pallets are one unit, then a "units" total is just the pallet count wearing a different hat, and the second tile on this page is dead weight. <b>Something like "trucks represented this week" would earn its place instead</b> — and the barcode already carries the truck number, so it costs nothing to compute. If units genuinely varies (some pallets 200, some 1), the tile stays as it is. Which is it?'],
+  ['Should a truck # that disagrees with the barcode be flagged?',
+   'On your tag the barcode is <code>PRM-10490-30</code> and the truck # is <code>10490</code>. If that holds generally, a disagreement means one of the two was misread and the popup should say so — free accuracy on the field most likely to be fat-fingered. <b>My default is a soft flag, never a block.</b> Tell me if the pattern does not always hold and I will drop it.'],
+  ['Is "Pallet 30 of 30" worth capturing after all?',
+   'You said the seven fields are all you need, so this is not in the build. But it is printed on every tag, it is already inside the barcode, and it would let the page tell you <b>"you have logged 29 of 30 pallets off truck 10490"</b> — which is the question a receiving log usually gets asked. Nearly free now; a migration later. Say the word either way.'],
+  ['Weeks run Sunday to Saturday',
+   'Matching the helper the marketing side already groups by, and derived from the date rather than the Flow Calendar — whose weeks stop on 2026-12-26. Speak up if bins run on a different week.'],
+  ['The remaining defaults',
+   'After Submit you land back on <b>Begin</b>, so the next pallet is one tap away. A PO logged in the last little while gets a <b>soft duplicate warning</b>, never a block. An unreadable photo opens the popup <b>empty and editable</b> rather than failing, so a torn tag can still be keyed by hand.'],
 ];
 document.getElementById('qa').innerHTML = QUESTIONS.map(([q,a],i) =>
   `<div class="qa-row"><span class="qa-n">${i+1}</span>
