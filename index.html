@@ -1723,6 +1723,41 @@
            headings and is theirs to fix, not this page's to inherit. */
         .bd-h1{color:#166534}
         .dark .bd-h1{color:#22c55e}
+        /* Tabs. Live in the sticky header so switching back from a long log
+           does not mean scrolling to the top. The negative bottom margin pulls
+           the rail flush with the header's own border, so the active tab's 2px
+           underline sits on that hairline instead of beside a second one.
+           Colours measured on the header's panel ground: #166534 is 7.13:1 on
+           white and #22c55e is 7.81:1 on op-panel — the accent green is NOT
+           reused as light-mode text, where it is 2.28:1. */
+        .bd-tabs{display:flex;gap:2px;margin:12px 0 -16px}
+        .bd-tab{background:transparent;border:0;border-bottom:2px solid transparent;
+          font:inherit;font-size:14px;font-weight:600;padding:9px 14px;cursor:pointer;
+          color:#6b6453;transition:color .15s,border-color .15s}
+        .dark .bd-tab{color:#8893a7}
+        .bd-tab:hover{color:#14110a}
+        .dark .bd-tab:hover{color:#e7ecf3}
+        .bd-tab[aria-selected="true"]{color:#166534;border-bottom-color:#166534}
+        .dark .bd-tab[aria-selected="true"]{color:#22c55e;border-bottom-color:#22c55e}
+        .bd-tab:focus-visible{outline:2px solid #166534;outline-offset:-3px;border-radius:4px}
+        .dark .bd-tab:focus-visible{outline-color:#22c55e}
+        .bd-tab-n{font-size:11px;font-weight:700;padding:1px 6px;border-radius:999px;
+          margin-left:6px;background:rgba(20,16,8,.07);color:#6b6453}
+        /* .09 measured 4.48:1 — the badge's own wash lightens the panel just
+           enough to break inkDim. .05 puts it at 5.06:1 and still reads as a chip. */
+        .dark .bd-tab-n{background:rgba(255,255,255,.05);color:#8893a7}
+        .bd-tab[aria-selected="true"] .bd-tab-n{background:rgba(34,197,94,.14);color:#166534}
+        .dark .bd-tab[aria-selected="true"] .bd-tab-n{background:rgba(34,197,94,.16);color:#22c55e}
+
+        /* 🛑 `hidden` LOSES TO AN AUTHOR `display`. The UA sheet's [hidden]{display:none}
+           is beaten by any author rule that sets display, so .bd-status{display:flex}
+           rendered an empty green pill under Begin from first paint — visible in every
+           screenshot taken AFTER an action had filled it, and in none taken before.
+           .bd-m-warn and .bd-m-shot carry the same fault and are toggled the same way.
+           Fixed once for the whole page rather than per element, so the next flex thing
+           that takes a `hidden` attribute cannot reintroduce it. */
+        #page-bin-dump [hidden]{display:none !important}
+
         .bd-panel{
           background:#ffffff;                      /* opl-panel */
           border:1px solid rgba(20,16,8,.10);      /* hairline */
@@ -1747,6 +1782,15 @@
         .bd-sw{width:22px;height:13px;border-radius:4px;border:1px solid rgba(20,16,8,.18);
           display:inline-block;vertical-align:-2px;margin-right:6px}
         .dark .bd-sw{border-color:rgba(255,255,255,.16)}
+        /* 🛑 Each swatch states BOTH themes and matches the value the table really
+           paints. These were inline styles, which cannot carry a `.dark` variant —
+           so "as first logged" rendered as a white block on the dark panel. */
+        .bd-sw-now{background:rgba(34,197,94,.10);border-color:rgba(22,101,52,.28)}
+        .dark .bd-sw-now{background:rgba(34,197,94,.10);border-color:rgba(34,197,94,.28)}
+        .bd-sw-edit{background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45)}
+        .dark .bd-sw-edit{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.45)}
+        .bd-sw-plain{background:#ffffff}
+        .dark .bd-sw-plain{background:#101826}
 
         /* Capture */
         .bd-cap{padding:28px 20px 24px;text-align:center}
@@ -1898,9 +1942,18 @@
           </div>
           <select id="bd-store" onchange="bdStoreChange()" class="rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-sm px-3 py-2"></select>
         </div>
+        <div class="max-w-7xl mx-auto">
+          <nav class="bd-tabs" role="tablist" aria-label="Bin Dump sections">
+            <button type="button" id="bd-tab-scan" class="bd-tab" role="tab" aria-selected="true"
+                    aria-controls="bd-pane-scan" onclick="bdSetTab('scan')">Scan</button>
+            <button type="button" id="bd-tab-log" class="bd-tab" role="tab" aria-selected="false"
+                    aria-controls="bd-pane-log" onclick="bdSetTab('log')">Log<span class="bd-tab-n" id="bd-tab-log-n">—</span></button>
+          </nav>
+        </div>
       </div>
 
-      <div class="max-w-7xl mx-auto px-6 py-6 space-y-4">
+      <div class="max-w-7xl mx-auto px-6 py-6">
+       <div id="bd-pane-scan" role="tabpanel" aria-labelledby="bd-tab-scan" class="space-y-4">
         <div class="bd-panel">
           <div id="bd-begin" class="bd-cap">
             <div class="bd-glyph">
@@ -1930,7 +1983,9 @@
             <div class="bd-tile-s">on those pallets</div>
           </div>
         </div>
+       </div><!-- /#bd-pane-scan -->
 
+       <div id="bd-pane-log" role="tabpanel" aria-labelledby="bd-tab-log" hidden>
         <div class="bd-panel">
           <div class="bd-bar">
             <span class="bd-lbl">Bin Dump Log</span>
@@ -1946,11 +2001,12 @@
           <div class="bd-sub" id="bd-log-status">Loading…</div>
           <div id="bd-weeks" class="mt-2"></div>
           <div class="bd-legend">
-            <span><span class="bd-sw" style="background:rgba(34,197,94,.10);border-color:rgba(22,101,52,.28)"></span>Current week</span>
-            <span><span class="bd-sw" style="background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45)"></span>Edited after logging</span>
-            <span><span class="bd-sw" style="background:#fafaf6"></span>As first logged</span>
+            <span><span class="bd-sw bd-sw-now"></span>Current week</span>
+            <span><span class="bd-sw bd-sw-edit"></span>Edited after logging</span>
+            <span><span class="bd-sw bd-sw-plain"></span>As first logged</span>
           </div>
         </div>
+       </div><!-- /#bd-pane-log -->
       </div>
 
       <input id="bd-photo" type="file" accept="image/*" capture="environment" class="hidden" onchange="bdPhoto(this)">
@@ -21946,7 +22002,7 @@
     { k: 'truck_no',       label: 'Truck #' },
   ];
   const bdState = { rows: [], openWeeks: new Set(), seeded: false, photo: null,
-                    photoType: 'image/jpeg', editingId: null, busy: false };
+                    photoType: 'image/jpeg', editingId: null, busy: false, tab: 'scan' };
 
   function bdStores() {
     if (!currentUser) return [];
@@ -21983,6 +22039,20 @@
     el('bd-reading').hidden = which !== 'reading';
   }
 
+  // 🔑 Scan is the default and stays it. This surface exists to be filled in —
+  // a truck is many pallets in a row — so opening on the log would put a reading
+  // view in front of someone holding a phone at a pallet. The log is one tap away
+  // and carries its own count, so it does not need to be in the way to be seen.
+  function bdSetTab(tab) {
+    bdState.tab = (tab === 'log') ? 'log' : 'scan';
+    for (const t of ['scan', 'log']) {
+      const on = t === bdState.tab;
+      el('bd-tab-' + t).setAttribute('aria-selected', String(on));
+      el('bd-pane-' + t).hidden = !on;
+    }
+  }
+  window.bdSetTab = bdSetTab;
+
   function initBinDump() {
     const sel = el('bd-store');
     const stores = bdStores();
@@ -22000,6 +22070,7 @@
       return;
     }
     void isAdmin;
+    bdSetTab('scan');
     bdLoad();
   }
   window.initBinDump = initBinDump;
@@ -22204,6 +22275,7 @@
     } catch (e) {
       bdState.rows = [];
       el('bd-weeks').innerHTML = '';
+      el('bd-tab-log-n').textContent = '—';
       el('bd-log-status').textContent = `Couldn't load the log — ${(e && e.message) || e}`;
       el('bd-wk-pallets').textContent = '—';
       el('bd-wk-units').textContent = '—';
@@ -22249,6 +22321,7 @@
     el('bd-wk-pallets').textContent = cur.length;
     el('bd-wk-units').textContent = cur.reduce((s, r) => s + (Number(r.units) || 0), 0).toLocaleString();
 
+    el('bd-tab-log-n').textContent = bdState.rows.length;
     el('bd-log-status').textContent = keys.length
       ? `${bdState.rows.length} pallet${bdState.rows.length === 1 ? '' : 's'} across `
         + `${keys.length} week${keys.length === 1 ? '' : 's'}. Tap a week to open it; tap Edit on a row to correct it.`
