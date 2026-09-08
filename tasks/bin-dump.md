@@ -110,7 +110,7 @@ that must exist; the frontend calls actions an old worker would reject as
 `UNCLASSIFIED_ACTION`. And `CACHE_NAME` in `sw.js` bumps with the frontend or installed
 phones keep serving the old bundle.
 
-## Status — built 2026-09-08, NOT deployed
+## Status — SHIPPED 2026-09-08 (PR #192, main @ 53e385d)
 - [x] `migration-058.sql`
 - [x] `worker.js` — seven actions, `BIN_TAG_PROMPT`, `binDumpFields`, `binDumpWeekOf`,
       `binDumpTruckHint`, `binDumpStoreGuard`, all seven registered in `ACTION_BUSINESS`
@@ -119,6 +119,29 @@ phones keep serving the old bundle.
 - [x] `scripts/test-bin-dump.mjs` — **93 assertions**
 - [x] `sw.js` CACHE_NAME v168 → v169, and `scripts/fixtures/shell-cache.json` with it
 - [x] Full repo suite **3504 assertions / 58 suites**, green
+
+### Live, and exercised on a real tag
+
+Deployed in this order, all confirmed:
+1. `migration-058` on staging D1 (1.74 MB) and prod D1 (5.10 MB) — 3 queries each.
+2. Worker to prod, version `c8fce7f8`. Deploy output verified to still carry the `MEDIA`
+   binding, `BL16_MERCHANT_ID` and all **6** crons — the three things a past deploy
+   silently dropped. Rollout confirmed by polling `bin-dump-list` to three consecutive
+   passes, because a single hit mid-rollout proves nothing.
+3. PR #192 merged; Pages built `main`.
+
+✅ **The first live scan of a real pallet tag read all seven fields correctly.** That is
+the one thing the whole suite could not prove: every test before it ran against a fixture
+derived from a single photograph, so a green suite only ever showed the code was
+self-consistent about a layout nobody had checked against a camera.
+
+⚠️ **Still unmeasured: variance.** One tag, one angle, one set of lights. What is not yet
+known is how the read holds up on a creased or torn tag, under glare, at a slant, on a
+tag from a different vendor whose barcode is not `PRM-<truck>-<index>`, or on a pallet
+whose unit count runs to hundreds rather than one. The failure to watch for is not a
+blank — blanks are visible and get typed — but a value that is wrong and plausible.
+If one appears, the fix is `BIN_TAG_PROMPT` and a worker redeploy, not a rebuild.
+
 
 ## Review — what the build turned up
 
