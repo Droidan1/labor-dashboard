@@ -1815,6 +1815,10 @@
         .bd-ghost:hover:not(:disabled){background:#fafaf6}
         .dark .bd-ghost:hover:not(:disabled){background:#16203a}
         .bd-sm{padding:6px 11px;font-size:11.5px;border-radius:8px}
+        .bd-danger{background:transparent;border-color:rgba(192,57,43,.40);color:#c0392b}
+        .dark .bd-danger{border-color:rgba(239,68,68,.42);color:#f87171}
+        .bd-danger:hover:not(:disabled){background:rgba(192,57,43,.08)}
+        .dark .bd-danger:hover:not(:disabled){background:rgba(239,68,68,.12)}
 
         .bd-reading{padding:32px 20px;text-align:center}
         .bd-spin{width:34px;height:34px;margin:0 auto 13px;border-radius:50%;
@@ -2034,6 +2038,7 @@
           </div>
           <div class="bd-bar" style="border-bottom:0;border-top:1px solid rgba(20,16,8,.10);position:sticky;bottom:0">
             <button type="button" class="bd-btn bd-ghost bd-sm" id="bd-m-retake" onclick="bdBegin()">Retake</button>
+            <button type="button" class="bd-btn bd-danger bd-sm" id="bd-m-delete" onclick="bdDelete()" hidden>Delete</button>
             <span class="bd-bar-right">
               <button type="button" class="bd-btn bd-ghost bd-sm" onclick="bdCloseModal()">Cancel</button>
               <button type="button" class="bd-btn bd-primary bd-sm" id="bd-m-submit" onclick="bdSubmit()">Submit</button>
@@ -22004,6 +22009,15 @@
   const bdState = { rows: [], openWeeks: new Set(), seeded: false, photo: null,
                     photoType: 'image/jpeg', editingId: null, busy: false, tab: 'scan' };
 
+  // Mirrors requireInventoryAccess on the worker, which is the real gate. A manager
+  // corrects a row; removing one outright is an admin's call, because there is no undo
+  // — the row and its tag photo both go, and the photo is the only way to check a
+  // disputed count after the fact.
+  function bdCanDelete() {
+    const r = currentUser && currentUser.role;
+    return r === 'superuser' || r === 'admin';
+  }
+
   function bdStores() {
     if (!currentUser) return [];
     if (currentUser.role === 'superuser' || currentUser.role === 'admin') return BD_ALL_STORES;
@@ -22020,6 +22034,8 @@
       case 'UNCLASSIFIED_ACTION': return 'This dashboard is newer than the API — the worker half of the deploy is missing.';
       case 'NEED_MANAGER':        return 'Your account cannot log bin dumps. Ask an admin for manager access.';
       case 'NO_STORE_ACCESS':     return 'You are not assigned to that store.';
+      case 'NEED_ADMIN':          return 'Only an admin can delete a logged pallet. A manager can correct one instead.';
+      case 'NEED_SUPERUSER':      return 'Only a superuser can do that.';
       case 'NO_SESSION':          return 'Your session has expired — sign in again.';
     }
     return (j && j.error) || `HTTP ${r.status}`;
@@ -22143,6 +22159,7 @@
     el('bd-m-title').textContent = 'Verify pallet tag';
     el('bd-m-shot').hidden = false;
     el('bd-m-retake').hidden = false;
+    el('bd-m-delete').hidden = true;   // nothing is logged yet — Cancel is the way out
     el('bd-m-submit').textContent = 'Submit';
     el('bd-m-photo').src = bdState.photo ? `data:${bdState.photoType};base64,${bdState.photo}` : '';
     el('bd-m-read').textContent = problem ? "Couldn't read the tag" : `Read ${j.read} of ${j.of} fields`;
@@ -22165,6 +22182,7 @@
     bdState.editingId = id;
     el('bd-m-title').textContent = 'Edit logged pallet';
     el('bd-m-retake').hidden = true;
+    el('bd-m-delete').hidden = !bdCanDelete();
     el('bd-m-submit').textContent = 'Save changes';
     if (row.has_photo) {
       el('bd-m-shot').hidden = false;
@@ -22180,6 +22198,40 @@
     bdOpenModal();
   }
   window.bdOpenEdit = bdOpenEdit;
+
+  async function bdDelete() {
+    const id = bdState.editingId;
+    if (id == null || bdState.busy) return;
+    const row = bdState.rows.find(r => r.id === id);
+    if (!row) return;
+    // 🔑 Name exactly what is going. A confirm that says "are you sure?" and nothing
+    // else is a button people learn to click through; one that reads back the pallet
+    // is one they actually check.
+    const what = [row.pallet_name, row.item_no ? `item ${row.item_no}` : null,
+                  row.po ? `PO ${row.po}` : null,
+                  row.units != null ? `${row.units} unit${row.units === 1 ? '' : 's'}` : null]
+                 .filter(Boolean).join(' · ');
+    const go = await uiConfirm(
+      `${what || 'This pallet'}\n\nLogged ${bdWhen(row.logged_at)} by ${row.logged_by || 'unknown'}.\n\n`
+      + `This removes the row${row.has_photo ? ' and its tag photo' : ''} for good. There is no undo.`,
+      { title: 'Delete this pallet?', okText: 'Delete', danger: true });
+    if (!go) return;
+
+    const btn = el('bd-m-delete');
+    bdState.busy = true; btn.disabled = true;
+    try {
+      await bdPost('bin-dump-delete', { id });
+      bdCloseModal();
+      bdSetStatus(`Deleted${what ? ` · ${what}` : ''}.`, 'ok');
+      await bdLoad();
+    } catch (e) {
+      el('bd-m-warn').textContent = (e && e.message) || String(e);
+      el('bd-m-warn').hidden = false;
+    } finally {
+      bdState.busy = false; btn.disabled = false;
+    }
+  }
+  window.bdDelete = bdDelete;
 
   function bdOpenModal() { el('bd-modal').style.display = 'flex'; }
   function bdCloseModal() { el('bd-modal').style.display = 'none'; }
