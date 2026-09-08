@@ -1,3 +1,40 @@
+## The documented cause was wrong, and my first fix inherited the error (2026-09-08)
+
+**What happened:** Brian's `git fetch` died with `fatal: mmap failed: Operation canceled`.
+ORIENT.md already had an entry for this, blaming the 985 KB `index.html`, so I read
+"mmap" + "big files" as a memory ceiling and prescribed
+`core.packedGitWindowSize=32m core.packedGitLimit=128m pack.threads=1`. It failed
+identically — same message, same point in index-pack, on a *smaller* pack than the first
+attempt (288 objects vs 322).
+
+**Root cause:** iCloud Drive. The repo lived in `~/Desktop/labor-dashboard`, which is
+inside Desktop & Documents sync. git writes a pack into `.git/objects/pack/` and then
+`mmap`s it to index it; iCloud hands back a placeholder rather than bytes, and that
+surfaces as `ECANCELED` — "Operation canceled", which is not what a memory ceiling says.
+A plain `git clone` into `~/dev` resolved 3910 objects and 2552 deltas first try.
+
+**The tell I walked past:** the errno. Out of memory is `ENOMEM`; address-space
+exhaustion is `ENOMEM` too. `ECANCELED` from `mmap` means something took the mapping
+away, which is a *storage* fact, not a memory one. I pattern-matched on the word "mmap"
+and on a note in our own docs instead of reading what the error actually said.
+
+<rules>
+1. **When a fix derived from the documented cause fails, suspect the documented cause.**
+   Not the size of the fix. I turned the same knob harder on a smaller input and expected
+   a different result; the second failure was the evidence that the model was wrong, and
+   I should have re-diagnosed there rather than at the third attempt.
+2. **Read the errno, not the syscall.** `mmap failed` names where it broke.
+   `Operation canceled` names why, and it excluded the entire theory I was working from.
+3. **A note in our own docs is a hypothesis with a good reputation, not a finding.** The
+   ORIENT.md entry was written from a symptom that reproduced under a big checkout, and
+   the file size was correlated, not causal. It has now been corrected in place — an entry
+   that names the wrong cause is worse than none, because it aims the next person at the
+   same dead end and lends it authority.
+4. **Ask where the repo lives before debugging git on macOS.** `~/Desktop` and
+   `~/Documents` are iCloud-synced by default. One `pwd` would have settled this before
+   any of the tuning.
+</rules>
+
 ## A backgrounded `git merge` finished AFTER I changed branches, and silently overwrote the tree (2026-08-21)
 
 **Context:** `git merge main` into `staging` kept timing out (this repo's `index.html` is
