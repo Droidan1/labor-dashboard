@@ -22009,13 +22009,16 @@
   const bdState = { rows: [], openWeeks: new Set(), seeded: false, photo: null,
                     photoType: 'image/jpeg', editingId: null, busy: false, tab: 'scan' };
 
-  // Mirrors requireInventoryAccess on the worker, which is the real gate. A manager
-  // corrects a row; removing one outright is an admin's call, because there is no undo
-  // — the row and its tag photo both go, and the photo is the only way to check a
-  // disputed count after the fact.
+  // Mirrors canSeeFinancials on the worker, which admits the same roles as every
+  // other bin-dump action. A manager mis-scans a pallet and should not need an admin
+  // to undo it (Brian, 2026-09-08).
+  //
+  // 🔑 This only decides whether the button is OFFERED. The store is not checked here
+  // and does not need to be: the log endpoint already returns only stores the caller
+  // holds, so a row on screen is one they can act on. The boundary is the worker,
+  // which re-derives the store FROM THE ROW on every delete.
   function bdCanDelete() {
-    const r = currentUser && currentUser.role;
-    return r === 'superuser' || r === 'admin';
+    return ['superuser', 'admin', 'executive', 'manager'].includes(currentUser && currentUser.role);
   }
 
   function bdStores() {
@@ -22034,7 +22037,7 @@
       case 'UNCLASSIFIED_ACTION': return 'This dashboard is newer than the API — the worker half of the deploy is missing.';
       case 'NEED_MANAGER':        return 'Your account cannot log bin dumps. Ask an admin for manager access.';
       case 'NO_STORE_ACCESS':     return 'You are not assigned to that store.';
-      case 'NEED_ADMIN':          return 'Only an admin can delete a logged pallet. A manager can correct one instead.';
+      case 'NEED_ADMIN':          return 'Your account cannot do that.';
       case 'NEED_SUPERUSER':      return 'Only a superuser can do that.';
       case 'NO_SESSION':          return 'Your session has expired — sign in again.';
     }

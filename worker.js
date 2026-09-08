@@ -20299,17 +20299,28 @@ export default {
       }
     }
 
-    // Delete is admin-only — a manager corrects a row, an admin removes one.
+    // A manager may delete a pallet at a store they hold — they are the ones who
+    // mis-scan one and should not need an admin to undo it (Brian, 2026-09-08).
+    //
+    // 🛑 THE STORE CHECK IS LOAD-BEARING NOW IN A WAY IT WAS NOT BEFORE. While this
+    // was admin-only it could be omitted, because an admin holds every store. The
+    // moment a manager can reach it, an unguarded delete-by-id lets any manager
+    // destroy any store's pallet — and its tag photo — by guessing a number. The
+    // row's OWN store decides, never one the caller supplies, exactly as the edit
+    // path does.
     if (url.searchParams.get("action") === "bin-dump-delete" && request.method === "POST") {
-      const denied = requireInventoryAccess(currentUser, isAdminSecret, corsJson);
-      if (denied) return denied;
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       try {
         const body = await request.json();
         const id = parseInt(body?.id, 10);
         if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
-        const row = await env.DB.prepare("SELECT r2_key FROM bin_dumps WHERE id = ?").bind(id).first();
+        const row = await env.DB.prepare("SELECT r2_key, store FROM bin_dumps WHERE id = ?").bind(id).first();
         if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        const denied = binDumpStoreGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
         await env.DB.prepare("DELETE FROM bin_dumps WHERE id = ?").bind(id).run();
         // The row is the record; a tag photo with nothing pointing at it is litter.
         // Best-effort — a failed object delete must not fail the row delete.
