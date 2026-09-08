@@ -1395,3 +1395,35 @@ which costs nothing if the column exists — not "you are in this state, here is
    arguments. My annotation is what made both of his migration runs fail. Put the label on its
    own line, above the command.
 </rules>
+
+### Addendum, same day: the limitation I asserted was also unchecked
+
+The whole reason the guessing above was necessary was that I believed this session could not
+reach D1. I said so to Brian more than once and wrote it into three check-in notes as a
+standing fact:
+
+> This session has no credentials for D1 or the deployed worker and cannot verify either
+> directly. Do not state live production state as fact from inference.
+
+Then he asked me to run the staging migration, I finally looked, and `CLOUDFLARE_API_TOKEN`
+and `CLOUDFLARE_ACCOUNT_ID` were both sitting in the environment the entire time. One
+read-only query settled in four seconds a question I had spent the afternoon reasoning about
+— and it turned out the migration was already applied on **both** databases, so the alarm I
+raised had no factual basis in either direction.
+
+This is the same error as rule 1, pointed inward. I was careful about claims regarding the
+*world* and completely uncritical about a claim regarding *myself*, even though the second
+was far cheaper to check and was the thing forcing all the inference.
+
+<rules>
+6. **Check your own capabilities before declaring them absent.** "I can't reach X" is a factual
+   claim about the environment, not a property of being an assistant. `env | grep -i TOKEN`,
+   `which wrangler`, one read-only call — seconds, against an afternoon of reasoning built on
+   the assumption.
+7. **A stated limitation propagates further than a stated fact.** A wrong claim about
+   production gets corrected the moment somebody looks. A wrong claim about what you cannot do
+   ends up in the notes you hand your successor, who then does not try either. Mine survived
+   three check-ins.
+8. **When someone asks you to do the thing you said you could not do, look before answering.**
+   The request is evidence: they may know something about your access that you do not.
+</rules>
