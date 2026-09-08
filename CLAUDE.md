@@ -65,13 +65,23 @@ which is stale and carries no `dark:` variants.
 
 ## Pull requests
 
-Arm **auto-merge immediately after pushing**, while the Cloudflare Pages checks are still
-running. GitHub refuses auto-merge on a PR that is already green — it only applies while
-something is still pending — so the window is roughly the first minute after the push.
-Armed in time, the PR lands on its own when both builds pass, with no click from Brian.
+🛑 **Auto-merge does not work on this repo, and there is no window in which it does.**
+Brian asked for it as the default on 2026-09-08; it was tried twice and refused twice.
+`main` is **unprotected**, so no status check is *required*, so a PR never reaches the
+`blocked` state GitHub's auto-merge exists to wait on — it goes straight from `unstable`
+(the two Cloudflare Pages builds still running) to `clean`, and the API refuses both:
+
+    unstable -> "required checks are failing"   (nothing was failing; they were running)
+    clean    -> "already in clean status ... you can merge directly"
+
+Do not keep retrying this on a hunch about timing. **The precondition is branch
+protection on `main` with the two `Cloudflare Pages` checks marked required** — a repo
+setting only Brian can change, and one that would also stop him pushing straight to
+`main`. Until that exists, every PR needs his merge click, and saying so is the correct
+answer rather than trying again.
 
 ⚠️ **Merging is not deploying — except for the frontend.** Pages rebuilds `main`
-automatically, so an auto-merged `index.html` change reaches www.retjghub.com with no
+automatically, so a merged `index.html` change reaches www.retjghub.com with no
 further step. The worker and every migration still need an explicit `wrangler` run, and
 the Destructive Operations rules below apply to those in full and are not softened by
 this.
