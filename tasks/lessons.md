@@ -1351,3 +1351,47 @@ control is exactly what a hand-kept list forgets.
    means a client-side corruption presents as a server-side refusal, and you will go looking
    in the wrong file. Check what the client actually put on the wire first.
 </rules>
+
+## I told Brian production was down, from an inference, while holding a five-second check
+
+Bin Dump's `sup_ref` column needed `migration-059.sql` on two D1 databases. Across one session
+I made the same mistake twice, escalating each time:
+
+1. Brian's deploy grew the worker by ~235 bytes. I said the deployed build was "almost certainly"
+   the older one, reasoning that #196's prompt rewrite was ~2.5 KB. When I finally measured, the
+   real diff was 1210 bytes, **791 of them comments the bundler strips** — the arithmetic never
+   supported the confidence I gave it.
+2. His `d1 execute` runs had all failed, so I concluded the column did not exist, and wrote:
+   *"Bin Dump is broken in production right now."* It was not. Production already had the column.
+   The `ALTER` returned `duplicate column name: sup_ref` — the all-clear — on the first try.
+
+The second is the bad one, and not because the guess was wrong. Earlier in the same session I had
+looked at Brian's screenshot and correctly written that it was consistent with **two** states
+(old worker + no column, or new worker + column), because a logged pallet rendering in the Log tab
+rules out only the mismatch. Then, with no new evidence, I collapsed that disjunction to the
+alarming branch and reported it as fact. I had already done the careful reasoning and then
+discarded it.
+
+What makes it avoidable: the migration is **its own probe**. One additive, nullable `ALTER` that
+either applies or says `duplicate column name`. Both outcomes are safe, and between them they
+name the state exactly. The right move was "run this, it will tell you which state you are in" —
+which costs nothing if the column exists — not "you are in this state, here is how to fix it."
+
+<rules>
+1. **Never state the live state of production as fact from an inference.** Say what you have
+   ("your migration runs failed, so the column may be missing") and what would settle it. A
+   sentence about prod that a person will act on needs a primary source, not a chain of reasoning.
+2. **When a safe, self-diagnosing probe exists, run it BEFORE narrating a diagnosis.** CLAUDE.md
+   rule 3 forbids verifying a guard with a probe that does the damage; the corollary is that a
+   probe which is harmless in *both* outcomes should come first, not after the conclusion.
+3. **Once you have enumerated two consistent states, you may not later pick one for free.**
+   Write the disjunction down and re-read it. Collapsing it silently is how a hedge becomes a
+   claim between two messages.
+4. **Weigh the two error costs before raising an alarm.** "Run this, it may already be done"
+   costs a command. "Your app is down" costs someone dropping what they are doing mid-shift.
+   Asymmetric costs mean asymmetric evidence bars.
+5. **Never put a trailing `#` comment on a shell command you hand someone.** Interactive zsh does
+   not set `INTERACTIVE_COMMENTS`, so `--file=x.sql   # staging` passes `#` and `staging` as
+   arguments. My annotation is what made both of his migration runs fail. Put the label on its
+   own line, above the command.
+</rules>
