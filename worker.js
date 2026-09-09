@@ -20330,22 +20330,41 @@ export default {
       } else if (allow) {
         // 🛑 "All stores" means all the stores THIS USER holds, never all stores.
         // D1 caps bound params at 100; a user's store list is single digits.
-        if (!allow.length) return new Response(JSON.stringify({ ok: true, rows: [] }), { headers: corsJson });
+        if (!allow.length) return new Response(JSON.stringify({ ok: true, rows: [], truncated: false }), { headers: corsJson });
         q += ` AND store IN (${allow.map(() => "?").join(",")})`; binds.push(...allow);
       }
-      const weeks = Math.min(Math.max(parseInt(url.searchParams.get("weeks") || "8", 10) || 8, 1), 52);
-      const since = new Date(Date.now() - weeks * 7 * 86400000).toISOString();
-      q += " AND logged_at >= ? ORDER BY logged_at DESC LIMIT 500";
-      binds.push(since);
+      // `weeks=all` lifts the time bound entirely. The CSV export's "Everything" needs it,
+      // and 52 weeks stops being "everything" the moment this table is a year old.
+      const weeksRaw = String(url.searchParams.get("weeks") || "8").trim().toLowerCase();
+      const allTime = weeksRaw === "all";
+      const weeks = allTime ? null : Math.min(Math.max(parseInt(weeksRaw, 10) || 8, 1), 52);
+      // 🛑 NOT `parseInt(...) || 500`. Zero is falsy, so that spelling turns an explicit
+      // limit=0 into the 500 default — the widest possible answer to the narrowest possible
+      // request. Parse, then decide on FINITENESS, then clamp.
+      const limitRaw = parseInt(url.searchParams.get("limit") || "", 10);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 5000) : 500;
+      if (!allTime) {
+        q += " AND logged_at >= ?";
+        binds.push(new Date(Date.now() - weeks * 7 * 86400000).toISOString());
+      }
+      // 🔑 Ask for ONE MORE than the caller wants. That is what distinguishes "there were
+      // exactly `limit` rows" from "there were more and you are not seeing them" — and the
+      // difference matters, because a CSV that stops at the cap without saying so is a file
+      // that looks like the whole log and is not.
+      q += " ORDER BY logged_at DESC LIMIT ?";
+      binds.push(limit + 1);
       const { results } = await env.DB.prepare(q).bind(...binds).all();
-      const rows = (results || []).map(r => ({
+      const found = results || [];
+      const truncated = found.length > limit;
+      const rows = found.slice(0, limit).map(r => ({
         ...r,
         r2_key: undefined,
         has_photo: !!r.r2_key,
         photo_url: r.r2_key ? `?action=bin-dump-photo&id=${r.id}` : null,
         week: binDumpWeekOf(r.logged_at),
       }));
-      return new Response(JSON.stringify({ ok: true, rows, weeks }), { headers: corsJson });
+      return new Response(JSON.stringify({ ok: true, rows, weeks: allTime ? "all" : weeks, truncated }),
+        { headers: corsJson });
     }
 
     if (url.searchParams.get("action") === "bin-dump-update" && request.method === "POST") {

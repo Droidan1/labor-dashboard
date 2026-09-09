@@ -753,6 +753,118 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   ok(/if \(!c\) continue;/.test(h), '…and skips blanks when deciding what is shared');
 }
 
+// ── 20. Export ranges: weeks=all, the limit, and saying when it truncates ──
+// The point of the range picker is that a CSV never quietly claims to be more than it is.
+{
+  const { env, db } = env0();
+  const ins = db.prepare(`INSERT INTO bin_dumps (store, barcode, po, units, logged_by, logged_at)
+                          VALUES ('BL1', ?, '5036', 1, 'x@y.z', ?)`);
+  const at = d => new Date(Date.parse(PINNED) - d * 86400000).toISOString();
+  ins.run('B-today', at(0));
+  ins.run('B-30d',   at(30));
+  ins.run('B-120d',  at(120));    // outside 8 weeks, inside a year
+  ins.run('B-800d',  at(800));    // outside even 52 weeks
+
+  const list = async (qs) => json(await call(`/?action=bin-dump-list&store=BL1${qs}`, { user: 'u-mgr1', env }));
+
+  let j = await list('');
+  eq(j.rows.length, 2, 'the default 8-week window keeps today and 30 days ago');
+  eq(j.weeks, 8, 'and says which window it used');
+  eq(j.truncated, false, 'nothing was cut');
+
+  j = await list('&weeks=52');
+  eq(j.rows.length, 3, '52 weeks reaches 120 days back');
+  ok(!j.rows.some(r => r.barcode === 'B-800d'), '…but not 800 days');
+
+  j = await list('&weeks=all');
+  eq(j.rows.length, 4, '🔑 weeks=all lifts the time bound entirely — 800 days included');
+  eq(j.weeks, 'all', '…and reports itself as all, not a number');
+
+  // 🛑 52 is NOT "everything". This is the assertion that stops someone quietly swapping
+  // weeks=all for weeks=52 and reintroducing a ceiling that grows into a bug.
+  ok((await list('&weeks=all')).rows.length > (await list('&weeks=52')).rows.length,
+     '🛑 weeks=all returns strictly more than the 52-week maximum');
+
+  // A garbage value falls back to the default rather than lifting the bound.
+  eq((await list('&weeks=banana')).rows.length, 2, 'an unparseable weeks falls back to 8, never to all');
+  eq((await list('&weeks=0')).rows.length, 2, 'and so does 0');
+  eq((await list('&weeks=999')).rows.length, 3, 'an over-large weeks clamps to 52, not to all');
+}
+
+// The +1 fetch: "exactly the limit" and "more than the limit" must not look the same.
+{
+  const { env, db } = env0();
+  const ins = db.prepare(`INSERT INTO bin_dumps (store, barcode, po, units, logged_by, logged_at)
+                          VALUES ('BL1', ?, '1', 1, 'x@y.z', ?)`);
+  for (let i = 0; i < 5; i++) ins.run(`B-${i}`, new Date(Date.parse(PINNED) - i * 3600000).toISOString());
+  const list = async (qs) => json(await call(`/?action=bin-dump-list&store=BL1${qs}`, { user: 'u-mgr1', env }));
+
+  let j = await list('&limit=3');
+  eq(j.rows.length, 3, 'the limit is honoured');
+  eq(j.truncated, true, '🔑 …and truncation is REPORTED, not silently applied');
+
+  j = await list('&limit=5');
+  eq(j.rows.length, 5, 'a limit exactly equal to the row count returns them all');
+  eq(j.truncated, false,
+     '🔑 …and is NOT flagged truncated. This is what asking for limit+1 buys: '
+     + 'a length check alone cannot tell "exactly the limit" from "there is more"');
+
+  j = await list('&limit=99999');
+  eq(j.rows.length, 5, 'an over-large limit clamps without erroring');
+  eq(j.truncated, false, '…and nothing is cut');
+
+  eq((await list('&limit=0')).rows.length, 1, 'a zero limit clamps up to 1 rather than returning nothing');
+
+  // Newest first, so a truncated export keeps the MOST RECENT rows — the ones somebody
+  // exporting today is most likely to actually want.
+  j = await list('&limit=2');
+  eq(j.rows[0].barcode, 'B-0', 'a truncated export keeps the newest rows, not the oldest');
+  eq(j.rows[1].barcode, 'B-1', '…in order');
+}
+
+// The client side of the same contract.
+{
+  const h = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const fn = h.slice(h.indexOf('async function bdExportCsv'), h.indexOf('window.bdExportCsv'));
+
+  ok(/'\\ufeff' \+ csv/.test(fn) || /\\\\ufeff/.test(fn),
+     'the CSV is written with a UTF-8 BOM so Excel does not mojibake an en-dash');
+  ok(/action=bin-dump-list/.test(fn),
+     '🔑 the export FETCHES its own rows — building it from bdState.rows would make '
+     + '"Everything" quietly mean the 8 weeks already on screen');
+  ok(/limit=\$\{BD_CSV_LIMIT\}/.test(fn), '…asking for the export limit, not the view default');
+  ok(/thisWeekOnly/.test(fn) && /r\.week === w/.test(fn),
+     '"This week" filters by WEEK KEY, not by a 7-day window, which differ on any day but Sunday');
+  ok(/if \(truncated\)/.test(fn) && /uiAlert/.test(fn),
+     '🛑 a truncated export raises a modal — a status line is too easy to miss when the '
+     + 'consequence is handing someone a partial file');
+  ok(/bdSetLogStatus/.test(fn) && !/bdSetStatus/.test(fn),
+     '🛑 export messages go to the LOG pane. #bd-status lives in the scan pane and is '
+     + 'hidden while the log is open, so bdSetStatus here would be invisible');
+  ok(/range\.slug\(\)/.test(fn), 'the filename records which range it covers');
+
+  // 🛑 THE RANGE TABLE ITSELF. Asserting only that the worker understands weeks=all leaves
+  // the client free to stop sending it: swapping 'all' for 52 caps "Everything" at a year
+  // and every other assertion here still passes. Pin what each option actually requests.
+  const ranges = h.slice(h.indexOf('const BD_RANGES = ['), h.indexOf('async function bdExportCsv'));
+  ok(/value: 'all',[^}]*weeks: 'all'/.test(ranges),
+     "🛑 'Everything' requests weeks='all' — not 52, which stops being everything once the "
+     + 'table is a year old');
+  ok(/value: '8',[^}]*weeks: 8/.test(ranges), "'Last 8 weeks' requests 8");
+  ok(/value: 'this',[^}]*weeks: 2,[^}]*thisWeekOnly: true/.test(ranges),
+     "'This week' fetches TWO weeks and narrows by week key — one week of days is not the "
+     + 'retail week on any day but Sunday');
+  eq((ranges.match(/value: '/g) || []).length, 3, 'three ranges, no more and no fewer');
+
+  // The shared dialog's chooser, and the cancel value that keeps it unambiguous.
+  const dlg = h.slice(h.indexOf('function _uiDialog'), h.indexOf('function uiConfirm'));
+  ok(/choices = null/.test(dlg), '_uiDialog grew a choices mode rather than a second dialog');
+  ok(/const cancelValue = choices \? null : false;/.test(dlg),
+     '🔑 cancelling a chooser resolves null, not false — false is a legitimate choice value');
+  ok(/e\.key === 'Enter' && !choices/.test(dlg),
+     'Enter picks nothing when there are choices; with three options there is no default');
+}
+
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
