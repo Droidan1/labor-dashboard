@@ -1922,6 +1922,13 @@
         .bd-fld.miss .bd-in{background:rgba(192,57,43,.10);border-color:rgba(192,57,43,.40)}
         .dark .bd-fld.miss .bd-in{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.42)}
         .bd-tag{font-size:9px;font-weight:700;letter-spacing:.06em;padding:1px 5px;border-radius:4px;border:1px solid}
+        /* Same red as the "not on the tag" state, and the same measured colours:
+           #c0392b on the light row, #f87171 on the dark one. */
+        .bd-dup{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.06em;
+          padding:1px 5px;border-radius:4px;margin-left:6px;vertical-align:middle;
+          white-space:nowrap;background:rgba(192,57,43,.10);
+          border:1px solid rgba(192,57,43,.40);color:#c0392b}
+        .dark .bd-dup{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.42);color:#f87171}
         .bd-fld.warn .bd-tag{background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45);color:#92400e}
         .dark .bd-fld.warn .bd-tag{border-color:rgba(245,158,11,.45);color:#f59e0b}
         .bd-fld.miss .bd-tag{background:rgba(192,57,43,.10);border-color:rgba(192,57,43,.40);color:#c0392b}
@@ -22484,28 +22491,44 @@
     bdState.busy = true; btn.disabled = true;
     try {
       if (bdState.editingId != null) {
-        await bdPost('bin-dump-update', { id: bdState.editingId, ...v });
+        const res = await bdPostAllowingDuplicate('bin-dump-update',
+          { id: bdState.editingId, ...v }, true);
+        if (!res) { bdState.busy = false; btn.disabled = false; return; }
         bdSetStatus('Changes saved.', 'ok');
       } else {
         const store = bdScanStore();
-        // ⚠️ A soft warning, never a block: a genuinely repeated PO does happen.
-        // A failed check costs the warning, never the submission.
-        if (v.po) {
-          const dup = await bdRecent(store, v.po);
-          if (dup.length) {
-            const d = dup[0];
-            const goOn = await uiConfirm(
-              `PO ${v.po} was already logged ${bdWhen(d.logged_at)} by ${d.logged_by || 'someone'}`
-              + `${d.pallet_name ? ` — ${d.pallet_name}` : ''}${d.units != null ? `, ${d.units} unit${d.units === 1 ? '' : 's'}` : ''}.`
-              + '\n\nLog this pallet as well?',
-              { title: 'Already logged?', okText: 'Log it anyway' });
-            if (!goOn) { bdState.busy = false; btn.disabled = false; return; }
+        const dup = await bdRecent(store, v.po, v.barcode);
+
+        // 🛑 The BARCODE check first, and it is a block. One barcode is one physical
+        // pallet, so a repeat means the same pallet twice and its units counted into the
+        // bins twice. Backing out here is the expected answer, not the exceptional one.
+        let allowDup = false;
+        if (dup.barcode_matches.length) {
+          if (!await bdConfirmDuplicate(dup.barcode_matches, false)) {
+            bdState.busy = false; btn.disabled = false; return;
           }
+          allowDup = true;
         }
-        await bdPost('bin-dump-log', {
+
+        // ⚠️ The PO check second, and it stays a soft warning: one PO covers a whole truck,
+        // so a repeat is normal and blocking on it would be noise. Skipped entirely when
+        // the barcode question was already asked — one pallet, one interruption.
+        if (!allowDup && v.po && dup.matches.length) {
+          const d = dup.matches[0];
+          const goOn = await uiConfirm(
+            `PO ${v.po} was already logged ${bdWhen(d.logged_at)} by ${d.logged_by || 'someone'}`
+            + `${d.pallet_name ? ` — ${d.pallet_name}` : ''}${d.units != null ? `, ${d.units} unit${d.units === 1 ? '' : 's'}` : ''}.`
+            + '\n\nLog this pallet as well?',
+            { title: 'Already logged?', okText: 'Log it anyway' });
+          if (!goOn) { bdState.busy = false; btn.disabled = false; return; }
+        }
+
+        const res = await bdPostAllowingDuplicate('bin-dump-log', {
           store, ...v,
+          ...(allowDup ? { allow_duplicate: true } : {}),
           ...(bdState.photo ? { image_b64: bdState.photo, media_type: bdState.photoType } : {}),
-        });
+        }, false);
+        if (!res) { bdState.busy = false; btn.disabled = false; return; }
         const n = parseInt(String(v.units).replace(/[^\d]/g, ''), 10);
         bdSetStatus(`Pallet logged${v.pallet_name ? ` · ${v.pallet_name}` : ''}`
           + (Number.isInteger(n) ? ` · ${n} unit${n === 1 ? '' : 's'}` : '') + '.', 'ok');
@@ -22529,17 +22552,71 @@
       body: JSON.stringify(body),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j.ok) throw new Error(bdErr(j, r));
+    if (!r.ok || !j.ok) {
+      // 🔑 Carry the structured part through. A DUPLICATE_BARCODE refusal is not a dead
+      // end — the caller re-asks the person and retries — and a bare Error would lose
+      // both the code and the row it is complaining about.
+      const err = new Error(bdErr(j, r));
+      err.code = j.code;
+      err.matches = j.matches || [];
+      throw err;
+    }
     return j;
   }
 
-  async function bdRecent(store, po) {
+  // POST, and if the worker refuses on a duplicate barcode the pre-flight did not see, put
+  // the question to the person and retry once with their answer. This covers the race the
+  // pre-flight structurally cannot: two people unloading the same truck at the same moment.
+  // Returns null if they backed out, so the caller can tell that from a success.
+  async function bdPostAllowingDuplicate(action, payload, isEdit) {
     try {
-      const r = await fetch(`${WORKER_BASE}?action=bin-dump-recent&store=${encodeURIComponent(store)}&po=${encodeURIComponent(po)}`,
-        { credentials: 'include' });
+      return await bdPost(action, payload);
+    } catch (e) {
+      if (!e || e.code !== 'DUPLICATE_BARCODE') throw e;
+      if (!await bdConfirmDuplicate(e.matches, isEdit)) return null;
+      return await bdPost(action, { ...payload, allow_duplicate: true });
+    }
+  }
+
+  // Asks both duplicate questions in one round trip. The PO answer is a hint; the barcode
+  // answer is a block. Pre-flighting it here is purely to avoid uploading a 250 KB photo
+  // only to have it refused — the WORKER decides, and bdSubmit still handles a 409 for the
+  // case this check could not see (someone else logging the same pallet a second earlier).
+  async function bdRecent(store, po, barcode) {
+    const q = `${WORKER_BASE}?action=bin-dump-recent&store=${encodeURIComponent(store)}`
+      + `&po=${encodeURIComponent(po || '')}&barcode=${encodeURIComponent(barcode || '')}`;
+    try {
+      const r = await fetch(q, { credentials: 'include' });
       const j = await r.json().catch(() => ({}));
-      return (r.ok && j.matches) || [];
-    } catch (e) { return []; }   // a duplicate hint is never worth failing a submit over
+      if (!r.ok) return { matches: [], barcode_matches: [] };
+      return { matches: j.matches || [], barcode_matches: j.barcode_matches || [] };
+    } catch (e) {
+      // A failed hint must never fail a submit. The server still refuses a real duplicate.
+      return { matches: [], barcode_matches: [] };
+    }
+  }
+
+  // One match, in words. A row at a store the caller cannot see arrives redacted to a date;
+  // that is still enough to stop them, which is the whole job.
+  function bdDupText(m) {
+    if (!m) return 'This barcode has already been logged.';
+    if (m.redacted) return `This barcode was already logged at ANOTHER STORE on ${bdWhen(m.logged_at)}.`;
+    return `This barcode was already logged ${bdWhen(m.logged_at)}`
+      + `${m.store ? ` at ${BD_LABELS[m.store] || m.store}` : ''}`
+      + ` by ${m.logged_by || 'someone'}`
+      + `${m.pallet_name ? ` — ${m.pallet_name}` : ''}`
+      + `${m.units != null ? `, ${m.units} unit${m.units === 1 ? '' : 's'}` : ''}.`;
+  }
+
+  // The barcode is one physical pallet, so this is worded as a mistake being made rather
+  // than a question being asked — and the button says what it costs.
+  async function bdConfirmDuplicate(matches, isEdit) {
+    return uiConfirm(
+      bdDupText(matches && matches[0])
+      + '\n\nA barcode identifies ONE pallet, so this looks like the same pallet twice —'
+      + ' which would count its units into the bins twice.'
+      + `\n\n${isEdit ? 'Save this correction anyway?' : 'Log it anyway?'}`,
+      { title: 'Duplicate pallet', okText: isEdit ? 'Save anyway' : 'Log it anyway' });
   }
 
   async function bdLoad() {
@@ -22608,6 +22685,20 @@
         + `${keys.length} week${keys.length === 1 ? '' : 's'}. Tap a week to open it; tap Edit on a row to correct it.`
       : 'No pallets logged yet. Press Begin to scan the first tag.';
 
+    // 🔑 The worker's 409 is what stops a duplicate being CREATED. This is the other half:
+    // showing the ones that exist anyway — logged through a deliberate override, or before
+    // the guard existed at all. Scoped to the rows in view, so a pair split across two
+    // stores only surfaces under "All stores"; the block is the guarantee, this is the eye.
+    const dupCodes = new Set();
+    {
+      const seen = new Set();
+      for (const r of bdState.rows) {
+        const c = String(r.barcode || '').trim();
+        if (!c) continue;                    // blanks are not duplicates of one another
+        if (seen.has(c)) dupCodes.add(c); else seen.add(c);
+      }
+    }
+
     const multi = el('bd-store').value === 'ALL';
     el('bd-weeks').innerHTML = keys.map(k => {
       const rows = groups.get(k);
@@ -22630,7 +22721,10 @@
               <td class="stick">${escapeHtml(bdWhen(r.logged_at))}</td>
               ${multi ? `<td class="dim">${escapeHtml(BD_LABELS[r.store] || r.store)}</td>` : ''}
               <td>${escapeHtml(r.item_no || '—')}</td>
-              <td style="font-weight:600">${escapeHtml(r.pallet_name || '—')}</td>
+              <td style="font-weight:600">${escapeHtml(r.pallet_name || '—')}${
+                dupCodes.has(String(r.barcode || '').trim())
+                  ? `<span class="bd-dup" title="Barcode ${escapeHtml(r.barcode)} is on more than one logged pallet">DUP</span>`
+                  : ''}</td>
               <td class="dim">${escapeHtml(r.sup_ref || '—')}</td>
               <td class="num">${r.units == null ? '—' : Number(r.units).toLocaleString()}</td>
               <td class="dim">${escapeHtml(r.po || '—')}</td>
