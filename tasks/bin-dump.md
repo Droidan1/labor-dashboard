@@ -28,6 +28,12 @@ stays editable.
 - **Tap the tag photo to open it full-screen and zoom.** 82px settles that a photo
   exists and nothing else.
 
+**2026-09-09**
+- **The same barcode must not be logged twice.** Brian's three calls, asked before
+  building: **block with a deliberate override** (a dead end gets worked around by typing
+  a fake barcode, which corrupts the record silently), **across all stores** (one pallet
+  cannot be in two places), **within 90 days** (not forever — truck numbers cycle).
+
 ## The tag, and the trap in it
 
 Labels run down the LEFT, each ending in a colon. Their values are **right-aligned on the
@@ -75,7 +81,7 @@ does nothing rather than nagging.
 
 ## Shape
 
-### Storage — `migration-058.sql`, then `migration-059.sql`
+### Storage — `migration-058.sql`, then `-059`, then `-060`
 One table, `bin_dumps`. The week is **derived from `logged_at`**, never stored: the Flow
 Calendar's weeks stop on 2026-12-26 and this must not stop with them.
 
@@ -88,12 +94,20 @@ would lose the ability to ask either question.
 `duplicate column name: sup_ref`, which is harmless and is in fact the cleanest way to
 ask whether it has already been applied.
 
+`migration-060.sql` adds `idx_bin_dumps_barcode ON bin_dumps(barcode, logged_at DESC)`.
+🔑 **Not store-prefixed**, unlike `idx_bin_dumps_po`: the duplicate lookup deliberately
+crosses stores, so a store-first index would not serve it. Unlike -059 this one **is**
+re-runnable — `CREATE INDEX` takes `IF NOT EXISTS` where `ALTER TABLE ADD COLUMN` does
+not. Verified in use, not merely present: the planner reports
+`SEARCH bin_dumps USING INDEX idx_bin_dumps_barcode (barcode=? AND logged_at>?)` on both
+databases, so both halves of the composite earn their place.
+
 ### Worker — seven actions
 | action | does |
 |---|---|
 | `bin-dump-scan` | photo in, eight fields out. **Stores nothing.** |
 | `bin-dump-log` | writes the confirmed row + the photo to R2 |
-| `bin-dump-recent` | the soft duplicate check, on its own so a slow answer never costs a submit |
+| `bin-dump-recent` | both duplicate checks in one trip, on its own so a slow answer never costs a submit |
 | `bin-dump-list` | the log, newest first |
 | `bin-dump-update` | edit a row; stamps `edited_by`/`edited_at`, never `logged_at` |
 | `bin-dump-delete` | manager+, and only at a store the caller holds |
@@ -164,10 +178,29 @@ surround reads differently.
   is invisible in a way a blank is not. Nulls surface as the red "not on the tag" state.
 - 🛑 `bin-dump-log` re-validates every field server-side. The verify popup is a
   convenience, not a gate.
+- 🛑 **Duplicate BARCODE within 90 days, at ANY store → blocked**, with a deliberate
+  override. A barcode is one physical pallet, so a repeat means its units are about to be
+  counted into the bins twice. `bin-dump-log` and `-update` return **409
+  `DUPLICATE_BARCODE`** unless `allow_duplicate` is *literally* `true` — truthiness is not
+  consent, and a test pins that `"false"`, `0`, `""` and `null` all still refuse.
+  🔑 **The worker is the boundary.** The popup only asks; the client pre-flights via
+  `bin-dump-recent` purely to avoid uploading a 250 KB photo that is about to be refused,
+  and retries once on a 409 for the race it structurally cannot see — two people unloading
+  the same truck at the same moment.
+  🔑 **Cross-store, but redacted.** A match at a store the caller does not hold comes back
+  as a date and nothing else: no store, no name, no pallet. Enough to stop them, nothing
+  leaked.
+  🛑 **The refusal precedes the R2 put**, so a blocked submit leaves no object with no row
+  pointing at it. Asserted twice — behaviourally against the mock bucket, and against the
+  source ordering, which is also checked in the deployed bundle.
+  🛑 A blank barcode is **not** a duplicate of every other blank, or a torn tag becomes
+  unloggable. The early return that guarantees this cannot be caught behaviourally (SQL's
+  `= NULL` matches nothing either way), so it is pinned at the source with that reason.
 - ⚠️ Duplicate PO/WO within **six hours** at the same store → **soft warning**, never a
-  block. Six hours is one receiving session: a truck of 30 pallets is unloaded over hours,
-  and the duplicate this guards against is the same pallet scanned twice. Longer would
-  start flagging a PO that legitimately came back.
+  block. Six hours is one receiving session: a truck of 30 pallets is unloaded over hours.
+  One PO covers all 30 pallets, so repeating is normal — which is exactly why the barcode
+  check above had to be a separate, harder rule. Skipped when the barcode question was
+  already asked: one pallet, one interruption.
 - ⚠️ An unreadable photo opens the popup **empty and editable** rather than failing, so a
   torn tag can still be keyed by hand.
 - ⚠️ Editing never touches `logged_at`. A correction is a correction, not a re-receipt —
@@ -200,10 +233,12 @@ needs `-e staging`. Wrangler warns about this; the warning is worth reading.
 | #196 | the second tag format — `sup_ref`, `PO / WO`, order-based pairing |
 | #197 | "1 unit" not "1 units"; a `tasks/lessons.md` entry |
 | #198 | the full-screen zoomable tag viewer |
+| #199, #200 | this document, and the lessons behind it |
+| #201 | the duplicate-barcode block, `migration-060`, the DUP badge |
 
-- `scripts/test-bin-dump.mjs` — **157 assertions**
-- Full repo suite — **3568 assertions / 58 suites**, green
-- `sw.js` CACHE_NAME at **v175**, fixture in step
+- `scripts/test-bin-dump.mjs` — **209 assertions**
+- Full repo suite — **3620 assertions / 58 suites**, green
+- `sw.js` CACHE_NAME at **v176**, fixture in step
 
 **Databases.** `migration-058` applied to staging (1.74 MB) and production (5.10 MB).
 `migration-059` is **applied on BOTH**, verified 2026-09-08 by reading the schema rather
@@ -211,9 +246,12 @@ than inferring it — `pragma_table_info('bin_dumps')` returns the same 16 colum
 `sup_ref` on each, at the sizes above:
 
 ```
-STAGING     | cols: 16 | sup_ref: YES | 1.74 MB
-PRODUCTION  | cols: 16 | sup_ref: YES | 5.10 MB
+STAGING     | cols: 16 | sup_ref: YES | 1.74 MB | idx_bin_dumps_barcode: YES
+PRODUCTION  | cols: 16 | sup_ref: YES | 5.10 MB | idx_bin_dumps_barcode: YES
 ```
+
+`migration-060` was applied to both on 2026-09-09, after a read-only check confirmed
+neither already had the index.
 
 🔑 **A Claude Code remote session can query D1 directly** — `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID` are in its environment, and `npx wrangler d1 execute <uuid>
@@ -232,12 +270,18 @@ the one thing the whole suite could not prove: every test before it ran against 
 derived from a single photograph, so a green suite only ever showed the code was
 self-consistent about a layout nobody had checked against a camera.
 
-⚠️ **Still unmeasured: variance.** Two tags, two formats, both photographed flat in good
-light. What is not yet known is how the read holds up on a creased or torn tag, under
-glare, at a slant, or on a pallet whose unit count runs to hundreds. The failure to watch
-for is not a blank — blanks are visible and get typed — but a value that is wrong and
-plausible. If one appears, the fix is `BIN_TAG_PROMPT` and a worker redeploy, not a
-rebuild.
+✅ **Both tag formats now read correctly against a real camera.** Tag A on the first live
+scan; tag B confirmed 2026-09-09, which is what the order-based prompt rewrite existed for
+and the one thing the fixtures could never prove.
+
+✅ **The duplicate block works in production**, confirmed 2026-09-09 from the data rather
+than the dialog: 7 rows, 7 barcodes, **0 repeated**. The refused submit wrote nothing.
+
+⚠️ **Still unmeasured: variance.** Both tags were photographed flat in good light. What is
+not yet known is how the read holds up on a creased or torn tag, under glare, at a slant,
+or on a pallet whose unit count runs to hundreds. The failure to watch for is not a blank —
+blanks are visible and get typed — but a value that is wrong and plausible. If one appears,
+the fix is `BIN_TAG_PROMPT` and a worker redeploy, not a rebuild.
 
 ## Review — what the build turned up
 
