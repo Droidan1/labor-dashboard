@@ -173,6 +173,36 @@ below the `uiConfirm` overlays (80), so a delete confirmation still lands on top
 chrome is dark in **both** themes deliberately — a photograph judged against a light
 surround reads differently.
 
+### Exporting to CSV
+The Log tab's **Export CSV** asks which range first — **this week / last 8 weeks /
+everything** — and every one of them FETCHES. Building the file from the rows already on
+screen would make "Everything" quietly mean the 8 weeks the log view holds, which is the
+whole reason the picker exists.
+
+🔑 `bin-dump-list` takes `weeks=all` to lift the time bound. 52 is the numeric maximum and
+stops being "everything" the moment this table is a year old, so `all` is a distinct value
+rather than a large number. "This week" asks for **two** weeks and narrows by WEEK KEY —
+`weeks=1` is the last seven days, a different set on any day that is not Sunday.
+
+🛑 **The row cap is reported, never silently applied.** The query asks for `limit + 1`,
+which is what distinguishes "there were exactly `limit` rows" from "there were more and you
+are not seeing them"; a length check alone cannot. A truncated export raises a **modal**,
+not a status line — somebody who misses it hands over a partial file and nothing downstream
+ever says so.
+
+🛑 Export messages go to `#bd-log-status`, NOT `bdSetStatus`. `#bd-status` lives inside the
+**scan** pane, which is hidden whenever the log is open — the original "Nothing to export
+yet." message had this fault and was never once seen.
+
+🔑 The file leads with a **UTF-8 BOM**, like `downloadWrsAsCsv`. Without it Excel renders a
+pallet name containing an en-dash as mojibake, which reads as bad data rather than a bad
+encoding and gets "corrected" by hand.
+
+The three-way prompt is `uiChoose`, added to `_uiDialog` rather than given its own overlay —
+the same reason the other three share it: native `confirm()` freezes the installed app on
+iOS. Cancelling a chooser resolves **null**, not `false`, because `false` is a legitimate
+choice value and the two must never collide.
+
 ## Guards
 - 🛑 A field the model cannot read comes back **null**, never a guess — a wrong unit count
   is invisible in a way a blank is not. Nulls surface as the red "not on the tag" state.

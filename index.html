@@ -5088,7 +5088,7 @@
   // installed standalone PWA (iOS) — they freeze the whole app. These
   // Promise-based, in-app replacements never block. uiConfirm → Promise<bool>,
   // uiAlert → Promise<void>. Text is set via textContent (no HTML injection).
-  function _uiDialog({ message, title, okText = 'OK', cancelText = null, danger = false, prompt = null }) {
+  function _uiDialog({ message, title, okText = 'OK', cancelText = null, danger = false, prompt = null, choices = null }) {
     return new Promise(resolve => {
       const dark = document.documentElement.classList.contains('dark');
       const bg = dark ? '#0f1722' : '#ffffff', fg = dark ? '#e6edf3' : '#13243a';
@@ -5112,9 +5112,21 @@
         input.style.cssText = `width:100%;box-sizing:border-box;padding:9px 11px;font-size:14px;border-radius:10px;border:1px solid ${border};background:transparent;color:${fg};margin-bottom:18px;`;
         box.appendChild(input);
       }
-      const rowEl = document.createElement('div'); rowEl.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
+      // A chooser stacks full-width buttons instead of a single OK — three options read as
+      // a list, not a row, and a thumb on a warehouse phone wants the bigger target.
+      const rowEl = document.createElement('div');
+      rowEl.style.cssText = choices
+        ? 'display:flex;flex-direction:column;gap:8px;'
+        : 'display:flex;gap:10px;justify-content:flex-end;';
       let done = false;
-      const onKey = (e) => { if (e.key === 'Escape') finish(cancelText ? false : true); else if (e.key === 'Enter') finish(true); };
+      // 🔑 Cancelling a chooser is null, not false: false is a legitimate choice value, so
+      // reusing it would make "they picked the falsy option" indistinguishable from "they
+      // backed out". Enter picks nothing here — with three options there is no default.
+      const cancelValue = choices ? null : false;
+      const onKey = (e) => {
+        if (e.key === 'Escape') finish(cancelText ? cancelValue : true);
+        else if (e.key === 'Enter' && !choices) finish(true);
+      };
       function finish(val) {
         if (done) return; done = true;
         document.removeEventListener('keydown', onKey); overlay.remove();
@@ -5122,10 +5134,23 @@
         // answer ("they cleared it") and must not read as a cancel.
         resolve(input ? (val ? input.value : null) : val);
       }
-      if (cancelText) { const c = document.createElement('button'); c.textContent = cancelText; c.style.cssText = `padding:9px 16px;font-size:14px;font-weight:600;border-radius:10px;border:1px solid ${border};background:transparent;color:${fg};cursor:pointer;`; c.onclick = () => finish(false); rowEl.appendChild(c); }
-      const okEl = document.createElement('button'); okEl.textContent = okText; okEl.style.cssText = `padding:9px 16px;font-size:14px;font-weight:700;border-radius:10px;border:none;background:${okBg};color:${okFg};cursor:pointer;`; okEl.onclick = () => finish(true); rowEl.appendChild(okEl);
+      let okEl = null;
+      if (choices) {
+        choices.forEach((ch, i) => {
+          const b = document.createElement('button');
+          b.textContent = ch.label;
+          b.style.cssText = `padding:11px 16px;font-size:14px;font-weight:${i === 0 ? 700 : 600};border-radius:10px;`
+            + (i === 0 ? `border:none;background:${okBg};color:${okFg};` : `border:1px solid ${border};background:transparent;color:${fg};`)
+            + 'cursor:pointer;width:100%;text-align:center;';
+          b.onclick = () => finish(ch.value);
+          rowEl.appendChild(b);
+          if (i === 0) okEl = b;
+        });
+      }
+      if (cancelText) { const c = document.createElement('button'); c.textContent = cancelText; c.style.cssText = `padding:${choices ? '11px' : '9px'} 16px;font-size:14px;font-weight:600;border-radius:10px;border:1px solid ${border};background:transparent;color:${fg};cursor:pointer;${choices ? 'width:100%;' : ''}`; c.onclick = () => finish(cancelValue); rowEl.appendChild(c); }
+      if (!choices) { okEl = document.createElement('button'); okEl.textContent = okText; okEl.style.cssText = `padding:9px 16px;font-size:14px;font-weight:700;border-radius:10px;border:none;background:${okBg};color:${okFg};cursor:pointer;`; okEl.onclick = () => finish(true); rowEl.appendChild(okEl); }
       box.appendChild(rowEl); overlay.appendChild(box);
-      overlay.addEventListener('click', e => { if (e.target === overlay) finish(cancelText ? false : true); });
+      overlay.addEventListener('click', e => { if (e.target === overlay) finish(cancelText ? cancelValue : true); });
       document.addEventListener('keydown', onKey); document.body.appendChild(overlay); (input || okEl).focus();
     });
   }
@@ -5135,7 +5160,12 @@
   function uiPrompt(title, message, opts = {}) {
     return _uiDialog({ message, title, prompt: opts.value || '', cancelText: opts.cancelText || 'Cancel', okText: opts.okText || 'OK' });
   }
-  window.uiConfirm = uiConfirm; window.uiAlert = uiAlert; window.uiPrompt = uiPrompt;
+  // uiChoose → Promise<value|null>. null means cancelled; see cancelValue above for why
+  // that is not `false`.
+  function uiChoose(title, message, choices, opts = {}) {
+    return _uiDialog({ title, message, choices, cancelText: opts.cancelText || 'Cancel' });
+  }
+  window.uiConfirm = uiConfirm; window.uiAlert = uiAlert; window.uiPrompt = uiPrompt; window.uiChoose = uiChoose;
   function fmtK(n) {
     if (n == null) return "—";
     const abs = Math.abs(n), sign = n < 0 ? "-" : "";
@@ -22743,21 +22773,82 @@
   }
   window.bdToggleWeek = bdToggleWeek;
 
-  function bdExportCsv() {
-    if (!bdState.rows.length) { bdSetStatus('Nothing to export yet.', 'err'); return; }
+  // The log view holds the last 8 weeks. An export built from those rows would quietly be
+  // 8 weeks whatever the button claimed, so every range below FETCHES — including the two
+  // that look like they could reuse what is already on screen.
+  // 🛑 NOT bdSetStatus. #bd-status sits inside the SCAN pane, so anything written there
+  // while the Log tab is open goes into a hidden element — the old 'Nothing to export yet.'
+  // message had exactly this fault and was never once seen by anybody.
+  function bdSetLogStatus(msg) { const s = el('bd-log-status'); if (s) s.textContent = msg; }
+
+  const BD_CSV_LIMIT = 5000;
+  const BD_RANGES = [
+    // 🔑 'This week' asks for 2 and filters to the current WEEK KEY. weeks=1 is the last
+    // seven days, which is a different set on any day that is not Sunday.
+    { value: 'this', label: 'This week',    weeks: 2,     thisWeekOnly: true, slug: () => `week-${bdThisWeek()}` },
+    { value: '8',    label: 'Last 8 weeks', weeks: 8,     slug: () => '8weeks' },
+    { value: 'all',  label: 'Everything',   weeks: 'all', slug: () => 'all' },
+  ];
+
+  async function bdExportCsv() {
+    const store = el('bd-store').value;
+    if (!store) return;
+    const pick = await uiChoose('Export to CSV', 'How much of the log?',
+      BD_RANGES.map(r => ({ label: r.label, value: r.value })));
+    if (pick == null) return;                      // null is cancelled; see uiChoose
+    const range = BD_RANGES.find(r => r.value === pick);
+
+    let rows, truncated = false;
+    bdSetLogStatus('Gathering…');
+    try {
+      const q = `${WORKER_BASE}?action=bin-dump-list&store=${encodeURIComponent(store)}`
+        + `&weeks=${range.weeks}&limit=${BD_CSV_LIMIT}`;
+      const r = await fetch(q, { credentials: 'include' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error(bdErr(j, r));
+      rows = j.rows || [];
+      truncated = !!j.truncated;
+    } catch (e) {
+      bdSetLogStatus(`Couldn't gather the log — ${(e && e.message) || e}`);
+      return;
+    }
+    if (range.thisWeekOnly) { const w = bdThisWeek(); rows = rows.filter(r => r.week === w); }
+    if (!rows.length) { bdSetLogStatus('Nothing to export in that range.'); return; }
+
     const cols = ['logged_at', 'store', 'week', 'barcode', 'item_no', 'pallet_name', 'sup_ref',
                   'po', 'units', 'created_by_tag', 'truck_no', 'logged_by', 'edited_by', 'edited_at'];
     const cell = v => {
       const s = v == null ? '' : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const csv = [cols.join(',')].concat(bdState.rows.map(r => cols.map(c => cell(r[c])).join(','))).join('\r\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const csv = [cols.join(',')].concat(rows.map(r => cols.map(c => cell(r[c])).join(','))).join('\r\n');
+    // 🔑 BOM, so Excel auto-detects UTF-8 — the same fix downloadWrsAsCsv already carries.
+    // Without it a pallet name containing an en-dash or an accent opens as mojibake, which
+    // looks like bad data rather than a bad encoding and gets "corrected" by hand.
+    const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `bin-dump-${el('bd-store').value}-${bdThisWeek()}.csv`;
+    // The filename carries the range, so a file found on a desktop months later still says
+    // what it covers.
+    a.download = `bin-dump-${store}-${range.slug()}.csv`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    const n = `${rows.length} pallet${rows.length === 1 ? '' : 's'}`;
+    // 🛑 A truncated export is SAID OUT LOUD. Silently handing over the newest 5000 of more
+    // than 5000 is precisely the "looks like the whole log and is not" problem this range
+    // picker exists to end.
+    if (truncated) {
+      // A modal, not a status line. Someone who does not notice this ships a partial file
+      // to whoever asked for it, and nothing downstream will ever say the rows are missing.
+      bdSetLogStatus(`Exported the newest ${n} — older pallets are NOT in this file.`);
+      await uiAlert(
+        `This range holds more than ${BD_CSV_LIMIT.toLocaleString()} pallets, so the file has the newest `
+        + `${BD_CSV_LIMIT.toLocaleString()} and stops there.\n\nOlder pallets are missing from it.`,
+        { title: 'Only part of the log' });
+    } else {
+      bdSetLogStatus(`Exported ${n} · ${range.label.toLowerCase()}.`);
+    }
   }
   window.bdExportCsv = bdExportCsv;
 
