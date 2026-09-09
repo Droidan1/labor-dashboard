@@ -604,6 +604,16 @@
           class="text-xs text-[#3BB54A] hover:underline focus:outline-none">
           Already have an account? Sign in →
         </button>
+        <!-- The other door. An associate has no email and no invite: their name
+             and a six-digit code an admin gave them IS the account. Same styling
+             as the passkey button below — a second way in, not a second product. -->
+        <div class="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700">
+          <button onclick="showAssociateLogin()"
+            class="w-full bg-gray-900 dark:bg-gray-700 hover:bg-gray-800 dark:hover:bg-gray-600 text-white font-semibold text-sm py-2.5 rounded-lg transition-colors">
+            Associate login
+          </button>
+          <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-2">Use the name and six-digit code your manager gave you.</p>
+        </div>
       </div>
       <!-- Passkey / Face ID login button -->
       <div id="passkey-login-wrap" class="hidden mt-4">
@@ -640,6 +650,42 @@
             Verify code
           </button>
         </div>
+      </div>
+      <!-- Associate sign-in -->
+      <div id="login-associate" class="hidden">
+        <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Your name</label>
+        <input id="assoc-name" type="text" autocomplete="off" placeholder="First and last"
+          class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#3BB54A]" />
+        <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mt-3 mb-1">Six-digit code</label>
+        <!-- 🔑 type="text" + inputmode="numeric", NOT type="number" like the OTP field
+             above it: a number input drops a leading zero, and 012345 is a perfectly
+             ordinary code. Same numeric keypad on a phone either way. -->
+        <input id="assoc-pin" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+          autocomplete="one-time-code" placeholder="000000"
+          class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-4 py-2.5 text-sm text-center tracking-widest font-mono focus:outline-none focus:ring-2 focus:ring-[#3BB54A]" />
+        <div id="assoc-error" class="hidden text-xs text-red-500 mt-3"></div>
+        <button id="assoc-btn" onclick="associateLogin()"
+          class="w-full bg-[#3BB54A] hover:bg-[#32a040] text-white font-semibold text-sm py-2.5 rounded-lg transition-colors mt-4">
+          Sign in
+        </button>
+        <div class="flex items-center justify-between mt-3">
+          <button onclick="showLoginPage()" class="text-xs text-gray-500 dark:text-gray-400 hover:underline">← Back</button>
+          <button onclick="showAssociateReset()" class="text-xs text-[#3BB54A] hover:underline">Forgot your code?</button>
+        </div>
+      </div>
+      <!-- Forgot the code. This only TELLS an admin someone is waiting — an
+           associate cannot reset their own code, which is the point of it. -->
+      <div id="login-associate-reset" class="hidden">
+        <p class="text-sm text-gray-700 dark:text-gray-300 font-medium mb-1">Forgot your code?</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">Only an admin can set a new one. Tell us your name and we'll let them know.</p>
+        <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Your name</label>
+        <input id="assoc-reset-name" type="text" autocomplete="off" placeholder="First and last"
+          class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#3BB54A]" />
+        <div id="assoc-reset-done" class="hidden text-xs text-[#3BB54A] mt-3 font-medium"></div>
+        <button id="assoc-reset-btn" onclick="associateResetRequest()" class="w-full bg-[#3BB54A] hover:bg-[#32a040] text-white font-semibold text-sm py-2.5 rounded-lg transition-colors" style="margin-top:1rem">
+          Ask for a new code
+        </button>
+        <button onclick="showAssociateLogin()" class="text-xs text-gray-500 dark:text-gray-400 hover:underline mt-3">← Back to sign in</button>
       </div>
     </div>
   </div>
@@ -832,10 +878,10 @@
          reach Submit Photos / Inventory / Supply via the More sheet. -->
     <nav id="bottom-nav" class="lg:hidden fixed z-30 flex items-center bn-float bn-skinny transition-transform duration-300" style="left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));padding:7px 8px">
       <div class="bn-group flex-1 flex">
-        <button data-tab="dashboard" aria-label="Dashboard" onclick="navigateToPage('dashboard')" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <button id="bn-dashboard" data-tab="dashboard" aria-label="Dashboard" onclick="navigateToPage('dashboard')" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
           <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="bn-lb">Dashboard</span>
         </button>
-        <button data-tab="weekly-summary" aria-label="Retail" onclick="navigateToPage('weekly-summary')" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+        <button id="bn-retail" data-tab="weekly-summary" aria-label="Retail" onclick="navigateToPage('weekly-summary')" class="bn-tab flex-1 flex flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
           <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg><span class="bn-lb">Retail</span>
         </button>
         <button id="bn-content" data-tab="content" aria-label="Content" onclick="navigateToPage('content')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
@@ -843,6 +889,11 @@
         </button>
         <button id="bn-flow" data-tab="flow-calendar" aria-label="Flow Calendar" onclick="navigateToPage('flow-calendar')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
           <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span class="bn-lb">Flow</span>
+        </button>
+        <!-- An associate's whole app may be one page. Without a bar tab of its own
+             it would live under More, two taps deep, on the phone it is used from. -->
+        <button id="bn-bin-dump" data-tab="bin-dump" aria-label="Bin Dump" onclick="navigateToPage('bin-dump')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg><span class="bn-lb">Bin Dump</span>
         </button>
         <button id="bn-scan" data-tab="merch-scan" aria-label="Price Scan" onclick="navigateToPage('merch-scan')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
           <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="10.5" y1="8" x2="10.5" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="17" y1="8" x2="17" y2="16"/></svg><span class="bn-lb">Scan</span>
@@ -4670,6 +4721,42 @@
             </table>
           </div>
         </div>
+
+        <!-- Associates: the code-login accounts.
+             🔑 Its own panel rather than more rows in the table above, because
+             almost every column differs — there is no email, no invite to resend,
+             no role to change, and a page list where the role would be. The two
+             are fed by ONE ?action=list-users response, split on the `associate`
+             flag, so they cannot disagree about who exists. -->
+        <div class="mt-10 flex items-end justify-between gap-3 flex-wrap">
+          <div>
+            <h2 class="text-sm font-semibold uppercase tracking-[0.11em] text-opl-ink dark:text-op-ink">Associates</h2>
+            <p class="text-xs text-opl-inkDim dark:text-op-inkDim mt-1">They sign in with a name and a six-digit code, and see only the pages ticked here.</p>
+          </div>
+          <button onclick="openAssociateModal()" class="flex items-center gap-2 bg-accent-green hover:brightness-110 text-[#04140a] text-sm font-semibold px-4 py-2 rounded-full transition-all">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add associate
+          </button>
+        </div>
+        <div class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-border overflow-hidden transition-colors mt-4">
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-[rgba(20,16,8,0.08)] dark:border-op-border text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim">
+                  <th class="text-left px-4 py-3 font-semibold">Name</th>
+                  <th class="text-left px-4 py-3 font-semibold">Stores</th>
+                  <th class="text-left px-4 py-3 font-semibold">Pages</th>
+                  <th class="text-left px-4 py-3 font-semibold">Status</th>
+                  <th class="text-left px-4 py-3 font-semibold">Last login</th>
+                  <th class="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody id="assoc-tbody">
+                <tr><td colspan="6" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <!-- Invite modal -->
@@ -4754,6 +4841,66 @@
           </div>
         </div>
       </div>
+      <!-- Add / edit associate -->
+      <div id="assoc-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-borderHi shadow-xl w-full max-w-md max-h-[90vh] flex flex-col">
+          <div class="px-6 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-center justify-between">
+            <h2 id="assoc-m-title" class="text-base font-semibold text-opl-ink dark:text-op-ink">Add Associate</h2>
+            <button onclick="closeAssociateModal()" class="text-opl-inkDim dark:text-op-inkDimmer hover:text-opl-ink dark:hover:text-op-ink transition-colors">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+          <div class="px-6 py-5 space-y-4 overflow-y-auto">
+            <input type="hidden" id="assoc-m-id">
+            <div>
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Name</label>
+              <input id="assoc-m-name" type="text" placeholder="First and last" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
+              <!-- The name is half the login AND what the Bin Dump log records, so
+                   it has to be the one they actually go by. -->
+              <p class="text-[11px] text-opl-inkDim dark:text-op-inkDimmer mt-1.5">They type this to sign in, and it is what the Bin Dump log will say.</p>
+            </div>
+            <div>
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Six-digit code</label>
+              <div class="flex gap-2">
+                <input id="assoc-m-pin" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000"
+                  class="flex-1 border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm text-center tracking-widest font-mono bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
+                <button onclick="assocGenerate()" class="text-sm px-4 rounded-[8px] border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition-colors whitespace-nowrap">Generate</button>
+              </div>
+              <!-- 🔑 Written down here or nowhere. Only a hash is stored, so this is
+                   the one moment the code is readable — the recovery path is a NEW
+                   code, never "look up the old one". -->
+              <p id="assoc-m-pin-note" class="text-[11px] text-opl-inkDim dark:text-op-inkDimmer mt-1.5">Tell them this code now — it is stored scrambled and cannot be looked up later.</p>
+            </div>
+            <div>
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-2">Stores</label>
+              <div id="assoc-m-store-grid" class="grid grid-cols-2 gap-2"></div>
+            </div>
+            <div>
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-2">Pages</label>
+              <!-- Rendered from GRANTABLE_PAGES — never hardcoded, so a future
+                   associate page appears here on its own. -->
+              <div id="assoc-m-pages" class="space-y-2"></div>
+            </div>
+            <div id="assoc-m-status-wrap" class="hidden">
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Status</label>
+              <select id="assoc-m-status-sel" class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
+                <option value="active">Active</option>
+                <option value="suspended">Suspended</option>
+              </select>
+            </div>
+            <div class="rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-opl-panelHi dark:bg-[rgba(255,255,255,0.03)] px-4 py-3">
+              <div class="text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1">What this person gets</div>
+              <p id="assoc-m-summary" class="text-xs leading-relaxed text-opl-inkDim dark:text-op-inkDim"></p>
+            </div>
+            <div id="assoc-m-status" class="hidden text-sm px-3 py-2 rounded-lg border"></div>
+          </div>
+          <div class="px-6 pb-5 pt-4 flex justify-end gap-3 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border">
+            <button onclick="closeAssociateModal()" class="text-sm px-4 py-2 rounded-full border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
+            <button id="assoc-m-save" onclick="submitAssociate()" class="text-sm px-4 py-2 rounded-full bg-accent-green hover:brightness-110 text-[#04140a] font-semibold transition-all">Save</button>
+          </div>
+        </div>
+      </div>
+
     </div><!-- end #page-users -->
 
     </div><!-- end main content -->
@@ -5584,6 +5731,18 @@
     el("splash").classList.add("hidden");
     el("app").classList.remove("hidden");
     el("error-banner").classList.add("hidden");
+    // 🛑 EVERYTHING BELOW IS THE DASHBOARD. It fetches all six stores with
+    // ?history_d1=true — a request carrying no `action` at all, which the worker
+    // refuses to anyone outside FINANCIAL_ROLES — and finishes by painting
+    // "Failed to load: … Data may be incomplete." into #error-banner. That banner
+    // is a body-level sibling of #app, so it sits ABOVE whichever page is open:
+    // an associate would land on Bin Dump under a red error about stores they are
+    // not allowed to see and have not asked about.
+    //
+    // The shell reveal above must still happen. It is the only thing besides
+    // showLoginPage that hides the splash, so returning any earlier leaves them
+    // looking at "Loading…" for good.
+    if (!canSeeFinancials(currentUser)) return;
     renderSkeletonCards();
     const results = {}, errors = {};
     let loaded = 0;
@@ -9080,6 +9239,13 @@
   window.showOnlyPage = showOnlyPage;
 
   function navigateToPage(page, pushHistory = true) {
+    // 🔑 FIRST guard, above every role list below. An associate is on none of
+    // those lists — they are gated by PAGE, not by role — so without this they
+    // could open nothing at all, and with only the Bin Dump list widened they
+    // could open everything else.
+    if (isAssociate(currentUser) && page !== 'no-access') {
+      if (pageLevel(page) < 1) return;
+    }
     // Guard pages that show money. The worker refuses the data for these roles
     // (NO_FINANCIAL_ACCESS) but the shell would still render, so gate here too.
     // Only fires for a role outside FINANCIAL_ROLES — today `staff` and anything
@@ -9121,7 +9287,9 @@
     if (page === 'bin-dump') {
       const role = currentUser && currentUser.role;
       const allowed = ['superuser', 'admin', 'executive', 'district_manager', 'manager'];
-      if (!allowed.includes(role)) return;
+      // ...or an associate who was granted this page. Same shape as the worker,
+      // where the role check and the page check are two ways past one gate.
+      if (!allowed.includes(role) && pageLevel('bin-dump') < 1) return;
     }
     // eBay Cases belongs to E-Commerce, so the guard is the business you hold,
     // not your role — mirroring the worker's fail-closed business gate, which is
@@ -22113,6 +22281,13 @@
     return ['superuser', 'admin', 'executive', 'manager'].includes(currentUser && currentUser.role);
   }
 
+  // May this account put anything INTO the bins, as opposed to reading the log?
+  // Mirrors the worker's ACTION_PAGE exactly: scan / log / update need edit,
+  // list / photo need view. Managers and above keep both, as they always had.
+  function bdCanEdit() {
+    return canSeeFinancials(currentUser) || pageLevel('bin-dump') >= 2;
+  }
+
   function bdStores() {
     if (!currentUser) return [];
     if (currentUser.role === 'superuser' || currentUser.role === 'admin') return BD_ALL_STORES;
@@ -22128,6 +22303,8 @@
     switch (j && j.code) {
       case 'UNCLASSIFIED_ACTION': return 'This dashboard is newer than the API — the worker half of the deploy is missing.';
       case 'NEED_MANAGER':        return 'Your account cannot log bin dumps. Ask an admin for manager access.';
+      case 'NEED_PAGE_VIEW':      return 'Your account has not been given this page. Ask an admin to add it.';
+      case 'NEED_PAGE_EDIT':      return 'Your account can read this log but not add to it. Ask an admin for edit access.';
       case 'NO_STORE_ACCESS':     return 'You are not assigned to that store.';
       case 'NEED_ADMIN':          return 'Your account cannot do that.';
       case 'NEED_SUPERUSER':      return 'Only a superuser can do that.';
@@ -22155,7 +22332,10 @@
   // view in front of someone holding a phone at a pallet. The log is one tap away
   // and carries its own count, so it does not need to be in the way to be seen.
   function bdSetTab(tab) {
-    bdState.tab = (tab === 'log') ? 'log' : 'scan';
+    // A view-only account has no Scan tab at all, so nothing may put them on it —
+    // not a stale call, not the default below. The worker refuses the scan
+    // regardless; this is about not showing a form that cannot be submitted.
+    bdState.tab = (tab === 'log' || !bdCanEdit()) ? 'log' : 'scan';
     for (const t of ['scan', 'log']) {
       const on = t === bdState.tab;
       el('bd-tab-' + t).setAttribute('aria-selected', String(on));
@@ -22181,7 +22361,12 @@
       return;
     }
     void isAdmin;
-    bdSetTab('scan');
+    // 🔑 An entry surface opens on the thing you are about to DO — and for a
+    // view-only associate that is reading the log, because there is nothing else
+    // they can do here.
+    const canEdit = bdCanEdit();
+    el('bd-tab-scan').hidden = !canEdit;
+    bdSetTab(canEdit ? 'scan' : 'log');
     bdLoad();
   }
   window.initBinDump = initBinDump;
@@ -22275,9 +22460,13 @@
     const row = bdState.rows.find(r => r.id === id);
     if (!row) return;
     bdState.editingId = id;
-    el('bd-m-title').textContent = 'Edit logged pallet';
+    // Read-only for a view-only account: they open a row to check what was logged
+    // and to look at the tag, which is exactly what "view" is for.
+    const ro = !bdCanEdit();
+    el('bd-m-title').textContent = ro ? 'Logged pallet' : 'Edit logged pallet';
     el('bd-m-retake').hidden = true;
-    el('bd-m-delete').hidden = !bdCanDelete();
+    el('bd-m-delete').hidden = ro || !bdCanDelete();
+    el('bd-m-submit').hidden = ro;
     el('bd-m-submit').textContent = 'Save changes';
     if (row.has_photo) {
       el('bd-m-shot').hidden = false;
@@ -22289,6 +22478,9 @@
       el('bd-m-shot').hidden = true;
     }
     el('bd-m-fields').innerHTML = BD_FIELDS.map(f => bdFieldRow(f, row[f.k], '')).join('');
+    // readOnly, not disabled: the values must stay selectable and legible rather
+    // than greying out into something that reads as broken.
+    if (ro) el('bd-m-fields').querySelectorAll('input').forEach(i => { i.readOnly = true; });
     el('bd-m-warn').hidden = true;
     bdOpenModal();
   }
@@ -23900,6 +24092,11 @@
     el('login-invite-only').classList.toggle('hidden', !!errorMsg);
     el('login-form-wrap').classList.toggle('hidden', !errorMsg);
     el('login-sent').classList.add('hidden');
+    el('login-associate').classList.add('hidden');
+    el('login-associate-reset').classList.add('hidden');
+    // Restored rather than left alone: showAssociateLogin hides it, and "← Back"
+    // comes through here. Without this the biometric button never returns.
+    el('passkey-login-wrap').classList.toggle('hidden', !passkeyAvailable);
     if (errorMsg) {
       el('login-error').textContent = errorMsg;
       el('login-error').classList.remove('hidden');
@@ -24329,7 +24526,40 @@
   // entry here and routes straight to the dashboard, exactly as before. Only the
   // superuser (who sees all businesses, including unconnected E-Commerce) has
   // 2+ and reaches the picker.
+  // ── Associates ────────────────────────────────────────────────────────
+  // The closed set of pages an admin may hand to an associate. Adding a future
+  // one is ONE entry here plus its actions in the worker's ACTION_PAGE — and
+  // scripts/test-associate.mjs pins the two against each other, because a page
+  // in one and not the other is a 403 with nothing on screen to explain it.
+  const GRANTABLE_PAGES = [
+    { id: 'bin-dump', label: 'Bin Dump', nav: 'nav-bin-dump' },
+  ];
+  // Mirrors PAGE_LEVELS in worker.js. The worker is the real gate; this only
+  // stops the UI offering what the API would refuse.
+  const PAGE_LEVEL_N = { view: 1, edit: 2 };
+
+  // Told to us by auth-me, so the client and the worker agree on one fact rather
+  // than each deciding what 'staff' means.
+  function isAssociate(user) {
+    const u = user || currentUser;
+    return !!(u && u.associate);
+  }
+  // 0 = cannot open this page. A financial role is not measured in levels — it
+  // has always had every page — so this answers only the associate question, and
+  // callers ask the role first where that matters.
+  function pageLevel(page, user) {
+    const u = user || currentUser;
+    return PAGE_LEVEL_N[(u && u.pages || {})[page]] || 0;
+  }
+
   function landingPageFor(user) {
+    // An associate has no dashboard to land on: the first page they hold IS their
+    // front door. Registry order rather than grant order, so it is the same page
+    // every morning instead of whatever the object happened to enumerate first.
+    if (isAssociate(user)) {
+      const first = GRANTABLE_PAGES.find(p => pageLevel(p.id, user) > 0);
+      return first ? first.id : 'no-access';
+    }
     if (!canSeeFinancials(user)) return 'no-access';
     const biz = userBusinesses(user);
     if (biz.length >= 2) {
@@ -25542,13 +25772,26 @@
     // FINANCIAL_ROLES here. ('district_manager' was retired by migration-029; it is
     // listed alongside its neighbours so this reads the same as the guards nearby.)
     const binDumpRoles = ['superuser', 'admin', 'executive', 'district_manager', 'manager'];
-    el('nav-bin-dump').classList.toggle('hidden', !binDumpRoles.includes(user.role));
+    el('nav-bin-dump').classList.toggle('hidden',
+      !binDumpRoles.includes(user.role) && pageLevel('bin-dump', user) < 1);
     el('nav-supply-request').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');
     el('nav-users').classList.toggle('hidden', !isAdmin);
     el('nav-admin-settings').classList.toggle('hidden', !isSuperuser);
     el('nav-settings').classList.remove('hidden');
     const adminOpt = el('invite-role-admin');
     if (adminOpt) adminOpt.classList.toggle('hidden', !isSuperuser);
+    // Populated for everyone, because anyone can end up here: a manager whose
+    // last grant was revoked lands on the same screen.
+    const naWho = el('no-access-who');
+    if (naWho) naWho.textContent = `Signed in as ${user.name || user.email}.`;
+
+    // 🔑 LAST among the role toggles, and it undoes all of them. Everything above
+    // either shows an item unconditionally (Marketing, Submit Photos, Settings) or
+    // shows it for a role list an associate is not on, so the only safe order is:
+    // let the role rules run, then hide the lot and reveal what was granted.
+    // Still BEFORE applyBusinessNav, for the same reason every other toggle is —
+    // role decides what you may open, business decides what is relevant here.
+    if (isAssociate(user)) applyAssociateNav(user);
 
     // 🔑 Business filtering must run at boot, and until now it did not on the
     // commonest path. The boot router is `if (landing !== 'dashboard')
@@ -25585,6 +25828,26 @@
         ...WRS_STORE_KEYS.filter(s => allowed.includes(s) || (s === 'BL12' && allowed.includes('BL16')))
       );
     }
+  }
+
+  // An associate's sidebar is built by SUBTRACTION: hide everything the shell can
+  // offer, then put back only the granted pages. A list of things to hide would
+  // have to be edited every time a page is added anywhere in the app, and the day
+  // someone forgot, an associate would find a page nobody meant to give them.
+  function applyAssociateNav(user) {
+    document.querySelectorAll('#sidebar .nav-item, #nav-marketing-group, #nav-merch-group')
+      .forEach(n => n.classList.add('hidden'));
+    // Settings is deliberately among them: it offers passkey enrolment (which the
+    // worker refuses for an associate anyway) and notification toggles that can
+    // never fire for an account that sees no money. Dark mode is NOT in there —
+    // it has its own row below the nav, and another in the More sheet.
+    for (const p of GRANTABLE_PAGES) {
+      if (pageLevel(p.id, user) > 0) el(p.nav)?.classList.remove('hidden');
+    }
+    // The badge is the name a pallet gets logged under. On a shared phone that is
+    // the one thing worth showing — it is how the next person knows to sign out.
+    el('user-email-label').textContent = user.name || user.email;
+    el('user-role-label').textContent = 'Associate';
   }
 
   async function sendLoginLink() {
@@ -25645,6 +25908,85 @@
     }
   }
 
+  // ── Associate sign-in ─────────────────────────────────────────────────
+  // Remembered so showLoginPage can put the biometric button back; see there.
+  let passkeyAvailable = false;
+
+  function showAssociateLogin() {
+    ['login-invite-only', 'login-form-wrap', 'login-sent', 'login-associate-reset', 'passkey-login-wrap']
+      .forEach(id => el(id).classList.add('hidden'));
+    el('login-associate').classList.remove('hidden');
+    el('assoc-error').classList.add('hidden');
+    el('assoc-pin').value = '';
+    // The phone remembers the NAME, so day to day this is a six-digit code and
+    // nothing else. Convenience only — the worker re-checks both, and a wrong
+    // name is refused with exactly the message a wrong code gets.
+    try { el('assoc-name').value = localStorage.getItem('assoc-name') || ''; } catch (_) {}
+    el(el('assoc-name').value ? 'assoc-pin' : 'assoc-name').focus();
+  }
+
+  function showAssociateReset() {
+    el('login-associate').classList.add('hidden');
+    el('login-associate-reset').classList.remove('hidden');
+    el('assoc-reset-done').classList.add('hidden');
+    el('assoc-reset-btn').disabled = false;
+    try { el('assoc-reset-name').value = localStorage.getItem('assoc-name') || ''; } catch (_) {}
+    el('assoc-reset-name').focus();
+  }
+
+  async function associateLogin() {
+    const name = el('assoc-name').value.trim();
+    const pin = el('assoc-pin').value.trim();
+    const errEl = el('assoc-error');
+    errEl.classList.add('hidden');
+    if (!name || !/^\d{6}$/.test(pin)) {
+      errEl.textContent = 'Enter your name and your six-digit code.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+    const btn = el('assoc-btn');
+    btn.disabled = true;
+    btn.textContent = 'Signing in…';
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=associate-login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', body: JSON.stringify({ name, pin }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || "That name and code didn't match");
+      try { localStorage.setItem('assoc-name', name); } catch (_) {}
+      location.reload();
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.classList.remove('hidden');
+      // Clear the code, keep the name: the code is what was wrong, and retyping
+      // the name on a phone is the part people give up on.
+      el('assoc-pin').value = '';
+      el('assoc-pin').focus();
+      btn.disabled = false;
+      btn.textContent = 'Sign in';
+    }
+  }
+
+  async function associateResetRequest() {
+    const name = el('assoc-reset-name').value.trim();
+    const done = el('assoc-reset-done');
+    if (!name) { el('assoc-reset-name').focus(); return; }
+    const btn = el('assoc-reset-btn');
+    btn.disabled = true;
+    try {
+      await fetch(`${WORKER_BASE}?action=associate-reset-request`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+    } catch (_) { /* the answer is the same either way — see below */ }
+    // 🔑 The same confirmation whatever happened, because the worker answers the
+    // same way whatever happened. Saying "no such person" here would turn this
+    // box into a way of finding out who works here.
+    done.textContent = 'Your admin has been asked to set you a new code.';
+    done.classList.remove('hidden');
+  }
+
   async function logout() {
     await fetch(`${WORKER_BASE}?action=auth-logout`, { method: 'POST', credentials: 'include' });
     currentUser = null;
@@ -25661,6 +26003,7 @@
     try {
       const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
       if (available) {
+        passkeyAvailable = true;
         el('passkey-login-wrap')?.classList.remove('hidden');
       }
     } catch(e) { /* ignore */ }
@@ -25969,6 +26312,7 @@
       if (!data.ok) throw new Error(data.error || 'Failed to load');
       usersData = data.users || [];
       renderUsersTable();
+      renderAssociates();
     } catch (e) {
       el('users-tbody').innerHTML = `<tr><td colspan="6" class="text-center text-op-bad py-8 text-sm">${escapeHtml(e.message)}</td></tr>`;
     }
@@ -25976,11 +26320,16 @@
 
   function renderUsersTable() {
     const isSuperuser = currentUser && currentUser.role === 'superuser';
-    if (!usersData.length) {
+    // 🔑 Associates are split out into their own panel below. Left in here they
+    // would be offered Edit (which posts set-user-grants, and is refused for
+    // them), Resend invite (to an address that cannot receive mail) and a role
+    // column that is always the same word.
+    const rows = usersData.filter(u => !u.associate);
+    if (!rows.length) {
       el('users-tbody').innerHTML = '<tr><td colspan="6" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">No users yet.</td></tr>';
       return;
     }
-    el('users-tbody').innerHTML = usersData.map(u => {
+    el('users-tbody').innerHTML = rows.map(u => {
       // Store chips carry the name; the code is the small print. `null` = every store.
       let parsed = null;
       try { parsed = u.stores ? JSON.parse(u.stores) : null; } catch (_) { parsed = null; }
@@ -26271,6 +26620,216 @@
     s.className = `text-sm px-3 py-2 rounded-lg border ${map[tone] || map.info}`;
     s.classList.remove('hidden');
     s.textContent = msg;
+  }
+
+  // ── Associates panel ──────────────────────────────────────────────────
+  // Same ?action=list-users payload as the table above, split on the `associate`
+  // flag the worker derives from pin_hash. One request, one source of truth about
+  // who exists.
+  const ASSOC_PILL = (color, text) => `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-[0.06em]"
+    style="border:1px solid ${color}66;color:${color}"><span style="width:5px;height:5px;border-radius:9999px;background:${color}"></span>${text}</span>`;
+
+  function assocAgo(iso) {
+    const mins = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+    if (mins < 60) return `${mins}m ago`;
+    if (mins < 60 * 24) return `${Math.round(mins / 60)}h ago`;
+    return `${Math.round(mins / 1440)}d ago`;
+  }
+
+  function renderAssociates() {
+    const rows = usersData.filter(u => u.associate);
+    const tb = el('assoc-tbody');
+    if (!tb) return;
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="6" class="text-center text-opl-inkDim dark:text-op-inkDim py-8 text-sm">No associates yet.</td></tr>';
+      return;
+    }
+    tb.innerHTML = rows.map(u => {
+      let stores = [];
+      try { stores = u.stores ? JSON.parse(u.stores) : []; } catch (_) { stores = []; }
+      const storeChips = stores.length
+        ? stores.map(c => `<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-[8px] text-[11px] font-semibold
+              border border-accent-green/25 bg-accent-green/10 text-accent-green whitespace-nowrap">${storeName(c)}
+              <span class="text-[9px] tabular-nums opacity-60">${escapeHtml(c)}</span></span>`).join(' ')
+        // Not "all stores": a bl grant with no units reaches NOTHING, which is why
+        // the editor refuses to save one. Saying "All stores" here would be a lie
+        // in the most confusing direction.
+        : `<span class="text-[11px] text-op-bad">No stores — they cannot log anything</span>`;
+
+      let pages = {};
+      try { pages = u.pages ? JSON.parse(u.pages) : {}; } catch (_) { pages = {}; }
+      const pageChips = GRANTABLE_PAGES.filter(p => pages[p.id])
+        .map(p => `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-[8px] text-[11px] font-semibold
+              border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi text-opl-ink dark:text-op-ink whitespace-nowrap">${escapeHtml(p.label)}
+              <span class="text-[9px] uppercase tracking-wider opacity-60">${escapeHtml(pages[p.id])}</span></span>`).join(' ');
+
+      const badges = [];
+      if (u.status !== 'active') badges.push(ASSOC_PILL('#ef4444', 'SUSPENDED'));
+      else if ((u.pin_failures || 0) >= 10) badges.push(ASSOC_PILL('#ef4444', 'LOCKED'));
+      else badges.push(ASSOC_PILL('#22c55e', u.last_login ? 'ACTIVE' : 'NEW'));
+      // The whole point of recording the request: an admin should not have to be
+      // told twice, and should be able to see who is standing at a phone waiting.
+      if (u.pin_reset_requested_at) {
+        badges.push(`<span class="ml-1.5 inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold tracking-[0.06em]"
+          style="border:1px solid #f59e0b66;color:#f59e0b">WANTS A NEW CODE · ${assocAgo(u.pin_reset_requested_at)}</span>`);
+      }
+
+      const lastLogin = u.last_login
+        ? new Date(u.last_login).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        : 'Never';
+      // Delete is superuser-only because it goes through the same delete-user the
+      // table above uses. An admin suspends instead, which keeps the history that
+      // names this person readable.
+      const del = (currentUser && currentUser.role === 'superuser')
+        ? `<button onclick="deleteUser('${u.id}','${escapeHtml(u.name || u.email)}')" class="text-opl-inkDim dark:text-op-inkDimmer hover:text-op-bad ml-2 transition-colors" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>`
+        : '';
+      return `<tr class="border-b border-[rgba(20,16,8,0.06)] dark:border-op-border last:border-b-0
+                         hover:bg-opl-panelHi dark:hover:bg-op-panelHi transition-colors">
+        <td class="px-4 py-3 text-sm font-medium text-opl-ink dark:text-op-ink">${escapeHtml(u.name || '—')}</td>
+        <td class="px-4 py-3"><div class="flex flex-wrap gap-1.5">${storeChips}</div></td>
+        <td class="px-4 py-3"><div class="flex flex-wrap gap-1.5">${pageChips || '<span class="text-[11px] text-opl-inkDim dark:text-op-inkDim">No pages</span>'}</div></td>
+        <td class="px-4 py-3 whitespace-nowrap">${badges.join('')}</td>
+        <td class="px-4 py-3 text-xs tabular-nums text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">${lastLogin}</td>
+        <td class="px-4 py-3 text-right whitespace-nowrap">
+          <button onclick="openAssociateModal('${u.id}')" class="text-opl-inkDim dark:text-op-inkDimmer hover:text-accent-green transition-colors" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          ${del}
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  // 🔑 crypto.getRandomValues with REJECTION, not `% 1000000` on one draw.
+  // 2^32 is not a multiple of a million, so the plain modulo makes the first
+  // ~967,000 codes very slightly likelier than the rest. Rejecting the tail costs
+  // one extra draw every ~4,400 times and removes the bias entirely — cheap, and
+  // this is the only secret an associate has.
+  function assocGenPin() {
+    const buf = new Uint32Array(1);
+    const LIMIT = 4294000000;               // the largest multiple of 1e6 under 2^32
+    for (;;) {
+      crypto.getRandomValues(buf);
+      if (buf[0] >= LIMIT) continue;
+      const pin = String(buf[0] % 1000000).padStart(6, '0');
+      // The worker refuses these outright, so never offer one.
+      if (/^(\d)\1{5}$/.test(pin) || ['123456','654321','123123','112233','121212','123321'].includes(pin)) continue;
+      return pin;
+    }
+  }
+  function assocGenerate() {
+    el('assoc-m-pin').value = assocGenPin();
+    assocSummary();
+  }
+
+  function assocPageRows(pages) {
+    return GRANTABLE_PAGES.map(p => `
+      <div class="flex items-center justify-between gap-3 rounded-[8px] border border-[rgba(20,16,8,0.10)] dark:border-op-border
+                  bg-opl-panelHi dark:bg-[rgba(255,255,255,0.03)] px-3 py-2.5">
+        <span class="text-sm font-medium text-opl-ink dark:text-op-ink">${escapeHtml(p.label)}</span>
+        <span class="flex items-center gap-3 text-xs text-opl-inkDim dark:text-op-inkDim">
+          ${['none', 'view', 'edit'].map(lv => `<label class="flex items-center gap-1.5 cursor-pointer">
+            <input type="radio" name="assoc-page-${p.id}" value="${lv}" class="assoc-m-page" data-page="${p.id}"
+                   style="accent-color:#22c55e" ${((pages[p.id] || 'none') === lv) ? 'checked' : ''}>${lv[0].toUpperCase() + lv.slice(1)}
+          </label>`).join('')}
+        </span>
+      </div>`).join('');
+  }
+
+  // Plain English, because a grid of radios is easy to misread and this is the
+  // last screen before somebody can sign in.
+  function assocSummary() {
+    const box = el('assoc-m-summary');
+    if (!box) return;
+    const stores = [...document.querySelectorAll('.assoc-m-store-cb:checked')].map(cb => cb.value);
+    const picked = [...document.querySelectorAll('.assoc-m-page:checked')]
+      .filter(r => r.value !== 'none')
+      .map(r => `${(GRANTABLE_PAGES.find(p => p.id === r.dataset.page) || {}).label} (${r.value})`);
+    const where = stores.length ? stores.map(storeName).join(', ') : 'no stores yet';
+    const what = picked.length ? picked.join(', ') : 'no pages yet';
+    box.textContent = !stores.length
+      ? 'Pick at least one store — without one they can sign in but cannot log anything.'
+      : !picked.length
+        ? `They will sign in and see nothing. Tick a page to give them something to open.`
+        : `Signs in with a name and code. Sees ${what}, at ${where}. Nothing else — no dashboard, no sales.`;
+  }
+
+  function openAssociateModal(id) {
+    const u = id ? usersData.find(x => x.id === id) : null;
+    el('assoc-m-id').value = u ? u.id : '';
+    el('assoc-m-title').textContent = u ? 'Edit Associate' : 'Add Associate';
+    el('assoc-m-name').value = u ? (u.name || '') : '';
+    el('assoc-m-pin').value = '';
+    el('assoc-m-status').classList.add('hidden');
+    el('assoc-m-save').disabled = false;
+    el('assoc-m-status-wrap').classList.toggle('hidden', !u);
+    el('assoc-m-status-sel').value = u ? u.status : 'active';
+    // Editing keeps the code unless a new one is typed — the admin cannot read the
+    // old one back, so "leave blank" is the only way to say "don't change it".
+    el('assoc-m-pin-note').textContent = u
+      ? ((u.pin_reset_requested_at ? `They asked for a new code ${assocAgo(u.pin_reset_requested_at)}. ` : '')
+         + ((u.pin_failures || 0) >= 10 ? 'Their account is locked; a new code unlocks it. ' : '')
+         + 'Leave blank to keep the current code. A new one signs them out everywhere.')
+      : 'Tell them this code now — it is stored scrambled and cannot be looked up later.';
+
+    let pages = {};
+    try { pages = u && u.pages ? JSON.parse(u.pages) : {}; } catch (_) { pages = {}; }
+    el('assoc-m-pages').innerHTML = assocPageRows(pages);
+
+    renderStorePicker('assoc-m');
+    let stores = [];
+    try { stores = u && u.stores ? JSON.parse(u.stores) : []; } catch (_) { stores = []; }
+    document.querySelectorAll('.assoc-m-store-cb').forEach(cb => { cb.checked = stores.includes(cb.value); });
+    // renderStorePicker wires updateAccessSummary, which no-ops here (there is no
+    // #assoc-m-access-summary); this modal has its own summary with its own rules.
+    document.querySelectorAll('.assoc-m-store-cb, .assoc-m-page')
+      .forEach(n => n.addEventListener('change', assocSummary));
+    assocSummary();
+    el('assoc-modal').classList.remove('hidden');
+    el('assoc-m-name').focus();
+  }
+  function closeAssociateModal() { el('assoc-modal').classList.add('hidden'); }
+
+  async function submitAssociate() {
+    const id = el('assoc-m-id').value;
+    const name = el('assoc-m-name').value.trim();
+    const pin = el('assoc-m-pin').value.trim();
+    const stores = [...document.querySelectorAll('.assoc-m-store-cb:checked')].map(cb => cb.value);
+    const pages = {};
+    document.querySelectorAll('.assoc-m-page:checked').forEach(r => {
+      if (r.value !== 'none') pages[r.dataset.page] = r.value;
+    });
+    const say = (msg, tone) => {
+      const box = el('assoc-m-status');
+      const map = { ok: 'border-green-200 bg-green-50 text-green-700', error: 'border-red-200 bg-red-50 text-red-700', info: 'border-blue-200 bg-blue-50 text-blue-700' };
+      box.className = `text-sm px-3 py-2 rounded-lg border ${map[tone] || map.info}`;
+      box.textContent = msg;
+      box.classList.remove('hidden');
+    };
+    if (!name) return say('Enter their name.', 'error');
+    if (!stores.length) return say('Pick at least one store.', 'error');
+    if (!id && !/^\d{6}$/.test(pin)) return say('Set a six-digit code.', 'error');
+    if (pin && !/^\d{6}$/.test(pin)) return say('The code must be six digits.', 'error');
+
+    el('assoc-m-save').disabled = true;
+    say('Saving…', 'info');
+    try {
+      const body = { name, stores, pages, status: el('assoc-m-status-sel').value };
+      if (id) body.id = id;
+      if (pin) body.pin = pin;
+      const r = await fetch(`${WORKER_BASE}?action=associate-save`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'Failed');
+      closeAssociateModal();
+      usersSetStatus(pin
+        ? `${name} can sign in with the code ${pin}. It is not stored anywhere you can read it back.`
+        : `${name} updated.`, 'ok');
+      loadUsers();
+    } catch (e) {
+      say(e.message, 'error');
+      el('assoc-m-save').disabled = false;
+    }
   }
 
   async function resendInvite(email) {
@@ -26923,6 +27482,14 @@
       var e = document.getElementById(navId);
       return !!e && !e.classList.contains('hidden');
     }
+    // The sidebar's Dashboard and Retail Summary items carry no id — they predate
+    // there being any role that could not open them — so they are mirrored by
+    // selector instead. Without this the two bar tabs stayed lit for an associate
+    // and navigateToPage silently refused every tap.
+    function visSel(sel) {
+      var e = document.querySelector(sel);
+      return !!e && !e.classList.contains('hidden');
+    }
     function gate(elId, show, flexClass) {
       var e = document.getElementById(elId);
       if (!e) return;
@@ -26932,6 +27499,13 @@
 
     function syncBottomNav(page) {
       if (page) window.__bnPage = page; // remembered so applyRoleUI can re-sync
+      // 🛑 A call with NO page means "re-gate the rows, leave the active tab
+      // alone" — openMoreSheet and the two setTimeout(init) re-syncs below all do
+      // that. Until this line they instead computed `morePages[undefined]`, which
+      // is undefined, so `activeTab` came out undefined and EVERY tab went dim:
+      // ~800ms after any load the bar lost its highlight and did not get it back
+      // until the next tap. Found by driving the boot path in a real browser.
+      var cur = page || window.__bnPage || 'dashboard';
       // role-gated tabs / rows
       // Admins/superusers keep the flat 5-icon bar; everyone else gets the
       // centered Submit button. (Inventory tab is the admin/superuser marker.)
@@ -26946,6 +27520,17 @@
       // Bar tabs. Admin bar: Content + Flow Calendar (admin-only sidebar
       // items) sit in the bar; Inventory + Supply move to the More sheet.
       // Manager bar: Supply stays right of the centered Submit squircle.
+      var seesDash = visSel('#sidebar .nav-item[data-page="dashboard"]');
+      // 🔑 Only once the role is known. Before that the sidebar is in its default
+      // state, which for these two is VISIBLE — hiding them on a maybe would blink
+      // the whole bar for everyone on every load.
+      gate('bn-dashboard', !roleReady || seesDash, 'flex');
+      gate('bn-retail', !roleReady || visSel('#sidebar .nav-item[data-page="weekly-summary"]'), 'flex');
+      // An account holding Bin Dump but NOT the dashboard is an associate: their
+      // whole app may be this one page, so it earns a slot in the bar rather than
+      // living two taps deep under More.
+      var binDumpInBar = roleReady && vis('nav-bin-dump') && !seesDash;
+      gate('bn-bin-dump', binDumpInBar, 'flex');
       gate('bn-content', vis('nav-content'), 'flex');
       gate('bn-flow', vis('nav-flow-calendar'), 'flex');
       gate('bn-supply', mgrBar && vis('nav-supply-request'), 'flex');
@@ -26963,7 +27548,7 @@
       gate('more-ebay-cases', vis('nav-ebay-cases'));                  // mirrors the sidebar item
       gate('more-merch-scan', !mgrBar && vis('nav-merch-scan'));       // managers have the bar tab
       gate('more-inventory', vis('nav-inventory'));                    // admin-only
-      gate('more-bin-dump', vis('nav-bin-dump'));                       // managers too
+      gate('more-bin-dump', vis('nav-bin-dump') && !binDumpInBar);      // managers too; an associate has the bar tab
       gate('more-supply', !mgrBar && vis('nav-supply-request'));       // admins: Supply lives here
       gate('more-marketing', vis('nav-marketing-ads'));
       gate('more-users', vis('nav-users'));
@@ -26974,12 +27559,15 @@
       // 'ebay-cases' has no bar tab of its own, so without it here every tab
       // sits dim while you are standing on the page.
       var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1, 'bin-dump': 1 };
+      // ...unless it has its own tab, in which case that tab is what should light
+      // up while you are standing on the page.
+      if (binDumpInBar) delete morePages['bin-dump'];
       if (!mgrBar) morePages['submit-photos'] = 1; // no center button → page lives under More
       if (isAdminBar) { morePages['inventory'] = 1; morePages['supply-request'] = 1; } // admin: both under More
       else { morePages['flow-calendar'] = 1; morePages['content'] = 1; }               // no bar tab for these
       // Detail pages are sub-pages of Dashboard — keep that tab highlighted.
       var detailPages = { 'store-detail': 1, 'all-stores-detail': 1 };
-      var activeTab = morePages[page] ? 'more' : (detailPages[page] ? 'dashboard' : page);
+      var activeTab = morePages[cur] ? 'more' : (detailPages[cur] ? 'dashboard' : cur);
       (nav ? nav.querySelectorAll('.bn-tab') : []).forEach(function (t) {
         var on = (t.id === 'bn-more') ? (activeTab === 'more') : (t.getAttribute('data-tab') === activeTab);
         t.classList.toggle(ACTIVE, on);

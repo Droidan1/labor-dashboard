@@ -60,8 +60,15 @@ ok('guard runs BEFORE the snapshot write', guardIdx > -1 && (snapIdx === -1 || g
 
 // ── update-user privilege guards ────────────────────────────────────────────
 console.log('\nupdate-user cannot be used to escalate:');
-const uu = worker.slice(worker.indexOf('action") === "update-user"'));
-const uuRegion = uu.slice(0, 3000);
+// 🔑 The region is the WHOLE HANDLER — from update-user's own dispatch line to
+// the next action's — not a fixed 3000 characters. The magic number silently
+// truncated the handler the moment a guard was added at the top of it, and the
+// `A < B` assertions below then compared against indexOf's -1, which reads as a
+// failure for the wrong reason (and, with the operands the other way round,
+// would read as a PASS for the wrong reason).
+const uuStart = worker.indexOf('action") === "update-user"');
+const uuNext = worker.indexOf('url.searchParams.get("action") ===', uuStart + 50);
+const uuRegion = worker.slice(uuStart, uuNext > -1 ? uuNext : worker.length);
 ok('an assignable-role allowlist exists', /const assignable = /.test(uuRegion));
 // Check the ARRAY LITERALS, not the whole expression — `currentUser.role ===
 // 'superuser'` is the condition selecting the branch, so a naive proximity
@@ -75,14 +82,20 @@ ok("'superuser' appears in no assignable-role array",
    arrays.join(' | ') || 'no arrays found');
 ok('a non-superuser caller may assign only manager',
    /: \['manager'\]/.test(uuRegion));
+// Both halves must be FOUND before they are ordered. Comparing against a -1 is
+// how the truncation above hid itself.
+const uuReject = uuRegion.indexOf('You cannot assign that role');
+const uuWrite  = uuRegion.indexOf('UPDATE users SET');
+ok('the handler region contains both the guard and the write',
+   uuReject > -1 && uuWrite > -1, `guard@${uuReject} write@${uuWrite}`);
 ok('an out-of-allowlist role is rejected before the UPDATE runs',
-   uuRegion.indexOf('You cannot assign that role') > -1 &&
-   uuRegion.indexOf('You cannot assign that role') < uuRegion.indexOf('UPDATE users SET'));
+   uuReject > -1 && uuWrite > -1 && uuReject < uuWrite);
 ok('a non-superuser cannot edit a superuser target',
    /SELECT role FROM users WHERE id = \?/.test(uuRegion) &&
    /target\[0\]\.role === 'superuser'/.test(uuRegion));
+const uuTarget = uuRegion.indexOf("target[0].role === 'superuser'");
 ok('that target check also runs before the UPDATE',
-   uuRegion.indexOf("target[0].role === 'superuser'") < uuRegion.indexOf('UPDATE users SET'));
+   uuTarget > -1 && uuWrite > -1 && uuTarget < uuWrite);
 
 // ── the client no longer offers what the server refuses ─────────────────────
 console.log('\nclient no longer ships the superuser option:');

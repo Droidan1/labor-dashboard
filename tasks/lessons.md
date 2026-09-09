@@ -1,3 +1,34 @@
+## A surviving mutation meant TWO copies of one rule, not a weak test (2026-09-09)
+
+Mutation-testing the new page gate: I broke `canUsePage` so any page grant admitted any
+level — a view-only associate could log pallets — and the suite stayed green. The
+instinct is "the test is weak, add an assertion". It was the wrong instinct.
+
+The suite was fine. The **financial gate had its own copy of the comparison**:
+
+```js
+// gate, worker.js:~13906
+const pageOk = !!pageReq && pageLevel(currentUser, pageReq[0]) >= PAGE_LEVELS[pageReq[1]];
+// handler, worker.js:~12335
+function canUsePage(user, isAdminSecret, page, level) { ... pageLevel(user, page) >= ... }
+```
+
+Breaking one left the other holding, so nothing observable changed. Adding assertions
+would have papered over the real finding.
+
+Rules:
+
+1. **When a mutation survives, first ask what else is enforcing the rule.** A second
+   enforcement point is the likeliest answer, and it is a defect in its own right, not
+   depth. The copy that drifts is always the one that says yes.
+2. **Fix it by deleting the copy, not by strengthening the test.** The gate now calls the
+   same `canUsePage` the handlers do; the mutation then failed three assertions.
+3. This is [[one-right-two-jobs]] seen from the other side: that lesson was one right
+   doing two jobs, this is one right written down twice. Same cure — one function.
+4. A mutation that makes a suite **crash** still counts as caught (non-zero exit), but read
+   the error: it should be a cascade from a real assertion failing, not the harness
+   tripping over its own fixture.
+
 ## The documented cause was wrong, and my first fix inherited the error (2026-09-08)
 
 **What happened:** Brian's `git fetch` died with `fatal: mmap failed: Operation canceled`.
