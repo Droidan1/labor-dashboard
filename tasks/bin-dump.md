@@ -108,7 +108,7 @@ databases, so both halves of the composite earn their place.
 | `bin-dump-scan` | photo in, eight fields out. **Stores nothing.** |
 | `bin-dump-log` | writes the confirmed row + the photo to R2 |
 | `bin-dump-recent` | both duplicate checks in one trip, on its own so a slow answer never costs a submit |
-| `bin-dump-list` | the log, newest first |
+| `bin-dump-list` | the log, newest first. `weeks` (a number, or `all`), `limit`, and it reports `truncated` |
 | `bin-dump-update` | edit a row; stamps `edited_by`/`edited_at`, never `logged_at` |
 | `bin-dump-delete` | manager+, and only at a store the caller holds |
 | `bin-dump-photo` | serves the tag image, re-checking store access |
@@ -252,7 +252,7 @@ broke — but the window was real and the ordering is not optional.
 `env.DB = labor-dashboard-db` — **production**. Staging lives under `[env.staging]` and
 needs `-e staging`. Wrangler warns about this; the warning is worth reading.
 
-## Status — shipped 2026-09-08
+## Status — shipped 2026-09-08 → 09-09
 
 | PR | what |
 |---|---|
@@ -265,10 +265,12 @@ needs `-e staging`. Wrangler warns about this; the warning is worth reading.
 | #198 | the full-screen zoomable tag viewer |
 | #199, #200 | this document, and the lessons behind it |
 | #201 | the duplicate-barcode block, `migration-060`, the DUP badge |
+| #202 | this document again, once the block was live |
+| #203 | the CSV export's range picker, `weeks=all`, the reported row cap, the BOM |
 
-- `scripts/test-bin-dump.mjs` — **209 assertions**
-- Full repo suite — **3620 assertions / 58 suites**, green
-- `sw.js` CACHE_NAME at **v176**, fixture in step
+- `scripts/test-bin-dump.mjs` — **243 assertions**
+- Full repo suite — **3654 assertions / 58 suites**, green
+- `sw.js` CACHE_NAME at **v177**, fixture in step
 
 **Databases.** `migration-058` applied to staging (1.74 MB) and production (5.10 MB).
 `migration-059` is **applied on BOTH**, verified 2026-09-08 by reading the schema rather
@@ -306,6 +308,21 @@ and the one thing the fixtures could never prove.
 
 ✅ **The duplicate block works in production**, confirmed 2026-09-09 from the data rather
 than the dialog: 7 rows, 7 barcodes, **0 repeated**. The refused submit wrote nothing.
+
+✅ **The CSV export works in production**, confirmed 2026-09-09. Worth recording what the
+work actually turned out to be: the export ALREADY EXISTED and had since #192. What it did
+not do was tell the truth about its scope — `bin-dump-list` defaulted to 8 weeks and the
+page never passed `weeks`, so a file called `bin-dump.csv` was the last 8 weeks and nothing
+said so. Two further defects surfaced only because someone looked at a feature that already
+"worked": no UTF-8 BOM (Excel rendered an en-dash as mojibake) and every export message
+written into `#bd-status`, which lives in the hidden scan pane — the original "Nothing to
+export yet." had never once been seen.
+
+🔑 **The lesson, and it is not about CSV.** A feature that exists and runs is not a feature
+that is correct. All three of these survived months of the button being present and
+apparently working, because nobody asked what the file actually contained. When a request
+arrives for something that already exists, the useful move is to go and check it rather
+than to build a second one.
 
 ⚠️ **Still unmeasured: variance.** Both tags were photographed flat in good light. What is
 not yet known is how the read holds up on a creased or torn tag, under glare, at a slant,
