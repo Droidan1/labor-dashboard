@@ -341,9 +341,11 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   ok(!!row.edited_at, 'and when');
   eq(row.logged_by, 'howardbrian260@gmail.com', 'the original logger is untouched');
 
-  // A row in a store the caller does not hold, addressed directly by id.
+  // A row in a store the caller does not hold, addressed directly by id. Its own barcode,
+  // because it is a different pallet — the same one twice is now a 409, and this section
+  // is about who may edit what, not about duplicates.
   const other = await json(await call('/?action=bin-dump-log', { user: 'u-mgr2', method: 'POST',
-    body: { store: 'BL4', ...TAG }, env }));
+    body: { store: 'BL4', ...TAG, barcode: 'PRM-10490-31' }, env }));
   eq((await call('/?action=bin-dump-update', { user: 'u-mgr1', method: 'POST',
       body: { id: other.id, ...TAG }, env })).status, 403,
      "🛑 the ROW's store decides, so another store's row cannot be edited by id");
@@ -354,8 +356,12 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
 // ── 16. Deleting: a manager may, but only at a store they hold ─────────────
 {
   const { env, db } = env0();
+  // Each row is a DIFFERENT pallet, so each gets its own barcode — `PRM-<truck>-<index>`
+  // is exactly that, the pallet's index on the truck. Reusing one barcode here would now
+  // trip the duplicate guard and this section would be testing that instead of deletion.
+  let pallet = 0;
   const mk = async (user, store) => (await json(await call('/?action=bin-dump-log',
-    { user, method: 'POST', body: { store, ...TAG, ...IMG }, env }))).id;
+    { user, method: 'POST', body: { store, ...TAG, barcode: `PRM-10490-${++pallet}`, ...IMG }, env }))).id;
   const keyOf = id => db.prepare('SELECT r2_key FROM bin_dumps WHERE id = ?').get(id).r2_key;
 
   // A manager deletes their own store's pallet — the case this exists for.
@@ -446,7 +452,7 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
      'a closed store can still be READ — closing it must not hide correct history');
 }
 
-// ── 18. The tag viewer: the zoom maths, and the wiring that reaches it ─────
+// ── 19. The tag viewer: the zoom maths, and the wiring that reaches it ─────
 // The viewer exists so somebody can tell a 3 from an 8. Everything that can make
 // it useless — a picture that slides out from under a pinch, pan bounds that run
 // away, a panel that will not hide — is decided by the two pure functions and the
@@ -562,6 +568,189 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
 
   ok(/const lb = el\('bd-lb'\);\s*\n\s*if \(!lb \|\| lb\.hidden\) return;/.test(html),
      'the Escape handler is guarded on the viewer being open, so it cannot swallow the key');
+}
+
+// ── 18. The duplicate-barcode guard ────────────────────────────────────────
+// A barcode is ONE PHYSICAL PALLET, so a repeat means the same pallet logged twice and
+// its units counted into the bins twice. Unlike the PO check above this is a block, and
+// the block lives HERE — the popup only asks the question.
+{
+  const { env, db } = env0();
+  const log = (user, body) => call('/?action=bin-dump-log',
+    { user, method: 'POST', body, env });
+
+  let r = await log('u-mgr1', { store: 'BL1', ...TAG, ...IMG });
+  eq(r.status, 200, 'the first pallet carrying this barcode logs normally');
+  eq(env.MEDIA._store.size, 1, 'and its photo is stored');
+
+  r = await log('u-mgr1', { store: 'BL1', ...TAG, ...IMG });
+  eq(r.status, 409, '🔑 the same barcode a second time is REFUSED');
+  let j = await json(r);
+  eq(j.code, 'DUPLICATE_BARCODE', '…with a code the client can branch on');
+  eq(j.matches.length, 1, '…and the row it collides with');
+  eq(j.matches[0].store, 'BL1', '…named, because this caller holds that store');
+  eq(j.matches[0].redacted, false, '…and not redacted');
+
+  // 🛑 The orphan check. If the refusal came after the R2 put, every blocked submit would
+  // leave an object with no row pointing at it — the exact class bin-dump-scan avoids.
+  eq(env.MEDIA._store.size, 1,
+     '🛑 the refusal happens BEFORE the photo is stored — a blocked submit leaves no orphan');
+  eq(db.prepare('SELECT COUNT(*) c FROM bin_dumps').get().c, 1, 'and writes no row');
+
+  // The override is the whole point of "block, but not a dead end".
+  r = await log('u-mgr1', { store: 'BL1', ...TAG, ...IMG, allow_duplicate: true });
+  eq(r.status, 200, 'an explicit allow_duplicate gets through');
+  eq(db.prepare('SELECT COUNT(*) c FROM bin_dumps').get().c, 2, '…and really writes the row');
+  eq(env.MEDIA._store.size, 2, '…photo and all');
+
+  // 🔑 Truthiness is not enough: only the literal true may pass. A client sending "false"
+  // or 0 or "yes" from a stray form value must NOT be read as consent.
+  for (const bad of ['false', 0, '', null]) {
+    const rr = await log('u-mgr1', { store: 'BL1', ...TAG, allow_duplicate: bad });
+    eq(rr.status, 409, `allow_duplicate: ${JSON.stringify(bad)} is not consent`);
+  }
+}
+
+// Blank barcodes must not collide with each other, or a torn tag becomes unloggable.
+{
+  const { env } = env0();
+  const blank = { store: 'BL1', ...TAG, barcode: null };
+  eq((await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST', body: blank, env })).status, 200,
+     'a pallet whose barcode could not be read still logs');
+  eq((await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST', body: blank, env })).status, 200,
+     '🔑 and so does a SECOND one — blanks are not duplicates of one another');
+  // binDumpText folds these to null too, so they must behave the same way.
+  for (const empty of ['', '   ', 'null', 'N/A']) {
+    eq((await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
+        body: { ...blank, barcode: empty }, env })).status, 200,
+       `a barcode of ${JSON.stringify(empty)} is treated as absent, not as a value`);
+  }
+
+  // 🔑 ASSERTED AT THE SOURCE, because no behavioural test can reach it. Deleting the
+  // early return is a mutation this suite survives: binDumpText already folds blanks to
+  // null, and SQL's `barcode = NULL` matches nothing, so the query returns [] either way.
+  // The guard is what keeps that true if binDumpText ever returns "" instead of null —
+  // at which point `barcode = ''` WOULD match every other blank and a torn tag would
+  // become unloggable. Cheap insurance; it must not be tidied away as redundant.
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function binDumpBarcodeMatches'));
+  ok(/if \(!code[^)]*\) return \[\];/.test(fn.slice(0, 400)),
+     'binDumpBarcodeMatches returns early on a blank barcode, before it ever queries');
+}
+
+// Crossing stores is the point: one pallet cannot be in two places.
+{
+  const { env } = env0();
+  // u-mgr2 holds BL1 and BL4. Log at BL4 first.
+  eq((await call('/?action=bin-dump-log', { user: 'u-mgr2', method: 'POST',
+      body: { store: 'BL4', ...TAG }, env })).status, 200, 'logged at BL4');
+
+  // u-mgr1 holds only BL1 and must still be stopped — but must not learn BL4's business.
+  const r = await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
+    body: { store: 'BL1', ...TAG }, env });
+  eq(r.status, 409, '🔑 the same pallet at a DIFFERENT store is still caught');
+  const m = (await json(r)).matches[0];
+  eq(m.redacted, true, '…but redacted, because the caller cannot see that store');
+  ok(!('store' in m), '…no store name');
+  ok(!('logged_by' in m), '…no logged_by');
+  ok(!('pallet_name' in m), '…no pallet name');
+  ok(!!m.logged_at, '…yet still a date, which is what makes the warning worth reading');
+
+  // A superuser sees the whole row, because they can see that store anyway.
+  const r2 = await call('/?action=bin-dump-log', { user: 'u-su', method: 'POST',
+    body: { store: 'BL1', ...TAG }, env });
+  eq(r2.status, 409, 'a superuser is stopped too');
+  const m2 = (await json(r2)).matches[0];
+  eq(m2.redacted, false, '…and sees it unredacted');
+  eq(m2.store, 'BL4', '…including which store it is at');
+}
+
+// The window is 90 days, not forever: truck numbers eventually cycle.
+{
+  const { env, db } = env0();
+  db.prepare(`INSERT INTO bin_dumps (store, barcode, po, units, logged_by, logged_at)
+              VALUES ('BL1', ?, '5036', 1, 'x@y.z', ?)`)
+    .run(TAG.barcode, new Date(Date.parse(PINNED) - 100 * 24 * 3600 * 1000).toISOString());
+  eq((await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
+      body: { store: 'BL1', ...TAG }, env })).status, 200,
+     'a barcode last seen 100 days ago no longer blocks');
+
+  const { env: env2, db: db2 } = env0();
+  db2.prepare(`INSERT INTO bin_dumps (store, barcode, po, units, logged_by, logged_at)
+               VALUES ('BL1', ?, '5036', 1, 'x@y.z', ?)`)
+    .run(TAG.barcode, new Date(Date.parse(PINNED) - 80 * 24 * 3600 * 1000).toISOString());
+  eq((await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
+      body: { store: 'BL1', ...TAG }, env: env2 })).status, 409,
+     '…but 80 days ago still does');
+}
+
+// bin-dump-recent answers both questions in one trip, and keeps them apart.
+{
+  const { env } = env0();
+  await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
+    body: { store: 'BL1', ...TAG }, env });
+
+  let j = await json(await call(
+    `/?action=bin-dump-recent&store=BL1&po=5036&barcode=${encodeURIComponent(TAG.barcode)}`,
+    { user: 'u-mgr1', env }));
+  eq(j.matches.length, 1, 'the PO hint still works');
+  eq(j.barcode_matches.length, 1, 'and the barcode block is reported alongside it');
+
+  j = await json(await call('/?action=bin-dump-recent&store=BL1&barcode=PRM-9-9', { user: 'u-mgr1', env }));
+  eq(j.matches.length, 0, 'no PO asked, no PO answered');
+  eq(j.barcode_matches.length, 0, 'an unseen barcode matches nothing');
+
+  // 🔑 A barcode-only question must not be swallowed by the "no PO" early return the
+  // handler used to take.
+  j = await json(await call(
+    `/?action=bin-dump-recent&store=BL1&barcode=${encodeURIComponent(TAG.barcode)}`,
+    { user: 'u-mgr1', env }));
+  eq(j.barcode_matches.length, 1, '🔑 asking about a barcode ALONE still answers');
+}
+
+// Editing: the same rule, minus the row being edited.
+{
+  const { env } = env0();
+  const a = await json(await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
+    body: { store: 'BL1', ...TAG }, env }));
+  await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
+    body: { store: 'BL1', ...TAG_B }, env });
+
+  eq((await call('/?action=bin-dump-update', { user: 'u-mgr1', method: 'POST',
+      body: { id: a.id, ...TAG, units: 7 }, env })).status, 200,
+     '🔑 a row is not a duplicate of ITSELF — saving its own barcode back is fine');
+
+  const r = await call('/?action=bin-dump-update', { user: 'u-mgr1', method: 'POST',
+    body: { id: a.id, ...TAG, barcode: TAG_B.barcode }, env });
+  eq(r.status, 409, 'but editing a barcode INTO another row’s is refused');
+  eq((await json(r)).code, 'DUPLICATE_BARCODE', '…with the same code as the log path');
+
+  eq((await call('/?action=bin-dump-update', { user: 'u-mgr1', method: 'POST',
+      body: { id: a.id, ...TAG, barcode: TAG_B.barcode, allow_duplicate: true }, env })).status, 200,
+     '…and the same override');
+}
+
+// The index that makes the lookup affordable, and the shape of the migration.
+{
+  const sql = fs.readFileSync(path.join(repo, 'migration-060.sql'), 'utf8');
+  ok(/CREATE INDEX IF NOT EXISTS\s+idx_bin_dumps_barcode\s+ON\s+bin_dumps\(barcode/i.test(sql),
+     'migration-060 indexes bin_dumps(barcode)');
+  ok(!/ON bin_dumps\(store,\s*barcode/i.test(sql),
+     '🔑 NOT store-prefixed — the lookup deliberately crosses stores, so a store-first index would not serve it');
+  ok(/IF NOT EXISTS/i.test(sql), 'and is re-runnable, unlike migration-059');
+
+  const w = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const logH = w.slice(w.indexOf('action") === "bin-dump-log"'));
+  const guardAt = logH.indexOf('DUPLICATE_BARCODE');
+  const putAt = logH.indexOf('env.MEDIA.put');
+  ok(guardAt > 0 && putAt > 0 && guardAt < putAt,
+     '🛑 in the source, the duplicate refusal precedes the R2 put — the orphan test above pins the behaviour, this pins the ordering');
+
+  const h = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  ok(/allow_duplicate: true/.test(h), 'the client can send the override');
+  ok(/bdPostAllowingDuplicate/.test(h), 'and retries once when the worker refuses on a race it could not pre-flight');
+  ok(/class="bd-dup"/.test(h), 'the log badges rows sharing a barcode');
+  ok(/if \(!c\) continue;/.test(h), '…and skips blanks when deciding what is shared');
 }
 
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".

@@ -6670,6 +6670,45 @@ const BIN_DUMP_FIELDS = ["barcode", "item_no", "pallet_name", "sup_ref", "po", "
 // legitimately came back; shorter would miss the case it exists for.
 const BIN_DUMP_DUPLICATE_WINDOW_MS = 6 * 60 * 60 * 1000;
 
+// The barcode identifies ONE PHYSICAL PALLET — `PRM-10490-30` is truck 10490, pallet 30 —
+// so the same barcode twice is the same pallet logged twice, and its units have been
+// double-counted into the bins. That is a far stronger signal than the PO check above,
+// where one PO is shared by all 30 pallets on a truck and repeating is normal.
+//
+// 🔑 NINETY DAYS, not forever. `PRM-<truck>-<index>` is only as unique as truck numbers
+// are, and those eventually cycle. An all-time check would start matching a fresh pallet
+// against a years-old one, and a warning that fires on good pallets trains people to
+// click through it — which costs more than the check was ever worth.
+const BIN_DUMP_BARCODE_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+
+// Has this exact pallet been logged already?
+//
+// 🔑 Deliberately CROSSES STORES, unlike every other Bin Dump query. One pallet cannot be
+// in two places, so a hit at another store is a real mistake — usually the pallet being
+// logged against the wrong store — and scoping the lookup would hide exactly the case
+// worth catching. What the caller may SEE is still scoped: a row at a store they do not
+// hold comes back as a date and nothing else, which is enough to stop them without
+// leaking another store's operations.
+//
+// 🛑 A blank barcode is not a duplicate of every other blank. binDumpText turns "", "null"
+// and "n/a" into null, and null returns no matches at all — a torn tag must stay loggable.
+async function binDumpBarcodeMatches(env, barcode, user, isAdminSecret, excludeId) {
+  const code = binDumpText(barcode, 60);
+  if (!code || !env.DB) return [];
+  const since = new Date(Date.now() - BIN_DUMP_BARCODE_WINDOW_MS).toISOString();
+  const { results } = await env.DB.prepare(
+    `SELECT id, store, pallet_name, units, logged_by, logged_at FROM bin_dumps
+      WHERE barcode = ? AND logged_at >= ? ORDER BY logged_at DESC LIMIT 5`
+  ).bind(code, since).all();
+  const allow = isAdminSecret ? null : allowedStores(user);   // null means every store
+  return (results || [])
+    .filter(r => !(excludeId != null && r.id === excludeId))
+    .map(r => (allow === null || allow.includes(r.store))
+      ? { id: r.id, store: r.store, pallet_name: r.pallet_name, units: r.units,
+          logged_by: r.logged_by, logged_at: r.logged_at, redacted: false }
+      : { logged_at: r.logged_at, redacted: true });
+}
+
 // 🛑 PAIR LABEL TO VALUE BY ORDER, NOT BY POSITION. This prompt used to say the
 // value sits one line ABOVE its label. That was true of the first tag sampled and
 // EXACTLY BACKWARDS on the second: on Brian's 2026-08-26 tag every value renders
@@ -20194,6 +20233,22 @@ export default {
           }), { status: 400, headers: corsJson });
         }
 
+        // 🛑 BEFORE the R2 upload, deliberately. A rejection after the put would leave an
+        // object with no row pointing at it — the exact orphan class bin-dump-scan was
+        // designed to avoid. Refuse first, upload second.
+        //
+        // 🔑 THIS is the boundary, not the popup. The client asks bin-dump-recent and shows
+        // a warning, but a stale tab or a direct POST would sail past that; only an explicit
+        // allow_duplicate from someone who read the warning gets through here.
+        const dupes = await binDumpBarcodeMatches(env, fields.barcode, currentUser, isAdminSecret, null);
+        if (dupes.length && body?.allow_duplicate !== true) {
+          return new Response(JSON.stringify({
+            error: "This barcode has already been logged",
+            code: "DUPLICATE_BARCODE",
+            matches: dupes,
+          }), { status: 409, headers: corsJson });
+        }
+
         let key = null, ctype = null;
         const b64 = String(body?.image_b64 || "");
         if (b64) {
@@ -20235,13 +20290,25 @@ export default {
       const denied = binDumpStoreGuard(url.searchParams.get("store"), currentUser, isAdminSecret, corsJson);
       if (denied) return denied;
       const po = String(url.searchParams.get("po") || "").trim();
-      if (!po) return new Response(JSON.stringify({ ok: true, matches: [] }), { headers: corsJson });
-      const since = new Date(Date.now() - BIN_DUMP_DUPLICATE_WINDOW_MS).toISOString();
-      const { results } = await env.DB.prepare(
-        `SELECT id, pallet_name, units, logged_by, logged_at FROM bin_dumps
-          WHERE store = ? AND po = ? AND logged_at >= ? ORDER BY logged_at DESC LIMIT 5`
-      ).bind(String(url.searchParams.get("store")).toUpperCase(), po, since).all();
-      return new Response(JSON.stringify({ ok: true, matches: results || [] }), { headers: corsJson });
+
+      // Two different questions, deliberately kept apart because they carry different
+      // weight. Same PO at this store, recently: SOFT — one PO covers a whole truck and
+      // repeating is normal. Same BARCODE anywhere, within 90 days: HARD — one barcode is
+      // one physical pallet, and a repeat means its units are about to be counted twice.
+      let matches = [];
+      if (po) {
+        const since = new Date(Date.now() - BIN_DUMP_DUPLICATE_WINDOW_MS).toISOString();
+        const r = await env.DB.prepare(
+          `SELECT id, pallet_name, units, logged_by, logged_at FROM bin_dumps
+            WHERE store = ? AND po = ? AND logged_at >= ? ORDER BY logged_at DESC LIMIT 5`
+        ).bind(String(url.searchParams.get("store")).toUpperCase(), po, since).all();
+        matches = r.results || [];
+      }
+      const barcodeMatches = await binDumpBarcodeMatches(
+        env, url.searchParams.get("barcode"), currentUser, isAdminSecret, null);
+
+      return new Response(JSON.stringify({ ok: true, matches, barcode_matches: barcodeMatches }),
+        { headers: corsJson });
     }
 
     // GET ?action=bin-dump-list&store=BL1[&weeks=8]
@@ -20303,6 +20370,18 @@ export default {
             error: "A pallet needs at least one of: barcode, item number, pallet name, or PO / WO",
           }), { status: 400, headers: corsJson });
         }
+        // Correcting a barcode INTO one that already exists is the same mistake arriving
+        // by a different door, so the same rule applies — minus this row, which is not a
+        // duplicate of itself.
+        const dupes = await binDumpBarcodeMatches(env, fields.barcode, currentUser, isAdminSecret, id);
+        if (dupes.length && body?.allow_duplicate !== true) {
+          return new Response(JSON.stringify({
+            error: "This barcode has already been logged",
+            code: "DUPLICATE_BARCODE",
+            matches: dupes,
+          }), { status: 409, headers: corsJson });
+        }
+
         // 🔑 logged_at is NOT touched. A correction is a correction, not a re-receipt:
         // moving the timestamp would silently move the pallet into a different week.
         await env.DB.prepare(
