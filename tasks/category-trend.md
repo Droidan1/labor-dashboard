@@ -209,3 +209,65 @@ than the code: the dashboard card's **budget** line (budget has no category
 dimension — it is per store per day) and its **last-year** line (would need year-old
 `items:` KV, and Clover only reaches back ~90 days). Two honest series beat four with
 two invented.
+
+
+## DECISIONS LOCKED — Brian, 2026-09-10
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Where does it go | **Its own tab on the Retail Summary page** — not inside each store tab |
+| 2 | What does "compare" mean | **Period over period.** Not last year |
+| 3 | Per-category budget / last-year lines | **"Don't have that yet"** — neither line is drawn |
+| 4 | Day compares two fortnights | Build as shown |
+| 5 | Vs compares the last two closed periods | Build as shown |
+| 6 | Grid sparklines on their own scale | Build as shown |
+| 7 | L3 names cleaned for display | Build as shown |
+| 8 | Should Auction appear | **No** |
+| 9 | The period we are in | **Yes, also** — period-to-date, added this round |
+| 10 | Day window of 14 | Build as shown |
+
+### #9 — period to date, built and verified
+
+`Compare: Last closed | To date`. The green line runs to the last closed day and
+stops; the amber line runs the **whole** previous period so the target is visible.
+**Both totals are clipped to the same span** and the pill says so ("same 6 days") —
+a month-to-date measured against a whole month is the classic way this chart lies.
+The caption carries the previous period's finished total. **Disabled for Day**: a day
+has no closed sub-period to clip to, because item snapshots are per day, not per hour.
+
+Two on-screen contradictions came with it and were fixed: the status line still said
+the charted period "is left out", and the panel legend still asserted every bucket is
+a closed period. Both are mode-aware now — **a legend that states the opposite of
+what is on screen is worse than no legend.**
+
+101 checks, all passing.
+
+## BUILD PLAN — app implementation
+
+- [ ] **Frontend, phase 1 — the tab.** New `wrs-tab` in the strip at index.html:1591
+      and a `#wrs-pane-trend` section. `switchWrsTab` (17425) and `renderWrsActiveTab`
+      (17450) are near-identical duplicated logic — **both must be edited**, and the
+      duplication is worth collapsing while in there.
+- [ ] **Frontend, phase 1 — the panel**, off `?action=weekly-t13` alone: L2/L3, the
+      week bucket, Vs / Trend / Grid / Table, net + units, store chips.
+      Inline SVG and CSS bars, never `<canvas>`.
+- [ ] **Worker, phase 1** — lift `LIMIT 13` (worker.js:18116) to a bounded `n`. Ceiling
+      is the KV budget: 7 stores x n weeks gets, so n ~= 100.
+- [ ] **Worker, phase 2** — a category-series action bucketing day snapshots into true
+      calendar days, months and quarters, **refusing rather than truncating** when
+      store-days would exceed ~840 subrequests.
+- [ ] **Gate BL12/BL16** through the existing `wrsGateDates` — a new series that skips
+      it double-counts the shared merchant.
+- [ ] Bump `CACHE_NAME` in `sw.js` in the same commit, or installed phones keep
+      serving the old bundle and the feature simply will not appear.
+
+### Checks to port from the preview's suite
+
+1. L3 totals equal their L2 total, per bucket (worker.js:2734).
+2. No bucket whose natural end is after the last closed day is plotted — except in
+   to-date mode, where BOTH sides are clipped to the same span.
+3. Per-category deltas are not all equal — the tell for a length artefact.
+4. The second render, after a control change, not just first paint.
+5. `Other / unmapped` resolves to one row per parent, not one row overall.
+6. The bars and the chart lines carry the same two colours.
+7. Contrast computed in both themes at >= 4.5:1.

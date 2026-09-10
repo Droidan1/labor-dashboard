@@ -231,6 +231,7 @@ html.light .sec-s{color:var(--inkDim);}
 .vs-sw{display:inline-block;width:18px;height:3px;border-radius:2px;flex:none;}
 .vs-pl{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--inkDim);}
 .vs-pv{font-variant-numeric:tabular-nums;color:var(--ink);}
+.vs-ps{font-size:10px;font-weight:600;color:var(--inkDim);white-space:nowrap;}
 .vs-headline{font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;margin-left:auto;white-space:nowrap;}
 .vs-chart{padding:2px 18px 0;}
 .vs-chart svg{display:block;}
@@ -373,6 +374,10 @@ table.mc tr.mc-l3 td{color:var(--inkDim);}
     view alone, never a limit on what you can see.
   </p>
   <div class="doc-note">
+    <b>Every question below is answered and folded in.</b> The one genuinely new thing
+    since you last looked is <b>Compare → To date</b>, which charts the period you are
+    in against the same span of the one before it.
+    <br><br>
     <b>Nothing is wired up, and no app code has been changed.</b> This is a static
     prototype in <code>docs/</code> — a directory <code>scripts/build.sh</code>
     deliberately excludes, so it never reaches production. <b>The numbers are
@@ -416,6 +421,11 @@ table.mc tr.mc-l3 td{color:var(--inkDim);}
         <span class="pill" id="ctl-measure"></span>
       </span>
 
+      <span class="ctl" id="ctl-compare-wrap" hidden>
+        <span class="ctl-lbl">Compare</span>
+        <span class="pill" id="ctl-compare"></span>
+      </span>
+
       <span class="ctl" id="ctl-scale-wrap" hidden>
         <span class="ctl-lbl">Scale</span>
         <span class="pill" id="ctl-scale"></span>
@@ -456,7 +466,7 @@ table.mc tr.mc-l3 td{color:var(--inkDim);}
   <div class="h2">What this panel is reading</div>
   <div class="qa" id="src"></div>
 
-  <div class="h2">Questions for you — these change what gets built</div>
+  <div class="h2">Decisions — answered 2026-09-10, and built in</div>
   <div class="qa" id="qa"></div>
 
   <div class="h2">How it would be built</div>
@@ -543,6 +553,7 @@ const S = {
   view:'vs', store:'__all__', hidden:new Set([OTHER]), maxSeries:6,
   picked:new Set(),        // categories explicitly promoted onto Trend
   focus:null,              // the single category the Vs chart plots (null = all)
+  ptd:false,               // compare the period we are IN, clipped like-for-like
   gridScale:'own',         // 'own' | 'shared'
 };
 function resetHidden(){ S.hidden = new Set([OTHER]); S.picked = new Set(); S.focus = null; }
@@ -1088,36 +1099,41 @@ const CHART_COLORS = { tw:'#22c55e', lw:'#f59e0b', bg:'#cbd5e1' };  // index.htm
 
 // Each point is a range on the current period and the matching range on the
 // previous one. Uniform across buckets so one drawing routine serves them all.
-function vsPoints(kind){
+// Each point is a range on the current period and the matching range on the
+// previous one. Uniform across buckets so one drawing routine serves them all.
+// `ptd` swaps the current period for the one we are IN, and reports how many
+// of its sub-periods have actually closed.
+function vsPoints(kind, ptd){
+  const back = ptd ? 0 : 1;      // 0 = the period containing today
   const dayPt = (c, p, label) => ({ label, cur:[c,c], prv:[p,p] });
   if (kind === 'day'){
     // A day has no sub-period in this data — item snapshots are per DAY, never
     // per hour — so Day compares the last fortnight against the one before it,
-    // aligned by weekday. Anything finer would need data that does not exist.
+    // aligned by weekday. Anything finer would need data that does not exist,
+    // which is also why "to date" is not offered for Day.
     const out = [];
     for (let i = 13; i >= 0; i--){
       const c = new Date(TODAY.getTime() - i*DAY_MS);
       out.push(dayPt(c, new Date(c.getTime() - 14*DAY_MS),
         c.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'})));
     }
-    return { points: out, curLabel:'Last 14 days', prvLabel:'Previous 14 days' };
+    return { points: out, curLabel:'Last 14 days', prvLabel:'Previous 14 days', elapsed: out.length };
   }
   if (kind === 'week'){
-    const cur = periodBack('week', 0).e <= TODAY ? periodBack('week', 0) : periodBack('week', 1);
-    const back = periodBack('week', 0).e <= TODAY ? 1 : 2;
-    const prv = periodBack('week', back);
+    const cur = periodBack('week', back), prv = periodBack('week', back + 1);
     const out = [];
     for (let i = 0; i < 7; i++){
       const c = new Date(cur.s.getTime() + i*DAY_MS);
       out.push(dayPt(c, new Date(prv.s.getTime() + i*DAY_MS),
         c.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'})));
     }
-    return { points: out, curLabel:'Wk '+isoWeek(cur.e), prvLabel:'Wk '+isoWeek(prv.e) };
+    return { points: out, curLabel:'Wk '+isoWeek(cur.e), prvLabel:'Wk '+isoWeek(prv.e),
+             elapsed: elapsedIn(out) };
   }
   if (kind === 'month'){
-    let k = 0; while (periodBack('month', k).e > TODAY) k++;
+    let k = back; while (!ptd && periodBack('month', k).e > TODAY) k++;
     const cur = periodBack('month', k), prv = periodBack('month', k+1);
-    const days = new Date(Date.UTC(cur.s.getUTCFullYear(), cur.s.getUTCMonth()+1, 0)).getUTCDate();
+    const days  = new Date(Date.UTC(cur.s.getUTCFullYear(), cur.s.getUTCMonth()+1, 0)).getUTCDate();
     const pDays = new Date(Date.UTC(prv.s.getUTCFullYear(), prv.s.getUTCMonth()+1, 0)).getUTCDate();
     const out = [];
     for (let i = 0; i < days; i++){
@@ -1126,9 +1142,9 @@ function vsPoints(kind){
       const p = i < pDays ? new Date(prv.s.getTime() + i*DAY_MS) : null;
       out.push({ label: String(i+1), cur:[c,c], prv: p ? [p,p] : null });
     }
-    return { points: out, curLabel: cur.long, prvLabel: prv.long };
+    return { points: out, curLabel: cur.long, prvLabel: prv.long, elapsed: elapsedIn(out) };
   }
-  let k = 0; while (periodBack('quarter', k).e > TODAY) k++;
+  let k = back; while (!ptd && periodBack('quarter', k).e > TODAY) k++;
   const cur = periodBack('quarter', k), prv = periodBack('quarter', k+1);
   const out = [];
   for (let i = 0; i < 13; i++){
@@ -1139,7 +1155,28 @@ function vsPoints(kind){
       cur:[cs, new Date(Math.min(cs.getTime()+6*DAY_MS, cur.e.getTime()))],
       prv:[ps, new Date(Math.min(ps.getTime()+6*DAY_MS, prv.e.getTime()))] });
   }
-  return { points: out, curLabel: cur.label.replace("'", " '"), prvLabel: prv.label.replace("'", " '") };
+  return { points: out, curLabel: cur.label.replace("'", " '"),
+           prvLabel: prv.label.replace("'", " '"), elapsed: elapsedIn(out) };
+}
+// How many sub-periods have actually CLOSED. A sub-period still running is not
+// a data point — a Tuesday half-done is not a Tuesday.
+function elapsedIn(points){
+  let n = 0;
+  for (const p of points){ if (p.cur[1].getTime() <= TODAY.getTime()) n++; else break; }
+  return n;
+}
+// The whole current period, clipped at the last closed day, and the SAME span
+// measured from the start of the previous one. Clipping both is what makes a
+// period-to-date comparison honest: six days against six days, never six
+// against thirty.
+function vsRanges(kind, ptd){
+  const { points, elapsed } = vsPoints(kind, ptd);
+  const n = ptd ? Math.max(1, elapsed) : points.length;
+  const usable = points.slice(0, n).filter(p => p.prv);
+  return {
+    cur: [points[0].cur[0], points[n-1].cur[1]],
+    prv: usable.length ? [usable[0].prv[0], usable[usable.length-1].prv[1]] : null,
+  };
 }
 
 // Value of the focused category (or every category) over an inclusive range.
@@ -1192,37 +1229,49 @@ function vsFocusRow(rows){
   if (S.focus === null) return null;
   return rows.find(r => r.key === S.focus) || null;
 }
+const ptdOn = () => S.ptd && S.bucket !== 'day';
 
 function drawVs(buckets, rows){
   const host = document.getElementById('chart');
   host.textContent = '';
-  const { points, curLabel, prvLabel } = vsPoints(S.bucket);
+  const ptd = ptdOn();
+  const { points, curLabel, prvLabel, elapsed } = vsPoints(S.bucket, ptd);
   const focus = vsFocusRow(rows);
 
-  const cur = points.map(p => valueOver(p.cur, focus));
+  // In to-date mode the current line STOPS where the data stops; the previous
+  // one runs the whole period, so you can see what you are running against.
+  const cutoff = ptd ? Math.max(1, elapsed) : points.length;
+  const cur = points.map((p,i) => i < cutoff ? valueOver(p.cur, focus) : null);
   const prv = points.map(p => valueOver(p.prv, focus));
   const sum = a => a.reduce((x,v)=> x + (v||0), 0);
-  const curTotal = sum(cur), prvTotal = sum(prv);
+  const curTotal  = sum(cur);
+  const prvSame   = sum(prv.slice(0, cutoff));   // like-for-like
+  const prvFull   = sum(prv);
 
-  // ── Legend pills, the app's own (index.html:8908) ───────────────────
   const lg = document.createElement('div'); lg.className = 'vs-legend';
-  const pill = (colour, lbl, val) => {
+  const pill = (colour, lbl, val, sub) => {
     const w = document.createElement('span'); w.className = 'vs-pill';
     const sw = document.createElement('span'); sw.className='vs-sw'; sw.style.background = colour;
     const l = document.createElement('span'); l.className='vs-pl'; l.textContent = lbl;
     const v = document.createElement('span'); v.className='vs-pv'; v.textContent = fmtVal(val);
-    w.append(sw, l, v); lg.appendChild(w);
+    w.append(sw, l, v);
+    if (sub){ const x = document.createElement('span'); x.className='vs-ps'; x.textContent = sub; w.appendChild(x); }
+    lg.appendChild(w);
   };
-  pill(CHART_COLORS.tw, curLabel, curTotal);
-  pill(CHART_COLORS.lw, prvLabel, prvTotal);
+  const unit = BUCKETS[S.bucket].unit;
+  pill(CHART_COLORS.tw, ptd ? curLabel + ' to date' : curLabel, curTotal);
+  // The comparator is the SAME span of the previous period, and the pill says
+  // so — comparing six days against a whole month is the classic way a
+  // to-date chart lies.
+  pill(CHART_COLORS.lw, prvLabel, prvSame,
+       ptd ? `same ${cutoff} ${cutoff === 1 ? subUnit(S.bucket) : subUnit(S.bucket)+'s'}` : '');
   const dl = document.createElement('span'); dl.className = 'vs-headline';
-  dl.style.color = curTotal >= prvTotal ? getCSS('--good') : getCSS('--bad');
-  dl.textContent = (curTotal >= prvTotal ? '▲ ' : '▼ ') + pctText(curTotal, prvTotal)
-    + '  ' + (curTotal >= prvTotal ? '+' : '−') + fmtVal(Math.abs(curTotal - prvTotal));
+  dl.style.color = curTotal >= prvSame ? getCSS('--good') : getCSS('--bad');
+  dl.textContent = (curTotal >= prvSame ? '▲ ' : '▼ ') + pctText(curTotal, prvSame)
+    + '  ' + (curTotal >= prvSame ? '+' : '−') + fmtVal(Math.abs(curTotal - prvSame));
   lg.appendChild(dl);
   host.appendChild(lg);
 
-  // ── The chart ───────────────────────────────────────────────────────
   const holder = document.createElement('div'); holder.className = 'vs-chart';
   holder.innerHTML = vsChartSVG(points, cur, prv, host.clientWidth || 760);
   host.appendChild(holder);
@@ -1232,13 +1281,16 @@ function drawVs(buckets, rows){
     ? (focus.l3 ? focus.l2 + ' → ' + focus.l3 : focus.key)
     : 'All ' + S.level.toUpperCase() + ' categories';
   const hint = document.createElement('span'); hint.className='vs-cap-h';
-  hint.textContent = focus ? ' · click its row again to go back to all' : ' · click a row to chart one category';
+  hint.textContent = ptd
+    ? ` · ${prvLabel} finished at ${fmtVal(prvFull)}` + (focus ? ' · click its row again for all' : ' · click a row to chart one category')
+    : (focus ? ' · click its row again to go back to all' : ' · click a row to chart one category');
   cap.appendChild(hint);
   host.appendChild(cap);
 
-  // ── Per-category rows underneath — every category, still ────────────
-  host.appendChild(vsRows(buckets, rows, focus));
+  const { cur: curRange, prv: prvRange } = vsRanges(S.bucket, ptd);
+  host.appendChild(vsRows(rows, curRange, prvRange, focus));
 }
+function subUnit(kind){ return kind === 'quarter' ? 'week' : 'day'; }
 
 function vsChartSVG(points, cur, prv, hostW){
   const W = Math.max(300, hostW - 4), narrow = W < 560;
@@ -1270,17 +1322,17 @@ function vsChartSVG(points, cur, prv, hostW){
                            else run.push([x(i), y(v)]); });
     if (run.length) out.push(run); return out;
   };
-  // Previous period first, so the current one sits on top (order 2 then 1).
   runs(prv).forEach(r => {
     g += `<path d="${splinePath(r, 0.3)}" fill="none" stroke="${CHART_COLORS.lw}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
   });
   runs(cur).forEach(r => {
-    const area = splinePath(r, 0.3) + ` L ${r[r.length-1][0].toFixed(1)} ${(M.t+ph).toFixed(1)}`
-               + ` L ${r[0][0].toFixed(1)} ${(M.t+ph).toFixed(1)} Z`;
-    g += `<path d="${area}" fill="rgba(34,197,94,0.12)" stroke="none"/>`;
-    g += `<path d="${splinePath(r, 0.3)}" fill="none" stroke="${CHART_COLORS.tw}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
+    if (r.length > 1){
+      const area = splinePath(r, 0.3) + ` L ${r[r.length-1][0].toFixed(1)} ${(M.t+ph).toFixed(1)}`
+                 + ` L ${r[0][0].toFixed(1)} ${(M.t+ph).toFixed(1)} Z`;
+      g += `<path d="${area}" fill="rgba(34,197,94,0.12)" stroke="none"/>`;
+      g += `<path d="${splinePath(r, 0.3)}" fill="none" stroke="${CHART_COLORS.tw}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
+    }
   });
-  // Markers carry a 2px surface ring so they stay legible where lines cross.
   const dots = (arr, colour, r) => arr.forEach((v,i) => { if (v == null) return;
     g += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${r}" fill="${colour}" stroke="${surf}" stroke-width="2"/>`; });
   dots(prv, CHART_COLORS.lw, 3);
@@ -1292,27 +1344,29 @@ function vsChartSVG(points, cur, prv, hostW){
     aria-label="${esc(points.length + ' points, current period against the previous one. Every value is in the Table view.')}">${g}</svg>`;
 }
 
-// The category breakdown stays: every category, two bars, click to chart it.
-function vsRows(buckets, rows, focus){
-  const n = buckets.length;
+// The category breakdown. Values come from the SAME ranges the card charts, so
+// the rows and the card can never disagree — including in to-date mode, where
+// the previous period is clipped to the same span.
+function vsRows(rows, curRange, prvRange, focus){
   const wrapEl = document.createElement('div'); wrapEl.className = 'vs-wrap';
-  if (n < 2) return wrapEl;
-  const cVal = r => r.values[n-1], pVal = r => r.values[n-2];
-  const max = Math.max(...rows.map(r => Math.max(cVal(r), pVal(r))), 1);
+  const cVal = new Map(), pVal = new Map();
+  rows.forEach(r => { cVal.set(r, valueOver(curRange, r) || 0);
+                      pVal.set(r, prvRange ? (valueOver(prvRange, r) || 0) : 0); });
+  const max = Math.max(...rows.map(r => Math.max(cVal.get(r), pVal.get(r))), 1);
 
   const groups = [];
   if (S.level === 'l2') groups.push({ l2:null, rows: rows.slice() });
   else activeParents().forEach(l2 => {
     const g = rows.filter(r => r.l2 === l2); if (g.length) groups.push({ l2, rows:g });
   });
-  groups.forEach(g => g.rows.sort((a,b) => cVal(b) - cVal(a)));
-  groups.sort((a,b) => b.rows.reduce((x,r)=>x+cVal(r),0) - a.rows.reduce((x,r)=>x+cVal(r),0));
+  groups.forEach(g => g.rows.sort((a,b) => cVal.get(b) - cVal.get(a)));
+  groups.sort((a,b) => b.rows.reduce((x,r)=>x+cVal.get(r),0) - a.rows.reduce((x,r)=>x+cVal.get(r),0));
 
   groups.forEach(g => {
     if (g.l2){
       const h = document.createElement('div'); h.className = 'grid-gh';
       const nm = document.createElement('span'); nm.className='grid-gh-n'; nm.textContent = g.l2;
-      const gc = g.rows.reduce((x,r)=>x+cVal(r),0), gp = g.rows.reduce((x,r)=>x+pVal(r),0);
+      const gc = g.rows.reduce((x,r)=>x+cVal.get(r),0), gp = g.rows.reduce((x,r)=>x+pVal.get(r),0);
       const ct = document.createElement('span'); ct.className='grid-gh-c';
       ct.textContent = fmtVal(gc) + '  vs  ' + fmtVal(gp) + '  ';
       const gd = document.createElement('span'); gd.className='vs-d';
@@ -1321,7 +1375,7 @@ function vsRows(buckets, rows, focus){
       ct.appendChild(gd); h.append(nm, ct); wrapEl.appendChild(h);
     }
     g.rows.forEach(r => {
-      const c = cVal(r), p = pVal(r);
+      const c = cVal.get(r), p = pVal.get(r);
       if (c <= 0 && p <= 0) return;
       const on = focus && focus.key === r.key;
       const row = document.createElement('button');
@@ -1534,7 +1588,8 @@ function drawStatus(buckets, series, allRows, open){
     + ` · <b>${scope}</b> · ${S.measure === 'net' ? 'net sales' : 'units'}`
     + ` · <b>all ${allRows.length} ${S.level.toUpperCase()} categor${allRows.length===1?'y':'ies'}</b>`
     + (S.view === 'vs'
-        ? ` — the card charts <b>${esc(vsPoints(S.bucket).curLabel)}</b> against <b>${esc(vsPoints(S.bucket).prvLabel)}</b>`
+        ? ` — the card charts <b>${esc(vsPoints(S.bucket, ptdOn()).curLabel)}${ptdOn() ? ' to date' : ''}</b>`
+          + ` against <b>${esc(vsPoints(S.bucket, ptdOn()).prvLabel)}</b>`
           + ` ${S.bucket === 'quarter' ? 'week by week' : 'day by day'}; every category is compared underneath it`
       : S.view === 'trend'
         ? ` — Trend overlays ${drawn} at a time (click any Grid panel to swap one in); <b>Vs</b>, <b>Grid</b> and <b>Table</b> show every one of them`
@@ -1556,9 +1611,15 @@ function drawStatus(buckets, series, allRows, open){
     txt += `.<br>Built from the <b>pre-rolled week summaries</b> — 1 read per store-week `
       + `(${buckets.length} × ${S.store==='__all__'?STORE_KEYS.length:1} = ${(buckets.length*(S.store==='__all__'?STORE_KEYS.length:1))}), the cheapest grain there is.`;
   }
-  if (open){
+  if (open && !(S.view === 'vs' && ptdOn())){
     txt += `<br><span class="warnDot">▲</span> <b>${esc(open.long.split(' · ')[0])} is still in progress and is left out</b>`
       + ` — a part-length period plotted beside full ones reads as a collapse in every category at once.`;
+  } else if (S.view === 'vs' && ptdOn()){
+    const { elapsed } = vsPoints(S.bucket, true);
+    const n = Math.max(1, elapsed), u = subUnit(S.bucket);
+    txt += `<br><span class="warnDot">▲</span> <b>The ${BUCKETS[S.bucket].unit} in progress, clipped to the ${n} ${u}${n===1?'':'s'} that have closed</b>`
+      + ` — and the ${BUCKETS[S.bucket].unit} before it is clipped to the same ${n}, so the totals are like for like.`
+      + ` The amber line still runs its full length, so you can see what you are running against.`;
   }
   if (S.level === 'l3' && S.bucket === 'week'){
     txt += `<br><span class="warnDot">▲</span> At week grain the L3 keys are the <b>normalised</b> ones — heuristic, IM and pattern matches are already folded into <b>Other / unmapped</b> before storage.`;
@@ -1587,11 +1648,13 @@ function drawPanelLegend(){
     strip: `<div class="pl-row">${box('var(--good)')}<span><b>Green in the change strip is up, red is down</b>, versus the ${BUCKETS[S.bucket].vs}. The bar's <i>direction</i> carries the same meaning as its colour, so the pair still reads under red-green colour blindness.</span></div>`,
     hierarchy: `<div class="pl-row"><span class="pl-swatch" style="display:inline-block;margin-top:1px;padding:1px 4px;border-radius:4px;border:1px solid var(--accent);color:var(--accent);font-size:8.5px;font-weight:700;letter-spacing:.06em;line-height:1.2">L3</span><span><b>An L3 row sits indented under its L2</b>, with a rule drawn back up to it. Inheritance is the information, so it is drawn rather than labelled — and the L2 row is the exact sum of the L3 rows beneath it.</span></div>`,
     closed: `<div class="pl-row">${box('')}<span><b>A dash (—) is no sale in that period; it is never a zero passed off as data.</b> Every bucket drawn is a <b>closed</b> period — the one still in progress is named in the status line and left out, so a part-length period can never masquerade as a decline.</span></div>`.replace('style="display:inline-block;width:11px;height:11px;border-radius:3px;','style="display:inline-block;width:11px;height:11px;border-radius:3px;border:1px solid var(--border);'),
+    ptd: `<div class="pl-row">${dash('#f59e0b',14,3)}<span><b>To date clips both sides to the same span.</b> The ${BUCKETS[S.bucket].unit} you are in is measured over the sub-periods that have actually closed, and the ${BUCKETS[S.bucket].unit} before it is measured over the same number — six days against six days, never six against thirty. The pill says how many. The amber line still runs its <i>full</i> length and the caption gives its finished total, so you can see the target as well as the pace.</span></div>`,
     surfaces: `<div class="pl-row">${box('var(--panelHi)')}<span><b>Four surfaces, and every category is on three of them.</b> <b>Vs</b> puts this period against the last, category by category. <b>Grid</b> gives each its own panel with its shape over the whole window. <b>Table</b> gives each a row of every bucket. <b>Trend</b> overlays up to ${S.maxSeries} as lines when you want to watch a few closely. Nothing is ever hidden — only undrawn.</span></div>`,
     contrast: `<div class="pl-row">${box('var(--panelHi)')}<span><b>Every number the charts draw is also in Table</b>, unrounded — so no value is reachable only by hovering. Contrast is ≥4.5:1 in both themes; the three light-mode hues that sit under 3:1 against white are why direct labels and that table are not optional.</span></div>`,
   };
 
-  const rows = { vs:    [R.vsBars, R.vsDelta, R.vsNoBudget, R.closed, R.surfaces],
+  const rows = { vs:    [R.vsBars, R.vsDelta, R.vsNoBudget,
+                         ptdOn() ? R.ptd : R.closed, R.surfaces],
                  trend: [R.trendLine, R.trendOther, R.strip, R.closed, R.surfaces],
                  grid:  [R.gridSpark, R.gridPick, R.strip, R.closed, R.surfaces],
                  table: [R.hierarchy, R.strip, R.closed, R.surfaces, R.contrast] }[S.view];
@@ -1620,6 +1683,21 @@ function buildControls(){
     v => { S.measure = v; });
   pillGroup('ctl-view', [['vs','Vs'],['trend','Trend'],['grid','Grid'],['table','Table']],
     ()=>S.view, v => { S.view = v; });
+
+  const cmpWrap = document.getElementById('ctl-compare-wrap');
+  cmpWrap.hidden = S.view !== 'vs';
+  if (S.view === 'vs'){
+    // "To date" needs sub-periods inside the current period to have closed.
+    // Day has none — its sub-period IS the day — so the option is disabled
+    // there rather than silently doing something else.
+    pillGroup('ctl-compare',
+      [['closed','Last closed'],
+       ['ptd','To date', S.bucket === 'day'
+          ? 'A day has no closed sub-period to measure — item snapshots are per day, not per hour'
+          : null]],
+      () => (S.ptd && S.bucket !== 'day') ? 'ptd' : 'closed',
+      v => { S.ptd = (v === 'ptd'); });
+  }
 
   const scWrap = document.getElementById('ctl-scale-wrap');
   scWrap.hidden = S.view !== 'grid';
@@ -1699,26 +1777,16 @@ document.getElementById('src').innerHTML = rowsHTML([
 ], true);
 
 document.getElementById('qa').innerHTML = rowsHTML([
-  ['Where does this panel go?',
-   'You said "under the different stores", which I read as <b>inside each store tab, below what is there now</b> — and that is also where day-grain is affordable, since one store is one read per day. But the same panel works scoped to All stores on the Summary tab. <b>My default is: build it once, mount it on the store tabs, and put an All-stores copy at the bottom of the Summary tab.</b> Say if you only want one of the two.'],
-  ['Is “compare” period-over-period, or versus last year?',
-   'I built <b>versus the previous bucket</b> — week 36 against week 35 — because that is what "week by week" reads as. For a seasonal retailer the comparison people usually reach for at month and quarter is <b>the same period last year</b>. That needs KV going back that far and a like-for-like rule (the existing YoY code notes last-year data carries no auction channel). <b>Not built here. Worth adding as a second toggle on the change strip?</b>'],
-  ['What the card cannot carry that the dashboard\u2019s can',
-   'The Sales Trend card has four series: this week, last week, last year, and a dashed budget line. This one has two, and the two missing ones are missing for a reason rather than an oversight. <b>Budget has no category dimension</b> — it is stored per store per day — so a per-category budget line would be invented. <b>Last year would need year-old <code>items:</code> KV</b>, and Clover only reaches back about 90 days, so where those snapshots were never taken the line cannot be reconstructed. I would rather show two honest series than four with two of them made up. <b>If per-category budgets exist somewhere I have not found, say where and the dashed line goes in.</b>'],
-  ['Day compares two fortnights, because a day has no inside',
-   'Every other bucket has sub-periods to plot: a week has its seven days, a month its days, a quarter its thirteen weeks. <b>A day would need hours, and the item snapshots are per day — there is no hourly category data at all.</b> So Day charts the last 14 days against the 14 before, aligned by weekday. It is a real day-level comparison and it uses data that exists. <b>If you want true hour-by-hour, that is a different and much larger piece of work</b> — say so and I will scope it separately.'],
-  ['Vs compares the last two closed periods — is that the “vs” you meant?',
-   'Week 36 against Week 35, August against July, Q2 against Q1. For a seasonal retailer the other candidate is <b>the same period last year</b>, which is a different question and a different data cost. The bucket pills already choose the grain; adding a <b>vs: previous | last year</b> control beside them would be small. <b>Worth it?</b>'],
-  ['Grid sparklines are scaled to their own high and low, not to zero',
-   'Drawn from zero, a category moving between $70k and $80k is a flat line — the panel tells you nothing. So each sparkline runs between its own high and low and the printed total carries the size. That means <b>heights are not comparable between panels</b>, which is why there is a <b>Scale: Shared</b> toggle that puts every panel on one 0-based scale instead. <b>Own is the default; say if you would rather it opened on Shared.</b>'],
-  ['L3 names are messy, and I am cleaning them for display',
-   'The raw keys are feed strings — <code>FG BL CONSUMABLES - FOOD - SNACKS</code>, <code>APPLIANCES - BL STORES</code>. The panel shows <b>Snacks</b> and <b>Appliances</b>; the full key stays in the tooltip and the table. Where two keys under one parent would collapse to the same word — <code>FG BL SOFTLINES - APPAREL</code> and <code>Apparel</code> both give "Apparel" — the pair falls back to the full cleaned path so no two panels ever read identically. <b>If you would rather see the raw Clover names everywhere, say so</b> — it is one function.'],
-  ['Should Auction appear?',
-   'It cannot, honestly. Auction is a manual sheet entry with no items behind it; the worker injects a synthetic Auction row with <code>qty: 0</code> so the store table foots to net sales. Putting it in a category chart would draw a flat zero line in Units and a line with no category detail in Net. <b>I have left it out</b> — tell me if you want it in the Net view only.'],
-  ['Do you want the period you are <i>in</i>, compared like-for-like?',
-   'Right now the panel <b>drops</b> the period in progress and compares the last two closed ones. It has to: my first pass plotted a 68-day Q3 next to three 92-day quarters and the change strip reported <b>every single category down 24.7%</b> — the shape of a missing month wearing the costume of a business result. The alternative is a <b>quarter-to-date</b> comparison: Q3’s first 68 days against Q2’s first 68 days. That is genuinely useful mid-quarter and it is honest, but it is a second code path and a second label. <b>Worth it, or is "last two closed periods" enough?</b>'],
-  ['Day view: 14 days, or a month?',
-   'Fourteen fits on a phone without the x-axis turning to mush, and it gives you two of every weekday. Thirty would need labels every fourth day. <b>Default 14, and the page date range can override it</b> — or say the word and it is 28.'],
+  ['Its own tab on the Retail Summary page',
+   'Not inside each store tab — a fifth tab in the strip alongside <b>Summary</b>, <b>T13</b> and the store tabs. The store chips inside the panel already scope it to one store or all of them, so the tab does the job the per-store mount would have, without duplicating the panel seven times.'],
+  ['Compare is period over period',
+   'This ${period} against the one before it. <b>Not</b> the same period last year — that stays out, so nothing has to be reconstructed from KV that may never have been written.'],
+  ['No budget line and no last-year line, confirmed',
+   'Per-category budgets do not exist yet. The card carries the two series it can stand behind, and the legend says plainly what the dashboard card has that this one does not.'],
+  ['The period you are in, compared like for like — <b>NEW, and the one thing here you have not seen</b>',
+   'Switch <b>Compare</b> to <b>To date</b>. The green line runs to the last closed day and stops; the amber line runs the <i>whole</i> previous period so you can see what you are chasing. <b>The totals are clipped to the same span</b> — six days against six days, and the pill says "same 6 days" — because a month-to-date measured against a whole month is the classic way this chart lies. The caption gives the previous period\u2019s finished total as the target. <b>Not offered for Day</b>: a day has no closed sub-period to clip to, since the item snapshots are per day and not per hour.'],
+  ['Everything else is as you saw it',
+   'Day compares two fortnights · Vs compares the last two closed periods · Grid sparklines keep their own scale · L3 names stay cleaned for display, with the raw key in the tooltip · Auction stays out · the Day window stays at 14.'],
 ], false);
 
 document.getElementById('build').innerHTML = rowsHTML([
