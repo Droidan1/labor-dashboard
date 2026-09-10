@@ -18309,6 +18309,13 @@ export default {
 
         return new Response(JSON.stringify({
           weeks: weeks.map(w => w.week),
+          // The trailing window this payload was BUILT for, echoed back. A
+          // caller cannot tell "you ignored my weeks param" from "there is
+          // only that much history" by counting `weeks` alone, and guessing
+          // wrong either blanks a good chart or draws a bad one. This is the
+          // authoritative answer. A worker predating the param has no such
+          // field, which is itself the signal.
+          weeksWindow: nWeeks,
           dates: weeks,
           stores,
           total,
