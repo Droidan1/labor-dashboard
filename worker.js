@@ -47,6 +47,11 @@ function wrsGateDates(store, dates) {
 // SUM, 0 KV) with per-store category detail loaded lazily. 120 days x 7 stores
 // ~= 840 KV, a safe margin under 1000.
 const WRS_RANGE_FULL_MAX_DAYS = 120;
+// category-series returns a breakdown per DATE, so there is no merge to hide
+// the reads behind: it is exactly dates x stores KV gets. Same 840 margin under
+// the ~1000 subrequest cap, but REFUSED rather than degraded — a partial
+// category series would read as a real decline.
+const CATEGORY_SERIES_MAX_STORE_DAYS = 840;
 
 // Inclusive list of 'YYYY-MM-DD' dates from `from` to `to`.
 function enumDatesInclusive(from, to) {
@@ -4230,6 +4235,7 @@ const ACTION_BUSINESS = new Map([
   ["weekly-store-detail", "bl"],
   ["weekly-summary", "bl"],
   ["weekly-t13", "bl"],
+  ["category-series", "bl"],
 ]);
 
 // Hex SHA-256 of a string. Used as the eBay audit-line dedupe key: hashing the
@@ -18310,6 +18316,109 @@ export default {
         }), { headers: corsJson });
       } catch (err) {
         return new Response(JSON.stringify({ error: "weekly-t13 failed", detail: err.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Public: per-DATE category series ──────────────────────────────
+    //    GET ?action=category-series&from=YYYY-MM-DD&to=YYYY-MM-DD[&level=l2|l3][&store=BL1]
+    // weekly-t13 is per WEEK, so it cannot feed a chart whose x-axis runs
+    // INSIDE the period. This returns the same L2/L3 numbers broken out per
+    // day, which is what a "this week against last week, day by day" card
+    // needs. buildStoreWeekly already reads exactly these snapshots and then
+    // merges them away; here the merge is per date instead of per range.
+    //
+    // Cost is dates x stores KV reads with no merge to hide behind, so the
+    // budget is capped and REFUSED rather than silently truncated — a field
+    // that works over a week and dies over a year is worse than an honest no.
+    if (url.searchParams.get("action") === "category-series") {
+      try {
+        const from = url.searchParams.get("from");
+        const to   = url.searchParams.get("to");
+        const level = url.searchParams.get("level") === "l3" ? "l3" : "l2";
+        const one  = (url.searchParams.get("store") || "").toUpperCase();
+        if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+          return new Response(JSON.stringify({ error: "from and to are required (YYYY-MM-DD)", code: "BAD_RANGE" }),
+            { status: 400, headers: corsJson });
+        }
+        if (to < from) {
+          return new Response(JSON.stringify({ error: "to is before from", code: "BAD_RANGE" }),
+            { status: 400, headers: corsJson });
+        }
+
+        // Same store scoping as weekly-summary / weekly-t13: a user who can
+        // see BL16 (Indy) also sees BL12, since it is the same physical store.
+        const _allow = allowedStores(currentUser);
+        let scoped = _allow
+          ? WRS_STORES.filter(s => _allow.includes(s) || (s === "BL12" && _allow.includes("BL16")))
+          : WRS_STORES;
+        if (one) scoped = scoped.filter(s => s === one);
+        if (!scoped.length) {
+          return new Response(JSON.stringify({ error: "No stores in scope", code: "NO_STORES" }),
+            { status: 403, headers: corsJson });
+        }
+
+        const allDates = enumDatesInclusive(from, to);
+        const storeDays = allDates.length * scoped.length;
+        if (storeDays > CATEGORY_SERIES_MAX_STORE_DAYS) {
+          return new Response(JSON.stringify({
+            error: "Range too wide for a per-day category breakdown",
+            code: "BUDGET_EXCEEDED",
+            storeDays, limit: CATEGORY_SERIES_MAX_STORE_DAYS,
+            hint: "Narrow the range, or pick a single store with &store=",
+          }), { status: 413, headers: corsJson });
+        }
+
+        const l2Out = {}, l3Out = {};
+        await Promise.all(scoped.map(async (store) => {
+          const lc = store.toLowerCase();
+          // Per-store date gate: BL12 keeps only pre-cutover dates and BL16
+          // only post-cutover ones, or the shared Clover account double-counts.
+          const dates = wrsGateDates(store, allDates);
+          l2Out[store] = {};
+          if (level === "l3") l3Out[store] = {};
+          const snaps = await Promise.all(dates.map(d => env.SALES_SNAPSHOTS
+            ? env.SALES_SNAPSHOTS.get(`items:${lc}:${d}`, "json")
+            : Promise.resolve(null)));
+          dates.forEach((d, i) => {
+            const snap = snaps[i];
+            if (!snap) return;                 // a day with no snapshot is ABSENT, not zero
+            // Merging a single day reuses the one true normaliser, so rounding,
+            // sort order and the l3Rows shape match what every other consumer
+            // of this data already parses.
+            const merged = mergeItemSnapshots([snap]);
+            const perL2 = {}, perL3 = {};
+            for (const c of (merged.categories || [])) {
+              if (!c || !c.category) continue;
+              perL2[c.category] = [roundCents(c.netSales || 0), Math.round(c.qty || 0)];
+              if (level === "l3") {
+                const kids = {};
+                for (const r of (c.l3Rows || [])) {
+                  if (!r || !r.l3) continue;
+                  // Same normalisation the week rollups use, so an L3 line here
+                  // and the same L3 in weekly-t13 are the same category.
+                  const key = normalizeL3Key(r.l3);
+                  const prev = kids[key] || [0, 0];
+                  kids[key] = [roundCents(prev[0] + (r.netSales || 0)), prev[1] + Math.round(r.qty || 0)];
+                }
+                if (Object.keys(kids).length) perL3[c.category] = kids;
+              }
+            }
+            if (Object.keys(perL2).length) l2Out[store][d] = perL2;
+            if (level === "l3" && Object.keys(perL3).length) l3Out[store][d] = perL3;
+          });
+        }));
+
+        return new Response(JSON.stringify({
+          from, to, level,
+          dates: allDates,
+          stores: scoped,
+          l2: l2Out,
+          l3: level === "l3" ? l3Out : undefined,
+          storeDays,
+        }), { headers: corsJson });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "category-series failed", detail: err.message }),
+          { status: 500, headers: corsJson });
       }
     }
 

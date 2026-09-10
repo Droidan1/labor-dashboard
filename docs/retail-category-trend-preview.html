@@ -1,0 +1,1809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Retail Summary — Category Trend preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Lilita+One&display=swap" rel="stylesheet">
+<style>
+/* ─────────────────────────────────────────────────────────────────────────
+   Category Trend — interactive preview.
+
+   docs/ is EXCLUDED from scripts/build.sh (see its line 4), so this file
+   never reaches production. Nothing here is wired to the API.
+
+   Every colour below is a LITERAL copy of a token in tailwind.config.js, or
+   a validated chart hue. A <style> block cannot use the Tailwind token
+   classes, so the literal is duplicated with the token named in a comment —
+   DESIGN.md §4.8 trap 3. Nothing inherits a colour: both themes are stated
+   ON THE PANEL, not just on the chart.
+
+   Contrast was COMPUTED, never eyeballed (§4.8 trap 6). The series palette
+   was run through the dataviz validator against the REAL surfaces this app
+   paints on — #101826 (op-panel), #0a0a0a (oled panel) and #ffffff
+   (opl-panel) — not against the validator's own default surface. Figures
+   are in the legend at the bottom of the panel.
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root{
+  /* op-* — V1 Operator dark (primary) */
+  --bg:#0a0f1a;          /* op-bg      */
+  --panel:#101826;       /* op-panel   */
+  --panelHi:#16203a;     /* op-panelHi */
+  --ink:#e7ecf3;         /* op-ink     */
+  --inkDim:#8893a7;      /* op-inkDim — 5.74:1 on op-panel */
+  --inkDimmer:#5a6478;   /* op-inkDimmer — BORDERS/BADGES ONLY (2.99:1 as text) */
+  --hairline:rgba(255,255,255,.09);
+  --border:rgba(255,255,255,.16);
+  --accent:#22c55e;      /* accent-green — 7.81:1 on op-panel */
+  --accentInk:#06210f;   /* text on a solid accent button */
+  --good:#22c55e;        /* op-good */
+  --bad:#ef4444;         /* op-bad  */
+  --goodWash:rgba(34,197,94,.16);
+  --badWash:rgba(239,68,68,.16);
+  --amber:#f59e0b;       /* op-warn */
+  --amberWash:rgba(245,158,11,.14);
+  --amberEdge:rgba(245,158,11,.45);
+
+  /* Series palette — dark steps. Validated on #101826 AND #0a0a0a:
+     lightness band PASS · chroma floor PASS · CVD adjacent worst ΔE 8.4
+     (protan, ≥8 target) · normal-vision worst ΔE 19.3 (≥15 floor) · all
+     six ≥3:1 contrast. */
+  --s1:#3987e5;  /* blue    */
+  --s2:#d95926;  /* orange  */
+  --s3:#199e70;  /* aqua    */
+  --s4:#c98500;  /* yellow  */
+  --s5:#d55181;  /* magenta */
+  --s6:#008300;  /* green   */
+  --sOther:#8893a7; /* de-emphasis grey = op-inkDim, 5.74:1 */
+  color-scheme:dark;     /* §4.8 trap 4 — an unchecked box is UA-drawn */
+}
+html.light{
+  /* opl-* — V1 Operator light */
+  --bg:#f4f3ee;          /* opl-bg      */
+  --panel:#ffffff;       /* opl-panel   */
+  --panelHi:#fafaf6;     /* opl-panelHi */
+  --ink:#14110a;         /* opl-ink     */
+  --inkDim:#6b6453;      /* opl-inkDim — 5.29:1 on opl-bg */
+  --inkDimmer:#9c9484;   /* opl-inkDimmer — BORDERS ONLY (2.71:1 as text) */
+  --hairline:rgba(20,16,8,.10);
+  --border:rgba(20,16,8,.18);
+  --accent:#166534;      /* green-800. accent-green #22c55e is 2.28:1 on white — unusable as TEXT in light */
+  --accentInk:#ffffff;
+  --good:#166534;
+  --bad:#c0392b;         /* opl-bad — 5.44:1 */
+  --goodWash:rgba(34,197,94,.16);
+  --badWash:rgba(192,57,43,.12);
+  --amber:#92400e;       /* amber-800 — 7.09:1 on opl-panel */
+  --amberWash:rgba(245,158,11,.16);
+  --amberEdge:rgba(180,83,9,.45);
+
+  /* Series palette — light steps. Validated on #ffffff: band PASS · chroma
+     PASS · CVD adjacent worst ΔE 9.1 · normal-vision worst ΔE 19.6 · three
+     slots (aqua 2.82, yellow 2.17, magenta 2.69) sit below 3:1, which the
+     validator reports as the RELIEF band: legal only with visible labels or
+     a table view. Both ship here — direct end-labels and the Table tab. */
+  --s1:#2a78d6;
+  --s2:#eb6834;
+  --s3:#1baf7a;
+  --s4:#eda100;
+  --s5:#e87ba4;
+  --s6:#008300;
+  --sOther:#6b6453;
+  color-scheme:light;
+}
+
+*{margin:0;padding:0;box-sizing:border-box;}
+/* The UA's [hidden] rule is display:none at (0,1,0); ANY class that sets
+   display beats it and the element stays on screen as an empty stub. Stating
+   it once here means a new hidden element can never quietly ignore it. */
+[hidden]{display:none !important;}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:'Geist',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  padding:28px 16px 72px;
+}
+.wrap{max-width:1080px;margin:0 auto;}
+
+/* ── Document chrome (preview only — not part of the proposal) ────────── */
+.doc-kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--accent);margin-bottom:6px;}
+.doc-title{font-family:'Lilita One',cursive;font-size:30px;letter-spacing:.02em;
+  color:var(--ink);font-weight:400;line-height:1.15;}
+.doc-sub{font-size:13.5px;color:var(--inkDim);margin-top:8px;max-width:74ch;line-height:1.65;}
+.doc-sub b{color:var(--ink);font-weight:600;}
+.doc-note{margin:16px 0 20px;padding:11px 14px;border-radius:10px;
+  background:var(--amberWash);border:1px solid var(--amberEdge);
+  font-size:12.5px;color:var(--ink);line-height:1.6;}
+.doc-note b{font-weight:700;}
+.doc-note code,.qa-a code,.doc-sub code{background:var(--panelHi);border:1px solid var(--hairline);
+  border-radius:4px;padding:1px 5px;font-size:11.5px;}
+
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:20px;}
+.tb-lbl{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--inkDim);}
+.seg{display:inline-flex;gap:0;border:1px solid var(--border);border-radius:999px;overflow:hidden;}
+.seg button{appearance:none;border:0;background:transparent;color:var(--inkDim);
+  font:inherit;font-size:11.5px;font-weight:600;padding:5px 13px;cursor:pointer;
+  transition:background .2s,color .2s;}
+.seg button:hover{color:var(--ink);}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accentInk);}
+.tb-spacer{flex:1;}
+
+/* ── THE PANEL — DESIGN.md §4.8: one panel owns bar + chart + legend ──── */
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;
+  overflow:hidden;color:var(--ink);/* trap 3: colour stated ON THE PANEL */}
+
+.mc-bar{background:var(--panelHi);border-bottom:1px solid var(--hairline);
+  padding:13px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+.mc-bar-lbl{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--inkDim);white-space:nowrap;}
+.ctl{display:flex;align-items:center;gap:7px;}
+
+.ctl-lbl{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--inkDimmer);}
+html.light .ctl-lbl{color:var(--inkDim);/* trap 5: inkDimmer fails AA on light */}
+
+/* Pill segmented control — the exact shape already on this page at
+   index.html:18347 (T13 Contribution|Penetration). */
+.pill{display:inline-flex;gap:6px;}
+.pill button{appearance:none;font:inherit;font-size:11px;font-weight:600;
+  padding:4px 10px;border-radius:999px;border:1px solid var(--border);
+  background:transparent;color:var(--inkDim);cursor:pointer;
+  transition:background .2s,color .2s,border-color .2s;white-space:nowrap;}
+.pill button:hover:not([aria-pressed="true"]):not(:disabled){color:var(--ink);}
+.pill button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accentInk);}
+.pill button:disabled{opacity:.45;cursor:not-allowed;}
+.pill button:focus-visible,.seg button:focus-visible,.chip:focus-visible,
+.lg-item:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+.mc-scope{padding:11px 18px;border-bottom:1px solid var(--hairline);
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.chip{appearance:none;font:inherit;font-size:11.5px;font-weight:600;
+  padding:4px 11px;border-radius:999px;border:1px solid var(--border);
+  background:transparent;color:var(--inkDim);cursor:pointer;transition:background .2s,color .2s,border-color .2s;}
+.chip:hover[aria-pressed="false"]{color:var(--ink);}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accentInk);}
+
+select.l2pick{appearance:none;font:inherit;font-size:11px;font-weight:600;
+  padding:4px 26px 4px 10px;border-radius:999px;border:1px solid var(--border);
+  background:var(--panel);color:var(--ink);cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),
+                   linear-gradient(135deg,currentColor 50%,transparent 50%);
+  background-position:calc(100% - 14px) 52%,calc(100% - 9px) 52%;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat;}
+
+.mc-status{padding:10px 18px 0;font-size:12px;color:var(--inkDim);line-height:1.6;}
+.mc-status b{color:var(--ink);font-weight:600;}
+.mc-status .warnDot{color:var(--amber);font-weight:700;}
+
+/* ── Chart ───────────────────────────────────────────────────────────── */
+.chart-host{position:relative;padding:6px 18px 0;}
+.chart-host svg{display:block;}
+.chart-host.stale{opacity:.45;transition:opacity .18s;/* refetch holds the frame */}
+
+.tip{position:absolute;pointer-events:none;z-index:5;min-width:158px;
+  background:var(--panelHi);border:1px solid var(--border);border-radius:9px;
+  padding:8px 10px;font-size:11.5px;box-shadow:0 6px 22px rgba(0,0,0,.35);
+  opacity:0;transition:opacity .12s;}
+html.light .tip{box-shadow:0 6px 22px rgba(20,16,8,.16);}
+.tip.on{opacity:1;}
+.tip-hd{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--inkDim);margin-bottom:6px;}
+.tip-row{display:flex;align-items:center;gap:7px;margin-top:3px;}
+.tip-key{width:11px;height:2.5px;border-radius:2px;flex:none;}
+.tip-val{font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink);margin-left:auto;}
+.tip-nm{color:var(--inkDim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
+
+/* ── Series legend (interactive) ──────────────────────────────────────── */
+.lg{display:flex;flex-wrap:wrap;gap:6px 14px;padding:12px 18px 14px;}
+.lg-item{appearance:none;background:transparent;border:0;font:inherit;cursor:pointer;
+  display:inline-flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink);
+  padding:2px 4px;border-radius:6px;transition:opacity .18s;}
+.lg-item[aria-pressed="false"]{opacity:.4;}
+.lg-key{width:14px;height:3px;border-radius:2px;flex:none;}
+.lg-val{color:var(--inkDim);font-variant-numeric:tabular-nums;}
+
+/* ── Change strip ─────────────────────────────────────────────────────── */
+.sec{border-top:1px solid var(--hairline);padding:14px 18px 4px;}
+.sec-hd{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:11px;}
+.sec-t{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--inkDim);}
+.sec-s{font-size:11.5px;color:var(--inkDimmer);}
+html.light .sec-s{color:var(--inkDim);}
+
+.dl-row{display:grid;grid-template-columns:minmax(96px,1.3fr) 1fr minmax(104px,auto);
+  align-items:center;gap:10px;padding:3px 0;}
+.dl-nm{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dl-dot{width:9px;height:9px;border-radius:3px;flex:none;}
+.dl-track{position:relative;height:17px;}
+.dl-mid{position:absolute;top:0;bottom:0;width:1px;background:var(--border);}
+.dl-bar{position:absolute;top:3px;height:11px;border-radius:3px;}
+.dl-v{text-align:right;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.dl-v .pct{color:var(--inkDim);font-weight:500;margin-left:5px;}
+.dl-none{font-size:12px;color:var(--inkDim);padding:8px 0 12px;}
+
+/* ── Vs — the app's chart card, then the category breakdown ─────────── */
+/* Legend pills copy index.html:8908 legPill/solidSwatch verbatim in shape. */
+.vs-legend{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 18px 4px;}
+.vs-pill{display:inline-flex;align-items:center;gap:8px;padding:4px 10px;border-radius:999px;
+  border:1px solid var(--border);background:var(--panelHi);font-size:11.5px;font-weight:700;white-space:nowrap;}
+.vs-sw{display:inline-block;width:18px;height:3px;border-radius:2px;flex:none;}
+.vs-pl{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--inkDim);}
+.vs-pv{font-variant-numeric:tabular-nums;color:var(--ink);}
+.vs-ps{font-size:10px;font-weight:600;color:var(--inkDim);white-space:nowrap;}
+.vs-headline{font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;margin-left:auto;white-space:nowrap;}
+.vs-chart{padding:2px 18px 0;}
+.vs-chart svg{display:block;}
+.vs-cap{padding:4px 18px 10px;font-size:11.5px;font-weight:600;color:var(--ink);}
+.vs-cap-h{font-weight:400;color:var(--inkDim);}
+
+.vs-wrap{padding:2px 18px 8px;border-top:1px solid var(--hairline);margin-top:4px;}
+.vs-row{display:grid;width:100%;grid-template-columns:minmax(120px,1.15fr) minmax(90px,3fr) minmax(132px,auto);
+  align-items:center;gap:12px;padding:5px 0;border-bottom:1px solid var(--hairline);
+  appearance:none;background:transparent;border-left:0;border-right:0;border-top:0;
+  font:inherit;text-align:left;cursor:pointer;color:var(--ink);}
+.vs-row:last-child{border-bottom:0;}
+.vs-row:hover{background:var(--panelHi);}
+.vs-row.on{background:var(--goodWash);}
+.vs-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+.vs-nm{font-size:12px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.vs-bars{display:flex;flex-direction:column;gap:2px;/* the 2px surface gap, not a stroke */}
+.vs-track{height:9px;border-radius:3px;background:var(--hairline);overflow:hidden;}
+.vs-bar{height:100%;border-radius:3px;transition:width .3s cubic-bezier(.4,0,.2,1);}
+/* The SAME two colours the chart above uses. Two periods wearing one pair of
+   colours in the chart and a different pair in the bars underneath is the same
+   comparison told twice in two languages. */
+.vs-bar.cur{background:#22c55e;}   /* CHART_COLORS.tw */
+.vs-bar.prv{background:#f59e0b;}   /* CHART_COLORS.lw */
+.vs-v{text-align:right;font-variant-numeric:tabular-nums;line-height:1.35;}
+.vs-cur{font-size:12.5px;font-weight:700;color:var(--ink);white-space:nowrap;}
+.vs-d{font-weight:600;margin-left:7px;}
+.vs-prv{font-size:11px;color:var(--inkDim);white-space:nowrap;}
+
+/* ── Grid — small multiples, one panel per category ──────────────────── */
+.grid-wrap{padding:2px 18px 6px;}
+.grid-gh{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;
+  margin:14px 0 7px;padding-bottom:5px;border-bottom:1px solid var(--hairline);}
+.grid-gh:first-child{margin-top:2px;}
+.grid-gh-n{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink);}
+.grid-gh-c{font-size:11px;color:var(--inkDim);font-variant-numeric:tabular-nums;}
+.grid-row{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));}
+.gcell{appearance:none;font:inherit;text-align:left;cursor:pointer;
+  background:var(--panelHi);border:1px solid var(--hairline);border-radius:10px;
+  padding:9px 10px 5px;color:var(--ink);transition:border-color .18s,background .18s;}
+.gcell:hover{border-color:var(--border);}
+.gcell.on{border-color:var(--accent);background:var(--goodWash);}
+.gc-t{font-size:11.5px;font-weight:600;color:var(--ink);line-height:1.3;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gc-v{font-size:14px;font-weight:700;color:var(--ink);margin-top:2px;
+  font-variant-numeric:tabular-nums;}
+.gc-d{font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:1px;}
+.gc-s{margin-top:2px;height:30px;}
+.gc-s svg{display:block;width:100%;height:30px;}
+
+.flash{max-height:0;overflow:hidden;opacity:0;margin:0 18px;
+  font-size:11.5px;color:var(--amber);transition:max-height .2s,opacity .2s,margin .2s;}
+.flash.on{max-height:44px;opacity:1;margin:8px 18px 0;}
+
+.sec-c{font-size:11px;color:var(--inkDim);font-variant-numeric:tabular-nums;margin-left:auto;}
+
+/* ── Table view ──────────────────────────────────────────────────────── */
+.tbl-scroll{overflow-x:auto;padding:0 0 4px;}
+table.mc{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;
+  color:var(--ink);/* trap 3 */}
+table.mc th,table.mc td{padding:0 10px;height:34px;white-space:nowrap;
+  border-bottom:1px solid var(--hairline);font-size:12px;text-align:right;}
+table.mc thead th{position:sticky;top:0;background:var(--panelHi);height:34px;
+  font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--inkDim);z-index:2;}
+table.mc th.k,table.mc td.k{text-align:left;position:sticky;left:0;
+  background:var(--panel);z-index:1;/* trap 2: sticky needs its own opaque bg */}
+table.mc thead th.k{background:var(--panelHi);z-index:3;}
+table.mc tbody tr:hover td{background:var(--panelHi);}
+table.mc tbody tr:hover td.k{background:var(--panelHi);}
+table.mc tr.tot td{font-weight:700;background:var(--panelHi);border-top:1px solid var(--border);}
+table.mc tr.tot td.k{background:var(--panelHi);}
+.k-dot{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:7px;vertical-align:-1px;}
+/* Level badge + indent + corner rule — the same hierarchy treatment
+   #mc-tbl already uses in index.html (DESIGN.md §4.8). */
+.mc-lvl{display:inline-block;margin-right:8px;padding:1px 4px;border-radius:4px;
+  border:1px solid var(--inkDimmer);color:var(--inkDimmer);
+  font-size:8.5px;font-weight:700;letter-spacing:.06em;vertical-align:1px;}
+.mc-lvl.l3{border-color:var(--accent);color:var(--accent);}
+table.mc tr.mc-l2 td.k{font-weight:600;}
+table.mc tr.mc-l3 td.k{position:sticky;left:0;padding-left:30px;}
+table.mc tr.mc-l3 td.k::before{content:"";position:absolute;left:14px;top:0;bottom:50%;
+  width:9px;border-left:1px solid var(--border);border-bottom:1px solid var(--border);
+  border-bottom-left-radius:4px;}
+table.mc tr.mc-l3 td{color:var(--inkDim);}
+.na{color:var(--inkDim);}
+
+/* ── Panel legend — every visual state gets a row (§4.8) ─────────────── */
+.plegend{border-top:1px solid var(--hairline);padding:12px 18px 14px;
+  display:flex;flex-direction:column;gap:6px;}
+.pl-row{display:flex;align-items:flex-start;gap:9px;font-size:11.5px;color:var(--inkDim);line-height:1.55;}
+.pl-row b{color:var(--ink);font-weight:600;}
+.pl-swatch{flex:none;margin-top:3px;}
+
+/* ── Q&A blocks (preview only) ───────────────────────────────────────── */
+.h2{font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--inkDim);margin:34px 0 12px;}
+.qa{background:var(--panel);border:1px solid var(--border);border-radius:14px;
+  padding:6px 16px;color:var(--ink);}
+.qa-row{display:flex;gap:11px;padding:12px 0;border-bottom:1px solid var(--hairline);}
+.qa-row:last-child{border-bottom:0;}
+.qa-n{flex:none;width:21px;height:21px;border-radius:7px;background:var(--panelHi);
+  border:1px solid var(--border);color:var(--inkDim);font-size:10.5px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;margin-top:1px;}
+.qa-q{display:block;font-size:13.5px;font-weight:600;color:var(--ink);}
+.qa-a{display:block;font-size:12.5px;color:var(--inkDim);margin-top:5px;line-height:1.65;}
+.qa-a b{color:var(--ink);font-weight:600;}
+
+@media (max-width:560px){
+  body{padding:20px 12px 56px;}
+  .doc-title{font-size:24px;}
+  .mc-bar,.mc-scope,.chart-host,.lg,.sec,.plegend,.mc-status{padding-left:12px;padding-right:12px;}
+  .dl-row{grid-template-columns:minmax(78px,1.1fr) 1fr minmax(88px,auto);gap:7px;}
+  .dl-nm{font-size:11px;}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="doc-kicker">Bargain Lane · Retail Summary</div>
+  <h1 class="doc-title">Category Trend — panel preview</h1>
+  <p class="doc-sub">
+    A working click-through of the proposed <b>Category Trend</b> panel for the Retail
+    Summary page: pick <b>L2 or L3</b>, pick the bucket — <b>day, week, month or
+    quarter</b> — and read every category across those buckets, with a
+    period-over-period change strip underneath. Every control below is live.
+    <br><br>
+    <b>Vs is the default, and it is the chart card this app already draws.</b> Same
+    shape, same colours, same legend pills as the Sales Trend card on the dashboard:
+    green for this period, amber for the one before, a soft fill under the current
+    line. The x-axis runs <i>inside</i> the period — Sun to Sat for a week, the days of
+    the month for a month — so it shows <b>where</b> the difference came from, not just
+    that there was one. Underneath, the same comparison for <b>every</b> category;
+    click any row to redraw the card for it alone.
+    <br><br>
+    <b>Grid</b> gives each category its own panel and its shape across the whole window.
+    <b>Table</b> gives each one a row of every bucket. <b>Trend</b> overlays up to six as
+    lines when you want to watch a few closely — six is a legibility ceiling on that
+    view alone, never a limit on what you can see.
+  </p>
+  <div class="doc-note">
+    <b>Every question below is answered and folded in.</b> The one genuinely new thing
+    since you last looked is <b>Compare → To date</b>, which charts the period you are
+    in against the same span of the one before it.
+    <br><br>
+    <b>Nothing is wired up, and no app code has been changed.</b> This is a static
+    prototype in <code>docs/</code> — a directory <code>scripts/build.sh</code>
+    deliberately excludes, so it never reaches production. <b>The numbers are
+    synthetic</b> (seeded, so they are stable between reloads) — plausible shapes on
+    real category names, not your sales. Read the layout and the behaviour, not the
+    figures.
+  </div>
+
+  <div class="toolbar">
+    <span class="tb-lbl">Theme</span>
+    <span class="seg">
+      <button id="th-dark"  aria-pressed="true">Dark</button>
+      <button id="th-light" aria-pressed="false">Light</button>
+    </span>
+    <span class="tb-spacer"></span>
+  </div>
+
+  <!-- ══ THE PROPOSED PANEL ════════════════════════════════════════════ -->
+  <div class="panel" id="panel">
+
+    <div class="mc-bar">
+      <span class="mc-bar-lbl">Category Trend</span>
+
+      <span class="ctl">
+        <span class="ctl-lbl">Level</span>
+        <span class="pill" id="ctl-level"></span>
+      </span>
+
+      <span class="ctl" id="ctl-parent-wrap" hidden>
+        <span class="ctl-lbl">Within</span>
+        <select class="l2pick" id="ctl-parent"></select>
+      </span>
+
+      <span class="ctl">
+        <span class="ctl-lbl">Bucket</span>
+        <span class="pill" id="ctl-bucket"></span>
+      </span>
+
+      <span class="ctl">
+        <span class="ctl-lbl">Measure</span>
+        <span class="pill" id="ctl-measure"></span>
+      </span>
+
+      <span class="ctl" id="ctl-compare-wrap" hidden>
+        <span class="ctl-lbl">Compare</span>
+        <span class="pill" id="ctl-compare"></span>
+      </span>
+
+      <span class="ctl" id="ctl-scale-wrap" hidden>
+        <span class="ctl-lbl">Scale</span>
+        <span class="pill" id="ctl-scale"></span>
+      </span>
+
+      <span class="tb-spacer"></span>
+
+      <span class="pill" id="ctl-view"></span>
+    </div>
+
+    <div class="mc-scope">
+      <span class="ctl-lbl" style="margin-right:2px">Store</span>
+      <span id="ctl-store" style="display:contents"></span>
+    </div>
+
+    <div class="mc-status" id="status"></div>
+    <div class="flash" id="flash" role="status" aria-live="polite"></div>
+
+    <div class="chart-host" id="chart-host">
+      <div id="chart"></div>
+      <div class="tip" id="tip"></div>
+    </div>
+
+    <div class="lg" id="legend"></div>
+
+    <div class="sec" id="delta-sec">
+      <div class="sec-hd">
+        <span class="sec-t" id="delta-t">Change</span>
+        <span class="sec-s" id="delta-s"></span>
+        <span class="sec-c" id="delta-c"></span>
+      </div>
+      <div id="delta"></div>
+    </div>
+
+    <div class="plegend" id="plegend"></div>
+  </div>
+
+  <div class="h2">What this panel is reading</div>
+  <div class="qa" id="src"></div>
+
+  <div class="h2">Decisions — answered 2026-09-10, and built in</div>
+  <div class="qa" id="qa"></div>
+
+  <div class="h2">How it would be built</div>
+  <div class="qa" id="build"></div>
+
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   Prototype logic. Seeded synthetic data only — no network, no storage.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Theme ───────────────────────────────────────────────────────────── */
+const root = document.documentElement;
+const thDark  = document.getElementById('th-dark');
+const thLight = document.getElementById('th-light');
+function setTheme(light){
+  root.classList.toggle('light', light);
+  thDark.setAttribute('aria-pressed', String(!light));
+  thLight.setAttribute('aria-pressed', String(light));
+  render();                       // the SVG carries resolved colours
+}
+thDark.onclick  = () => setTheme(false);
+thLight.onclick = () => setTheme(true);
+
+/* ── The real taxonomy ───────────────────────────────────────────────── */
+// The 12 display L2s — index.html:18016 T13_L2_CATS. The other three real L2s
+// (Custom Sales / Refund / Sku Book Items) are diagnostics and stay excluded.
+const L2S = [
+  'Softline - Apparel', 'Consumable Food', 'Softline - Shoes', 'Home',
+  'Hardlines', 'Consumable HBA', 'Seasonal', 'Softline - Accessories',
+  'Consumable Other', 'Furniture', 'Bin Products', 'Gift Cards',
+];
+// Rough share of chain net, from the shapes in tasks/t13-l3-reroll-impact.md.
+const L2_WEIGHT = {
+  'Softline - Apparel':.215,'Consumable Food':.155,'Softline - Shoes':.130,
+  'Home':.100,'Hardlines':.095,'Consumable HBA':.070,'Seasonal':.062,
+  'Softline - Accessories':.052,'Consumable Other':.045,'Furniture':.040,
+  'Bin Products':.030,'Gift Cards':.006,
+};
+// Real Clover L3 keys (worker.js:160 L3_TO_L2). 'Other / unmapped' is the
+// L3_OTHER bucket normalizeL3Key folds the bracketed sources into.
+const L3S = {
+  'Consumable Food':['FG BL CONSUMABLES - FOOD - SNACKS','FG BL CONSUMABLES - FOOD - BEVERAGES',
+    'FG BL CONSUMABLES - FOOD - CANDY','FG BL CONSUMABLES - FOOD - PANTRY',
+    'FG BL CONSUMABLES - FOOD - FROZEN','FG BL CONSUMABLES - FOOD - COFFEE & TEA',
+    'FG BL CONSUMABLES - FOOD - BREAKFAST','FG BL CONSUMABLES - FOOD - CANNED GOODS',
+    'FG BL CONSUMABLES - FOOD - ENERGY DRINKS','Other / unmapped'],
+  'Hardlines':['FG BL HARDLINES - TOYS','FG BL HARDLINES - ELECTRONICS',
+    'FG BL HARDLINES - GENERAL MERCHANDISE','FG BL HARDLINES - SPORTING GOODS',
+    'FG BL HARDLINES - OFFICE PRODUCTS','FG BL HARDLINES - STORAGE',
+    'FG BL HARDLINES - LUGGAGE','FG BL HARDLINES - BABY','APPLIANCES - BL STORES','Other / unmapped'],
+  'Home':['FG BL HOME - KITCHEN','FG BL HOME - HOME DECOR','FG BL HOME - BEDDING & PILLOWS',
+    'FG BL HOME - BATH','FG BL HOME - RUGS','FG BL HAMILTON BEACH','Other / unmapped'],
+  'Softline - Apparel':['FG BL SOFTLINES - APPAREL','Apparel','Other / unmapped'],
+  'Softline - Shoes':['FG BL SOFTLINES - SHOES','Other / unmapped'],
+  'Consumable HBA':['FG BL CONSUMABLES - HBA - PERSONAL CARE','FG BL CONSUMABLES - HBA - OTC',
+    'FG BL CONSUMABLES - HBA - COSMETICS','FG BL CONSUMABLES - HBA - PAPER','Other / unmapped'],
+  'Seasonal':['FG BL SEASONAL - CHRISTMAS','FG BL SEASONAL - SPRING/SUMMER',
+    'FG BL SEASONAL - FALL/HARVEST','FG BL SEASONAL - LAWN & GARDEN','Other / unmapped'],
+  'Softline - Accessories':['FG BL SOFTLINES - ACCESSORIES','Other / unmapped'],
+  'Consumable Other':['FG BL CONSUMABLES - OTHER - CLEANING','FG BL CONSUMABLES - OTHER - PET',
+    'FG BL CONSUMABLES - OTHER - LAUNDRY','Other / unmapped'],
+  'Furniture':['FG BL FURNITURE - UPHOLSTERY','FG BL FURNITURE - CASEGOODS',
+    'FG BL FURNITURE - MATTRESS','Other / unmapped'],
+  'Bin Products':['Bin Products','Other / unmapped'],
+  'Gift Cards':['Gift Cards','Other / unmapped'],
+};
+// index.html:14822. BL12 Wyoming is flagged "Closed · historical" at 18613.
+const STORE_KEYS  = ['BL1','BL2','BL4','BL8','BL14','BL16'];
+const STORE_NAMES = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont',
+                      BL8:'Holland', BL14:'Battle Creek', BL16:'Indy East' };
+const STORE_SCALE = { BL1:1.00, BL2:.82, BL4:.71, BL8:.66, BL14:.58, BL16:.49 };
+
+/* ── State ───────────────────────────────────────────────────────────── */
+// "Other" starts HIDDEN. A sum of seven categories outranks every real one,
+// so drawing it by default makes the fold bucket look like the top seller and
+// buries the comparison the chart exists to make. It stays one click away in
+// the legend, and the Table always carries it.
+const OTHER = '__other__';
+const ALL   = '__all__';
+const S = {
+  level:'l2', parent:ALL, bucket:'week', measure:'net',
+  view:'vs', store:'__all__', hidden:new Set([OTHER]), maxSeries:6,
+  picked:new Set(),        // categories explicitly promoted onto Trend
+  focus:null,              // the single category the Vs chart plots (null = all)
+  ptd:false,               // compare the period we are IN, clipped like-for-like
+  gridScale:'own',         // 'own' | 'shared'
+};
+function resetHidden(){ S.hidden = new Set([OTHER]); S.picked = new Set(); S.focus = null; }
+
+/* ── Deterministic synthetic data ────────────────────────────────────── */
+// One store-day rate per (store, category). Every bucket is the SUM of its
+// days, so day/week/month/quarter stay consistent with each other — the same
+// property the real feed has, where the store-day is the unit of truth.
+function hash32(str){
+  let h = 2166136261 >>> 0;
+  for (let i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h >>> 0;
+}
+function noise(seedStr){                     // deterministic 0..1
+  let x = hash32(seedStr);
+  x ^= x << 13; x >>>= 0; x ^= x >> 17; x ^= x << 5; x >>>= 0;
+  return x / 4294967296;
+}
+const DAY_MS = 86400000;
+const TODAY  = new Date(Date.UTC(2026, 8, 6));   // Sun 2026-09-06 — a closed week end
+function ymd(d){ return d.toISOString().slice(0,10); }
+function dayIdx(d){ return Math.floor(d.getTime()/DAY_MS); }
+
+const CHAIN_DAILY_NET = 34500;               // whole chain, all categories
+const _dayCache = new Map();
+function dayNet(store, l2, d){
+  const key = store+'|'+l2+'|'+dayIdx(d);
+  let v = _dayCache.get(key);
+  if (v !== undefined) return v;
+  const dow  = d.getUTCDay();                                  // 0 Sun
+  const dowF = [1.14,0.80,0.82,0.86,0.95,1.15,1.28][dow];      // weekend-heavy
+  const doy  = (Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+                - Date.UTC(d.getUTCFullYear(),0,1)) / DAY_MS;
+  let seas = 1 + 0.16*Math.sin((doy/365)*2*Math.PI - 1.1);     // spring/holiday swell
+  if (l2 === 'Seasonal')       seas *= 1 + 0.85*Math.sin((doy/365)*2*Math.PI - 0.35);
+  if (l2 === 'Consumable Food')seas *= 1.04;
+  const drift = 1 + 0.055*Math.sin((dayIdx(d)/610)*2*Math.PI + hash32(l2)%7);
+  // A per-WEEK factor. Without it two consecutive weeks differ only by daily
+  // noise that averages out, the two lines sit on top of each other, and the
+  // preview shows a comparison chart that appears to have nothing to compare.
+  const wk    = 0.86 + 0.28*noise(store+'|'+l2+'|w'+Math.floor(dayIdx(d)/7));
+  const shock = 0.80 + 0.40*noise('chainday|'+dayIdx(d));
+  const rnd   = 0.86 + 0.28*noise(key);
+  v = CHAIN_DAILY_NET * (L2_WEIGHT[l2]||.02) * (STORE_SCALE[store]||.5)
+      * dowF * Math.max(.15, seas) * drift * wk * shock * rnd / 3.26;  // /Σ store scale
+  _dayCache.set(key, v);
+  return v;
+}
+// L3 shares MOVE over time — each sub-category has its own slow drift and its
+// own weekday lean, so Snacks and Frozen do not rise and fall in lockstep.
+// (First pass held them fixed, and every L3 in the change strip then reported
+//  the identical +22.9%: six rows agreeing to four significant figures is
+//  never data, it is one number wearing six labels.)
+// Shares are renormalised per day, which preserves the invariant worker.js:2734
+// rests on — L3 sums to its L2 exactly.
+const _shareCache = new Map();
+function l3Shares(store, l2, d){
+  const di  = dayIdx(d);
+  const key = store+'|'+l2+'|'+di;
+  let s = _shareCache.get(key);
+  if (s) return s;
+  const names = L3S[l2] || ['Other / unmapped'];
+  const raw = names.map((n,i) => {
+    const base   = (0.25 + noise(store+'|'+l2+'|'+n)) / (1 + i*0.38);
+    const period = 240 + (hash32(n) % 460);                 // 240–700 days
+    const phase  = (hash32(n+'p') % 1000) / 1000 * 2*Math.PI;
+    const drift  = 1 + 0.20*Math.sin((di/period)*2*Math.PI + phase);
+    const dow    = 1 + 0.12*Math.sin((d.getUTCDay()/7)*2*Math.PI + phase);
+    return Math.max(0.02, base * drift * dow);
+  });
+  const sum = raw.reduce((a,b)=>a+b,0);
+  s = {}; names.forEach((n,i)=> s[n] = raw[i]/sum);
+  if (_shareCache.size > 20000) _shareCache.clear();
+  _shareCache.set(key, s);
+  return s;
+}
+function unitsFor(l2, net){                  // ASP varies by category
+  const asp = { 'Furniture':64, 'Hardlines':9.2, 'Home':7.4, 'Softline - Apparel':5.1,
+    'Softline - Shoes':8.3, 'Softline - Accessories':4.2, 'Consumable Food':2.35,
+    'Consumable HBA':3.1, 'Consumable Other':3.4, 'Seasonal':6.1,
+    'Bin Products':1.85, 'Gift Cards':25 }[l2] || 6;
+  return net / asp;
+}
+
+/* ── Buckets ─────────────────────────────────────────────────────────── */
+const BUCKETS = {
+  day:     { label:'Day',     n:14, unit:'day',     vs:'previous day' },
+  week:    { label:'Week',    n:13, unit:'week',    vs:'previous week' },
+  month:   { label:'Month',   n:12, unit:'month',   vs:'previous month' },
+  quarter: { label:'Quarter', n:8,  unit:'quarter', vs:'previous quarter' },
+};
+// `i` counts periods back; i=0 is the period CONTAINING today. Each returns
+// its natural [s,e] — the calendar bounds, NOT clamped to today.
+function periodBack(kind, i){
+  if (kind === 'day'){
+    const d = new Date(TODAY.getTime() - i*DAY_MS);
+    return { s:new Date(d), e:new Date(d),
+      label:d.toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'}),
+      long:ymd(d) };
+  }
+  if (kind === 'week'){
+    // Sunday -> Saturday, matching the Sales Trend card on the dashboard (its
+    // axis reads Sun..Sat) and the marketing side's grouping helper. The real
+    // feed keys weeks by daily_sales.week, so the LABELS come from there.
+    const endSat = new Date(TODAY.getTime() + ((6 - TODAY.getUTCDay() + 7) % 7)*DAY_MS);
+    const e = new Date(endSat.getTime() - i*7*DAY_MS);
+    const s = new Date(e.getTime() - 6*DAY_MS);
+    return { s, e, label:'Wk '+isoWeek(e), long:'Week '+isoWeek(e)+' · '+ymd(s)+' → '+ymd(e) };
+  }
+  if (kind === 'month'){
+    const s = new Date(Date.UTC(TODAY.getUTCFullYear(), TODAY.getUTCMonth()-i, 1));
+    const e = new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth()+1, 0));
+    return { s, e, label:s.toLocaleDateString('en-US',{month:'short',timeZone:'UTC'})
+      + (s.getUTCMonth()===0 ? " '"+String(s.getUTCFullYear()).slice(2) : ''),
+      long:s.toLocaleDateString('en-US',{month:'long',year:'numeric',timeZone:'UTC'}) };
+  }
+  let q = Math.floor(TODAY.getUTCMonth()/3) - i, y = TODAY.getUTCFullYear();
+  while (q < 0){ q += 4; y -= 1; }
+  const s = new Date(Date.UTC(y, q*3, 1));
+  const e = new Date(Date.UTC(y, q*3+3, 0));
+  return { s, e, label:'Q'+(q+1)+" '"+String(y).slice(2),
+    long:'Q'+(q+1)+' '+y+' · '+ymd(s)+' → '+ymd(e) };
+}
+
+// EVERY BUCKET IS A CLOSED PERIOD. The period in progress is dropped, never
+// clamped — a 68-day Q3 plotted beside three 92-day quarters reads as a 25%
+// collapse in every category at once, which is the shape of a missing month,
+// not of a business. (lessons.md: "An entry surface opens on the period you
+// HAVE data for"; "An empty answer is a fault, not a fact".) What was dropped
+// is reported in the status line rather than silently discarded.
+function buildBuckets(kind){
+  const n = BUCKETS[kind].n;
+  const all = [];
+  for (let i = n + 1; i >= 0; i--) all.push(periodBack(kind, i));
+  const closed = all.filter(b => b.e.getTime() <= TODAY.getTime());
+  const open   = all.length > closed.length ? all[all.length-1] : null;
+  return { list: closed.slice(-n), open };
+}
+function isoWeek(d){
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay()||7));
+  const y0 = new Date(Date.UTC(t.getUTCFullYear(),0,1));
+  return Math.ceil((((t-y0)/DAY_MS)+1)/7);
+}
+
+/* ── Series assembly ─────────────────────────────────────────────────── */
+// Which L2 parents are in play. 'All L2s' walks every one of them, so L3 mode
+// can show the whole chain and not just one branch.
+function activeParents(){
+  return (S.level === 'l3' && S.parent === ALL) ? L2S : [S.parent];
+}
+function seriesFor(){
+  const { list: buckets, open } = buildBuckets(S.bucket);
+  const stores  = S.store === '__all__' ? STORE_KEYS : [S.store];
+  const zero    = () => buckets.map(()=>0);
+  const rows = [];
+
+  if (S.level === 'l2'){
+    L2S.forEach(k => rows.push({ key:k, l2:k, label:k, values:zero() }));
+  } else {
+    // The KEY keeps its parent. worker.js:2466 is explicit about why: an
+    // l3-only key silently merges "Sku Book Items", which really does appear
+    // under five different L2 parents.
+    activeParents().forEach(l2 =>
+      (L3S[l2] || []).forEach(l3 =>
+        rows.push({ key:l2+' :: '+l3, l2, l3, label:shortLabel(l3), values:zero() })));
+  }
+  const byL2 = {};
+  rows.forEach(r => { (byL2[r.l2] = byL2[r.l2] || []).push(r); });
+
+  buckets.forEach((b, bi) => {
+    for (let t = b.s.getTime(); t <= b.e.getTime(); t += DAY_MS){
+      const d = new Date(t);
+      for (const st of stores){
+        if (S.level === 'l2'){
+          rows.forEach(r => {
+            const net = dayNet(st, r.key, d);
+            r.values[bi] += S.measure === 'net' ? net : unitsFor(r.key, net);
+          });
+        } else {
+          for (const l2 of activeParents()){
+            const parentNet = dayNet(st, l2, d);
+            const sh = l3Shares(st, l2, d);
+            (byL2[l2] || []).forEach(r => {
+              const net = parentNet * (sh[r.l3] || 0);
+              r.values[bi] += S.measure === 'net' ? net : unitsFor(l2, net);
+            });
+          }
+        }
+      }
+    }
+  });
+  rows.forEach(r => { r.total = r.values.reduce((a,b)=>a+b,0); });
+  // Two DIFFERENT L3 keys under one parent must never wear the same label —
+  // "FG BL SOFTLINES - APPAREL" and "Apparel" both shorten to "Apparel", and
+  // two identical panels side by side is worse than one long name. Where a
+  // short label collides inside its parent, everyone in the collision falls
+  // back to the raw key.
+  Object.values(byL2).forEach(group => {
+    const seen = {};
+    group.forEach(r => { (seen[r.label] = seen[r.label] || []).push(r); });
+    Object.values(seen).forEach(g => { if (g.length > 1) g.forEach(r => { r.label = pathLabel(r.l3); }); });
+  });
+  return { buckets, rows, open };
+}
+// L3 keys are raw Clover category names and they are messy: a feed prefix
+// ("FG BL "), a department segment, and sometimes a trailing store marker
+// ("APPLIANCES - BL STORES"). Take the meaningful segment; the FULL key stays
+// in the tooltip, the table and the panel's title attribute, so nothing is lost.
+const L3_NOISE = new Set(['BL STORES','STORES','BL']);
+// An explicit set, not a length rule. "≤3 chars and all-caps" reads TEA as an
+// acronym and ships "Coffee & TEA"; the real acronyms in this taxonomy are a
+// short, known list, so name them.
+const ACRONYMS = new Set(['HBA','OTC','BL','IM','SKU','TV','DVD','CD','PC','USB','LED','HDMI']);
+function titleCase(t){
+  const cap = w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  return t.split(/\s+/).map(w => {
+    if (ACRONYMS.has(w.toUpperCase())) return w.toUpperCase();
+    if (!/[A-Za-z]/.test(w)) return w;                       // &, /, digits
+    return w.split(/([/-])/).map(x => /[A-Za-z]/.test(x) ? cap(x) : x).join('');
+  }).join(' ');
+}
+function cleanParts(k){
+  return k.replace(/^(FG\s+BL|FG|BL)\s+/, '').split(' - ')
+    .map(x => x.trim()).filter(x => x && !L3_NOISE.has(x.toUpperCase()))
+    .map(x => x === x.toUpperCase() ? titleCase(x) : x);
+}
+function shortLabel(k){
+  if (k.startsWith('Softline - ') || k.startsWith('Consumable ')) return k;
+  const parts = cleanParts(k);
+  return parts.length ? parts[parts.length - 1] : k;
+}
+// The tie-break when two keys under one parent shorten the same way: keep the
+// WHOLE cleaned path rather than dropping back to the raw key, so the label
+// that disambiguates is still a label and not a feed string.
+function pathLabel(k){
+  if (k.startsWith('Softline - ') || k.startsWith('Consumable ')) return k;
+  const parts = cleanParts(k);
+  return parts.length ? parts.join(' \u00b7 ') : k;
+}
+
+/* Colour follows the ENTITY, not its rank in the current view. The ordering
+   and the fold-to-Other set are computed from the WHOLE window, once, before
+   any legend toggle — so hiding a series never repaints the survivors. */
+function paletteVar(i){ return getCSS(i < 6 ? '--s'+(i+1) : '--sOther'); }
+function getCSS(v){ return getComputedStyle(root).getPropertyValue(v).trim(); }
+
+// The CHART draws at most six lines — past that no colourblind reader can tell
+// them apart, and it is the one surface that has to stay legible. Which six is
+// yours to choose: click any panel in Grid, or any legend entry here. With
+// nothing chosen it falls back to the six biggest. Everything NOT drawn is
+// still fully visible in Grid and in Table — nothing is hidden, only undrawn.
+function foldSeries(rows){
+  const ranked = rows.slice().sort((a,b) => b.total - a.total);
+  const picked = ranked.filter(r => S.picked.has(r.key));
+  const keep   = (picked.length ? picked : ranked.slice(0, S.maxSeries)).slice(0, S.maxSeries);
+  const tail   = ranked.filter(r => !keep.includes(r) && r.values.some(v => v > 0));
+  keep.forEach((r,i) => { r.slot = i; });
+  if (tail.length){
+    const other = { key:OTHER, label:'Other ('+tail.length+')', slot:6,
+      values:rows[0].values.map((_,i) => tail.reduce((a,r)=>a+r.values[i],0)),
+      members:tail.map(r => r.label) };
+    other.total = other.values.reduce((a,b)=>a+b,0);
+    return keep.concat([other]);
+  }
+  return keep;
+}
+
+/* ── Formatting (DESIGN.md §8) ───────────────────────────────────────── */
+const fmtD0  = v => '$' + Math.round(v).toLocaleString('en-US');
+const fmtU0  = v => Math.round(v).toLocaleString('en-US');
+const fmtVal = v => S.measure === 'net' ? fmtD0(v) : fmtU0(v);
+function fmtAxis(v){
+  if (S.measure !== 'net') return v >= 1000 ? Math.round(v/1000)+'k' : String(Math.round(v));
+  if (v >= 1000) return '$' + Math.round(v/1000) + 'k';
+  return '$' + Math.round(v);
+}
+const fmtSigned = v => (v >= 0 ? '+' : '−') + fmtVal(Math.abs(v));
+
+/* ── Chart (inline SVG — see "How it would be built") ────────────────── */
+const hostEl = document.getElementById('chart-host');
+const chartEl = document.getElementById('chart');
+const tipEl   = document.getElementById('tip');
+let LAST = null;
+
+function drawChart(buckets, series){
+  const W = Math.max(300, chartEl.clientWidth || 700);
+  const narrow = W < 560;
+  const visible = series.filter(s => !S.hidden.has(s.key));
+  const labelRoom = (!narrow && visible.length <= 4 && visible.length > 0) ? 84 : 10;
+  const M = { t:14, r:labelRoom, b:30, l:narrow ? 40 : 52 };
+  const H = narrow ? 210 : 262;
+  const pw = W - M.l - M.r, ph = H - M.t - M.b;
+
+  let max = 0;
+  visible.forEach(s => s.values.forEach(v => { if (v > max) max = v; }));
+  if (max <= 0) max = 1;
+  const ticks = niceTicks(max, 4);
+  const top = ticks[ticks.length-1];
+
+  const x = i => M.l + (buckets.length === 1 ? pw/2 : (i/(buckets.length-1))*pw);
+  const y = v => M.t + ph - (v/top)*ph;
+
+  const ink=getCSS('--ink'), dim=getCSS('--inkDim'), grid=getCSS('--hairline'),
+        surf=getCSS('--panel');
+
+  let g = '';
+  // Gridlines — solid hairlines, one shade off the surface. Never dashed.
+  ticks.forEach(t => {
+    g += `<line x1="${M.l}" y1="${y(t).toFixed(1)}" x2="${M.l+pw}" y2="${y(t).toFixed(1)}" stroke="${grid}" stroke-width="1"/>`;
+    g += `<text x="${M.l-8}" y="${(y(t)+3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="${dim}" font-family="Geist,sans-serif" style="font-variant-numeric:tabular-nums">${fmtAxis(t)}</text>`;
+  });
+
+  // X labels — thinned so they never collide.
+  const step = Math.max(1, Math.ceil(buckets.length / (narrow ? 4 : 8)));
+  buckets.forEach((b,i) => {
+    if (i % step !== 0 && i !== buckets.length-1) return;
+    // The end labels anchor inward, or the last one is clipped by the viewBox.
+    const anchor = i === 0 ? 'start' : (i === buckets.length-1 ? 'end' : 'middle');
+    g += `<text x="${x(i).toFixed(1)}" y="${H-10}" text-anchor="${anchor}" font-size="10" fill="${dim}" font-family="Geist,sans-serif">${esc(b.label)}</text>`;
+  });
+
+  // Lines — 2px, round join. Dots carry a 2px surface ring (never a border).
+  visible.forEach(s => {
+    const c = paletteVar(s.slot);
+    const pts = s.values.map((v,i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    g += `<polyline points="${pts}" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    if (buckets.length <= 16){
+      s.values.forEach((v,i) => {
+        g += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="3.5" fill="${c}" stroke="${surf}" stroke-width="2"/>`;
+      });
+    }
+  });
+
+  // Direct end-labels at ≤4 series — text wears an INK token, never the
+  // series colour; the coloured line-key beside it carries identity.
+  if (labelRoom > 10){
+    const placed = [];
+    visible.slice().sort((a,b)=> b.values[b.values.length-1]-a.values[a.values.length-1])
+      .forEach(s => {
+        let ly = y(s.values[s.values.length-1]);
+        while (placed.some(p => Math.abs(p-ly) < 12)) ly += 12;
+        placed.push(ly);
+        const lx = M.l + pw + 8;
+        g += `<line x1="${(M.l+pw+2).toFixed(1)}" y1="${y(s.values[s.values.length-1]).toFixed(1)}" x2="${lx-2}" y2="${ly.toFixed(1)}" stroke="${paletteVar(s.slot)}" stroke-width="1" opacity=".65"/>`;
+        g += `<rect x="${lx}" y="${(ly-1.5).toFixed(1)}" width="9" height="3" rx="1.5" fill="${paletteVar(s.slot)}"/>`;
+        g += `<text x="${lx+13}" y="${(ly+3.5).toFixed(1)}" font-size="10.5" fill="${ink}" font-family="Geist,sans-serif">${esc(clip(s.label, 11))}</text>`;
+      });
+  }
+
+  // Crosshair layer — the reader aims at a bucket, never at a 2px line.
+  g += `<line id="xh" x1="0" y1="${M.t}" x2="0" y2="${M.t+ph}" stroke="${dim}" stroke-width="1" opacity="0"/>`;
+  g += `<rect id="hit" x="${M.l}" y="${M.t}" width="${pw}" height="${ph}" fill="transparent" style="cursor:crosshair"/>`;
+
+  chartEl.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
+     aria-label="${esc(chartAria(buckets, visible))}">${g}</svg>`;
+
+  LAST = { buckets, visible, x, y, M, ph, W, H };
+  wireCrosshair();
+}
+function chartAria(buckets, visible){
+  return `${visible.length} categories across ${buckets.length} ${BUCKETS[S.bucket].unit}s, `
+    + `${buckets[0].label} to ${buckets[buckets.length-1].label}. Full values in the Table view.`;
+}
+function niceTicks(max, n){
+  const raw = max/n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1,1.5,2,2.5,3,4,5,7.5,10].map(m=>m*mag).find(s => s >= raw) || 10*mag;
+  const out = []; for (let v=0; v<=max+step*0.001; v+=step) out.push(v);
+  if (out[out.length-1] < max) out.push(out[out.length-1]+step);
+  return out;
+}
+function clip(s,n){ return s.length > n ? s.slice(0,n-1)+'…' : s; }
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+/* Crosshair + one tooltip listing EVERY series at that bucket. */
+function wireCrosshair(){
+  const svg = chartEl.querySelector('svg');
+  const hit = svg.querySelector('#hit'), xh = svg.querySelector('#xh');
+  const { buckets, visible, x, M, ph } = LAST;
+  const move = ev => {
+    const r = svg.getBoundingClientRect();
+    const px = (ev.clientX - r.left) * (LAST.W / r.width);
+    let bi = 0, best = Infinity;
+    buckets.forEach((_,i) => { const d = Math.abs(x(i)-px); if (d < best){ best = d; bi = i; } });
+    xh.setAttribute('x1', x(bi)); xh.setAttribute('x2', x(bi));
+    xh.setAttribute('opacity', '0.55');
+    showTip(bi, r);
+  };
+  hit.addEventListener('pointermove', move);
+  hit.addEventListener('pointerdown', move);
+  hit.addEventListener('pointerleave', () => { xh.setAttribute('opacity','0'); tipEl.classList.remove('on'); });
+}
+function showTip(bi, svgRect){
+  const { buckets, visible, x, W } = LAST;
+  const b = buckets[bi];
+  // Labels are untrusted data: textContent, never innerHTML concatenation.
+  tipEl.textContent = '';
+  const hd = document.createElement('div'); hd.className = 'tip-hd';
+  hd.textContent = b.long;
+  tipEl.appendChild(hd);
+  visible.slice().sort((a,c)=> c.values[bi]-a.values[bi]).forEach(s => {
+    const row = document.createElement('div'); row.className = 'tip-row';
+    const k = document.createElement('span'); k.className = 'tip-key';
+    k.style.background = paletteVar(s.slot);
+    const nm = document.createElement('span'); nm.className = 'tip-nm';
+    nm.textContent = s.key === OTHER ? s.label : s.key;   // full L3 key here
+    const v = document.createElement('span'); v.className = 'tip-val';
+    v.textContent = fmtVal(s.values[bi]);
+    row.append(k, nm, v); tipEl.appendChild(row);
+  });
+  const hostRect = hostEl.getBoundingClientRect();
+  const px = (x(bi) / W) * svgRect.width + (svgRect.left - hostRect.left);
+  const tw = tipEl.offsetWidth || 170;
+  tipEl.style.left = Math.max(6, Math.min(hostRect.width - tw - 6, px - tw/2)) + 'px';
+  tipEl.style.top  = '10px';
+  tipEl.classList.add('on');
+}
+
+/* ── Legend ──────────────────────────────────────────────────────────── */
+// In Vs there are only two marks and they are PERIODS, not categories — so
+// the legend names the two dates rather than listing series.
+function drawVsLegend(buckets){
+  const el = document.getElementById('legend');
+  el.textContent = '';
+  const n = buckets.length;
+  if (n < 2) return;
+  const key = (colour, label, sub) => {
+    const w = document.createElement('span'); w.className='lg-item'; w.style.cursor='default';
+    const k = document.createElement('span'); k.className='lg-key';
+    k.style.background = colour; k.style.height = '9px'; k.style.borderRadius = '3px';
+    const t = document.createElement('span'); t.textContent = label;
+    const v = document.createElement('span'); v.className='lg-val'; v.textContent = sub;
+    w.append(k, t, v); el.appendChild(w);
+  };
+  key(getCSS('--s1'),     'This ' + BUCKETS[S.bucket].unit, buckets[n-1].long);
+  key(getCSS('--sOther'), 'Previous ' + BUCKETS[S.bucket].unit, buckets[n-2].long);
+}
+function drawLegend(series){
+  const el = document.getElementById('legend');
+  el.textContent = '';
+  series.forEach(s => {
+    const b = document.createElement('button');
+    b.className = 'lg-item'; b.type = 'button';
+    b.setAttribute('aria-pressed', String(!S.hidden.has(s.key)));
+    const k = document.createElement('span'); k.className='lg-key'; k.style.background = paletteVar(s.slot);
+    const n = document.createElement('span');
+    n.textContent = s.key === OTHER ? s.label : s.label;
+    if (s.key === OTHER && s.members) n.title = s.members.join(', ');
+    else n.title = s.key;
+    const v = document.createElement('span'); v.className='lg-val'; v.textContent = fmtVal(s.total);
+    b.append(k, n, v);
+    b.onclick = () => {
+      if (S.hidden.has(s.key)) S.hidden.delete(s.key); else S.hidden.add(s.key);
+      if (series.every(x => S.hidden.has(x.key))) S.hidden.delete(s.key);  // never blank the chart
+      render();
+    };
+    el.appendChild(b);
+  });
+}
+
+/* ── Change strip ────────────────────────────────────────────────────── */
+// Ranked over EVERY category, not just the drawn ones — with 60-odd L3s the
+// mover you need to see is rarely one of the six on the chart. Capped at
+// MOVERS rows, and the status line says how many it is ranking over.
+const MOVERS = 12;
+function drawDelta(buckets, allRows){
+  const el = document.getElementById('delta');
+  el.textContent = '';
+  const n = buckets.length;
+  if (n < 2){
+    document.getElementById('delta-t').textContent = 'Change';
+    el.innerHTML = '<div class="dl-none">Not enough closed periods to compare.</div>'; return;
+  }
+  const cur = buckets[n-1], prv = buckets[n-2];
+  document.getElementById('delta-s').textContent = prv.long + '  \u2192  ' + cur.long;
+
+  let rows = allRows
+    .filter(r => r.values[n-1] > 0 || r.values[n-2] > 0)
+    .map(r => ({ s:r, d: r.values[n-1] - r.values[n-2],
+      pct: r.values[n-2] > 0 ? (r.values[n-1]-r.values[n-2])/r.values[n-2] : null }));
+  const ranked = rows.length;
+  rows.sort((a,b) => Math.abs(b.d) - Math.abs(a.d));
+  rows = rows.slice(0, MOVERS).sort((a,b) => b.d - a.d);
+
+  document.getElementById('delta-t').textContent = ranked > MOVERS
+    ? `Biggest movers vs ${BUCKETS[S.bucket].vs}`
+    : `Change vs ${BUCKETS[S.bucket].vs}`;
+  const cnt = document.getElementById('delta-c');
+  cnt.textContent = ranked > MOVERS
+    ? `top ${MOVERS} of ${ranked} \u00b7 all ${ranked} are in Grid and Table` : '';
+
+  const span = Math.max(...rows.map(r => Math.abs(r.d)), 1);
+
+  rows.forEach(r => {
+    const row = document.createElement('div'); row.className = 'dl-row';
+    const nm = document.createElement('div'); nm.className = 'dl-nm';
+    const dot = document.createElement('span'); dot.className='dl-dot';
+    // Only a category actually on the Chart wears a series colour; the rest
+    // take the neutral, so the dot never implies a line that isn't drawn.
+    dot.style.background = (r.s.slot != null && S.picked.has(r.s.key))
+      ? paletteVar(r.s.slot) : getCSS('--inkDimmer');
+    const nmT = document.createElement('span');
+    // Out here a row has no group header above it, so an L3 has to carry its
+    // parent or "Other / unmapped" appears twelve times meaning twelve things.
+    nmT.textContent = r.s.l3 ? r.s.l2 + ' \u2192 ' + r.s.label : r.s.key;
+    nmT.title = r.s.l3 ? r.s.l2 + ' \u2192 ' + r.s.l3 : r.s.key;
+    nm.append(dot, nmT);
+
+    const track = document.createElement('div'); track.className='dl-track';
+    const mid = document.createElement('div'); mid.className='dl-mid'; mid.style.left='50%';
+    const bar = document.createElement('div'); bar.className='dl-bar';
+    const w = (Math.abs(r.d)/span) * 48;
+    bar.style.background = r.d >= 0 ? getCSS('--good') : getCSS('--bad');
+    if (r.d >= 0){ bar.style.left = '50%'; bar.style.width = w + '%'; }
+    else { bar.style.right = '50%'; bar.style.width = w + '%'; }
+    track.append(mid, bar);
+
+    const v = document.createElement('div'); v.className='dl-v';
+    v.style.color = r.d >= 0 ? getCSS('--good') : getCSS('--bad');
+    v.textContent = fmtSigned(r.d);
+    const p = document.createElement('span'); p.className='pct';
+    p.textContent = r.pct == null ? 'new' : (r.pct>=0?'+':'−') + Math.abs(r.pct*100).toFixed(1) + '%';
+    v.appendChild(p);
+
+    row.append(nm, track, v);
+    el.appendChild(row);
+  });
+}
+
+/* ── Vs — the chart card the app already draws ────────────────────────
+   Deliberately the SAME shape as the Sales Trend card on the dashboard
+   (index.html:8882 `_buildChartCardHTML`, colours from CHART_COLORS at 8826):
+   legend pills carrying running totals, a smooth green line with a soft fill
+   for the current period, a solid amber line for the one before it, dollar
+   ticks and a hairline grid. DESIGN.md says extend what is there rather than
+   deriving a new look, and this is the look.
+
+   The x-axis is the INSIDE of the period, which is what makes it a "vs" and
+   not a trend: Sun..Sat for a week, the days of the month for a month, the
+   thirteen weeks for a quarter. You see WHERE in the period the difference
+   came from, not just that there was one. */
+const CHART_COLORS = { tw:'#22c55e', lw:'#f59e0b', bg:'#cbd5e1' };  // index.html:8826
+
+// Each point is a range on the current period and the matching range on the
+// previous one. Uniform across buckets so one drawing routine serves them all.
+// Each point is a range on the current period and the matching range on the
+// previous one. Uniform across buckets so one drawing routine serves them all.
+// `ptd` swaps the current period for the one we are IN, and reports how many
+// of its sub-periods have actually closed.
+function vsPoints(kind, ptd){
+  const back = ptd ? 0 : 1;      // 0 = the period containing today
+  const dayPt = (c, p, label) => ({ label, cur:[c,c], prv:[p,p] });
+  if (kind === 'day'){
+    // A day has no sub-period in this data — item snapshots are per DAY, never
+    // per hour — so Day compares the last fortnight against the one before it,
+    // aligned by weekday. Anything finer would need data that does not exist,
+    // which is also why "to date" is not offered for Day.
+    const out = [];
+    for (let i = 13; i >= 0; i--){
+      const c = new Date(TODAY.getTime() - i*DAY_MS);
+      out.push(dayPt(c, new Date(c.getTime() - 14*DAY_MS),
+        c.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'})));
+    }
+    return { points: out, curLabel:'Last 14 days', prvLabel:'Previous 14 days', elapsed: out.length };
+  }
+  if (kind === 'week'){
+    const cur = periodBack('week', back), prv = periodBack('week', back + 1);
+    const out = [];
+    for (let i = 0; i < 7; i++){
+      const c = new Date(cur.s.getTime() + i*DAY_MS);
+      out.push(dayPt(c, new Date(prv.s.getTime() + i*DAY_MS),
+        c.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'})));
+    }
+    return { points: out, curLabel:'Wk '+isoWeek(cur.e), prvLabel:'Wk '+isoWeek(prv.e),
+             elapsed: elapsedIn(out) };
+  }
+  if (kind === 'month'){
+    let k = back; while (!ptd && periodBack('month', k).e > TODAY) k++;
+    const cur = periodBack('month', k), prv = periodBack('month', k+1);
+    const days  = new Date(Date.UTC(cur.s.getUTCFullYear(), cur.s.getUTCMonth()+1, 0)).getUTCDate();
+    const pDays = new Date(Date.UTC(prv.s.getUTCFullYear(), prv.s.getUTCMonth()+1, 0)).getUTCDate();
+    const out = [];
+    for (let i = 0; i < days; i++){
+      const c = new Date(cur.s.getTime() + i*DAY_MS);
+      // A 31st with no 31st to compare against is a GAP, not a zero.
+      const p = i < pDays ? new Date(prv.s.getTime() + i*DAY_MS) : null;
+      out.push({ label: String(i+1), cur:[c,c], prv: p ? [p,p] : null });
+    }
+    return { points: out, curLabel: cur.long, prvLabel: prv.long, elapsed: elapsedIn(out) };
+  }
+  let k = back; while (!ptd && periodBack('quarter', k).e > TODAY) k++;
+  const cur = periodBack('quarter', k), prv = periodBack('quarter', k+1);
+  const out = [];
+  for (let i = 0; i < 13; i++){
+    const cs = new Date(cur.s.getTime() + i*7*DAY_MS);
+    const ps = new Date(prv.s.getTime() + i*7*DAY_MS);
+    if (cs > cur.e) break;
+    out.push({ label:'Wk '+(i+1),
+      cur:[cs, new Date(Math.min(cs.getTime()+6*DAY_MS, cur.e.getTime()))],
+      prv:[ps, new Date(Math.min(ps.getTime()+6*DAY_MS, prv.e.getTime()))] });
+  }
+  return { points: out, curLabel: cur.label.replace("'", " '"),
+           prvLabel: prv.label.replace("'", " '"), elapsed: elapsedIn(out) };
+}
+// How many sub-periods have actually CLOSED. A sub-period still running is not
+// a data point — a Tuesday half-done is not a Tuesday.
+function elapsedIn(points){
+  let n = 0;
+  for (const p of points){ if (p.cur[1].getTime() <= TODAY.getTime()) n++; else break; }
+  return n;
+}
+// The whole current period, clipped at the last closed day, and the SAME span
+// measured from the start of the previous one. Clipping both is what makes a
+// period-to-date comparison honest: six days against six days, never six
+// against thirty.
+function vsRanges(kind, ptd){
+  const { points, elapsed } = vsPoints(kind, ptd);
+  const n = ptd ? Math.max(1, elapsed) : points.length;
+  const usable = points.slice(0, n).filter(p => p.prv);
+  return {
+    cur: [points[0].cur[0], points[n-1].cur[1]],
+    prv: usable.length ? [usable[0].prv[0], usable[usable.length-1].prv[1]] : null,
+  };
+}
+
+// Value of the focused category (or every category) over an inclusive range.
+function valueOver(range, focus){
+  if (!range) return null;
+  const stores = S.store === '__all__' ? STORE_KEYS : [S.store];
+  let acc = 0;
+  for (let t = range[0].getTime(); t <= range[1].getTime(); t += DAY_MS){
+    const d = new Date(t);
+    for (const st of stores){
+      if (!focus){
+        for (const l2 of L2S){
+          const net = dayNet(st, l2, d);
+          acc += S.measure === 'net' ? net : unitsFor(l2, net);
+        }
+      } else if (focus.l3){
+        const net = dayNet(st, focus.l2, d) * (l3Shares(st, focus.l2, d)[focus.l3] || 0);
+        acc += S.measure === 'net' ? net : unitsFor(focus.l2, net);
+      } else {
+        const net = dayNet(st, focus.key, d);
+        acc += S.measure === 'net' ? net : unitsFor(focus.key, net);
+      }
+    }
+  }
+  return acc;
+}
+
+// Chart.js's own control-point maths (splineCurve), so the curve matches the
+// dashboard's tension: 0.3 rather than merely looking smooth.
+function splinePath(pts, t){
+  if (pts.length < 2) return '';
+  let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+  const cp = [];
+  for (let i = 0; i < pts.length; i++){
+    const p0 = pts[i-1] || pts[i], p1 = pts[i], p2 = pts[i+1] || pts[i];
+    const d01 = Math.hypot(p1[0]-p0[0], p1[1]-p0[1]) || 1;
+    const d12 = Math.hypot(p2[0]-p1[0], p2[1]-p1[1]) || 1;
+    const fa = t * d01/(d01+d12), fb = t * d12/(d01+d12);
+    cp.push([[p1[0]-fa*(p2[0]-p0[0]), p1[1]-fa*(p2[1]-p0[1])],
+             [p1[0]+fb*(p2[0]-p0[0]), p1[1]+fb*(p2[1]-p0[1])]]);
+  }
+  for (let i = 1; i < pts.length; i++)
+    d += ` C ${cp[i-1][1][0].toFixed(1)} ${cp[i-1][1][1].toFixed(1)},`
+       + ` ${cp[i][0][0].toFixed(1)} ${cp[i][0][1].toFixed(1)},`
+       + ` ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)}`;
+  return d;
+}
+
+function vsFocusRow(rows){
+  if (S.focus === null) return null;
+  return rows.find(r => r.key === S.focus) || null;
+}
+const ptdOn = () => S.ptd && S.bucket !== 'day';
+
+function drawVs(buckets, rows){
+  const host = document.getElementById('chart');
+  host.textContent = '';
+  const ptd = ptdOn();
+  const { points, curLabel, prvLabel, elapsed } = vsPoints(S.bucket, ptd);
+  const focus = vsFocusRow(rows);
+
+  // In to-date mode the current line STOPS where the data stops; the previous
+  // one runs the whole period, so you can see what you are running against.
+  const cutoff = ptd ? Math.max(1, elapsed) : points.length;
+  const cur = points.map((p,i) => i < cutoff ? valueOver(p.cur, focus) : null);
+  const prv = points.map(p => valueOver(p.prv, focus));
+  const sum = a => a.reduce((x,v)=> x + (v||0), 0);
+  const curTotal  = sum(cur);
+  const prvSame   = sum(prv.slice(0, cutoff));   // like-for-like
+  const prvFull   = sum(prv);
+
+  const lg = document.createElement('div'); lg.className = 'vs-legend';
+  const pill = (colour, lbl, val, sub) => {
+    const w = document.createElement('span'); w.className = 'vs-pill';
+    const sw = document.createElement('span'); sw.className='vs-sw'; sw.style.background = colour;
+    const l = document.createElement('span'); l.className='vs-pl'; l.textContent = lbl;
+    const v = document.createElement('span'); v.className='vs-pv'; v.textContent = fmtVal(val);
+    w.append(sw, l, v);
+    if (sub){ const x = document.createElement('span'); x.className='vs-ps'; x.textContent = sub; w.appendChild(x); }
+    lg.appendChild(w);
+  };
+  const unit = BUCKETS[S.bucket].unit;
+  pill(CHART_COLORS.tw, ptd ? curLabel + ' to date' : curLabel, curTotal);
+  // The comparator is the SAME span of the previous period, and the pill says
+  // so — comparing six days against a whole month is the classic way a
+  // to-date chart lies.
+  pill(CHART_COLORS.lw, prvLabel, prvSame,
+       ptd ? `same ${cutoff} ${cutoff === 1 ? subUnit(S.bucket) : subUnit(S.bucket)+'s'}` : '');
+  const dl = document.createElement('span'); dl.className = 'vs-headline';
+  dl.style.color = curTotal >= prvSame ? getCSS('--good') : getCSS('--bad');
+  dl.textContent = (curTotal >= prvSame ? '▲ ' : '▼ ') + pctText(curTotal, prvSame)
+    + '  ' + (curTotal >= prvSame ? '+' : '−') + fmtVal(Math.abs(curTotal - prvSame));
+  lg.appendChild(dl);
+  host.appendChild(lg);
+
+  const holder = document.createElement('div'); holder.className = 'vs-chart';
+  holder.innerHTML = vsChartSVG(points, cur, prv, host.clientWidth || 760);
+  host.appendChild(holder);
+
+  const cap = document.createElement('div'); cap.className = 'vs-cap';
+  cap.textContent = focus
+    ? (focus.l3 ? focus.l2 + ' → ' + focus.l3 : focus.key)
+    : 'All ' + S.level.toUpperCase() + ' categories';
+  const hint = document.createElement('span'); hint.className='vs-cap-h';
+  hint.textContent = ptd
+    ? ` · ${prvLabel} finished at ${fmtVal(prvFull)}` + (focus ? ' · click its row again for all' : ' · click a row to chart one category')
+    : (focus ? ' · click its row again to go back to all' : ' · click a row to chart one category');
+  cap.appendChild(hint);
+  host.appendChild(cap);
+
+  const { cur: curRange, prv: prvRange } = vsRanges(S.bucket, ptd);
+  host.appendChild(vsRows(rows, curRange, prvRange, focus));
+}
+function subUnit(kind){ return kind === 'quarter' ? 'week' : 'day'; }
+
+function vsChartSVG(points, cur, prv, hostW){
+  const W = Math.max(300, hostW - 4), narrow = W < 560;
+  const M = { t:14, r:14, b:30, l: narrow ? 46 : 62 };
+  const H = narrow ? 220 : 300;
+  const pw = W - M.l - M.r, ph = H - M.t - M.b;
+  const max = Math.max(...cur.filter(v=>v!=null), ...prv.filter(v=>v!=null), 1);
+  const ticks = niceTicks(max, 5), top = ticks[ticks.length-1];
+  const x = i => M.l + (points.length === 1 ? pw/2 : (i/(points.length-1))*pw);
+  const y = v => M.t + ph - (v/top)*ph;
+  const grid = getCSS('--hairline'), dim = getCSS('--inkDim'), surf = getCSS('--panel');
+
+  let g = '';
+  ticks.forEach(t => {
+    g += `<line x1="${M.l}" y1="${y(t).toFixed(1)}" x2="${M.l+pw}" y2="${y(t).toFixed(1)}" stroke="${grid}" stroke-width="1"/>`;
+    g += `<text x="${M.l-9}" y="${(y(t)+3.5).toFixed(1)}" text-anchor="end" font-size="10.5" fill="${dim}" font-family="Geist,sans-serif" style="font-variant-numeric:tabular-nums">${esc(fmtAxis(t))}</text>`;
+  });
+  const step = Math.max(1, Math.ceil(points.length / (narrow ? 4 : 7)));
+  points.forEach((p,i) => {
+    if (i % step !== 0 && i !== points.length-1) return;
+    const anchor = i === 0 ? 'start' : (i === points.length-1 ? 'end' : 'middle');
+    g += `<text x="${x(i).toFixed(1)}" y="${H-9}" text-anchor="${anchor}" font-size="10.5" fill="${dim}" font-family="Geist,sans-serif">${esc(p.label)}</text>`;
+  });
+
+  // A null is a GAP — the line breaks rather than diving to zero.
+  const runs = arr => {
+    const out = []; let run = [];
+    arr.forEach((v,i) => { if (v == null){ if (run.length) out.push(run); run = []; }
+                           else run.push([x(i), y(v)]); });
+    if (run.length) out.push(run); return out;
+  };
+  runs(prv).forEach(r => {
+    g += `<path d="${splinePath(r, 0.3)}" fill="none" stroke="${CHART_COLORS.lw}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  });
+  runs(cur).forEach(r => {
+    if (r.length > 1){
+      const area = splinePath(r, 0.3) + ` L ${r[r.length-1][0].toFixed(1)} ${(M.t+ph).toFixed(1)}`
+                 + ` L ${r[0][0].toFixed(1)} ${(M.t+ph).toFixed(1)} Z`;
+      g += `<path d="${area}" fill="rgba(34,197,94,0.12)" stroke="none"/>`;
+      g += `<path d="${splinePath(r, 0.3)}" fill="none" stroke="${CHART_COLORS.tw}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
+    }
+  });
+  const dots = (arr, colour, r) => arr.forEach((v,i) => { if (v == null) return;
+    g += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${r}" fill="${colour}" stroke="${surf}" stroke-width="2"/>`; });
+  dots(prv, CHART_COLORS.lw, 3);
+  dots(cur, CHART_COLORS.tw, 3.5);
+
+  g += `<line id="xh" x1="0" y1="${M.t}" x2="0" y2="${M.t+ph}" stroke="${dim}" stroke-width="1" opacity="0"/>`;
+  g += `<rect id="hit" x="${M.l}" y="${M.t}" width="${pw}" height="${ph}" fill="transparent" style="cursor:crosshair"/>`;
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
+    aria-label="${esc(points.length + ' points, current period against the previous one. Every value is in the Table view.')}">${g}</svg>`;
+}
+
+// The category breakdown. Values come from the SAME ranges the card charts, so
+// the rows and the card can never disagree — including in to-date mode, where
+// the previous period is clipped to the same span.
+function vsRows(rows, curRange, prvRange, focus){
+  const wrapEl = document.createElement('div'); wrapEl.className = 'vs-wrap';
+  const cVal = new Map(), pVal = new Map();
+  rows.forEach(r => { cVal.set(r, valueOver(curRange, r) || 0);
+                      pVal.set(r, prvRange ? (valueOver(prvRange, r) || 0) : 0); });
+  const max = Math.max(...rows.map(r => Math.max(cVal.get(r), pVal.get(r))), 1);
+
+  const groups = [];
+  if (S.level === 'l2') groups.push({ l2:null, rows: rows.slice() });
+  else activeParents().forEach(l2 => {
+    const g = rows.filter(r => r.l2 === l2); if (g.length) groups.push({ l2, rows:g });
+  });
+  groups.forEach(g => g.rows.sort((a,b) => cVal.get(b) - cVal.get(a)));
+  groups.sort((a,b) => b.rows.reduce((x,r)=>x+cVal.get(r),0) - a.rows.reduce((x,r)=>x+cVal.get(r),0));
+
+  groups.forEach(g => {
+    if (g.l2){
+      const h = document.createElement('div'); h.className = 'grid-gh';
+      const nm = document.createElement('span'); nm.className='grid-gh-n'; nm.textContent = g.l2;
+      const gc = g.rows.reduce((x,r)=>x+cVal.get(r),0), gp = g.rows.reduce((x,r)=>x+pVal.get(r),0);
+      const ct = document.createElement('span'); ct.className='grid-gh-c';
+      ct.textContent = fmtVal(gc) + '  vs  ' + fmtVal(gp) + '  ';
+      const gd = document.createElement('span'); gd.className='vs-d';
+      gd.style.color = gc >= gp ? getCSS('--good') : getCSS('--bad');
+      gd.textContent = (gc >= gp ? '▲ ' : '▼ ') + pctText(gc, gp);
+      ct.appendChild(gd); h.append(nm, ct); wrapEl.appendChild(h);
+    }
+    g.rows.forEach(r => {
+      const c = cVal.get(r), p = pVal.get(r);
+      if (c <= 0 && p <= 0) return;
+      const on = focus && focus.key === r.key;
+      const row = document.createElement('button');
+      row.type = 'button'; row.className = 'vs-row' + (on ? ' on' : '');
+      row.setAttribute('aria-pressed', String(!!on));
+      row.title = (r.l3 ? r.l2 + ' → ' + r.l3 : r.key) + ' · click to chart it';
+      row.onclick = () => { S.focus = on ? null : r.key; render(); };
+
+      const nm = document.createElement('div'); nm.className='vs-nm'; nm.textContent = r.label;
+      const bars = document.createElement('div'); bars.className='vs-bars';
+      const bar = (v, cls) => {
+        const t = document.createElement('div'); t.className='vs-track';
+        const b = document.createElement('div'); b.className='vs-bar '+cls;
+        b.style.width = (v > 0 ? Math.max(0.6, (v/max)*100) : 0) + '%';
+        t.appendChild(b); return t;
+      };
+      bars.append(bar(c,'cur'), bar(p,'prv'));
+
+      const val = document.createElement('div'); val.className='vs-v';
+      const l1 = document.createElement('div'); l1.className='vs-cur';
+      l1.textContent = c > 0 ? fmtVal(c) : '—';
+      const d = document.createElement('span'); d.className='vs-d';
+      d.style.color = (c - p) >= 0 ? getCSS('--good') : getCSS('--bad');
+      d.textContent = ((c - p) >= 0 ? '▲ ' : '▼ ') + pctText(c, p);
+      l1.appendChild(d);
+      const l2l = document.createElement('div'); l2l.className='vs-prv';
+      l2l.textContent = 'vs ' + (p > 0 ? fmtVal(p) : '—');
+      val.append(l1, l2l);
+
+      row.append(nm, bars, val);
+      wrapEl.appendChild(row);
+    });
+  });
+  return wrapEl;
+}
+function pctText(c, p){
+  if (p <= 0) return c > 0 ? 'new' : '—';
+  const q = (c - p) / p;
+  return (q >= 0 ? '' : '−') + Math.abs(q*100).toFixed(1) + '%';
+}
+
+/* ── Grid — small multiples. EVERY category, nothing folded. ──────────
+   This is dataviz's prescribed answer past ~8 series: don't grow hues, facet.
+   One panel per category, grouped under its L2 when the level is L3, each
+   with its own line, its window total and its change. Clicking a panel
+   promotes that category onto the Chart. */
+function drawGrid(buckets, rows){
+  const host = document.getElementById('chart');
+  const n = buckets.length;
+  const groups = [];
+  if (S.level === 'l2'){
+    groups.push({ l2:null, rows: rows.slice().sort((a,b)=>b.total-a.total) });
+  } else {
+    activeParents().forEach(l2 => {
+      const g = rows.filter(r => r.l2 === l2).sort((a,b)=>b.total-a.total);
+      if (g.length) groups.push({ l2, rows:g });
+    });
+    groups.sort((a,b) => b.rows.reduce((x,r)=>x+r.total,0) - a.rows.reduce((x,r)=>x+r.total,0));
+  }
+  const sharedMax = Math.max(...rows.map(r => Math.max(...r.values)), 1);
+
+  host.textContent = '';
+  const wrapEl = document.createElement('div');
+  wrapEl.className = 'grid-wrap';
+
+  groups.forEach(g => {
+    if (g.l2){
+      const h = document.createElement('div'); h.className = 'grid-gh';
+      const nm = document.createElement('span'); nm.className='grid-gh-n'; nm.textContent = g.l2;
+      const ct = document.createElement('span'); ct.className='grid-gh-c';
+      ct.textContent = g.rows.length + (g.rows.length === 1 ? ' sub-category · ' : ' sub-categories · ')
+        + fmtVal(g.rows.reduce((a,r)=>a+r.total,0));
+      h.append(nm, ct); wrapEl.appendChild(h);
+    }
+    const row = document.createElement('div'); row.className = 'grid-row';
+    g.rows.forEach(r => {
+      const on = S.picked.has(r.key);
+      const cell = document.createElement('button');
+      cell.type = 'button'; cell.className = 'gcell' + (on ? ' on' : '');
+      cell.setAttribute('aria-pressed', String(on));
+      cell.title = (r.l3 ? r.l2 + ' → ' + r.l3 : r.key)
+        + ' · click to ' + (on ? 'remove from' : 'add to') + ' the Chart';
+
+      const t = document.createElement('div'); t.className='gc-t'; t.textContent = r.label;
+      const v = document.createElement('div'); v.className='gc-v'; v.textContent = fmtVal(r.total);
+
+      const d  = n >= 2 ? r.values[n-1] - r.values[n-2] : null;
+      const pc = (n >= 2 && r.values[n-2] > 0) ? d / r.values[n-2] : null;
+      const dl = document.createElement('div'); dl.className='gc-d';
+      if (d == null || r.total <= 0){
+        dl.textContent = '—'; dl.style.color = getCSS('--inkDim');
+      } else {
+        dl.style.color = d >= 0 ? getCSS('--good') : getCSS('--bad');
+        dl.textContent = (d>=0?'▲':'▼') + ' ' + (pc == null ? 'new' : Math.abs(pc*100).toFixed(1)+'%');
+      }
+      const spark = document.createElement('div'); spark.className='gc-s';
+      spark.innerHTML = miniLine(r.values, S.gridScale === 'shared' ? sharedMax : null,
+                                 on ? paletteVar(0) : getCSS('--inkDim'));
+      cell.append(t, v, dl, spark);
+      cell.onclick = () => {
+        if (S.picked.has(r.key)) S.picked.delete(r.key);
+        else {
+          if (S.picked.size >= S.maxSeries){
+            flash(`The Chart holds ${S.maxSeries} lines. Drop one first — every category stays visible here and in Table.`);
+            return;
+          }
+          S.picked.add(r.key);
+        }
+        render();
+      };
+      row.appendChild(cell);
+    });
+    wrapEl.appendChild(row);
+  });
+  host.appendChild(wrapEl);
+}
+// A bare 96x30 line. No axis — the printed total carries the magnitude.
+//   Own scale    -> min..max of THIS series, so the shape is readable. A
+//                   category hovering between 70k and 80k is a flat line if
+//                   you scale it from zero, which is a sparkline showing you
+//                   nothing. The baseline is NOT zero here, and the legend
+//                   says so; the number above the line is what carries size.
+//   Shared scale -> 0..max across every panel, so heights ARE comparable.
+function miniLine(vals, forcedMax, colour){
+  const W = 96, H = 30, P = 3;
+  if (vals.every(v => v <= 0))
+    return `<svg width="${W}" height="${H}" aria-hidden="true"></svg>`;
+  let lo, hi;
+  if (forcedMax != null){ lo = 0; hi = forcedMax; }
+  else {
+    lo = Math.min(...vals); hi = Math.max(...vals);
+    const pad = (hi - lo) * 0.12 || Math.abs(hi) * 0.06 || 1;
+    lo -= pad; hi += pad;
+  }
+  if (hi <= lo) hi = lo + 1;
+  const x = i => P + (vals.length === 1 ? (W-2*P)/2 : (i/(vals.length-1))*(W-2*P));
+  const y = v => H - P - ((v - lo)/(hi - lo))*(H-2*P);
+  const pts = vals.map((v,i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true">`
+    + `<polyline points="${pts}" fill="none" stroke="${colour}" stroke-width="1.7"`
+    + ` stroke-linejoin="round" stroke-linecap="round"/>`
+    + `<circle cx="${x(vals.length-1).toFixed(1)}" cy="${y(vals[vals.length-1]).toFixed(1)}"`
+    + ` r="2.4" fill="${colour}"/></svg>`;
+}
+let flashT;
+function flash(msg){
+  const el = document.getElementById('flash');
+  el.textContent = msg; el.classList.add('on');
+  clearTimeout(flashT); flashT = setTimeout(() => el.classList.remove('on'), 3200);
+}
+
+/* ── Table view — the WCAG-clean twin. Every value here, none gated. ─── */
+// EVERY row, never a fold. In L3 the rows sit under their L2 parent, drawn the
+// way DESIGN.md §4.8 draws a hierarchy: a level badge opens the first cell, the
+// child indents, and a corner rule runs back up to the parent. Inheritance is
+// the information, so it is drawn rather than labelled.
+function drawTable(buckets, rows){
+  const host = document.getElementById('chart');
+  const cell = v => `<td>${v > 0 ? esc(fmtVal(v)) : '<span class="na">—</span>'}</td>`;
+  const dot  = r => S.picked.has(r.key)
+    ? `<span class="k-dot" style="background:${paletteVar(0)}"></span>` : '';
+
+  let body = '';
+  const sumRows = list => buckets.map((_,i) => list.reduce((a,r)=>a+r.values[i],0));
+
+  if (S.level === 'l2'){
+    rows.slice().sort((a,b)=>b.total-a.total).forEach(r => {
+      body += `<tr><td class="k"><span class="mc-lvl">L2</span>${dot(r)}${esc(r.key)}</td>`
+        + r.values.map(cell).join('') + `<td>${esc(fmtVal(r.total))}</td></tr>`;
+    });
+  } else {
+    const parents = activeParents().map(l2 => ({ l2, kids: rows.filter(r => r.l2 === l2) }))
+      .filter(g => g.kids.length);
+    parents.forEach(g => { g.vals = sumRows(g.kids); g.total = g.vals.reduce((a,b)=>a+b,0); });
+    parents.sort((a,b) => b.total - a.total);
+    parents.forEach(g => {
+      body += `<tr class="mc-l2"><td class="k"><span class="mc-lvl">L2</span>${esc(g.l2)}</td>`
+        + g.vals.map(cell).join('') + `<td>${esc(fmtVal(g.total))}</td></tr>`;
+      g.kids.slice().sort((a,b)=>b.total-a.total).forEach(r => {
+        body += `<tr class="mc-l3"><td class="k"><span class="mc-lvl l3">L3</span>${dot(r)}`
+          + `<span title="${esc(r.l3)}">${esc(r.l3)}</span></td>`
+          + r.values.map(cell).join('') + `<td>${esc(fmtVal(r.total))}</td></tr>`;
+      });
+    });
+  }
+  const tot = sumRows(rows);
+  let h = '<div class="tbl-scroll"><table class="mc"><thead><tr>';
+  h += `<th class="k">${S.level === 'l2' ? 'L2 category'
+        : (S.parent === ALL ? 'L2 → L3 · whole taxonomy' : 'L3 · ' + esc(S.parent))}</th>`;
+  buckets.forEach(b => h += `<th>${esc(b.label)}</th>`);
+  h += '<th>Total</th></tr></thead><tbody>' + body;
+  h += `<tr class="tot"><td class="k">Total</td>`
+    + tot.map(v => `<td>${esc(fmtVal(v))}</td>`).join('')
+    + `<td>${esc(fmtVal(tot.reduce((a,b)=>a+b,0)))}</td></tr>`;
+  h += '</tbody></table></div>';
+  host.innerHTML = h;
+}
+
+/* ── Status line — one sentence, and it says what is NOT knowable ────── */
+function drawStatus(buckets, series, allRows, open){
+  const el = document.getElementById('status');
+  const b0 = buckets[0], b1 = buckets[buckets.length-1];
+  const scope = S.store === '__all__'
+    ? STORE_KEYS.length + ' stores' : STORE_NAMES[S.store];
+  const drawn = series.filter(s => s.key !== OTHER).length;
+  const dayCount = Math.round((b1.e - b0.s)/DAY_MS) + 1;
+  const storeDays = dayCount * (S.store === '__all__' ? STORE_KEYS.length : 1);
+
+  let txt = `<b>${buckets.length} ${BUCKETS[S.bucket].unit}s</b> to ${b1.long.split(' · ')[0]}`
+    + ` · <b>${scope}</b> · ${S.measure === 'net' ? 'net sales' : 'units'}`
+    + ` · <b>all ${allRows.length} ${S.level.toUpperCase()} categor${allRows.length===1?'y':'ies'}</b>`
+    + (S.view === 'vs'
+        ? ` — the card charts <b>${esc(vsPoints(S.bucket, ptdOn()).curLabel)}${ptdOn() ? ' to date' : ''}</b>`
+          + ` against <b>${esc(vsPoints(S.bucket, ptdOn()).prvLabel)}</b>`
+          + ` ${S.bucket === 'quarter' ? 'week by week' : 'day by day'}; every category is compared underneath it`
+      : S.view === 'trend'
+        ? ` — Trend overlays ${drawn} at a time (click any Grid panel to swap one in); <b>Vs</b>, <b>Grid</b> and <b>Table</b> show every one of them`
+        : (S.view === 'grid'
+           ? ` — one panel each, nothing folded${S.gridScale === 'own'
+               ? '; each panel is scaled to its OWN high and low — the baseline is not zero, so read the SHAPE and take size from the printed total'
+               : '; every panel runs 0 to one shared maximum, so the heights ARE comparable and the small categories flatten out'}`
+           : ` — every row, every bucket, no fold`));
+
+  // The honest part: say where the numbers come from and what it costs.
+  if (S.bucket === 'day' || S.bucket === 'month' || S.bucket === 'quarter'){
+    const over = storeDays > 840;
+    txt += `.<br>Built from <b>day snapshots</b> — ${dayCount} days × ${S.store==='__all__'?STORE_KEYS.length:1} store`
+      + `${S.store==='__all__'?'s':''} = <b>${storeDays.toLocaleString()}</b> KV reads`
+      + (over
+        ? ` <span class="warnDot">▲ over the ~840 subrequest budget</span> — this combination would fall back to week rollups, and calendar edges would be approximate.`
+        : ` — inside the ~840 subrequest budget, so the buckets are true calendar periods.`);
+  } else {
+    txt += `.<br>Built from the <b>pre-rolled week summaries</b> — 1 read per store-week `
+      + `(${buckets.length} × ${S.store==='__all__'?STORE_KEYS.length:1} = ${(buckets.length*(S.store==='__all__'?STORE_KEYS.length:1))}), the cheapest grain there is.`;
+  }
+  if (open && !(S.view === 'vs' && ptdOn())){
+    txt += `<br><span class="warnDot">▲</span> <b>${esc(open.long.split(' · ')[0])} is still in progress and is left out</b>`
+      + ` — a part-length period plotted beside full ones reads as a collapse in every category at once.`;
+  } else if (S.view === 'vs' && ptdOn()){
+    const { elapsed } = vsPoints(S.bucket, true);
+    const n = Math.max(1, elapsed), u = subUnit(S.bucket);
+    txt += `<br><span class="warnDot">▲</span> <b>The ${BUCKETS[S.bucket].unit} in progress, clipped to the ${n} ${u}${n===1?'':'s'} that have closed</b>`
+      + ` — and the ${BUCKETS[S.bucket].unit} before it is clipped to the same ${n}, so the totals are like for like.`
+      + ` The amber line still runs its full length, so you can see what you are running against.`;
+  }
+  if (S.level === 'l3' && S.bucket === 'week'){
+    txt += `<br><span class="warnDot">▲</span> At week grain the L3 keys are the <b>normalised</b> ones — heuristic, IM and pattern matches are already folded into <b>Other / unmapped</b> before storage.`;
+  }
+  el.innerHTML = txt;
+}
+
+/* ── Panel legend (§4.8: every visual state gets a row) ──────────────── */
+function drawPanelLegend(){
+  const el = document.getElementById('plegend');
+  const dash = (css,w,h,extra='') => `<span class="pl-swatch" style="display:inline-block;width:${w}px;height:${h}px;border-radius:${h>4?3:2}px;${css?'background:'+css+';':''}${extra}"></span>`;
+  const line = css => dash(css, 14, 3);
+  const box  = css => dash(css, 11, 11);
+
+  // §4.8: every visual state the surface uses gets a row — and ONLY the states
+  // it uses. Explaining a change strip that is not on screen, or a series
+  // colour in a view that has no series, teaches the reader to skim the legend.
+  const R = {
+    vsBars: `<div class="pl-row">${dash('#22c55e',14,3)}<span><b>Green is this ${BUCKETS[S.bucket].unit}, amber is the one before it</b> — the same two colours, and the same card, as the Sales Trend chart on the dashboard. The chart's x-axis runs <i>inside</i> the period, so it shows <b>where</b> the difference came from rather than only that there was one. The bars underneath repeat that comparison for every category, on one shared scale.</span></div>`,
+    vsDelta: `<div class="pl-row">${box('var(--goodWash)')}<span><b>Click any category row to chart it</b> — the card above redraws for that category alone, click again for all of them. The ▲▼ figure is up or down on the ${BUCKETS[S.bucket].unit}; the two bar lengths say the same thing, so the reading never rests on colour alone, and the comparator is spelled out on every row (<b>vs $…</b>) rather than left as a percentage you have to take on trust.</span></div>`,
+    vsNoBudget: `<div class="pl-row">${dash('#cbd5e1',14,3,'background:repeating-linear-gradient(90deg,#cbd5e1 0,#cbd5e1 4px,transparent 4px,transparent 7px)')}<span><b>No budget line, and no last-year line.</b> The dashboard card has both; neither exists per category. Budget is stored per store per day with no category dimension, and a last-year category line would need year-old <code>items:</code> KV. Drawing either would mean inventing it.</span></div>`,
+    gridSpark: `<div class="pl-row">${line('var(--inkDim)')}<span><b>A Grid sparkline shows shape, not size.</b> On <b>Own</b> scale each panel runs between its own high and low — <b>the baseline is not zero</b> — because a category moving between $70k and $80k is a flat line if you draw it from zero. The number above it carries the magnitude. Switch <b>Scale</b> to <b>Shared</b> when you want heights to be comparable instead.</span></div>`,
+    gridPick: `<div class="pl-row">${box('var(--goodWash)')}<span><b>A panel outlined in green is on the Trend chart.</b> Click any panel to add it, click again to drop it. Trend holds ${S.maxSeries} lines at most — past six no colourblind reader can separate the hues — so a seventh is refused rather than quietly evicting one.</span></div>`,
+    trendLine: `<div class="pl-row">${line('var(--s1)')}<span><b>A coloured line is one category</b>, and its colour is fixed to it for the whole window — hiding a series never repaints the others. Six is the ceiling here; <b>Vs</b>, <b>Grid</b> and <b>Table</b> are where every category shows at once.</span></div>`,
+    trendOther: `<div class="pl-row">${line('var(--sOther)')}<span><b>Grey is “Other”</b> — everything not currently drawn, summed, and <b>switched off by default</b>: a sum of the tail outranks every real category, so drawing it makes the fold bucket look like the top seller.</span></div>`,
+    strip: `<div class="pl-row">${box('var(--good)')}<span><b>Green in the change strip is up, red is down</b>, versus the ${BUCKETS[S.bucket].vs}. The bar's <i>direction</i> carries the same meaning as its colour, so the pair still reads under red-green colour blindness.</span></div>`,
+    hierarchy: `<div class="pl-row"><span class="pl-swatch" style="display:inline-block;margin-top:1px;padding:1px 4px;border-radius:4px;border:1px solid var(--accent);color:var(--accent);font-size:8.5px;font-weight:700;letter-spacing:.06em;line-height:1.2">L3</span><span><b>An L3 row sits indented under its L2</b>, with a rule drawn back up to it. Inheritance is the information, so it is drawn rather than labelled — and the L2 row is the exact sum of the L3 rows beneath it.</span></div>`,
+    closed: `<div class="pl-row">${box('')}<span><b>A dash (—) is no sale in that period; it is never a zero passed off as data.</b> Every bucket drawn is a <b>closed</b> period — the one still in progress is named in the status line and left out, so a part-length period can never masquerade as a decline.</span></div>`.replace('style="display:inline-block;width:11px;height:11px;border-radius:3px;','style="display:inline-block;width:11px;height:11px;border-radius:3px;border:1px solid var(--border);'),
+    ptd: `<div class="pl-row">${dash('#f59e0b',14,3)}<span><b>To date clips both sides to the same span.</b> The ${BUCKETS[S.bucket].unit} you are in is measured over the sub-periods that have actually closed, and the ${BUCKETS[S.bucket].unit} before it is measured over the same number — six days against six days, never six against thirty. The pill says how many. The amber line still runs its <i>full</i> length and the caption gives its finished total, so you can see the target as well as the pace.</span></div>`,
+    surfaces: `<div class="pl-row">${box('var(--panelHi)')}<span><b>Four surfaces, and every category is on three of them.</b> <b>Vs</b> puts this period against the last, category by category. <b>Grid</b> gives each its own panel with its shape over the whole window. <b>Table</b> gives each a row of every bucket. <b>Trend</b> overlays up to ${S.maxSeries} as lines when you want to watch a few closely. Nothing is ever hidden — only undrawn.</span></div>`,
+    contrast: `<div class="pl-row">${box('var(--panelHi)')}<span><b>Every number the charts draw is also in Table</b>, unrounded — so no value is reachable only by hovering. Contrast is ≥4.5:1 in both themes; the three light-mode hues that sit under 3:1 against white are why direct labels and that table are not optional.</span></div>`,
+  };
+
+  const rows = { vs:    [R.vsBars, R.vsDelta, R.vsNoBudget,
+                         ptdOn() ? R.ptd : R.closed, R.surfaces],
+                 trend: [R.trendLine, R.trendOther, R.strip, R.closed, R.surfaces],
+                 grid:  [R.gridSpark, R.gridPick, R.strip, R.closed, R.surfaces],
+                 table: [R.hierarchy, R.strip, R.closed, R.surfaces, R.contrast] }[S.view];
+  el.innerHTML = rows.join('');
+}
+
+/* ── Controls ────────────────────────────────────────────────────────── */
+function pillGroup(hostId, opts, get, set){
+  const host = document.getElementById(hostId);
+  host.textContent = '';
+  opts.forEach(([val,label,dis]) => {
+    const b = document.createElement('button'); b.type='button';
+    b.textContent = label;
+    b.setAttribute('aria-pressed', String(get() === val));
+    if (dis){ b.disabled = true; b.title = dis; }
+    else b.onclick = () => { set(val); render(); };
+    host.appendChild(b);
+  });
+}
+function buildControls(){
+  pillGroup('ctl-level', [['l2','L2'],['l3','L3']], ()=>S.level,
+    v => { S.level = v; resetHidden(); });
+  pillGroup('ctl-bucket', Object.entries(BUCKETS).map(([k,v])=>[k,v.label]),
+    ()=>S.bucket, v => { S.bucket = v; });
+  pillGroup('ctl-measure', [['net','Net $'],['units','Units']], ()=>S.measure,
+    v => { S.measure = v; });
+  pillGroup('ctl-view', [['vs','Vs'],['trend','Trend'],['grid','Grid'],['table','Table']],
+    ()=>S.view, v => { S.view = v; });
+
+  const cmpWrap = document.getElementById('ctl-compare-wrap');
+  cmpWrap.hidden = S.view !== 'vs';
+  if (S.view === 'vs'){
+    // "To date" needs sub-periods inside the current period to have closed.
+    // Day has none — its sub-period IS the day — so the option is disabled
+    // there rather than silently doing something else.
+    pillGroup('ctl-compare',
+      [['closed','Last closed'],
+       ['ptd','To date', S.bucket === 'day'
+          ? 'A day has no closed sub-period to measure — item snapshots are per day, not per hour'
+          : null]],
+      () => (S.ptd && S.bucket !== 'day') ? 'ptd' : 'closed',
+      v => { S.ptd = (v === 'ptd'); });
+  }
+
+  const scWrap = document.getElementById('ctl-scale-wrap');
+  scWrap.hidden = S.view !== 'grid';
+  if (S.view === 'grid'){
+    pillGroup('ctl-scale', [['own','Own'],['shared','Shared']], ()=>S.gridScale,
+      v => { S.gridScale = v; });
+  }
+
+  const wrap = document.getElementById('ctl-parent-wrap');
+  const sel  = document.getElementById('ctl-parent');
+  wrap.hidden = S.level !== 'l3';
+  if (S.level === 'l3'){
+    sel.textContent = '';
+    [[ALL,'All L2s']].concat(L2S.map(l2=>[l2,l2])).forEach(([v,n]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = n;
+      if (v === S.parent) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.onchange = () => { S.parent = sel.value; resetHidden(); render(); };
+  }
+
+  const sc = document.getElementById('ctl-store');
+  sc.textContent = '';
+  [['__all__','All stores']].concat(STORE_KEYS.map(k=>[k,STORE_NAMES[k]])).forEach(([k,n]) => {
+    const b = document.createElement('button'); b.type='button'; b.className='chip';
+    b.textContent = n; b.setAttribute('aria-pressed', String(S.store === k));
+    b.onclick = () => { S.store = k; render(); };
+    sc.appendChild(b);
+  });
+}
+
+/* ── Render ──────────────────────────────────────────────────────────── */
+function render(){
+  buildControls();
+  const { buckets, rows, open } = seriesFor();
+  const series = foldSeries(rows);
+  drawStatus(buckets, series, rows, open);
+  const lg = document.getElementById('legend');
+  lg.hidden = false;
+  if (S.view === 'trend'){
+    drawChart(buckets, series);
+    drawLegend(series);
+  } else {
+    tipEl.classList.remove('on');
+    lg.textContent = '';
+    // No separate legend: the pills inside the card carry the two periods and
+    // their totals, exactly as the dashboard's chart card does.
+    if (S.view === 'vs'){ lg.hidden = true; drawVs(buckets, rows); }
+    // Grid labels every panel and Table names every row, so an identity
+    // key there would only restate what is already on screen.
+    else { lg.hidden = true; if (S.view === 'grid') drawGrid(buckets, rows); else drawTable(buckets, rows); }
+  }
+  // Vs already IS the comparison, row by row — a separate strip saying the
+  // same thing underneath is the same number printed twice.
+  document.getElementById('delta-sec').hidden = S.view === 'vs';
+  if (S.view !== 'vs') drawDelta(buckets, rows);
+  drawPanelLegend();
+}
+let rt; new ResizeObserver(() => {
+  clearTimeout(rt); rt = setTimeout(() => { if (S.view === 'trend') render(); }, 90);
+}).observe(chartEl);
+
+/* ── Prose blocks ────────────────────────────────────────────────────── */
+const rowsHTML = (list, dot) => list.map(([q,a],i) =>
+  `<div class="qa-row"><span class="qa-n"${dot?' style="background:var(--goodWash);border-color:var(--accent);color:var(--accent)"':''}>${dot?'&#9679;':i+1}</span>
+   <span><span class="qa-q">${q}</span><span class="qa-a">${a}</span></span></div>`).join('');
+
+document.getElementById('src').innerHTML = rowsHTML([
+  ['Week buckets are already sitting there, fully built',
+   '<code>?action=weekly-t13&amp;end=</code> already returns <code>perStoreL2Net</code>, <code>perStoreL2Units</code>, <code>perStoreL3Net</code> and <code>perStoreL3Units</code> — thirteen weeks, per store, both measures, L2 <i>and</i> L3. <b>The week view needs no backend work at all.</b> It is capped at 13 weeks by a literal <code>LIMIT 13</code>; lifting that to a parameter is the single smallest change that unlocks the rest. One caveat I have not resolved: <b>week boundaries come from <code>daily_sales.week</code></b>, which is sheet-derived and not strictly ISO, so the real panel would take its week labels from there rather than computing them — this preview approximates with Sunday-ended weeks.'],
+  ['Day buckets cost one KV read per store per day',
+   'Category data lives in KV, not D1 — <code>items:&lt;store&gt;:&lt;date&gt;</code> per store-day, <code>week-summary:&lt;store&gt;:&lt;week&gt;</code> per store-week. The worker already caps a full range at <b>120 days</b> because "120 days × 7 stores ≈ 840 KV, a safe margin under 1000". <b>That cap is per store-day, which is why the store chips matter</b>: one store over a year is 365 reads and fine; seven stores over a year is 2,555 and is not. The status line above recomputes this live — switch to Quarter with All stores and watch it go over.'],
+  ['Month and quarter do not exist anywhere yet',
+   'There is no monthly or quarterly rollup in KV or D1. They can be built two ways and the difference is real: <b>summed from day snapshots</b> gives true calendar months but costs the reads above; <b>summed from week rollups</b> is nearly free but a week straddling 30 September lands wholly in one month or the other. I have defaulted this preview to true calendar periods and made the panel say so.'],
+  ['One correctness trap I would carry over',
+   'BL12 and BL16 share a Clover merchant, split by <code>WRS_CUTOVER = "2026-06-14"</code> via <code>wrsGateDates</code>. T13 already zeroes the non-operating side per week. <b>Any new time series has to apply the same gate or it double-counts</b> — so the series builder would call the existing gate rather than re-deriving one. (BL12 Wyoming is closed, so this preview shows six stores.)'],
+], true);
+
+document.getElementById('qa').innerHTML = rowsHTML([
+  ['Its own tab on the Retail Summary page',
+   'Not inside each store tab — a fifth tab in the strip alongside <b>Summary</b>, <b>T13</b> and the store tabs. The store chips inside the panel already scope it to one store or all of them, so the tab does the job the per-store mount would have, without duplicating the panel seven times.'],
+  ['Compare is period over period',
+   'This ${period} against the one before it. <b>Not</b> the same period last year — that stays out, so nothing has to be reconstructed from KV that may never have been written.'],
+  ['No budget line and no last-year line, confirmed',
+   'Per-category budgets do not exist yet. The card carries the two series it can stand behind, and the legend says plainly what the dashboard card has that this one does not.'],
+  ['The period you are in, compared like for like — <b>NEW, and the one thing here you have not seen</b>',
+   'Switch <b>Compare</b> to <b>To date</b>. The green line runs to the last closed day and stops; the amber line runs the <i>whole</i> previous period so you can see what you are chasing. <b>The totals are clipped to the same span</b> — six days against six days, and the pill says "same 6 days" — because a month-to-date measured against a whole month is the classic way this chart lies. The caption gives the previous period\u2019s finished total as the target. <b>Not offered for Day</b>: a day has no closed sub-period to clip to, since the item snapshots are per day and not per hour.'],
+  ['Everything else is as you saw it',
+   'Day compares two fortnights · Vs compares the last two closed periods · Grid sparklines keep their own scale · L3 names stay cleaned for display, with the raw key in the tooltip · Auction stays out · the Day window stays at 14.'],
+], false);
+
+document.getElementById('build').innerHTML = rowsHTML([
+  ['Inline SVG, not a <code>&lt;canvas&gt;</code> — and this is the load-bearing choice',
+   'Chart.js is loaded on the page but is wrong here for two concrete reasons. First, <code>renderWrsSummary</code> builds one string and assigns <code>innerHTML</code> once, so any chart instance inside it leaks on every tab switch and range change. Second, <b>the PDF and CSV export scrape the live DOM of the visible pane</b> — a canvas would very likely come out blank in your PDF. Inline SVG has neither problem, matches the <code>v1Sparkline</code> helper already in the file, and is what this preview draws.'],
+  ['One panel, following DESIGN.md §4.8, not a bare chart',
+   'Panel with a <code>panelHi</code> bar carrying the controls, a one-sentence status line, the plot, then a legend that says what every visual state means. All eight of the traps §4.8 lists were checked — sticky cells carry their own opaque background, colour is stated on the panel rather than inherited, <code>inkDimmer</code> is not used as text in light mode, and the render target holds only what the render owns.'],
+  ['The palette was computed, not chosen',
+   'Six categorical hues run through the validator against the <b>real</b> surfaces this app paints on — <code>#101826</code>, pure-black <code>#0a0a0a</code>, and <code>#ffffff</code> — not against a generic one. Worst adjacent colourblind separation ΔE 8.4 dark / 9.1 light against a target of 8; all six clear 3:1 on both dark grounds. Three light-mode hues sit under 3:1 on white, which is exactly why the direct end-labels and the Table view are part of the build and not extras.'],
+  ['Backend: one parameter first, one endpoint second',
+   'Phase one is the week view off the existing T13 feed with <code>LIMIT 13</code> lifted to a bounded parameter — small, and it ships the whole L2/L3 toggle. Phase two adds a category-series action that buckets day snapshots into true calendar days, months and quarters, <b>refusing rather than truncating</b> when store-days would exceed the subrequest budget, so a too-wide request gets an honest message instead of a quietly short answer.'],
+  ['What I would prove before calling it done',
+   'That L3 still sums to its L2 to the cent across every bucket (the invariant the T13 card rests on), that the BL12/BL16 gate is applied so the shared merchant is not double-counted, that a week with no L3 roll renders as <b>unknown rather than zero</b>, that the second render works and not just the first, and that contrast is computed in both themes at ≥4.5:1. Plus the service-worker <code>CACHE_NAME</code> bumped in the same commit, or installed phones keep serving the old bundle.'],
+], true);
+
+/* ── Boot ────────────────────────────────────────────────────────────── */
+render();
+</script>
+</body>
+</html>
