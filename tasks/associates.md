@@ -210,7 +210,11 @@ Steps 1-3 are **done on both environments**; only the frontend merge is outstand
 | `PIN_PEPPER` secret | ✅ set (`clover-sales-api-staging`) | ✅ set (`clover-sales-api`) |
 | `migration-061.sql` | ✅ applied, 5 columns confirmed by `pragma_table_info` | ✅ applied, same |
 | Worker deploy | ✅ `562451bb-b101-457b-86c9-b4ab0d03c57f` | ✅ `ef0ff3e9-dbd2-4202-b8ef-128e1d43737b` |
-| Frontend | — | ⏳ waits on Brian's merge of #205 |
+| Frontend | — | ✅ #205 merged as `49ed4f4`; Pages built `main` (`55d223df`) |
+
+**Fully live at www.retjghub.com as of 2026-09-10 00:10 UTC.** Installed PWAs pick the new
+shell up on next launch — `CACHE_NAME` moved to v178 and `_headers` serves `sw.js` and
+`index.html` with `Cache-Control: no-cache`.
 
 A **different random pepper per environment**, deliberately: they are different databases,
 and a code minted against one should not validate against the other.
@@ -241,9 +245,12 @@ real request against the deployed worker will be a human one.
 
 ## Still open
 
-- **The frontend.** Until #205 merges, production runs the old `index.html`, which has no
-  Associate login button. That direction is safe on purpose — the new worker only *adds*
-  fields to `auth-me` and `list-users`, which the old client ignores.
+- **No associate exists yet.** Nothing about this has been exercised by a real request:
+  the session that built and deployed it could not reach the worker's hostname, so the
+  first sign-in will be the first live test. What to check, in order: create one from
+  Users → Associates, confirm the code works on a phone, confirm the sidebar shows only
+  Bin Dump, confirm the dashboard is unreachable by URL, and confirm the Log records the
+  name rather than an email address.
 - The second `GRANTABLE_PAGES` entry is free when it is wanted: `submit-photos` is already
   reachable for `staff` server-side, so it costs one registry line and no worker change.
 - Rate limiting still does not exist anywhere else in this app. The associate login is the
