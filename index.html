@@ -1591,6 +1591,7 @@
         <nav id="wrs-tabs" class="flex flex-wrap gap-1 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border mb-6">
           <button data-wrs-tab="summary" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-[#3BB54A] text-[#3BB54A]">Summary</button>
           <button data-wrs-tab="t13" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">T13</button>
+          <button data-wrs-tab="categories" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Categories</button>
           <button data-wrs-tab="BL1" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Coliseum</button>
           <button data-wrs-tab="BL2" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">South Bend</button>
           <button data-wrs-tab="BL4" class="wrs-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink">Dupont</button>
@@ -1605,6 +1606,7 @@
 
         <section id="wrs-pane-summary" class="wrs-pane space-y-6"></section>
         <section id="wrs-pane-t13" class="wrs-pane hidden space-y-6"></section>
+        <section id="wrs-pane-categories" class="wrs-pane hidden space-y-6"></section>
         <section id="wrs-pane-store" class="wrs-pane hidden space-y-6"></section>
       </div>
     </div><!-- end #page-weekly-summary -->
@@ -3711,6 +3713,166 @@
         .mc-sw-own{background:#fafaf6;border-color:rgba(20,16,8,.18)!important}
         .dark .mc-sw-own{background:rgb(var(--op-panelHi));border-color:rgba(255,255,255,.16)!important}
         .mc-sw-dirty{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.55)!important}
+      </style>
+
+      <!-- ══ Retail Summary → Categories tab ══════════════════════════════
+           Colour is stated for BOTH themes on the PANEL, not just the table
+           (DESIGN.md §4.8 trap 3). Light values are literals with the token
+           named in a comment; dark re-points through the op-* variables the
+           same way #mc-tbl does. Nothing inherits a colour.
+           Contrast computed, not eyeballed (trap 6): ink 15.9:1 light /
+           14.98:1 dark, inkDim 5.29 / 5.74, and every chart mark ≥3:1 on its
+           own ground. -->
+      <style>
+        #ct-panel{background:#ffffff;border:1px solid rgba(20,16,8,.18);border-radius:14px;
+          overflow:hidden;color:#14110a}                      /* opl-panel / opl-ink */
+        .dark #ct-panel{background:rgb(var(--op-panel));border-color:var(--op-border);
+          color:rgb(var(--op-ink))}
+        #ct-bar{background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10);
+          padding:13px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+        .dark #ct-bar{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.09)}
+        .ct-lbl{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+          color:#6b6453;white-space:nowrap}                   /* opl-inkDim — 5.29:1 */
+        .dark .ct-lbl{color:rgb(var(--op-inkDim))}
+        .ct-ctl{display:flex;align-items:center;gap:7px}
+        .ct-ctl[hidden]{display:none!important}   /* a class that sets display outranks [hidden] */
+
+        .ct-pill{display:inline-flex;gap:6px}
+        .ct-pill button{appearance:none;font:inherit;font-size:11px;font-weight:600;padding:4px 10px;
+          border-radius:999px;border:1px solid rgba(20,16,8,.18);background:transparent;color:#6b6453;
+          cursor:pointer;transition:background .2s,color .2s,border-color .2s;white-space:nowrap}
+        .dark .ct-pill button{border-color:var(--op-border);color:rgb(var(--op-inkDim))}
+        .ct-pill button:hover:not([aria-pressed=true]):not(:disabled){color:#14110a}
+        .dark .ct-pill button:hover:not([aria-pressed=true]):not(:disabled){color:rgb(var(--op-ink))}
+        .ct-pill button[aria-pressed=true]{background:#3BB54A;border-color:#3BB54A;color:#ffffff}
+        .ct-pill button:disabled{opacity:.45;cursor:not-allowed}
+        .ct-chip{appearance:none;font:inherit;font-size:11.5px;font-weight:600;padding:4px 11px;
+          border-radius:999px;border:1px solid rgba(20,16,8,.18);background:transparent;color:#6b6453;cursor:pointer}
+        .dark .ct-chip{border-color:var(--op-border);color:rgb(var(--op-inkDim))}
+        .ct-chip[aria-pressed=true]{background:#22c55e;border-color:#22c55e;color:#06210f}
+        #ct-scope{padding:11px 18px;border-bottom:1px solid rgba(20,16,8,.10);
+          display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+        .dark #ct-scope{border-bottom-color:rgba(255,255,255,.09)}
+        select.ct-sel{appearance:none;font:inherit;font-size:11px;font-weight:600;padding:4px 24px 4px 10px;
+          border-radius:999px;border:1px solid rgba(20,16,8,.18);background:#ffffff;color:#14110a;cursor:pointer}
+        .dark select.ct-sel{border-color:var(--op-border);background:rgb(var(--op-panel));color:rgb(var(--op-ink))}
+
+        #ct-status{padding:10px 18px 0;font-size:12px;color:#6b6453;line-height:1.6}
+        .dark #ct-status{color:rgb(var(--op-inkDim))}
+        #ct-status b{color:#14110a;font-weight:600}
+        .dark #ct-status b{color:rgb(var(--op-ink))}
+        .ct-warn{color:#92400e;font-weight:700}               /* amber-800 — 7.09:1 on white */
+        .dark .ct-warn{color:#f59e0b}
+        #ct-flash{max-height:0;overflow:hidden;opacity:0;margin:0 18px;font-size:11.5px;
+          color:#92400e;font-weight:600;transition:max-height .2s,opacity .2s,margin .2s}
+        .dark #ct-flash{color:#f59e0b}
+        #ct-flash.on{max-height:44px;opacity:1;margin:8px 18px 0}
+
+        /* ── Vs card — the dashboard's Sales Trend card, for categories ── */
+        #ct-legend{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 18px 4px}
+        .ct-lp{display:inline-flex;align-items:center;gap:8px;padding:4px 10px;border-radius:999px;
+          border:1px solid rgba(20,16,8,.18);background:#fafaf6;font-size:11.5px;font-weight:700;white-space:nowrap}
+        .dark .ct-lp{border-color:var(--op-border);background:rgb(var(--op-panelHi))}
+        .ct-sw{display:inline-block;width:18px;height:3px;border-radius:2px;flex:none}
+        .ct-lpl{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#6b6453}
+        .dark .ct-lpl{color:rgb(var(--op-inkDim))}
+        .ct-lpv{font-variant-numeric:tabular-nums;color:#14110a}
+        .dark .ct-lpv{color:rgb(var(--op-ink))}
+        .ct-lps{font-size:10px;font-weight:600;color:#6b6453}
+        .dark .ct-lps{color:rgb(var(--op-inkDim))}
+        .ct-head{font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;margin-left:auto;white-space:nowrap}
+        #ct-chart{padding:2px 18px 0}
+        #ct-chart svg{display:block}
+        .ct-cap{padding:4px 18px 10px;font-size:11.5px;font-weight:600;color:#14110a}
+        .dark .ct-cap{color:rgb(var(--op-ink))}
+        .ct-cap-h{font-weight:400;color:#6b6453}
+        .dark .ct-cap-h{color:rgb(var(--op-inkDim))}
+
+        /* ── Per-category rows ── */
+        #ct-rows{padding:2px 18px 8px;border-top:1px solid rgba(20,16,8,.10);margin-top:4px}
+        .dark #ct-rows{border-top-color:rgba(255,255,255,.09)}
+        .ct-gh{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin:14px 0 7px;
+          padding-bottom:5px;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark .ct-gh{border-bottom-color:rgba(255,255,255,.09)}
+        .ct-gh-n{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#14110a}
+        .dark .ct-gh-n{color:rgb(var(--op-ink))}
+        .ct-gh-c{font-size:11px;color:#6b6453;font-variant-numeric:tabular-nums}
+        .dark .ct-gh-c{color:rgb(var(--op-inkDim))}
+        .ct-row{display:grid;width:100%;grid-template-columns:minmax(110px,1.15fr) minmax(80px,3fr) minmax(130px,auto);
+          align-items:center;gap:12px;padding:5px 0;border-bottom:1px solid rgba(20,16,8,.10);
+          appearance:none;background:transparent;border-left:0;border-right:0;border-top:0;font:inherit;
+          text-align:left;cursor:pointer;color:#14110a}
+        .dark .ct-row{border-bottom-color:rgba(255,255,255,.09);color:rgb(var(--op-ink))}
+        .ct-row:hover{background:#fafaf6}
+        .dark .ct-row:hover{background:rgb(var(--op-panelHi))}
+        .ct-row[aria-pressed=true]{background:rgba(34,197,94,.12)}
+        .ct-nm{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .ct-bars{display:flex;flex-direction:column;gap:2px}  /* a 2px surface gap, never a stroke */
+        .ct-trk{height:9px;border-radius:3px;background:rgba(20,16,8,.10);overflow:hidden}
+        .dark .ct-trk{background:rgba(255,255,255,.09)}
+        .ct-bar{height:100%;border-radius:3px}
+        .ct-bar.cur{background:#22c55e}   /* CHART_COLORS.tw */
+        .ct-bar.prv{background:#f59e0b}   /* CHART_COLORS.lw */
+        .ct-v{text-align:right;font-variant-numeric:tabular-nums;line-height:1.35}
+        .ct-cur{font-size:12.5px;font-weight:700;white-space:nowrap}
+        .ct-d{font-weight:600;margin-left:7px}
+        .ct-prv{font-size:11px;color:#6b6453;white-space:nowrap}
+        .dark .ct-prv{color:rgb(var(--op-inkDim))}
+
+        /* ── Grid — small multiples ── */
+        #ct-grid{padding:2px 18px 6px}
+        .ct-grow{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(148px,1fr))}
+        .ct-cell{appearance:none;font:inherit;text-align:left;cursor:pointer;background:#fafaf6;
+          border:1px solid rgba(20,16,8,.10);border-radius:10px;padding:9px 10px 5px;color:#14110a}
+        .dark .ct-cell{background:rgb(var(--op-panelHi));border-color:rgba(255,255,255,.09);color:rgb(var(--op-ink))}
+        .ct-cell[aria-pressed=true]{border-color:#22c55e;background:rgba(34,197,94,.12)}
+        .ct-ct{font-size:11.5px;font-weight:600;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .ct-cv{font-size:14px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+        .ct-cd{font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:1px}
+        .ct-cs{margin-top:2px;height:30px}
+        .ct-cs svg{display:block;width:100%;height:30px}
+
+        /* ── Table ── */
+        #ct-tblwrap{overflow-x:auto;padding:0 0 4px}
+        #ct-tbl{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;color:#14110a}
+        .dark #ct-tbl{color:rgb(var(--op-ink))}
+        #ct-tbl th,#ct-tbl td{padding:0 10px;height:34px;white-space:nowrap;text-align:right;
+          border-bottom:1px solid rgba(20,16,8,.10);font-size:12px}
+        .dark #ct-tbl th,.dark #ct-tbl td{border-bottom-color:rgba(255,255,255,.09)}
+        #ct-tbl thead th{position:sticky;top:0;background:#fafaf6;font-size:10.5px;font-weight:700;
+          letter-spacing:.05em;text-transform:uppercase;color:#6b6453;z-index:2}
+        .dark #ct-tbl thead th{background:rgb(var(--op-panelHi));color:rgb(var(--op-inkDim))}
+        /* A sticky column needs its own opaque background or cells slide under it. */
+        #ct-tbl th.k,#ct-tbl td.k{text-align:left;position:sticky;left:0;background:#ffffff;z-index:1}
+        .dark #ct-tbl th.k,.dark #ct-tbl td.k{background:rgb(var(--op-panel))}
+        #ct-tbl thead th.k{background:#fafaf6;z-index:3}
+        .dark #ct-tbl thead th.k{background:rgb(var(--op-panelHi))}
+        #ct-tbl tr.ct-l2 td.k{font-weight:600}
+        #ct-tbl tr.ct-l3 td.k{padding-left:30px;position:relative}
+        #ct-tbl tr.ct-l3 td.k::before{content:"";position:absolute;left:14px;top:0;bottom:50%;width:9px;
+          border-left:1px solid rgba(20,16,8,.18);border-bottom:1px solid rgba(20,16,8,.18);border-bottom-left-radius:4px}
+        .dark #ct-tbl tr.ct-l3 td.k::before{border-color:rgba(255,255,255,.16)}
+        #ct-tbl tr.ct-tot td{font-weight:700;background:#fafaf6}
+        .dark #ct-tbl tr.ct-tot td{background:rgb(var(--op-panelHi))}
+        .ct-na{color:#6b6453}
+        .dark .ct-na{color:rgb(var(--op-inkDim))}
+
+        /* ── Panel legend ── */
+        #ct-legend2{border-top:1px solid rgba(20,16,8,.10);padding:12px 18px 14px;
+          display:flex;flex-direction:column;gap:6px}
+        .dark #ct-legend2{border-top-color:rgba(255,255,255,.09)}
+        .ct-lgr{display:flex;align-items:flex-start;gap:9px;font-size:11.5px;color:#6b6453;line-height:1.55}
+        .dark .ct-lgr{color:rgb(var(--op-inkDim))}
+        .ct-lgr b{color:#14110a;font-weight:600}
+        .dark .ct-lgr b{color:rgb(var(--op-ink))}
+        .ct-lgs{flex:none;margin-top:3px}
+
+        @media (max-width:640px){
+          #ct-bar,#ct-scope,#ct-chart,#ct-rows,#ct-grid,#ct-legend,#ct-legend2,#ct-status{
+            padding-left:12px;padding-right:12px}
+          .ct-row{grid-template-columns:minmax(74px,1.1fr) minmax(60px,2fr) minmax(94px,auto);gap:7px}
+          .ct-nm{font-size:11px}
+        }
       </style>
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-[1500px] mx-auto">
@@ -17422,30 +17584,11 @@
     renderWrsStore(storeKey);
   }
 
-  function switchWrsTab(tab) {
-    if (wrsCurrentTab === tab) return;
-    wrsCurrentTab = tab;
-    document.querySelectorAll('#wrs-tabs .wrs-tab').forEach(btn => {
-      const active = btn.dataset.wrsTab === tab;
-      btn.classList.toggle('border-[#3BB54A]', active);
-      btn.classList.toggle('text-[#3BB54A]', active);
-      btn.classList.toggle('border-transparent', !active);
-      btn.classList.toggle('text-opl-inkDim', !active);
-      btn.classList.toggle('dark:text-op-inkDim', !active);
-    });
-    ['summary','t13','store'].forEach(p => el('wrs-pane-'+p).classList.add('hidden'));
-    setTimeout(() => firstHint('wrs-t13', '[data-wrs-tab="t13"]', "<b>T13</b> = trailing 13-week trends, by store &amp; category."), 500);
-    if (tab === 'summary') {
-      el('wrs-pane-summary').classList.remove('hidden');
-      if (wrsData) renderWrsSummary();
-    } else if (tab === 't13') {
-      el('wrs-pane-t13').classList.remove('hidden');
-      if (!wrsT13Data) loadT13(); else renderT13();
-    } else {
-      el('wrs-pane-store').classList.remove('hidden');
-      if (wrsData) showWrsStorePane(tab);
-    }
-  }
+  // One body, two entry points. These were 23 duplicated lines: switchWrsTab
+  // and renderWrsActiveTab differed only by the guard and the assignment at
+  // the top, so every tab added had to be added twice and could fall out of
+  // step. Adding the Categories pane is the third time that would have bitten.
+  const WRS_PANES = ['summary','t13','categories','store'];
 
   function renderWrsActiveTab() {
     const tab = wrsCurrentTab;
@@ -17457,7 +17600,7 @@
       btn.classList.toggle('text-opl-inkDim', !active);
       btn.classList.toggle('dark:text-op-inkDim', !active);
     });
-    ['summary','t13','store'].forEach(p => el('wrs-pane-'+p).classList.add('hidden'));
+    WRS_PANES.forEach(p => el('wrs-pane-'+p).classList.add('hidden'));
     setTimeout(() => firstHint('wrs-t13', '[data-wrs-tab="t13"]', "<b>T13</b> = trailing 13-week trends, by store &amp; category."), 500);
     if (tab === 'summary') {
       el('wrs-pane-summary').classList.remove('hidden');
@@ -17465,10 +17608,802 @@
     } else if (tab === 't13') {
       el('wrs-pane-t13').classList.remove('hidden');
       if (!wrsT13Data) loadT13(); else renderT13();
+    } else if (tab === 'categories') {
+      el('wrs-pane-categories').classList.remove('hidden');
+      loadCatTrend();
     } else {
       el('wrs-pane-store').classList.remove('hidden');
       if (wrsData) showWrsStorePane(tab);
     }
+  }
+
+  function switchWrsTab(tab) {
+    if (wrsCurrentTab === tab) return;
+    wrsCurrentTab = tab;
+    renderWrsActiveTab();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  RETAIL SUMMARY → CATEGORIES  (L2/L3 period-over-period)
+  //  Preview approved 2026-09-10: docs/retail-category-trend-preview.html
+  //
+  //  Vs is the dashboard's Sales Trend card drawn for categories — same
+  //  CHART_COLORS, same tension, same legend pills. Its x-axis runs INSIDE
+  //  the period, which is what makes it a comparison rather than a trend,
+  //  and that needs per-DAY category data: ?action=category-series. The
+  //  13-week buckets behind Trend/Grid/Table come from the pre-rolled
+  //  ?action=weekly-t13 instead, which is one KV read per store-week.
+  //
+  //  Inline SVG and CSS bars, never <canvas>: this pane is rebuilt by a
+  //  wholesale innerHTML write, so a chart instance would leak on every tab
+  //  switch, and downloadWrsAsPdf scrapes the live DOM, where a canvas is
+  //  very likely to come out blank.
+  // ═══════════════════════════════════════════════════════════════
+
+  const CT_COLORS = { cur: CHART_COLORS.tw, prv: CHART_COLORS.lw };
+  const CT_MOVERS = 12;          // rows in the movers strip
+  const CT_MAX_LINES = 6;        // Trend's ceiling: past six, CVD readers cannot separate hues
+  // The same six the dataviz validator cleared against #101826, #0a0a0a and
+  // #ffffff. Trend needs categorical hues the app does not otherwise define.
+  const CT_SERIES = {
+    light: ['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300'],
+    dark:  ['#3987e5','#d95926','#199e70','#c98500','#d55181','#008300'],
+  };
+  const CT_OTHER = '__other__', CT_ALL = '__all__';
+
+  const ctState = {
+    level: 'l2', parent: CT_ALL, bucket: 'week', measure: 'net',
+    view: 'vs', store: CT_ALL, ptd: false, gridScale: 'own',
+    focus: null, picked: new Set(),
+  };
+  let ctDaily = null;            // ?action=category-series payload for the Vs window
+  let ctDailyKey = '';           // the window+level that payload was fetched for
+  let ctLoading = false, ctError = '';
+  let ctWeeksTried = false;      // the weekly feed is fetched at most once per session
+
+  const ctIsDark = () => document.documentElement.classList.contains('dark');
+  const ctHue = i => (i < CT_MAX_LINES ? CT_SERIES[ctIsDark() ? 'dark' : 'light'][i]
+                                       : (ctIsDark() ? '#8893a7' : '#6b6453'));
+  const ctInk    = () => ctIsDark() ? '#e7ecf3' : '#14110a';
+  const ctInkDim = () => ctIsDark() ? '#8893a7' : '#6b6453';
+  const ctGrid   = () => ctIsDark() ? 'rgba(255,255,255,.09)' : 'rgba(20,16,8,.10)';
+  const ctSurf   = () => ctIsDark() ? '#101826' : '#ffffff';
+  const ctGood   = () => ctIsDark() ? '#22c55e' : '#166534';
+  const ctBad    = () => ctIsDark() ? '#ef4444' : '#c0392b';
+
+  const CT_DAY_MS = 86400000;
+  const ctYmd = d => d.toISOString().slice(0, 10);
+  const ctParse = ymd => new Date(ymd + 'T00:00:00Z');
+
+  /* ── Formatting (DESIGN.md §8) ─────────────────────────────────── */
+  const ctFmt = v => ctState.measure === 'net'
+    ? '$' + Math.round(v).toLocaleString('en-US')
+    : Math.round(v).toLocaleString('en-US');
+  function ctAxis(v) {
+    if (ctState.measure !== 'net') return v >= 1000 ? Math.round(v / 1000) + 'k' : String(Math.round(v));
+    return v >= 1000 ? '$' + Math.round(v / 1000) + 'k' : '$' + Math.round(v);
+  }
+  function ctPct(cur, prv) {
+    if (!(prv > 0)) return cur > 0 ? 'new' : '—';
+    const q = (cur - prv) / prv;
+    return (q >= 0 ? '' : '−') + Math.abs(q * 100).toFixed(1) + '%';
+  }
+
+  /* ── L3 display names ──────────────────────────────────────────────
+     The raw keys are feed strings — "FG BL CONSUMABLES - FOOD - SNACKS",
+     "APPLIANCES - BL STORES". Show the meaningful segment; the full key
+     stays in the title attribute and in the table, so nothing is lost. */
+  const CT_NOISE = new Set(['BL STORES', 'STORES', 'BL']);
+  const CT_ACRONYMS = new Set(['HBA','OTC','BL','IM','SKU','TV','DVD','CD','PC','USB','LED','HDMI']);
+  function ctTitleCase(t) {
+    const cap = w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    return t.split(/\s+/).map(w => {
+      if (CT_ACRONYMS.has(w.toUpperCase())) return w.toUpperCase();
+      if (!/[A-Za-z]/.test(w)) return w;
+      return w.split(/([/-])/).map(x => /[A-Za-z]/.test(x) ? cap(x) : x).join('');
+    }).join(' ');
+  }
+  function ctCleanParts(k) {
+    return k.replace(/^(FG\s+BL|FG|BL)\s+/, '').split(' - ')
+      .map(x => x.trim()).filter(x => x && !CT_NOISE.has(x.toUpperCase()))
+      .map(x => x === x.toUpperCase() ? ctTitleCase(x) : x);
+  }
+  function ctShort(k) {
+    if (k.startsWith('Softline - ') || k.startsWith('Consumable ')) return k;
+    const p = ctCleanParts(k); return p.length ? p[p.length - 1] : k;
+  }
+  function ctPath(k) {
+    if (k.startsWith('Softline - ') || k.startsWith('Consumable ')) return k;
+    const p = ctCleanParts(k); return p.length ? p.join(' · ') : k;
+  }
+
+  /* ── Which stores are in scope ─────────────────────────────────── */
+  const ctStores = () => ctState.store === CT_ALL ? WRS_STORE_KEYS : [ctState.store];
+
+  // Vs reads the day series, so its category list comes from there too. Taking
+  // it from the weekly feed instead made an empty week rollup blank a card
+  // whose own data had already arrived — two different windows, one of them
+  // deciding whether the other renders.
+  function ctVsRows() {
+    if (!ctDaily) return [];
+    const rows = [], seen = new Map();
+    const add = (key, l2, l3, label) => {
+      let r = seen.get(key);
+      if (!r) { r = { key, l2, l3, label, values: [] }; seen.set(key, r); rows.push(r); }
+      return r;
+    };
+    for (const st of ctStores()) {
+      if (ctState.level === 'l2') {
+        const byDate = (ctDaily.l2 || {})[st] || {};
+        for (const d of Object.keys(byDate))
+          for (const c of Object.keys(byDate[d])) if (T13_L2_CATS.includes(c)) add(c, c, null, c);
+      } else {
+        const parents = ctState.parent === CT_ALL ? null : [ctState.parent];
+        const byDate = (ctDaily.l3 || {})[st] || {};
+        for (const d of Object.keys(byDate))
+          for (const l2 of Object.keys(byDate[d])) {
+            if (parents && !parents.includes(l2)) continue;
+            if (!T13_L2_CATS.includes(l2)) continue;
+            for (const l3 of Object.keys(byDate[d][l2])) add(l2 + ' :: ' + l3, l2, l3, ctShort(l3));
+          }
+      }
+    }
+    if (ctState.level === 'l3') ctDisambiguate(rows);
+    rows.sort((a, b) => (a.l2 || '').localeCompare(b.l2 || '') || a.label.localeCompare(b.label));
+    return rows;
+  }
+
+  /* ── Weekly buckets, straight off the T13 payload ────────────────
+     perStoreL2Net[weekIdx][store][l2] and perStoreL3Net[weekIdx][store][l2][l3].
+     L3 maps are absent on week-summary entries rolled before L3 shipped — an
+     empty map there means UNKNOWN, not zero, and the status line says so. */
+  function ctWeekRows() {
+    const d = wrsT13Data;
+    if (!d) return { buckets: [], rows: [], l3Missing: 0 };
+    const weeks = d.weeks || [];
+    const netKey = ctState.measure === 'net' ? 'perStoreL2Net' : 'perStoreL2Units';
+    const l3Key  = ctState.measure === 'net' ? 'perStoreL3Net' : 'perStoreL3Units';
+    const l2By = d[netKey] || [], l3By = d[l3Key] || [];
+    const stores = ctStores();
+    const buckets = weeks.map((w, i) => ({
+      key: String(w),
+      label: 'Wk ' + w,
+      long: 'Week ' + w + ((d.dates || [])[i] ? ' · ' + d.dates[i].start + ' → ' + d.dates[i].end : ''),
+    }));
+
+    const rows = [];
+    const zero = () => buckets.map(() => 0);
+    if (ctState.level === 'l2') {
+      T13_L2_CATS.forEach(l2 => rows.push({ key: l2, l2, label: l2, values: zero() }));
+      buckets.forEach((_, i) => {
+        const per = l2By[i] || {};
+        for (const st of stores) {
+          const m = per[st] || {};
+          rows.forEach(r => { r.values[i] += Number(m[r.key]) || 0; });
+        }
+      });
+    } else {
+      // The key keeps its parent: worker.js:2466 is explicit that an l3-only
+      // key silently merges "Sku Book Items", which appears under five L2s.
+      const parents = ctState.parent === CT_ALL ? T13_L2_CATS : [ctState.parent];
+      const seen = new Map();
+      buckets.forEach((_, i) => {
+        const per = l3By[i] || {};
+        for (const st of stores) {
+          const byL2 = per[st] || {};
+          for (const l2 of parents) {
+            const m = byL2[l2] || {};
+            for (const l3 of Object.keys(m)) {
+              const key = l2 + ' :: ' + l3;
+              let r = seen.get(key);
+              if (!r) { r = { key, l2, l3, label: ctShort(l3), values: zero() }; seen.set(key, r); rows.push(r); }
+              r.values[i] += Number(m[l3]) || 0;
+            }
+          }
+        }
+      });
+      ctDisambiguate(rows);
+    }
+    rows.forEach(r => { r.total = r.values.reduce((a, b) => a + b, 0); });
+
+    // How many weeks carry no L3 at all — those entries pre-date the L3 roll.
+    let l3Missing = 0;
+    if (ctState.level === 'l3') {
+      buckets.forEach((_, i) => {
+        const per = l3By[i] || {};
+        const any = ctStores().some(st => Object.keys(per[st] || {}).length);
+        if (!any) l3Missing++;
+      });
+    }
+    return { buckets, rows, l3Missing };
+  }
+
+  // Two DIFFERENT L3 keys under one parent must never wear the same label.
+  function ctDisambiguate(rows) {
+    const byParent = {};
+    rows.forEach(r => { (byParent[r.l2] = byParent[r.l2] || []).push(r); });
+    Object.values(byParent).forEach(group => {
+      const seen = {};
+      group.forEach(r => { (seen[r.label] = seen[r.label] || []).push(r); });
+      Object.values(seen).forEach(g => { if (g.length > 1) g.forEach(r => { r.label = ctPath(r.l3); }); });
+    });
+  }
+
+  /* ── The Vs window: which two periods, and the days inside them ── */
+  function ctVsWindow() {
+    // Sunday → Saturday, matching the Sales Trend card's own axis.
+    const today = ctParse(etTodayStr());
+    const endSat = new Date(today.getTime() + ((6 - today.getUTCDay() + 7) % 7) * CT_DAY_MS);
+    const back = ctState.ptd ? 0 : 1;
+    const curEnd = new Date(endSat.getTime() - back * 7 * CT_DAY_MS);
+    const curStart = new Date(curEnd.getTime() - 6 * CT_DAY_MS);
+    const prvStart = new Date(curStart.getTime() - 7 * CT_DAY_MS);
+    const prvEnd = new Date(curEnd.getTime() - 7 * CT_DAY_MS);
+    const points = [];
+    for (let i = 0; i < 7; i++) {
+      const c = new Date(curStart.getTime() + i * CT_DAY_MS);
+      const p = new Date(prvStart.getTime() + i * CT_DAY_MS);
+      points.push({
+        cur: ctYmd(c), prv: ctYmd(p),
+        label: c.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }),
+      });
+    }
+    // Only sub-periods that have CLOSED are data. A day still running is not a day.
+    const lastClosed = ctYmd(new Date(today.getTime() - CT_DAY_MS));
+    let elapsed = points.length;
+    if (ctState.ptd) {
+      elapsed = points.filter(p => p.cur <= lastClosed).length;
+      elapsed = Math.max(1, elapsed);
+    }
+    return {
+      points, elapsed,
+      from: ctYmd(prvStart), to: ctYmd(curEnd),
+      curLabel: 'Wk ' + isoWeekOf(curEnd), prvLabel: 'Wk ' + isoWeekOf(prvEnd),
+    };
+  }
+  function isoWeekOf(d) {
+    const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+    const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+    return Math.ceil((((t - y0) / CT_DAY_MS) + 1) / 7);
+  }
+
+  // One day's value for a category (or every category) out of the payload.
+  function ctDayValue(dateStr, focus) {
+    if (!ctDaily) return null;
+    const unit = ctState.measure === 'net' ? 0 : 1;
+    let acc = 0;
+    for (const st of ctStores()) {
+      if (!focus) {
+        const m = ((ctDaily.l2 || {})[st] || {})[dateStr] || {};
+        for (const c of T13_L2_CATS) acc += (m[c] || [0, 0])[unit] || 0;
+      } else if (focus.l3) {
+        const m = (((ctDaily.l3 || {})[st] || {})[dateStr] || {})[focus.l2] || {};
+        acc += (m[focus.l3] || [0, 0])[unit] || 0;
+      } else {
+        const m = ((ctDaily.l2 || {})[st] || {})[dateStr] || {};
+        acc += (m[focus.key] || [0, 0])[unit] || 0;
+      }
+    }
+    return acc;
+  }
+
+  /* ── Loading ───────────────────────────────────────────────────── */
+  async function loadCatTrend() {
+    // The weekly buckets share the T13 feed, but NOT loadT13(): that function
+    // owns #wrs-pane-t13 and rewrites it, and it returns early when the range
+    // picker has no end date. Fetch it here instead and touch only this pane.
+    if (!wrsT13Data && !ctWeeksTried) {
+      ctWeeksTried = true;
+      try {
+        const end = (wrsRange && wrsRange.to) || etTodayStr();
+        const d = await cachedFetch(`${WORKER_BASE}?action=weekly-t13&end=${encodeURIComponent(end)}`, { credentials: 'include' });
+        if (!d.error) wrsT13Data = d;
+      } catch (_) { /* the weekly views say so below; Vs does not need it */ }
+    }
+    const w = ctVsWindow();
+    const key = `${w.from}|${w.to}|${ctState.level}|${ctState.store}`;
+    if (key !== ctDailyKey) {
+      ctLoading = true; ctError = ''; renderCatTrend();
+      try {
+        const qs = new URLSearchParams({ from: w.from, to: w.to, level: ctState.level });
+        if (ctState.store !== CT_ALL) qs.set('store', ctState.store);
+        const r = await fetch(`${WORKER_BASE}?action=category-series&${qs}`, { credentials: 'include' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          // j.code is the useful half of the response; j.error is the generic
+          // half. Showing only the error sends someone hunting a permission
+          // problem that may not exist.
+          ctError = j.code === 'BUDGET_EXCEEDED'
+            ? `That range needs ${j.storeDays} store-days of snapshots and the limit is ${j.limit}. Pick one store, or a shorter window.`
+            : j.code === 'UNCLASSIFIED_ACTION'
+              ? 'The worker half of this deploy is missing — the API does not know this endpoint yet.'
+              : (j.error || `HTTP ${r.status}`);
+          ctDaily = null;
+        } else {
+          ctDaily = j; ctDailyKey = key;
+        }
+      } catch (e) {
+        ctError = e.message || 'Could not load the category series.';
+        ctDaily = null;
+      }
+      ctLoading = false;
+    }
+    renderCatTrend();
+  }
+  window.loadCatTrend = loadCatTrend;
+
+  /* ── Render ────────────────────────────────────────────────────── */
+  function renderCatTrend() {
+    const host = el('wrs-pane-categories');
+    if (!host) return;
+    // The render target holds ONLY what this render owns (§4.8 trap 7).
+    host.innerHTML = `<div id="ct-panel">
+        <div id="ct-bar"></div>
+        <div id="ct-scope"></div>
+        <div id="ct-status"></div>
+        <div id="ct-flash" role="status" aria-live="polite"></div>
+        <div id="ct-body"></div>
+        <div id="ct-legend2"></div>
+      </div>`;
+    ctBuildControls();
+    const { buckets, rows, l3Missing } = ctWeekRows();
+    ctDrawStatus(buckets, rows, l3Missing);
+    const body = el('ct-body');
+    if (ctLoading && ctState.view === 'vs') {
+      body.innerHTML = `<div style="padding:28px 18px;text-align:center;font-size:13px" class="ct-lgr">Loading day-by-day category sales…</div>`;
+    } else if (ctError && ctState.view === 'vs') {
+      body.innerHTML = `<div style="padding:22px 18px;text-align:center;font-size:13px" class="ct-lgr">${escapeHtml(ctError)}</div>`;
+    } else if (ctState.view === 'vs') {
+      const vsRows = ctVsRows();
+      if (!vsRows.length) body.innerHTML = `<div style="padding:22px 18px;text-align:center;font-size:13px" class="ct-lgr">No category sales recorded for these two weeks.</div>`;
+      else ctDrawVs(vsRows);
+    } else if (!rows.length) {
+      // The weekly views depend on the week rollups, and those are a separate
+      // feed — say which one is missing rather than a blanket "no data".
+      body.innerHTML = `<div style="padding:22px 18px;text-align:center;font-size:13px" class="ct-lgr">The trailing-13-week rollups have not loaded, so the weekly views are empty. <b>Vs</b> reads the day snapshots and still works.</div>`;
+    }
+    else if (ctState.view === 'trend')   ctDrawTrend(buckets, rows);
+    else if (ctState.view === 'grid')    ctDrawGrid(buckets, rows);
+    else                                 ctDrawTable(buckets, rows);
+    ctDrawLegend();
+  }
+
+  function ctPillGroup(host, opts, get, set) {
+    host.innerHTML = '';
+    opts.forEach(([val, label, dis]) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = label;
+      b.setAttribute('aria-pressed', String(get() === val));
+      if (dis) { b.disabled = true; b.title = dis; }
+      else b.onclick = () => { set(val); loadCatTrend(); };
+      host.appendChild(b);
+    });
+  }
+  function ctBuildControls() {
+    const bar = el('ct-bar');
+    // Phase 1 is the week grain — the stored rollups' own unit. Day, month and
+    // quarter need a wider day-snapshot window than the subrequest budget
+    // allows without the range-splitting work, so they say so rather than
+    // appearing to work.
+    const laterHint = 'Coming with the longer-window series — the week grain is what the stored rollups hold today';
+    bar.innerHTML = `<span class="ct-lbl">Category Trend</span>
+      <span class="ct-ctl"><span class="ct-lbl">Level</span><span class="ct-pill" id="ct-level"></span></span>
+      <span class="ct-ctl" id="ct-parent-wrap" hidden><span class="ct-lbl">Within</span><select class="ct-sel" id="ct-parent"></select></span>
+      <span class="ct-ctl"><span class="ct-lbl">Bucket</span><span class="ct-pill" id="ct-bucket"></span></span>
+      <span class="ct-ctl"><span class="ct-lbl">Measure</span><span class="ct-pill" id="ct-measure"></span></span>
+      <span class="ct-ctl" id="ct-compare-wrap"><span class="ct-lbl">Compare</span><span class="ct-pill" id="ct-compare"></span></span>
+      <span class="ct-ctl" id="ct-scale-wrap" hidden><span class="ct-lbl">Scale</span><span class="ct-pill" id="ct-scale"></span></span>
+      <span style="flex:1"></span>
+      <span class="ct-pill" id="ct-view"></span>`;
+
+    ctPillGroup(el('ct-level'), [['l2', 'L2'], ['l3', 'L3']], () => ctState.level,
+      v => { ctState.level = v; ctState.focus = null; ctState.picked = new Set(); ctDailyKey = ''; });
+    ctPillGroup(el('ct-bucket'), [['week', 'Week'], ['day', 'Day', laterHint],
+      ['month', 'Month', laterHint], ['quarter', 'Quarter', laterHint]],
+      () => ctState.bucket, v => { ctState.bucket = v; });
+    ctPillGroup(el('ct-measure'), [['net', 'Net $'], ['units', 'Units']], () => ctState.measure,
+      v => { ctState.measure = v; });
+    ctPillGroup(el('ct-compare'), [['closed', 'Last closed'], ['ptd', 'To date']],
+      () => ctState.ptd ? 'ptd' : 'closed', v => { ctState.ptd = (v === 'ptd'); ctDailyKey = ''; });
+    ctPillGroup(el('ct-view'), [['vs', 'Vs'], ['trend', 'Trend'], ['grid', 'Grid'], ['table', 'Table']],
+      () => ctState.view, v => { ctState.view = v; });
+    el('ct-compare-wrap').hidden = ctState.view !== 'vs';
+    el('ct-scale-wrap').hidden = ctState.view !== 'grid';
+    if (ctState.view === 'grid') {
+      ctPillGroup(el('ct-scale'), [['own', 'Own'], ['shared', 'Shared']], () => ctState.gridScale,
+        v => { ctState.gridScale = v; });
+    }
+
+    const wrap = el('ct-parent-wrap'), sel = el('ct-parent');
+    wrap.hidden = ctState.level !== 'l3';
+    if (ctState.level === 'l3') {
+      sel.innerHTML = [[CT_ALL, 'All L2s']].concat(T13_L2_CATS.map(c => [c, c]))
+        .map(([v, n]) => `<option value="${escapeHtml(v)}"${v === ctState.parent ? ' selected' : ''}>${escapeHtml(n)}</option>`).join('');
+      sel.onchange = () => { ctState.parent = sel.value; ctState.focus = null; loadCatTrend(); };
+    }
+
+    const sc = el('ct-scope');
+    sc.innerHTML = `<span class="ct-lbl" style="margin-right:2px">Store</span>`;
+    [[CT_ALL, 'All stores']].concat(WRS_STORE_KEYS.map(k => [k, WRS_STORE_NAMES[k]])).forEach(([k, n]) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'ct-chip'; b.textContent = n;
+      b.setAttribute('aria-pressed', String(ctState.store === k));
+      b.onclick = () => { ctState.store = k; ctDailyKey = ''; loadCatTrend(); };
+      sc.appendChild(b);
+    });
+  }
+
+  let ctFlashT;
+  function ctFlash(msg) {
+    const f = el('ct-flash'); if (!f) return;
+    f.textContent = msg; f.classList.add('on');
+    clearTimeout(ctFlashT); ctFlashT = setTimeout(() => f.classList.remove('on'), 3600);
+  }
+
+  /* ── Status line — one sentence, and it says what is NOT knowable ─ */
+  function ctDrawStatus(buckets, weekRows, l3Missing) {
+    const w = ctVsWindow();
+    const rows = ctState.view === 'vs' ? ctVsRows() : weekRows;
+    const scope = ctState.store === CT_ALL ? WRS_STORE_KEYS.length + ' stores' : WRS_STORE_NAMES[ctState.store];
+    const lvl = ctState.level.toUpperCase();
+    let t = `<b>${escapeHtml(scope)}</b> · ${ctState.measure === 'net' ? 'net sales' : 'units'}`
+      + ` · <b>all ${rows.length} ${lvl} categor${rows.length === 1 ? 'y' : 'ies'}</b>`;
+    if (ctState.view === 'vs') {
+      t += ` — the card charts <b>${escapeHtml(w.curLabel)}${ctState.ptd ? ' to date' : ''}</b>`
+         + ` against <b>${escapeHtml(w.prvLabel)}</b> day by day; every category is compared underneath it.`;
+      if (ctState.ptd) {
+        const n = w.elapsed;
+        t += `<br><span class="ct-warn">▲</span> <b>The week in progress, clipped to the ${n} day${n === 1 ? '' : 's'} that have closed</b>`
+           + ` — and last week is clipped to the same ${n}, so the totals are like for like.`
+           + ` The amber line still runs its full length, so you can see what you are running against.`;
+      }
+    } else {
+      t += ` — <b>${buckets.length} weeks</b> to ${escapeHtml(buckets.length ? buckets[buckets.length - 1].label : '—')}`
+         + (ctState.view === 'trend'
+             ? `. Trend overlays ${Math.min(CT_MAX_LINES, rows.length)} at a time; Grid and Table show every one.`
+             : ctState.view === 'grid'
+               ? `, one panel each, nothing folded${ctState.gridScale === 'own'
+                   ? '; each panel is scaled to its OWN high and low — the baseline is not zero, so read the shape and take size from the printed total'
+                   : '; every panel runs 0 to one shared maximum, so the heights ARE comparable'}.`
+               : `, every row, every week, no fold.`);
+    }
+    if (l3Missing > 0) {
+      t += `<br><span class="ct-warn">▲</span> <b>${l3Missing} of ${buckets.length} weeks carry no L3 breakdown</b>`
+         + ` — those week summaries were rolled before L3 shipped. That is <b>unknown, not zero</b>;`
+         + ` Settings → Rebuild Week Summaries re-rolls them from the daily snapshots.`;
+    }
+    el('ct-status').innerHTML = t;
+  }
+
+  /* ── Vs — the dashboard's Sales Trend card, for categories ──────── */
+  function ctFocusRow(rows) { return ctState.focus == null ? null : (rows.find(r => r.key === ctState.focus) || null); }
+
+  function ctDrawVs(rows) {
+    const body = el('ct-body');
+    const w = ctVsWindow();
+    const focus = ctFocusRow(rows);
+    const cutoff = ctState.ptd ? w.elapsed : w.points.length;
+    const cur = w.points.map((p, i) => i < cutoff ? ctDayValue(p.cur, focus) : null);
+    const prv = w.points.map(p => ctDayValue(p.prv, focus));
+    const sum = a => a.reduce((x, v) => x + (v || 0), 0);
+    const curTotal = sum(cur), prvSame = sum(prv.slice(0, cutoff)), prvFull = sum(prv);
+
+    const pill = (colour, lbl, val, sub) =>
+      `<span class="ct-lp"><span class="ct-sw" style="background:${colour}"></span>`
+      + `<span class="ct-lpl">${escapeHtml(lbl)}</span><span class="ct-lpv">${escapeHtml(ctFmt(val))}</span>`
+      + (sub ? `<span class="ct-lps">${escapeHtml(sub)}</span>` : '') + `</span>`;
+    const up = curTotal >= prvSame;
+    body.innerHTML = `
+      <div id="ct-legend">
+        ${pill(CT_COLORS.cur, ctState.ptd ? w.curLabel + ' to date' : w.curLabel, curTotal, '')}
+        ${pill(CT_COLORS.prv, w.prvLabel, prvSame, ctState.ptd ? `same ${cutoff} day${cutoff === 1 ? '' : 's'}` : '')}
+        <span class="ct-head" style="color:${up ? ctGood() : ctBad()}">${up ? '▲' : '▼'} ${escapeHtml(ctPct(curTotal, prvSame))}
+          ${up ? '+' : '−'}${escapeHtml(ctFmt(Math.abs(curTotal - prvSame)))}</span>
+      </div>
+      <div id="ct-chart"></div>
+      <div class="ct-cap">${escapeHtml(focus ? (focus.l3 ? focus.l2 + ' → ' + focus.l3 : focus.key) : 'All ' + ctState.level.toUpperCase() + ' categories')}<span class="ct-cap-h">${
+        ctState.ptd ? ` · ${escapeHtml(w.prvLabel)} finished at ${escapeHtml(ctFmt(prvFull))}` : ''
+      }${focus ? ' · click its row again for all categories' : ' · click a row to chart one category'}</span></div>
+      <div id="ct-rows"></div>`;
+    el('ct-chart').innerHTML = ctChartSVG(w.points, cur, prv, el('ct-chart').clientWidth || 760);
+    ctDrawRows(el('ct-rows'), rows, w, cutoff, focus);
+  }
+
+  // Chart.js's own splineCurve maths, so the curve bends at tension 0.3 the
+  // way the dashboard's card does rather than merely looking smooth.
+  function ctSpline(pts, t) {
+    if (pts.length < 2) return '';
+    let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+    const cp = [];
+    for (let i = 0; i < pts.length; i++) {
+      const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1] || pts[i];
+      const d01 = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) || 1;
+      const d12 = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) || 1;
+      const fa = t * d01 / (d01 + d12), fb = t * d12 / (d01 + d12);
+      cp.push([[p1[0] - fa * (p2[0] - p0[0]), p1[1] - fa * (p2[1] - p0[1])],
+               [p1[0] + fb * (p2[0] - p0[0]), p1[1] + fb * (p2[1] - p0[1])]]);
+    }
+    for (let i = 1; i < pts.length; i++)
+      d += ` C ${cp[i - 1][1][0].toFixed(1)} ${cp[i - 1][1][1].toFixed(1)},`
+         + ` ${cp[i][0][0].toFixed(1)} ${cp[i][0][1].toFixed(1)},`
+         + ` ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)}`;
+    return d;
+  }
+  function ctNiceTicks(max, n) {
+    const raw = max / n, mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+    const step = [1, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10].map(m => m * mag).find(s => s >= raw) || 10 * mag;
+    const out = []; for (let v = 0; v <= max + step * 0.001; v += step) out.push(v);
+    if (out[out.length - 1] < max) out.push(out[out.length - 1] + step);
+    return out;
+  }
+  function ctChartSVG(points, cur, prv, hostW) {
+    const W = Math.max(300, hostW - 4), narrow = W < 560;
+    const M = { t: 14, r: 14, b: 30, l: narrow ? 46 : 62 };
+    const H = narrow ? 220 : 300;
+    const pw = W - M.l - M.r, ph = H - M.t - M.b;
+    const vals = cur.filter(v => v != null).concat(prv.filter(v => v != null));
+    const max = Math.max(...vals, 1);
+    const ticks = ctNiceTicks(max, 5), top = ticks[ticks.length - 1] || 1;
+    const x = i => M.l + (points.length === 1 ? pw / 2 : (i / (points.length - 1)) * pw);
+    const y = v => M.t + ph - (v / top) * ph;
+    const grid = ctGrid(), dim = ctInkDim(), surf = ctSurf();
+    let g = '';
+    ticks.forEach(t => {
+      g += `<line x1="${M.l}" y1="${y(t).toFixed(1)}" x2="${M.l + pw}" y2="${y(t).toFixed(1)}" stroke="${grid}" stroke-width="1"/>`
+         + `<text x="${M.l - 9}" y="${(y(t) + 3.5).toFixed(1)}" text-anchor="end" font-size="10.5" fill="${dim}" font-family="Geist,sans-serif" style="font-variant-numeric:tabular-nums">${escapeHtml(ctAxis(t))}</text>`;
+    });
+    const step = Math.max(1, Math.ceil(points.length / (narrow ? 4 : 7)));
+    points.forEach((p, i) => {
+      if (i % step !== 0 && i !== points.length - 1) return;
+      // End labels anchor inward or the last one is clipped by the viewBox.
+      const a = i === 0 ? 'start' : (i === points.length - 1 ? 'end' : 'middle');
+      g += `<text x="${x(i).toFixed(1)}" y="${H - 9}" text-anchor="${a}" font-size="10.5" fill="${dim}" font-family="Geist,sans-serif">${escapeHtml(p.label)}</text>`;
+    });
+    // A null is a GAP — the line breaks rather than diving to zero.
+    const runs = arr => { const out = []; let run = [];
+      arr.forEach((v, i) => { if (v == null) { if (run.length) out.push(run); run = []; } else run.push([x(i), y(v)]); });
+      if (run.length) out.push(run); return out; };
+    runs(prv).forEach(r => { if (r.length > 1)
+      g += `<path d="${ctSpline(r, 0.3)}" fill="none" stroke="${CT_COLORS.prv}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`; });
+    runs(cur).forEach(r => {
+      if (r.length < 2) return;
+      g += `<path d="${ctSpline(r, 0.3)} L ${r[r.length - 1][0].toFixed(1)} ${(M.t + ph).toFixed(1)} L ${r[0][0].toFixed(1)} ${(M.t + ph).toFixed(1)} Z" fill="rgba(34,197,94,0.12)" stroke="none"/>`
+         + `<path d="${ctSpline(r, 0.3)}" fill="none" stroke="${CT_COLORS.cur}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
+    });
+    // Markers carry a 2px surface ring so they stay legible where lines cross.
+    const dots = (arr, colour, r) => arr.forEach((v, i) => { if (v == null) return;
+      g += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${r}" fill="${colour}" stroke="${surf}" stroke-width="2"/>`; });
+    dots(prv, CT_COLORS.prv, 3); dots(cur, CT_COLORS.cur, 3.5);
+    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(
+      points.length + ' days, this period against the previous one. Every value is in the Table view.')}">${g}</svg>`;
+  }
+
+  // Per-category rows. Values come from the SAME window the card charts, so
+  // the rows and the card can never disagree — to-date included.
+  function ctDrawRows(host, rows, w, cutoff, focus) {
+    const cVal = new Map(), pVal = new Map();
+    rows.forEach(r => {
+      let c = 0, p = 0;
+      for (let i = 0; i < w.points.length; i++) {
+        if (i < cutoff) { c += ctDayValue(w.points[i].cur, r) || 0; p += ctDayValue(w.points[i].prv, r) || 0; }
+      }
+      cVal.set(r, c); pVal.set(r, p);
+    });
+    const max = Math.max(...rows.map(r => Math.max(cVal.get(r), pVal.get(r))), 1);
+    host.innerHTML = '';
+    ctGroups(rows, cVal).forEach(g => {
+      if (g.l2) {
+        const gc = g.rows.reduce((x, r) => x + cVal.get(r), 0), gp = g.rows.reduce((x, r) => x + pVal.get(r), 0);
+        host.insertAdjacentHTML('beforeend',
+          `<div class="ct-gh"><span class="ct-gh-n">${escapeHtml(g.l2)}</span><span class="ct-gh-c">${escapeHtml(ctFmt(gc))}  vs  ${escapeHtml(ctFmt(gp))}  <span class="ct-d" style="color:${gc >= gp ? ctGood() : ctBad()}">${gc >= gp ? '▲' : '▼'} ${escapeHtml(ctPct(gc, gp))}</span></span></div>`);
+      }
+      g.rows.forEach(r => {
+        const c = cVal.get(r), p = pVal.get(r);
+        if (c <= 0 && p <= 0) return;
+        const on = !!(focus && focus.key === r.key);
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'ct-row'; b.setAttribute('aria-pressed', String(on));
+        b.title = (r.l3 ? r.l2 + ' → ' + r.l3 : r.key) + ' · click to chart it';
+        b.onclick = () => { ctState.focus = on ? null : r.key; renderCatTrend(); };
+        b.innerHTML = `<div class="ct-nm">${escapeHtml(r.label)}</div>
+          <div class="ct-bars">
+            <div class="ct-trk"><div class="ct-bar cur" style="width:${c > 0 ? Math.max(0.6, (c / max) * 100) : 0}%"></div></div>
+            <div class="ct-trk"><div class="ct-bar prv" style="width:${p > 0 ? Math.max(0.6, (p / max) * 100) : 0}%"></div></div>
+          </div>
+          <div class="ct-v"><div class="ct-cur">${escapeHtml(c > 0 ? ctFmt(c) : '—')}<span class="ct-d" style="color:${(c - p) >= 0 ? ctGood() : ctBad()}">${(c - p) >= 0 ? '▲' : '▼'} ${escapeHtml(ctPct(c, p))}</span></div>
+            <div class="ct-prv">vs ${escapeHtml(p > 0 ? ctFmt(p) : '—')}</div></div>`;
+        host.appendChild(b);
+      });
+    });
+  }
+  function ctGroups(rows, valMap) {
+    const val = r => valMap ? valMap.get(r) : r.total;
+    const groups = [];
+    if (ctState.level === 'l2') groups.push({ l2: null, rows: rows.slice() });
+    else {
+      const parents = ctState.parent === CT_ALL ? T13_L2_CATS : [ctState.parent];
+      parents.forEach(l2 => { const g = rows.filter(r => r.l2 === l2); if (g.length) groups.push({ l2, rows: g }); });
+    }
+    groups.forEach(g => g.rows.sort((a, b) => val(b) - val(a)));
+    groups.sort((a, b) => b.rows.reduce((x, r) => x + val(r), 0) - a.rows.reduce((x, r) => x + val(r), 0));
+    return groups;
+  }
+
+  /* ── Trend — up to six lines over the weekly buckets ────────────── */
+  function ctFold(rows) {
+    const ranked = rows.slice().sort((a, b) => b.total - a.total);
+    const picked = ranked.filter(r => ctState.picked.has(r.key));
+    const keep = (picked.length ? picked : ranked.slice(0, CT_MAX_LINES)).slice(0, CT_MAX_LINES);
+    const tail = ranked.filter(r => !keep.includes(r) && r.values.some(v => v > 0));
+    keep.forEach((r, i) => { r.slot = i; });
+    if (!tail.length || !rows.length) return keep;
+    // "Other" is a sum of the tail, so it outranks every real category. It is
+    // present for completeness and switched OFF, or the fold bucket reads as
+    // the top seller.
+    const other = { key: CT_OTHER, label: 'Other (' + tail.length + ')', slot: CT_MAX_LINES,
+      values: rows[0].values.map((_, i) => tail.reduce((a, r) => a + r.values[i], 0)) };
+    other.total = other.values.reduce((a, b) => a + b, 0);
+    other.members = tail.map(r => r.label);
+    return keep.concat([other]);
+  }
+  function ctDrawTrend(buckets, rows) {
+    const body = el('ct-body');
+    body.innerHTML = `<div id="ct-chart"></div><div id="ct-legend"></div>`;
+    const series = ctFold(rows).filter(s => s.key !== CT_OTHER || ctState.picked.has(CT_OTHER));
+    const W = Math.max(300, el('ct-chart').clientWidth - 4 || 760), narrow = W < 560;
+    const visible = series.length ? series : [];
+    const M = { t: 14, r: 14, b: 30, l: narrow ? 46 : 62 };
+    const H = narrow ? 220 : 280, pw = W - M.l - M.r, ph = H - M.t - M.b;
+    let max = 0; visible.forEach(s => s.values.forEach(v => { if (v > max) max = v; }));
+    const ticks = ctNiceTicks(max || 1, 4), top = ticks[ticks.length - 1] || 1;
+    const x = i => M.l + (buckets.length === 1 ? pw / 2 : (i / (buckets.length - 1)) * pw);
+    const y = v => M.t + ph - (v / top) * ph;
+    const grid = ctGrid(), dim = ctInkDim(), surf = ctSurf();
+    let g = '';
+    ticks.forEach(t => {
+      g += `<line x1="${M.l}" y1="${y(t).toFixed(1)}" x2="${M.l + pw}" y2="${y(t).toFixed(1)}" stroke="${grid}" stroke-width="1"/>`
+         + `<text x="${M.l - 9}" y="${(y(t) + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="${dim}" font-family="Geist,sans-serif">${escapeHtml(ctAxis(t))}</text>`;
+    });
+    const step = Math.max(1, Math.ceil(buckets.length / (narrow ? 4 : 8)));
+    buckets.forEach((b, i) => {
+      if (i % step !== 0 && i !== buckets.length - 1) return;
+      const a = i === 0 ? 'start' : (i === buckets.length - 1 ? 'end' : 'middle');
+      g += `<text x="${x(i).toFixed(1)}" y="${H - 9}" text-anchor="${a}" font-size="10" fill="${dim}" font-family="Geist,sans-serif">${escapeHtml(b.label)}</text>`;
+    });
+    visible.forEach(s => {
+      const c = ctHue(s.slot);
+      g += `<polyline points="${s.values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+      if (buckets.length <= 16) s.values.forEach((v, i) => {
+        g += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="3.2" fill="${c}" stroke="${surf}" stroke-width="2"/>`;
+      });
+    });
+    el('ct-chart').innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(
+      visible.length + ' categories across ' + buckets.length + ' weeks. Every value is in the Table view.')}">${g}</svg>`;
+
+    // Text wears an ink token; the coloured key beside it carries identity.
+    const lg = el('ct-legend'); lg.innerHTML = '';
+    ctFold(rows).forEach(s => {
+      const on = s.key === CT_OTHER ? ctState.picked.has(CT_OTHER) : true;
+      lg.insertAdjacentHTML('beforeend',
+        `<span class="ct-lp" style="${on ? '' : 'opacity:.45'}" title="${escapeHtml(s.key === CT_OTHER ? (s.members || []).join(', ') : s.key)}">
+           <span class="ct-sw" style="background:${ctHue(s.slot)}"></span>
+           <span class="ct-lpl">${escapeHtml(s.label)}</span>
+           <span class="ct-lpv">${escapeHtml(ctFmt(s.total))}</span></span>`);
+    });
+  }
+
+  /* ── Grid — small multiples, EVERY category, nothing folded ─────── */
+  function ctMini(vals, forcedMax, colour) {
+    const W = 96, H = 30, P = 3;
+    if (!vals.length || vals.every(v => v <= 0)) return `<svg width="${W}" height="${H}" aria-hidden="true"></svg>`;
+    let lo, hi;
+    // Own scale runs min..max: drawn from zero, a category moving between $70k
+    // and $80k is a flat line and the panel tells you nothing. The baseline is
+    // NOT zero here and the legend says so; the printed total carries size.
+    if (forcedMax != null) { lo = 0; hi = forcedMax; }
+    else { lo = Math.min(...vals); hi = Math.max(...vals);
+           const pad = (hi - lo) * 0.12 || Math.abs(hi) * 0.06 || 1; lo -= pad; hi += pad; }
+    if (hi <= lo) hi = lo + 1;
+    const x = i => P + (vals.length === 1 ? (W - 2 * P) / 2 : (i / (vals.length - 1)) * (W - 2 * P));
+    const y = v => H - P - ((v - lo) / (hi - lo)) * (H - 2 * P);
+    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true">`
+      + `<polyline points="${vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${colour}" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"/>`
+      + `<circle cx="${x(vals.length - 1).toFixed(1)}" cy="${y(vals[vals.length - 1]).toFixed(1)}" r="2.4" fill="${colour}"/></svg>`;
+  }
+  function ctDrawGrid(buckets, rows) {
+    const body = el('ct-body');
+    body.innerHTML = `<div id="ct-grid"></div>`;
+    const host = el('ct-grid');
+    const n = buckets.length;
+    const sharedMax = Math.max(...rows.map(r => Math.max(...r.values, 0)), 1);
+    ctGroups(rows).forEach(g => {
+      if (g.l2) host.insertAdjacentHTML('beforeend',
+        `<div class="ct-gh"><span class="ct-gh-n">${escapeHtml(g.l2)}</span><span class="ct-gh-c">${g.rows.length} sub-categor${g.rows.length === 1 ? 'y' : 'ies'} · ${escapeHtml(ctFmt(g.rows.reduce((a, r) => a + r.total, 0)))}</span></div>`);
+      const row = document.createElement('div'); row.className = 'ct-grow';
+      g.rows.forEach(r => {
+        const on = ctState.picked.has(r.key);
+        const d = n >= 2 ? r.values[n - 1] - r.values[n - 2] : null;
+        const pc = (n >= 2 && r.values[n - 2] > 0) ? d / r.values[n - 2] : null;
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'ct-cell'; b.setAttribute('aria-pressed', String(on));
+        b.title = (r.l3 ? r.l2 + ' → ' + r.l3 : r.key) + ' · click to ' + (on ? 'remove from' : 'add to') + ' Trend';
+        b.innerHTML = `<div class="ct-ct">${escapeHtml(r.label)}</div>
+          <div class="ct-cv">${escapeHtml(ctFmt(r.total))}</div>
+          <div class="ct-cd" style="color:${d == null || r.total <= 0 ? ctInkDim() : (d >= 0 ? ctGood() : ctBad())}">${
+            d == null || r.total <= 0 ? '—' : (d >= 0 ? '▲ ' : '▼ ') + (pc == null ? 'new' : Math.abs(pc * 100).toFixed(1) + '%')}</div>
+          <div class="ct-cs">${ctMini(r.values, ctState.gridScale === 'shared' ? sharedMax : null, on ? ctHue(0) : ctInkDim())}</div>`;
+        b.onclick = () => {
+          if (ctState.picked.has(r.key)) ctState.picked.delete(r.key);
+          else {
+            if (ctState.picked.size >= CT_MAX_LINES) {
+              ctFlash(`Trend holds ${CT_MAX_LINES} lines. Drop one first — every category stays visible here and in Table.`);
+              return;
+            }
+            ctState.picked.add(r.key);
+          }
+          renderCatTrend();
+        };
+        row.appendChild(b);
+      });
+      host.appendChild(row);
+    });
+  }
+
+  /* ── Table — every row, L3 nested under its L2 (§4.8 hierarchy) ── */
+  function ctDrawTable(buckets, rows) {
+    const cell = v => `<td>${v > 0 ? escapeHtml(ctFmt(v)) : '<span class="ct-na">—</span>'}</td>`;
+    const sumRows = list => buckets.map((_, i) => list.reduce((a, r) => a + r.values[i], 0));
+    let out = '';
+    if (ctState.level === 'l2') {
+      rows.slice().sort((a, b) => b.total - a.total).forEach(r => {
+        out += `<tr class="ct-l2"><td class="k"><span class="mc-lvl">L2</span>${escapeHtml(r.key)}</td>`
+             + r.values.map(cell).join('') + `<td>${escapeHtml(ctFmt(r.total))}</td></tr>`;
+      });
+    } else {
+      const groups = ctGroups(rows);
+      groups.forEach(g => { g.vals = sumRows(g.rows); g.total = g.vals.reduce((a, b) => a + b, 0); });
+      groups.sort((a, b) => b.total - a.total);
+      groups.forEach(g => {
+        out += `<tr class="ct-l2"><td class="k"><span class="mc-lvl">L2</span>${escapeHtml(g.l2)}</td>`
+             + g.vals.map(cell).join('') + `<td>${escapeHtml(ctFmt(g.total))}</td></tr>`;
+        g.rows.forEach(r => {
+          out += `<tr class="ct-l3"><td class="k"><span class="mc-lvl">L3</span><span title="${escapeHtml(r.l3)}">${escapeHtml(r.l3)}</span></td>`
+               + r.values.map(cell).join('') + `<td>${escapeHtml(ctFmt(r.total))}</td></tr>`;
+        });
+      });
+    }
+    const tot = sumRows(rows);
+    el('ct-body').innerHTML = `<div id="ct-tblwrap"><table id="ct-tbl"><thead><tr>
+        <th class="k">${ctState.level === 'l2' ? 'L2 category'
+          : (ctState.parent === CT_ALL ? 'L2 → L3 · whole taxonomy' : 'L3 · ' + escapeHtml(ctState.parent))}</th>
+        ${buckets.map(b => `<th>${escapeHtml(b.label)}</th>`).join('')}<th>Total</th>
+      </tr></thead><tbody>${out}
+        <tr class="ct-tot"><td class="k">Total</td>${tot.map(v => `<td>${escapeHtml(ctFmt(v))}</td>`).join('')}
+        <td>${escapeHtml(ctFmt(tot.reduce((a, b) => a + b, 0)))}</td></tr>
+      </tbody></table></div>`;
+  }
+
+  /* ── Panel legend — only the states THIS view uses (§4.8) ───────── */
+  function ctDrawLegend() {
+    const line = c => `<span class="ct-lgs" style="display:inline-block;width:14px;height:3px;border-radius:2px;background:${c}"></span>`;
+    const box = c => `<span class="ct-lgs" style="display:inline-block;width:11px;height:11px;border-radius:3px;background:${c};border:1px solid rgba(127,127,127,.35)"></span>`;
+    const R = {
+      vsLines: `<div class="ct-lgr">${line(CT_COLORS.cur)}<span><b>Green is this week, amber is the one before it</b> — the same two colours, and the same card, as the Sales Trend chart on the dashboard. The x-axis runs <i>inside</i> the week, so it shows <b>where</b> the difference came from rather than only that there was one. The bars underneath repeat that comparison for every category, on one shared scale.</span></div>`,
+      vsClick: `<div class="ct-lgr">${box('rgba(34,197,94,.14)')}<span><b>Click any category row to chart it</b> — the card above redraws for that category alone, click again for all of them. The ▲▼ figure is up or down on the week; the two bar lengths say the same thing, so the reading never rests on colour alone, and the comparator is spelled out on every row (<b>vs $…</b>).</span></div>`,
+      vsNone: `<div class="ct-lgr"><span class="ct-lgs" style="display:inline-block;width:14px;height:3px;background:repeating-linear-gradient(90deg,#cbd5e1 0,#cbd5e1 4px,transparent 4px,transparent 7px)"></span><span><b>No budget line, and no last-year line.</b> The dashboard card has both; neither exists per category. Budget is stored per store per day with no category dimension, and a last-year category line would need year-old snapshots. Drawing either would mean inventing it.</span></div>`,
+      ptd: `<div class="ct-lgr">${line(CT_COLORS.prv)}<span><b>To date clips both sides to the same span.</b> This week is measured over the days that have closed, and last week over the same number — three days against three days, never three against seven. The pill says how many. The amber line still runs its <b>full</b> length and the caption gives its finished total, so you can see the target as well as the pace.</span></div>`,
+      trend: `<div class="ct-lgr">${line(ctHue(0))}<span><b>A coloured line is one category</b>, and its colour is fixed to it for the whole window. Six is the ceiling — past it no colourblind reader can separate the hues — so <b>Grid</b> and <b>Table</b> are where every category shows at once. Click a Grid panel to choose which six.</span></div>`,
+      grid: `<div class="ct-lgr">${line(ctInkDim())}<span><b>A Grid sparkline shows shape, not size.</b> On <b>Own</b> scale each panel runs between its own high and low — <b>the baseline is not zero</b> — because a category moving between $70k and $80k is a flat line drawn from zero. The number above it carries the magnitude. Switch <b>Scale</b> to <b>Shared</b> when you want heights to be comparable.</span></div>`,
+      hier: `<div class="ct-lgr"><span class="ct-lgs mc-lvl" style="margin-top:1px">L3</span><span><b>An L3 row sits indented under its L2</b>, with a rule drawn back up to it. Inheritance is the information, so it is drawn rather than labelled — and the L2 row is the exact sum of the L3 rows beneath it.</span></div>`,
+      dash: `<div class="ct-lgr">${box('transparent')}<span><b>A dash (—) is no sale in that period; it is never a zero passed off as data.</b> A day with no snapshot is absent rather than counted as zero sales, and a week whose summary pre-dates L3 reads as unknown, not as an empty category.</span></div>`,
+      surfaces: `<div class="ct-lgr">${box('rgba(127,127,127,.14)')}<span><b>Four surfaces, and every category is on three of them.</b> <b>Vs</b> puts this week against the last, category by category. <b>Grid</b> gives each its own panel. <b>Table</b> gives each a row of every week. <b>Trend</b> overlays up to six as lines. Nothing is ever hidden — only undrawn.</span></div>`,
+    };
+    const rows = { vs: [R.vsLines, R.vsClick, ctState.ptd ? R.ptd : R.vsNone, R.dash, R.surfaces],
+                   trend: [R.trend, R.dash, R.surfaces],
+                   grid: [R.grid, R.dash, R.surfaces],
+                   table: [R.hier, R.dash, R.surfaces] }[ctState.view];
+    el('ct-legend2').innerHTML = rows.join('');
   }
 
   window.switchWrsTab = switchWrsTab;

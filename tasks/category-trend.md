@@ -244,6 +244,53 @@ what is on screen is worse than no legend.**
 
 ## BUILD PLAN — app implementation
 
+### Phase 1 — SHIPPED 2026-09-10
+
+**A correction to this plan before the results.** It said phase 1 "runs entirely off
+`?action=weekly-t13`" and needed no backend work. That was wrong, and checking rather
+than assuming caught it: **weekly-t13 is per WEEK**, so it cannot feed a chart whose
+x-axis runs inside the period — which is the whole point of the Vs card. Phase 1
+therefore includes one new worker action after all.
+
+- [x] `?action=category-series&from=&to=&level=l2|l3[&store=]` — per-DATE L2/L3 net and
+      qty. `buildStoreWeekly` already reads exactly these snapshots and merges them
+      away; this merges per date instead. Registered in `ACTION_BUSINESS` (without it
+      it is a hard 403 for everyone, superuser included), scoped by `allowedStores`,
+      gated per date by `wrsGateDates`, and **refuses** past 840 store-days rather than
+      half-answering. 29 assertions.
+- [x] **The Categories tab** on the Retail Summary page, with the panel: L2/L3,
+      Vs / Trend / Grid / Table, net + units, store chips, Compare closed/to-date.
+      Inline SVG and CSS bars, never `<canvas>`.
+- [x] **Collapsed `switchWrsTab` / `renderWrsActiveTab`** — 23 duplicated lines where
+      every new tab had to be added twice. Adding this one would have been the third
+      time that bit.
+- [x] `CACHE_NAME` bumped to v184 and `scripts/fixtures/shell-cache.json` re-pinned.
+- [ ] **Phase 2** — day, month and quarter buckets. They need a wider day-snapshot
+      window than one request's subrequest budget allows, so the pills are present and
+      disabled with the reason on hover rather than appearing to work.
+
+### What the browser caught that the syntax check did not
+
+`node --check` passed on a file with **`getTodayStr is not defined`** in it — the
+helper is `etTodayStr`. Only loading the real page in Chromium with the API stubbed
+surfaced it. Two more followed:
+
+1. **Vs depended on the wrong feed.** Its category list came from the weekly rollups
+   while its numbers came from the day series — two different windows, one of them
+   deciding whether the other rendered. An empty week feed blanked a card whose own
+   data had already arrived. Vs now derives its list from the payload it holds.
+2. **It called `loadT13()`**, which owns `#wrs-pane-t13` and rewrites it, and returns
+   early when the range picker has no end date. Borrowing a loader that owns another
+   pane is §4.8 trap 7 wearing a different hat. It fetches the feed itself now.
+3. **A modal for a soft limit.** Promoting a seventh Trend line opened `uiAlert`. The
+   approved preview used an inline note; a modal to say "you already have six" is an
+   interruption for something the user can simply retry.
+
+Verified: 44 browser checks against the real `index.html`, plus **3,992 assertions
+across 62 suites** in the repo's own runner, all passing.
+
+### Original plan (kept for the record)
+
 - [ ] **Frontend, phase 1 — the tab.** New `wrs-tab` in the strip at index.html:1591
       and a `#wrs-pane-trend` section. `switchWrsTab` (17425) and `renderWrsActiveTab`
       (17450) are near-identical duplicated logic — **both must be edited**, and the
