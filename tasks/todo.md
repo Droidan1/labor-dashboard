@@ -1,3 +1,76 @@
+# Pure black (OLED) theme + Settings → Accessibility page (2026-09-10)
+
+Brian: "add a pure black mode (different than dark mode). Add this inside the settings page
+under a new page called accessibility. Give me a preview of how this will look before you
+build it."
+
+Preview published (interactive, three-way theme switch over the real screens):
+https://claude.ai/code/artifact/36407a1f-0f86-4e48-a605-3eaed559ded6
+
+**Not started — awaiting Brian's go-ahead on the preview.**
+
+## Approach
+
+Pure black is **additive**, not a third branch: `<html class="dark oled">`. `dark` stays on, so
+all 2,847 `dark:` utilities keep resolving (`:is(.dark *)`) and all nine JS sites that ask
+`classList.contains('dark')` keep answering yes. We only retint.
+
+## Palette (measured, not eyeballed — ratios vs the real composited ground)
+
+| Token | dark | pure black | why |
+|---|---|---|---|
+| bg | `#0a0f1a` | `#000000` | OLED pixels off |
+| panel | `#101826` | `#0a0a0a` | |
+| panelHi | `#16203a` | `#161616` | |
+| ink | `#e7ecf3` | `#f2f2f2` | 17.68:1 on panel |
+| inkDim | `#8893a7` | `#a8a8a8` | 8.33:1 |
+| inkDimmer | `#5a6478` | `#8a8a8a` | **2.99 → 5.73**; today's value fails AA |
+| border | `rgba(255,255,255,.06)` | `rgba(255,255,255,.14)` | .06 on #000 = 1.10:1, cards dissolve |
+| borderHi | `rgba(255,255,255,.10)` | `rgba(255,255,255,.22)` | |
+| sidebar | `#070b14` | `#000000` | |
+| glass | `rgba(22,32,58,.55)` | `rgba(10,10,10,.72)` | |
+
+accent-green / bad / warn unchanged — all three already pass ≥4.5:1 on `#0a0a0a`.
+
+## Tasks
+
+- [ ] `tailwind.config.js` — `op.*` become `rgb(var(--op-x) / <alpha-value>)` (the three rgba
+      tokens stay plain `var()`, they take no opacity modifier). Covers **1,680 of 2,847**
+      rules incl. every `/opacity` variant, from ~24 lines of `:root` + `html.oled`.
+- [ ] Override layer for the literal ~1,170: the `dark:*-gray-*` long tail (~400) and the 232
+      hand-written `.dark <sel>{}` rules with pasted hex. `html.oled …` is (0,2,1) and beats
+      Tailwind's (0,2,0) without `!important`. `#page-mos` is already var-driven — one extra
+      `.oled #page-mos{}` block.
+- [ ] Nine JS colour sites → one three-way palette accessor: 3 Chart.js (8673, 8911, 12026),
+      5 Marketing via `mkIsDark` (14618), and `_uiDialog` (5573) — which carries its own dark
+      palette (`#0f1722`/`#e6edf3`) matching neither theme.
+- [ ] `#page-accessibility` — store-detail back-button header (index.html:1268-1275) at
+      `max-w-3xl` to match Settings. `showOnlyPage` finds `[id^="page-"]` automatically;
+      swipe-back and the associate gate both work with no wiring.
+- [ ] Settings nav row (chevron-right `9 18 15 12 9 6`) + `morePages['accessibility']=1`
+      at :28600 so the ••• tab stays lit + add to the stale `_pages` list at :9292.
+- [ ] Boot script :579 applies `oled` alongside `dark` (pre-paint, no navy flash); `theme-color`
+      at :9 stops being pinned to `#3BB54A` and follows the theme.
+- [ ] Verify contrast in **all three** themes against real backgrounds; check the six §4.8
+      rendering traps on the dense tables.
+- [ ] `CACHE_NAME` v179 → v180 in the same commit.
+
+## Open questions (defaults marked; building the defaults absent an answer)
+
+1. **Sidebar toggle** — it is a binary sun/moon animation with a 28px knob throw and stars;
+   a third stop does not fit it. *Default:* stays two-way and remembers which dark you picked.
+2. **Scope of the page** — *default:* theme only. Larger text / reduced motion are the obvious
+   later tenants, not building them unasked.
+3. **JS-painted colours** — *default:* yes, they follow.
+
+## Notes
+
+- No `prefers-color-scheme` anywhere in the app, so there is no "system" option to extend.
+- Print export is a `@media print` stylesheet with fixed light literals — theme-independent,
+  needs no change.
+- The committed root `tailwind.css` is stale and has no `dark:` variants; `build.sh` regenerates
+  into `dist/`. Verify contrast against token values, never against the local stylesheet.
+
 # Mark Out of Stock (2026-09-10)
 
 Brian: "add a new page — MOS. Scan a QR code or manually input a BL sticker code, then 3
