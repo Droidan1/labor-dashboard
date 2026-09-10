@@ -1,3 +1,38 @@
+## A colour has more than one spelling, and I only searched for one (2026-09-10)
+
+**Context:** Pure black shipped. Brian opened it on his phone and the bottom nav bar was
+still navy on a black page — the exact "navy patch on a black screen" I had warned about in
+the PR, in the most-looked-at chrome on mobile.
+
+**Root cause:** `.dark .bn-float` sets `background: rgba(16,24,38,.64)`. That is
+`op-panel #101826` written in decimal. I had swept the file for the five token hexes and
+re-pointed 160 of them to `rgb(var(--op-*))`, and my closing check was a grep for those same
+hexes returning clean. It did return clean. `rgba(16,24,38,.64)` was never in the search
+space, so "no hits" meant "no hits for the spelling I chose", not "no copies left".
+
+Searching decimal afterwards found **six** more sites, not one: the bottom bar, both mobile
+hint pills, the sparkline dot halo, and three OFFLINE pill borders — and one of those four
+pill borders I had already converted by hand, so the file was left inconsistent in a way that
+should itself have been a clue.
+
+**Why the tests did not catch it.** 54 browser assertions passed. Every one of them measured
+a surface I had *changed*; none swept for surfaces that should have changed and did not. A
+suite built from the diff can only confirm the diff.
+
+<rules>
+1. **Auditing a value means searching every spelling of it.** A CSS colour has at least
+   three: `#101826`, `rgb(16 24 38)`, `rgba(16,24,38,.64)`. Enumerate the token's decimal
+   channels and grep those too, before declaring a sweep complete.
+2. **A clean grep only proves the pattern is absent.** State the pattern to yourself and ask
+   what it cannot match. "No hits" is evidence about the query, not about the file.
+3. **Inconsistency in your own edits is a signal.** I converted one of four identical
+   `rgba(136,147,167,0.35)` borders by hand and left three. That asymmetry meant my
+   mechanical pass had a blind spot; I read it as a tidy-up I had not got to.
+4. **For a theme change, assert on what should NOT be left behind.** The useful test is not
+   "the surfaces I edited are black" but "no element still computes to the old theme's
+   panel colour". Sweep the rendered page for the outgoing value.
+</rules>
+
 ## `getComputedStyle` during a `transition` returns the colour you just left (2026-09-10)
 
 **Context:** Verifying the pure-black theme. 54 browser assertions, six failing — `body` and

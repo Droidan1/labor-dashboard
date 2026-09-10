@@ -1,3 +1,33 @@
+# Pure black follow-up: nav bar left navy, dark status bar reverted (2026-09-10)
+
+Brian, after merging: "revert dark back to green and look at the nav bar on mobile that
+didn't change color."
+
+- [x] **`theme-color` reverted for dark** — back to `#3BB54A`. Only pure black changes the
+      browser/PWA chrome now (`#000000`). Light was never touched. Dark's navy bar was a
+      side effect of making the tag theme-following; the tag only ever needed to change for
+      pure black, where a green bar over a black app defeats the point.
+- [x] **The mobile bottom bar was still navy** — `.dark .bn-float` wrote
+      `background: rgba(16,24,38,.64)`, which is `op-panel #101826` in decimal. The sweep
+      that shipped pure black searched the five token **hexes** and came back clean, because
+      `rgba(16,24,38,…)` was never in the search space. Now `rgb(var(--op-panel) / .64)`, and
+      its border follows `--op-borderHi` so it strengthens on black like every other border.
+- [x] **Five more sites with the same defect**, found by searching the decimal spelling:
+      both mobile hint pills (`#swipe-label`, `#ptr-hint`, op-panel at 92%), the sparkline
+      tooltip dot halo (op-bg at 90%), and three OFFLINE pill borders (op-inkDim at 35%) —
+      a fourth had already been converted by hand, which left the file inconsistent and
+      should itself have been the clue.
+- [x] **New sweep test**: walk every element in pure black and flag any that still computes
+      a dark-theme token value. One hit, and it is correct — the Dark swatch on the
+      Accessibility page, which is meant to be a literal sample of `#0a0f1a`. This is the
+      check that would have caught the nav bar; the 54 assertions could not, because every
+      one of them measured a surface the diff had already touched.
+- [x] 61 browser assertions pass (54 + 7 for the bar, its border and the hint pills).
+- [x] `CACHE_NAME` v180 → v181.
+
+Lesson recorded: a colour has more than one spelling, and a clean grep only proves the
+pattern is absent.
+
 # Pure black (OLED) theme + Settings → Accessibility page (2026-09-10)
 
 Brian: "add a pure black mode (different than dark mode). Add this inside the settings page

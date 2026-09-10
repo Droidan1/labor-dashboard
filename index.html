@@ -615,8 +615,8 @@
       box-shadow: 0 12px 32px rgba(20,16,8,.16), 0 2px 8px rgba(20,16,8,.08);
     }
     .dark .bn-float {
-      background: rgba(16,24,38,.64);
-      border-color: rgba(255,255,255,.10);
+      background: rgb(var(--op-panel) / .64);
+      border-color: var(--op-borderHi);
       box-shadow: 0 12px 32px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4);
     }
     /* Perf: keep the bar on its own compositor layer so the scroll-hide
@@ -724,7 +724,10 @@
       if (on) root.classList.add('dark');
       if (oled) root.classList.add('oled');
       var m = document.querySelector('meta[name="theme-color"]');
-      if (m) m.content = oled ? '#000000' : (on ? '#0a0f1a' : '#3BB54A');
+      // Only pure black changes the browser chrome. Dark keeps the brand
+      // green bar it has always had — a green status bar over a black app is
+      // the one case that defeats the point, and dark is not that case.
+      if (m) m.content = oled ? '#000000' : '#3BB54A';
     })();
   </script>
 </head>
@@ -1140,14 +1143,14 @@
       <div id="swipe-rail" class="hidden lg:hidden fixed left-0 top-[calc(env(safe-area-inset-top)+72px)] bottom-0 w-[3px] z-30 pointer-events-none"
         style="background:linear-gradient(180deg,transparent 0%,#22c55e 50%,transparent 100%);opacity:.16;animation:swipe-rail-pulse 2.6s ease-in-out infinite"></div>
       <div id="swipe-label" class="hidden lg:hidden fixed left-3 top-[44%] z-30 pointer-events-none inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10.5px] font-bold uppercase tracking-[0.06em] text-accent-green"
-        style="background:rgba(16,24,38,.92);border:1px solid rgba(34,197,94,.42);backdrop-filter:blur(6px)">
+        style="background:rgb(var(--op-panel) / .92);border:1px solid rgba(34,197,94,.42);backdrop-filter:blur(6px)">
         <svg class="w-[11px] h-[11px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         Swipe back
       </div>
 
       <!-- First-time hint for mobile pull-to-refresh (shown once). -->
       <div id="ptr-hint" class="hidden lg:hidden fixed left-1/2 top-[calc(env(safe-area-inset-top)+62px)] z-30 pointer-events-none inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-[11px] font-bold text-accent-green"
-        style="transform:translate(-50%,-8px);background:rgba(16,24,38,.92);border:1px solid rgba(34,197,94,.42);backdrop-filter:blur(6px)">
+        style="transform:translate(-50%,-8px);background:rgb(var(--op-panel) / .92);border:1px solid rgba(34,197,94,.42);backdrop-filter:blur(6px)">
         <svg class="w-[12px] h-[12px] ptr-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
         Pull down to refresh
       </div>
@@ -5763,7 +5766,7 @@
     ind.style.cssText = 'position:absolute;top:0;width:1px;height:' + H + 'px;background:' + color + ';opacity:0;pointer-events:none;transition:opacity .15s';
     slot.appendChild(ind);
     const dot = document.createElement('div');
-    dot.style.cssText = 'position:absolute;width:7px;height:7px;border-radius:50%;background:' + color + ';transform:translate(-50%,-50%);opacity:0;pointer-events:none;box-shadow:0 0 0 2px rgba(10,15,26,0.9);transition:opacity .15s';
+    dot.style.cssText = 'position:absolute;width:7px;height:7px;border-radius:50%;background:' + color + ';transform:translate(-50%,-50%);opacity:0;pointer-events:none;box-shadow:0 0 0 2px rgb(var(--op-bg) / 0.9);transition:opacity .15s';
     slot.appendChild(dot);
     const tip = document.createElement('div');
     tip.style.cssText = 'position:absolute;bottom:' + (H + 6) + 'px;background:rgb(var(--op-panel) / 0.95);color:rgb(var(--op-ink));font:600 10px Geist,system-ui;padding:4px 7px;border-radius:6px;white-space:nowrap;pointer-events:none;opacity:0;transform:translateX(-50%);transition:opacity .15s;z-index:20';
@@ -7311,7 +7314,7 @@
       const txt = el("hero-live-text");
       const liveCol = "#22c55e", offCol = "rgb(var(--op-inkDim))";
       const on = showLive;
-      pill.style.border = `1px solid ${on ? "rgba(34,197,94,0.4)" : "rgba(136,147,167,0.35)"}`;
+      pill.style.border = `1px solid ${on ? "rgba(34,197,94,0.4)" : "rgb(var(--op-inkDim) / 0.35)"}`;
       pill.style.color = on ? liveCol : offCol;
       if (dot) dot.style.background = on ? liveCol : offCol;
       if (txt) txt.textContent = on ? "LIVE" : "OFFLINE";
@@ -9421,7 +9424,7 @@
     // LIVE pill — green when current week + live sales present.
     const showLive = sm.isCurrentWeek && sm.liveSales != null && sm.liveSales > 0;
     const liveCol = showLive ? '#22c55e' : 'rgb(var(--op-inkDim))';
-    const liveBorder = showLive ? 'rgba(34,197,94,0.4)' : 'rgba(136,147,167,0.35)';
+    const liveBorder = showLive ? 'rgba(34,197,94,0.4)' : 'rgb(var(--op-inkDim) / 0.35)';
     const wkLbl = sm.isCurrentWeek ? 'This Week' : `Week ${selectedWeek}`;
 
     el('store-detail-metrics').innerHTML = `
@@ -12110,7 +12113,7 @@
     const avgStore = t.storesReporting > 0 ? t.totalSales / t.storesReporting : 0;
     const showLive = t.isCurrentWeek && t.anyLive;
     const liveCol = showLive ? '#22c55e' : 'rgb(var(--op-inkDim))';
-    const liveBorder = showLive ? 'rgba(34,197,94,0.4)' : 'rgba(136,147,167,0.35)';
+    const liveBorder = showLive ? 'rgba(34,197,94,0.4)' : 'rgb(var(--op-inkDim) / 0.35)';
     const wkLbl = t.isCurrentWeek ? 'This Week' : `Week ${selectedWeek}`;
 
     return `
@@ -24444,7 +24447,9 @@
   // Three themes ('light' | 'dark' | 'oled'), two classes. See the pre-paint
   // boot script in <head> for why, and the :root / html.oled blocks in the
   // first <style> for the token values.
-  const THEME_BAR_COLOR = { light: '#3BB54A', dark: '#0a0f1a', oled: '#000000' };
+  // Browser/PWA chrome tint. Light and dark both keep brand green; only pure
+  // black needs the bar to disappear along with the page.
+  const THEME_BAR_COLOR = { light: '#3BB54A', dark: '#3BB54A', oled: '#000000' };
 
   function currentTheme() {
     const root = document.documentElement;

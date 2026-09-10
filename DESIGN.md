@@ -46,10 +46,18 @@ The `op-*` tokens are **CSS variables**, not literals. `tailwind.config.js`
 declares them as `rgb(var(--op-x) / <alpha-value>)`; the values live in
 index.html's first `<style>` block (`:root` for dark, `html.oled` for pure
 black). Re-pointing six variables retints ~1,680 of the 2,847 `dark:` rules,
-transparency variants included. **Never paste an `op-*` hex into a `<style>`
-block** — write `rgb(var(--op-ink))` so it follows all three themes. (The
-three already-translucent tokens — `border`, `borderHi`, `glass` — are plain
-`var()` because a fixed alpha and `<alpha-value>` cannot coexist.)
+transparency variants included. **Never paste an `op-*` value into a `<style>`
+block in any spelling** — not `#101826` and not `rgba(16,24,38,.64)` — write
+`rgb(var(--op-panel))`, or `rgb(var(--op-panel) / .64)` when you need an
+alpha, so it follows all three themes. (The three already-translucent tokens
+— `border`, `borderHi`, `glass` — are plain `var()` because a fixed alpha and
+`<alpha-value>` cannot coexist.)
+
+The decimal spelling is the one that bites. When pure black shipped, the
+mobile bottom bar stayed navy on a black page because `.dark .bn-float` wrote
+`rgba(16,24,38,.64)` — the same colour as `#101826`, invisible to a search for
+the hex. **Auditing a token means searching every spelling of its value**, and
+`rgba()` is a spelling.
 
 **Operator dark (`op-*`) — primary**
 | Token | Hex |
