@@ -63,6 +63,21 @@ cost $0.35. The month total is sound over many lines; one expensive line is not.
 
 **3. Store Use is not shrink.** The month splits them instead of adding them up.
 
+**4. A sticker may carry no price at all** (Brian, 2026-09-10). `BL-10380` is a whole
+sticker — Halloween Candy, in BL1's map. The item is still fully identified, and because
+cost is looked up from the CATEGORY rather than from the price, **a priceless sticker
+still produces the number this page exists for.** Only the retail figure is unknown.
+
+Unknown is recorded as `null` and never as zero, the same rule cost already follows, and
+the month reports `lines_without_price` beside `lines_without_cost` so a short retail
+total is never presented as a complete one. A price segment that IS present must still be
+real: `BL-50038-0` stays refused, because nothing is sold for nothing.
+
+⚠️ The client's `MOS_CODE_RE` is a SECOND parser — it decides whether a decoded QR is one
+of ours before the code is trusted. It has to accept exactly what the worker accepts, or
+the camera reads a valid sticker and silently ignores it. Pinned against a shared list of
+codes in test-mos section 10.
+
 ## The QR scanner
 
 The existing camera scanner on Price Scan reads **EAN-13 and UPC-A only** — hand-written
