@@ -7,7 +7,7 @@ build it."
 Preview published (interactive, three-way theme switch over the real screens):
 https://claude.ai/code/artifact/36407a1f-0f86-4e48-a605-3eaed559ded6
 
-**Not started — awaiting Brian's go-ahead on the preview.**
+**Built and verified 2026-09-10.** Brian approved the preview and said to build the defaults.
 
 ## Approach
 
@@ -34,34 +34,43 @@ accent-green / bad / warn unchanged — all three already pass ≥4.5:1 on `#0a0
 
 ## Tasks
 
-- [ ] `tailwind.config.js` — `op.*` become `rgb(var(--op-x) / <alpha-value>)` (the three rgba
-      tokens stay plain `var()`, they take no opacity modifier). Covers **1,680 of 2,847**
-      rules incl. every `/opacity` variant, from ~24 lines of `:root` + `html.oled`.
-- [ ] Override layer for the literal ~1,170: the `dark:*-gray-*` long tail (~400) and the 232
-      hand-written `.dark <sel>{}` rules with pasted hex. `html.oled …` is (0,2,1) and beats
-      Tailwind's (0,2,0) without `!important`. `#page-mos` is already var-driven — one extra
-      `.oled #page-mos{}` block.
-- [ ] Nine JS colour sites → one three-way palette accessor: 3 Chart.js (8673, 8911, 12026),
-      5 Marketing via `mkIsDark` (14618), and `_uiDialog` (5573) — which carries its own dark
-      palette (`#0f1722`/`#e6edf3`) matching neither theme.
-- [ ] `#page-accessibility` — store-detail back-button header (index.html:1268-1275) at
-      `max-w-3xl` to match Settings. `showOnlyPage` finds `[id^="page-"]` automatically;
-      swipe-back and the associate gate both work with no wiring.
-- [ ] Settings nav row (chevron-right `9 18 15 12 9 6`) + `morePages['accessibility']=1`
-      at :28600 so the ••• tab stays lit + add to the stale `_pages` list at :9292.
-- [ ] Boot script :579 applies `oled` alongside `dark` (pre-paint, no navy flash); `theme-color`
-      at :9 stops being pinned to `#3BB54A` and follows the theme.
-- [ ] Verify contrast in **all three** themes against real backgrounds; check the six §4.8
-      rendering traps on the dense tables.
-- [ ] `CACHE_NAME` v179 → v180 in the same commit.
+- [x] `tailwind.config.js` — `op.*` are now `rgb(var(--op-x) / <alpha-value>)`; the three rgba
+      tokens stay plain `var()` since a fixed alpha and `<alpha-value>` cannot coexist. Verified
+      in the compiled CSS: `background-color: rgb(var(--op-panel) / var(--tw-bg-opacity, 1))`.
+      1,680 of 2,847 rules retint from 24 lines of `:root` + `html.oled`.
+- [x] Override layer for the literal half — 21 rules covering the `dark:*-gray-*` backgrounds,
+      borders, divides and hovers. **Grey TEXT deliberately not overridden**: a darker ground
+      can only raise its contrast, and measuring confirmed it (gray-400 7.01→7.80,
+      gray-500 3.68→4.10, gray-300 12.07→13.44). Border alphas are picked for parity with the
+      edge each draws today, measured against its own card: gray-700 on a gray-800 card is 1.42
+      and white at 14% on `#0a0a0a` is also 1.42; 600 → 1.94 vs 1.91; 500 → 3.04 vs 3.01.
+- [x] The 232 hand-written `.dark <sel>{}` rules — 160 pasted copies of five token hexes
+      re-pointed to `rgb(var(--op-*))`, so they follow all three themes from one place. The
+      always-dark surfaces (sidebar tooltip, coach-marks, bin-dump lightbox) went with them:
+      `:root` holds the dark values, so light is untouched and only `oled` shifts them.
+- [x] JS colour sites → `window.themeColors()`, a three-way table for the colours CSS variables
+      cannot reach (canvas paints). Wired: 3 Chart.js renderers + `_uiDialog`. **The 5 Marketing
+      sites were left alone on purpose** — every dark-side value there is a light pastel that
+      improves on a darker ground (measured: 8.22→9.15, 7.99→8.90, …, none below 4.5:1) and its
+      grid is already white-alpha, so it self-adapts. Churn that fixes nothing.
+- [x] Inline-style colours (LIVE/OFFLINE pills, pace bars, role dots, sparkline tooltip) use
+      `rgb(var(--op-*))` directly — an inline style resolves variables, so no accessor needed.
+- [x] `#page-accessibility` with the store-detail back-button header at `max-w-3xl`.
+      Real radiogroup semantics: one tab stop, arrow keys move and select.
+- [x] Settings nav row (chevron-right) + `morePages['accessibility']` + the stale `_pages` list
+      + a `syncThemeControls()` hook on entry so the radios can't come back stale.
+- [x] Boot script applies `oled` alongside `dark` pre-paint; `theme-color` now follows the theme
+      (`#3BB54A` light / `#0a0f1a` dark / `#000000` pure black) instead of being pinned to green.
+- [x] Two-way sidebar switch keeps its binary sun/moon animation and remembers the flavour via
+      a new `darkFlavor` key. Going light does not erase it.
+- [x] **54 browser assertions** over pre-paint boot, token plumbing, the override layer, control
+      sync, switch memory, contrast in all three themes, and routing. All pass.
+- [x] `CACHE_NAME` v179 → v180 in the same commit.
 
-## Open questions (defaults marked; building the defaults absent an answer)
+## Open questions — all answered
 
-1. **Sidebar toggle** — it is a binary sun/moon animation with a 28px knob throw and stars;
-   a third stop does not fit it. *Default:* stays two-way and remembers which dark you picked.
-2. **Scope of the page** — *default:* theme only. Larger text / reduced motion are the obvious
-   later tenants, not building them unasked.
-3. **JS-painted colours** — *default:* yes, they follow.
+Brian: "go ahead and build it with the defaults." So: the sidebar switch stays two-way and
+remembers; the page carries theme only; the JS-painted colours follow.
 
 ## Notes
 

@@ -1,3 +1,39 @@
+## `getComputedStyle` during a `transition` returns the colour you just left (2026-09-10)
+
+**Context:** Verifying the pure-black theme. 54 browser assertions, six failing — `body` and
+every app bar reported the LIGHT background in dark and oled mode, while the settings cards
+next to them reported correctly. I spent six probes hunting a cascade bug that did not exist:
+specificity was right (`html.oled .dark\:…` is (0,2,1) vs Tailwind's (0,2,0)), the variable
+resolved (`--op-bg` = `10 15 26` on body), CDP listed the dark rule last as the winner, and
+replaying the rule's own `cssText` on a fresh div produced the correct colour.
+
+**Root cause:** `<body class="… transition-colors">`. Tailwind's `transition-colors` is a
+150 ms transition on `background-color`. `getComputedStyle` returns the **interpolated**
+value, so reading it synchronously after a class change reads t=0 — the pre-change colour.
+The settings cards have no transition class, which is exactly why they looked fine and made
+the failure look selective and cascade-shaped.
+
+**The disproof I should have run first:** set a plain, unmistakable value inline and read it
+back. `body.style.cssText = 'background-color: rgb(255 0 0)'` returned `rgb(244, 243, 238)`.
+An inline literal cannot lose a cascade fight, so at that instant the problem was provably
+the *measurement*, not the CSS. That one line was available from the first failure and would
+have replaced every probe after it.
+
+<rules>
+1. **Before measuring a colour you just changed, settle the transition** — wait past the
+   duration, or disable transitions for the measurement. Prefer waiting: it tests the real
+   thing. A synchronous read after a class toggle is measuring the old frame.
+2. **When a probe disagrees with the spec, suspect the probe.** Specificity, variable
+   resolution and CDP's own cascade all said the rule won. Three independent sources agreeing
+   against one measurement means the measurement is wrong.
+3. **Falsify with a value that cannot be produced any other way.** Pure red, inline. If the
+   read-back is not red, stop reasoning about CSS and go fix the harness.
+4. **A failure that skips some elements is a clue about those elements, not about the rule.**
+   "Cards fine, body and app bars wrong" was the whole answer — `transition-colors` is on the
+   second set and not the first. I read it as "tokens broken, literals fine" because that
+   split also fit, and never checked which split was real.
+</rules>
+
 ## A surviving mutation is not automatically a hole in the tests (2026-09-10)
 
 Mutation-testing the MOS suite, eight of ten mutations were caught and two survived. The
