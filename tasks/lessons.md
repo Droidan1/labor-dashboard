@@ -1,3 +1,60 @@
+## A surviving mutation is not automatically a hole in the tests (2026-09-10)
+
+Mutation-testing the MOS suite, eight of ten mutations were caught and two survived. The
+reflex is to write assertions until they die. Both would have been wrong to chase.
+
+**Survivor 1 — "read the colliding IM# cost map".** I mutated `mosCostCents` to try
+`costs.items[description]` before `costs.categories[description]`. It survived because
+`items` is keyed by IM# and `description` is a category NAME, so the added lookup could
+never hit. My mutation was a no-op, not an undetected bug. The real protection is that
+the function is only ever handed a name — the SIGNATURE is the guard. Mutating the call
+site to pass `parsed.itemNo` instead did fail, six assertions.
+
+**Survivor 2 — "let a sweep overwrite a name a person typed".** I removed
+`WHERE sticker_codes.source <> 'user'` and nothing broke. Investigating: the only caller
+that passes `'clover'` runs after establishing there is no row at all, so the clause
+could never fire. **It was dead code.** Worse than dead — it was a claim in the source
+that the rule was enforced there, when the rule actually lives in an early return three
+functions away. I deleted it and mutated the early return instead: five assertions.
+
+Rules:
+
+1. **Before writing an assertion to kill a survivor, prove the mutation is a real bug.**
+   Read the mutated code in context and ask what input would now behave differently. If
+   there is none, the mutation was semantically equivalent and the suite is fine.
+2. **A survivor sometimes indicts the CODE, not the test.** An unreachable guard passes
+   mutation testing by definition. That is a reason to delete it, not to test it.
+3. **Then mutate the thing that actually carries the rule.** Both of these had a real
+   guard elsewhere, and both of those guards were caught immediately once aimed at.
+4. Same family as "grepping a name is not testing a behaviour": the question is always
+   what would have to change for the behaviour to be wrong, not what text is present.
+
+## Playwright matches routes LAST-REGISTERED-FIRST (2026-09-10)
+
+The browser probe for MOS reported 41 of 52 assertions failing — every nav item hidden,
+every page unrouted, `currentPage` reading "dashboard" for an associate who should have
+landed elsewhere. It looked exactly like the boot race, and none of it was real.
+
+```js
+await page.route('**/api.retjghub.com/**', stub);   // registered first
+await page.route('**/*', (r) => r.continue());      // registered second — WINS
+```
+
+Playwright evaluates handlers in reverse registration order, so the catch-all shadowed
+the stub and every request went to the real network, which the egress proxy blocks. The
+app then failed auth and sat on its default section.
+
+1. **Do not register a catch-all `continue()` route.** Unrouted requests continue on
+   their own; the handler only exists to shadow the ones above it.
+2. Two probe bugs in the same file, both previously recorded here in other forms:
+   `offsetParent` is null inside a positioned ancestor (so the whole sidebar read as
+   hidden), and `currentUser` / `currentPage` are module-scoped inside the app's IIFE —
+   index.html even carries a comment saying `window.currentPage` is always undefined.
+   Read the DOM: which `[id^="page-"]` lacks `hidden`.
+3. **When a probe reports EVERYTHING broken, suspect the probe.** A real regression is
+   usually narrow. A one-page debug script printing what the page actually did — which
+   API calls fired, what class the element carries — found all three in one run.
+
 ## `cmp` on a Cloudflare worker bundle compares the envelope, not the code (2026-09-09)
 
 Verifying the staging deploy, I fetched the deployed script twice and ran `cmp`. It said

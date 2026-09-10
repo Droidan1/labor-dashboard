@@ -1,3 +1,27 @@
+# Mark Out of Stock (2026-09-10)
+
+Brian: "add a new page — MOS. Scan a QR code or manually input a BL sticker code, then 3
+fields get auto generated... user then will input QTY. This is done every month so we
+need to keep track of this too." Then: "add one more auto field (cost) on the item with a
+monthly total cost MOS'ed", and answers settling the scan (real QR), the category
+(right), the price (keep), the reason (required) and the month (grouping only).
+
+- [x] `migration-062.sql` — `mos_entries` + the `sticker_codes` learned map
+- [x] Worker: `mos-lookup`, `-log`, `-list`, `-update`, `-delete`; cost from the
+      per-category map; the learn-and-remember write-through
+- [x] `jsqr.min.js` vendored, allowlisted in build.sh, precached in sw.js, loaded on demand
+- [x] The page: QR scanner, five auto fields, required reason, monthly log with cost
+      totals, CSV export, teach-a-code prompt
+- [x] `scripts/test-mos.mjs` (129 assertions) + ten mutations, ten caught
+- [x] 51 browser assertions over four scenarios, contrast in both themes
+- [x] CACHE_NAME v178 -> v179
+- [ ] **Apply `migration-062.sql`** to staging, then production — needs Brian's go (rule 7)
+- [ ] Deploy the worker, then merge the frontend
+
+Full write-up in [mos.md](mos.md). Two findings worth reading before the deploy: the
+description lookup cannot name stock that has left Clover (which is what MOS is for), and
+the cost is a flat per-category rate, so a single expensive line is not to be quoted.
+
 # Associate role: a six-digit login and per-page permissions (2026-09-09)
 
 Brian: a new "associate" account for Bargain Lane, made by an admin, that signs in with a

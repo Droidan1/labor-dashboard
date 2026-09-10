@@ -4095,6 +4095,11 @@ const ACTION_BUSINESS = new Map([
   ["bin-dump-update", "bl"],
   ["bin-dump-delete", "bl"],
   ["bin-dump-photo", "bl"],
+  ["mos-lookup", "bl"],
+  ["mos-log", "bl"],
+  ["mos-list", "bl"],
+  ["mos-update", "bl"],
+  ["mos-delete", "bl"],
   ["cancel-sale-schedule", "bl"],
   ["category-costs", "bl"],
   ["channel-range", "bl"],
@@ -6846,10 +6851,18 @@ function binDumpTruckHint(fields) {
   return `The barcode reads truck ${m[1]}, but Truck # reads ${fields.truck_no}. One of them was misread.`;
 }
 
-// Store gate for every bin-dump action: a real store, one this user holds, and one
-// that still trades. A closed store has no bins to dump a pallet into, so a row
-// against one is meaningless data — the same reasoning shelf-count-save uses.
-function binDumpStoreGuard(storeRaw, currentUser, isAdminSecret, corsJson, opts) {
+// Store gate for any per-store floor action: a real store, one this user holds, and one
+// that still trades. A closed store cannot receive a pallet or lose one to shrink, so a
+// row against one is meaningless data — the same reasoning shelf-count-save uses.
+//
+// 🔑 NAMED FOR THE RIGHT IT CHECKS, NOT FOR ITS FIRST CALLER. It was binDumpStoreGuard
+// while Bin Dump was the only page asking; Mark Out of Stock asks exactly the same
+// question, and a second page calling a bin-dump-named function is how a shared rule
+// starts getting copied instead of called.
+//
+// `closedMsg` is the one part that IS caller-specific: "there are no bins to dump into"
+// is nonsense on a shrink screen. A caller that has a better sentence passes one.
+function storeActionGuard(storeRaw, currentUser, isAdminSecret, corsJson, opts) {
   const store = String(storeRaw || "").trim().toUpperCase();
   if (!ALL_STORES.includes(store)) {
     return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
@@ -6860,8 +6873,9 @@ function binDumpStoreGuard(storeRaw, currentUser, isAdminSecret, corsJson, opts)
   // Reading back an existing row is still allowed for a store that has since closed —
   // otherwise closing a store would hide history that was correct when it was written.
   if (!opts?.allowClosed && STORE_CLOSED_FROM[store]) {
+    const what = opts?.closedMsg || "there are no bins to dump into";
     return new Response(JSON.stringify({
-      error: `${STORE_LABELS[store] || store} closed on ${STORE_CLOSED_FROM[store]} — there are no bins to dump into`,
+      error: `${STORE_LABELS[store] || store} closed on ${STORE_CLOSED_FROM[store]} — ${what}`,
     }), { status: 409, headers: corsJson });
   }
   return null;
@@ -11123,6 +11137,145 @@ const stickerCode = (categoryCode, price) => {
   return (!p || !/^\d+$/.test(c)) ? null : `BL-${c}-${p}`;
 };
 
+// ─── Mark Out of Stock: reading a sticker code back ──────────────────────────
+//
+// The inverse of the two functions above, kept beside them so the encoding and the
+// decoding cannot drift apart. MOS is the only caller that reads a code rather than
+// writing one.
+//
+// 🔑 THREE SPELLINGS OF THE SAME STICKER MUST NORMALISE TO ONE STRING. The QR carries
+// `BL-50038-1_5` (byte mode, underscore). A person reading the label off the shelf types
+// `BL-50038-1.5`, and Brian's own sheet has `BL-`, `Bl-` and `bl-` in the same column.
+// All of them are the same pallet of condiments at $1.50, and a log that stored them as
+// three different codes could not total a month.
+const MOS_REASONS = ["Stolen", "Damaged", "Expired", "Store Use"];
+
+function mosNormalizeCode(raw) {
+  const s = String(raw || "").trim().toUpperCase().replace(/\s+/g, "");
+  // The price tail is optional-decimal because $10.00 encodes as a bare `10` — no
+  // separator at all, which is a different SHAPE and not just a different value.
+  const m = /^BL-(\d{1,10})-(\d+(?:[._]\d{1,2})?)$/.exec(s);
+  return m ? `BL-${m[1]}-${m[2].replace(".", "_")}` : null;
+}
+
+// Code -> { itemNo, priceCents }. Takes the NORMALISED form.
+//
+// 🛑 Cents, via Math.round on a scaled float. `Number("1.75") * 100` is 174.99999999999997
+// in IEEE 754, and truncating that is a penny short on every $1.75 line — small, invisible,
+// and wrong in a column that gets summed for a whole month.
+function mosParseCode(code) {
+  const m = /^BL-(\d{1,10})-(\d+(?:_\d{1,2})?)$/.exec(String(code || ""));
+  if (!m) return null;
+  const price = Number(m[2].replace("_", "."));
+  if (!Number.isFinite(price) || price <= 0) return null;
+  return { itemNo: m[1], priceCents: Math.round(price * 100) };
+}
+
+// Calendar month in Eastern time, 'YYYY-MM'. Same idiom as binDumpWeekOf: format the
+// full date in ET and slice, rather than asking Intl for year+month, so the two grouping
+// helpers cannot disagree about which day a late-evening entry belongs to.
+// A unit count: digits, 1..100000, or null. See the comment at its call site for the
+// three different wrong answers the obvious spellings give.
+function mosQty(raw) {
+  if (typeof raw === "number") return Number.isInteger(raw) && raw >= 1 && raw <= 100000 ? raw : null;
+  if (!/^\d{1,6}$/.test(String(raw ?? "").trim())) return null;
+  const n = Number(String(raw).trim());
+  return n >= 1 && n <= 100000 ? n : null;
+}
+
+function mosMonthOf(iso) {
+  const et = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(iso));
+  return et.slice(0, 7);
+}
+
+// Category code -> name, from the KV maps ONLY — never triggering a refresh.
+//
+// 🛑 DELIBERATELY NOT stickerCategoryCodes(). That function sweeps Clover when its cache
+// is cold, and this runs inside a lookup that may miss at all six stores: calling it in a
+// loop would be up to thirty paged Clover requests on one scan, at a warehouse door, on a
+// phone. A cold cache here just means "not found", which the learned table below then
+// fixes permanently the first time anyone names it.
+//
+// The caller's own store is tried first, then the rest — the code is per CATEGORY and
+// chain-wide, so another store's catalogue is a legitimate answer for what a number means,
+// even though it is never a legitimate answer for whether a code EXISTS to print.
+async function mosNameFromCache(env, itemNo, store) {
+  if (!env.SALES_SNAPSHOTS) return null;
+  const order = [store, ...ALL_STORES.filter(s => s !== store)].filter(Boolean);
+  for (const s of order) {
+    let cached = null;
+    try { cached = await env.SALES_SNAPSHOTS.get(stickerCodesKey(s), "json"); } catch (_) { continue; }
+    const map = cached && cached.map;
+    if (!map) continue;
+    for (const [name, code] of Object.entries(map)) {
+      if (String(code) === String(itemNo)) return name;
+    }
+  }
+  return null;
+}
+
+// What this category costs us, per unit, in cents — or null.
+//
+// 🔑 `categories`, NOT `items`. fetchItemCosts returns both, and they are keyed by
+// different numbering schemes that OVERLAP: the sticker's 50038 is a Clover category, and
+// 50038 is separately a valid IM# in the per-item map resolving to something unrelated.
+// Reaching for `items` because the key looks like the right shape would put one category's
+// cost on another's shrink and the number would still look plausible.
+//
+// 🛑 NULL IS NOT ZERO. Four of the 46 categories carrying sticker codes have no cost on
+// file. Returning 0 for those would read as free merchandise and understate every total
+// they land in; the screen says "no cost on file" instead.
+async function mosCostCents(env, description) {
+  if (!description) return null;
+  const costs = await fetchItemCosts(env);
+  const raw = costs.categories ? costs.categories[description] : undefined;
+  if (raw === undefined || raw === null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
+}
+
+// The full resolution, in the order that gets cheaper-and-more-durable first.
+// Returns { description, source } — source is 'learned' | 'clover' | null.
+async function mosResolve(env, itemNo, store) {
+  if (!env.DB) return { description: null, source: null };
+  try {
+    const row = await env.DB.prepare(
+      "SELECT description FROM sticker_codes WHERE code = ?"
+    ).bind(String(itemNo)).first();
+    if (row && row.description) return { description: row.description, source: "learned" };
+  } catch (_) { /* table not migrated yet — fall through to the live map */ }
+
+  const name = await mosNameFromCache(env, itemNo, store);
+  if (!name) return { description: null, source: null };
+
+  // Write through, so the next scan of this code answers from D1 even after the
+  // category's last item leaves Clover — which is the whole reason this table exists.
+  await mosLearnCode(env, itemNo, name, "clover", null).catch(() => {});
+  return { description: name, source: "clover" };
+}
+
+// 🔑 A NAME A PERSON TYPED OUTRANKS ONE A SWEEP GUESSED — but that rule is enforced in
+// mosResolve, not here. It returns on the FIRST row it finds, so a code that already has
+// a name never reaches the write-through below at all, whatever the sweep saw.
+//
+// 🛑 An earlier draft also carried `WHERE sticker_codes.source <> 'user'` on the clover
+// branch. Mutation testing removed it and every assertion still passed — because the
+// clause is unreachable: the only caller that passes 'clover' has already established
+// there is no row. A guard that cannot fire is not a second layer of protection, it is a
+// claim in the source that nothing checks, and the next person to read it would believe
+// the rule lives here. The early return is the guard, and test-mos section 3 pins it.
+async function mosLearnCode(env, itemNo, description, source, actor) {
+  if (!env.DB || !itemNo || !description) return;
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO sticker_codes (code, description, source, taught_by, first_seen, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(code) DO UPDATE SET description = excluded.description,
+       source = excluded.source, taught_by = excluded.taught_by, updated_at = excluded.updated_at`
+  ).bind(String(itemNo), description, source === "user" ? "user" : "clover",
+         actor || null, now, now).run();
+}
+
 // Category -> numeric code, LEARNED FROM CLOVER rather than kept by hand.
 //
 // 🔑 THERE IS NO TABLE TO MAINTAIN, and that is deliberate. A hand-kept list of category
@@ -12315,6 +12468,12 @@ const ACTION_PAGE = new Map([
   ["bin-dump-recent", ["bin-dump", "edit"]],
   ["bin-dump-log",    ["bin-dump", "edit"]],
   ["bin-dump-update", ["bin-dump", "edit"]],
+  // Mark Out of Stock. `mos-delete` is absent for the same reason bin-dump-delete
+  // is: removing a recorded loss is a manager's undo, not a floor action.
+  ["mos-list",        ["mos", "view"]],
+  ["mos-lookup",      ["mos", "edit"]],
+  ["mos-log",         ["mos", "edit"]],
+  ["mos-update",      ["mos", "edit"]],
 ]);
 
 // The closed set an admin may tick, DERIVED from the map above rather than
@@ -12329,7 +12488,7 @@ function pageLevel(user, page) {
   return PAGE_LEVELS[want] || 0;
 }
 
-// The guard the handlers call, shaped like binDumpStoreGuard: a Response to
+// The guard the handlers call, shaped like storeActionGuard: a Response to
 // return, or null to carry on. A financial role passes on the role it already
 // had, so this is behaviour-preserving for every account that exists today.
 function canUsePage(user, isAdminSecret, page, level) {
@@ -14172,9 +14331,16 @@ export default {
       const pageReq = ACTION_PAGE.get(requestedAction);
       const pageOk = !!pageReq && canUsePage(currentUser, isAdminSecret, pageReq[0], pageReq[1]);
       if (!NON_FINANCIAL_ACTIONS.has(requestedAction) && !pageOk) {
-        return new Response(JSON.stringify({
-          error: "Forbidden", code: "NO_FINANCIAL_ACCESS",
-        }), { status: 403, headers: corsJson });
+        // 🔑 THE REFUSAL NAMES WHICH DOOR WAS LOCKED. The gate fires BEFORE the
+        // handler, so a handler's precise requirePage() code never runs — and an
+        // associate who holds a page at `view` and posts to it would be told
+        // "no financial access", which is true of the role and useless to them.
+        // Where the action belongs to a page, answer as that page would.
+        const body = pageReq
+          ? { error: "Forbidden", page: pageReq[0],
+              code: pageReq[1] === "edit" ? "NEED_PAGE_EDIT" : "NEED_PAGE_VIEW" }
+          : { error: "Forbidden", code: "NO_FINANCIAL_ACCESS" };
+        return new Response(JSON.stringify(body), { status: 403, headers: corsJson });
       }
     }
 
@@ -20649,7 +20815,7 @@ export default {
       if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
       try {
         const body = await request.json();
-        const denied = binDumpStoreGuard(body?.store, currentUser, isAdminSecret, corsJson);
+        const denied = storeActionGuard(body?.store, currentUser, isAdminSecret, corsJson);
         if (denied) return denied;
         const store = String(body.store).toUpperCase();
 
@@ -20715,7 +20881,7 @@ export default {
       const pageDenied = requirePage(currentUser, isAdminSecret, "bin-dump", "edit", corsJson);
       if (pageDenied) return pageDenied;
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
-      const denied = binDumpStoreGuard(url.searchParams.get("store"), currentUser, isAdminSecret, corsJson);
+      const denied = storeActionGuard(url.searchParams.get("store"), currentUser, isAdminSecret, corsJson);
       if (denied) return denied;
       const po = String(url.searchParams.get("po") || "").trim();
 
@@ -20751,7 +20917,7 @@ export default {
                  FROM bin_dumps WHERE 1=1`;
       const binds = [];
       if (storeRaw && storeRaw !== "ALL") {
-        const denied = binDumpStoreGuard(storeRaw, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        const denied = storeActionGuard(storeRaw, currentUser, isAdminSecret, corsJson, { allowClosed: true });
         if (denied) return denied;
         q += " AND store = ?"; binds.push(storeRaw);
       } else if (allow) {
@@ -20806,7 +20972,7 @@ export default {
         if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
         // The row's OWN store decides, not one the caller supplies — otherwise a
         // caller could name a store they hold and edit a row belonging to another.
-        const denied = binDumpStoreGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        const denied = storeActionGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
         if (denied) return denied;
 
         const fields = binDumpFields(body);
@@ -20865,7 +21031,7 @@ export default {
         if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
         const row = await env.DB.prepare("SELECT r2_key, store FROM bin_dumps WHERE id = ?").bind(id).first();
         if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
-        const denied = binDumpStoreGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        const denied = storeActionGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
         if (denied) return denied;
         await env.DB.prepare("DELETE FROM bin_dumps WHERE id = ?").bind(id).run();
         // The row is the record; a tag photo with nothing pointing at it is litter.
@@ -20893,6 +21059,288 @@ export default {
       // A tag photo never changes once written → cache hard in the browser.
       h.set("Cache-Control", "private, max-age=2592000, immutable");
       return new Response(obj.body, { headers: h });
+    }
+
+    // ══ Mark Out of Stock ═════════════════════════════════════════════════
+    //
+    // Merchandise that left the floor without being sold. One row per sticker code per
+    // entry. The month is a grouping, not something anyone closes (Brian, 2026-09-10).
+
+    // GET ?action=mos-lookup&store=BL1&code=BL-50038-1_5
+    //
+    // Resolves a scanned or typed sticker into the fields the entry screen fills in for
+    // itself. Deliberately SEPARATE from mos-log so the screen can show what it read and
+    // let someone check it against the label in their hand before anything is committed —
+    // the same reason bin-dump-scan does not write a row.
+    if (url.searchParams.get("action") === "mos-lookup" && request.method === "GET") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "mos", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      const store = String(url.searchParams.get("store") || "").trim().toUpperCase();
+      const denied = storeActionGuard(store, currentUser, isAdminSecret, corsJson,
+        { closedMsg: "nothing can be marked out of it" });
+      if (denied) return denied;
+
+      const code = mosNormalizeCode(url.searchParams.get("code"));
+      const parsed = code ? mosParseCode(code) : null;
+      if (!parsed) {
+        return new Response(JSON.stringify({
+          error: "That doesn't read as a shelf sticker", code: "BAD_CODE",
+        }), { status: 400, headers: corsJson });
+      }
+      const { description, source } = await mosResolve(env, parsed.itemNo, store);
+      return new Response(JSON.stringify({
+        ok: true,
+        code,
+        item_no: parsed.itemNo,
+        description,
+        description_source: source,
+        unit_price_cents: parsed.priceCents,
+        unit_cost_cents: await mosCostCents(env, description),
+        // The screen asks for a name when this is true, and mos-log teaches it.
+        needs_description: !description,
+      }), { headers: corsJson });
+    }
+
+    // POST ?action=mos-log  { store, code, qty, reason, description? }
+    if (url.searchParams.get("action") === "mos-log" && request.method === "POST") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "mos", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const denied = storeActionGuard(body?.store, currentUser, isAdminSecret, corsJson,
+          { closedMsg: "nothing can be marked out of it" });
+        if (denied) return denied;
+        const store = String(body.store).trim().toUpperCase();
+
+        const code = mosNormalizeCode(body?.code);
+        const parsed = code ? mosParseCode(code) : null;
+        if (!parsed) {
+          return new Response(JSON.stringify({
+            error: "That doesn't read as a shelf sticker", code: "BAD_CODE",
+          }), { status: 400, headers: corsJson });
+        }
+
+        // 🛑 THE SHAPE, THEN THE VALUE. parseInt("12abc") is 12 and parseInt("1e3") is
+        // 1; Number("1e3") is 1000 and Number(" 12 ") is 12. Every one of those is a
+        // quantity nobody typed, landing silently in a shrink total. A unit count is
+        // digits and nothing else, so it is matched as digits before it is a number.
+        const qty = mosQty(body?.qty);
+        if (qty === null) {
+          return new Response(JSON.stringify({
+            error: "Quantity must be a whole number of units", code: "BAD_QTY",
+          }), { status: 400, headers: corsJson });
+        }
+
+        // Required, by decision — a shrink figure you cannot break down by cause is not
+        // worth keeping. The list lives in one const so a fifth reason is one line and no
+        // migration (see migration-062 on why there is no CHECK constraint).
+        const reason = String(body?.reason || "").trim();
+        if (!MOS_REASONS.includes(reason)) {
+          return new Response(JSON.stringify({
+            error: "Pick a reason", code: "BAD_REASON", reasons: MOS_REASONS,
+          }), { status: 400, headers: corsJson });
+        }
+
+        let { description, source } = await mosResolve(env, parsed.itemNo, store);
+
+        // Teaching. The first person to scan a code nobody has named types it once and
+        // everyone after gets it filled in.
+        //
+        // 🛑 THIS WRITE IS PERMANENT AND CHAIN-WIDE, so it is validated harder than a
+        // field that only lands on one row: a typo here mislabels the category for every
+        // store and every future entry. Requires real text — length, and at least one
+        // letter, so "-", "1" and "n/a" cannot become a category name.
+        if (!description) {
+          const typed = binDumpText(body?.description, 120);
+          if (typed && typed.length >= 3 && /[a-z]/i.test(typed)) {
+            description = typed;
+            source = "user";
+            await mosLearnCode(env, parsed.itemNo, typed, "user", actorLabel(currentUser));
+          }
+        }
+        if (!description) {
+          return new Response(JSON.stringify({
+            error: "Nothing on file names item " + parsed.itemNo + " yet",
+            code: "NEEDS_DESCRIPTION", item_no: parsed.itemNo,
+          }), { status: 400, headers: corsJson });
+        }
+
+        // Snapshotted, not resolved at read time — see migration-062.
+        const unitCost = await mosCostCents(env, description);
+        const at = new Date().toISOString();
+        const res = await env.DB.prepare(
+          `INSERT INTO mos_entries (store, code, item_no, description, qty,
+             unit_cost_cents, unit_price_cents, reason, logged_by, logged_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`
+        ).bind(store, code, parsed.itemNo, description, qty,
+               unitCost, parsed.priceCents, reason, actorLabel(currentUser), at).run();
+
+        return new Response(JSON.stringify({
+          ok: true, id: res.meta?.last_row_id ?? null, store, code,
+          item_no: parsed.itemNo, description, description_source: source,
+          qty, unit_cost_cents: unitCost, unit_price_cents: parsed.priceCents,
+          reason, logged_at: at, month: mosMonthOf(at),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=mos-list&store=BL1[&months=3|all][&limit=]
+    if (url.searchParams.get("action") === "mos-list" && request.method === "GET") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "mos", "view", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+
+      const storeRaw = String(url.searchParams.get("store") || "").trim().toUpperCase();
+      const allow = currentUser ? allowedStores(currentUser) : null;
+      let where = " WHERE 1=1";
+      const binds = [];
+      if (storeRaw && storeRaw !== "ALL") {
+        const denied = storeActionGuard(storeRaw, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+        where += " AND store = ?"; binds.push(storeRaw);
+      } else if (allow) {
+        // "All stores" means all the stores THIS USER holds, never all stores.
+        if (!allow.length) {
+          return new Response(JSON.stringify({ ok: true, rows: [], months: [], truncated: false }), { headers: corsJson });
+        }
+        where += ` AND store IN (${allow.map(() => "?").join(",")})`; binds.push(...allow);
+      }
+      const monthsRaw = String(url.searchParams.get("months") || "3").trim().toLowerCase();
+      const allTime = monthsRaw === "all";
+      const months = allTime ? null : Math.min(Math.max(parseInt(monthsRaw, 10) || 3, 1), 60);
+      if (!allTime) {
+        // Generous: a calendar month is not 30 days, and the boundary is ET while this
+        // bound is UTC. Over-fetching by a day costs nothing; under-fetching would drop
+        // the oldest visible month's first entries out of its own total.
+        where += " AND logged_at >= ?";
+        binds.push(new Date(Date.now() - (months * 31 + 1) * 86400000).toISOString());
+      }
+      const limitRaw = parseInt(url.searchParams.get("limit") || "", 10);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 5000) : 500;
+
+      // 🔑 TWO QUERIES, AND THE TOTALS ARE NOT COMPUTED FROM THE ROWS.
+      // The month header carries the number this whole page exists to produce. Summing
+      // the DISPLAYED rows would make that number quietly depend on the display limit —
+      // a month with 600 entries would report the cost of its most recent 500 and look
+      // exactly as authoritative. The totals query is unlimited and narrow (five small
+      // columns), so it is correct whether or not the list beneath it is truncated.
+      const { results: totRows } = await env.DB.prepare(
+        `SELECT logged_at, qty, unit_cost_cents, unit_price_cents, reason FROM mos_entries${where}`
+      ).bind(...binds).all();
+
+      // Grouped in JS rather than by strftime, because the month boundary is EASTERN and
+      // SQLite would group by UTC — every entry made after 8pm on the last day of a month
+      // would land in the next one, in the one column nobody would think to re-check.
+      const byMonth = new Map();
+      for (const r of (totRows || [])) {
+        const m = mosMonthOf(r.logged_at);
+        if (!byMonth.has(m)) {
+          byMonth.set(m, { month: m, lines: 0, units: 0, cost_cents: 0, retail_cents: 0,
+                           shrink_cents: 0, store_use_cents: 0, lines_without_cost: 0 });
+        }
+        const t = byMonth.get(m);
+        const q = Number(r.qty) || 0;
+        t.lines += 1;
+        t.units += q;
+        t.retail_cents += q * (Number(r.unit_price_cents) || 0);
+        // null cost is "not on file", never zero — counted so the screen can say the
+        // total is short rather than presenting it as complete.
+        if (r.unit_cost_cents === null || r.unit_cost_cents === undefined) {
+          t.lines_without_cost += 1;
+        } else {
+          const c = q * Number(r.unit_cost_cents);
+          t.cost_cents += c;
+          if (r.reason === "Store Use") t.store_use_cents += c; else t.shrink_cents += c;
+        }
+      }
+      const monthTotals = [...byMonth.values()].sort((a, b) => b.month.localeCompare(a.month));
+
+      const { results } = await env.DB.prepare(
+        `SELECT id, store, code, item_no, description, qty, unit_cost_cents, unit_price_cents,
+                reason, logged_by, logged_at, edited_by, edited_at FROM mos_entries${where}
+         ORDER BY logged_at DESC LIMIT ?`
+      ).bind(...binds, limit + 1).all();
+      const found = results || [];
+      const truncated = found.length > limit;
+      const rows = found.slice(0, limit).map(r => ({ ...r, month: mosMonthOf(r.logged_at) }));
+
+      return new Response(JSON.stringify({
+        ok: true, rows, months: monthTotals,
+        range: allTime ? "all" : months, truncated,
+      }), { headers: corsJson });
+    }
+
+    // POST ?action=mos-update  { id, qty, reason }
+    //
+    // 🔑 ONLY THE TWO FIELDS A PERSON TYPED. The code, description, cost and price are
+    // facts about the sticker that was scanned, not opinions to revise — editing the code
+    // would mean re-resolving all four and silently turning this row into a different
+    // product. A wrong sticker is a delete, which is a manager's job.
+    if (url.searchParams.get("action") === "mos-update" && request.method === "POST") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "mos", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const id = Number(body?.id);
+        if (!Number.isInteger(id)) {
+          return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        }
+        const row = await env.DB.prepare("SELECT store FROM mos_entries WHERE id = ?").bind(id).first();
+        if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        // Store comes FROM THE ROW, never from the body — otherwise anyone could edit any
+        // store's entry by naming their own.
+        const denied = storeActionGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+
+        const qty = mosQty(body?.qty);
+        if (qty === null) {
+          return new Response(JSON.stringify({ error: "Quantity must be a whole number of units", code: "BAD_QTY" }),
+            { status: 400, headers: corsJson });
+        }
+        const reason = String(body?.reason || "").trim();
+        if (!MOS_REASONS.includes(reason)) {
+          return new Response(JSON.stringify({ error: "Pick a reason", code: "BAD_REASON", reasons: MOS_REASONS }),
+            { status: 400, headers: corsJson });
+        }
+        await env.DB.prepare(
+          "UPDATE mos_entries SET qty = ?, reason = ?, edited_by = ?, edited_at = ? WHERE id = ?"
+        ).bind(qty, reason, actorLabel(currentUser), new Date().toISOString(), id).run();
+        return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=mos-delete  { id }
+    //
+    // 🛑 canSeeFinancials, and absent from ACTION_PAGE — so no page grant reaches it at
+    // any level. Removing a recorded loss is exactly the action you would not hand to the
+    // person whose mistake or shrink it records.
+    if (url.searchParams.get("action") === "mos-delete" && request.method === "POST") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const id = Number(body?.id);
+        if (!Number.isInteger(id)) {
+          return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        }
+        const row = await env.DB.prepare("SELECT store FROM mos_entries WHERE id = ?").bind(id).first();
+        if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        const denied = storeActionGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+        await env.DB.prepare("DELETE FROM mos_entries WHERE id = ?").bind(id).run();
+        return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
     }
 
     if (url.searchParams.get("action") === "sticker-history" && request.method === "GET") {
