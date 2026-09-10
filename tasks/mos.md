@@ -133,10 +133,38 @@ getting copied instead of called. Its closed-store sentence is now the caller's,
   computed against the real composited background on seven selectors in both themes.
   Not committed: Playwright is not a dependency.
 
+## What landed, 2026-09-10
+
+| Step | Staging | Production |
+|---|---|---|
+| `migration-062.sql` | ✅ both tables + index | ✅ same |
+| Worker deploy | ✅ `9df48b9d-d2fa-4e83-beee-9d5ca6026684` | ✅ `b3df90ac-960f-4c45-b9ad-62d2380fa827` |
+| Frontend | — | ⏳ waits on the merge of #207 |
+
+Neither table existed on either database beforehand — checked, because
+`CREATE TABLE IF NOT EXISTS` silently no-ops on a table of the same name with a
+different shape, which is the one way this migration could have looked fine and done
+nothing. Production row counts across the tables MOS sits beside were identical before
+and after (15 users, 7 bin_dumps, 7 sticker_prints, 2,740 daily_sales), which is what a
+create-only migration should do.
+
+Both deploys verified against the deployed bundle: `mos-lookup`, `mos-log`, `mos-list`,
+`mos-update`, `mos-delete`, `mosLearnCode`, `mosCostCents` and `sticker_codes` all
+present; `binDumpStoreGuard` **0 occurrences**, so the rename propagated rather than
+leaving two copies; and `associate-login`, `bin-dump-log`, `DUPLICATE_BARCODE`,
+`auth-verify-otp`, `FINANCIAL_ROLES`, `sticker-check` all still there. Three consecutive
+identical body hashes on production, and the production hash equals staging's.
+
+⚠️ **The live HTTP endpoints were not exercised** — the egress proxy denies the worker's
+own hostnames from this session. The first real request will be a human one.
+
+The new worker is backward-compatible with the frontend currently on `main`: it only
+ADDS actions, and the rename is internal.
+
 ## Still open
 
-- **Nothing is applied to either database.** `migration-062.sql` has not run, so the page
-  500s until it does. Deploy order is migration → worker → frontend.
+- **The frontend.** Until #207 merges, production has no MOS page — the endpoints are
+  live and unreachable from the UI, which is the safe direction.
 - The learned map starts EMPTY. The first scan of any code teaches it, so early on people
   will be asked to name things more often than they will later.
 - Only Bargain Lane. `ACTION_BUSINESS` maps all five actions to `bl`.

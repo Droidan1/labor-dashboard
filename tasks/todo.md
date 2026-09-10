@@ -15,8 +15,12 @@ monthly total cost MOS'ed", and answers settling the scan (real QR), the categor
 - [x] `scripts/test-mos.mjs` (129 assertions) + ten mutations, ten caught
 - [x] 51 browser assertions over four scenarios, contrast in both themes
 - [x] CACHE_NAME v178 -> v179
-- [ ] **Apply `migration-062.sql`** to staging, then production — needs Brian's go (rule 7)
-- [ ] Deploy the worker, then merge the frontend
+- [x] **Apply `migration-062.sql`** to staging, then production — done 2026-09-10; both
+      tables created, every neighbouring row count unchanged
+- [x] Deploy the worker to both — staging `9df48b9d`, production `b3df90ac`, verified by
+      bundle over three consecutive identical hashes
+- [ ] **Merge PR #207** — Brian's click; that is the last step
+- [ ] Scan a real sticker and confirm the flow end to end
 
 Full write-up in [mos.md](mos.md). Two findings worth reading before the deploy: the
 description lookup cannot name stock that has left Clover (which is what MOS is for), and
