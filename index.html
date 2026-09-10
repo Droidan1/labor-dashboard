@@ -2468,6 +2468,8 @@
         table.mos-tbl tr:last-child td{border-bottom:0}
         table.mos-tbl td.n{text-align:right}
         table.mos-tbl td.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
+        #page-mos code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;
+          background:var(--mph);border:1px solid var(--mh);border-radius:4px;padding:0 4px;color:var(--mi)}
         table.mos-tbl td.desc{white-space:normal;min-width:175px;color:var(--md);font-size:12px}
         .mos-ea{display:block;font-size:10.5px;color:var(--md);font-weight:400;margin-top:-1px}
         .mos-chip{font-size:10px;font-weight:700;letter-spacing:.04em;padding:2.5px 7px;border-radius:5px;
@@ -2528,7 +2530,8 @@
               <button class="mos-btn" type="button" onclick="mosLookup()">Look it up</button>
             </div>
             <p class="mos-hint">Hold the QR in frame and it fills itself in. Typing works too — dots and
-              underscores both read, and case doesn't matter.</p>
+              underscores both read, case doesn't matter, and a sticker with no price on it
+              (<code>BL-10380</code>) is fine.</p>
 
             <!-- Live scanner. Same camera lessons as Price Scan; see mosScan(). -->
             <div id="mos-scanbox" hidden style="margin:0 16px 16px;position:relative;border-radius:12px;overflow:hidden;background:#000">
@@ -2635,7 +2638,8 @@
               <b>Shrink</b> is Stolen, Damaged and Expired — merchandise lost. <b>Store use</b> is stock the
               store consumed on purpose, so it is counted apart rather than added in.
               A line whose category has no cost on file is listed but left out of the cost total, and the
-              month says how many.
+              month says how many. Same for a sticker printed without a price — <code>BL-10380</code> is a
+              whole sticker — which still counts toward cost, because cost comes from the category.
             </div>
           </div>
         </div>
@@ -23809,7 +23813,7 @@
     const retail = r && r.unit_price_cents !== null && r.unit_price_cents !== undefined
       ? mosMoney(q * r.unit_price_cents) : null;
     el('mos-v-cost').textContent = cost || (r ? 'no cost on file' : '—');
-    el('mos-v-retail').textContent = retail || '—';
+    el('mos-v-retail').textContent = retail || (r ? 'not on sticker' : '—');
     // Reason is required, so Save cannot be reached without one.
     const needsName = r && r.needs_description;
     const named = !needsName || el('mos-teach-input').value.trim().length >= 3;
@@ -23852,7 +23856,11 @@
       // has no cost imported, and four of the forty-six do not.
       cost.textContent = 'no cost on file'; cost.className = 'none';
     } else { cost.textContent = mosMoney(j.unit_cost_cents); cost.className = ''; }
-    el('mos-f-price').textContent = mosMoney(j.unit_price_cents) || '—';
+    const price = el('mos-f-price');
+    if (j.unit_price_cents === null || j.unit_price_cents === undefined) {
+      // Same rule as cost: unknown is said, not printed as $0.00.
+      price.textContent = 'no price on the sticker'; price.className = 'none';
+    } else { price.textContent = mosMoney(j.unit_price_cents); price.className = ''; }
     const now = new Date();
     el('mos-f-when').innerHTML = escapeHtml(now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))
       + '<br><span style="color:var(--md);font-weight:500">'
@@ -23890,7 +23898,9 @@
   // QR — a carton label, a poster, an employee's phone — and hand back a perfectly
   // valid string that is not one of ours. The shape check is the real guard: it must
   // look like BL-<digits>-<price> or it is ignored and scanning continues.
-  const MOS_CODE_RE = /^BL-\d{1,10}-\d+(?:[._]\d{1,2})?$/i;
+  // The price segment is optional: `BL-10380` is a whole sticker. Mirrors
+  // mosNormalizeCode in worker.js, which is the real parser.
+  const MOS_CODE_RE = /^BL-\d{1,10}(?:-\d+(?:[._]\d{1,2})?)?$/i;
   const mosLooksLikeSticker = (s) => MOS_CODE_RE.test(String(s || '').trim().replace(/\s+/g, ''));
 
   let mosStream = null, mosScanning = false, mosTorchOn = false;
@@ -24142,7 +24152,9 @@
     const cost = r.unit_cost_cents === null || r.unit_cost_cents === undefined
       ? '<span class="mos-ea">no cost on file</span>'
       : `${mosMoney(r.qty * r.unit_cost_cents)}<span class="mos-ea">${mosMoney(r.unit_cost_cents)} ea</span>`;
-    const retail = `${mosMoney(r.qty * r.unit_price_cents)}<span class="mos-ea">${mosMoney(r.unit_price_cents)} ea</span>`;
+    const retail = r.unit_price_cents === null || r.unit_price_cents === undefined
+      ? '<span class="mos-ea">no price on sticker</span>'
+      : `${mosMoney(r.qty * r.unit_price_cents)}<span class="mos-ea">${mosMoney(r.unit_price_cents)} ea</span>`;
     const when = new Date(r.logged_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     const act = (mosCanEdit() ? `<button class="mos-row-btn" onclick="mosEdit(${r.id})">Edit</button>` : '')
       + (mosCanDelete() ? ` <button class="mos-row-btn" onclick="mosRemove(${r.id})">Remove</button>` : '');
@@ -24169,8 +24181,10 @@
       const open = mosState.open.has(m.month);
       const rows = mosState.rows.filter(r => r.month === m.month);
       const isNow = m.month === mosState.months[0].month;
-      const noCost = m.lines_without_cost
-        ? `<div class="warn">No cost on file<b>${m.lines_without_cost} line${m.lines_without_cost === 1 ? '' : 's'}</b></div>` : '';
+      const short = (n, what) => n
+        ? `<div class="warn">No ${what}<b>${n} line${n === 1 ? '' : 's'}</b></div>` : '';
+      const noCost = short(m.lines_without_cost, 'cost on file')
+                   + short(m.lines_without_price, 'price on sticker');
       return `<div class="mos-mo${open ? ' open' : ''}" id="mos-mo-${m.month}">
         <button class="mos-mo-head" type="button" aria-expanded="${open}" onclick="mosToggleMonth('${m.month}')">
           <span class="mos-caret"></span>

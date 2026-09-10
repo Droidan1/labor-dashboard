@@ -94,8 +94,21 @@ console.log('\n── 1. The sticker code decodes, in every spelling it arrives 
   eq(mosParseCode('BL-50038-1_75').priceCents, 175, 'the cents conversion rounds rather than truncates');
   eq(mosParseCode('BL-50038-29_99').priceCents, 2999, '29_99 survives the same rounding');
 
+  // 🔑 A STICKER MAY CARRY NO PRICE AT ALL (Brian, 2026-09-10). `BL-10380` is whole.
+  // The item is still fully identified, and cost comes from the CATEGORY, so the
+  // number this page exists for survives; only the retail figure is unknown.
+  eq(mosNormalizeCode('BL-10380'), 'BL-10380', 'a priceless sticker is a sticker');
+  eq(mosNormalizeCode('bl-10380'), 'BL-10380', 'and normalises for case');
+  eq(mosNormalizeCode(' BL-10380 '), 'BL-10380', 'and for whitespace');
+  eq(mosParseCode('BL-10380').itemNo, '10380', 'its item number reads');
+  eq(mosParseCode('BL-10380').priceCents, null,
+     '🛑 its price is NULL, not 0 — zero would be a free item, which is a different claim');
+  eq(mosNormalizeCode('BL-10380-'), null, 'a trailing hyphen is not a sticker');
+  eq(mosNormalizeCode('BL-'), null, 'nor a bare prefix');
+  eq(mosNormalizeCode('BL-10380-x'), null, 'nor a non-numeric price');
+  eq(mosParseCode('BL-50038-0'), null, 'a price segment that IS present must be real');
+
   eq(mosNormalizeCode('50038-1_5'), null, 'no BL- prefix is not a sticker');
-  eq(mosNormalizeCode('BL-50038'), null, 'no price segment is not a sticker');
   eq(mosNormalizeCode('BL-ABC-1'), null, 'a non-numeric item is not a sticker');
   eq(mosNormalizeCode(''), null, 'empty is not a sticker');
   eq(mosNormalizeCode(null), null, 'null is not a sticker');
@@ -222,7 +235,10 @@ console.log('\n── 4. Logging, and what it refuses ──');
     [{ ...base, qty: 100001 }, 'an absurd quantity'],
     [{ ...base, reason: '' }, 'no reason'],
     [{ ...base, reason: 'Shrinkage' }, 'a reason that is not one of the four'],
-    [{ ...base, code: 'BL-50038' }, 'a code with no price'],
+    // `BL-50038` is NO LONGER refused — a sticker without a price is a real sticker
+    // (Brian, 2026-09-10), covered in section 6b. What stays refused is a code that is
+    // malformed rather than merely priceless.
+    [{ ...base, code: 'BL-50038-' }, 'a trailing hyphen where a price should be'],
     [{ ...base, code: 'nonsense' }, 'a code that is not a code'],
   ]) {
     eq((await post(body)).status, 400, `refused: ${why}`);
@@ -290,6 +306,40 @@ console.log('\n── 6. The month totals do not depend on the display limit ─
   eq(m.lines_without_cost, 1, 'a costless line is counted as such');
   eq(m.cost_cents, 0, 'and contributes nothing to the cost total');
   eq(m.retail_cents, 1200, 'while its retail value still counts — that comes from the code');
+}
+
+console.log('\n── 6b. A sticker with no price on it ──');
+{
+  const { db, env } = env0();
+  // 10380 is Halloween Candy in the seeded map, and the category has a cost.
+  db.prepare(`INSERT INTO sticker_codes (code, description, source, first_seen, updated_at)
+              VALUES ('10380', ?, 'clover', 'x', 'x')`).run(CONDIMENTS);
+
+  const look = await json(await call('/?action=mos-lookup&store=BL1&code=BL-10380', { user: 'u-mgr1', env }));
+  eq(look.item_no, '10380', 'lookup accepts it');
+  eq(look.unit_price_cents, null, 'with no retail price');
+  eq(look.unit_cost_cents, 25, '🔑 but the COST still resolves — it comes from the category, not the price');
+  eq(look.needs_description, false, 'and the description resolves as normal');
+
+  const logged = await call('/?action=mos-log', { user: 'u-mgr1', method: 'POST', env,
+    body: { store: 'BL1', code: 'BL-10380', qty: 10, reason: 'Damaged' } });
+  eq(logged.status, 200, 'and it logs');
+  const row = db.prepare('SELECT code, unit_price_cents, unit_cost_cents FROM mos_entries').get();
+  eq(row.code, 'BL-10380', 'stored under the code as scanned');
+  eq(row.unit_price_cents, null, 'price NULL in the row');
+  eq(row.unit_cost_cents, 25, 'cost present in the row');
+
+  // And one priced line alongside it, so the month has both kinds.
+  await call('/?action=mos-log', { user: 'u-mgr1', method: 'POST', env,
+    body: { store: 'BL1', code: 'BL-50038-1_5', qty: 4, reason: 'Expired' } });
+  const m = (await json(await call('/?action=mos-list&store=BL1', { user: 'u-mgr1', env }))).months[0];
+  eq(m.lines, 2, 'both lines count');
+  eq(m.units, 14, 'and all their units');
+  eq(m.cost_cents, 350, '🔑 the COST total includes the priceless line — 10x25c + 4x25c');
+  eq(m.retail_cents, 600, 'the RETAIL total excludes it — 4 x $1.50 only');
+  eq(m.lines_without_price, 1, '🛑 and the month SAYS its retail total is short by one line');
+  eq(m.lines_without_cost, 0, 'while nothing is missing a cost');
+  eq(m.shrink_cents, 350, 'both are shrink');
 }
 
 console.log('\n── 7. Editing and removing ──');
@@ -410,6 +460,16 @@ console.log('\n── 10. The decoder ships, and the build will carry it ──'
   ok(/mosLoadDecoder/.test(client), 'it is injected on demand instead');
   // The shape guard: Reed-Solomon proves a QR was read correctly, not that it was OURS.
   ok(/mosLooksLikeSticker/.test(client), 'a decoded QR is shape-checked before it is trusted');
+  // 🔑 That shape check is a SECOND parser, and a stricter one would silently drop a
+  // valid scan on the floor — the camera would see the QR and ignore it.
+  const re = client.match(/const MOS_CODE_RE = (\/[^\n]+\/i);/)[1];
+  const clientRe = new Function('return ' + re)();
+  for (const c of ['BL-10380', 'BL-50038-1_5', 'BL-50038-1.5', 'bl-10380', 'BL-50038-10']) {
+    ok(clientRe.test(c), `the client shape check accepts ${c}`);
+  }
+  for (const c of ['BL-10380-', 'BL-', 'nonsense', 'https://x/BL-10380']) {
+    ok(!clientRe.test(c), `and rejects ${JSON.stringify(c)}`);
+  }
 }
 
 console.log(failures ? `\n${failures} FAILED of ${assertions}` : `\n${assertions} passed`);

@@ -11152,10 +11152,18 @@ const MOS_REASONS = ["Stolen", "Damaged", "Expired", "Store Use"];
 
 function mosNormalizeCode(raw) {
   const s = String(raw || "").trim().toUpperCase().replace(/\s+/g, "");
-  // The price tail is optional-decimal because $10.00 encodes as a bare `10` — no
-  // separator at all, which is a different SHAPE and not just a different value.
-  const m = /^BL-(\d{1,10})-(\d+(?:[._]\d{1,2})?)$/.exec(s);
-  return m ? `BL-${m[1]}-${m[2].replace(".", "_")}` : null;
+  // TWO OPTIONAL PARTS, and they are optional for different reasons.
+  //
+  //   the decimal   $10.00 encodes as a bare `10` — no separator at all, which is a
+  //                 different SHAPE and not just a different value.
+  //   the segment   some stickers carry no price whatsoever: `BL-10380` is a whole
+  //                 sticker (Brian, 2026-09-10). The item is still fully identified —
+  //                 and since cost is looked up from the CATEGORY, a priceless sticker
+  //                 still produces the number this page exists for. Only the retail
+  //                 figure is unknown, and unknown is recorded as null, never as zero.
+  const m = /^BL-(\d{1,10})(?:-(\d+(?:[._]\d{1,2})?))?$/.exec(s);
+  if (!m) return null;
+  return m[2] === undefined ? `BL-${m[1]}` : `BL-${m[1]}-${m[2].replace(".", "_")}`;
 }
 
 // Code -> { itemNo, priceCents }. Takes the NORMALISED form.
@@ -11164,8 +11172,14 @@ function mosNormalizeCode(raw) {
 // in IEEE 754, and truncating that is a penny short on every $1.75 line — small, invisible,
 // and wrong in a column that gets summed for a whole month.
 function mosParseCode(code) {
-  const m = /^BL-(\d{1,10})-(\d+(?:_\d{1,2})?)$/.exec(String(code || ""));
+  const m = /^BL-(\d{1,10})(?:-(\d+(?:_\d{1,2})?))?$/.exec(String(code || ""));
   if (!m) return null;
+  // 🔑 NULL PRICE AND UNPARSEABLE ARE DIFFERENT ANSWERS, and callers act on the
+  // difference: null here means "this sticker carries no price", which is a valid
+  // sticker; returning null for the WHOLE result means "this is not a sticker" and
+  // becomes a 400. A price segment that IS present must still be a real price, so
+  // `BL-50038-0` stays refused — nothing is sold for nothing.
+  if (m[2] === undefined) return { itemNo: m[1], priceCents: null };
   const price = Number(m[2].replace("_", "."));
   if (!Number.isFinite(price) || price <= 0) return null;
   return { itemNo: m[1], priceCents: Math.round(price * 100) };
@@ -21240,13 +21254,21 @@ export default {
         const m = mosMonthOf(r.logged_at);
         if (!byMonth.has(m)) {
           byMonth.set(m, { month: m, lines: 0, units: 0, cost_cents: 0, retail_cents: 0,
-                           shrink_cents: 0, store_use_cents: 0, lines_without_cost: 0 });
+                           shrink_cents: 0, store_use_cents: 0,
+                           lines_without_cost: 0, lines_without_price: 0 });
         }
         const t = byMonth.get(m);
         const q = Number(r.qty) || 0;
         t.lines += 1;
         t.units += q;
-        t.retail_cents += q * (Number(r.unit_price_cents) || 0);
+        // A sticker with no price contributes no retail value and is COUNTED as such —
+        // the same treatment as a missing cost. `Number(null) || 0` would have added
+        // zero and said nothing, leaving a short total looking complete.
+        if (r.unit_price_cents === null || r.unit_price_cents === undefined) {
+          t.lines_without_price += 1;
+        } else {
+          t.retail_cents += q * Number(r.unit_price_cents);
+        }
         // null cost is "not on file", never zero — counted so the screen can say the
         // total is short rather than presenting it as complete.
         if (r.unit_cost_cents === null || r.unit_cost_cents === undefined) {
