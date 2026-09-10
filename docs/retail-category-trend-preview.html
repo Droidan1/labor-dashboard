@@ -94,6 +94,10 @@ html.light{
 }
 
 *{margin:0;padding:0;box-sizing:border-box;}
+/* The UA's [hidden] rule is display:none at (0,1,0); ANY class that sets
+   display beats it and the element stays on screen as an empty stub. Stating
+   it once here means a new hidden element can never quietly ignore it. */
+[hidden]{display:none !important;}
 body{
   background:var(--bg); color:var(--ink);
   font-family:'Geist',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
@@ -136,10 +140,7 @@ body{
 .mc-bar-lbl{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
   color:var(--inkDim);white-space:nowrap;}
 .ctl{display:flex;align-items:center;gap:7px;}
-/* `display:flex` beats the UA's [hidden]{display:none}, so the hidden control
-   stays on screen as an empty stub. Same family as DESIGN.md §4.8 trap 1 —
-   a rule you assume the browser applies, silently outranked. */
-.ctl[hidden]{display:none;}
+
 .ctl-lbl{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--inkDimmer);}
 html.light .ctl-lbl{color:var(--inkDim);/* trap 5: inkDimmer fails AA on light */}
 
@@ -222,6 +223,33 @@ html.light .sec-s{color:var(--inkDim);}
 .dl-v .pct{color:var(--inkDim);font-weight:500;margin-left:5px;}
 .dl-none{font-size:12px;color:var(--inkDim);padding:8px 0 12px;}
 
+/* ── Grid — small multiples, one panel per category ──────────────────── */
+.grid-wrap{padding:2px 18px 6px;}
+.grid-gh{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;
+  margin:14px 0 7px;padding-bottom:5px;border-bottom:1px solid var(--hairline);}
+.grid-gh:first-child{margin-top:2px;}
+.grid-gh-n{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink);}
+.grid-gh-c{font-size:11px;color:var(--inkDim);font-variant-numeric:tabular-nums;}
+.grid-row{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));}
+.gcell{appearance:none;font:inherit;text-align:left;cursor:pointer;
+  background:var(--panelHi);border:1px solid var(--hairline);border-radius:10px;
+  padding:9px 10px 5px;color:var(--ink);transition:border-color .18s,background .18s;}
+.gcell:hover{border-color:var(--border);}
+.gcell.on{border-color:var(--accent);background:var(--goodWash);}
+.gc-t{font-size:11.5px;font-weight:600;color:var(--ink);line-height:1.3;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gc-v{font-size:14px;font-weight:700;color:var(--ink);margin-top:2px;
+  font-variant-numeric:tabular-nums;}
+.gc-d{font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:1px;}
+.gc-s{margin-top:2px;height:30px;}
+.gc-s svg{display:block;width:100%;height:30px;}
+
+.flash{max-height:0;overflow:hidden;opacity:0;margin:0 18px;
+  font-size:11.5px;color:var(--amber);transition:max-height .2s,opacity .2s,margin .2s;}
+.flash.on{max-height:44px;opacity:1;margin:8px 18px 0;}
+
+.sec-c{font-size:11px;color:var(--inkDim);font-variant-numeric:tabular-nums;margin-left:auto;}
+
 /* ── Table view ──────────────────────────────────────────────────────── */
 .tbl-scroll{overflow-x:auto;padding:0 0 4px;}
 table.mc{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;
@@ -239,6 +267,18 @@ table.mc tbody tr:hover td.k{background:var(--panelHi);}
 table.mc tr.tot td{font-weight:700;background:var(--panelHi);border-top:1px solid var(--border);}
 table.mc tr.tot td.k{background:var(--panelHi);}
 .k-dot{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:7px;vertical-align:-1px;}
+/* Level badge + indent + corner rule — the same hierarchy treatment
+   #mc-tbl already uses in index.html (DESIGN.md §4.8). */
+.mc-lvl{display:inline-block;margin-right:8px;padding:1px 4px;border-radius:4px;
+  border:1px solid var(--inkDimmer);color:var(--inkDimmer);
+  font-size:8.5px;font-weight:700;letter-spacing:.06em;vertical-align:1px;}
+.mc-lvl.l3{border-color:var(--accent);color:var(--accent);}
+table.mc tr.mc-l2 td.k{font-weight:600;}
+table.mc tr.mc-l3 td.k{position:sticky;left:0;padding-left:30px;}
+table.mc tr.mc-l3 td.k::before{content:"";position:absolute;left:14px;top:0;bottom:50%;
+  width:9px;border-left:1px solid var(--border);border-bottom:1px solid var(--border);
+  border-bottom-left-radius:4px;}
+table.mc tr.mc-l3 td{color:var(--inkDim);}
 .na{color:var(--inkDim);}
 
 /* ── Panel legend — every visual state gets a row (§4.8) ─────────────── */
@@ -279,8 +319,14 @@ table.mc tr.tot td.k{background:var(--panelHi);}
   <p class="doc-sub">
     A working click-through of the proposed <b>Category Trend</b> panel for the Retail
     Summary page: pick <b>L2 or L3</b>, pick the bucket — <b>day, week, month or
-    quarter</b> — and read every category's line across those buckets, with a
+    quarter</b> — and read every category across those buckets, with a
     period-over-period change strip underneath. Every control below is live.
+    <br><br>
+    <b>Every category is visible, always.</b> <b>Grid</b> gives each one its own panel —
+    all twelve L2s, or all fifty-six L3s grouped under their parents, nothing folded
+    away. <b>Table</b> gives each one a row. <b>Chart</b> overlays up to six for close
+    comparison; click a Grid panel to swap one in. Six is the ceiling on the Chart
+    alone, and it is a legibility limit, not a limit on what you can see.
   </p>
   <div class="doc-note">
     <b>Nothing is wired up, and no app code has been changed.</b> This is a static
@@ -326,6 +372,11 @@ table.mc tr.tot td.k{background:var(--panelHi);}
         <span class="pill" id="ctl-measure"></span>
       </span>
 
+      <span class="ctl" id="ctl-scale-wrap" hidden>
+        <span class="ctl-lbl">Scale</span>
+        <span class="pill" id="ctl-scale"></span>
+      </span>
+
       <span class="tb-spacer"></span>
 
       <span class="pill" id="ctl-view"></span>
@@ -337,6 +388,7 @@ table.mc tr.tot td.k{background:var(--panelHi);}
     </div>
 
     <div class="mc-status" id="status"></div>
+    <div class="flash" id="flash" role="status" aria-live="polite"></div>
 
     <div class="chart-host" id="chart-host">
       <div id="chart"></div>
@@ -349,6 +401,7 @@ table.mc tr.tot td.k{background:var(--panelHi);}
       <div class="sec-hd">
         <span class="sec-t" id="delta-t">Change</span>
         <span class="sec-s" id="delta-s"></span>
+        <span class="sec-c" id="delta-c"></span>
       </div>
       <div id="delta"></div>
     </div>
@@ -440,11 +493,14 @@ const STORE_SCALE = { BL1:1.00, BL2:.82, BL4:.71, BL8:.66, BL14:.58, BL16:.49 };
 // buries the comparison the chart exists to make. It stays one click away in
 // the legend, and the Table always carries it.
 const OTHER = '__other__';
+const ALL   = '__all__';
 const S = {
-  level:'l2', parent:'Consumable Food', bucket:'week', measure:'net',
-  view:'chart', store:'__all__', hidden:new Set([OTHER]), maxSeries:6,
+  level:'l2', parent:ALL, bucket:'week', measure:'net',
+  view:'grid', store:'__all__', hidden:new Set([OTHER]), maxSeries:6,
+  picked:new Set(),        // categories explicitly promoted onto the Chart
+  gridScale:'own',         // 'own' | 'shared'
 };
-function resetHidden(){ S.hidden = new Set([OTHER]); }
+function resetHidden(){ S.hidden = new Set([OTHER]); S.picked = new Set(); }
 
 /* ── Deterministic synthetic data ────────────────────────────────────── */
 // One store-day rate per (store, category). Every bucket is the SUM of its
@@ -582,11 +638,29 @@ function isoWeek(d){
 }
 
 /* ── Series assembly ─────────────────────────────────────────────────── */
+// Which L2 parents are in play. 'All L2s' walks every one of them, so L3 mode
+// can show the whole chain and not just one branch.
+function activeParents(){
+  return (S.level === 'l3' && S.parent === ALL) ? L2S : [S.parent];
+}
 function seriesFor(){
   const { list: buckets, open } = buildBuckets(S.bucket);
   const stores  = S.store === '__all__' ? STORE_KEYS : [S.store];
-  const keys    = S.level === 'l2' ? L2S : (L3S[S.parent] || []);
-  const rows = keys.map(k => ({ key:k, label:shortLabel(k), values:buckets.map(()=>0) }));
+  const zero    = () => buckets.map(()=>0);
+  const rows = [];
+
+  if (S.level === 'l2'){
+    L2S.forEach(k => rows.push({ key:k, l2:k, label:k, values:zero() }));
+  } else {
+    // The KEY keeps its parent. worker.js:2466 is explicit about why: an
+    // l3-only key silently merges "Sku Book Items", which really does appear
+    // under five different L2 parents.
+    activeParents().forEach(l2 =>
+      (L3S[l2] || []).forEach(l3 =>
+        rows.push({ key:l2+' :: '+l3, l2, l3, label:shortLabel(l3), values:zero() })));
+  }
+  const byL2 = {};
+  rows.forEach(r => { (byL2[r.l2] = byL2[r.l2] || []).push(r); });
 
   buckets.forEach((b, bi) => {
     for (let t = b.s.getTime(); t <= b.e.getTime(); t += DAY_MS){
@@ -598,25 +672,65 @@ function seriesFor(){
             r.values[bi] += S.measure === 'net' ? net : unitsFor(r.key, net);
           });
         } else {
-          const parentNet = dayNet(st, S.parent, d);
-          const sh = l3Shares(st, S.parent, d);
-          rows.forEach(r => {
-            const net = parentNet * (sh[r.key] || 0);
-            r.values[bi] += S.measure === 'net' ? net : unitsFor(S.parent, net);
-          });
+          for (const l2 of activeParents()){
+            const parentNet = dayNet(st, l2, d);
+            const sh = l3Shares(st, l2, d);
+            (byL2[l2] || []).forEach(r => {
+              const net = parentNet * (sh[r.l3] || 0);
+              r.values[bi] += S.measure === 'net' ? net : unitsFor(l2, net);
+            });
+          }
         }
       }
     }
   });
+  rows.forEach(r => { r.total = r.values.reduce((a,b)=>a+b,0); });
+  // Two DIFFERENT L3 keys under one parent must never wear the same label —
+  // "FG BL SOFTLINES - APPAREL" and "Apparel" both shorten to "Apparel", and
+  // two identical panels side by side is worse than one long name. Where a
+  // short label collides inside its parent, everyone in the collision falls
+  // back to the raw key.
+  Object.values(byL2).forEach(group => {
+    const seen = {};
+    group.forEach(r => { (seen[r.label] = seen[r.label] || []).push(r); });
+    Object.values(seen).forEach(g => { if (g.length > 1) g.forEach(r => { r.label = pathLabel(r.l3); }); });
+  });
   return { buckets, rows, open };
 }
-// L3 keys are long ("FG BL CONSUMABLES - FOOD - SNACKS"). The chart shows the
-// tail; the full key stays in the tooltip and the table.
+// L3 keys are raw Clover category names and they are messy: a feed prefix
+// ("FG BL "), a department segment, and sometimes a trailing store marker
+// ("APPLIANCES - BL STORES"). Take the meaningful segment; the FULL key stays
+// in the tooltip, the table and the panel's title attribute, so nothing is lost.
+const L3_NOISE = new Set(['BL STORES','STORES','BL']);
+// An explicit set, not a length rule. "≤3 chars and all-caps" reads TEA as an
+// acronym and ships "Coffee & TEA"; the real acronyms in this taxonomy are a
+// short, known list, so name them.
+const ACRONYMS = new Set(['HBA','OTC','BL','IM','SKU','TV','DVD','CD','PC','USB','LED','HDMI']);
+function titleCase(t){
+  const cap = w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  return t.split(/\s+/).map(w => {
+    if (ACRONYMS.has(w.toUpperCase())) return w.toUpperCase();
+    if (!/[A-Za-z]/.test(w)) return w;                       // &, /, digits
+    return w.split(/([/-])/).map(x => /[A-Za-z]/.test(x) ? cap(x) : x).join('');
+  }).join(' ');
+}
+function cleanParts(k){
+  return k.replace(/^(FG\s+BL|FG|BL)\s+/, '').split(' - ')
+    .map(x => x.trim()).filter(x => x && !L3_NOISE.has(x.toUpperCase()))
+    .map(x => x === x.toUpperCase() ? titleCase(x) : x);
+}
 function shortLabel(k){
-  if (!k.includes(' - ')) return k;
   if (k.startsWith('Softline - ') || k.startsWith('Consumable ')) return k;
-  const tail = k.split(' - ').pop();
-  return tail.charAt(0) + tail.slice(1).toLowerCase();
+  const parts = cleanParts(k);
+  return parts.length ? parts[parts.length - 1] : k;
+}
+// The tie-break when two keys under one parent shorten the same way: keep the
+// WHOLE cleaned path rather than dropping back to the raw key, so the label
+// that disambiguates is still a label and not a feed string.
+function pathLabel(k){
+  if (k.startsWith('Softline - ') || k.startsWith('Consumable ')) return k;
+  const parts = cleanParts(k);
+  return parts.length ? parts.join(' \u00b7 ') : k;
 }
 
 /* Colour follows the ENTITY, not its rank in the current view. The ordering
@@ -625,16 +739,21 @@ function shortLabel(k){
 function paletteVar(i){ return getCSS(i < 6 ? '--s'+(i+1) : '--sOther'); }
 function getCSS(v){ return getComputedStyle(root).getPropertyValue(v).trim(); }
 
+// The CHART draws at most six lines — past that no colourblind reader can tell
+// them apart, and it is the one surface that has to stay legible. Which six is
+// yours to choose: click any panel in Grid, or any legend entry here. With
+// nothing chosen it falls back to the six biggest. Everything NOT drawn is
+// still fully visible in Grid and in Table — nothing is hidden, only undrawn.
 function foldSeries(rows){
-  const totals = rows.map(r => ({ r, t:r.values.reduce((a,b)=>a+b,0) }));
-  totals.sort((a,b) => b.t - a.t);
-  const keep = totals.slice(0, S.maxSeries).map(x => x.r);
-  const tail = totals.slice(S.maxSeries).map(x => x.r).filter(r => r.values.some(v=>v>0));
-  keep.forEach((r,i) => { r.slot = i; r.total = totals.find(t=>t.r===r).t; });
+  const ranked = rows.slice().sort((a,b) => b.total - a.total);
+  const picked = ranked.filter(r => S.picked.has(r.key));
+  const keep   = (picked.length ? picked : ranked.slice(0, S.maxSeries)).slice(0, S.maxSeries);
+  const tail   = ranked.filter(r => !keep.includes(r) && r.values.some(v => v > 0));
+  keep.forEach((r,i) => { r.slot = i; });
   if (tail.length){
     const other = { key:OTHER, label:'Other ('+tail.length+')', slot:6,
-      values:keep[0].values.map((_,i)=> tail.reduce((a,r)=>a+r.values[i],0)),
-      members:tail.map(r=>r.label) };
+      values:rows[0].values.map((_,i) => tail.reduce((a,r)=>a+r.values[i],0)),
+      members:tail.map(r => r.label) };
     other.total = other.values.reduce((a,b)=>a+b,0);
     return keep.concat([other]);
   }
@@ -816,28 +935,51 @@ function drawLegend(series){
 }
 
 /* ── Change strip ────────────────────────────────────────────────────── */
-function drawDelta(buckets, series){
+// Ranked over EVERY category, not just the drawn ones — with 60-odd L3s the
+// mover you need to see is rarely one of the six on the chart. Capped at
+// MOVERS rows, and the status line says how many it is ranking over.
+const MOVERS = 12;
+function drawDelta(buckets, allRows){
   const el = document.getElementById('delta');
   el.textContent = '';
-  document.getElementById('delta-t').textContent =
-    'Change vs ' + BUCKETS[S.bucket].vs;
   const n = buckets.length;
-  if (n < 2){ el.innerHTML = '<div class="dl-none">Not enough closed periods to compare.</div>'; return; }
+  if (n < 2){
+    document.getElementById('delta-t').textContent = 'Change';
+    el.innerHTML = '<div class="dl-none">Not enough closed periods to compare.</div>'; return;
+  }
   const cur = buckets[n-1], prv = buckets[n-2];
-  document.getElementById('delta-s').textContent = prv.long + '  →  ' + cur.long;
+  document.getElementById('delta-s').textContent = prv.long + '  \u2192  ' + cur.long;
 
-  const rows = series.map(s => ({ s, d: s.values[n-1] - s.values[n-2],
-    pct: s.values[n-2] > 0 ? (s.values[n-1]-s.values[n-2])/s.values[n-2] : null }));
-  rows.sort((a,b) => b.d - a.d);
+  let rows = allRows
+    .filter(r => r.values[n-1] > 0 || r.values[n-2] > 0)
+    .map(r => ({ s:r, d: r.values[n-1] - r.values[n-2],
+      pct: r.values[n-2] > 0 ? (r.values[n-1]-r.values[n-2])/r.values[n-2] : null }));
+  const ranked = rows.length;
+  rows.sort((a,b) => Math.abs(b.d) - Math.abs(a.d));
+  rows = rows.slice(0, MOVERS).sort((a,b) => b.d - a.d);
+
+  document.getElementById('delta-t').textContent = ranked > MOVERS
+    ? `Biggest movers vs ${BUCKETS[S.bucket].vs}`
+    : `Change vs ${BUCKETS[S.bucket].vs}`;
+  const cnt = document.getElementById('delta-c');
+  cnt.textContent = ranked > MOVERS
+    ? `top ${MOVERS} of ${ranked} \u00b7 all ${ranked} are in Grid and Table` : '';
+
   const span = Math.max(...rows.map(r => Math.abs(r.d)), 1);
 
   rows.forEach(r => {
     const row = document.createElement('div'); row.className = 'dl-row';
     const nm = document.createElement('div'); nm.className = 'dl-nm';
     const dot = document.createElement('span'); dot.className='dl-dot';
-    dot.style.background = paletteVar(r.s.slot);
+    // Only a category actually on the Chart wears a series colour; the rest
+    // take the neutral, so the dot never implies a line that isn't drawn.
+    dot.style.background = (r.s.slot != null && S.picked.has(r.s.key))
+      ? paletteVar(r.s.slot) : getCSS('--inkDimmer');
     const nmT = document.createElement('span');
-    nmT.textContent = r.s.label; nmT.title = r.s.key === OTHER ? (r.s.members||[]).join(', ') : r.s.key;
+    // Out here a row has no group header above it, so an L3 has to carry its
+    // parent or "Other / unmapped" appears twelve times meaning twelve things.
+    nmT.textContent = r.s.l3 ? r.s.l2 + ' \u2192 ' + r.s.label : r.s.key;
+    nmT.title = r.s.l3 ? r.s.l2 + ' \u2192 ' + r.s.l3 : r.s.key;
     nm.append(dot, nmT);
 
     const track = document.createElement('div'); track.className='dl-track';
@@ -861,23 +1003,159 @@ function drawDelta(buckets, series){
   });
 }
 
-/* ── Table view — the WCAG-clean twin. Every value here, none gated. ─── */
-function drawTable(buckets, series){
+/* ── Grid — small multiples. EVERY category, nothing folded. ──────────
+   This is dataviz's prescribed answer past ~8 series: don't grow hues, facet.
+   One panel per category, grouped under its L2 when the level is L3, each
+   with its own line, its window total and its change. Clicking a panel
+   promotes that category onto the Chart. */
+function drawGrid(buckets, rows){
   const host = document.getElementById('chart');
-  const rows = series.slice().sort((a,b)=> b.total - a.total);
-  let h = '<div class="tbl-scroll"><table class="mc"><thead><tr>';
-  h += `<th class="k">${S.level === 'l2' ? 'L2 category' : 'L3 · ' + esc(S.parent)}</th>`;
-  buckets.forEach(b => h += `<th>${esc(b.label)}</th>`);
-  h += '<th>Total</th></tr></thead><tbody>';
-  rows.forEach(s => {
-    h += `<tr><td class="k"><span class="k-dot" style="background:${paletteVar(s.slot)}"></span>${esc(s.key===OTHER?s.label:s.key)}</td>`;
-    s.values.forEach(v => h += `<td>${v > 0 ? esc(fmtVal(v)) : '<span class="na">—</span>'}</td>`);
-    h += `<td>${esc(fmtVal(s.total))}</td></tr>`;
+  const n = buckets.length;
+  const groups = [];
+  if (S.level === 'l2'){
+    groups.push({ l2:null, rows: rows.slice().sort((a,b)=>b.total-a.total) });
+  } else {
+    activeParents().forEach(l2 => {
+      const g = rows.filter(r => r.l2 === l2).sort((a,b)=>b.total-a.total);
+      if (g.length) groups.push({ l2, rows:g });
+    });
+    groups.sort((a,b) => b.rows.reduce((x,r)=>x+r.total,0) - a.rows.reduce((x,r)=>x+r.total,0));
+  }
+  const sharedMax = Math.max(...rows.map(r => Math.max(...r.values)), 1);
+
+  host.textContent = '';
+  const wrapEl = document.createElement('div');
+  wrapEl.className = 'grid-wrap';
+
+  groups.forEach(g => {
+    if (g.l2){
+      const h = document.createElement('div'); h.className = 'grid-gh';
+      const nm = document.createElement('span'); nm.className='grid-gh-n'; nm.textContent = g.l2;
+      const ct = document.createElement('span'); ct.className='grid-gh-c';
+      ct.textContent = g.rows.length + (g.rows.length === 1 ? ' sub-category · ' : ' sub-categories · ')
+        + fmtVal(g.rows.reduce((a,r)=>a+r.total,0));
+      h.append(nm, ct); wrapEl.appendChild(h);
+    }
+    const row = document.createElement('div'); row.className = 'grid-row';
+    g.rows.forEach(r => {
+      const on = S.picked.has(r.key);
+      const cell = document.createElement('button');
+      cell.type = 'button'; cell.className = 'gcell' + (on ? ' on' : '');
+      cell.setAttribute('aria-pressed', String(on));
+      cell.title = (r.l3 ? r.l2 + ' → ' + r.l3 : r.key)
+        + ' · click to ' + (on ? 'remove from' : 'add to') + ' the Chart';
+
+      const t = document.createElement('div'); t.className='gc-t'; t.textContent = r.label;
+      const v = document.createElement('div'); v.className='gc-v'; v.textContent = fmtVal(r.total);
+
+      const d  = n >= 2 ? r.values[n-1] - r.values[n-2] : null;
+      const pc = (n >= 2 && r.values[n-2] > 0) ? d / r.values[n-2] : null;
+      const dl = document.createElement('div'); dl.className='gc-d';
+      if (d == null || r.total <= 0){
+        dl.textContent = '—'; dl.style.color = getCSS('--inkDim');
+      } else {
+        dl.style.color = d >= 0 ? getCSS('--good') : getCSS('--bad');
+        dl.textContent = (d>=0?'▲':'▼') + ' ' + (pc == null ? 'new' : Math.abs(pc*100).toFixed(1)+'%');
+      }
+      const spark = document.createElement('div'); spark.className='gc-s';
+      spark.innerHTML = miniLine(r.values, S.gridScale === 'shared' ? sharedMax : null,
+                                 on ? paletteVar(0) : getCSS('--inkDim'));
+      cell.append(t, v, dl, spark);
+      cell.onclick = () => {
+        if (S.picked.has(r.key)) S.picked.delete(r.key);
+        else {
+          if (S.picked.size >= S.maxSeries){
+            flash(`The Chart holds ${S.maxSeries} lines. Drop one first — every category stays visible here and in Table.`);
+            return;
+          }
+          S.picked.add(r.key);
+        }
+        render();
+      };
+      row.appendChild(cell);
+    });
+    wrapEl.appendChild(row);
   });
-  const tot = buckets.map((_,i) => series.reduce((a,s)=>a+s.values[i],0));
-  h += `<tr class="tot"><td class="k">Total</td>`;
-  tot.forEach(v => h += `<td>${esc(fmtVal(v))}</td>`);
-  h += `<td>${esc(fmtVal(tot.reduce((a,b)=>a+b,0)))}</td></tr>`;
+  host.appendChild(wrapEl);
+}
+// A bare 96x30 line. No axis — the printed total carries the magnitude.
+//   Own scale    -> min..max of THIS series, so the shape is readable. A
+//                   category hovering between 70k and 80k is a flat line if
+//                   you scale it from zero, which is a sparkline showing you
+//                   nothing. The baseline is NOT zero here, and the legend
+//                   says so; the number above the line is what carries size.
+//   Shared scale -> 0..max across every panel, so heights ARE comparable.
+function miniLine(vals, forcedMax, colour){
+  const W = 96, H = 30, P = 3;
+  if (vals.every(v => v <= 0))
+    return `<svg width="${W}" height="${H}" aria-hidden="true"></svg>`;
+  let lo, hi;
+  if (forcedMax != null){ lo = 0; hi = forcedMax; }
+  else {
+    lo = Math.min(...vals); hi = Math.max(...vals);
+    const pad = (hi - lo) * 0.12 || Math.abs(hi) * 0.06 || 1;
+    lo -= pad; hi += pad;
+  }
+  if (hi <= lo) hi = lo + 1;
+  const x = i => P + (vals.length === 1 ? (W-2*P)/2 : (i/(vals.length-1))*(W-2*P));
+  const y = v => H - P - ((v - lo)/(hi - lo))*(H-2*P);
+  const pts = vals.map((v,i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true">`
+    + `<polyline points="${pts}" fill="none" stroke="${colour}" stroke-width="1.7"`
+    + ` stroke-linejoin="round" stroke-linecap="round"/>`
+    + `<circle cx="${x(vals.length-1).toFixed(1)}" cy="${y(vals[vals.length-1]).toFixed(1)}"`
+    + ` r="2.4" fill="${colour}"/></svg>`;
+}
+let flashT;
+function flash(msg){
+  const el = document.getElementById('flash');
+  el.textContent = msg; el.classList.add('on');
+  clearTimeout(flashT); flashT = setTimeout(() => el.classList.remove('on'), 3200);
+}
+
+/* ── Table view — the WCAG-clean twin. Every value here, none gated. ─── */
+// EVERY row, never a fold. In L3 the rows sit under their L2 parent, drawn the
+// way DESIGN.md §4.8 draws a hierarchy: a level badge opens the first cell, the
+// child indents, and a corner rule runs back up to the parent. Inheritance is
+// the information, so it is drawn rather than labelled.
+function drawTable(buckets, rows){
+  const host = document.getElementById('chart');
+  const cell = v => `<td>${v > 0 ? esc(fmtVal(v)) : '<span class="na">—</span>'}</td>`;
+  const dot  = r => S.picked.has(r.key)
+    ? `<span class="k-dot" style="background:${paletteVar(0)}"></span>` : '';
+
+  let body = '';
+  const sumRows = list => buckets.map((_,i) => list.reduce((a,r)=>a+r.values[i],0));
+
+  if (S.level === 'l2'){
+    rows.slice().sort((a,b)=>b.total-a.total).forEach(r => {
+      body += `<tr><td class="k"><span class="mc-lvl">L2</span>${dot(r)}${esc(r.key)}</td>`
+        + r.values.map(cell).join('') + `<td>${esc(fmtVal(r.total))}</td></tr>`;
+    });
+  } else {
+    const parents = activeParents().map(l2 => ({ l2, kids: rows.filter(r => r.l2 === l2) }))
+      .filter(g => g.kids.length);
+    parents.forEach(g => { g.vals = sumRows(g.kids); g.total = g.vals.reduce((a,b)=>a+b,0); });
+    parents.sort((a,b) => b.total - a.total);
+    parents.forEach(g => {
+      body += `<tr class="mc-l2"><td class="k"><span class="mc-lvl">L2</span>${esc(g.l2)}</td>`
+        + g.vals.map(cell).join('') + `<td>${esc(fmtVal(g.total))}</td></tr>`;
+      g.kids.slice().sort((a,b)=>b.total-a.total).forEach(r => {
+        body += `<tr class="mc-l3"><td class="k"><span class="mc-lvl l3">L3</span>${dot(r)}`
+          + `<span title="${esc(r.l3)}">${esc(r.l3)}</span></td>`
+          + r.values.map(cell).join('') + `<td>${esc(fmtVal(r.total))}</td></tr>`;
+      });
+    });
+  }
+  const tot = sumRows(rows);
+  let h = '<div class="tbl-scroll"><table class="mc"><thead><tr>';
+  h += `<th class="k">${S.level === 'l2' ? 'L2 category'
+        : (S.parent === ALL ? 'L2 → L3 · whole taxonomy' : 'L3 · ' + esc(S.parent))}</th>`;
+  buckets.forEach(b => h += `<th>${esc(b.label)}</th>`);
+  h += '<th>Total</th></tr></thead><tbody>' + body;
+  h += `<tr class="tot"><td class="k">Total</td>`
+    + tot.map(v => `<td>${esc(fmtVal(v))}</td>`).join('')
+    + `<td>${esc(fmtVal(tot.reduce((a,b)=>a+b,0)))}</td></tr>`;
   h += '</tbody></table></div>';
   host.innerHTML = h;
 }
@@ -888,15 +1166,20 @@ function drawStatus(buckets, series, allRows, open){
   const b0 = buckets[0], b1 = buckets[buckets.length-1];
   const scope = S.store === '__all__'
     ? STORE_KEYS.length + ' stores' : STORE_NAMES[S.store];
-  const shown = series.filter(s => s.key !== OTHER).length;
-  const folded = allRows.length - shown;
+  const drawn = series.filter(s => s.key !== OTHER).length;
   const dayCount = Math.round((b1.e - b0.s)/DAY_MS) + 1;
   const storeDays = dayCount * (S.store === '__all__' ? STORE_KEYS.length : 1);
 
   let txt = `<b>${buckets.length} ${BUCKETS[S.bucket].unit}s</b> to ${b1.long.split(' · ')[0]}`
     + ` · <b>${scope}</b> · ${S.measure === 'net' ? 'net sales' : 'units'}`
-    + ` · ${shown} of ${allRows.length} ${S.level.toUpperCase()} categor${allRows.length===1?'y':'ies'} drawn`
-    + (folded > 0 ? `, the other ${folded} folded into <b>Other</b> (off by default — switch it on in the legend)` : '');
+    + ` · <b>all ${allRows.length} ${S.level.toUpperCase()} categor${allRows.length===1?'y':'ies'}</b>`
+    + (S.view === 'chart'
+        ? ` — the Chart draws ${drawn} at a time (click any Grid panel to swap one in); <b>Grid</b> and <b>Table</b> show every one of them`
+        : (S.view === 'grid'
+           ? ` — one panel each, nothing folded${S.gridScale === 'own'
+               ? '; each panel is scaled to its OWN high and low — the baseline is not zero, so read the SHAPE and take size from the printed total'
+               : '; every panel runs 0 to one shared maximum, so the heights ARE comparable and the small categories flatten out'}`
+           : ` — every row, every bucket, no fold`));
 
   // The honest part: say where the numbers come from and what it costs.
   if (S.bucket === 'day' || S.bucket === 'month' || S.bucket === 'quarter'){
@@ -925,8 +1208,10 @@ function drawPanelLegend(){
   const el = document.getElementById('plegend');
   const sw = (css) => `<span class="pl-swatch" style="display:inline-block;width:14px;height:3px;border-radius:2px;background:${css}"></span>`;
   el.innerHTML = `
-    <div class="pl-row">${sw('var(--s1)')}<span><b>A coloured line is one category.</b> The colour is fixed to that category for the whole window — hiding a series in the legend never repaints the others.</span></div>
-    <div class="pl-row">${sw('var(--sOther)')}<span><b>Grey is “Other”</b> — every category past the top ${S.maxSeries}, summed, and <b>switched off by default</b>: a sum of the tail outranks every real category, so drawing it makes the fold bucket look like the top seller. Click it in the legend to bring it in; hover to see which categories it holds. Six hues is the ceiling — a seventh would be indistinguishable to a colourblind reader, so the tail folds rather than growing a new colour.</span></div>
+    <div class="pl-row"><span class="pl-swatch" style="display:inline-block;width:11px;height:11px;border-radius:3px;background:var(--panelHi);border:1px solid var(--border)"></span><span><b>Three surfaces, and every category is on two of them.</b> <b>Grid</b> gives each category its own panel — all ${S.level==='l2'?'L2s':'L3s'}, nothing folded. <b>Table</b> gives each its own row. <b>Chart</b> overlays up to ${S.maxSeries} of them for close comparison; click a Grid panel to swap one in. Nothing is ever hidden — only undrawn.</span></div>
+    <div class="pl-row">${sw('var(--inkDim)')}<span><b>A Grid sparkline shows shape, not size.</b> On <b>Own</b> scale each panel runs between its own high and low — <b>the baseline is not zero</b> — because a category moving between $70k and $80k is a flat line if you draw it from zero. The number above it carries the magnitude. Switch <b>Scale</b> to <b>Shared</b> when you want heights to be comparable instead.</span></div>
+    <div class="pl-row">${sw('var(--s1)')}<span><b>A coloured line is one category</b>, and only on the Chart. Six is the hard ceiling there: past it no colourblind reader can separate the hues, which is why the answer to “show me all of them” is a panel each rather than a seventh colour. A category you have promoted is outlined in green in Grid and dotted in Table.</span></div>
+    <div class="pl-row">${sw('var(--sOther)')}<span><b>Grey is “Other”</b> on the Chart only — everything not currently drawn, summed, and <b>switched off by default</b>: a sum of the tail outranks every real category, so drawing it makes the fold bucket look like the top seller.</span></div>
     <div class="pl-row"><span class="pl-swatch" style="display:inline-block;width:11px;height:11px;border-radius:3px;background:var(--good)"></span><span><b>Green in the change strip is up, red is down</b>, versus the ${BUCKETS[S.bucket].vs}. The bar's <i>direction</i> carries the same meaning as its colour, so the pair still reads under red-green colour blindness.</span></div>
     <div class="pl-row"><span class="pl-swatch" style="display:inline-block;width:11px;height:11px;border-radius:3px;border:1px solid var(--border)"></span><span><b>A dash (—) is no sale in that period; it is never a zero passed off as data.</b> Every bucket drawn is a <b>closed</b> period — the one still in progress is named in the status line and left out, so a part-length period can never masquerade as a decline.</span></div>
     <div class="pl-row"><span class="pl-swatch" style="display:inline-block;width:11px;height:11px;border-radius:3px;background:var(--panelHi);border:1px solid var(--border)"></span><span><b>Table</b> holds every value the chart draws, unrounded and unhidden — so no number is reachable only by hovering. Contrast is ≥4.5:1 in both themes; the three light-mode hues that sit under 3:1 against white are the reason direct labels and this table are not optional.</span></div>`;
@@ -952,17 +1237,24 @@ function buildControls(){
     ()=>S.bucket, v => { S.bucket = v; });
   pillGroup('ctl-measure', [['net','Net $'],['units','Units']], ()=>S.measure,
     v => { S.measure = v; });
-  pillGroup('ctl-view', [['chart','Chart'],['table','Table']], ()=>S.view,
+  pillGroup('ctl-view', [['chart','Chart'],['grid','Grid'],['table','Table']], ()=>S.view,
     v => { S.view = v; });
+
+  const scWrap = document.getElementById('ctl-scale-wrap');
+  scWrap.hidden = S.view !== 'grid';
+  if (S.view === 'grid'){
+    pillGroup('ctl-scale', [['own','Own'],['shared','Shared']], ()=>S.gridScale,
+      v => { S.gridScale = v; });
+  }
 
   const wrap = document.getElementById('ctl-parent-wrap');
   const sel  = document.getElementById('ctl-parent');
   wrap.hidden = S.level !== 'l3';
   if (S.level === 'l3'){
     sel.textContent = '';
-    L2S.forEach(l2 => {
-      const o = document.createElement('option'); o.value = l2; o.textContent = l2;
-      if (l2 === S.parent) o.selected = true;
+    [[ALL,'All L2s']].concat(L2S.map(l2=>[l2,l2])).forEach(([v,n]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = n;
+      if (v === S.parent) o.selected = true;
       sel.appendChild(o);
     });
     sel.onchange = () => { S.parent = sel.value; resetHidden(); render(); };
@@ -984,14 +1276,19 @@ function render(){
   const { buckets, rows, open } = seriesFor();
   const series = foldSeries(rows);
   drawStatus(buckets, series, rows, open);
+  const lg = document.getElementById('legend');
   if (S.view === 'chart'){
     drawChart(buckets, series);
+    drawLegend(series);
+    lg.hidden = false;
   } else {
     tipEl.classList.remove('on');
-    drawTable(buckets, series);
+    // The Chart's legend belongs to the Chart. Grid labels every panel and
+    // Table names every row, so a second identity key there is noise.
+    lg.hidden = true; lg.textContent = '';
+    if (S.view === 'grid') drawGrid(buckets, rows); else drawTable(buckets, rows);
   }
-  drawLegend(series);
-  drawDelta(buckets, series.filter(s => !S.hidden.has(s.key)));
+  drawDelta(buckets, rows);
   drawPanelLegend();
 }
 let rt; new ResizeObserver(() => {
@@ -1019,8 +1316,12 @@ document.getElementById('qa').innerHTML = rowsHTML([
    'You said "under the different stores", which I read as <b>inside each store tab, below what is there now</b> — and that is also where day-grain is affordable, since one store is one read per day. But the same panel works scoped to All stores on the Summary tab. <b>My default is: build it once, mount it on the store tabs, and put an All-stores copy at the bottom of the Summary tab.</b> Say if you only want one of the two.'],
   ['Is “compare” period-over-period, or versus last year?',
    'I built <b>versus the previous bucket</b> — week 36 against week 35 — because that is what "week by week" reads as. For a seasonal retailer the comparison people usually reach for at month and quarter is <b>the same period last year</b>. That needs KV going back that far and a like-for-like rule (the existing YoY code notes last-year data carries no auction channel). <b>Not built here. Worth adding as a second toggle on the change strip?</b>'],
-  ['Top 6 plus a switched-off “Other” — is that the right cut?',
-   'There are 12 L2 categories and up to 10 L3s under one parent, and six is the hard ceiling for lines a colourblind reader can still tell apart. So the top 6 draw, and the tail folds into a grey <b>Other</b> that starts switched off — my first pass drew it and it immediately became the tallest line on the chart, which is a sum of seven things pretending to be a category. <b>The legend switches any series on or off</b>; the Table always shows all of them. If you would rather pin a fixed six — Apparel, Food, Shoes, Home, Hardlines, HBA — instead of "whatever is biggest this window", that is a one-line change and arguably steadier to read week to week.'],
+  ['Is Grid the right way to “see all of them”?',
+   'You asked to see all L2 and all L3, so <b>Grid</b> is now the default view: one panel per category — 12 at L2, 56 at L3 with <b>All L2s</b> selected — each with its total, its change and its shape. Nothing folds. The Chart still caps at six lines because past six no colourblind reader can separate the hues, but that cap now only governs <i>overlaying</i>, not seeing. <b>Is a panel-per-category the right shape, or would you rather the Table were the default and Grid the extra?</b>'],
+  ['Grid sparklines are scaled to their own high and low, not to zero',
+   'Drawn from zero, a category moving between $70k and $80k is a flat line — the panel tells you nothing. So each sparkline runs between its own high and low and the printed total carries the size. That means <b>heights are not comparable between panels</b>, which is why there is a <b>Scale: Shared</b> toggle that puts every panel on one 0-based scale instead. <b>Own is the default; say if you would rather it opened on Shared.</b>'],
+  ['L3 names are messy, and I am cleaning them for display',
+   'The raw keys are feed strings — <code>FG BL CONSUMABLES - FOOD - SNACKS</code>, <code>APPLIANCES - BL STORES</code>. The panel shows <b>Snacks</b> and <b>Appliances</b>; the full key stays in the tooltip and the table. Where two keys under one parent would collapse to the same word — <code>FG BL SOFTLINES - APPAREL</code> and <code>Apparel</code> both give "Apparel" — the pair falls back to the full cleaned path so no two panels ever read identically. <b>If you would rather see the raw Clover names everywhere, say so</b> — it is one function.'],
   ['Should Auction appear?',
    'It cannot, honestly. Auction is a manual sheet entry with no items behind it; the worker injects a synthetic Auction row with <code>qty: 0</code> so the store table foots to net sales. Putting it in a category chart would draw a flat zero line in Units and a line with no category detail in Net. <b>I have left it out</b> — tell me if you want it in the Net view only.'],
   ['Do you want the period you are <i>in</i>, compared like-for-like?',

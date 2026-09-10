@@ -87,3 +87,47 @@ day, which keeps L3 summing to its L2 exactly (measured drift: 0).
 - Per-category deltas are not all equal — the tell for a length artefact.
 - The second render, after a control change, not just first paint.
 - BL12/BL16 gated by `wrsGateDates` so the shared merchant is not double-counted.
+
+
+## Iteration 2 — "I want to be able to see all L2 and L3" (Brian, 2026-09-10)
+
+The first pass drew the top 6 and folded the rest, and gated L3 behind picking one
+parent L2. Both were wrong for the ask. What changed:
+
+- **Grid view, now the default.** Small multiples — one panel per category, with its
+  window total, its change and its shape. 12 panels at L2; **56 at L3**, grouped under
+  all 12 parents. Nothing folds. This is dataviz's own answer past ~8 series: don't
+  grow hues, facet.
+- **"All L2s"** added to the L3 parent selector, so L3 spans the whole taxonomy rather
+  than one branch.
+- **Table shows every row**, L3 nested under its L2 with the §4.8 hierarchy treatment
+  (level badge, indent, corner rule back to the parent).
+- **Chart keeps a 6-line cap** — that is a colourblind-legibility limit and it now
+  governs only *overlaying*, not *seeing*. Which six is a choice: click a Grid panel to
+  promote it. A seventh is refused with a visible message, never a silent eviction.
+- **Change strip ranks over every category**, not just the drawn ones, capped at 12 and
+  captioned "top 12 of 56".
+
+Verified headlessly: **57 checks**, all passing, including the 24 bucket × level × view
+combinations.
+
+**Defects this round, all caught by looking at the render:**
+
+1. **`[hidden]` was ignored again.** I fixed `.ctl[hidden]` in round one, then wrote
+   `lg.hidden = true` on a `display:flex` element and walked straight back into it.
+   Fixed as a *class* of bug this time: one global `[hidden]{display:none!important}`.
+2. **Grid sparklines were near-flat** — scaled from zero, a category moving between
+   $70k and $80k draws a straight line. Now min–max per panel, with the non-zero
+   baseline stated and a `Scale: Shared` toggle for when heights must be comparable.
+3. **Labels collided.** `Other / unmapped` exists under all 12 parents and
+   `FG BL SOFTLINES - APPAREL` / `Apparel` both shorten to "Apparel". Colliding
+   siblings now fall back to the full cleaned path, and the movers strip names the L2
+   parent since it lists rows outside their group.
+4. **Feed strings leaked into labels** — `Bl stores`, `FG BL HAMILTON BEA…`. Cleaned:
+   strip the feed prefix, drop noise segments, title-case.
+5. **"Coffee & TEA"** — my "≤3 chars and all-caps means acronym" rule read TEA as one.
+   Replaced with an explicit acronym set.
+
+**Extra checks worth porting:** L3 keys must keep their parent (`Other / unmapped`
+resolving to 12 distinct rows, not 1 — worker.js:2466); no two labels identical inside
+one parent; the Chart cap refuses rather than evicts.
