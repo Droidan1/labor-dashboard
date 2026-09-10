@@ -25,7 +25,10 @@ card and a way to ask for a reset that only an admin can action.
       rows first; afterwards 14 users, 0 associates, 0 pages, 0 failures.
 - [x] Deploy the worker to both. Verified by grepping the deployed bundle, three consecutive
       identical body hashes on production, old surface intact.
-- [ ] **Merge PR #205** — Brian's click. Auto-merge cannot work on this repo.
+- [x] **Merge PR #205** — merged by Brian as `49ed4f4`; Pages built `main` (`55d223df`).
+      The whole feature is live at www.retjghub.com.
+- [ ] Create the first associate and confirm the flow on a real phone. Nothing here has
+      been exercised by a live request yet.
 
 ## Found while deploying, NOT part of this change
 
