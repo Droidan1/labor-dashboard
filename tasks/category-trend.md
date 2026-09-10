@@ -352,3 +352,57 @@ across 62 suites** in the repo's own runner, all passing.
 5. `Other / unmapped` resolves to one row per parent, not one row overall.
 6. The bars and the chart lines carry the same two colours.
 7. Contrast computed in both themes at >= 4.5:1.
+
+---
+
+## Phase 3 — the version guard (2026-09-10)
+
+### Why
+
+Phase 2 merged, Pages shipped the frontend automatically, and the worker was still
+one deploy behind. Month asked the feed for 56 weeks and would have got 13; quarter
+asked for 108 and would have got 13. Nothing errored. Month would have drawn ~2
+periods instead of ~13, and quarter — with fewer than three buckets, so the
+part-covered drop in `ctWeekRows` never runs — would have drawn a fortnight as a
+whole quarter. That is the −24.7% partial-period bug from the preview round,
+arriving through a deploy skew rather than a code change.
+
+### The hard part: telling the two shortfalls apart
+
+`weeks.length < wantWeeks` is **not** evidence the param was ignored. A store with
+little history looks identical. Guessing wrong in one direction blanks a good
+chart; in the other it draws a bad one.
+
+So the worker now echoes the window it built for — `weeksWindow: nWeeks`. Present
+and >= what was asked means honoured, full stop. Absent means the worker predates
+the echo, and *that* handler hard-coded 13, so exactly 13 where more was asked for
+is the signature of the param being ignored. Once every worker echoes, the fallback
+clause decides nothing.
+
+That fallback is also what removes the deploy-order hazard: the worker currently in
+production honours `weeks` but does not echo it, and the fallback reads that
+correctly as honoured. Frontend and worker can ship in either order.
+
+### A bug found on the way
+
+The tab read `wrsT13Data` — the same global `loadT13()` writes from its own
+13-week fetch. Visiting T13 and returning to Categories at month grain left the
+tab rendering from 13 weeks, and the old `ctWeeksKey` (which held a width, not a
+URL) said the data was current. The tab now keeps its own `ctWeekly`, keyed on the
+feed URL. Section 21 of the browser suite is that regression.
+
+### Scope of the refusal
+
+Only month and quarter, and only the week-derived views. Week grain gets 13 weeks
+from an old worker and 13 is the right answer for it — blanking that would be a
+false alarm. Vs reads the day series, a different endpoint, and is untouched.
+
+### Verification
+
+- 4,019 assertions across 63 suites (+6: the echo is exact, reports the window and
+  not the row count, and survives clamping).
+- Browser suite extended to 4 new sections against the real `index.html`: an old
+  worker caught at month and quarter across Trend/Grid/Table, week and Vs still
+  drawing, a correct worker drawing normally, and the T13 clobber regression.
+- Section 17 of that suite was inheriting its view from the section before it and
+  now sets it explicitly — it was passing for the wrong reason.

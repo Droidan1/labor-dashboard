@@ -75,11 +75,35 @@ const body = async r => JSON.parse(await r.text());
   }
 }
 
+/* ── It says which window it BUILT, not just what it returned ──────── */
+{
+  // The frontend cannot tell "you ignored my weeks param" from "there is only
+  // that much history" by counting weeks: both are a short array. The echo is
+  // what makes that distinguishable, so it has to be exact.
+  const b = await body(await call(`end=${LAST}&weeks=26`));
+  ok(b.weeksWindow === 26, `weeksWindow echoes the honoured window, got ${b.weeksWindow}`);
+
+  const d = await body(await call(`end=${LAST}`));
+  ok(d.weeksWindow === 13, `the default echoes 13, got ${d.weeksWindow}`);
+
+  // 30 weeks exist, so weeks.length is 30 while the window asked for is 110.
+  // The echo must report the WINDOW, not the rows — reporting the rows would
+  // make a short history indistinguishable from an ignored param all over again.
+  const c = await body(await call(`end=${LAST}&weeks=99999`));
+  ok(c.weeksWindow === 110, `a clamped window echoes the clamp, got ${c.weeksWindow}`);
+  ok(c.weeks.length === 30 && c.weeksWindow !== c.weeks.length,
+     `and it is the window, not the row count (${c.weeksWindow} vs ${c.weeks.length})`);
+
+  // A caller asking for less than exists still gets its own number back.
+  const e = await body(await call(`end=${LAST}&weeks=4`));
+  ok(e.weeksWindow === 4, `a narrow window echoes itself, got ${e.weeksWindow}`);
+}
+
 /* ── The payload shape is untouched at any width ───────────────────── */
 {
   const b = await body(await call(`end=${LAST}&weeks=20`));
-  for (const k of ['weeks', 'dates', 'stores', 'total', 'perStoreL2Net', 'perStoreL2Units',
-                   'perStoreL3Net', 'perStoreL3Units']) {
+  for (const k of ['weeks', 'weeksWindow', 'dates', 'stores', 'total', 'perStoreL2Net',
+                   'perStoreL2Units', 'perStoreL3Net', 'perStoreL3Units']) {
     ok(b[k] !== undefined, `weeks=20 still returns ${k}`);
   }
   ok(b.perStoreL2Net.length === b.weeks.length,

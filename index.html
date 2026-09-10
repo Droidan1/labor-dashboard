@@ -17385,7 +17385,7 @@
     wrsRange = r;
     updateWrsChip();
     renderWrsPanel();
-    wrsData = null; wrsT13Data = null;
+    wrsData = null; wrsT13Data = null; ctResetWeekly();
     loadWeeklyRetail(true);
   }
   function wrsPickRangePreset(id) {
@@ -17659,7 +17659,12 @@
   let ctDaily = null;            // ?action=category-series payload for the Vs window
   let ctDailyKey = '';           // the window+level that payload was fetched for
   let ctLoading = false, ctError = '';
-  let ctWeeksKey = '';           // the trailing width the weekly feed was fetched at
+  let ctWeekly = null;           // ?action=weekly-t13 payload for THIS tab's bucket
+  let ctWeeksKey = '';           // the feed URL that payload was fetched from
+  let ctWeeksShort = null;       // set when the feed did not honour the window
+  // Cleared together or not at all: a live verdict against a dropped payload
+  // would show the version warning where "not loaded yet" is the truth.
+  const ctResetWeekly = () => { ctWeekly = null; ctWeeksKey = ''; ctWeeksShort = null; };
 
   const ctPtdOn = () => ctState.ptd && ctState.bucket !== 'day';
   const ctIsDark = () => document.documentElement.classList.contains('dark');
@@ -17779,9 +17784,22 @@
       long: 'Q' + q + ' ' + d.getUTCFullYear() };
   }
 
+  // Was this payload built for the window we asked for? The echo answers it
+  // outright when present. When it is absent the worker predates the echo, and
+  // that handler hard-coded 13 — so exactly 13 where more was asked for is the
+  // signature of the param being ignored, and any other width means it was
+  // honoured. Once every worker echoes, that second clause decides nothing.
+  // Counting `weeks` alone cannot do this: a short answer is equally what a
+  // store with little history looks like.
+  function ctWeeksHonoured(d, want) {
+    if (!d) return true;                 // nothing loaded at all is a different message
+    if (typeof d.weeksWindow === 'number') return d.weeksWindow >= want;
+    return want <= 13 || (d.weeks || []).length !== 13;
+  }
+
   function ctWeekRows() {
     if (ctState.bucket === 'day') return ctDayBuckets();
-    const d = wrsT13Data;
+    const d = ctWeekly;
     if (!d) return { buckets: [], rows: [], l3Missing: 0 };
     const weeks = d.weeks || [];
     const netKey = ctState.measure === 'net' ? 'perStoreL2Net' : 'perStoreL2Units';
@@ -18029,17 +18047,32 @@
     // The weekly buckets share the T13 feed, but NOT loadT13(): that function
     // owns #wrs-pane-t13 and rewrites it, and it returns early when the range
     // picker has no end date. Fetch it here instead and touch only this pane.
+    //
+    // It keeps its OWN payload rather than sharing wrsT13Data: loadT13() writes
+    // that global from its own 13-week fetch, so this tab could be handed a
+    // 13-week payload while its bucket needed 56 and never know. Keying on the
+    // URL rather than the width means the range's end is part of the identity.
     const wantWeeks = CT_WEEKS_FOR[ctState.bucket] || 13;
-    if (ctWeeksKey !== String(wantWeeks)) {
-      ctWeeksKey = String(wantWeeks);
+    const end = (wrsRange && wrsRange.to) || etTodayStr();
+    const weeklyUrl =
+      `${WORKER_BASE}?action=weekly-t13&end=${encodeURIComponent(end)}&weeks=${wantWeeks}`;
+    if (ctWeeksKey !== weeklyUrl) {
+      ctWeeksKey = weeklyUrl;
       try {
-        const end = (wrsRange && wrsRange.to) || etTodayStr();
-        const d = await cachedFetch(
-          `${WORKER_BASE}?action=weekly-t13&end=${encodeURIComponent(end)}&weeks=${wantWeeks}`,
-          { credentials: 'include' });
-        if (!d.error) wrsT13Data = d;
+        const d = await cachedFetch(weeklyUrl, { credentials: 'include' });
+        if (!d.error) ctWeekly = d;
       } catch (_) { /* the weekly views say so below; Vs does not need it */ }
     }
+    // Did the feed actually build the window we asked for? A worker predating
+    // the `weeks` param returns 13 whatever is asked. At week grain that is
+    // merely a shorter chart. At month and quarter it rolls far too few weeks
+    // into each period — and with fewer than three buckets the part-covered
+    // drop in ctWeekRows never runs, so a two-week "quarter" is drawn as a
+    // whole one. That is the quiet wrong answer, so it is refused out loud.
+    ctWeeksShort = (ctWeekly && !ctWeeksHonoured(ctWeekly, wantWeeks)
+                    && (ctState.bucket === 'month' || ctState.bucket === 'quarter'))
+      ? { want: wantWeeks, got: (ctWeekly.weeks || []).length }
+      : null;
     const w = ctVsWindow();
     const key = `${w.from}|${w.to}|${ctState.level}|${ctState.store}`;
     if (key !== ctDailyKey) {
@@ -18097,6 +18130,15 @@
       const vsRows = ctVsRows();
       if (!vsRows.length) body.innerHTML = `<div style="padding:22px 18px;text-align:center;font-size:13px" class="ct-lgr">No category sales recorded for these two weeks.</div>`;
       else ctDrawVs(vsRows);
+    } else if (ctWeeksShort) {
+      // Loud on purpose. The alternative is a chart that looks right: three
+      // months where thirteen were asked for, or a fortnight drawn as a
+      // quarter. Name the arithmetic, the cause and the fix.
+      body.innerHTML = `<div style="padding:22px 18px;text-align:center;font-size:13px" class="ct-lgr">
+        <b>${ctState.bucket === 'month' ? 'Month' : 'Quarter'} needs ${ctWeeksShort.want} weeks of rollups; the API returned ${ctWeeksShort.got}.</b><br>
+        The worker half of this deploy is older than this page, so it ignored the window it was asked for.
+        Rolling up that many weeks would draw a part-covered period as a whole one, so this view is not drawn.
+        <br><b>Week</b> and <b>Vs</b> are unaffected. Deploying the worker clears this.</div>`;
     } else if (!rows.length) {
       // The weekly views depend on the week rollups, and those are a separate
       // feed — say which one is missing rather than a blanket "no data".
@@ -18570,7 +18612,7 @@
     const svg = btn?.querySelector('svg');
     if (svg) { svg.style.transition = 'transform .6s ease'; svg.style.transform = 'rotate(360deg)'; }
     _apiCache.clear();
-    wrsData = null; wrsT13Data = null;
+    wrsData = null; wrsT13Data = null; ctResetWeekly();
     try { await Promise.resolve(loadWeeklyRetail(true)); }
     finally { if (svg) setTimeout(() => { svg.style.transition = 'none'; svg.style.transform = ''; }, 650); }
   }
@@ -18911,7 +18953,7 @@
   function pullRefreshAction() {
     if (currentPage === 'weekly-summary') {
       _apiCache.clear();
-      wrsData = null; wrsT13Data = null;
+      wrsData = null; wrsT13Data = null; ctResetWeekly();
       return Promise.resolve(loadWeeklyRetail(true));
     }
     return Promise.resolve(typeof loadAll === 'function' ? loadAll(true) : null);
