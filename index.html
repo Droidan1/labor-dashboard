@@ -17659,8 +17659,9 @@
   let ctDaily = null;            // ?action=category-series payload for the Vs window
   let ctDailyKey = '';           // the window+level that payload was fetched for
   let ctLoading = false, ctError = '';
-  let ctWeeksTried = false;      // the weekly feed is fetched at most once per session
+  let ctWeeksKey = '';           // the trailing width the weekly feed was fetched at
 
+  const ctPtdOn = () => ctState.ptd && ctState.bucket !== 'day';
   const ctIsDark = () => document.documentElement.classList.contains('dark');
   const ctHue = i => (i < CT_MAX_LINES ? CT_SERIES[ctIsDark() ? 'dark' : 'light'][i]
                                        : (ctIsDark() ? '#8893a7' : '#6b6453'));
@@ -17757,7 +17758,29 @@
      perStoreL2Net[weekIdx][store][l2] and perStoreL3Net[weekIdx][store][l2][l3].
      L3 maps are absent on week-summary entries rolled before L3 shipped — an
      empty map there means UNKNOWN, not zero, and the status line says so. */
+  // How many trailing weeks the current bucket needs from the weekly feed.
+  // Month and quarter are built out of whole weeks, so they need enough of
+  // them to cover the window; the worker clamps at 110 either way.
+  const CT_WEEKS_FOR = { week: 13, month: 56, quarter: 108, day: 13 };
+
+  // Which bucket each week belongs to, keyed by the week's END date. A week
+  // straddling a month boundary lands in ONE month rather than being split —
+  // splitting it would need day data over the whole window, which is exactly
+  // the read budget this path exists to avoid. The status line says so.
+  function ctBucketOf(kind, endYmd) {
+    if (!endYmd) return null;
+    const d = ctParse(endYmd);
+    if (kind === 'month') return { key: endYmd.slice(0, 7),
+      label: d.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' })
+             + (d.getUTCMonth() === 0 ? " '" + String(d.getUTCFullYear()).slice(2) : ''),
+      long: d.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }) };
+    const q = Math.floor(d.getUTCMonth() / 3) + 1;
+    return { key: d.getUTCFullYear() + '-Q' + q, label: 'Q' + q + " '" + String(d.getUTCFullYear()).slice(2),
+      long: 'Q' + q + ' ' + d.getUTCFullYear() };
+  }
+
   function ctWeekRows() {
+    if (ctState.bucket === 'day') return ctDayBuckets();
     const d = wrsT13Data;
     if (!d) return { buckets: [], rows: [], l3Missing: 0 };
     const weeks = d.weeks || [];
@@ -17765,21 +17788,50 @@
     const l3Key  = ctState.measure === 'net' ? 'perStoreL3Net' : 'perStoreL3Units';
     const l2By = d[netKey] || [], l3By = d[l3Key] || [];
     const stores = ctStores();
-    const buckets = weeks.map((w, i) => ({
-      key: String(w),
-      label: 'Wk ' + w,
-      long: 'Week ' + w + ((d.dates || [])[i] ? ' · ' + d.dates[i].start + ' → ' + d.dates[i].end : ''),
-    }));
+
+    // weekIdx -> bucket index. For the week bucket that is the identity; for
+    // month and quarter several weeks collapse into one.
+    const buckets = [];
+    const at = [];
+    if (ctState.bucket === 'week') {
+      weeks.forEach((w, i) => {
+        buckets.push({ key: String(w), label: 'Wk ' + w,
+          long: 'Week ' + w + ((d.dates || [])[i] ? ' · ' + d.dates[i].start + ' → ' + d.dates[i].end : '') });
+        at.push(i);
+      });
+    } else {
+      const seen = new Map();
+      weeks.forEach((w, i) => {
+        const b = ctBucketOf(ctState.bucket, ((d.dates || [])[i] || {}).end);
+        if (!b) { at.push(-1); return; }
+        if (!seen.has(b.key)) { seen.set(b.key, buckets.length); buckets.push(b); }
+        at.push(seen.get(b.key));
+      });
+      // The first and last buckets are usually part-covered by the trailing
+      // window — a month with two of its weeks in view is not that month.
+      // Drop them rather than draw a short period as a real one.
+      if (buckets.length > 2) {
+        const counts = buckets.map((_, bi) => at.filter(x => x === bi).length);
+        const full = Math.max(...counts);
+        const keep = buckets.map((_, bi) => counts[bi] >= full - 1);
+        const remap = [];
+        let n = 0;
+        buckets.forEach((_, bi) => { remap[bi] = keep[bi] ? n++ : -1; });
+        for (let i = 0; i < at.length; i++) at[i] = at[i] >= 0 ? remap[at[i]] : -1;
+        for (let bi = buckets.length - 1; bi >= 0; bi--) if (!keep[bi]) buckets.splice(bi, 1);
+      }
+    }
 
     const rows = [];
     const zero = () => buckets.map(() => 0);
     if (ctState.level === 'l2') {
       T13_L2_CATS.forEach(l2 => rows.push({ key: l2, l2, label: l2, values: zero() }));
-      buckets.forEach((_, i) => {
-        const per = l2By[i] || {};
+      weeks.forEach((_, wi) => {
+        const bi = at[wi]; if (bi < 0) return;
+        const per = l2By[wi] || {};
         for (const st of stores) {
           const m = per[st] || {};
-          rows.forEach(r => { r.values[i] += Number(m[r.key]) || 0; });
+          rows.forEach(r => { r.values[bi] += Number(m[r.key]) || 0; });
         }
       });
     } else {
@@ -17787,8 +17839,9 @@
       // key silently merges "Sku Book Items", which appears under five L2s.
       const parents = ctState.parent === CT_ALL ? T13_L2_CATS : [ctState.parent];
       const seen = new Map();
-      buckets.forEach((_, i) => {
-        const per = l3By[i] || {};
+      weeks.forEach((_, wi) => {
+        const bi = at[wi]; if (bi < 0) return;
+        const per = l3By[wi] || {};
         for (const st of stores) {
           const byL2 = per[st] || {};
           for (const l2 of parents) {
@@ -17797,7 +17850,7 @@
               const key = l2 + ' :: ' + l3;
               let r = seen.get(key);
               if (!r) { r = { key, l2, l3, label: ctShort(l3), values: zero() }; seen.set(key, r); rows.push(r); }
-              r.values[i] += Number(m[l3]) || 0;
+              r.values[bi] += Number(m[l3]) || 0;
             }
           }
         }
@@ -17809,13 +17862,32 @@
     // How many weeks carry no L3 at all — those entries pre-date the L3 roll.
     let l3Missing = 0;
     if (ctState.level === 'l3') {
-      buckets.forEach((_, i) => {
-        const per = l3By[i] || {};
+      weeks.forEach((_, wi) => {
+        if (at[wi] < 0) return;
+        const per = l3By[wi] || {};
         const any = ctStores().some(st => Object.keys(per[st] || {}).length);
         if (!any) l3Missing++;
       });
     }
-    return { buckets, rows, l3Missing };
+    return { buckets, rows, l3Missing, weekDerived: ctState.bucket !== 'week' };
+  }
+
+  // Day buckets come from the day series, not the week rollups — it is already
+  // loaded for the Vs card and it is the only feed with day resolution.
+  function ctDayBuckets() {
+    if (!ctDaily) return { buckets: [], rows: [], l3Missing: 0 };
+    const end = ctLastClosedDay();
+    const buckets = [];
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(end.getTime() - i * CT_DAY_MS);
+      buckets.push({ key: ctYmd(d),
+        label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
+        long: ctYmd(d) });
+    }
+    const rows = ctVsRows();
+    rows.forEach(r => { r.values = buckets.map(b => ctDayValue([b.key, b.key], r) || 0); });
+    rows.forEach(r => { r.total = r.values.reduce((a, b) => a + b, 0); });
+    return { buckets, rows, l3Missing: 0, weekDerived: false };
   }
 
   // Two DIFFERENT L3 keys under one parent must never wear the same label.
@@ -17829,37 +17901,44 @@
     });
   }
 
-  /* ── The Vs window: which two periods, and the days inside them ── */
-  function ctVsWindow() {
-    // Sunday → Saturday, matching the Sales Trend card's own axis.
+  /* ── Periods ───────────────────────────────────────────────────────
+     `i` counts periods back; i=0 is the period CONTAINING today. Each carries
+     its natural calendar bounds, NOT clipped to today — the clipping happens
+     once, where it can be labelled. */
+  const ctLastClosedDay = () => new Date(ctParse(etTodayStr()).getTime() - CT_DAY_MS);
+  function ctPeriodBack(kind, i) {
     const today = ctParse(etTodayStr());
-    const endSat = new Date(today.getTime() + ((6 - today.getUTCDay() + 7) % 7) * CT_DAY_MS);
-    const back = ctState.ptd ? 0 : 1;
-    const curEnd = new Date(endSat.getTime() - back * 7 * CT_DAY_MS);
-    const curStart = new Date(curEnd.getTime() - 6 * CT_DAY_MS);
-    const prvStart = new Date(curStart.getTime() - 7 * CT_DAY_MS);
-    const prvEnd = new Date(curEnd.getTime() - 7 * CT_DAY_MS);
-    const points = [];
-    for (let i = 0; i < 7; i++) {
-      const c = new Date(curStart.getTime() + i * CT_DAY_MS);
-      const p = new Date(prvStart.getTime() + i * CT_DAY_MS);
-      points.push({
-        cur: ctYmd(c), prv: ctYmd(p),
-        label: c.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }),
-      });
+    if (kind === 'day') {
+      // Day's "period" is a rolling fortnight: a single day has no sub-period
+      // to plot, because the item snapshots are per day and not per hour.
+      const e = new Date(ctLastClosedDay().getTime() - i * 14 * CT_DAY_MS);
+      const st = new Date(e.getTime() - 13 * CT_DAY_MS);
+      return { s: st, e, label: '14 days to ' + ctYmd(e), long: ctYmd(st) + ' → ' + ctYmd(e) };
     }
-    // Only sub-periods that have CLOSED are data. A day still running is not a day.
-    const lastClosed = ctYmd(new Date(today.getTime() - CT_DAY_MS));
-    let elapsed = points.length;
-    if (ctState.ptd) {
-      elapsed = points.filter(p => p.cur <= lastClosed).length;
-      elapsed = Math.max(1, elapsed);
+    if (kind === 'week') {
+      // Sunday → Saturday, matching the Sales Trend card's own axis.
+      const endSat = new Date(today.getTime() + ((6 - today.getUTCDay() + 7) % 7) * CT_DAY_MS);
+      const e = new Date(endSat.getTime() - i * 7 * CT_DAY_MS);
+      const st = new Date(e.getTime() - 6 * CT_DAY_MS);
+      return { s: st, e, label: 'Wk ' + isoWeekOf(e), long: 'Week ' + isoWeekOf(e) + ' · ' + ctYmd(st) + ' → ' + ctYmd(e) };
     }
-    return {
-      points, elapsed,
-      from: ctYmd(prvStart), to: ctYmd(curEnd),
-      curLabel: 'Wk ' + isoWeekOf(curEnd), prvLabel: 'Wk ' + isoWeekOf(prvEnd),
-    };
+    if (kind === 'month') {
+      const st = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - i, 1));
+      const e = new Date(Date.UTC(st.getUTCFullYear(), st.getUTCMonth() + 1, 0));
+      const nm = st.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+      return { s: st, e, label: nm, long: nm };
+    }
+    let q = Math.floor(today.getUTCMonth() / 3) - i, y = today.getUTCFullYear();
+    while (q < 0) { q += 4; y -= 1; }
+    const st = new Date(Date.UTC(y, q * 3, 1));
+    const e = new Date(Date.UTC(y, q * 3 + 3, 0));
+    return { s: st, e, label: 'Q' + (q + 1) + " '" + String(y).slice(2), long: 'Q' + (q + 1) + ' ' + y };
+  }
+  // How many periods back the most recently CLOSED one sits.
+  function ctClosedBack(kind) {
+    const lc = ctLastClosedDay().getTime();
+    for (let i = 0; i < 6; i++) if (ctPeriodBack(kind, i).e.getTime() <= lc) return i;
+    return 1;
   }
   function isoWeekOf(d) {
     const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -17868,36 +17947,96 @@
     return Math.ceil((((t - y0) / CT_DAY_MS) + 1) / 7);
   }
 
-  // One day's value for a category (or every category) out of the payload.
-  function ctDayValue(dateStr, focus) {
-    if (!ctDaily) return null;
+  /* ── The Vs window: which two periods, and the sub-periods inside ──
+     Every bucket produces the same shape, so one drawing routine serves them
+     all: a list of points, each a [from,to] range on the current period and
+     the matching range on the previous one. Quarter's sub-period is a WEEK,
+     which is also what keeps it inside the read budget. */
+  function ctVsWindow() {
+    const kind = ctState.bucket;
+    const back = ctPtdOn() ? 0 : ctClosedBack(kind);
+    const cur = ctPeriodBack(kind, back), prv = ctPeriodBack(kind, back + 1);
+    const lc = ctLastClosedDay().getTime();
+    const points = [];
+    const dayLabel = d => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+    if (kind === 'quarter') {
+      for (let i = 0; i < 13; i++) {
+        const cs = new Date(cur.s.getTime() + i * 7 * CT_DAY_MS);
+        if (cs > cur.e) break;
+        const ps = new Date(prv.s.getTime() + i * 7 * CT_DAY_MS);
+        points.push({
+          label: 'Wk ' + (i + 1),
+          cur: [ctYmd(cs), ctYmd(new Date(Math.min(cs.getTime() + 6 * CT_DAY_MS, cur.e.getTime())))],
+          prv: [ctYmd(ps), ctYmd(new Date(Math.min(ps.getTime() + 6 * CT_DAY_MS, prv.e.getTime())))],
+        });
+      }
+    } else {
+      const days = Math.round((cur.e - cur.s) / CT_DAY_MS) + 1;
+      const pDays = Math.round((prv.e - prv.s) / CT_DAY_MS) + 1;
+      for (let i = 0; i < days; i++) {
+        const c = new Date(cur.s.getTime() + i * CT_DAY_MS);
+        // A 31st with no 31st to compare against is a GAP, not a zero.
+        const p = i < pDays ? new Date(prv.s.getTime() + i * CT_DAY_MS) : null;
+        points.push({
+          label: kind === 'month' ? String(i + 1) : dayLabel(c),
+          cur: [ctYmd(c), ctYmd(c)],
+          prv: p ? [ctYmd(p), ctYmd(p)] : null,
+        });
+      }
+    }
+    // Only sub-periods that have CLOSED are data. A week half-done is not a week.
+    let elapsed = points.length;
+    if (ctPtdOn()) {
+      elapsed = points.filter(pt => ctParse(pt.cur[1]).getTime() <= lc).length;
+      elapsed = Math.max(1, elapsed);
+    }
+    return {
+      points, elapsed, kind,
+      from: ctYmd(prv.s), to: ctYmd(cur.e),
+      curLabel: cur.label, prvLabel: prv.label,
+      subUnit: kind === 'quarter' ? 'week' : 'day',
+    };
+  }
+
+  // Value of a category (or every category) over an inclusive date range.
+  function ctDayValue(range, focus) {
+    if (!ctDaily || !range) return null;
     const unit = ctState.measure === 'net' ? 0 : 1;
+    const [from, to] = Array.isArray(range) ? range : [range, range];
     let acc = 0;
-    for (const st of ctStores()) {
-      if (!focus) {
-        const m = ((ctDaily.l2 || {})[st] || {})[dateStr] || {};
-        for (const c of T13_L2_CATS) acc += (m[c] || [0, 0])[unit] || 0;
-      } else if (focus.l3) {
-        const m = (((ctDaily.l3 || {})[st] || {})[dateStr] || {})[focus.l2] || {};
-        acc += (m[focus.l3] || [0, 0])[unit] || 0;
-      } else {
-        const m = ((ctDaily.l2 || {})[st] || {})[dateStr] || {};
-        acc += (m[focus.key] || [0, 0])[unit] || 0;
+    for (let t = ctParse(from).getTime(); t <= ctParse(to).getTime(); t += CT_DAY_MS) {
+      const d = ctYmd(new Date(t));
+      for (const st of ctStores()) {
+        if (!focus) {
+          const m = ((ctDaily.l2 || {})[st] || {})[d] || {};
+          for (const c of T13_L2_CATS) acc += (m[c] || [0, 0])[unit] || 0;
+        } else if (focus.l3) {
+          const m = (((ctDaily.l3 || {})[st] || {})[d] || {})[focus.l2] || {};
+          acc += (m[focus.l3] || [0, 0])[unit] || 0;
+        } else {
+          const m = ((ctDaily.l2 || {})[st] || {})[d] || {};
+          acc += (m[focus.key] || [0, 0])[unit] || 0;
+        }
       }
     }
     return acc;
   }
+
 
   /* ── Loading ───────────────────────────────────────────────────── */
   async function loadCatTrend() {
     // The weekly buckets share the T13 feed, but NOT loadT13(): that function
     // owns #wrs-pane-t13 and rewrites it, and it returns early when the range
     // picker has no end date. Fetch it here instead and touch only this pane.
-    if (!wrsT13Data && !ctWeeksTried) {
-      ctWeeksTried = true;
+    const wantWeeks = CT_WEEKS_FOR[ctState.bucket] || 13;
+    if (ctWeeksKey !== String(wantWeeks)) {
+      ctWeeksKey = String(wantWeeks);
       try {
         const end = (wrsRange && wrsRange.to) || etTodayStr();
-        const d = await cachedFetch(`${WORKER_BASE}?action=weekly-t13&end=${encodeURIComponent(end)}`, { credentials: 'include' });
+        const d = await cachedFetch(
+          `${WORKER_BASE}?action=weekly-t13&end=${encodeURIComponent(end)}&weeks=${wantWeeks}`,
+          { credentials: 'include' });
         if (!d.error) wrsT13Data = d;
       } catch (_) { /* the weekly views say so below; Vs does not need it */ }
     }
@@ -17947,8 +18086,8 @@
         <div id="ct-legend2"></div>
       </div>`;
     ctBuildControls();
-    const { buckets, rows, l3Missing } = ctWeekRows();
-    ctDrawStatus(buckets, rows, l3Missing);
+    const { buckets, rows, l3Missing, weekDerived } = ctWeekRows();
+    ctDrawStatus(buckets, rows, l3Missing, weekDerived);
     const body = el('ct-body');
     if (ctLoading && ctState.view === 'vs') {
       body.innerHTML = `<div style="padding:28px 18px;text-align:center;font-size:13px" class="ct-lgr">Loading day-by-day category sales…</div>`;
@@ -17961,7 +18100,7 @@
     } else if (!rows.length) {
       // The weekly views depend on the week rollups, and those are a separate
       // feed — say which one is missing rather than a blanket "no data".
-      body.innerHTML = `<div style="padding:22px 18px;text-align:center;font-size:13px" class="ct-lgr">The trailing-13-week rollups have not loaded, so the weekly views are empty. <b>Vs</b> reads the day snapshots and still works.</div>`;
+      body.innerHTML = `<div style="padding:22px 18px;text-align:center;font-size:13px" class="ct-lgr">The trailing week rollups have not loaded, so this view is empty. <b>Vs</b> reads the day snapshots and still works.</div>`;
     }
     else if (ctState.view === 'trend')   ctDrawTrend(buckets, rows);
     else if (ctState.view === 'grid')    ctDrawGrid(buckets, rows);
@@ -17982,11 +18121,6 @@
   }
   function ctBuildControls() {
     const bar = el('ct-bar');
-    // Phase 1 is the week grain — the stored rollups' own unit. Day, month and
-    // quarter need a wider day-snapshot window than the subrequest budget
-    // allows without the range-splitting work, so they say so rather than
-    // appearing to work.
-    const laterHint = 'Coming with the longer-window series — the week grain is what the stored rollups hold today';
     bar.innerHTML = `<span class="ct-lbl">Category Trend</span>
       <span class="ct-ctl"><span class="ct-lbl">Level</span><span class="ct-pill" id="ct-level"></span></span>
       <span class="ct-ctl" id="ct-parent-wrap" hidden><span class="ct-lbl">Within</span><select class="ct-sel" id="ct-parent"></select></span>
@@ -17999,13 +18133,17 @@
 
     ctPillGroup(el('ct-level'), [['l2', 'L2'], ['l3', 'L3']], () => ctState.level,
       v => { ctState.level = v; ctState.focus = null; ctState.picked = new Set(); ctDailyKey = ''; });
-    ctPillGroup(el('ct-bucket'), [['week', 'Week'], ['day', 'Day', laterHint],
-      ['month', 'Month', laterHint], ['quarter', 'Quarter', laterHint]],
-      () => ctState.bucket, v => { ctState.bucket = v; });
+    ctPillGroup(el('ct-bucket'), [['day', 'Day'], ['week', 'Week'], ['month', 'Month'], ['quarter', 'Quarter']],
+      () => ctState.bucket, v => { ctState.bucket = v; ctState.focus = null; ctDailyKey = ''; });
     ctPillGroup(el('ct-measure'), [['net', 'Net $'], ['units', 'Units']], () => ctState.measure,
       v => { ctState.measure = v; });
-    ctPillGroup(el('ct-compare'), [['closed', 'Last closed'], ['ptd', 'To date']],
-      () => ctState.ptd ? 'ptd' : 'closed', v => { ctState.ptd = (v === 'ptd'); ctDailyKey = ''; });
+    ctPillGroup(el('ct-compare'),
+      [['closed', 'Last closed'],
+       ['ptd', 'To date', ctState.bucket === 'day'
+         ? 'A rolling fortnight has no sub-period still to close — the snapshots are per day, not per hour'
+         : null]],
+      () => (ctState.ptd && ctState.bucket !== 'day') ? 'ptd' : 'closed',
+      v => { ctState.ptd = (v === 'ptd'); ctDailyKey = ''; });
     ctPillGroup(el('ct-view'), [['vs', 'Vs'], ['trend', 'Trend'], ['grid', 'Grid'], ['table', 'Table']],
       () => ctState.view, v => { ctState.view = v; });
     el('ct-compare-wrap').hidden = ctState.view !== 'vs';
@@ -18042,31 +18180,43 @@
   }
 
   /* ── Status line — one sentence, and it says what is NOT knowable ─ */
-  function ctDrawStatus(buckets, weekRows, l3Missing) {
+  function ctDrawStatus(buckets, weekRows, l3Missing, weekDerived) {
     const w = ctVsWindow();
     const rows = ctState.view === 'vs' ? ctVsRows() : weekRows;
     const scope = ctState.store === CT_ALL ? WRS_STORE_KEYS.length + ' stores' : WRS_STORE_NAMES[ctState.store];
     const lvl = ctState.level.toUpperCase();
+    const unit = ctState.bucket === 'day' ? 'day' : ctState.bucket;
     let t = `<b>${escapeHtml(scope)}</b> · ${ctState.measure === 'net' ? 'net sales' : 'units'}`
       + ` · <b>all ${rows.length} ${lvl} categor${rows.length === 1 ? 'y' : 'ies'}</b>`;
     if (ctState.view === 'vs') {
-      t += ` — the card charts <b>${escapeHtml(w.curLabel)}${ctState.ptd ? ' to date' : ''}</b>`
-         + ` against <b>${escapeHtml(w.prvLabel)}</b> day by day; every category is compared underneath it.`;
-      if (ctState.ptd) {
+      t += ` — the card charts <b>${escapeHtml(w.curLabel)}${ctPtdOn() ? ' to date' : ''}</b>`
+         + ` against <b>${escapeHtml(w.prvLabel)}</b> ${w.subUnit} by ${w.subUnit};`
+         + ` every category is compared underneath it.`;
+      if (ctPtdOn()) {
         const n = w.elapsed;
-        t += `<br><span class="ct-warn">▲</span> <b>The week in progress, clipped to the ${n} day${n === 1 ? '' : 's'} that have closed</b>`
-           + ` — and last week is clipped to the same ${n}, so the totals are like for like.`
+        t += `<br><span class="ct-warn">▲</span> <b>The ${unit} in progress, clipped to the ${n} ${w.subUnit}${n === 1 ? '' : 's'} that have closed</b>`
+           + ` — and the ${unit} before it is clipped to the same ${n}, so the totals are like for like.`
            + ` The amber line still runs its full length, so you can see what you are running against.`;
       }
     } else {
-      t += ` — <b>${buckets.length} weeks</b> to ${escapeHtml(buckets.length ? buckets[buckets.length - 1].label : '—')}`
+      const last = buckets.length ? buckets[buckets.length - 1].label : '—';
+      t += ` — <b>${buckets.length} ${unit}${buckets.length === 1 ? '' : 's'}</b> to ${escapeHtml(last)}`
          + (ctState.view === 'trend'
              ? `. Trend overlays ${Math.min(CT_MAX_LINES, rows.length)} at a time; Grid and Table show every one.`
              : ctState.view === 'grid'
                ? `, one panel each, nothing folded${ctState.gridScale === 'own'
                    ? '; each panel is scaled to its OWN high and low — the baseline is not zero, so read the shape and take size from the printed total'
                    : '; every panel runs 0 to one shared maximum, so the heights ARE comparable'}.`
-               : `, every row, every week, no fold.`);
+               : `, every row, every ${unit}, no fold.`);
+      // The two halves of this tab are built from different feeds, and at
+      // month or quarter grain that is a real difference in what a "month"
+      // means. Say it here rather than let the numbers disagree quietly.
+      if (weekDerived) {
+        t += `<br><span class="ct-warn">▲</span> <b>These ${unit}s are built from whole weeks</b>, assigned by the week's`
+           + ` end date — a week straddling the boundary lands in one ${unit} rather than being split.`
+           + ` The <b>Vs</b> card is not: it reads day snapshots, so it is calendar-exact.`
+           + ` Expect small differences between the two.`;
+      }
     }
     if (l3Missing > 0) {
       t += `<br><span class="ct-warn">▲</span> <b>${l3Missing} of ${buckets.length} weeks carry no L3 breakdown</b>`
@@ -18083,7 +18233,7 @@
     const body = el('ct-body');
     const w = ctVsWindow();
     const focus = ctFocusRow(rows);
-    const cutoff = ctState.ptd ? w.elapsed : w.points.length;
+    const cutoff = ctPtdOn() ? w.elapsed : w.points.length;
     const cur = w.points.map((p, i) => i < cutoff ? ctDayValue(p.cur, focus) : null);
     const prv = w.points.map(p => ctDayValue(p.prv, focus));
     const sum = a => a.reduce((x, v) => x + (v || 0), 0);
@@ -18096,14 +18246,14 @@
     const up = curTotal >= prvSame;
     body.innerHTML = `
       <div id="ct-legend">
-        ${pill(CT_COLORS.cur, ctState.ptd ? w.curLabel + ' to date' : w.curLabel, curTotal, '')}
-        ${pill(CT_COLORS.prv, w.prvLabel, prvSame, ctState.ptd ? `same ${cutoff} day${cutoff === 1 ? '' : 's'}` : '')}
+        ${pill(CT_COLORS.cur, ctPtdOn() ? w.curLabel + ' to date' : w.curLabel, curTotal, '')}
+        ${pill(CT_COLORS.prv, w.prvLabel, prvSame, ctPtdOn() ? `same ${cutoff} ${w.subUnit}${cutoff === 1 ? '' : 's'}` : '')}
         <span class="ct-head" style="color:${up ? ctGood() : ctBad()}">${up ? '▲' : '▼'} ${escapeHtml(ctPct(curTotal, prvSame))}
           ${up ? '+' : '−'}${escapeHtml(ctFmt(Math.abs(curTotal - prvSame)))}</span>
       </div>
       <div id="ct-chart"></div>
       <div class="ct-cap">${escapeHtml(focus ? (focus.l3 ? focus.l2 + ' → ' + focus.l3 : focus.key) : 'All ' + ctState.level.toUpperCase() + ' categories')}<span class="ct-cap-h">${
-        ctState.ptd ? ` · ${escapeHtml(w.prvLabel)} finished at ${escapeHtml(ctFmt(prvFull))}` : ''
+        ctPtdOn() ? ` · ${escapeHtml(w.prvLabel)} finished at ${escapeHtml(ctFmt(prvFull))}` : ''
       }${focus ? ' · click its row again for all categories' : ' · click a row to chart one category'}</span></div>
       <div id="ct-rows"></div>`;
     el('ct-chart').innerHTML = ctChartSVG(w.points, cur, prv, el('ct-chart').clientWidth || 760);
@@ -18386,20 +18536,26 @@
 
   /* ── Panel legend — only the states THIS view uses (§4.8) ───────── */
   function ctDrawLegend() {
+    // The legend has to name the bucket you are actually in. Hard-coding
+    // "week" left it saying "up or down on the week" over a month chart —
+    // the third time in this feature that a legend described something other
+    // than what was on screen.
+    const U = ctState.bucket === 'day' ? 'day' : ctState.bucket;
+    const SUB = ctVsWindow().subUnit;
     const line = c => `<span class="ct-lgs" style="display:inline-block;width:14px;height:3px;border-radius:2px;background:${c}"></span>`;
     const box = c => `<span class="ct-lgs" style="display:inline-block;width:11px;height:11px;border-radius:3px;background:${c};border:1px solid rgba(127,127,127,.35)"></span>`;
     const R = {
-      vsLines: `<div class="ct-lgr">${line(CT_COLORS.cur)}<span><b>Green is this week, amber is the one before it</b> — the same two colours, and the same card, as the Sales Trend chart on the dashboard. The x-axis runs <i>inside</i> the week, so it shows <b>where</b> the difference came from rather than only that there was one. The bars underneath repeat that comparison for every category, on one shared scale.</span></div>`,
-      vsClick: `<div class="ct-lgr">${box('rgba(34,197,94,.14)')}<span><b>Click any category row to chart it</b> — the card above redraws for that category alone, click again for all of them. The ▲▼ figure is up or down on the week; the two bar lengths say the same thing, so the reading never rests on colour alone, and the comparator is spelled out on every row (<b>vs $…</b>).</span></div>`,
+      vsLines: `<div class="ct-lgr">${line(CT_COLORS.cur)}<span><b>Green is this ${U}, amber is the one before it</b> — the same two colours, and the same card, as the Sales Trend chart on the dashboard. The x-axis runs <i>inside</i> the ${U}, so it shows <b>where</b> the difference came from rather than only that there was one. The bars underneath repeat that comparison for every category, on one shared scale.</span></div>`,
+      vsClick: `<div class="ct-lgr">${box('rgba(34,197,94,.14)')}<span><b>Click any category row to chart it</b> — the card above redraws for that category alone, click again for all of them. The ▲▼ figure is up or down on the ${U}; the two bar lengths say the same thing, so the reading never rests on colour alone, and the comparator is spelled out on every row (<b>vs $…</b>).</span></div>`,
       vsNone: `<div class="ct-lgr"><span class="ct-lgs" style="display:inline-block;width:14px;height:3px;background:repeating-linear-gradient(90deg,#cbd5e1 0,#cbd5e1 4px,transparent 4px,transparent 7px)"></span><span><b>No budget line, and no last-year line.</b> The dashboard card has both; neither exists per category. Budget is stored per store per day with no category dimension, and a last-year category line would need year-old snapshots. Drawing either would mean inventing it.</span></div>`,
-      ptd: `<div class="ct-lgr">${line(CT_COLORS.prv)}<span><b>To date clips both sides to the same span.</b> This week is measured over the days that have closed, and last week over the same number — three days against three days, never three against seven. The pill says how many. The amber line still runs its <b>full</b> length and the caption gives its finished total, so you can see the target as well as the pace.</span></div>`,
+      ptd: `<div class="ct-lgr">${line(CT_COLORS.prv)}<span><b>To date clips both sides to the same span.</b> The ${U} you are in is measured over the ${SUB}s that have closed, and the ${U} before it over the same number — three ${SUB}s against three, never three against a whole ${U}. The pill says how many. The amber line still runs its <b>full</b> length and the caption gives its finished total, so you can see the target as well as the pace.</span></div>`,
       trend: `<div class="ct-lgr">${line(ctHue(0))}<span><b>A coloured line is one category</b>, and its colour is fixed to it for the whole window. Six is the ceiling — past it no colourblind reader can separate the hues — so <b>Grid</b> and <b>Table</b> are where every category shows at once. Click a Grid panel to choose which six.</span></div>`,
       grid: `<div class="ct-lgr">${line(ctInkDim())}<span><b>A Grid sparkline shows shape, not size.</b> On <b>Own</b> scale each panel runs between its own high and low — <b>the baseline is not zero</b> — because a category moving between $70k and $80k is a flat line drawn from zero. The number above it carries the magnitude. Switch <b>Scale</b> to <b>Shared</b> when you want heights to be comparable.</span></div>`,
       hier: `<div class="ct-lgr"><span class="ct-lgs mc-lvl" style="margin-top:1px">L3</span><span><b>An L3 row sits indented under its L2</b>, with a rule drawn back up to it. Inheritance is the information, so it is drawn rather than labelled — and the L2 row is the exact sum of the L3 rows beneath it.</span></div>`,
-      dash: `<div class="ct-lgr">${box('transparent')}<span><b>A dash (—) is no sale in that period; it is never a zero passed off as data.</b> A day with no snapshot is absent rather than counted as zero sales, and a week whose summary pre-dates L3 reads as unknown, not as an empty category.</span></div>`,
-      surfaces: `<div class="ct-lgr">${box('rgba(127,127,127,.14)')}<span><b>Four surfaces, and every category is on three of them.</b> <b>Vs</b> puts this week against the last, category by category. <b>Grid</b> gives each its own panel. <b>Table</b> gives each a row of every week. <b>Trend</b> overlays up to six as lines. Nothing is ever hidden — only undrawn.</span></div>`,
+      dash: `<div class="ct-lgr">${box('transparent')}<span><b>A dash (—) is no sale in that period; it is never a zero passed off as data.</b> A day with no snapshot is absent rather than counted as zero sales, and a week whose summary pre-dates L3 reads as unknown, not as an empty category. At month and quarter grain the long views are built from whole weeks; the card is not.</span></div>`,
+      surfaces: `<div class="ct-lgr">${box('rgba(127,127,127,.14)')}<span><b>Four surfaces, and every category is on three of them.</b> <b>Vs</b> puts this ${U} against the last, category by category. <b>Grid</b> gives each its own panel. <b>Table</b> gives each a row of every ${U}. <b>Trend</b> overlays up to six as lines. Nothing is ever hidden — only undrawn.</span></div>`,
     };
-    const rows = { vs: [R.vsLines, R.vsClick, ctState.ptd ? R.ptd : R.vsNone, R.dash, R.surfaces],
+    const rows = { vs: [R.vsLines, R.vsClick, ctPtdOn() ? R.ptd : R.vsNone, R.dash, R.surfaces],
                    trend: [R.trend, R.dash, R.surfaces],
                    grid: [R.grid, R.dash, R.surfaces],
                    table: [R.hier, R.dash, R.surfaces] }[ctState.view];

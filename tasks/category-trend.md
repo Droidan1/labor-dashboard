@@ -265,9 +265,43 @@ therefore includes one new worker action after all.
       every new tab had to be added twice. Adding this one would have been the third
       time that bit.
 - [x] `CACHE_NAME` bumped to v184 and `scripts/fixtures/shell-cache.json` re-pinned.
-- [ ] **Phase 2** — day, month and quarter buckets. They need a wider day-snapshot
-      window than one request's subrequest budget allows, so the pills are present and
-      disabled with the reason on hover rather than appearing to work.
+### Phase 2 — SHIPPED 2026-09-10
+
+All four buckets are live. Two feeds, and the difference between them is stated on
+screen rather than left to be discovered:
+
+- **The Vs card is calendar-exact at every bucket**, because it reads day snapshots.
+  Day compares two rolling fortnights, Week Sun→Sat, Month day 1..N against the same
+  days of the month before, Quarter its thirteen weeks against the previous quarter's.
+- **Trend / Grid / Table at month and quarter grain are built from WHOLE WEEKS**,
+  assigned by the week's end date. A week straddling 30 September lands in one month
+  rather than being split — splitting it would need day data over the whole window,
+  which is the exact read budget this path exists to avoid. **The status line says so,
+  and says the card differs.** A month meaning two things on one tab is fine; a month
+  meaning two things silently is not.
+- `?action=weekly-t13` grew a bounded `weeks` param (default 13, clamped 1..110 — one
+  KV key per store-week, so 110 x 7 = 770, the same margin the day path keeps). Month
+  asks for 56, quarter for 108.
+- **Part-covered end buckets are dropped**, not drawn. A month with two of its weeks
+  inside the trailing window is not that month, and plotting it as one is the same
+  error as the partial quarter from the preview round, one layer down.
+- **To date is refused for Day** — a rolling fortnight has no sub-period still to
+  close — with the reason on hover.
+- A window past the read budget is **refused with its arithmetic** and the way to get
+  an answer anyway, not half-answered.
+
+**The legend was hard-coded to "week" again.** It read "up or down on the week" over a
+month chart. That is the third time in this feature a legend described something other
+than what was on screen; it now derives its unit from the bucket, and there is a check
+per bucket that no other unit leaks in.
+
+**A test that was watching the wrong signal.** The assertion "Month asks the feed for
+56 weeks" failed because `cachedFetch` memoises by URL, so only the first request at
+each width reaches the network. The code was right. It now asserts on the widths seen
+across the whole run, with the rendered bucket counts carrying the real proof.
+
+Verified: **84 browser checks** against the real `index.html`, **21** on the bounded
+`weeks` param, and **4,013 assertions across 63 suites** in the repo's runner.
 
 ### What the browser caught that the syntax check did not
 

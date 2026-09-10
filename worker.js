@@ -52,6 +52,8 @@ const WRS_RANGE_FULL_MAX_DAYS = 120;
 // the ~1000 subrequest cap, but REFUSED rather than degraded — a partial
 // category series would read as a real decline.
 const CATEGORY_SERIES_MAX_STORE_DAYS = 840;
+// weekly-t13's trailing window. One KV key per store-week, so 110 x 7 = 770.
+const WEEKLY_TRAILING_MAX_WEEKS = 110;
 
 // Inclusive list of 'YYYY-MM-DD' dates from `from` to `to`.
 function enumDatesInclusive(from, to) {
@@ -18093,6 +18095,12 @@ export default {
       const endWeek = url.searchParams.get("endWeek");
       const endDate = url.searchParams.get("end");   // anchor at a date (range picker)
       const year = url.searchParams.get("year") || String(new Date().getUTCFullYear());
+      // Trailing window. 13 stays the default so every existing caller is
+      // untouched; the ceiling is the subrequest budget, not a round number —
+      // this reads one KV key per store-week, so 110 x 7 stores = 770 gets,
+      // the same margin under ~1000 that WRS_RANGE_FULL_MAX_DAYS keeps.
+      const nWeeks = Math.min(WEEKLY_TRAILING_MAX_WEEKS,
+        Math.max(1, parseInt(url.searchParams.get("weeks"), 10) || 13));
       if (!endWeek && !endDate) {
         return new Response(JSON.stringify({ error: "Missing endWeek or end param" }), { status: 400, headers: corsJson });
       }
@@ -18119,8 +18127,8 @@ export default {
             const { results } = await env.DB.prepare(
               `SELECT week, MIN(date) as start_date, MAX(date) as end_date
                FROM daily_sales WHERE date <= ?
-               GROUP BY week ORDER BY MIN(date) DESC LIMIT 13`
-            ).bind(anchorDate).all();
+               GROUP BY week ORDER BY MIN(date) DESC LIMIT ?`
+            ).bind(anchorDate, nWeeks).all();
             weeks = (results || []).reverse().map(r => ({
               week: String(r.week),
               start: r.start_date,
