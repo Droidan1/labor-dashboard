@@ -201,11 +201,49 @@ calls actions the worker must already serve, so it lands last.
    (rule 5 — poll on the whole condition, require consecutive clean passes).
 4. Frontend PR merges last. Pages rebuilds `main` on its own; `CACHE_NAME` is at **v178**.
 
+## What actually landed, 2026-09-09/10
+
+Steps 1-3 are **done on both environments**; only the frontend merge is outstanding.
+
+| Step | Staging | Production |
+|---|---|---|
+| `PIN_PEPPER` secret | ✅ set (`clover-sales-api-staging`) | ✅ set (`clover-sales-api`) |
+| `migration-061.sql` | ✅ applied, 5 columns confirmed by `pragma_table_info` | ✅ applied, same |
+| Worker deploy | ✅ `562451bb-b101-457b-86c9-b4ab0d03c57f` | ✅ `ef0ff3e9-dbd2-4202-b8ef-128e1d43737b` |
+| Frontend | — | ⏳ waits on Brian's merge of #205 |
+
+A **different random pepper per environment**, deliberately: they are different databases,
+and a code minted against one should not validate against the other.
+
+Production was backed up before the migration — the 14 user rows to
+`users-prod-backup-20260909T235909Z.json` in the session scratchpad, checked for row count
+before the ALTERs ran (rule 2: a failed backup is a failed write). Afterwards: **14 users,
+0 associates, 0 with pages, 0 failures** — no row was read, rewritten or touched, which is
+all an `ADD COLUMN` can do. Production holds 5 admins, 8 managers and 1 superuser and no
+`staff` at all, so the financial gate's new clause changes nothing for anyone today.
+
+Both deploys verified by fetching the deployed script from the Cloudflare API and grepping
+the bundle: `associate-login`, `associate-save`, `PIN_PEPPER`, `canUsePage`, `ACTION_PAGE`,
+`NEED_PAGE_EDIT` and `u.name, u.pages` all present; `bin-dump-log`, `DUPLICATE_BARCODE`,
+`FINANCIAL_ROLES`, `binDumpStoreGuard` and `auth-verify-otp` all still present, so nothing
+was reverted. **Three consecutive identical body hashes** on production (rollout is ~180s
+observed), and the production hash equals staging's — the same code is on both.
+
+🔑 **Comparing the fetched bundles with `cmp` reported a difference when there was none.**
+The Cloudflare API returns the script as `multipart/form-data` with a **random boundary per
+request**: 116 differing bytes, exactly two boundary strings, identical content. Hash the
+body with the boundary lines stripped, not the response.
+
+⚠️ **The live HTTP endpoints were NOT exercised from this session.** The egress proxy denies
+`api-staging.retjghub.com` and `api.retjghub.com` by policy, so the evidence here is the
+deployed bundle plus the 131-assertion suite driving the real `worker.fetch`. The first
+real request against the deployed worker will be a human one.
+
 ## Still open
 
-- Nothing has been applied to either database, and `PIN_PEPPER` is not set anywhere. The
-  feature is inert until both happen — an associate cannot be created without the pepper,
-  which is the correct failure.
+- **The frontend.** Until #205 merges, production runs the old `index.html`, which has no
+  Associate login button. That direction is safe on purpose — the new worker only *adds*
+  fields to `auth-me` and `list-users`, which the old client ignores.
 - The second `GRANTABLE_PAGES` entry is free when it is wanted: `submit-photos` is already
   reachable for `staff` server-side, so it costs one registry line and no worker change.
 - Rate limiting still does not exist anywhere else in this app. The associate login is the

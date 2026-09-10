@@ -1,3 +1,28 @@
+## `cmp` on a Cloudflare worker bundle compares the envelope, not the code (2026-09-09)
+
+Verifying the staging deploy, I fetched the deployed script twice and ran `cmp`. It said
+the two differed — which reads exactly like "you are mid-rollout, the old code is still
+being served", the thing rule 5 exists to catch. Both fetches had the **same byte count**
+and the **same grep counts for every string I cared about**, which should have been the
+tell.
+
+`GET /accounts/{id}/workers/scripts/{name}` returns `multipart/form-data`, and the
+**boundary is regenerated per request**. `cmp -l | wc -l` said 116 differing bytes: two
+boundary strings of ~58 characters. The script was byte-identical.
+
+Rules:
+
+1. **Hash the body, not the response.** `grep -v '^--[0-9a-f]\{40,\}' | sha256sum` strips
+   the boundary lines; that hash was stable across three passes and matched staging's.
+2. **When a probe reports a difference, ask what part of the response is allowed to
+   differ** before believing it. Boundaries, timestamps, request ids and ETags all move on
+   their own.
+3. Two contradicting signals — "identical size and content greps" versus "cmp says no" —
+   mean one of the probes is wrong, not that reality is ambiguous. Resolve it before
+   reporting either.
+4. Same family as the fixed-width context grep and the `offsetParent` mistakes: the probe
+   answered a question next to the one asked.
+
 ## A surviving mutation meant TWO copies of one rule, not a weak test (2026-09-09)
 
 Mutation-testing the new page gate: I broke `canUsePage` so any page grant admitted any

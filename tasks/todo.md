@@ -19,9 +19,44 @@ card and a way to ask for a reset that only an admin can action.
       blocks, the Associates panel and its modal, the bottom bar's missing ids.
 - [x] `scripts/test-associate.mjs` (131 assertions) + mutation testing.
 - [x] `CACHE_NAME` → v178, fixture updated.
-- [ ] `wrangler secret put PIN_PEPPER` (staging, then production) — **needs Brian**.
-- [ ] Apply `migration-061.sql` to staging, then production — **needs Brian** (rule 7).
-- [ ] Deploy the worker, confirm the bundle, merge the frontend.
+- [x] `wrangler secret put PIN_PEPPER` — set on staging and production (a different random
+      value each; they are different databases).
+- [x] Apply `migration-061.sql` to staging, then production. Backed up production's 14 user
+      rows first; afterwards 14 users, 0 associates, 0 pages, 0 failures.
+- [x] Deploy the worker to both. Verified by grepping the deployed bundle, three consecutive
+      identical body hashes on production, old surface intact.
+- [ ] **Merge PR #205** — Brian's click. Auto-merge cannot work on this repo.
+
+## Found while deploying, NOT part of this change
+
+`scripts/test-daily-auction-column.mjs` goes red every evening between 8pm and midnight
+Eastern, on `main` as much as on this branch. It is a timezone inconsistency in
+`buildWeeklyTable` (`index.html:7899`), which computes **two** notions of today and then
+uses the wrong one:
+
+```js
+const todayStr = new Date().toDateString();                     // the DEVICE's timezone
+const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })…;  // ET
+…
+const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
+```
+
+Row dates are built as **local noon** (`new Date(dateStr + "T12:00:00")`, `loadStoreFromD1`),
+so on any device set to Eastern the two agree and the Daily tab is correct — which is every
+device in the business. On a device whose local date differs from ET (a UTC box, or someone
+travelling) today's row stops being "today": it loses the live Clover figure and the
+highlight. In the test container, which runs UTC, that is true for four hours a day.
+
+Proposed fix, one line, comparing ET on both sides rather than mixing the two:
+
+```js
+const etDay = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);
+const isToday = isCurrentWeek && r.date && etDay(r.date) === todayKey;
+```
+
+Deliberately **not** done here — it changes a shipped dashboard surface for every user and
+has nothing to do with associates. It does not affect CI (this repo's only checks are the
+two Cloudflare Pages builds). Worth its own small PR.
 
 ## Review
 
