@@ -131,3 +131,35 @@ combinations.
 **Extra checks worth porting:** L3 keys must keep their parent (`Other / unmapped`
 resolving to 12 distinct rows, not 1 — worker.js:2466); no two labels identical inside
 one parent; the Chart cap refuses rather than evicts.
+
+
+## Iteration 3 — "the graph should be a vs" (Brian, 2026-09-10)
+
+The graph is now the comparison itself, not a trend with the change reported
+underneath. **Vs** is the default view: two bars per category — this period over the
+one before it — on one shared scale, sorted by the current period, with the comparator
+spelled out on every row ("vs $69,182") the way a store card spells out "vs $budget".
+
+The shape solves both asks at once. **Two marks, regardless of how many categories** —
+so a Vs chart holds all 12 L2s, or all 56 L3s grouped under their parents, with no fold
+and no colour ceiling. Colour here is emphasis, not identity: current takes the blue,
+previous the de-emphasis grey, which leaves green/red free to mean direction — the same
+thing they mean everywhere else in this app.
+
+Views are now **Vs · Trend · Grid · Table**. The change strip is hidden in Vs, because
+Vs already says it row by row and printing it twice underneath is noise.
+
+**The panel legend is now view-aware.** It was explaining a change strip and line-series
+colour rules while showing neither. §4.8 says every visual state gets a legend row; the
+converse matters as much — a legend that describes things not on screen teaches the
+reader to skim it.
+
+Verified: **76 checks**, all passing, including the 32 bucket x level x view
+combinations.
+
+**Test bug worth recording** (not a product bug): the "bar length tracks value" check
+read `.vs-cur.textContent`, which glues the value to the nested delta span — "$66,144"
+and "-4.4%" became 661444.4. Diagnosed before touching the code; the geometry was
+correct all along (66,144 -> 95.6% of a 69,182 max). **A failing assertion is a claim
+about the test as much as about the code** — check which one is wrong before editing
+either.

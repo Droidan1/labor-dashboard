@@ -223,6 +223,23 @@ html.light .sec-s{color:var(--inkDim);}
 .dl-v .pct{color:var(--inkDim);font-weight:500;margin-left:5px;}
 .dl-none{font-size:12px;color:var(--inkDim);padding:8px 0 12px;}
 
+/* ── Vs — two bars per category, current over previous ──────────────── */
+.vs-wrap{padding:2px 18px 8px;}
+.vs-row{display:grid;grid-template-columns:minmax(120px,1.15fr) minmax(90px,3fr) minmax(132px,auto);
+  align-items:center;gap:12px;padding:5px 0;border-bottom:1px solid var(--hairline);}
+.vs-row:last-child{border-bottom:0;}
+.vs-row:hover{background:var(--panelHi);}
+.vs-nm{font-size:12px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.vs-bars{display:flex;flex-direction:column;gap:2px;/* the 2px surface gap, not a stroke */}
+.vs-track{height:9px;border-radius:3px;background:var(--hairline);overflow:hidden;}
+.vs-bar{height:100%;border-radius:3px;transition:width .3s cubic-bezier(.4,0,.2,1);}
+.vs-bar.cur{background:var(--s1);}
+.vs-bar.prv{background:var(--sOther);}
+.vs-v{text-align:right;font-variant-numeric:tabular-nums;line-height:1.35;}
+.vs-cur{font-size:12.5px;font-weight:700;color:var(--ink);white-space:nowrap;}
+.vs-d{font-weight:600;margin-left:7px;}
+.vs-prv{font-size:11px;color:var(--inkDim);white-space:nowrap;}
+
 /* ── Grid — small multiples, one panel per category ──────────────────── */
 .grid-wrap{padding:2px 18px 6px;}
 .grid-gh{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;
@@ -322,11 +339,15 @@ table.mc tr.mc-l3 td{color:var(--inkDim);}
     quarter</b> — and read every category across those buckets, with a
     period-over-period change strip underneath. Every control below is live.
     <br><br>
-    <b>Every category is visible, always.</b> <b>Grid</b> gives each one its own panel —
-    all twelve L2s, or all fifty-six L3s grouped under their parents, nothing folded
-    away. <b>Table</b> gives each one a row. <b>Chart</b> overlays up to six for close
-    comparison; click a Grid panel to swap one in. Six is the ceiling on the Chart
-    alone, and it is a legibility limit, not a limit on what you can see.
+    <b>Vs is the default and the main event:</b> every category gets two bars — this
+    period and the one before it — on one shared scale, with the comparator spelled
+    out on every row. Because there are only ever <i>two</i> colours no matter how many
+    categories, it holds <b>all twelve L2s, or all fifty-six L3s</b>, in one chart.
+    <br><br>
+    <b>Grid</b> gives each category its own panel and its shape across the whole window.
+    <b>Table</b> gives each one a row of every bucket. <b>Trend</b> overlays up to six as
+    lines when you want to watch a few closely — six is a legibility ceiling on that
+    view alone, never a limit on what you can see.
   </p>
   <div class="doc-note">
     <b>Nothing is wired up, and no app code has been changed.</b> This is a static
@@ -496,7 +517,7 @@ const OTHER = '__other__';
 const ALL   = '__all__';
 const S = {
   level:'l2', parent:ALL, bucket:'week', measure:'net',
-  view:'grid', store:'__all__', hidden:new Set([OTHER]), maxSeries:6,
+  view:'vs', store:'__all__', hidden:new Set([OTHER]), maxSeries:6,
   picked:new Set(),        // categories explicitly promoted onto the Chart
   gridScale:'own',         // 'own' | 'shared'
 };
@@ -911,6 +932,24 @@ function showTip(bi, svgRect){
 }
 
 /* ── Legend ──────────────────────────────────────────────────────────── */
+// In Vs there are only two marks and they are PERIODS, not categories — so
+// the legend names the two dates rather than listing series.
+function drawVsLegend(buckets){
+  const el = document.getElementById('legend');
+  el.textContent = '';
+  const n = buckets.length;
+  if (n < 2) return;
+  const key = (colour, label, sub) => {
+    const w = document.createElement('span'); w.className='lg-item'; w.style.cursor='default';
+    const k = document.createElement('span'); k.className='lg-key';
+    k.style.background = colour; k.style.height = '9px'; k.style.borderRadius = '3px';
+    const t = document.createElement('span'); t.textContent = label;
+    const v = document.createElement('span'); v.className='lg-val'; v.textContent = sub;
+    w.append(k, t, v); el.appendChild(w);
+  };
+  key(getCSS('--s1'),     'This ' + BUCKETS[S.bucket].unit, buckets[n-1].long);
+  key(getCSS('--sOther'), 'Previous ' + BUCKETS[S.bucket].unit, buckets[n-2].long);
+}
 function drawLegend(series){
   const el = document.getElementById('legend');
   el.textContent = '';
@@ -1001,6 +1040,106 @@ function drawDelta(buckets, allRows){
     row.append(nm, track, v);
     el.appendChild(row);
   });
+}
+
+/* ── Vs — the comparison IS the chart ─────────────────────────────────
+   Two bars per category: this period and the one before it. Because there
+   are only ever TWO series no matter how many categories, this is the one
+   chart form that can hold all 12 L2s — or all 56 L3s — at once without
+   running out of distinguishable colour.
+
+   Colour is emphasis, not identity: the current period takes the blue, the
+   previous takes the de-emphasis grey. Green and red stay reserved for the
+   direction of the change, which is what they mean everywhere else in this
+   app (DESIGN.md §2.1 pacing semantics). */
+function drawVs(buckets, rows){
+  const host = document.getElementById('chart');
+  const n = buckets.length;
+  host.textContent = '';
+  if (n < 2){
+    host.innerHTML = '<div class="dl-none" style="padding:14px 18px">'
+      + 'Only one closed period in this window — nothing to compare it against.</div>';
+    return;
+  }
+  const cur = buckets[n-1], prv = buckets[n-2];
+
+  // One scale across every bar on screen, or the comparison is meaningless.
+  const max = Math.max(...rows.map(r => Math.max(r.values[n-1], r.values[n-2])), 1);
+
+  const groups = [];
+  if (S.level === 'l2'){
+    groups.push({ l2:null, rows: rows.slice() });
+  } else {
+    activeParents().forEach(l2 => {
+      const g = rows.filter(r => r.l2 === l2);
+      if (g.length) groups.push({ l2, rows:g });
+    });
+  }
+  const cVal = r => r.values[n-1], pVal = r => r.values[n-2];
+  groups.forEach(g => g.rows.sort((a,b) => cVal(b) - cVal(a)));
+  groups.sort((a,b) => b.rows.reduce((x,r)=>x+cVal(r),0) - a.rows.reduce((x,r)=>x+cVal(r),0));
+
+  const wrapEl = document.createElement('div');
+  wrapEl.className = 'vs-wrap';
+
+  groups.forEach(g => {
+    if (g.l2){
+      const h = document.createElement('div'); h.className = 'grid-gh';
+      const nm = document.createElement('span'); nm.className='grid-gh-n'; nm.textContent = g.l2;
+      const gc = g.rows.reduce((x,r)=>x+cVal(r),0), gp = g.rows.reduce((x,r)=>x+pVal(r),0);
+      const ct = document.createElement('span'); ct.className='grid-gh-c';
+      ct.textContent = fmtVal(gc) + '  vs  ' + fmtVal(gp) + '  ';
+      // The parent's own movement, coloured the same way its children are —
+      // a group header that states a change and greys it reads as a caption.
+      const gd = document.createElement('span'); gd.className='vs-d';
+      gd.style.color = gc >= gp ? getCSS('--good') : getCSS('--bad');
+      gd.textContent = (gc >= gp ? '\u25b2 ' : '\u25bc ') + pctText(gc, gp);
+      ct.appendChild(gd);
+      h.append(nm, ct); wrapEl.appendChild(h);
+    }
+    g.rows.forEach(r => {
+      const c = cVal(r), p = pVal(r);
+      if (c <= 0 && p <= 0) return;                 // never a row of two zeroes
+      const row = document.createElement('div'); row.className = 'vs-row';
+      row.title = (r.l3 ? r.l2 + ' → ' + r.l3 : r.key)
+        + `\n${cur.long}: ${fmtVal(c)}\n${prv.long}: ${fmtVal(p)}`;
+
+      const nm = document.createElement('div'); nm.className='vs-nm';
+      nm.textContent = r.label;
+
+      const bars = document.createElement('div'); bars.className='vs-bars';
+      const bar = (v, cls) => {
+        const t = document.createElement('div'); t.className='vs-track';
+        const b = document.createElement('div'); b.className='vs-bar '+cls;
+        b.style.width = (v > 0 ? Math.max(0.6, (v/max)*100) : 0) + '%';
+        t.appendChild(b); return t;
+      };
+      bars.append(bar(c,'cur'), bar(p,'prv'));
+
+      const val = document.createElement('div'); val.className='vs-v';
+      const l1 = document.createElement('div'); l1.className='vs-cur';
+      l1.textContent = c > 0 ? fmtVal(c) : '—';
+      const d = document.createElement('span'); d.className='vs-d';
+      const delta = c - p;
+      d.style.color = delta >= 0 ? getCSS('--good') : getCSS('--bad');
+      d.textContent = (delta >= 0 ? '▲ ' : '▼ ') + pctText(c, p);
+      l1.appendChild(d);
+      // The comparator is spelled out on every row, the way a store card
+      // spells out "vs $budget" — never a bare percentage you have to trust.
+      const l2l = document.createElement('div'); l2l.className='vs-prv';
+      l2l.textContent = 'vs ' + (p > 0 ? fmtVal(p) : '—');
+      val.append(l1, l2l);
+
+      row.append(nm, bars, val);
+      wrapEl.appendChild(row);
+    });
+  });
+  host.appendChild(wrapEl);
+}
+function pctText(c, p){
+  if (p <= 0) return c > 0 ? 'new' : '—';
+  const q = (c - p) / p;
+  return (q >= 0 ? '' : '−') + Math.abs(q*100).toFixed(1) + '%';
 }
 
 /* ── Grid — small multiples. EVERY category, nothing folded. ──────────
@@ -1173,8 +1312,10 @@ function drawStatus(buckets, series, allRows, open){
   let txt = `<b>${buckets.length} ${BUCKETS[S.bucket].unit}s</b> to ${b1.long.split(' · ')[0]}`
     + ` · <b>${scope}</b> · ${S.measure === 'net' ? 'net sales' : 'units'}`
     + ` · <b>all ${allRows.length} ${S.level.toUpperCase()} categor${allRows.length===1?'y':'ies'}</b>`
-    + (S.view === 'chart'
-        ? ` — the Chart draws ${drawn} at a time (click any Grid panel to swap one in); <b>Grid</b> and <b>Table</b> show every one of them`
+    + (S.view === 'vs'
+        ? ` — <b>${buckets[buckets.length-1].long.split(' · ')[0]}</b> against <b>${(buckets[buckets.length-2]||buckets[0]).long.split(' · ')[0]}</b>, two bars each, all on one scale`
+      : S.view === 'trend'
+        ? ` — Trend overlays ${drawn} at a time (click any Grid panel to swap one in); <b>Vs</b>, <b>Grid</b> and <b>Table</b> show every one of them`
         : (S.view === 'grid'
            ? ` — one panel each, nothing folded${S.gridScale === 'own'
                ? '; each panel is scaled to its OWN high and low — the baseline is not zero, so read the SHAPE and take size from the printed total'
@@ -1206,15 +1347,32 @@ function drawStatus(buckets, series, allRows, open){
 /* ── Panel legend (§4.8: every visual state gets a row) ──────────────── */
 function drawPanelLegend(){
   const el = document.getElementById('plegend');
-  const sw = (css) => `<span class="pl-swatch" style="display:inline-block;width:14px;height:3px;border-radius:2px;background:${css}"></span>`;
-  el.innerHTML = `
-    <div class="pl-row"><span class="pl-swatch" style="display:inline-block;width:11px;height:11px;border-radius:3px;background:var(--panelHi);border:1px solid var(--border)"></span><span><b>Three surfaces, and every category is on two of them.</b> <b>Grid</b> gives each category its own panel — all ${S.level==='l2'?'L2s':'L3s'}, nothing folded. <b>Table</b> gives each its own row. <b>Chart</b> overlays up to ${S.maxSeries} of them for close comparison; click a Grid panel to swap one in. Nothing is ever hidden — only undrawn.</span></div>
-    <div class="pl-row">${sw('var(--inkDim)')}<span><b>A Grid sparkline shows shape, not size.</b> On <b>Own</b> scale each panel runs between its own high and low — <b>the baseline is not zero</b> — because a category moving between $70k and $80k is a flat line if you draw it from zero. The number above it carries the magnitude. Switch <b>Scale</b> to <b>Shared</b> when you want heights to be comparable instead.</span></div>
-    <div class="pl-row">${sw('var(--s1)')}<span><b>A coloured line is one category</b>, and only on the Chart. Six is the hard ceiling there: past it no colourblind reader can separate the hues, which is why the answer to “show me all of them” is a panel each rather than a seventh colour. A category you have promoted is outlined in green in Grid and dotted in Table.</span></div>
-    <div class="pl-row">${sw('var(--sOther)')}<span><b>Grey is “Other”</b> on the Chart only — everything not currently drawn, summed, and <b>switched off by default</b>: a sum of the tail outranks every real category, so drawing it makes the fold bucket look like the top seller.</span></div>
-    <div class="pl-row"><span class="pl-swatch" style="display:inline-block;width:11px;height:11px;border-radius:3px;background:var(--good)"></span><span><b>Green in the change strip is up, red is down</b>, versus the ${BUCKETS[S.bucket].vs}. The bar's <i>direction</i> carries the same meaning as its colour, so the pair still reads under red-green colour blindness.</span></div>
-    <div class="pl-row"><span class="pl-swatch" style="display:inline-block;width:11px;height:11px;border-radius:3px;border:1px solid var(--border)"></span><span><b>A dash (—) is no sale in that period; it is never a zero passed off as data.</b> Every bucket drawn is a <b>closed</b> period — the one still in progress is named in the status line and left out, so a part-length period can never masquerade as a decline.</span></div>
-    <div class="pl-row"><span class="pl-swatch" style="display:inline-block;width:11px;height:11px;border-radius:3px;background:var(--panelHi);border:1px solid var(--border)"></span><span><b>Table</b> holds every value the chart draws, unrounded and unhidden — so no number is reachable only by hovering. Contrast is ≥4.5:1 in both themes; the three light-mode hues that sit under 3:1 against white are the reason direct labels and this table are not optional.</span></div>`;
+  const dash = (css,w,h,extra='') => `<span class="pl-swatch" style="display:inline-block;width:${w}px;height:${h}px;border-radius:${h>4?3:2}px;${css?'background:'+css+';':''}${extra}"></span>`;
+  const line = css => dash(css, 14, 3);
+  const box  = css => dash(css, 11, 11);
+
+  // §4.8: every visual state the surface uses gets a row — and ONLY the states
+  // it uses. Explaining a change strip that is not on screen, or a series
+  // colour in a view that has no series, teaches the reader to skim the legend.
+  const R = {
+    vsBars: `<div class="pl-row">${dash('var(--s1)',14,9)}<span><b>Blue is this ${BUCKETS[S.bucket].unit}, grey is the one before it.</b> Every bar on screen is on one shared scale, so the lengths are directly comparable — across categories as well as between the two periods. Colour here is emphasis, not identity: with only two marks no matter how many categories, this is the one chart shape that holds <b>every</b> category at once.</span></div>`,
+    vsDelta: `<div class="pl-row">${box('var(--good)')}<span><b>Green is up on the ${BUCKETS[S.bucket].unit}, red is down</b> — and the two bar lengths say the same thing, so the reading never rests on the colour alone. The comparator is spelled out on every row (<b>vs $…</b>) rather than left as a percentage you have to take on trust.</span></div>`,
+    gridSpark: `<div class="pl-row">${line('var(--inkDim)')}<span><b>A Grid sparkline shows shape, not size.</b> On <b>Own</b> scale each panel runs between its own high and low — <b>the baseline is not zero</b> — because a category moving between $70k and $80k is a flat line if you draw it from zero. The number above it carries the magnitude. Switch <b>Scale</b> to <b>Shared</b> when you want heights to be comparable instead.</span></div>`,
+    gridPick: `<div class="pl-row">${box('var(--goodWash)')}<span><b>A panel outlined in green is on the Trend chart.</b> Click any panel to add it, click again to drop it. Trend holds ${S.maxSeries} lines at most — past six no colourblind reader can separate the hues — so a seventh is refused rather than quietly evicting one.</span></div>`,
+    trendLine: `<div class="pl-row">${line('var(--s1)')}<span><b>A coloured line is one category</b>, and its colour is fixed to it for the whole window — hiding a series never repaints the others. Six is the ceiling here; <b>Vs</b>, <b>Grid</b> and <b>Table</b> are where every category shows at once.</span></div>`,
+    trendOther: `<div class="pl-row">${line('var(--sOther)')}<span><b>Grey is “Other”</b> — everything not currently drawn, summed, and <b>switched off by default</b>: a sum of the tail outranks every real category, so drawing it makes the fold bucket look like the top seller.</span></div>`,
+    strip: `<div class="pl-row">${box('var(--good)')}<span><b>Green in the change strip is up, red is down</b>, versus the ${BUCKETS[S.bucket].vs}. The bar's <i>direction</i> carries the same meaning as its colour, so the pair still reads under red-green colour blindness.</span></div>`,
+    hierarchy: `<div class="pl-row"><span class="pl-swatch" style="display:inline-block;margin-top:1px;padding:1px 4px;border-radius:4px;border:1px solid var(--accent);color:var(--accent);font-size:8.5px;font-weight:700;letter-spacing:.06em;line-height:1.2">L3</span><span><b>An L3 row sits indented under its L2</b>, with a rule drawn back up to it. Inheritance is the information, so it is drawn rather than labelled — and the L2 row is the exact sum of the L3 rows beneath it.</span></div>`,
+    closed: `<div class="pl-row">${box('')}<span><b>A dash (—) is no sale in that period; it is never a zero passed off as data.</b> Every bucket drawn is a <b>closed</b> period — the one still in progress is named in the status line and left out, so a part-length period can never masquerade as a decline.</span></div>`.replace('style="display:inline-block;width:11px;height:11px;border-radius:3px;','style="display:inline-block;width:11px;height:11px;border-radius:3px;border:1px solid var(--border);'),
+    surfaces: `<div class="pl-row">${box('var(--panelHi)')}<span><b>Four surfaces, and every category is on three of them.</b> <b>Vs</b> puts this period against the last, category by category. <b>Grid</b> gives each its own panel with its shape over the whole window. <b>Table</b> gives each a row of every bucket. <b>Trend</b> overlays up to ${S.maxSeries} as lines when you want to watch a few closely. Nothing is ever hidden — only undrawn.</span></div>`,
+    contrast: `<div class="pl-row">${box('var(--panelHi)')}<span><b>Every number the charts draw is also in Table</b>, unrounded — so no value is reachable only by hovering. Contrast is ≥4.5:1 in both themes; the three light-mode hues that sit under 3:1 against white are why direct labels and that table are not optional.</span></div>`,
+  };
+
+  const rows = { vs:    [R.vsBars, R.vsDelta, R.closed, R.surfaces],
+                 trend: [R.trendLine, R.trendOther, R.strip, R.closed, R.surfaces],
+                 grid:  [R.gridSpark, R.gridPick, R.strip, R.closed, R.surfaces],
+                 table: [R.hierarchy, R.strip, R.closed, R.surfaces, R.contrast] }[S.view];
+  el.innerHTML = rows.join('');
 }
 
 /* ── Controls ────────────────────────────────────────────────────────── */
@@ -1237,8 +1395,8 @@ function buildControls(){
     ()=>S.bucket, v => { S.bucket = v; });
   pillGroup('ctl-measure', [['net','Net $'],['units','Units']], ()=>S.measure,
     v => { S.measure = v; });
-  pillGroup('ctl-view', [['chart','Chart'],['grid','Grid'],['table','Table']], ()=>S.view,
-    v => { S.view = v; });
+  pillGroup('ctl-view', [['vs','Vs'],['trend','Trend'],['grid','Grid'],['table','Table']],
+    ()=>S.view, v => { S.view = v; });
 
   const scWrap = document.getElementById('ctl-scale-wrap');
   scWrap.hidden = S.view !== 'grid';
@@ -1277,22 +1435,26 @@ function render(){
   const series = foldSeries(rows);
   drawStatus(buckets, series, rows, open);
   const lg = document.getElementById('legend');
-  if (S.view === 'chart'){
+  lg.hidden = false;
+  if (S.view === 'trend'){
     drawChart(buckets, series);
     drawLegend(series);
-    lg.hidden = false;
   } else {
     tipEl.classList.remove('on');
-    // The Chart's legend belongs to the Chart. Grid labels every panel and
-    // Table names every row, so a second identity key there is noise.
-    lg.hidden = true; lg.textContent = '';
-    if (S.view === 'grid') drawGrid(buckets, rows); else drawTable(buckets, rows);
+    lg.textContent = '';
+    if (S.view === 'vs'){ drawVs(buckets, rows); drawVsLegend(buckets); }
+    // Grid labels every panel and Table names every row, so an identity
+    // key there would only restate what is already on screen.
+    else { lg.hidden = true; if (S.view === 'grid') drawGrid(buckets, rows); else drawTable(buckets, rows); }
   }
-  drawDelta(buckets, rows);
+  // Vs already IS the comparison, row by row — a separate strip saying the
+  // same thing underneath is the same number printed twice.
+  document.getElementById('delta-sec').hidden = S.view === 'vs';
+  if (S.view !== 'vs') drawDelta(buckets, rows);
   drawPanelLegend();
 }
 let rt; new ResizeObserver(() => {
-  clearTimeout(rt); rt = setTimeout(() => { if (S.view === 'chart') render(); }, 90);
+  clearTimeout(rt); rt = setTimeout(() => { if (S.view === 'trend') render(); }, 90);
 }).observe(chartEl);
 
 /* ── Prose blocks ────────────────────────────────────────────────────── */
@@ -1316,8 +1478,10 @@ document.getElementById('qa').innerHTML = rowsHTML([
    'You said "under the different stores", which I read as <b>inside each store tab, below what is there now</b> — and that is also where day-grain is affordable, since one store is one read per day. But the same panel works scoped to All stores on the Summary tab. <b>My default is: build it once, mount it on the store tabs, and put an All-stores copy at the bottom of the Summary tab.</b> Say if you only want one of the two.'],
   ['Is “compare” period-over-period, or versus last year?',
    'I built <b>versus the previous bucket</b> — week 36 against week 35 — because that is what "week by week" reads as. For a seasonal retailer the comparison people usually reach for at month and quarter is <b>the same period last year</b>. That needs KV going back that far and a like-for-like rule (the existing YoY code notes last-year data carries no auction channel). <b>Not built here. Worth adding as a second toggle on the change strip?</b>'],
-  ['Is Grid the right way to “see all of them”?',
-   'You asked to see all L2 and all L3, so <b>Grid</b> is now the default view: one panel per category — 12 at L2, 56 at L3 with <b>All L2s</b> selected — each with its total, its change and its shape. Nothing folds. The Chart still caps at six lines because past six no colourblind reader can separate the hues, but that cap now only governs <i>overlaying</i>, not seeing. <b>Is a panel-per-category the right shape, or would you rather the Table were the default and Grid the extra?</b>'],
+  ['Bars against bars — or dots on a line?',
+   'You asked for the graph to <i>be</i> the comparison, so <b>Vs</b> is now the default: two bars per category, this period over the last, one shared scale. The usual alternative is a <b>dumbbell</b> — two dots joined by a connector, where the length of the connector <i>is</i> the change. It is more elegant and it reads the movement faster once you are used to it; bars read faster cold. <b>I went with bars. Say if you would rather see the dumbbell version.</b>'],
+  ['Vs compares the last two closed periods — is that the “vs” you meant?',
+   'Week 36 against Week 35, August against July, Q2 against Q1. For a seasonal retailer the other candidate is <b>the same period last year</b>, which is a different question and a different data cost. The bucket pills already choose the grain; adding a <b>vs: previous | last year</b> control beside them would be small. <b>Worth it?</b>'],
   ['Grid sparklines are scaled to their own high and low, not to zero',
    'Drawn from zero, a category moving between $70k and $80k is a flat line — the panel tells you nothing. So each sparkline runs between its own high and low and the printed total carries the size. That means <b>heights are not comparable between panels</b>, which is why there is a <b>Scale: Shared</b> toggle that puts every panel on one 0-based scale instead. <b>Own is the default; say if you would rather it opened on Shared.</b>'],
   ['L3 names are messy, and I am cleaning them for display',
