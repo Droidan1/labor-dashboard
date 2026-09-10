@@ -4068,6 +4068,10 @@ const BUSINESS_AGNOSTIC_ACTIONS = new Set([
   "push-subscribe", "push-subscription-status", "push-test", "push-unsubscribe",
   "update-notif-prefs", "vapid-public-key", "resend-invite",
   "grant-options", "user-grants", "set-user-grants",
+  // Both self-gate ABOVE the auth gate (there is no session yet — signing in is
+  // the point) and return before reaching this one. Listed so the completeness
+  // test stays satisfied, same as ebay-handler-ingest below.
+  "associate-login", "associate-reset-request",
   // Self-gates on X-Handler-Token ABOVE the auth gate and returns before
   // reaching this one — listed so the completeness test stays satisfied.
   "ebay-handler-ingest",
@@ -4080,9 +4084,22 @@ const ACTION_BUSINESS = new Map([
   // First non-bl entry — the business gate's first real use.
   ["ebay-cases", "ecom"],
   ["afternoon-briefing", "bl"],
+  ["associate-save", "bl"],
   ["backfill", "bl"],
   ["backfill-category-orders", "bl"],
   ["backfill-items-snapshots", "bl"],
+  ["bin-dump-scan", "bl"],
+  ["bin-dump-log", "bl"],
+  ["bin-dump-recent", "bl"],
+  ["bin-dump-list", "bl"],
+  ["bin-dump-update", "bl"],
+  ["bin-dump-delete", "bl"],
+  ["bin-dump-photo", "bl"],
+  ["mos-lookup", "bl"],
+  ["mos-log", "bl"],
+  ["mos-list", "bl"],
+  ["mos-update", "bl"],
+  ["mos-delete", "bl"],
   ["cancel-sale-schedule", "bl"],
   ["category-costs", "bl"],
   ["channel-range", "bl"],
@@ -6650,6 +6667,218 @@ function autoWeekOf(d) {                       // Sunday that starts the retail 
   const u = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   u.setUTCDate(u.getUTCDate() - u.getUTCDay());
   return u.toISOString().slice(0, 10);
+}
+
+
+// ── Bin Dump: reading a pallet tag ──────────────────────────────────────────
+// The seven fields Brian asked for, in the order they read on the tag.
+const BIN_DUMP_FIELDS = ["barcode", "item_no", "pallet_name", "sup_ref", "po", "units", "created_by_tag", "truck_no"];
+
+// How far back the soft duplicate check looks. One receiving session: a truck of
+// 30 pallets is unloaded over hours, and the duplicate this guards against is the
+// same tag scanned twice during that unload. Longer would start flagging a PO that
+// legitimately came back; shorter would miss the case it exists for.
+const BIN_DUMP_DUPLICATE_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+// The barcode identifies ONE PHYSICAL PALLET — `PRM-10490-30` is truck 10490, pallet 30 —
+// so the same barcode twice is the same pallet logged twice, and its units have been
+// double-counted into the bins. That is a far stronger signal than the PO check above,
+// where one PO is shared by all 30 pallets on a truck and repeating is normal.
+//
+// 🔑 NINETY DAYS, not forever. `PRM-<truck>-<index>` is only as unique as truck numbers
+// are, and those eventually cycle. An all-time check would start matching a fresh pallet
+// against a years-old one, and a warning that fires on good pallets trains people to
+// click through it — which costs more than the check was ever worth.
+const BIN_DUMP_BARCODE_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+
+// Has this exact pallet been logged already?
+//
+// 🔑 Deliberately CROSSES STORES, unlike every other Bin Dump query. One pallet cannot be
+// in two places, so a hit at another store is a real mistake — usually the pallet being
+// logged against the wrong store — and scoping the lookup would hide exactly the case
+// worth catching. What the caller may SEE is still scoped: a row at a store they do not
+// hold comes back as a date and nothing else, which is enough to stop them without
+// leaking another store's operations.
+//
+// 🛑 A blank barcode is not a duplicate of every other blank. binDumpText turns "", "null"
+// and "n/a" into null, and null returns no matches at all — a torn tag must stay loggable.
+async function binDumpBarcodeMatches(env, barcode, user, isAdminSecret, excludeId) {
+  const code = binDumpText(barcode, 60);
+  if (!code || !env.DB) return [];
+  const since = new Date(Date.now() - BIN_DUMP_BARCODE_WINDOW_MS).toISOString();
+  const { results } = await env.DB.prepare(
+    `SELECT id, store, pallet_name, units, logged_by, logged_at FROM bin_dumps
+      WHERE barcode = ? AND logged_at >= ? ORDER BY logged_at DESC LIMIT 5`
+  ).bind(code, since).all();
+  const allow = isAdminSecret ? null : allowedStores(user);   // null means every store
+  return (results || [])
+    .filter(r => !(excludeId != null && r.id === excludeId))
+    .map(r => (allow === null || allow.includes(r.store))
+      ? { id: r.id, store: r.store, pallet_name: r.pallet_name, units: r.units,
+          logged_by: r.logged_by, logged_at: r.logged_at, redacted: false }
+      : { logged_at: r.logged_at, redacted: true });
+}
+
+// 🛑 PAIR LABEL TO VALUE BY ORDER, NOT BY POSITION. This prompt used to say the
+// value sits one line ABOVE its label. That was true of the first tag sampled and
+// EXACTLY BACKWARDS on the second: on Brian's 2026-08-26 tag every value renders
+// slightly BELOW its label instead. The two are mirror images, and a rule naming a
+// direction is right on one and actively misleading on the other. What holds on
+// both is the ORDER — the Nth right-aligned value belongs to the Nth label — so
+// that is what the prompt says now, with a meaning check behind it.
+//
+// Tag formats also differ in which fields exist: one carries "PO:" and a truck
+// number, the other "WO:" and a "Sup. Ref:" and no truck at all. Both spellings
+// land in `po`, and anything absent stays null.
+const BIN_TAG_PROMPT = [
+  "You are reading ONE printed pallet tag photographed in a warehouse.",
+  "",
+  'Return ONLY JSON, with exactly these keys: {"barcode":null,"item_no":null,"pallet_name":null,"sup_ref":null,"po":null,"units":null,"created_by_tag":null,"truck_no":null}',
+  "",
+  "HOW THE TAG IS LAID OUT — READ THIS FIRST.",
+  "Labels run down the LEFT, each ending in a colon. Their values are RIGHT-ALIGNED",
+  "on the far side of the tag. A value is NOT reliably on the same line as its label:",
+  "depending on the tag it prints slightly above or slightly below it, and the drift",
+  "grows down the tag. Do not pair them by which line they sit on.",
+  "",
+  "PAIR THEM BY ORDER. Read the labels top to bottom. Read the right-aligned values",
+  "top to bottom. The first value belongs to the first label, the second to the",
+  "second, and so on. Two real tags, both correct:",
+  "",
+  "    Item:                         Item:",
+  "                     50201                          50007",
+  "    PALLET AMAZON IND8            FG BL CONSUMABLES - FOOD -",
+  "                      5036        SNACKS",
+  "    PO:                           Sup. Ref:",
+  "                         1                            mix",
+  "    # of Units:                   WO:",
+  "               Ranon Price                          14373",
+  "    Created By:                   # of Units:",
+  "                     10490                            362",
+  "    Truck #:                      Created By:",
+  "                                                   Oo Aung",
+  "",
+  "  LEFT tag  -> item 50201, PO 5036, 1 unit, created by Ranon Price, truck 10490",
+  "  RIGHT tag -> item 50007, sup ref mix, WO 14373, 362 units, created by Oo Aung",
+  "",
+  "THE FIELDS",
+  "- barcode: the text printed under the LARGE barcode at the top. It comes in more",
+  "  than one shape (PRM-10490-30, P-082626-725979). Copy it exactly, including",
+  "  letters and hyphens. It is NOT the item number.",
+  "- item_no: pairs with 'Item:'. Usually bold, near the top right.",
+  "- pallet_name: the description printed BELOW 'Item:', left-aligned rather than",
+  "  right. It is the one field that is genuinely under its label. It MAY WRAP ONTO",
+  "  TWO OR MORE LINES — join them with single spaces into one string, e.g.",
+  "  'FG BL CONSUMABLES - FOOD - SNACKS'.",
+  "- sup_ref: pairs with 'Sup. Ref:'. Absent on some tags.",
+  "- po: pairs with 'PO:' OR with 'WO:' — the two are the same field and a tag",
+  "  carries one or the other. Whichever it shows, put its value here.",
+  "- units: pairs with '# of Units:'. Digits only, no commas.",
+  "- created_by_tag: pairs with 'Created By:'. A person's name, exactly as printed.",
+  "- truck_no: pairs with 'Truck #:'. Absent on some tags.",
+  "",
+  "CHECK YOURSELF BEFORE ANSWERING. created_by_tag must be a PERSON'S NAME and units",
+  "must be a COUNT. If you have ended up with a name in units, or a bare number where",
+  "a name belongs, your pairing has slipped by one — go back and match the Nth value",
+  "to the Nth label.",
+  "",
+  "IGNORE the 'Initialed By:' line, the small second barcode near the bottom, any",
+  "'Pallet N of M' line, the printed date and time, and any partial label from the",
+  "roll showing above or below this one.",
+  "",
+  "USE null FOR ANYTHING THIS TAG DOES NOT SHOW OR YOU CANNOT READ CONFIDENTLY —",
+  "torn, blurred, under glare, or simply not part of this tag's format. Not every tag",
+  "has every field. A wrong value is far worse than a missing one: a blank is obvious",
+  "and somebody types it, while a plausible wrong digit is copied into the record and",
+  "never questioned. Never invent a value to fill out the shape.",
+].join("\n");
+
+// The week a pallet belongs to, anchored to the STORE's day rather than UTC.
+// Every store is Eastern, and a pallet dumped at 9pm ET on a Saturday is already
+// 01:00 UTC on Sunday — so autoWeekOf() would file it under a week the store had
+// not started working yet, and the Saturday evening of a truck would land in the
+// next week's total. Derive the ET calendar date first, then take its Sunday.
+function binDumpWeekOf(iso) {
+  const et = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(iso));
+  return _weekStartOf(et);
+}
+
+// One tag field: a trimmed string, or null. Never "" — an empty string would be a
+// value that says "read, and empty", which is a different claim from "not read".
+function binDumpText(v, max) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  if (!s || s.toLowerCase() === "null" || s.toLowerCase() === "n/a") return null;
+  return s.slice(0, max || 120);
+}
+
+// Normalise whatever the model (or the client) hands back into the seven fields.
+// Shared by the scan, the log and the edit so all three agree on what a field is.
+function binDumpFields(raw) {
+  const units = (() => {
+    const v = raw?.units;
+    if (v === null || v === undefined || String(v).trim() === "") return null;
+    // "1,240" and "240 units" both appear on tags; keep the digits, drop the rest.
+    const n = parseInt(String(v).replace(/[^\d]/g, ""), 10);
+    return Number.isInteger(n) && n >= 0 ? n : null;
+  })();
+  return {
+    barcode: binDumpText(raw?.barcode, 60),
+    item_no: binDumpText(raw?.item_no, 40),
+    pallet_name: binDumpText(raw?.pallet_name, 160),
+    sup_ref: binDumpText(raw?.sup_ref, 60),
+    po: binDumpText(raw?.po, 40),
+    units,
+    created_by_tag: binDumpText(raw?.created_by_tag, 80),
+    truck_no: binDumpText(raw?.truck_no, 40),
+  };
+}
+
+// The barcode on Brian's tag is PRM + the truck number + this pallet's index
+// (PRM-10490-30, with "Pallet 30 of 30" printed at the foot). When it has that
+// shape, it is a free second reading of the truck number, so a disagreement means
+// one of the two was misread.
+//
+// 🔑 Returns null unless the barcode ACTUALLY matches that shape. Confirmed on one
+// tag, not on every vendor's — so a barcode shaped differently produces no hint at
+// all rather than warning on every pallet. It is a hint, never a refusal: the
+// manager can always submit either value.
+function binDumpTruckHint(fields) {
+  if (!fields.barcode || !fields.truck_no) return null;
+  const m = /^[A-Za-z]+-(\d+)-\d+$/.exec(fields.barcode);
+  if (!m) return null;
+  if (m[1] === fields.truck_no) return null;
+  return `The barcode reads truck ${m[1]}, but Truck # reads ${fields.truck_no}. One of them was misread.`;
+}
+
+// Store gate for any per-store floor action: a real store, one this user holds, and one
+// that still trades. A closed store cannot receive a pallet or lose one to shrink, so a
+// row against one is meaningless data — the same reasoning shelf-count-save uses.
+//
+// 🔑 NAMED FOR THE RIGHT IT CHECKS, NOT FOR ITS FIRST CALLER. It was binDumpStoreGuard
+// while Bin Dump was the only page asking; Mark Out of Stock asks exactly the same
+// question, and a second page calling a bin-dump-named function is how a shared rule
+// starts getting copied instead of called.
+//
+// `closedMsg` is the one part that IS caller-specific: "there are no bins to dump into"
+// is nonsense on a shrink screen. A caller that has a better sentence passes one.
+function storeActionGuard(storeRaw, currentUser, isAdminSecret, corsJson, opts) {
+  const store = String(storeRaw || "").trim().toUpperCase();
+  if (!ALL_STORES.includes(store)) {
+    return new Response(JSON.stringify({ error: "Invalid store" }), { status: 400, headers: corsJson });
+  }
+  if (!isAdminSecret && !canAccessStore(currentUser, store)) {
+    return new Response(JSON.stringify({ error: "Forbidden for this store", code: "NO_STORE_ACCESS" }), { status: 403, headers: corsJson });
+  }
+  // Reading back an existing row is still allowed for a store that has since closed —
+  // otherwise closing a store would hide history that was correct when it was written.
+  if (!opts?.allowClosed && STORE_CLOSED_FROM[store]) {
+    const what = opts?.closedMsg || "there are no bins to dump into";
+    return new Response(JSON.stringify({
+      error: `${STORE_LABELS[store] || store} closed on ${STORE_CLOSED_FROM[store]} — ${what}`,
+    }), { status: 409, headers: corsJson });
+  }
+  return null;
 }
 
 async function ensureAutoDraftForPhotos(env, store, now) {
@@ -10908,6 +11137,145 @@ const stickerCode = (categoryCode, price) => {
   return (!p || !/^\d+$/.test(c)) ? null : `BL-${c}-${p}`;
 };
 
+// ─── Mark Out of Stock: reading a sticker code back ──────────────────────────
+//
+// The inverse of the two functions above, kept beside them so the encoding and the
+// decoding cannot drift apart. MOS is the only caller that reads a code rather than
+// writing one.
+//
+// 🔑 THREE SPELLINGS OF THE SAME STICKER MUST NORMALISE TO ONE STRING. The QR carries
+// `BL-50038-1_5` (byte mode, underscore). A person reading the label off the shelf types
+// `BL-50038-1.5`, and Brian's own sheet has `BL-`, `Bl-` and `bl-` in the same column.
+// All of them are the same pallet of condiments at $1.50, and a log that stored them as
+// three different codes could not total a month.
+const MOS_REASONS = ["Stolen", "Damaged", "Expired", "Store Use"];
+
+function mosNormalizeCode(raw) {
+  const s = String(raw || "").trim().toUpperCase().replace(/\s+/g, "");
+  // The price tail is optional-decimal because $10.00 encodes as a bare `10` — no
+  // separator at all, which is a different SHAPE and not just a different value.
+  const m = /^BL-(\d{1,10})-(\d+(?:[._]\d{1,2})?)$/.exec(s);
+  return m ? `BL-${m[1]}-${m[2].replace(".", "_")}` : null;
+}
+
+// Code -> { itemNo, priceCents }. Takes the NORMALISED form.
+//
+// 🛑 Cents, via Math.round on a scaled float. `Number("1.75") * 100` is 174.99999999999997
+// in IEEE 754, and truncating that is a penny short on every $1.75 line — small, invisible,
+// and wrong in a column that gets summed for a whole month.
+function mosParseCode(code) {
+  const m = /^BL-(\d{1,10})-(\d+(?:_\d{1,2})?)$/.exec(String(code || ""));
+  if (!m) return null;
+  const price = Number(m[2].replace("_", "."));
+  if (!Number.isFinite(price) || price <= 0) return null;
+  return { itemNo: m[1], priceCents: Math.round(price * 100) };
+}
+
+// Calendar month in Eastern time, 'YYYY-MM'. Same idiom as binDumpWeekOf: format the
+// full date in ET and slice, rather than asking Intl for year+month, so the two grouping
+// helpers cannot disagree about which day a late-evening entry belongs to.
+// A unit count: digits, 1..100000, or null. See the comment at its call site for the
+// three different wrong answers the obvious spellings give.
+function mosQty(raw) {
+  if (typeof raw === "number") return Number.isInteger(raw) && raw >= 1 && raw <= 100000 ? raw : null;
+  if (!/^\d{1,6}$/.test(String(raw ?? "").trim())) return null;
+  const n = Number(String(raw).trim());
+  return n >= 1 && n <= 100000 ? n : null;
+}
+
+function mosMonthOf(iso) {
+  const et = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(iso));
+  return et.slice(0, 7);
+}
+
+// Category code -> name, from the KV maps ONLY — never triggering a refresh.
+//
+// 🛑 DELIBERATELY NOT stickerCategoryCodes(). That function sweeps Clover when its cache
+// is cold, and this runs inside a lookup that may miss at all six stores: calling it in a
+// loop would be up to thirty paged Clover requests on one scan, at a warehouse door, on a
+// phone. A cold cache here just means "not found", which the learned table below then
+// fixes permanently the first time anyone names it.
+//
+// The caller's own store is tried first, then the rest — the code is per CATEGORY and
+// chain-wide, so another store's catalogue is a legitimate answer for what a number means,
+// even though it is never a legitimate answer for whether a code EXISTS to print.
+async function mosNameFromCache(env, itemNo, store) {
+  if (!env.SALES_SNAPSHOTS) return null;
+  const order = [store, ...ALL_STORES.filter(s => s !== store)].filter(Boolean);
+  for (const s of order) {
+    let cached = null;
+    try { cached = await env.SALES_SNAPSHOTS.get(stickerCodesKey(s), "json"); } catch (_) { continue; }
+    const map = cached && cached.map;
+    if (!map) continue;
+    for (const [name, code] of Object.entries(map)) {
+      if (String(code) === String(itemNo)) return name;
+    }
+  }
+  return null;
+}
+
+// What this category costs us, per unit, in cents — or null.
+//
+// 🔑 `categories`, NOT `items`. fetchItemCosts returns both, and they are keyed by
+// different numbering schemes that OVERLAP: the sticker's 50038 is a Clover category, and
+// 50038 is separately a valid IM# in the per-item map resolving to something unrelated.
+// Reaching for `items` because the key looks like the right shape would put one category's
+// cost on another's shrink and the number would still look plausible.
+//
+// 🛑 NULL IS NOT ZERO. Four of the 46 categories carrying sticker codes have no cost on
+// file. Returning 0 for those would read as free merchandise and understate every total
+// they land in; the screen says "no cost on file" instead.
+async function mosCostCents(env, description) {
+  if (!description) return null;
+  const costs = await fetchItemCosts(env);
+  const raw = costs.categories ? costs.categories[description] : undefined;
+  if (raw === undefined || raw === null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
+}
+
+// The full resolution, in the order that gets cheaper-and-more-durable first.
+// Returns { description, source } — source is 'learned' | 'clover' | null.
+async function mosResolve(env, itemNo, store) {
+  if (!env.DB) return { description: null, source: null };
+  try {
+    const row = await env.DB.prepare(
+      "SELECT description FROM sticker_codes WHERE code = ?"
+    ).bind(String(itemNo)).first();
+    if (row && row.description) return { description: row.description, source: "learned" };
+  } catch (_) { /* table not migrated yet — fall through to the live map */ }
+
+  const name = await mosNameFromCache(env, itemNo, store);
+  if (!name) return { description: null, source: null };
+
+  // Write through, so the next scan of this code answers from D1 even after the
+  // category's last item leaves Clover — which is the whole reason this table exists.
+  await mosLearnCode(env, itemNo, name, "clover", null).catch(() => {});
+  return { description: name, source: "clover" };
+}
+
+// 🔑 A NAME A PERSON TYPED OUTRANKS ONE A SWEEP GUESSED — but that rule is enforced in
+// mosResolve, not here. It returns on the FIRST row it finds, so a code that already has
+// a name never reaches the write-through below at all, whatever the sweep saw.
+//
+// 🛑 An earlier draft also carried `WHERE sticker_codes.source <> 'user'` on the clover
+// branch. Mutation testing removed it and every assertion still passed — because the
+// clause is unreachable: the only caller that passes 'clover' has already established
+// there is no row. A guard that cannot fire is not a second layer of protection, it is a
+// claim in the source that nothing checks, and the next person to read it would believe
+// the rule lives here. The early return is the guard, and test-mos section 3 pins it.
+async function mosLearnCode(env, itemNo, description, source, actor) {
+  if (!env.DB || !itemNo || !description) return;
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO sticker_codes (code, description, source, taught_by, first_seen, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(code) DO UPDATE SET description = excluded.description,
+       source = excluded.source, taught_by = excluded.taught_by, updated_at = excluded.updated_at`
+  ).bind(String(itemNo), description, source === "user" ? "user" : "clover",
+         actor || null, now, now).run();
+}
+
 // Category -> numeric code, LEARNED FROM CLOVER rather than kept by hand.
 //
 // 🔑 THERE IS NO TABLE TO MAINTAIN, and that is deliberate. A hand-kept list of category
@@ -11744,7 +12112,8 @@ async function getAuthUser(request, env) {
   if (!sessionId) return null;
   const now = new Date().toISOString();
   const { results } = await env.DB.prepare(
-    `SELECT u.id, u.email, u.role, u.stores, u.status, s.expires_at
+    `SELECT u.id, u.email, u.role, u.stores, u.status, u.name, u.pages,
+            (u.pin_hash IS NOT NULL) AS is_associate, s.expires_at
      FROM sessions s JOIN users u ON s.user_id = u.id
      WHERE s.id = ? AND s.expires_at > ? AND u.status = 'active'`
   ).bind(sessionId, now).all();
@@ -11766,11 +12135,28 @@ async function getAuthUser(request, env) {
     user.grants = await loadGrants(env, user.id);
   }
   user.stores = user.stores ? JSON.parse(user.stores) : null;
+  user.is_associate = !!user.is_associate;
+  // Page grants: {"bin-dump":"view"|"edit"}. Absent key = cannot open that page.
+  //
+  // 🔑 Fail CLOSED on unparseable JSON, exactly as loadGrants does with `units`.
+  // {} is the safe reading — the account still exists, it just opens nothing.
+  try {
+    user.pages = user.pages ? JSON.parse(user.pages) : {};
+  } catch (_) {
+    console.log(JSON.stringify({ user_pages_unparseable: user.id, raw: String(user.pages).slice(0, 80) }));
+    user.pages = {};
+  }
+  if (!user.pages || typeof user.pages !== 'object' || Array.isArray(user.pages)) user.pages = {};
   // Sliding 7-day expiry, but roll at most ~once/day. Without this throttle every
   // request (incl. every ?action=photo image load) fired a session-row UPDATE, so
   // a folder of dozens of photos became dozens of D1 writes contending on one row.
+  //
+  // 🔑 An associate's session does NOT slide. It is 12 hours from sign-in and then
+  // it is over. The phone is shared, so the next shift must not inherit the last
+  // one's session merely because the app was opened often enough to keep rolling it.
   const rollTo = Date.now() + 7 * 24 * 60 * 60 * 1000;
-  if (!expiresAt || (rollTo - new Date(expiresAt).getTime()) > 24 * 60 * 60 * 1000) {
+  if (!user.is_associate &&
+      (!expiresAt || (rollTo - new Date(expiresAt).getTime()) > 24 * 60 * 60 * 1000)) {
     env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?')
       .bind(new Date(rollTo).toISOString(), sessionId).run().catch(() => {});
   }
@@ -12051,6 +12437,119 @@ const NON_FINANCIAL_ACTIONS = new Set([
   // photo submission is open to every authenticated user
   'photo', 'photo-upload', 'thumbnail', 'thumbnails', 'notify-photo-upload',
 ]);
+
+// ── Associates: page grants ─────────────────────────────────────────────────
+// An associate is a floor worker who signs in with a name and a six-digit code
+// and may open only the pages an admin ticked. They carry role 'staff', so the
+// financial gate already closes every money endpoint to them; what follows is
+// what lets a small, NAMED set back open — one page at a time, at one of two
+// levels. It can never widen anything a financial role already had.
+//
+// 🔑 `pin_hash IS NOT NULL` is the test, NOT the role. If a `staff` user ever
+// signs in by email instead (tasks/projects-tasks-permissions.md plans one), the
+// 12-hour session and the passkey refusal must keep applying to code-login
+// accounts only. One helper, so that stays one line.
+function isAssociate(user) { return !!(user && user.is_associate); }
+
+const PAGE_LEVELS = { view: 1, edit: 2 };
+
+// action -> [page, level required]. The ONLY route by which a role outside
+// FINANCIAL_ROLES reaches a Bargain Lane endpoint. Read as: "bin-dump-log serves
+// the Bin Dump page and needs edit on it."
+//
+// 🛑 bin-dump-delete is deliberately ABSENT. Removing a logged pallet stays a
+// manager's undo (Brian, 2026-09-08); an associate who mis-scans asks for it to
+// be taken out. Absent here means the gate never lets an associate through, at
+// any level, however the grant is written.
+const ACTION_PAGE = new Map([
+  ["bin-dump-list",   ["bin-dump", "view"]],
+  ["bin-dump-photo",  ["bin-dump", "view"]],
+  ["bin-dump-scan",   ["bin-dump", "edit"]],
+  ["bin-dump-recent", ["bin-dump", "edit"]],
+  ["bin-dump-log",    ["bin-dump", "edit"]],
+  ["bin-dump-update", ["bin-dump", "edit"]],
+  // Mark Out of Stock. `mos-delete` is absent for the same reason bin-dump-delete
+  // is: removing a recorded loss is a manager's undo, not a floor action.
+  ["mos-list",        ["mos", "view"]],
+  ["mos-lookup",      ["mos", "edit"]],
+  ["mos-log",         ["mos", "edit"]],
+  ["mos-update",      ["mos", "edit"]],
+]);
+
+// The closed set an admin may tick, DERIVED from the map above rather than
+// restated beside it: a page with no actions behind it is a checkbox that grants
+// nothing, and two lists would drift the first time one is edited.
+const GRANTABLE_PAGES = [...new Set([...ACTION_PAGE.values()].map(([page]) => page))];
+
+// How far this user may go on one page. 0 = cannot open it at all.
+function pageLevel(user, page) {
+  if (!user || !page) return 0;
+  const want = user.pages && user.pages[page];
+  return PAGE_LEVELS[want] || 0;
+}
+
+// The guard the handlers call, shaped like storeActionGuard: a Response to
+// return, or null to carry on. A financial role passes on the role it already
+// had, so this is behaviour-preserving for every account that exists today.
+function canUsePage(user, isAdminSecret, page, level) {
+  if (isAdminSecret || canSeeFinancials(user)) return true;
+  // An unknown level is 99 — a typo denies rather than admits.
+  return pageLevel(user, page) >= (PAGE_LEVELS[level] || 99);
+}
+function requirePage(user, isAdminSecret, page, level, corsJson) {
+  if (canUsePage(user, isAdminSecret, page, level)) return null;
+  return new Response(JSON.stringify({
+    error: "Forbidden",
+    code: level === "edit" ? "NEED_PAGE_EDIT" : "NEED_PAGE_VIEW",
+    page,
+  }), { status: 403, headers: corsJson });
+}
+
+// Who did this, for a history column. An associate's email is synthetic and is
+// never shown anywhere, so `logged_by` has to carry the name they go by.
+function actorLabel(user) {
+  return (user && (user.name || user.email)) || "unknown";
+}
+
+// ── Associate codes ─────────────────────────────────────────────────────────
+// 🔑 HMAC with a server-side pepper, not a bare digest. Six digits is a million
+// candidates, so a plain SHA-256 reverses in seconds from a database dump — and
+// the dump is precisely the threat this defends against. The pepper lives in
+// `wrangler secret put PIN_PEPPER`, so it is not in the dump at all.
+//
+// 🛑 No pepper means NO LOGIN, never an unpeppered hash. A fallback would
+// silently downgrade every stored code the moment the secret went missing, and
+// nothing would look wrong until someone went looking.
+async function pinHash(env, pin) {
+  if (!env || !env.PIN_PEPPER) throw new Error("PIN_NOT_CONFIGURED");
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(env.PIN_PEPPER),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(String(pin)));
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Codes a person reaches for first. Refused at CREATION, not at login: the point
+// is that they never exist, not that they are awkward to type.
+const WEAK_PINS = new Set(["123456", "654321", "123123", "112233", "121212", "123321"]);
+function validPin(pin) {
+  const s = String(pin == null ? "" : pin).trim();
+  if (!/^\d{6}$/.test(s)) return null;
+  if (WEAK_PINS.has(s) || /^(\d)\1{5}$/.test(s)) return null;
+  return s;
+}
+
+// Ten wrong codes locks the account until an admin sets a new one.
+//
+// 🔑 The counter is a D1 COLUMN, not a KV key. `UPDATE ... + 1` is atomic against
+// one primary; KV is eventually consistent across edges, so a counter there would
+// let a distributed guesser run straight past the limit it appears to enforce.
+// Per-account is also the only lockout that exists once a name is part of the
+// login — a global one could be tripped by anybody, locking every associate out.
+const PIN_MAX_FAILURES = 10;
+
+// Names are compared case- and whitespace-insensitively, and stored as typed.
+function normName(s) { return String(s == null ? "" : s).trim().replace(/\s+/g, " "); }
 
 // ── Supply-request bulk purge helpers ───────────────────────────────────────
 const SUPPLY_STATUSES = ['pending', 'under_review', 'on_hold', 'ordered'];
@@ -13091,7 +13590,10 @@ export default {
         const normalized = email.trim().toLowerCase();
         // Look up user — respond generically whether found or not (don't leak existence)
         const { results } = await env.DB.prepare(
-          "SELECT id FROM users WHERE email = ? AND status = 'active'"
+          // pin_hash IS NOT NULL = an associate, who signs in by code. Without
+          // this they are a live oracle: the synthetic address would be accepted
+          // here, mailed at .invalid, and answer differently from an unknown one.
+          "SELECT id FROM users WHERE email = ? AND status = 'active' AND pin_hash IS NULL"
         ).bind(normalized).all();
         if (results && results.length) {
           const token = randomHex(32);
@@ -13126,7 +13628,10 @@ export default {
           .bind(now, token).run();
         // Load user
         const { results: users } = await env.DB.prepare(
-          "SELECT id FROM users WHERE email = ? AND status = 'active'"
+          // pin_hash IS NOT NULL = an associate, who signs in by code. Without
+          // this they are a live oracle: the synthetic address would be accepted
+          // here, mailed at .invalid, and answer differently from an unknown one.
+          "SELECT id FROM users WHERE email = ? AND status = 'active' AND pin_hash IS NULL"
         ).bind(email).all();
         if (!users || !users.length) {
           return Response.redirect(`${appOrigin(env)}/?auth_error=nouser`, 302);
@@ -13173,7 +13678,10 @@ export default {
         await env.DB.prepare("UPDATE magic_links SET used_at = ? WHERE token = ?").bind(now, token).run();
         // Load user
         const { results: users } = await env.DB.prepare(
-          "SELECT id FROM users WHERE email = ? AND status = 'active'"
+          // pin_hash IS NOT NULL = an associate, who signs in by code. Without
+          // this they are a live oracle: the synthetic address would be accepted
+          // here, mailed at .invalid, and answer differently from an unknown one.
+          "SELECT id FROM users WHERE email = ? AND status = 'active' AND pin_hash IS NULL"
         ).bind(normalized).all();
         if (!users || !users.length) {
           return new Response(JSON.stringify({ error: "Account not found" }), { status: 403, headers: corsJson });
@@ -13192,6 +13700,96 @@ export default {
       }
     }
 
+    // ── Associate: POST ?action=associate-login — name + six-digit code ──
+    //
+    // 🔑 ABOVE the auth gate, like auth-verify-otp below it: there is no session
+    // yet, and creating one is the entire point.
+    //
+    // 🔑 ONE BODY for every failure. A wrong code, a name nobody has and a
+    // suspended account all answer identically — three messages would turn the
+    // login screen into a directory of who works here.
+    if (request.method === "POST" && url.searchParams.get("action") === "associate-login") {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const name = normName(body && body.name);
+        const pin = String((body && body.pin) || "").trim();
+        // 🛑 Dies at INPUT VALIDATION, before anything is looked up or counted, so
+        // a malformed request can neither probe for names nor burn somebody's
+        // remaining attempts.
+        if (!name || !/^\d{6}$/.test(pin)) {
+          return new Response(JSON.stringify({
+            error: "Enter your name and your six-digit code", code: "BAD_INPUT",
+          }), { status: 400, headers: corsJson });
+        }
+        const row = await env.DB.prepare(
+          `SELECT id, pin_hash, pin_failures, status FROM users
+            WHERE pin_hash IS NOT NULL AND lower(name) = lower(?)`
+        ).bind(name).first();
+        const generic = () => new Response(JSON.stringify({
+          error: "That name and code didn't match", code: "BAD_CODE",
+        }), { status: 401, headers: corsJson });
+        if (!row || row.status !== "active") return generic();
+        // Ten wrong codes and the account is done until an admin sets a new one.
+        // Checked BEFORE the hash, so a locked account cannot be used as an
+        // oracle by watching how long the answer takes.
+        if ((row.pin_failures || 0) >= PIN_MAX_FAILURES) {
+          return new Response(JSON.stringify({
+            error: "Too many wrong codes. Ask an admin to set you a new one.", code: "LOCKED",
+          }), { status: 401, headers: corsJson });
+        }
+        if ((await pinHash(env, pin)) !== row.pin_hash) {
+          await env.DB.prepare("UPDATE users SET pin_failures = pin_failures + 1 WHERE id = ?")
+            .bind(row.id).run().catch(() => {});
+          return generic();
+        }
+        const now = new Date().toISOString();
+        const sessionId = randomHex(32);
+        // 🔑 12 hours, and getAuthUser does not roll it — the one place in this
+        // app where a session is not sliding. The phone is shared, so it has to
+        // end on its own inside a shift.
+        const ttl = 12 * 60 * 60;
+        await env.DB.prepare(
+          "INSERT INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)"
+        ).bind(sessionId, row.id, new Date(Date.now() + ttl * 1000).toISOString(), now).run();
+        await env.DB.prepare("UPDATE users SET last_login = ?, pin_failures = 0 WHERE id = ?")
+          .bind(now, row.id).run();
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { ...corsJson, "Set-Cookie": sessionCookie(sessionId, ttl, env) },
+        });
+      } catch (e) {
+        if (String(e && e.message) === "PIN_NOT_CONFIGURED") {
+          return new Response(JSON.stringify({
+            error: "Associate sign-in is not configured on this environment", code: "NOT_CONFIGURED",
+          }), { status: 500, headers: corsJson });
+        }
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Associate: POST ?action=associate-reset-request — "I forgot my code" ──
+    //
+    // Records that a reset was ASKED FOR, and nothing else: an associate cannot
+    // change their own code, by design. Answers {ok:true} whatever happens — the
+    // alternative is a way to find out who has an account. Re-asking inside an
+    // hour is a no-op, so the badge shows when they FIRST asked rather than how
+    // many times they tapped.
+    if (request.method === "POST" && url.searchParams.get("action") === "associate-reset-request") {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const name = normName(body && body.name);
+        if (name) {
+          const now = new Date();
+          const hourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+          await env.DB.prepare(
+            `UPDATE users SET pin_reset_requested_at = ?
+              WHERE pin_hash IS NOT NULL AND status = 'active' AND lower(name) = lower(?)
+                AND (pin_reset_requested_at IS NULL OR pin_reset_requested_at < ?)`
+          ).bind(now.toISOString(), name, hourAgo).run().catch(() => {});
+        }
+      } catch (_) { /* still answers ok — see above */ }
+      return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+    }
+
     // ── Auth: GET ?action=auth-me — return current user info ─────
     if (url.searchParams.get("action") === "auth-me") {
       const user = await getAuthUser(request, env);
@@ -13202,6 +13800,17 @@ export default {
         authenticated: true,
         email: user.email,
         role: user.role,
+        // An associate has no real email and is known by name everywhere — on the
+        // badge, in the Bin Dump log's "by ...". null for everyone else, so the
+        // client keeps showing the address it always did.
+        name: user.name || null,
+        // Which pages this account may open, and how far. {} for every existing
+        // role: they are gated by role, not by page, and always were.
+        pages: user.pages || {},
+        // 🔑 Sent rather than derived from the role, so the client and the worker
+        // agree on one fact. `staff` alone is not the answer — a staff account
+        // that signs in by email would not be one of these.
+        associate: isAssociate(user),
         // EFFECTIVE scope, not the raw users.stores column. The server scopes
         // every endpoint by the grant; reporting the column here let the client
         // filter by something the server no longer consults. They agree today
@@ -13223,6 +13832,14 @@ export default {
       try {
         const user = await getAuthUser(request, env);
         if (!user) return new Response(JSON.stringify({error:"Not authenticated"}), {status:401,headers:corsJson});
+        // 🛑 A passkey is bound to ONE device and mints a 7-day session — both
+        // wrong for a code login on a shared warehouse phone, and it would route
+        // straight around the 12-hour rule. Signing in with one is impossible
+        // anyway (there is nothing to register), so refuse at the door.
+        if (isAssociate(user)) {
+          return new Response(JSON.stringify({ error: "Associates sign in with their code", code: "NO_PASSKEY" }),
+            { status: 403, headers: corsJson });
+        }
         const challenge = crypto.getRandomValues(new Uint8Array(32));
         const challengeB64 = bufToBase64url(challenge);
         await env.SALES_SNAPSHOTS.put(`webauthn:reg:${user.id}`, challengeB64, { expirationTtl: 300 });
@@ -13252,6 +13869,14 @@ export default {
       try {
         const user = await getAuthUser(request, env);
         if (!user) return new Response(JSON.stringify({error:"Not authenticated"}), {status:401,headers:corsJson});
+        // 🛑 A passkey is bound to ONE device and mints a 7-day session — both
+        // wrong for a code login on a shared warehouse phone, and it would route
+        // straight around the 12-hour rule. Signing in with one is impossible
+        // anyway (there is nothing to register), so refuse at the door.
+        if (isAssociate(user)) {
+          return new Response(JSON.stringify({ error: "Associates sign in with their code", code: "NO_PASSKEY" }),
+            { status: 403, headers: corsJson });
+        }
         const body2 = await request.json();
         const { id: credId, response: credResp } = body2;
         // Verify clientDataJSON
@@ -13695,10 +14320,27 @@ export default {
     // (superuser, admin, manager) is unaffected.
     if (!isAdminSecret && !canSeeFinancials(currentUser)) {
       const requestedAction = url.searchParams.get("action") || "";
-      if (!NON_FINANCIAL_ACTIONS.has(requestedAction)) {
-        return new Response(JSON.stringify({
-          error: "Forbidden", code: "NO_FINANCIAL_ACCESS",
-        }), { status: 403, headers: corsJson });
+      // ...and one more way to say yes: the action serves a PAGE this account was
+      // granted, at the level that action needs. That is how an associate reaches
+      // Bin Dump and nothing else. The allowlist above is still the only other
+      // door, and an action in neither is still refused.
+      //
+      // 🔑 The SAME canUsePage the handlers call, not a second copy of the rule.
+      // Two copies is how a gate and its handler come to disagree — and the one
+      // that disagrees quietly is always the one that says yes.
+      const pageReq = ACTION_PAGE.get(requestedAction);
+      const pageOk = !!pageReq && canUsePage(currentUser, isAdminSecret, pageReq[0], pageReq[1]);
+      if (!NON_FINANCIAL_ACTIONS.has(requestedAction) && !pageOk) {
+        // 🔑 THE REFUSAL NAMES WHICH DOOR WAS LOCKED. The gate fires BEFORE the
+        // handler, so a handler's precise requirePage() code never runs — and an
+        // associate who holds a page at `view` and posts to it would be told
+        // "no financial access", which is true of the role and useless to them.
+        // Where the action belongs to a page, answer as that page would.
+        const body = pageReq
+          ? { error: "Forbidden", page: pageReq[0],
+              code: pageReq[1] === "edit" ? "NEED_PAGE_EDIT" : "NEED_PAGE_VIEW" }
+          : { error: "Forbidden", code: "NO_FINANCIAL_ACCESS" };
+        return new Response(JSON.stringify(body), { status: 403, headers: corsJson });
       }
     }
 
@@ -14874,7 +15516,12 @@ export default {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
       const { results } = await env.DB.prepare(
-        "SELECT id, email, role, stores, status, created_at, last_login FROM users ORDER BY created_at DESC"
+        // 🛑 pin_hash is NEVER selected. `associate` is the derived flag the client
+        // splits the two tables on; the hash itself has no business leaving D1.
+        `SELECT id, email, role, stores, status, created_at, last_login,
+                name, pages, pin_failures, pin_reset_requested_at,
+                (pin_hash IS NOT NULL) AS associate
+           FROM users ORDER BY created_at DESC`
       ).all();
       return new Response(JSON.stringify({ ok: true, users: results || [] }), { headers: corsJson });
     }
@@ -14986,7 +15633,8 @@ export default {
       try {
         const { email } = await request.json();
         const normalized = email.trim().toLowerCase();
-        const user = await env.DB.prepare("SELECT id FROM users WHERE email = ? AND status = 'active'").bind(normalized).first();
+        // An associate has no mailbox to resend an invite to — see auth-login.
+        const user = await env.DB.prepare("SELECT id FROM users WHERE email = ? AND status = 'active' AND pin_hash IS NULL").bind(normalized).first();
         if (!user) return new Response(JSON.stringify({ error: "User not found" }), { status: 404, headers: corsJson });
         const token = randomHex(32);
         const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -15010,6 +15658,142 @@ export default {
       }
     }
 
+    // ── Associates: create, edit, or set a new code ──────────────────
+    //    POST ?action=associate-save { id?, name, pin?, stores, pages, status? }
+    //
+    // One upsert rather than four endpoints. An associate IS a name, a code, a
+    // store list and a page list — they are decided together on one screen, and
+    // splitting them lets a half-made account exist: a name with no stores signs
+    // in fine and then finds every store guard refusing it.
+    //
+    // 🔑 Deliberately NOT set-user-grants. That endpoint validates the role
+    // against grantOptionsFor, which hands an admin only 'manager'. Creating an
+    // associate is a different decision from handing out a business, and this
+    // door only ever writes 'staff'.
+    if (request.method === "POST" && url.searchParams.get("action") === "associate-save") {
+      if (!canAccessInventory(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_ADMIN" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const body = await request.json();
+        const id = String((body && body.id) || "").trim();
+        const name = normName(body && body.name);
+        const status = (body && body.status) === "suspended" ? "suspended" : "active";
+        if (!name || name.length > 60) {
+          return new Response(JSON.stringify({ error: "Enter a name (up to 60 characters)" }),
+            { status: 400, headers: corsJson });
+        }
+
+        // 🛑 At least one store, REFUSED rather than defaulted. allowedUnits reads
+        // a Bargain Lane grant with NULL units as NO stores (a deliberate legacy
+        // reading), so an associate saved without one would sign in successfully
+        // and then be unable to log anything anywhere.
+        const stores = Array.isArray(body && body.stores)
+          ? [...new Set(body.stores.map(v => String(v).trim()).filter(Boolean))] : [];
+        if (!stores.length) {
+          return new Response(JSON.stringify({ error: "Pick at least one store" }), { status: 400, headers: corsJson });
+        }
+        const badStores = stores.filter(v => !ALL_STORES.includes(v));
+        if (badStores.length) {
+          return new Response(JSON.stringify({ error: `Not Bargain Lane stores: ${badStores.join(", ")}` }),
+            { status: 400, headers: corsJson });
+        }
+
+        // Pages: a closed set in BOTH key and value, validated against the same
+        // ACTION_PAGE the gate reads. A page nothing routes to would be a
+        // checkbox that grants nothing.
+        const raw = (body && body.pages && typeof body.pages === "object" && !Array.isArray(body.pages))
+          ? body.pages : {};
+        const pages = {};
+        for (const [page, level] of Object.entries(raw)) {
+          if (!level || level === "none") continue;
+          if (!GRANTABLE_PAGES.includes(page)) {
+            return new Response(JSON.stringify({ error: `Not a page that can be granted: ${page}` }),
+              { status: 400, headers: corsJson });
+          }
+          if (!PAGE_LEVELS[level]) {
+            return new Response(JSON.stringify({ error: `Not an access level: ${level}` }),
+              { status: 400, headers: corsJson });
+          }
+          pages[page] = level;
+        }
+
+        // The code is required to create and optional to edit ("leave blank to
+        // keep"). It is hashed here and never stored, returned or logged.
+        const rawPin = (body && body.pin != null) ? String(body.pin).trim() : "";
+        let hash = null;
+        if (rawPin) {
+          const pin = validPin(rawPin);
+          if (!pin) {
+            return new Response(JSON.stringify({ error: "The code must be six digits, and not an obvious one" }),
+              { status: 400, headers: corsJson });
+          }
+          hash = await pinHash(env, pin);
+        } else if (!id) {
+          return new Response(JSON.stringify({ error: "Set a six-digit code" }), { status: 400, headers: corsJson });
+        }
+
+        // The name is half the login AND the whole of the audit trail — it is what
+        // bin_dumps.logged_by records. Two people called the same thing would
+        // break both at once.
+        const clash = await env.DB.prepare(
+          "SELECT id FROM users WHERE pin_hash IS NOT NULL AND lower(name) = lower(?) AND id != ?"
+        ).bind(name, id || "-").first();
+        if (clash) {
+          return new Response(JSON.stringify({ error: `There is already an associate called ${name}` }),
+            { status: 409, headers: corsJson });
+        }
+
+        const storesJson = JSON.stringify(stores);
+        const pagesJson = JSON.stringify(pages);
+        const now = new Date().toISOString();
+        let userId = id;
+        if (id) {
+          // Only an associate is reachable through this door. An admin must not be
+          // able to turn a manager into one by passing their id.
+          const target = await env.DB.prepare(
+            "SELECT id FROM users WHERE id = ? AND pin_hash IS NOT NULL"
+          ).bind(id).first();
+          if (!target) {
+            return new Response(JSON.stringify({ error: "No such associate" }), { status: 404, headers: corsJson });
+          }
+          await env.DB.prepare(
+            "UPDATE users SET name = ?, stores = ?, pages = ?, status = ? WHERE id = ?"
+          ).bind(name, storesJson, pagesJson, status, id).run();
+          if (hash) {
+            // 🛑 A new code SIGNS THEM OUT everywhere. Without this the phone that
+            // prompted the reset keeps working on its old session, and the reset
+            // has achieved nothing at all.
+            await env.DB.prepare(
+              "UPDATE users SET pin_hash = ?, pin_failures = 0, pin_reset_requested_at = NULL WHERE id = ?"
+            ).bind(hash, id).run();
+            await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(id).run().catch(() => {});
+          }
+        } else {
+          userId = "usr_" + randomHex(8);
+          // users.email is NOT NULL UNIQUE and an associate has no address. The
+          // .invalid TLD is reserved for exactly this — it can never be routed, so
+          // nothing can mail it by accident. It is never displayed.
+          await env.DB.prepare(
+            `INSERT INTO users (id, email, role, stores, status, created_at, name, pin_hash, pages)
+             VALUES (?, ?, 'staff', ?, ?, ?, ?, ?, ?)`
+          ).bind(userId, `assoc_${userId}@associate.invalid`, storesJson, status, now, name, hash, pagesJson).run();
+        }
+        // The grant is what the business gate and every store guard actually read.
+        // Same helper invite-user and update-user call, so an associate's grant is
+        // written exactly like everyone else's rather than by a second code path.
+        await upsertBargainLaneGrant(env, userId, "staff", storesJson);
+        return new Response(JSON.stringify({ ok: true, id: userId }), { headers: corsJson });
+      } catch (e) {
+        if (String(e && e.message) === "PIN_NOT_CONFIGURED") {
+          return new Response(JSON.stringify({
+            error: "Associate codes are not configured on this environment", code: "NOT_CONFIGURED",
+          }), { status: 500, headers: corsJson });
+        }
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     // ── User management: update-user ─────────────────────────────────
     if (request.method === "POST" && url.searchParams.get("action") === "update-user") {
       if (!canAccessInventory(currentUser)) {
@@ -15017,6 +15801,19 @@ export default {
       }
       try {
         const { id, role, stores, status } = await request.json();
+
+        // An associate's name, code, stores and pages are set together on the
+        // Associates panel. Reaching one here would write a role or a store list
+        // that panel then contradicts — and `role` here can only ever be a value
+        // an associate must not hold.
+        const assocTarget = await env.DB.prepare(
+          "SELECT 1 AS a FROM users WHERE id = ? AND pin_hash IS NOT NULL"
+        ).bind(id).first();
+        if (assocTarget) {
+          return new Response(JSON.stringify({
+            error: "Manage associates from the Associates panel", code: "IS_ASSOCIATE",
+          }), { status: 400, headers: corsJson });
+        }
 
         // 🛑 PRIVILEGE ESCALATION GUARD. This endpoint is open to admins
         // (canAccessInventory above) and wrote `role` straight from the body
@@ -15131,9 +15928,19 @@ export default {
 
         // A non-superuser may never edit a superuser. Same guard update-user
         // grew after an admin could demote the real superuser.
-        const { results: target } = await env.DB.prepare('SELECT id, role FROM users WHERE id = ?').bind(id).all();
+        const { results: target } = await env.DB.prepare(
+          'SELECT id, role, (pin_hash IS NOT NULL) AS associate FROM users WHERE id = ?'
+        ).bind(id).all();
         if (!target || !target.length) {
           return new Response(JSON.stringify({ error: "No such user" }), { status: 404, headers: corsJson });
+        }
+        // Same reasoning as update-user: this replaces a user's grants wholesale,
+        // which for an associate would rewrite the row their stores live in while
+        // the Associates panel believes it owns it.
+        if (target[0].associate) {
+          return new Response(JSON.stringify({
+            error: "Manage associates from the Associates panel", code: "IS_ASSOCIATE",
+          }), { status: 400, headers: corsJson });
         }
         if (currentUser.role !== 'superuser' && target[0].role === 'superuser') {
           return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
@@ -19919,6 +20726,620 @@ export default {
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+
+    // ── Bin Dump: pallet tag → log ──────────────────────────────────────
+    // A manager photographs a pallet tag, Claude reads seven fields off it, the
+    // manager confirms them, and the pallet is logged. tasks/bin-dump.md has the
+    // decisions; the layout trap below is the load-bearing part.
+    //
+    // Gating: these actions are deliberately NOT in NON_FINANCIAL_ACTIONS, so the
+    // financial gate above already admits exactly superuser/admin/executive/manager
+    // and refuses staff — the same way shelf-count-save is gated. Each handler then
+    // re-checks the store. ('district_manager' was retired by migration-029.)
+
+    if (url.searchParams.get("action") === "bin-dump-scan" && request.method === "POST") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "bin-dump", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.ANTHROPIC_API_KEY) {
+        return new Response(JSON.stringify({ error: "Tag reading is not configured on this environment" }), { status: 400, headers: corsJson });
+      }
+      try {
+        const body = await request.json();
+        const b64 = String(body?.image_b64 || "");
+        if (!b64) return new Response(JSON.stringify({ error: "No photo" }), { status: 400, headers: corsJson });
+        if (b64.length > 8_000_000) {
+          return new Response(JSON.stringify({ error: "That photo is too large — try again a little further back" }), { status: 400, headers: corsJson });
+        }
+        const mt = ["image/jpeg", "image/png", "image/webp"].includes(body?.media_type) ? body.media_type : "image/jpeg";
+
+        const t0 = Date.now();
+        let ok = false, got = {}, status = null;
+        try {
+          const vis = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+            body: JSON.stringify({
+              // Same model the other extraction endpoints use. If field accuracy ever
+              // proves short in the field, this is the one line to change — the prompt
+              // below already carries the whole of what makes this tag hard.
+              model: "claude-sonnet-4-6",
+              max_tokens: 500,
+              thinking: { type: "disabled" },
+              system: BIN_TAG_PROMPT,
+              messages: [{ role: "user", content: [
+                { type: "image", source: { type: "base64", media_type: mt, data: b64 } },
+                { type: "text", text: "Read this pallet tag." },
+              ]}],
+            }),
+          });
+          status = vis.status;
+          ok = vis.ok;
+          if (ok) {
+            const vj = await vis.json();
+            // stop_reason "refusal" yields no text at all; treat it as an unreadable
+            // photo rather than an error, so the manager still gets an editable form.
+            const txt = (vj.content || []).filter(c => c.type === "text").map(c => c.text).join("");
+            try { got = JSON.parse((txt.match(/\{[\s\S]*\}/) || ["{}"])[0]); } catch (_) { got = {}; }
+          } else {
+            // 174 unexplained 400s went by on another endpoint before it logged the body.
+            const err = await vis.text().catch(() => "");
+            console.error(`Bin tag scan API ${vis.status}: ${err.slice(0, 200)}`);
+          }
+        } catch (e) {
+          ok = false;
+          console.error("Bin tag scan failed:", (e && e.message) || e);
+        }
+        await retailLog(env, { provider: "claude", detail: "bin dump tag", ok, status, ms: Date.now() - t0 });
+        if (!ok) {
+          return new Response(JSON.stringify({ error: "Could not read that photo — try again, or type the tag in by hand" }),
+            { status: 502, headers: corsJson });
+        }
+        const fields = binDumpFields(got);
+        const read = BIN_DUMP_FIELDS.filter(k => fields[k] !== null).length;
+        return new Response(JSON.stringify({
+          ok: true, fields, read, of: BIN_DUMP_FIELDS.length,
+          // A soft hint, never a refusal — see binDumpTruckHint.
+          truck_hint: binDumpTruckHint(fields),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    if (url.searchParams.get("action") === "bin-dump-log" && request.method === "POST") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "bin-dump", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const denied = storeActionGuard(body?.store, currentUser, isAdminSecret, corsJson);
+        if (denied) return denied;
+        const store = String(body.store).toUpperCase();
+
+        // 🔑 Re-validated here, not trusted from the popup. The verify step is a
+        // convenience for the person; it is not the boundary.
+        const fields = binDumpFields(body);
+        if (!fields.item_no && !fields.pallet_name && !fields.po && !fields.barcode) {
+          return new Response(JSON.stringify({
+            error: "A pallet needs at least one of: barcode, item number, pallet name, or PO / WO",
+          }), { status: 400, headers: corsJson });
+        }
+
+        // 🛑 BEFORE the R2 upload, deliberately. A rejection after the put would leave an
+        // object with no row pointing at it — the exact orphan class bin-dump-scan was
+        // designed to avoid. Refuse first, upload second.
+        //
+        // 🔑 THIS is the boundary, not the popup. The client asks bin-dump-recent and shows
+        // a warning, but a stale tab or a direct POST would sail past that; only an explicit
+        // allow_duplicate from someone who read the warning gets through here.
+        const dupes = await binDumpBarcodeMatches(env, fields.barcode, currentUser, isAdminSecret, null);
+        if (dupes.length && body?.allow_duplicate !== true) {
+          return new Response(JSON.stringify({
+            error: "This barcode has already been logged",
+            code: "DUPLICATE_BARCODE",
+            matches: dupes,
+          }), { status: 409, headers: corsJson });
+        }
+
+        let key = null, ctype = null;
+        const b64 = String(body?.image_b64 || "");
+        if (b64) {
+          if (b64.length > 8_000_000) {
+            return new Response(JSON.stringify({ error: "That photo is too large" }), { status: 400, headers: corsJson });
+          }
+          ctype = ["image/jpeg", "image/png", "image/webp"].includes(body?.media_type) ? body.media_type : "image/jpeg";
+          const now = new Date();
+          const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+          key = `bin-tags/${store}/${ym}/${crypto.randomUUID()}.${ctype === "image/png" ? "png" : ctype === "image/webp" ? "webp" : "jpg"}`;
+          await env.MEDIA.put(key, Uint8Array.from(atob(b64), c => c.charCodeAt(0)), { httpMetadata: { contentType: ctype } });
+        }
+
+        const at = new Date().toISOString();
+        const res = await env.DB.prepare(
+          `INSERT INTO bin_dumps (store, barcode, item_no, pallet_name, sup_ref, po, units,
+             created_by_tag, truck_no, r2_key, content_type, logged_by, logged_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        ).bind(store, fields.barcode, fields.item_no, fields.pallet_name, fields.sup_ref, fields.po, fields.units,
+               fields.created_by_tag, fields.truck_no, key, ctype,
+               actorLabel(currentUser), at).run();
+
+        return new Response(JSON.stringify({
+          ok: true, id: res.meta?.last_row_id ?? null, store, logged_at: at, week: binDumpWeekOf(at),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=bin-dump-recent&store=BL1&po=5036 — the soft duplicate check.
+    // Separate from the log so it can run while the manager is still looking at the
+    // popup, and so a slow or failed answer costs a warning, never the submission.
+    if (url.searchParams.get("action") === "bin-dump-recent" && request.method === "GET") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "bin-dump", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      const denied = storeActionGuard(url.searchParams.get("store"), currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      const po = String(url.searchParams.get("po") || "").trim();
+
+      // Two different questions, deliberately kept apart because they carry different
+      // weight. Same PO at this store, recently: SOFT — one PO covers a whole truck and
+      // repeating is normal. Same BARCODE anywhere, within 90 days: HARD — one barcode is
+      // one physical pallet, and a repeat means its units are about to be counted twice.
+      let matches = [];
+      if (po) {
+        const since = new Date(Date.now() - BIN_DUMP_DUPLICATE_WINDOW_MS).toISOString();
+        const r = await env.DB.prepare(
+          `SELECT id, pallet_name, units, logged_by, logged_at FROM bin_dumps
+            WHERE store = ? AND po = ? AND logged_at >= ? ORDER BY logged_at DESC LIMIT 5`
+        ).bind(String(url.searchParams.get("store")).toUpperCase(), po, since).all();
+        matches = r.results || [];
+      }
+      const barcodeMatches = await binDumpBarcodeMatches(
+        env, url.searchParams.get("barcode"), currentUser, isAdminSecret, null);
+
+      return new Response(JSON.stringify({ ok: true, matches, barcode_matches: barcodeMatches }),
+        { headers: corsJson });
+    }
+
+    // GET ?action=bin-dump-list&store=BL1[&weeks=8]
+    if (url.searchParams.get("action") === "bin-dump-list" && request.method === "GET") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "bin-dump", "view", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      const storeRaw = String(url.searchParams.get("store") || "").trim().toUpperCase();
+      const allow = currentUser ? allowedStores(currentUser) : null;
+      let q = `SELECT id, store, barcode, item_no, pallet_name, sup_ref, po, units, created_by_tag,
+                      truck_no, r2_key, logged_by, logged_at, edited_by, edited_at
+                 FROM bin_dumps WHERE 1=1`;
+      const binds = [];
+      if (storeRaw && storeRaw !== "ALL") {
+        const denied = storeActionGuard(storeRaw, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+        q += " AND store = ?"; binds.push(storeRaw);
+      } else if (allow) {
+        // 🛑 "All stores" means all the stores THIS USER holds, never all stores.
+        // D1 caps bound params at 100; a user's store list is single digits.
+        if (!allow.length) return new Response(JSON.stringify({ ok: true, rows: [], truncated: false }), { headers: corsJson });
+        q += ` AND store IN (${allow.map(() => "?").join(",")})`; binds.push(...allow);
+      }
+      // `weeks=all` lifts the time bound entirely. The CSV export's "Everything" needs it,
+      // and 52 weeks stops being "everything" the moment this table is a year old.
+      const weeksRaw = String(url.searchParams.get("weeks") || "8").trim().toLowerCase();
+      const allTime = weeksRaw === "all";
+      const weeks = allTime ? null : Math.min(Math.max(parseInt(weeksRaw, 10) || 8, 1), 52);
+      // 🛑 NOT `parseInt(...) || 500`. Zero is falsy, so that spelling turns an explicit
+      // limit=0 into the 500 default — the widest possible answer to the narrowest possible
+      // request. Parse, then decide on FINITENESS, then clamp.
+      const limitRaw = parseInt(url.searchParams.get("limit") || "", 10);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 5000) : 500;
+      if (!allTime) {
+        q += " AND logged_at >= ?";
+        binds.push(new Date(Date.now() - weeks * 7 * 86400000).toISOString());
+      }
+      // 🔑 Ask for ONE MORE than the caller wants. That is what distinguishes "there were
+      // exactly `limit` rows" from "there were more and you are not seeing them" — and the
+      // difference matters, because a CSV that stops at the cap without saying so is a file
+      // that looks like the whole log and is not.
+      q += " ORDER BY logged_at DESC LIMIT ?";
+      binds.push(limit + 1);
+      const { results } = await env.DB.prepare(q).bind(...binds).all();
+      const found = results || [];
+      const truncated = found.length > limit;
+      const rows = found.slice(0, limit).map(r => ({
+        ...r,
+        r2_key: undefined,
+        has_photo: !!r.r2_key,
+        photo_url: r.r2_key ? `?action=bin-dump-photo&id=${r.id}` : null,
+        week: binDumpWeekOf(r.logged_at),
+      }));
+      return new Response(JSON.stringify({ ok: true, rows, weeks: allTime ? "all" : weeks, truncated }),
+        { headers: corsJson });
+    }
+
+    if (url.searchParams.get("action") === "bin-dump-update" && request.method === "POST") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "bin-dump", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const id = parseInt(body?.id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        const row = await env.DB.prepare("SELECT store FROM bin_dumps WHERE id = ?").bind(id).first();
+        if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        // The row's OWN store decides, not one the caller supplies — otherwise a
+        // caller could name a store they hold and edit a row belonging to another.
+        const denied = storeActionGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+
+        const fields = binDumpFields(body);
+        if (!fields.item_no && !fields.pallet_name && !fields.po && !fields.barcode) {
+          return new Response(JSON.stringify({
+            error: "A pallet needs at least one of: barcode, item number, pallet name, or PO / WO",
+          }), { status: 400, headers: corsJson });
+        }
+        // Correcting a barcode INTO one that already exists is the same mistake arriving
+        // by a different door, so the same rule applies — minus this row, which is not a
+        // duplicate of itself.
+        const dupes = await binDumpBarcodeMatches(env, fields.barcode, currentUser, isAdminSecret, id);
+        if (dupes.length && body?.allow_duplicate !== true) {
+          return new Response(JSON.stringify({
+            error: "This barcode has already been logged",
+            code: "DUPLICATE_BARCODE",
+            matches: dupes,
+          }), { status: 409, headers: corsJson });
+        }
+
+        // 🔑 logged_at is NOT touched. A correction is a correction, not a re-receipt:
+        // moving the timestamp would silently move the pallet into a different week.
+        await env.DB.prepare(
+          `UPDATE bin_dumps SET barcode = ?, item_no = ?, pallet_name = ?, sup_ref = ?, po = ?, units = ?,
+             created_by_tag = ?, truck_no = ?, edited_by = ?, edited_at = ?
+           WHERE id = ?`
+        ).bind(fields.barcode, fields.item_no, fields.pallet_name, fields.sup_ref, fields.po, fields.units,
+               fields.created_by_tag, fields.truck_no,
+               actorLabel(currentUser), new Date().toISOString(), id).run();
+        return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // A manager may delete a pallet at a store they hold — they are the ones who
+    // mis-scan one and should not need an admin to undo it (Brian, 2026-09-08).
+    //
+    // 🛑 THE STORE CHECK IS LOAD-BEARING NOW IN A WAY IT WAS NOT BEFORE. While this
+    // was admin-only it could be omitted, because an admin holds every store. The
+    // moment a manager can reach it, an unguarded delete-by-id lets any manager
+    // destroy any store's pallet — and its tag photo — by guessing a number. The
+    // row's OWN store decides, never one the caller supplies, exactly as the edit
+    // path does.
+    if (url.searchParams.get("action") === "bin-dump-delete" && request.method === "POST") {
+      // 🔑 NOT requirePage. Removing a logged pallet stays a manager's undo, so
+      // this is the one Bin Dump action no page grant can reach — see ACTION_PAGE,
+      // which deliberately does not list it.
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const id = parseInt(body?.id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        const row = await env.DB.prepare("SELECT r2_key, store FROM bin_dumps WHERE id = ?").bind(id).first();
+        if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        const denied = storeActionGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+        await env.DB.prepare("DELETE FROM bin_dumps WHERE id = ?").bind(id).run();
+        // The row is the record; a tag photo with nothing pointing at it is litter.
+        // Best-effort — a failed object delete must not fail the row delete.
+        if (row.r2_key && env.MEDIA) await env.MEDIA.delete(row.r2_key).catch(() => {});
+        return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    if (url.searchParams.get("action") === "bin-dump-photo" && request.method === "GET") {
+      if (!canUsePage(currentUser, isAdminSecret, "bin-dump", "view")) return new Response("Forbidden", { status: 403, headers: corsHeaders });
+      if (!env.DB || !env.MEDIA) return new Response("Storage not configured", { status: 500, headers: corsHeaders });
+      const id = parseInt(url.searchParams.get("id") || "", 10);
+      if (!Number.isInteger(id)) return new Response("Invalid id", { status: 400, headers: corsHeaders });
+      const row = await env.DB.prepare("SELECT r2_key, content_type, store FROM bin_dumps WHERE id = ?").bind(id).first();
+      if (!row || !row.r2_key) return new Response("Not found", { status: 404, headers: corsHeaders });
+      const allow = currentUser ? allowedStores(currentUser) : null;
+      if (allow && !allow.includes(row.store)) return new Response("Forbidden", { status: 403, headers: corsHeaders });
+      const obj = await env.MEDIA.get(row.r2_key);
+      if (!obj) return new Response("Gone", { status: 404, headers: corsHeaders });
+      const h = new Headers(corsHeaders);
+      h.set("Content-Type", row.content_type || "image/jpeg");
+      // A tag photo never changes once written → cache hard in the browser.
+      h.set("Cache-Control", "private, max-age=2592000, immutable");
+      return new Response(obj.body, { headers: h });
+    }
+
+    // ══ Mark Out of Stock ═════════════════════════════════════════════════
+    //
+    // Merchandise that left the floor without being sold. One row per sticker code per
+    // entry. The month is a grouping, not something anyone closes (Brian, 2026-09-10).
+
+    // GET ?action=mos-lookup&store=BL1&code=BL-50038-1_5
+    //
+    // Resolves a scanned or typed sticker into the fields the entry screen fills in for
+    // itself. Deliberately SEPARATE from mos-log so the screen can show what it read and
+    // let someone check it against the label in their hand before anything is committed —
+    // the same reason bin-dump-scan does not write a row.
+    if (url.searchParams.get("action") === "mos-lookup" && request.method === "GET") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "mos", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      const store = String(url.searchParams.get("store") || "").trim().toUpperCase();
+      const denied = storeActionGuard(store, currentUser, isAdminSecret, corsJson,
+        { closedMsg: "nothing can be marked out of it" });
+      if (denied) return denied;
+
+      const code = mosNormalizeCode(url.searchParams.get("code"));
+      const parsed = code ? mosParseCode(code) : null;
+      if (!parsed) {
+        return new Response(JSON.stringify({
+          error: "That doesn't read as a shelf sticker", code: "BAD_CODE",
+        }), { status: 400, headers: corsJson });
+      }
+      const { description, source } = await mosResolve(env, parsed.itemNo, store);
+      return new Response(JSON.stringify({
+        ok: true,
+        code,
+        item_no: parsed.itemNo,
+        description,
+        description_source: source,
+        unit_price_cents: parsed.priceCents,
+        unit_cost_cents: await mosCostCents(env, description),
+        // The screen asks for a name when this is true, and mos-log teaches it.
+        needs_description: !description,
+      }), { headers: corsJson });
+    }
+
+    // POST ?action=mos-log  { store, code, qty, reason, description? }
+    if (url.searchParams.get("action") === "mos-log" && request.method === "POST") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "mos", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const denied = storeActionGuard(body?.store, currentUser, isAdminSecret, corsJson,
+          { closedMsg: "nothing can be marked out of it" });
+        if (denied) return denied;
+        const store = String(body.store).trim().toUpperCase();
+
+        const code = mosNormalizeCode(body?.code);
+        const parsed = code ? mosParseCode(code) : null;
+        if (!parsed) {
+          return new Response(JSON.stringify({
+            error: "That doesn't read as a shelf sticker", code: "BAD_CODE",
+          }), { status: 400, headers: corsJson });
+        }
+
+        // 🛑 THE SHAPE, THEN THE VALUE. parseInt("12abc") is 12 and parseInt("1e3") is
+        // 1; Number("1e3") is 1000 and Number(" 12 ") is 12. Every one of those is a
+        // quantity nobody typed, landing silently in a shrink total. A unit count is
+        // digits and nothing else, so it is matched as digits before it is a number.
+        const qty = mosQty(body?.qty);
+        if (qty === null) {
+          return new Response(JSON.stringify({
+            error: "Quantity must be a whole number of units", code: "BAD_QTY",
+          }), { status: 400, headers: corsJson });
+        }
+
+        // Required, by decision — a shrink figure you cannot break down by cause is not
+        // worth keeping. The list lives in one const so a fifth reason is one line and no
+        // migration (see migration-062 on why there is no CHECK constraint).
+        const reason = String(body?.reason || "").trim();
+        if (!MOS_REASONS.includes(reason)) {
+          return new Response(JSON.stringify({
+            error: "Pick a reason", code: "BAD_REASON", reasons: MOS_REASONS,
+          }), { status: 400, headers: corsJson });
+        }
+
+        let { description, source } = await mosResolve(env, parsed.itemNo, store);
+
+        // Teaching. The first person to scan a code nobody has named types it once and
+        // everyone after gets it filled in.
+        //
+        // 🛑 THIS WRITE IS PERMANENT AND CHAIN-WIDE, so it is validated harder than a
+        // field that only lands on one row: a typo here mislabels the category for every
+        // store and every future entry. Requires real text — length, and at least one
+        // letter, so "-", "1" and "n/a" cannot become a category name.
+        if (!description) {
+          const typed = binDumpText(body?.description, 120);
+          if (typed && typed.length >= 3 && /[a-z]/i.test(typed)) {
+            description = typed;
+            source = "user";
+            await mosLearnCode(env, parsed.itemNo, typed, "user", actorLabel(currentUser));
+          }
+        }
+        if (!description) {
+          return new Response(JSON.stringify({
+            error: "Nothing on file names item " + parsed.itemNo + " yet",
+            code: "NEEDS_DESCRIPTION", item_no: parsed.itemNo,
+          }), { status: 400, headers: corsJson });
+        }
+
+        // Snapshotted, not resolved at read time — see migration-062.
+        const unitCost = await mosCostCents(env, description);
+        const at = new Date().toISOString();
+        const res = await env.DB.prepare(
+          `INSERT INTO mos_entries (store, code, item_no, description, qty,
+             unit_cost_cents, unit_price_cents, reason, logged_by, logged_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`
+        ).bind(store, code, parsed.itemNo, description, qty,
+               unitCost, parsed.priceCents, reason, actorLabel(currentUser), at).run();
+
+        return new Response(JSON.stringify({
+          ok: true, id: res.meta?.last_row_id ?? null, store, code,
+          item_no: parsed.itemNo, description, description_source: source,
+          qty, unit_cost_cents: unitCost, unit_price_cents: parsed.priceCents,
+          reason, logged_at: at, month: mosMonthOf(at),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=mos-list&store=BL1[&months=3|all][&limit=]
+    if (url.searchParams.get("action") === "mos-list" && request.method === "GET") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "mos", "view", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+
+      const storeRaw = String(url.searchParams.get("store") || "").trim().toUpperCase();
+      const allow = currentUser ? allowedStores(currentUser) : null;
+      let where = " WHERE 1=1";
+      const binds = [];
+      if (storeRaw && storeRaw !== "ALL") {
+        const denied = storeActionGuard(storeRaw, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+        where += " AND store = ?"; binds.push(storeRaw);
+      } else if (allow) {
+        // "All stores" means all the stores THIS USER holds, never all stores.
+        if (!allow.length) {
+          return new Response(JSON.stringify({ ok: true, rows: [], months: [], truncated: false }), { headers: corsJson });
+        }
+        where += ` AND store IN (${allow.map(() => "?").join(",")})`; binds.push(...allow);
+      }
+      const monthsRaw = String(url.searchParams.get("months") || "3").trim().toLowerCase();
+      const allTime = monthsRaw === "all";
+      const months = allTime ? null : Math.min(Math.max(parseInt(monthsRaw, 10) || 3, 1), 60);
+      if (!allTime) {
+        // Generous: a calendar month is not 30 days, and the boundary is ET while this
+        // bound is UTC. Over-fetching by a day costs nothing; under-fetching would drop
+        // the oldest visible month's first entries out of its own total.
+        where += " AND logged_at >= ?";
+        binds.push(new Date(Date.now() - (months * 31 + 1) * 86400000).toISOString());
+      }
+      const limitRaw = parseInt(url.searchParams.get("limit") || "", 10);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 5000) : 500;
+
+      // 🔑 TWO QUERIES, AND THE TOTALS ARE NOT COMPUTED FROM THE ROWS.
+      // The month header carries the number this whole page exists to produce. Summing
+      // the DISPLAYED rows would make that number quietly depend on the display limit —
+      // a month with 600 entries would report the cost of its most recent 500 and look
+      // exactly as authoritative. The totals query is unlimited and narrow (five small
+      // columns), so it is correct whether or not the list beneath it is truncated.
+      const { results: totRows } = await env.DB.prepare(
+        `SELECT logged_at, qty, unit_cost_cents, unit_price_cents, reason FROM mos_entries${where}`
+      ).bind(...binds).all();
+
+      // Grouped in JS rather than by strftime, because the month boundary is EASTERN and
+      // SQLite would group by UTC — every entry made after 8pm on the last day of a month
+      // would land in the next one, in the one column nobody would think to re-check.
+      const byMonth = new Map();
+      for (const r of (totRows || [])) {
+        const m = mosMonthOf(r.logged_at);
+        if (!byMonth.has(m)) {
+          byMonth.set(m, { month: m, lines: 0, units: 0, cost_cents: 0, retail_cents: 0,
+                           shrink_cents: 0, store_use_cents: 0, lines_without_cost: 0 });
+        }
+        const t = byMonth.get(m);
+        const q = Number(r.qty) || 0;
+        t.lines += 1;
+        t.units += q;
+        t.retail_cents += q * (Number(r.unit_price_cents) || 0);
+        // null cost is "not on file", never zero — counted so the screen can say the
+        // total is short rather than presenting it as complete.
+        if (r.unit_cost_cents === null || r.unit_cost_cents === undefined) {
+          t.lines_without_cost += 1;
+        } else {
+          const c = q * Number(r.unit_cost_cents);
+          t.cost_cents += c;
+          if (r.reason === "Store Use") t.store_use_cents += c; else t.shrink_cents += c;
+        }
+      }
+      const monthTotals = [...byMonth.values()].sort((a, b) => b.month.localeCompare(a.month));
+
+      const { results } = await env.DB.prepare(
+        `SELECT id, store, code, item_no, description, qty, unit_cost_cents, unit_price_cents,
+                reason, logged_by, logged_at, edited_by, edited_at FROM mos_entries${where}
+         ORDER BY logged_at DESC LIMIT ?`
+      ).bind(...binds, limit + 1).all();
+      const found = results || [];
+      const truncated = found.length > limit;
+      const rows = found.slice(0, limit).map(r => ({ ...r, month: mosMonthOf(r.logged_at) }));
+
+      return new Response(JSON.stringify({
+        ok: true, rows, months: monthTotals,
+        range: allTime ? "all" : months, truncated,
+      }), { headers: corsJson });
+    }
+
+    // POST ?action=mos-update  { id, qty, reason }
+    //
+    // 🔑 ONLY THE TWO FIELDS A PERSON TYPED. The code, description, cost and price are
+    // facts about the sticker that was scanned, not opinions to revise — editing the code
+    // would mean re-resolving all four and silently turning this row into a different
+    // product. A wrong sticker is a delete, which is a manager's job.
+    if (url.searchParams.get("action") === "mos-update" && request.method === "POST") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "mos", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const id = Number(body?.id);
+        if (!Number.isInteger(id)) {
+          return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        }
+        const row = await env.DB.prepare("SELECT store FROM mos_entries WHERE id = ?").bind(id).first();
+        if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        // Store comes FROM THE ROW, never from the body — otherwise anyone could edit any
+        // store's entry by naming their own.
+        const denied = storeActionGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+
+        const qty = mosQty(body?.qty);
+        if (qty === null) {
+          return new Response(JSON.stringify({ error: "Quantity must be a whole number of units", code: "BAD_QTY" }),
+            { status: 400, headers: corsJson });
+        }
+        const reason = String(body?.reason || "").trim();
+        if (!MOS_REASONS.includes(reason)) {
+          return new Response(JSON.stringify({ error: "Pick a reason", code: "BAD_REASON", reasons: MOS_REASONS }),
+            { status: 400, headers: corsJson });
+        }
+        await env.DB.prepare(
+          "UPDATE mos_entries SET qty = ?, reason = ?, edited_by = ?, edited_at = ? WHERE id = ?"
+        ).bind(qty, reason, actorLabel(currentUser), new Date().toISOString(), id).run();
+        return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=mos-delete  { id }
+    //
+    // 🛑 canSeeFinancials, and absent from ACTION_PAGE — so no page grant reaches it at
+    // any level. Removing a recorded loss is exactly the action you would not hand to the
+    // person whose mistake or shrink it records.
+    if (url.searchParams.get("action") === "mos-delete" && request.method === "POST") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const id = Number(body?.id);
+        if (!Number.isInteger(id)) {
+          return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        }
+        const row = await env.DB.prepare("SELECT store FROM mos_entries WHERE id = ?").bind(id).first();
+        if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        const denied = storeActionGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+        await env.DB.prepare("DELETE FROM mos_entries WHERE id = ?").bind(id).run();
+        return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
       }
     }
 

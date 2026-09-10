@@ -1,3 +1,224 @@
+## A colour has more than one spelling, and I only searched for one (2026-09-10)
+
+**Context:** Pure black shipped. Brian opened it on his phone and the bottom nav bar was
+still navy on a black page — the exact "navy patch on a black screen" I had warned about in
+the PR, in the most-looked-at chrome on mobile.
+
+**Root cause:** `.dark .bn-float` sets `background: rgba(16,24,38,.64)`. That is
+`op-panel #101826` written in decimal. I had swept the file for the five token hexes and
+re-pointed 160 of them to `rgb(var(--op-*))`, and my closing check was a grep for those same
+hexes returning clean. It did return clean. `rgba(16,24,38,.64)` was never in the search
+space, so "no hits" meant "no hits for the spelling I chose", not "no copies left".
+
+Searching decimal afterwards found **six** more sites, not one: the bottom bar, both mobile
+hint pills, the sparkline dot halo, and three OFFLINE pill borders — and one of those four
+pill borders I had already converted by hand, so the file was left inconsistent in a way that
+should itself have been a clue.
+
+**Why the tests did not catch it.** 54 browser assertions passed. Every one of them measured
+a surface I had *changed*; none swept for surfaces that should have changed and did not. A
+suite built from the diff can only confirm the diff.
+
+<rules>
+1. **Auditing a value means searching every spelling of it.** A CSS colour has at least
+   three: `#101826`, `rgb(16 24 38)`, `rgba(16,24,38,.64)`. Enumerate the token's decimal
+   channels and grep those too, before declaring a sweep complete.
+2. **A clean grep only proves the pattern is absent.** State the pattern to yourself and ask
+   what it cannot match. "No hits" is evidence about the query, not about the file.
+3. **Inconsistency in your own edits is a signal.** I converted one of four identical
+   `rgba(136,147,167,0.35)` borders by hand and left three. That asymmetry meant my
+   mechanical pass had a blind spot; I read it as a tidy-up I had not got to.
+4. **For a theme change, assert on what should NOT be left behind.** The useful test is not
+   "the surfaces I edited are black" but "no element still computes to the old theme's
+   panel colour". Sweep the rendered page for the outgoing value.
+</rules>
+
+## `getComputedStyle` during a `transition` returns the colour you just left (2026-09-10)
+
+**Context:** Verifying the pure-black theme. 54 browser assertions, six failing — `body` and
+every app bar reported the LIGHT background in dark and oled mode, while the settings cards
+next to them reported correctly. I spent six probes hunting a cascade bug that did not exist:
+specificity was right (`html.oled .dark\:…` is (0,2,1) vs Tailwind's (0,2,0)), the variable
+resolved (`--op-bg` = `10 15 26` on body), CDP listed the dark rule last as the winner, and
+replaying the rule's own `cssText` on a fresh div produced the correct colour.
+
+**Root cause:** `<body class="… transition-colors">`. Tailwind's `transition-colors` is a
+150 ms transition on `background-color`. `getComputedStyle` returns the **interpolated**
+value, so reading it synchronously after a class change reads t=0 — the pre-change colour.
+The settings cards have no transition class, which is exactly why they looked fine and made
+the failure look selective and cascade-shaped.
+
+**The disproof I should have run first:** set a plain, unmistakable value inline and read it
+back. `body.style.cssText = 'background-color: rgb(255 0 0)'` returned `rgb(244, 243, 238)`.
+An inline literal cannot lose a cascade fight, so at that instant the problem was provably
+the *measurement*, not the CSS. That one line was available from the first failure and would
+have replaced every probe after it.
+
+<rules>
+1. **Before measuring a colour you just changed, settle the transition** — wait past the
+   duration, or disable transitions for the measurement. Prefer waiting: it tests the real
+   thing. A synchronous read after a class toggle is measuring the old frame.
+2. **When a probe disagrees with the spec, suspect the probe.** Specificity, variable
+   resolution and CDP's own cascade all said the rule won. Three independent sources agreeing
+   against one measurement means the measurement is wrong.
+3. **Falsify with a value that cannot be produced any other way.** Pure red, inline. If the
+   read-back is not red, stop reasoning about CSS and go fix the harness.
+4. **A failure that skips some elements is a clue about those elements, not about the rule.**
+   "Cards fine, body and app bars wrong" was the whole answer — `transition-colors` is on the
+   second set and not the first. I read it as "tokens broken, literals fine" because that
+   split also fit, and never checked which split was real.
+</rules>
+
+## A surviving mutation is not automatically a hole in the tests (2026-09-10)
+
+Mutation-testing the MOS suite, eight of ten mutations were caught and two survived. The
+reflex is to write assertions until they die. Both would have been wrong to chase.
+
+**Survivor 1 — "read the colliding IM# cost map".** I mutated `mosCostCents` to try
+`costs.items[description]` before `costs.categories[description]`. It survived because
+`items` is keyed by IM# and `description` is a category NAME, so the added lookup could
+never hit. My mutation was a no-op, not an undetected bug. The real protection is that
+the function is only ever handed a name — the SIGNATURE is the guard. Mutating the call
+site to pass `parsed.itemNo` instead did fail, six assertions.
+
+**Survivor 2 — "let a sweep overwrite a name a person typed".** I removed
+`WHERE sticker_codes.source <> 'user'` and nothing broke. Investigating: the only caller
+that passes `'clover'` runs after establishing there is no row at all, so the clause
+could never fire. **It was dead code.** Worse than dead — it was a claim in the source
+that the rule was enforced there, when the rule actually lives in an early return three
+functions away. I deleted it and mutated the early return instead: five assertions.
+
+Rules:
+
+1. **Before writing an assertion to kill a survivor, prove the mutation is a real bug.**
+   Read the mutated code in context and ask what input would now behave differently. If
+   there is none, the mutation was semantically equivalent and the suite is fine.
+2. **A survivor sometimes indicts the CODE, not the test.** An unreachable guard passes
+   mutation testing by definition. That is a reason to delete it, not to test it.
+3. **Then mutate the thing that actually carries the rule.** Both of these had a real
+   guard elsewhere, and both of those guards were caught immediately once aimed at.
+4. Same family as "grepping a name is not testing a behaviour": the question is always
+   what would have to change for the behaviour to be wrong, not what text is present.
+
+## Playwright matches routes LAST-REGISTERED-FIRST (2026-09-10)
+
+The browser probe for MOS reported 41 of 52 assertions failing — every nav item hidden,
+every page unrouted, `currentPage` reading "dashboard" for an associate who should have
+landed elsewhere. It looked exactly like the boot race, and none of it was real.
+
+```js
+await page.route('**/api.retjghub.com/**', stub);   // registered first
+await page.route('**/*', (r) => r.continue());      // registered second — WINS
+```
+
+Playwright evaluates handlers in reverse registration order, so the catch-all shadowed
+the stub and every request went to the real network, which the egress proxy blocks. The
+app then failed auth and sat on its default section.
+
+1. **Do not register a catch-all `continue()` route.** Unrouted requests continue on
+   their own; the handler only exists to shadow the ones above it.
+2. Two probe bugs in the same file, both previously recorded here in other forms:
+   `offsetParent` is null inside a positioned ancestor (so the whole sidebar read as
+   hidden), and `currentUser` / `currentPage` are module-scoped inside the app's IIFE —
+   index.html even carries a comment saying `window.currentPage` is always undefined.
+   Read the DOM: which `[id^="page-"]` lacks `hidden`.
+3. **When a probe reports EVERYTHING broken, suspect the probe.** A real regression is
+   usually narrow. A one-page debug script printing what the page actually did — which
+   API calls fired, what class the element carries — found all three in one run.
+
+## `cmp` on a Cloudflare worker bundle compares the envelope, not the code (2026-09-09)
+
+Verifying the staging deploy, I fetched the deployed script twice and ran `cmp`. It said
+the two differed — which reads exactly like "you are mid-rollout, the old code is still
+being served", the thing rule 5 exists to catch. Both fetches had the **same byte count**
+and the **same grep counts for every string I cared about**, which should have been the
+tell.
+
+`GET /accounts/{id}/workers/scripts/{name}` returns `multipart/form-data`, and the
+**boundary is regenerated per request**. `cmp -l | wc -l` said 116 differing bytes: two
+boundary strings of ~58 characters. The script was byte-identical.
+
+Rules:
+
+1. **Hash the body, not the response.** `grep -v '^--[0-9a-f]\{40,\}' | sha256sum` strips
+   the boundary lines; that hash was stable across three passes and matched staging's.
+2. **When a probe reports a difference, ask what part of the response is allowed to
+   differ** before believing it. Boundaries, timestamps, request ids and ETags all move on
+   their own.
+3. Two contradicting signals — "identical size and content greps" versus "cmp says no" —
+   mean one of the probes is wrong, not that reality is ambiguous. Resolve it before
+   reporting either.
+4. Same family as the fixed-width context grep and the `offsetParent` mistakes: the probe
+   answered a question next to the one asked.
+
+## A surviving mutation meant TWO copies of one rule, not a weak test (2026-09-09)
+
+Mutation-testing the new page gate: I broke `canUsePage` so any page grant admitted any
+level — a view-only associate could log pallets — and the suite stayed green. The
+instinct is "the test is weak, add an assertion". It was the wrong instinct.
+
+The suite was fine. The **financial gate had its own copy of the comparison**:
+
+```js
+// gate, worker.js:~13906
+const pageOk = !!pageReq && pageLevel(currentUser, pageReq[0]) >= PAGE_LEVELS[pageReq[1]];
+// handler, worker.js:~12335
+function canUsePage(user, isAdminSecret, page, level) { ... pageLevel(user, page) >= ... }
+```
+
+Breaking one left the other holding, so nothing observable changed. Adding assertions
+would have papered over the real finding.
+
+Rules:
+
+1. **When a mutation survives, first ask what else is enforcing the rule.** A second
+   enforcement point is the likeliest answer, and it is a defect in its own right, not
+   depth. The copy that drifts is always the one that says yes.
+2. **Fix it by deleting the copy, not by strengthening the test.** The gate now calls the
+   same `canUsePage` the handlers do; the mutation then failed three assertions.
+3. This is [[one-right-two-jobs]] seen from the other side: that lesson was one right
+   doing two jobs, this is one right written down twice. Same cure — one function.
+4. A mutation that makes a suite **crash** still counts as caught (non-zero exit), but read
+   the error: it should be a cascade from a real assertion failing, not the harness
+   tripping over its own fixture.
+
+## The documented cause was wrong, and my first fix inherited the error (2026-09-08)
+
+**What happened:** Brian's `git fetch` died with `fatal: mmap failed: Operation canceled`.
+ORIENT.md already had an entry for this, blaming the 985 KB `index.html`, so I read
+"mmap" + "big files" as a memory ceiling and prescribed
+`core.packedGitWindowSize=32m core.packedGitLimit=128m pack.threads=1`. It failed
+identically — same message, same point in index-pack, on a *smaller* pack than the first
+attempt (288 objects vs 322).
+
+**Root cause:** iCloud Drive. The repo lived in `~/Desktop/labor-dashboard`, which is
+inside Desktop & Documents sync. git writes a pack into `.git/objects/pack/` and then
+`mmap`s it to index it; iCloud hands back a placeholder rather than bytes, and that
+surfaces as `ECANCELED` — "Operation canceled", which is not what a memory ceiling says.
+A plain `git clone` into `~/dev` resolved 3910 objects and 2552 deltas first try.
+
+**The tell I walked past:** the errno. Out of memory is `ENOMEM`; address-space
+exhaustion is `ENOMEM` too. `ECANCELED` from `mmap` means something took the mapping
+away, which is a *storage* fact, not a memory one. I pattern-matched on the word "mmap"
+and on a note in our own docs instead of reading what the error actually said.
+
+<rules>
+1. **When a fix derived from the documented cause fails, suspect the documented cause.**
+   Not the size of the fix. I turned the same knob harder on a smaller input and expected
+   a different result; the second failure was the evidence that the model was wrong, and
+   I should have re-diagnosed there rather than at the third attempt.
+2. **Read the errno, not the syscall.** `mmap failed` names where it broke.
+   `Operation canceled` names why, and it excluded the entire theory I was working from.
+3. **A note in our own docs is a hypothesis with a good reputation, not a finding.** The
+   ORIENT.md entry was written from a symptom that reproduced under a big checkout, and
+   the file size was correlated, not causal. It has now been corrected in place — an entry
+   that names the wrong cause is worse than none, because it aims the next person at the
+   same dead end and lends it authority.
+4. **Ask where the repo lives before debugging git on macOS.** `~/Desktop` and
+   `~/Documents` are iCloud-synced by default. One `pwd` would have settled this before
+   any of the tuning.
+</rules>
+
 ## A backgrounded `git merge` finished AFTER I changed branches, and silently overwrote the tree (2026-08-21)
 
 **Context:** `git merge main` into `staging` kept timing out (this repo's `index.html` is
@@ -1313,4 +1534,80 @@ control is exactly what a hand-kept list forgets.
    Adopting the server's response is right — it is how clamping stays honest — but it also
    means a client-side corruption presents as a server-side refusal, and you will go looking
    in the wrong file. Check what the client actually put on the wire first.
+</rules>
+
+## I told Brian production was down, from an inference, while holding a five-second check
+
+Bin Dump's `sup_ref` column needed `migration-059.sql` on two D1 databases. Across one session
+I made the same mistake twice, escalating each time:
+
+1. Brian's deploy grew the worker by ~235 bytes. I said the deployed build was "almost certainly"
+   the older one, reasoning that #196's prompt rewrite was ~2.5 KB. When I finally measured, the
+   real diff was 1210 bytes, **791 of them comments the bundler strips** — the arithmetic never
+   supported the confidence I gave it.
+2. His `d1 execute` runs had all failed, so I concluded the column did not exist, and wrote:
+   *"Bin Dump is broken in production right now."* It was not. Production already had the column.
+   The `ALTER` returned `duplicate column name: sup_ref` — the all-clear — on the first try.
+
+The second is the bad one, and not because the guess was wrong. Earlier in the same session I had
+looked at Brian's screenshot and correctly written that it was consistent with **two** states
+(old worker + no column, or new worker + column), because a logged pallet rendering in the Log tab
+rules out only the mismatch. Then, with no new evidence, I collapsed that disjunction to the
+alarming branch and reported it as fact. I had already done the careful reasoning and then
+discarded it.
+
+What makes it avoidable: the migration is **its own probe**. One additive, nullable `ALTER` that
+either applies or says `duplicate column name`. Both outcomes are safe, and between them they
+name the state exactly. The right move was "run this, it will tell you which state you are in" —
+which costs nothing if the column exists — not "you are in this state, here is how to fix it."
+
+<rules>
+1. **Never state the live state of production as fact from an inference.** Say what you have
+   ("your migration runs failed, so the column may be missing") and what would settle it. A
+   sentence about prod that a person will act on needs a primary source, not a chain of reasoning.
+2. **When a safe, self-diagnosing probe exists, run it BEFORE narrating a diagnosis.** CLAUDE.md
+   rule 3 forbids verifying a guard with a probe that does the damage; the corollary is that a
+   probe which is harmless in *both* outcomes should come first, not after the conclusion.
+3. **Once you have enumerated two consistent states, you may not later pick one for free.**
+   Write the disjunction down and re-read it. Collapsing it silently is how a hedge becomes a
+   claim between two messages.
+4. **Weigh the two error costs before raising an alarm.** "Run this, it may already be done"
+   costs a command. "Your app is down" costs someone dropping what they are doing mid-shift.
+   Asymmetric costs mean asymmetric evidence bars.
+5. **Never put a trailing `#` comment on a shell command you hand someone.** Interactive zsh does
+   not set `INTERACTIVE_COMMENTS`, so `--file=x.sql   # staging` passes `#` and `staging` as
+   arguments. My annotation is what made both of his migration runs fail. Put the label on its
+   own line, above the command.
+</rules>
+
+### Addendum, same day: the limitation I asserted was also unchecked
+
+The whole reason the guessing above was necessary was that I believed this session could not
+reach D1. I said so to Brian more than once and wrote it into three check-in notes as a
+standing fact:
+
+> This session has no credentials for D1 or the deployed worker and cannot verify either
+> directly. Do not state live production state as fact from inference.
+
+Then he asked me to run the staging migration, I finally looked, and `CLOUDFLARE_API_TOKEN`
+and `CLOUDFLARE_ACCOUNT_ID` were both sitting in the environment the entire time. One
+read-only query settled in four seconds a question I had spent the afternoon reasoning about
+— and it turned out the migration was already applied on **both** databases, so the alarm I
+raised had no factual basis in either direction.
+
+This is the same error as rule 1, pointed inward. I was careful about claims regarding the
+*world* and completely uncritical about a claim regarding *myself*, even though the second
+was far cheaper to check and was the thing forcing all the inference.
+
+<rules>
+6. **Check your own capabilities before declaring them absent.** "I can't reach X" is a factual
+   claim about the environment, not a property of being an assistant. `env | grep -i TOKEN`,
+   `which wrangler`, one read-only call — seconds, against an afternoon of reasoning built on
+   the assumption.
+7. **A stated limitation propagates further than a stated fact.** A wrong claim about
+   production gets corrected the moment somebody looks. A wrong claim about what you cannot do
+   ends up in the notes you hand your successor, who then does not try either. Mine survived
+   three check-ins.
+8. **When someone asks you to do the thing you said you could not do, look before answering.**
+   The request is evidence: they may know something about your access that you do not.
 </rules>

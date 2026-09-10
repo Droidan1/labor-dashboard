@@ -1,10 +1,15 @@
-const CACHE_NAME = 'dashboard-cache-v169';
+const CACHE_NAME = 'dashboard-cache-v182';
 
 // Pre-fetched and cached on install
 const PRECACHE_ASSETS = [
   './',
   './index.html',
   './tailwind.css',
+  // The QR decoder for Mark Out of Stock. PRECACHED but not <script>-tagged in
+  // index.html: precached so the first scan works on bad warehouse wifi, loaded
+  // on demand so 127KB is not parsed at every app start by everyone who never
+  // opens MOS. See mosLoadDecoder().
+  './jsqr.min.js',
   './apple-touch-icon.png',
   './icon-192.png',
   './retjg-logo.png',

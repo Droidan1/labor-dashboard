@@ -1,3 +1,224 @@
+# Pure black follow-up: nav bar left navy, dark status bar reverted (2026-09-10)
+
+Brian, after merging: "revert dark back to green and look at the nav bar on mobile that
+didn't change color."
+
+- [x] **`theme-color` reverted for dark** — back to `#3BB54A`. Only pure black changes the
+      browser/PWA chrome now (`#000000`). Light was never touched. Dark's navy bar was a
+      side effect of making the tag theme-following; the tag only ever needed to change for
+      pure black, where a green bar over a black app defeats the point.
+- [x] **The mobile bottom bar was still navy** — `.dark .bn-float` wrote
+      `background: rgba(16,24,38,.64)`, which is `op-panel #101826` in decimal. The sweep
+      that shipped pure black searched the five token **hexes** and came back clean, because
+      `rgba(16,24,38,…)` was never in the search space. Now `rgb(var(--op-panel) / .64)`, and
+      its border follows `--op-borderHi` so it strengthens on black like every other border.
+- [x] **Five more sites with the same defect**, found by searching the decimal spelling:
+      both mobile hint pills (`#swipe-label`, `#ptr-hint`, op-panel at 92%), the sparkline
+      tooltip dot halo (op-bg at 90%), and three OFFLINE pill borders (op-inkDim at 35%) —
+      a fourth had already been converted by hand, which left the file inconsistent and
+      should itself have been the clue.
+- [x] **New sweep test**: walk every element in pure black and flag any that still computes
+      a dark-theme token value. One hit, and it is correct — the Dark swatch on the
+      Accessibility page, which is meant to be a literal sample of `#0a0f1a`. This is the
+      check that would have caught the nav bar; the 54 assertions could not, because every
+      one of them measured a surface the diff had already touched.
+- [x] 61 browser assertions pass (54 + 7 for the bar, its border and the hint pills).
+- [x] `CACHE_NAME` v180 → v181.
+
+Lesson recorded: a colour has more than one spelling, and a clean grep only proves the
+pattern is absent.
+
+# Pure black (OLED) theme + Settings → Accessibility page (2026-09-10)
+
+Brian: "add a pure black mode (different than dark mode). Add this inside the settings page
+under a new page called accessibility. Give me a preview of how this will look before you
+build it."
+
+Preview published (interactive, three-way theme switch over the real screens):
+https://claude.ai/code/artifact/36407a1f-0f86-4e48-a605-3eaed559ded6
+
+**Built and verified 2026-09-10.** Brian approved the preview and said to build the defaults.
+
+## Approach
+
+Pure black is **additive**, not a third branch: `<html class="dark oled">`. `dark` stays on, so
+all 2,847 `dark:` utilities keep resolving (`:is(.dark *)`) and all nine JS sites that ask
+`classList.contains('dark')` keep answering yes. We only retint.
+
+## Palette (measured, not eyeballed — ratios vs the real composited ground)
+
+| Token | dark | pure black | why |
+|---|---|---|---|
+| bg | `#0a0f1a` | `#000000` | OLED pixels off |
+| panel | `#101826` | `#0a0a0a` | |
+| panelHi | `#16203a` | `#161616` | |
+| ink | `#e7ecf3` | `#f2f2f2` | 17.68:1 on panel |
+| inkDim | `#8893a7` | `#a8a8a8` | 8.33:1 |
+| inkDimmer | `#5a6478` | `#8a8a8a` | **2.99 → 5.73**; today's value fails AA |
+| border | `rgba(255,255,255,.06)` | `rgba(255,255,255,.14)` | .06 on #000 = 1.10:1, cards dissolve |
+| borderHi | `rgba(255,255,255,.10)` | `rgba(255,255,255,.22)` | |
+| sidebar | `#070b14` | `#000000` | |
+| glass | `rgba(22,32,58,.55)` | `rgba(10,10,10,.72)` | |
+
+accent-green / bad / warn unchanged — all three already pass ≥4.5:1 on `#0a0a0a`.
+
+## Tasks
+
+- [x] `tailwind.config.js` — `op.*` are now `rgb(var(--op-x) / <alpha-value>)`; the three rgba
+      tokens stay plain `var()` since a fixed alpha and `<alpha-value>` cannot coexist. Verified
+      in the compiled CSS: `background-color: rgb(var(--op-panel) / var(--tw-bg-opacity, 1))`.
+      1,680 of 2,847 rules retint from 24 lines of `:root` + `html.oled`.
+- [x] Override layer for the literal half — 21 rules covering the `dark:*-gray-*` backgrounds,
+      borders, divides and hovers. **Grey TEXT deliberately not overridden**: a darker ground
+      can only raise its contrast, and measuring confirmed it (gray-400 7.01→7.80,
+      gray-500 3.68→4.10, gray-300 12.07→13.44). Border alphas are picked for parity with the
+      edge each draws today, measured against its own card: gray-700 on a gray-800 card is 1.42
+      and white at 14% on `#0a0a0a` is also 1.42; 600 → 1.94 vs 1.91; 500 → 3.04 vs 3.01.
+- [x] The 232 hand-written `.dark <sel>{}` rules — 160 pasted copies of five token hexes
+      re-pointed to `rgb(var(--op-*))`, so they follow all three themes from one place. The
+      always-dark surfaces (sidebar tooltip, coach-marks, bin-dump lightbox) went with them:
+      `:root` holds the dark values, so light is untouched and only `oled` shifts them.
+- [x] JS colour sites → `window.themeColors()`, a three-way table for the colours CSS variables
+      cannot reach (canvas paints). Wired: 3 Chart.js renderers + `_uiDialog`. **The 5 Marketing
+      sites were left alone on purpose** — every dark-side value there is a light pastel that
+      improves on a darker ground (measured: 8.22→9.15, 7.99→8.90, …, none below 4.5:1) and its
+      grid is already white-alpha, so it self-adapts. Churn that fixes nothing.
+- [x] Inline-style colours (LIVE/OFFLINE pills, pace bars, role dots, sparkline tooltip) use
+      `rgb(var(--op-*))` directly — an inline style resolves variables, so no accessor needed.
+- [x] `#page-accessibility` with the store-detail back-button header at `max-w-3xl`.
+      Real radiogroup semantics: one tab stop, arrow keys move and select.
+- [x] Settings nav row (chevron-right) + `morePages['accessibility']` + the stale `_pages` list
+      + a `syncThemeControls()` hook on entry so the radios can't come back stale.
+- [x] Boot script applies `oled` alongside `dark` pre-paint; `theme-color` now follows the theme
+      (`#3BB54A` light / `#0a0f1a` dark / `#000000` pure black) instead of being pinned to green.
+- [x] Two-way sidebar switch keeps its binary sun/moon animation and remembers the flavour via
+      a new `darkFlavor` key. Going light does not erase it.
+- [x] **54 browser assertions** over pre-paint boot, token plumbing, the override layer, control
+      sync, switch memory, contrast in all three themes, and routing. All pass.
+- [x] `CACHE_NAME` v179 → v180 in the same commit.
+
+## Open questions — all answered
+
+Brian: "go ahead and build it with the defaults." So: the sidebar switch stays two-way and
+remembers; the page carries theme only; the JS-painted colours follow.
+
+## Notes
+
+- No `prefers-color-scheme` anywhere in the app, so there is no "system" option to extend.
+- Print export is a `@media print` stylesheet with fixed light literals — theme-independent,
+  needs no change.
+- The committed root `tailwind.css` is stale and has no `dark:` variants; `build.sh` regenerates
+  into `dist/`. Verify contrast against token values, never against the local stylesheet.
+
+# Mark Out of Stock (2026-09-10)
+
+Brian: "add a new page — MOS. Scan a QR code or manually input a BL sticker code, then 3
+fields get auto generated... user then will input QTY. This is done every month so we
+need to keep track of this too." Then: "add one more auto field (cost) on the item with a
+monthly total cost MOS'ed", and answers settling the scan (real QR), the category
+(right), the price (keep), the reason (required) and the month (grouping only).
+
+- [x] `migration-062.sql` — `mos_entries` + the `sticker_codes` learned map
+- [x] Worker: `mos-lookup`, `-log`, `-list`, `-update`, `-delete`; cost from the
+      per-category map; the learn-and-remember write-through
+- [x] `jsqr.min.js` vendored, allowlisted in build.sh, precached in sw.js, loaded on demand
+- [x] The page: QR scanner, five auto fields, required reason, monthly log with cost
+      totals, CSV export, teach-a-code prompt
+- [x] `scripts/test-mos.mjs` (129 assertions) + ten mutations, ten caught
+- [x] 51 browser assertions over four scenarios, contrast in both themes
+- [x] CACHE_NAME v178 -> v179
+- [x] **Apply `migration-062.sql`** to staging, then production — done 2026-09-10; both
+      tables created, every neighbouring row count unchanged
+- [x] Deploy the worker to both — staging `9df48b9d`, production `b3df90ac`, verified by
+      bundle over three consecutive identical hashes
+- [ ] **Merge PR #207** — Brian's click; that is the last step
+- [ ] Scan a real sticker and confirm the flow end to end
+
+Full write-up in [mos.md](mos.md). Two findings worth reading before the deploy: the
+description lookup cannot name stock that has left Clover (which is what MOS is for), and
+the cost is a flat per-category rate, so a single expensive line is not to be quoted.
+
+# Associate role: a six-digit login and per-page permissions (2026-09-09)
+
+Brian: a new "associate" account for Bargain Lane, made by an admin, that signs in with a
+six-digit code and can open only the pages the admin ticked — Bin Dump today, more later —
+and nothing else, not even the dashboard. Plus an "Associate login" button on the login
+card and a way to ask for a reset that only an admin can action.
+
+## Plan
+
+- [x] `migration-061.sql` — additive only: `users.name`, `pin_hash`, `pin_failures`,
+      `pin_reset_requested_at`, `pages`. Reuse the existing `staff` role rather than
+      rebuilding the table for a new CHECK value.
+- [x] Worker: `ACTION_PAGE` / `canUsePage` / `requirePage`, the financial gate's one new
+      way to say yes, the seven Bin Dump guards, peppered HMAC codes, per-account lockout.
+- [x] Worker: `associate-login`, `associate-reset-request`, `associate-save`; refuse
+      associates on every email-login, invite, passkey-register and user-write path.
+- [x] Client: `GRANTABLE_PAGES` registry, `applyAssociateNav`, page checks in
+      `navigateToPage` / `landingPageFor`, Bin Dump view-vs-edit, the login card's two new
+      blocks, the Associates panel and its modal, the bottom bar's missing ids.
+- [x] `scripts/test-associate.mjs` (131 assertions) + mutation testing.
+- [x] `CACHE_NAME` → v178, fixture updated.
+- [x] `wrangler secret put PIN_PEPPER` — set on staging and production (a different random
+      value each; they are different databases).
+- [x] Apply `migration-061.sql` to staging, then production. Backed up production's 14 user
+      rows first; afterwards 14 users, 0 associates, 0 pages, 0 failures.
+- [x] Deploy the worker to both. Verified by grepping the deployed bundle, three consecutive
+      identical body hashes on production, old surface intact.
+- [x] **Merge PR #205** — merged by Brian as `49ed4f4`; Pages built `main` (`55d223df`).
+      The whole feature is live at www.retjghub.com.
+- [ ] Create the first associate and confirm the flow on a real phone. Nothing here has
+      been exercised by a live request yet.
+
+## Found while deploying, NOT part of this change
+
+`scripts/test-daily-auction-column.mjs` goes red every evening between 8pm and midnight
+Eastern, on `main` as much as on this branch. It is a timezone inconsistency in
+`buildWeeklyTable` (`index.html:7899`), which computes **two** notions of today and then
+uses the wrong one:
+
+```js
+const todayStr = new Date().toDateString();                     // the DEVICE's timezone
+const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })…;  // ET
+…
+const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
+```
+
+Row dates are built as **local noon** (`new Date(dateStr + "T12:00:00")`, `loadStoreFromD1`),
+so on any device set to Eastern the two agree and the Daily tab is correct — which is every
+device in the business. On a device whose local date differs from ET (a UTC box, or someone
+travelling) today's row stops being "today": it loses the live Clover figure and the
+highlight. In the test container, which runs UTC, that is true for four hours a day.
+
+Proposed fix, one line, comparing ET on both sides rather than mixing the two:
+
+```js
+const etDay = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);
+const isToday = isCurrentWeek && r.date && etDay(r.date) === todayKey;
+```
+
+Deliberately **not** done here — it changes a shipped dashboard surface for every user and
+has nothing to do with associates. It does not affect CI (this repo's only checks are the
+two Cloudflare Pages builds). Worth its own small PR.
+
+## Review
+
+Full suite **3,786 assertions across 59 suites, green**, plus 75 browser assertions in
+headless Chromium over six scenarios. Ten mutations, ten caught — one of them only after
+the fix it prompted: the financial gate held its own copy of the level comparison, so
+breaking the shared helper changed nothing. Both now call one `canUsePage`.
+
+Four latent bugs found on the way, all pre-existing and all fixed: `loadAll()` would have
+painted a store-loading error banner over the associate's page; the bottom bar quietly
+lost its active tab ~800ms after **every** load for **every** user; a Bargain Lane grant
+with no units reaches nothing, so an associate saved without a store would sign in and
+then be refused everywhere; and the synthetic `@associate.invalid` address was a live
+oracle on `auth-login`. `test-privilege-guards.js` was also comparing against `indexOf`'s
+`-1` — a fixed 3,000-character window that truncated the moment a guard was added.
+
+Nothing is applied to either database and `PIN_PEPPER` is unset, so the feature is inert
+until both happen. That is the correct failure: without the pepper an associate cannot be
+created at all. Full write-up in [associates.md](associates.md).
 # Today's auction is dropped on six surfaces, not one (2026-09-04)
 
 ## The ask
