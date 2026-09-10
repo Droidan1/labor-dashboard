@@ -18124,10 +18124,21 @@ export default {
             anchorDate = anchor?.d;
           }
           if (anchorDate) {
+            // 🔑 GROUP BY THE WEEK'S SATURDAY, NOT THE LABEL. `week` is a bare
+            // sheet number ("1".."52") that restarts every January, so grouping
+            // on it alone merges week 26 of 2025 into week 26 of 2026 — every
+            // other query in this file pairs `week` with `date LIKE '<year>-%'`
+            // for exactly that reason. Two consequences, both silent: no window
+            // could ever return more than ~52 rows however many were asked for,
+            // and a merged row's start year picks the `week-summary:` key below,
+            // so a week presented as recent read the OLDEST year's numbers.
+            // date(d,'weekday 6') is the Saturday on or after d, so every day of
+            // a Sun–Sat week maps to one key. Verified against production: it
+            // reproduces the existing boundaries exactly and is year-safe.
             const { results } = await env.DB.prepare(
-              `SELECT week, MIN(date) as start_date, MAX(date) as end_date
+              `SELECT MAX(week) as week, MIN(date) as start_date, MAX(date) as end_date
                FROM daily_sales WHERE date <= ?
-               GROUP BY week ORDER BY MIN(date) DESC LIMIT ?`
+               GROUP BY date(date, 'weekday 6') ORDER BY MIN(date) DESC LIMIT ?`
             ).bind(anchorDate, nWeeks).all();
             weeks = (results || []).reverse().map(r => ({
               week: String(r.week),

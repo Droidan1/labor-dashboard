@@ -406,3 +406,54 @@ false alarm. Vs reads the day series, a different endpoint, and is untouched.
   drawing, a correct worker drawing normally, and the T13 clobber regression.
 - Section 17 of that suite was inheriting its view from the section before it and
   now sets it explicitly — it was passing for the wrong reason.
+
+---
+
+## Phase 4 — why quarter showed two columns (2026-09-10)
+
+Two causes, only one of them a code bug.
+
+### 1. The history does not reach (dominant)
+
+Quarter asks for 108 weeks. Production holds **42 real weeks**, back to 2025-05-01.
+That spans Q4'25 (part), Q1'26, Q2'26, Q3'26 (in progress); the part-covered drop
+correctly discards two, leaving **two columns**. Nothing said so — the control
+promised quarter-over-quarter and delivered a pair of bars.
+
+The version guard from phase 3 stays silent here, and should: the worker echoes
+`weeksWindow: 108`, so it honoured the window. The shortfall is the data's. But
+that is the same silence one layer over, so the status line now says which:
+*"Only 42 of the 108 weeks this view asks for exist, going back to 2025-05-01 — so
+2 full quarters can be drawn."*
+
+The distinction that decides the treatment:
+
+| cause | are the drawn periods correct? | treatment |
+|---|---|---|
+| worker behind | no — too few weeks rolled per period | refuse to draw |
+| history short | yes — just fewer of them | draw, and caption why |
+
+### 2. `GROUP BY week` merged years
+
+`daily_sales.week` is a bare sheet label ("1".."52") that restarts each January —
+every other query in worker.js pairs it with `date LIKE '<year>-%'`; the weekly-t13
+one did not. Consequences, both silent:
+
+- no window could return more than ~52 rows however many were asked for, so month
+  (56) and quarter (108) were capped without complaint;
+- a merged row's `start` year chooses the `week-summary:<store>:<wk>-<year>` key, so
+  a week presented as recent read the **oldest year's numbers**. This reached the
+  T13 tab too, not only Categories.
+
+Measured on production: the old query returned 38 rows for a 108-week ask with 2
+spanning years; grouping on `date(date,'weekday 6')` — the Saturday on or after each
+date — returns 42, with the one remaining span a genuine Dec/Jan straddle. Verified
+against production that this reproduces the existing Sun–Sat boundaries exactly, so
+the T13 tab is unchanged by it.
+
+### Verification
+
+- 4,025 assertions across 63 suites (+6). The new section fails on the old query
+  (52 rows; one "week" running 2024-01-07 → 2026-01-10) and passes on the fix.
+- 113 browser checks (+5): the shortfall caption names the numbers, does not blame
+  the worker, still draws the quarters that exist, and stays quiet at full history.
