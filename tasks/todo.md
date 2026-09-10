@@ -1,3 +1,82 @@
+# Associate role: a six-digit login and per-page permissions (2026-09-09)
+
+Brian: a new "associate" account for Bargain Lane, made by an admin, that signs in with a
+six-digit code and can open only the pages the admin ticked — Bin Dump today, more later —
+and nothing else, not even the dashboard. Plus an "Associate login" button on the login
+card and a way to ask for a reset that only an admin can action.
+
+## Plan
+
+- [x] `migration-061.sql` — additive only: `users.name`, `pin_hash`, `pin_failures`,
+      `pin_reset_requested_at`, `pages`. Reuse the existing `staff` role rather than
+      rebuilding the table for a new CHECK value.
+- [x] Worker: `ACTION_PAGE` / `canUsePage` / `requirePage`, the financial gate's one new
+      way to say yes, the seven Bin Dump guards, peppered HMAC codes, per-account lockout.
+- [x] Worker: `associate-login`, `associate-reset-request`, `associate-save`; refuse
+      associates on every email-login, invite, passkey-register and user-write path.
+- [x] Client: `GRANTABLE_PAGES` registry, `applyAssociateNav`, page checks in
+      `navigateToPage` / `landingPageFor`, Bin Dump view-vs-edit, the login card's two new
+      blocks, the Associates panel and its modal, the bottom bar's missing ids.
+- [x] `scripts/test-associate.mjs` (131 assertions) + mutation testing.
+- [x] `CACHE_NAME` → v178, fixture updated.
+- [x] `wrangler secret put PIN_PEPPER` — set on staging and production (a different random
+      value each; they are different databases).
+- [x] Apply `migration-061.sql` to staging, then production. Backed up production's 14 user
+      rows first; afterwards 14 users, 0 associates, 0 pages, 0 failures.
+- [x] Deploy the worker to both. Verified by grepping the deployed bundle, three consecutive
+      identical body hashes on production, old surface intact.
+- [ ] **Merge PR #205** — Brian's click. Auto-merge cannot work on this repo.
+
+## Found while deploying, NOT part of this change
+
+`scripts/test-daily-auction-column.mjs` goes red every evening between 8pm and midnight
+Eastern, on `main` as much as on this branch. It is a timezone inconsistency in
+`buildWeeklyTable` (`index.html:7899`), which computes **two** notions of today and then
+uses the wrong one:
+
+```js
+const todayStr = new Date().toDateString();                     // the DEVICE's timezone
+const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })…;  // ET
+…
+const isToday = isCurrentWeek && r.date && r.date.toDateString() === todayStr;
+```
+
+Row dates are built as **local noon** (`new Date(dateStr + "T12:00:00")`, `loadStoreFromD1`),
+so on any device set to Eastern the two agree and the Daily tab is correct — which is every
+device in the business. On a device whose local date differs from ET (a UTC box, or someone
+travelling) today's row stops being "today": it loses the live Clover figure and the
+highlight. In the test container, which runs UTC, that is true for four hours a day.
+
+Proposed fix, one line, comparing ET on both sides rather than mixing the two:
+
+```js
+const etDay = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);
+const isToday = isCurrentWeek && r.date && etDay(r.date) === todayKey;
+```
+
+Deliberately **not** done here — it changes a shipped dashboard surface for every user and
+has nothing to do with associates. It does not affect CI (this repo's only checks are the
+two Cloudflare Pages builds). Worth its own small PR.
+
+## Review
+
+Full suite **3,786 assertions across 59 suites, green**, plus 75 browser assertions in
+headless Chromium over six scenarios. Ten mutations, ten caught — one of them only after
+the fix it prompted: the financial gate held its own copy of the level comparison, so
+breaking the shared helper changed nothing. Both now call one `canUsePage`.
+
+Four latent bugs found on the way, all pre-existing and all fixed: `loadAll()` would have
+painted a store-loading error banner over the associate's page; the bottom bar quietly
+lost its active tab ~800ms after **every** load for **every** user; a Bargain Lane grant
+with no units reaches nothing, so an associate saved without a store would sign in and
+then be refused everywhere; and the synthetic `@associate.invalid` address was a live
+oracle on `auth-login`. `test-privilege-guards.js` was also comparing against `indexOf`'s
+`-1` — a fixed 3,000-character window that truncated the moment a guard was added.
+
+Nothing is applied to either database and `PIN_PEPPER` is unset, so the feature is inert
+until both happen. That is the correct failure: without the pepper an associate cannot be
+created at all. Full write-up in [associates.md](associates.md).
+
 # Daily Breakdown row: stop the sales figure painting over its budget (2026-09-04)
 
 Follow-up to #189, which flagged this and deliberately left it alone.

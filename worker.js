@@ -4068,6 +4068,10 @@ const BUSINESS_AGNOSTIC_ACTIONS = new Set([
   "push-subscribe", "push-subscription-status", "push-test", "push-unsubscribe",
   "update-notif-prefs", "vapid-public-key", "resend-invite",
   "grant-options", "user-grants", "set-user-grants",
+  // Both self-gate ABOVE the auth gate (there is no session yet — signing in is
+  // the point) and return before reaching this one. Listed so the completeness
+  // test stays satisfied, same as ebay-handler-ingest below.
+  "associate-login", "associate-reset-request",
   // Self-gates on X-Handler-Token ABOVE the auth gate and returns before
   // reaching this one — listed so the completeness test stays satisfied.
   "ebay-handler-ingest",
@@ -4080,6 +4084,7 @@ const ACTION_BUSINESS = new Map([
   // First non-bl entry — the business gate's first real use.
   ["ebay-cases", "ecom"],
   ["afternoon-briefing", "bl"],
+  ["associate-save", "bl"],
   ["backfill", "bl"],
   ["backfill-category-orders", "bl"],
   ["backfill-items-snapshots", "bl"],
@@ -11954,7 +11959,8 @@ async function getAuthUser(request, env) {
   if (!sessionId) return null;
   const now = new Date().toISOString();
   const { results } = await env.DB.prepare(
-    `SELECT u.id, u.email, u.role, u.stores, u.status, s.expires_at
+    `SELECT u.id, u.email, u.role, u.stores, u.status, u.name, u.pages,
+            (u.pin_hash IS NOT NULL) AS is_associate, s.expires_at
      FROM sessions s JOIN users u ON s.user_id = u.id
      WHERE s.id = ? AND s.expires_at > ? AND u.status = 'active'`
   ).bind(sessionId, now).all();
@@ -11976,11 +11982,28 @@ async function getAuthUser(request, env) {
     user.grants = await loadGrants(env, user.id);
   }
   user.stores = user.stores ? JSON.parse(user.stores) : null;
+  user.is_associate = !!user.is_associate;
+  // Page grants: {"bin-dump":"view"|"edit"}. Absent key = cannot open that page.
+  //
+  // 🔑 Fail CLOSED on unparseable JSON, exactly as loadGrants does with `units`.
+  // {} is the safe reading — the account still exists, it just opens nothing.
+  try {
+    user.pages = user.pages ? JSON.parse(user.pages) : {};
+  } catch (_) {
+    console.log(JSON.stringify({ user_pages_unparseable: user.id, raw: String(user.pages).slice(0, 80) }));
+    user.pages = {};
+  }
+  if (!user.pages || typeof user.pages !== 'object' || Array.isArray(user.pages)) user.pages = {};
   // Sliding 7-day expiry, but roll at most ~once/day. Without this throttle every
   // request (incl. every ?action=photo image load) fired a session-row UPDATE, so
   // a folder of dozens of photos became dozens of D1 writes contending on one row.
+  //
+  // 🔑 An associate's session does NOT slide. It is 12 hours from sign-in and then
+  // it is over. The phone is shared, so the next shift must not inherit the last
+  // one's session merely because the app was opened often enough to keep rolling it.
   const rollTo = Date.now() + 7 * 24 * 60 * 60 * 1000;
-  if (!expiresAt || (rollTo - new Date(expiresAt).getTime()) > 24 * 60 * 60 * 1000) {
+  if (!user.is_associate &&
+      (!expiresAt || (rollTo - new Date(expiresAt).getTime()) > 24 * 60 * 60 * 1000)) {
     env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?')
       .bind(new Date(rollTo).toISOString(), sessionId).run().catch(() => {});
   }
@@ -12261,6 +12284,113 @@ const NON_FINANCIAL_ACTIONS = new Set([
   // photo submission is open to every authenticated user
   'photo', 'photo-upload', 'thumbnail', 'thumbnails', 'notify-photo-upload',
 ]);
+
+// ── Associates: page grants ─────────────────────────────────────────────────
+// An associate is a floor worker who signs in with a name and a six-digit code
+// and may open only the pages an admin ticked. They carry role 'staff', so the
+// financial gate already closes every money endpoint to them; what follows is
+// what lets a small, NAMED set back open — one page at a time, at one of two
+// levels. It can never widen anything a financial role already had.
+//
+// 🔑 `pin_hash IS NOT NULL` is the test, NOT the role. If a `staff` user ever
+// signs in by email instead (tasks/projects-tasks-permissions.md plans one), the
+// 12-hour session and the passkey refusal must keep applying to code-login
+// accounts only. One helper, so that stays one line.
+function isAssociate(user) { return !!(user && user.is_associate); }
+
+const PAGE_LEVELS = { view: 1, edit: 2 };
+
+// action -> [page, level required]. The ONLY route by which a role outside
+// FINANCIAL_ROLES reaches a Bargain Lane endpoint. Read as: "bin-dump-log serves
+// the Bin Dump page and needs edit on it."
+//
+// 🛑 bin-dump-delete is deliberately ABSENT. Removing a logged pallet stays a
+// manager's undo (Brian, 2026-09-08); an associate who mis-scans asks for it to
+// be taken out. Absent here means the gate never lets an associate through, at
+// any level, however the grant is written.
+const ACTION_PAGE = new Map([
+  ["bin-dump-list",   ["bin-dump", "view"]],
+  ["bin-dump-photo",  ["bin-dump", "view"]],
+  ["bin-dump-scan",   ["bin-dump", "edit"]],
+  ["bin-dump-recent", ["bin-dump", "edit"]],
+  ["bin-dump-log",    ["bin-dump", "edit"]],
+  ["bin-dump-update", ["bin-dump", "edit"]],
+]);
+
+// The closed set an admin may tick, DERIVED from the map above rather than
+// restated beside it: a page with no actions behind it is a checkbox that grants
+// nothing, and two lists would drift the first time one is edited.
+const GRANTABLE_PAGES = [...new Set([...ACTION_PAGE.values()].map(([page]) => page))];
+
+// How far this user may go on one page. 0 = cannot open it at all.
+function pageLevel(user, page) {
+  if (!user || !page) return 0;
+  const want = user.pages && user.pages[page];
+  return PAGE_LEVELS[want] || 0;
+}
+
+// The guard the handlers call, shaped like binDumpStoreGuard: a Response to
+// return, or null to carry on. A financial role passes on the role it already
+// had, so this is behaviour-preserving for every account that exists today.
+function canUsePage(user, isAdminSecret, page, level) {
+  if (isAdminSecret || canSeeFinancials(user)) return true;
+  // An unknown level is 99 — a typo denies rather than admits.
+  return pageLevel(user, page) >= (PAGE_LEVELS[level] || 99);
+}
+function requirePage(user, isAdminSecret, page, level, corsJson) {
+  if (canUsePage(user, isAdminSecret, page, level)) return null;
+  return new Response(JSON.stringify({
+    error: "Forbidden",
+    code: level === "edit" ? "NEED_PAGE_EDIT" : "NEED_PAGE_VIEW",
+    page,
+  }), { status: 403, headers: corsJson });
+}
+
+// Who did this, for a history column. An associate's email is synthetic and is
+// never shown anywhere, so `logged_by` has to carry the name they go by.
+function actorLabel(user) {
+  return (user && (user.name || user.email)) || "unknown";
+}
+
+// ── Associate codes ─────────────────────────────────────────────────────────
+// 🔑 HMAC with a server-side pepper, not a bare digest. Six digits is a million
+// candidates, so a plain SHA-256 reverses in seconds from a database dump — and
+// the dump is precisely the threat this defends against. The pepper lives in
+// `wrangler secret put PIN_PEPPER`, so it is not in the dump at all.
+//
+// 🛑 No pepper means NO LOGIN, never an unpeppered hash. A fallback would
+// silently downgrade every stored code the moment the secret went missing, and
+// nothing would look wrong until someone went looking.
+async function pinHash(env, pin) {
+  if (!env || !env.PIN_PEPPER) throw new Error("PIN_NOT_CONFIGURED");
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(env.PIN_PEPPER),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(String(pin)));
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Codes a person reaches for first. Refused at CREATION, not at login: the point
+// is that they never exist, not that they are awkward to type.
+const WEAK_PINS = new Set(["123456", "654321", "123123", "112233", "121212", "123321"]);
+function validPin(pin) {
+  const s = String(pin == null ? "" : pin).trim();
+  if (!/^\d{6}$/.test(s)) return null;
+  if (WEAK_PINS.has(s) || /^(\d)\1{5}$/.test(s)) return null;
+  return s;
+}
+
+// Ten wrong codes locks the account until an admin sets a new one.
+//
+// 🔑 The counter is a D1 COLUMN, not a KV key. `UPDATE ... + 1` is atomic against
+// one primary; KV is eventually consistent across edges, so a counter there would
+// let a distributed guesser run straight past the limit it appears to enforce.
+// Per-account is also the only lockout that exists once a name is part of the
+// login — a global one could be tripped by anybody, locking every associate out.
+const PIN_MAX_FAILURES = 10;
+
+// Names are compared case- and whitespace-insensitively, and stored as typed.
+function normName(s) { return String(s == null ? "" : s).trim().replace(/\s+/g, " "); }
 
 // ── Supply-request bulk purge helpers ───────────────────────────────────────
 const SUPPLY_STATUSES = ['pending', 'under_review', 'on_hold', 'ordered'];
@@ -13301,7 +13431,10 @@ export default {
         const normalized = email.trim().toLowerCase();
         // Look up user — respond generically whether found or not (don't leak existence)
         const { results } = await env.DB.prepare(
-          "SELECT id FROM users WHERE email = ? AND status = 'active'"
+          // pin_hash IS NOT NULL = an associate, who signs in by code. Without
+          // this they are a live oracle: the synthetic address would be accepted
+          // here, mailed at .invalid, and answer differently from an unknown one.
+          "SELECT id FROM users WHERE email = ? AND status = 'active' AND pin_hash IS NULL"
         ).bind(normalized).all();
         if (results && results.length) {
           const token = randomHex(32);
@@ -13336,7 +13469,10 @@ export default {
           .bind(now, token).run();
         // Load user
         const { results: users } = await env.DB.prepare(
-          "SELECT id FROM users WHERE email = ? AND status = 'active'"
+          // pin_hash IS NOT NULL = an associate, who signs in by code. Without
+          // this they are a live oracle: the synthetic address would be accepted
+          // here, mailed at .invalid, and answer differently from an unknown one.
+          "SELECT id FROM users WHERE email = ? AND status = 'active' AND pin_hash IS NULL"
         ).bind(email).all();
         if (!users || !users.length) {
           return Response.redirect(`${appOrigin(env)}/?auth_error=nouser`, 302);
@@ -13383,7 +13519,10 @@ export default {
         await env.DB.prepare("UPDATE magic_links SET used_at = ? WHERE token = ?").bind(now, token).run();
         // Load user
         const { results: users } = await env.DB.prepare(
-          "SELECT id FROM users WHERE email = ? AND status = 'active'"
+          // pin_hash IS NOT NULL = an associate, who signs in by code. Without
+          // this they are a live oracle: the synthetic address would be accepted
+          // here, mailed at .invalid, and answer differently from an unknown one.
+          "SELECT id FROM users WHERE email = ? AND status = 'active' AND pin_hash IS NULL"
         ).bind(normalized).all();
         if (!users || !users.length) {
           return new Response(JSON.stringify({ error: "Account not found" }), { status: 403, headers: corsJson });
@@ -13402,6 +13541,96 @@ export default {
       }
     }
 
+    // ── Associate: POST ?action=associate-login — name + six-digit code ──
+    //
+    // 🔑 ABOVE the auth gate, like auth-verify-otp below it: there is no session
+    // yet, and creating one is the entire point.
+    //
+    // 🔑 ONE BODY for every failure. A wrong code, a name nobody has and a
+    // suspended account all answer identically — three messages would turn the
+    // login screen into a directory of who works here.
+    if (request.method === "POST" && url.searchParams.get("action") === "associate-login") {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const name = normName(body && body.name);
+        const pin = String((body && body.pin) || "").trim();
+        // 🛑 Dies at INPUT VALIDATION, before anything is looked up or counted, so
+        // a malformed request can neither probe for names nor burn somebody's
+        // remaining attempts.
+        if (!name || !/^\d{6}$/.test(pin)) {
+          return new Response(JSON.stringify({
+            error: "Enter your name and your six-digit code", code: "BAD_INPUT",
+          }), { status: 400, headers: corsJson });
+        }
+        const row = await env.DB.prepare(
+          `SELECT id, pin_hash, pin_failures, status FROM users
+            WHERE pin_hash IS NOT NULL AND lower(name) = lower(?)`
+        ).bind(name).first();
+        const generic = () => new Response(JSON.stringify({
+          error: "That name and code didn't match", code: "BAD_CODE",
+        }), { status: 401, headers: corsJson });
+        if (!row || row.status !== "active") return generic();
+        // Ten wrong codes and the account is done until an admin sets a new one.
+        // Checked BEFORE the hash, so a locked account cannot be used as an
+        // oracle by watching how long the answer takes.
+        if ((row.pin_failures || 0) >= PIN_MAX_FAILURES) {
+          return new Response(JSON.stringify({
+            error: "Too many wrong codes. Ask an admin to set you a new one.", code: "LOCKED",
+          }), { status: 401, headers: corsJson });
+        }
+        if ((await pinHash(env, pin)) !== row.pin_hash) {
+          await env.DB.prepare("UPDATE users SET pin_failures = pin_failures + 1 WHERE id = ?")
+            .bind(row.id).run().catch(() => {});
+          return generic();
+        }
+        const now = new Date().toISOString();
+        const sessionId = randomHex(32);
+        // 🔑 12 hours, and getAuthUser does not roll it — the one place in this
+        // app where a session is not sliding. The phone is shared, so it has to
+        // end on its own inside a shift.
+        const ttl = 12 * 60 * 60;
+        await env.DB.prepare(
+          "INSERT INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)"
+        ).bind(sessionId, row.id, new Date(Date.now() + ttl * 1000).toISOString(), now).run();
+        await env.DB.prepare("UPDATE users SET last_login = ?, pin_failures = 0 WHERE id = ?")
+          .bind(now, row.id).run();
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { ...corsJson, "Set-Cookie": sessionCookie(sessionId, ttl, env) },
+        });
+      } catch (e) {
+        if (String(e && e.message) === "PIN_NOT_CONFIGURED") {
+          return new Response(JSON.stringify({
+            error: "Associate sign-in is not configured on this environment", code: "NOT_CONFIGURED",
+          }), { status: 500, headers: corsJson });
+        }
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Associate: POST ?action=associate-reset-request — "I forgot my code" ──
+    //
+    // Records that a reset was ASKED FOR, and nothing else: an associate cannot
+    // change their own code, by design. Answers {ok:true} whatever happens — the
+    // alternative is a way to find out who has an account. Re-asking inside an
+    // hour is a no-op, so the badge shows when they FIRST asked rather than how
+    // many times they tapped.
+    if (request.method === "POST" && url.searchParams.get("action") === "associate-reset-request") {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const name = normName(body && body.name);
+        if (name) {
+          const now = new Date();
+          const hourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+          await env.DB.prepare(
+            `UPDATE users SET pin_reset_requested_at = ?
+              WHERE pin_hash IS NOT NULL AND status = 'active' AND lower(name) = lower(?)
+                AND (pin_reset_requested_at IS NULL OR pin_reset_requested_at < ?)`
+          ).bind(now.toISOString(), name, hourAgo).run().catch(() => {});
+        }
+      } catch (_) { /* still answers ok — see above */ }
+      return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+    }
+
     // ── Auth: GET ?action=auth-me — return current user info ─────
     if (url.searchParams.get("action") === "auth-me") {
       const user = await getAuthUser(request, env);
@@ -13412,6 +13641,17 @@ export default {
         authenticated: true,
         email: user.email,
         role: user.role,
+        // An associate has no real email and is known by name everywhere — on the
+        // badge, in the Bin Dump log's "by ...". null for everyone else, so the
+        // client keeps showing the address it always did.
+        name: user.name || null,
+        // Which pages this account may open, and how far. {} for every existing
+        // role: they are gated by role, not by page, and always were.
+        pages: user.pages || {},
+        // 🔑 Sent rather than derived from the role, so the client and the worker
+        // agree on one fact. `staff` alone is not the answer — a staff account
+        // that signs in by email would not be one of these.
+        associate: isAssociate(user),
         // EFFECTIVE scope, not the raw users.stores column. The server scopes
         // every endpoint by the grant; reporting the column here let the client
         // filter by something the server no longer consults. They agree today
@@ -13433,6 +13673,14 @@ export default {
       try {
         const user = await getAuthUser(request, env);
         if (!user) return new Response(JSON.stringify({error:"Not authenticated"}), {status:401,headers:corsJson});
+        // 🛑 A passkey is bound to ONE device and mints a 7-day session — both
+        // wrong for a code login on a shared warehouse phone, and it would route
+        // straight around the 12-hour rule. Signing in with one is impossible
+        // anyway (there is nothing to register), so refuse at the door.
+        if (isAssociate(user)) {
+          return new Response(JSON.stringify({ error: "Associates sign in with their code", code: "NO_PASSKEY" }),
+            { status: 403, headers: corsJson });
+        }
         const challenge = crypto.getRandomValues(new Uint8Array(32));
         const challengeB64 = bufToBase64url(challenge);
         await env.SALES_SNAPSHOTS.put(`webauthn:reg:${user.id}`, challengeB64, { expirationTtl: 300 });
@@ -13462,6 +13710,14 @@ export default {
       try {
         const user = await getAuthUser(request, env);
         if (!user) return new Response(JSON.stringify({error:"Not authenticated"}), {status:401,headers:corsJson});
+        // 🛑 A passkey is bound to ONE device and mints a 7-day session — both
+        // wrong for a code login on a shared warehouse phone, and it would route
+        // straight around the 12-hour rule. Signing in with one is impossible
+        // anyway (there is nothing to register), so refuse at the door.
+        if (isAssociate(user)) {
+          return new Response(JSON.stringify({ error: "Associates sign in with their code", code: "NO_PASSKEY" }),
+            { status: 403, headers: corsJson });
+        }
         const body2 = await request.json();
         const { id: credId, response: credResp } = body2;
         // Verify clientDataJSON
@@ -13905,7 +14161,17 @@ export default {
     // (superuser, admin, manager) is unaffected.
     if (!isAdminSecret && !canSeeFinancials(currentUser)) {
       const requestedAction = url.searchParams.get("action") || "";
-      if (!NON_FINANCIAL_ACTIONS.has(requestedAction)) {
+      // ...and one more way to say yes: the action serves a PAGE this account was
+      // granted, at the level that action needs. That is how an associate reaches
+      // Bin Dump and nothing else. The allowlist above is still the only other
+      // door, and an action in neither is still refused.
+      //
+      // 🔑 The SAME canUsePage the handlers call, not a second copy of the rule.
+      // Two copies is how a gate and its handler come to disagree — and the one
+      // that disagrees quietly is always the one that says yes.
+      const pageReq = ACTION_PAGE.get(requestedAction);
+      const pageOk = !!pageReq && canUsePage(currentUser, isAdminSecret, pageReq[0], pageReq[1]);
+      if (!NON_FINANCIAL_ACTIONS.has(requestedAction) && !pageOk) {
         return new Response(JSON.stringify({
           error: "Forbidden", code: "NO_FINANCIAL_ACCESS",
         }), { status: 403, headers: corsJson });
@@ -15084,7 +15350,12 @@ export default {
         return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
       }
       const { results } = await env.DB.prepare(
-        "SELECT id, email, role, stores, status, created_at, last_login FROM users ORDER BY created_at DESC"
+        // 🛑 pin_hash is NEVER selected. `associate` is the derived flag the client
+        // splits the two tables on; the hash itself has no business leaving D1.
+        `SELECT id, email, role, stores, status, created_at, last_login,
+                name, pages, pin_failures, pin_reset_requested_at,
+                (pin_hash IS NOT NULL) AS associate
+           FROM users ORDER BY created_at DESC`
       ).all();
       return new Response(JSON.stringify({ ok: true, users: results || [] }), { headers: corsJson });
     }
@@ -15196,7 +15467,8 @@ export default {
       try {
         const { email } = await request.json();
         const normalized = email.trim().toLowerCase();
-        const user = await env.DB.prepare("SELECT id FROM users WHERE email = ? AND status = 'active'").bind(normalized).first();
+        // An associate has no mailbox to resend an invite to — see auth-login.
+        const user = await env.DB.prepare("SELECT id FROM users WHERE email = ? AND status = 'active' AND pin_hash IS NULL").bind(normalized).first();
         if (!user) return new Response(JSON.stringify({ error: "User not found" }), { status: 404, headers: corsJson });
         const token = randomHex(32);
         const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -15220,6 +15492,142 @@ export default {
       }
     }
 
+    // ── Associates: create, edit, or set a new code ──────────────────
+    //    POST ?action=associate-save { id?, name, pin?, stores, pages, status? }
+    //
+    // One upsert rather than four endpoints. An associate IS a name, a code, a
+    // store list and a page list — they are decided together on one screen, and
+    // splitting them lets a half-made account exist: a name with no stores signs
+    // in fine and then finds every store guard refusing it.
+    //
+    // 🔑 Deliberately NOT set-user-grants. That endpoint validates the role
+    // against grantOptionsFor, which hands an admin only 'manager'. Creating an
+    // associate is a different decision from handing out a business, and this
+    // door only ever writes 'staff'.
+    if (request.method === "POST" && url.searchParams.get("action") === "associate-save") {
+      if (!canAccessInventory(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_ADMIN" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const body = await request.json();
+        const id = String((body && body.id) || "").trim();
+        const name = normName(body && body.name);
+        const status = (body && body.status) === "suspended" ? "suspended" : "active";
+        if (!name || name.length > 60) {
+          return new Response(JSON.stringify({ error: "Enter a name (up to 60 characters)" }),
+            { status: 400, headers: corsJson });
+        }
+
+        // 🛑 At least one store, REFUSED rather than defaulted. allowedUnits reads
+        // a Bargain Lane grant with NULL units as NO stores (a deliberate legacy
+        // reading), so an associate saved without one would sign in successfully
+        // and then be unable to log anything anywhere.
+        const stores = Array.isArray(body && body.stores)
+          ? [...new Set(body.stores.map(v => String(v).trim()).filter(Boolean))] : [];
+        if (!stores.length) {
+          return new Response(JSON.stringify({ error: "Pick at least one store" }), { status: 400, headers: corsJson });
+        }
+        const badStores = stores.filter(v => !ALL_STORES.includes(v));
+        if (badStores.length) {
+          return new Response(JSON.stringify({ error: `Not Bargain Lane stores: ${badStores.join(", ")}` }),
+            { status: 400, headers: corsJson });
+        }
+
+        // Pages: a closed set in BOTH key and value, validated against the same
+        // ACTION_PAGE the gate reads. A page nothing routes to would be a
+        // checkbox that grants nothing.
+        const raw = (body && body.pages && typeof body.pages === "object" && !Array.isArray(body.pages))
+          ? body.pages : {};
+        const pages = {};
+        for (const [page, level] of Object.entries(raw)) {
+          if (!level || level === "none") continue;
+          if (!GRANTABLE_PAGES.includes(page)) {
+            return new Response(JSON.stringify({ error: `Not a page that can be granted: ${page}` }),
+              { status: 400, headers: corsJson });
+          }
+          if (!PAGE_LEVELS[level]) {
+            return new Response(JSON.stringify({ error: `Not an access level: ${level}` }),
+              { status: 400, headers: corsJson });
+          }
+          pages[page] = level;
+        }
+
+        // The code is required to create and optional to edit ("leave blank to
+        // keep"). It is hashed here and never stored, returned or logged.
+        const rawPin = (body && body.pin != null) ? String(body.pin).trim() : "";
+        let hash = null;
+        if (rawPin) {
+          const pin = validPin(rawPin);
+          if (!pin) {
+            return new Response(JSON.stringify({ error: "The code must be six digits, and not an obvious one" }),
+              { status: 400, headers: corsJson });
+          }
+          hash = await pinHash(env, pin);
+        } else if (!id) {
+          return new Response(JSON.stringify({ error: "Set a six-digit code" }), { status: 400, headers: corsJson });
+        }
+
+        // The name is half the login AND the whole of the audit trail — it is what
+        // bin_dumps.logged_by records. Two people called the same thing would
+        // break both at once.
+        const clash = await env.DB.prepare(
+          "SELECT id FROM users WHERE pin_hash IS NOT NULL AND lower(name) = lower(?) AND id != ?"
+        ).bind(name, id || "-").first();
+        if (clash) {
+          return new Response(JSON.stringify({ error: `There is already an associate called ${name}` }),
+            { status: 409, headers: corsJson });
+        }
+
+        const storesJson = JSON.stringify(stores);
+        const pagesJson = JSON.stringify(pages);
+        const now = new Date().toISOString();
+        let userId = id;
+        if (id) {
+          // Only an associate is reachable through this door. An admin must not be
+          // able to turn a manager into one by passing their id.
+          const target = await env.DB.prepare(
+            "SELECT id FROM users WHERE id = ? AND pin_hash IS NOT NULL"
+          ).bind(id).first();
+          if (!target) {
+            return new Response(JSON.stringify({ error: "No such associate" }), { status: 404, headers: corsJson });
+          }
+          await env.DB.prepare(
+            "UPDATE users SET name = ?, stores = ?, pages = ?, status = ? WHERE id = ?"
+          ).bind(name, storesJson, pagesJson, status, id).run();
+          if (hash) {
+            // 🛑 A new code SIGNS THEM OUT everywhere. Without this the phone that
+            // prompted the reset keeps working on its old session, and the reset
+            // has achieved nothing at all.
+            await env.DB.prepare(
+              "UPDATE users SET pin_hash = ?, pin_failures = 0, pin_reset_requested_at = NULL WHERE id = ?"
+            ).bind(hash, id).run();
+            await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(id).run().catch(() => {});
+          }
+        } else {
+          userId = "usr_" + randomHex(8);
+          // users.email is NOT NULL UNIQUE and an associate has no address. The
+          // .invalid TLD is reserved for exactly this — it can never be routed, so
+          // nothing can mail it by accident. It is never displayed.
+          await env.DB.prepare(
+            `INSERT INTO users (id, email, role, stores, status, created_at, name, pin_hash, pages)
+             VALUES (?, ?, 'staff', ?, ?, ?, ?, ?, ?)`
+          ).bind(userId, `assoc_${userId}@associate.invalid`, storesJson, status, now, name, hash, pagesJson).run();
+        }
+        // The grant is what the business gate and every store guard actually read.
+        // Same helper invite-user and update-user call, so an associate's grant is
+        // written exactly like everyone else's rather than by a second code path.
+        await upsertBargainLaneGrant(env, userId, "staff", storesJson);
+        return new Response(JSON.stringify({ ok: true, id: userId }), { headers: corsJson });
+      } catch (e) {
+        if (String(e && e.message) === "PIN_NOT_CONFIGURED") {
+          return new Response(JSON.stringify({
+            error: "Associate codes are not configured on this environment", code: "NOT_CONFIGURED",
+          }), { status: 500, headers: corsJson });
+        }
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
     // ── User management: update-user ─────────────────────────────────
     if (request.method === "POST" && url.searchParams.get("action") === "update-user") {
       if (!canAccessInventory(currentUser)) {
@@ -15227,6 +15635,19 @@ export default {
       }
       try {
         const { id, role, stores, status } = await request.json();
+
+        // An associate's name, code, stores and pages are set together on the
+        // Associates panel. Reaching one here would write a role or a store list
+        // that panel then contradicts — and `role` here can only ever be a value
+        // an associate must not hold.
+        const assocTarget = await env.DB.prepare(
+          "SELECT 1 AS a FROM users WHERE id = ? AND pin_hash IS NOT NULL"
+        ).bind(id).first();
+        if (assocTarget) {
+          return new Response(JSON.stringify({
+            error: "Manage associates from the Associates panel", code: "IS_ASSOCIATE",
+          }), { status: 400, headers: corsJson });
+        }
 
         // 🛑 PRIVILEGE ESCALATION GUARD. This endpoint is open to admins
         // (canAccessInventory above) and wrote `role` straight from the body
@@ -15341,9 +15762,19 @@ export default {
 
         // A non-superuser may never edit a superuser. Same guard update-user
         // grew after an admin could demote the real superuser.
-        const { results: target } = await env.DB.prepare('SELECT id, role FROM users WHERE id = ?').bind(id).all();
+        const { results: target } = await env.DB.prepare(
+          'SELECT id, role, (pin_hash IS NOT NULL) AS associate FROM users WHERE id = ?'
+        ).bind(id).all();
         if (!target || !target.length) {
           return new Response(JSON.stringify({ error: "No such user" }), { status: 404, headers: corsJson });
+        }
+        // Same reasoning as update-user: this replaces a user's grants wholesale,
+        // which for an associate would rewrite the row their stores live in while
+        // the Associates panel believes it owns it.
+        if (target[0].associate) {
+          return new Response(JSON.stringify({
+            error: "Manage associates from the Associates panel", code: "IS_ASSOCIATE",
+          }), { status: 400, headers: corsJson });
         }
         if (currentUser.role !== 'superuser' && target[0].role === 'superuser') {
           return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
@@ -20144,9 +20575,8 @@ export default {
     // re-checks the store. ('district_manager' was retired by migration-029.)
 
     if (url.searchParams.get("action") === "bin-dump-scan" && request.method === "POST") {
-      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
-        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
-      }
+      const pageDenied = requirePage(currentUser, isAdminSecret, "bin-dump", "edit", corsJson);
+      if (pageDenied) return pageDenied;
       if (!env.ANTHROPIC_API_KEY) {
         return new Response(JSON.stringify({ error: "Tag reading is not configured on this environment" }), { status: 400, headers: corsJson });
       }
@@ -20214,9 +20644,8 @@ export default {
     }
 
     if (url.searchParams.get("action") === "bin-dump-log" && request.method === "POST") {
-      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
-        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
-      }
+      const pageDenied = requirePage(currentUser, isAdminSecret, "bin-dump", "edit", corsJson);
+      if (pageDenied) return pageDenied;
       if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
       try {
         const body = await request.json();
@@ -20269,7 +20698,7 @@ export default {
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
         ).bind(store, fields.barcode, fields.item_no, fields.pallet_name, fields.sup_ref, fields.po, fields.units,
                fields.created_by_tag, fields.truck_no, key, ctype,
-               (currentUser && currentUser.email) || "unknown", at).run();
+               actorLabel(currentUser), at).run();
 
         return new Response(JSON.stringify({
           ok: true, id: res.meta?.last_row_id ?? null, store, logged_at: at, week: binDumpWeekOf(at),
@@ -20283,9 +20712,8 @@ export default {
     // Separate from the log so it can run while the manager is still looking at the
     // popup, and so a slow or failed answer costs a warning, never the submission.
     if (url.searchParams.get("action") === "bin-dump-recent" && request.method === "GET") {
-      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
-        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
-      }
+      const pageDenied = requirePage(currentUser, isAdminSecret, "bin-dump", "edit", corsJson);
+      if (pageDenied) return pageDenied;
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       const denied = binDumpStoreGuard(url.searchParams.get("store"), currentUser, isAdminSecret, corsJson);
       if (denied) return denied;
@@ -20313,9 +20741,8 @@ export default {
 
     // GET ?action=bin-dump-list&store=BL1[&weeks=8]
     if (url.searchParams.get("action") === "bin-dump-list" && request.method === "GET") {
-      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
-        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
-      }
+      const pageDenied = requirePage(currentUser, isAdminSecret, "bin-dump", "view", corsJson);
+      if (pageDenied) return pageDenied;
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       const storeRaw = String(url.searchParams.get("store") || "").trim().toUpperCase();
       const allow = currentUser ? allowedStores(currentUser) : null;
@@ -20368,9 +20795,8 @@ export default {
     }
 
     if (url.searchParams.get("action") === "bin-dump-update" && request.method === "POST") {
-      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
-        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
-      }
+      const pageDenied = requirePage(currentUser, isAdminSecret, "bin-dump", "edit", corsJson);
+      if (pageDenied) return pageDenied;
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       try {
         const body = await request.json();
@@ -20409,7 +20835,7 @@ export default {
            WHERE id = ?`
         ).bind(fields.barcode, fields.item_no, fields.pallet_name, fields.sup_ref, fields.po, fields.units,
                fields.created_by_tag, fields.truck_no,
-               (currentUser && currentUser.email) || "unknown", new Date().toISOString(), id).run();
+               actorLabel(currentUser), new Date().toISOString(), id).run();
         return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
@@ -20426,6 +20852,9 @@ export default {
     // row's OWN store decides, never one the caller supplies, exactly as the edit
     // path does.
     if (url.searchParams.get("action") === "bin-dump-delete" && request.method === "POST") {
+      // 🔑 NOT requirePage. Removing a logged pallet stays a manager's undo, so
+      // this is the one Bin Dump action no page grant can reach — see ACTION_PAGE,
+      // which deliberately does not list it.
       if (!isAdminSecret && !canSeeFinancials(currentUser)) {
         return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
       }
@@ -20449,7 +20878,7 @@ export default {
     }
 
     if (url.searchParams.get("action") === "bin-dump-photo" && request.method === "GET") {
-      if (!isAdminSecret && !canSeeFinancials(currentUser)) return new Response("Forbidden", { status: 403, headers: corsHeaders });
+      if (!canUsePage(currentUser, isAdminSecret, "bin-dump", "view")) return new Response("Forbidden", { status: 403, headers: corsHeaders });
       if (!env.DB || !env.MEDIA) return new Response("Storage not configured", { status: 500, headers: corsHeaders });
       const id = parseInt(url.searchParams.get("id") || "", 10);
       if (!Number.isInteger(id)) return new Response("Invalid id", { status: 400, headers: corsHeaders });
