@@ -36,8 +36,20 @@ new tokens automatically compile when used in `index.html`.
 
 ### 2.1 Colors
 
-Two palettes — dark is primary; light is the secondary mode controlled
-by the existing `.dark` class on `<html>`.
+Three themes, two classes. Dark is primary; light is the secondary mode
+controlled by the `.dark` class on `<html>`; **pure black is additive** —
+`<html class="dark oled">` keeps `dark` on so every `dark:` utility still
+matches and every `isDark()` check still answers yes, and `oled` only
+retints.
+
+The `op-*` tokens are **CSS variables**, not literals. `tailwind.config.js`
+declares them as `rgb(var(--op-x) / <alpha-value>)`; the values live in
+index.html's first `<style>` block (`:root` for dark, `html.oled` for pure
+black). Re-pointing six variables retints ~1,680 of the 2,847 `dark:` rules,
+transparency variants included. **Never paste an `op-*` hex into a `<style>`
+block** — write `rgb(var(--op-ink))` so it follows all three themes. (The
+three already-translucent tokens — `border`, `borderHi`, `glass` — are plain
+`var()` because a fixed alpha and `<alpha-value>` cannot coexist.)
 
 **Operator dark (`op-*`) — primary**
 | Token | Hex |
@@ -55,6 +67,32 @@ by the existing `.dark` class on `<html>`.
 | `op-warn` | `#f59e0b` |
 | `op-sidebar` | `#070b14` |
 | `op-glass` | `rgba(22,32,58,0.55)` |
+
+**Operator pure black (`html.oled`)** — the same tokens, re-pointed.
+Set in Settings → Accessibility. Ratios are against the ground each
+value actually sits on.
+
+| Token | Value | vs dark |
+|---|---|---|
+| `op-bg` | `#000000` | pixels off on OLED |
+| `op-panel` | `#0a0a0a` | |
+| `op-panelHi` | `#161616` | |
+| `op-ink` | `#f2f2f2` | 17.68:1 on panel (dark: 14.98) |
+| `op-inkDim` | `#a8a8a8` | 8.33:1 (dark: 5.74) |
+| `op-inkDimmer` | `#8a8a8a` | 5.73:1 — **dark's `#5a6478` measures 2.99 and fails AA** |
+| `op-border` | `rgba(255,255,255,0.14)` | 6% on `#000` is 1.10:1; panels sit only 1.06:1 above the page, so the border carries the card edge alone |
+| `op-borderHi` | `rgba(255,255,255,0.22)` | |
+| `op-sidebar` | `#000000` | |
+| `op-glass` | `rgba(10,10,10,0.72)` | |
+
+`good` / `bad` / `warn` and every accent are **unchanged** — all clear
+4.5:1 on `#0a0a0a` as they do on `#101826`.
+
+Two rules for extending it. **Grey text needs no `oled` override** — a
+darker ground can only raise contrast (gray-400 goes 7.01 → 7.80), so
+overriding `dark:text-gray-*` is churn. **Grey backgrounds and borders
+do**, via the `html.oled .dark\:…` layer next to the variables; that
+selector is (0,2,1) and beats Tailwind's (0,2,0) with no `!important`.
 
 **Operator light (`opl-*`)**
 | Token | Hex |

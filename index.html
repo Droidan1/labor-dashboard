@@ -29,6 +29,141 @@
 
 
   <style>
+    /* ═══════════════════════════════════════════════════════════════
+       THEME TOKENS — the `op-*` palette from tailwind.config.js.
+       ═══════════════════════════════════════════════════════════════
+       Tailwind compiles `dark:bg-op-panel` to `rgb(var(--op-panel) / …)`,
+       so re-pointing these six variables retints every one of the ~1,680
+       token-based dark: rules at once.
+
+       There are three themes, but only two classes: pure black is
+       ADDITIVE. `<html class="dark oled">` keeps `dark` on, so all 2,847
+       `dark:` utilities still match `:is(.dark *)` and every JS check of
+       `classList.contains('dark')` still answers yes. `oled` only retints.
+
+       Contrast, computed against the real composited ground (WCAG 2.1):
+         dark   ink 14.98 · inkDim 5.74 · inkDimmer 2.99 (fails AA)
+         oled   ink 17.68 · inkDim 8.33 · inkDimmer 5.73 (all pass)
+       inkDimmer is raised deliberately — #5a6478 on #0a0a0a would measure
+       1.62:1. The border is raised for the same reason: panels sit only
+       1.06:1 above the page, so the border carries the card edge on its
+       own, and 6% white on true black is 1.10:1 — invisible. */
+    :root {
+      --op-bg: 10 15 26;          /* #0a0f1a */
+      --op-panel: 16 24 38;       /* #101826 */
+      --op-panelHi: 22 32 58;     /* #16203a */
+      --op-ink: 231 236 243;      /* #e7ecf3 */
+      --op-inkDim: 136 147 167;   /* #8893a7 */
+      --op-inkDimmer: 90 100 120; /* #5a6478 */
+      --op-sidebar: 7 11 20;      /* #070b14 */
+      --op-border: rgba(255,255,255,0.06);
+      --op-borderHi: rgba(255,255,255,0.1);
+      --op-glass: rgba(22,32,58,0.55);
+    }
+    html.oled {
+      --op-bg: 0 0 0;             /* #000000 — pixels off on OLED */
+      --op-panel: 10 10 10;       /* #0a0a0a */
+      --op-panelHi: 22 22 22;     /* #161616 */
+      --op-ink: 242 242 242;      /* #f2f2f2 — neutral, not blue-tinted */
+      --op-inkDim: 168 168 168;   /* #a8a8a8 */
+      --op-inkDimmer: 138 138 138;/* #8a8a8a */
+      --op-sidebar: 0 0 0;        /* #000000 */
+      --op-border: rgba(255,255,255,0.14);
+      --op-borderHi: rgba(255,255,255,0.22);
+      --op-glass: rgba(10,10,10,0.72);
+    }
+
+    /* ── Pure black: the surfaces that never went through op-* ────────
+       Settings rows and their neighbours are on Tailwind's plain grey
+       ramp, so they cannot follow a variable. Tailwind emits
+       `.dark\:bg-gray-800:is(.dark *)` at (0,2,0); `html.oled .dark\:…`
+       is (0,2,1) and wins on specificity alone, so load order is
+       irrelevant and no !important is needed.
+
+       Backgrounds and borders only. Every grey TEXT value is left alone
+       deliberately — a darker ground can only raise its contrast, and
+       measuring confirmed it: gray-400 goes 7.01 → 7.80, gray-500
+       3.68 → 4.10, gray-300 12.07 → 13.44. Overriding them would be
+       churn that fixes nothing.
+
+       Border alphas are picked for parity with the edge each one draws
+       today, measured against its own card rather than the page:
+       border-gray-700 on a gray-800 card is 1.42, and white at 14% on
+       #0a0a0a is also 1.42. Likewise 600 → 1.94 vs 1.91 at 22%, and
+       500 → 3.04 vs 3.01 at 34%. */
+    html.oled .dark\:bg-gray-900 { background-color: #000000; }
+    html.oled .dark\:bg-gray-800 { background-color: #0a0a0a; }
+    html.oled .dark\:bg-gray-700 { background-color: #161616; }
+    html.oled .dark\:bg-gray-600 { background-color: #222222; }
+    html.oled .dark\:bg-gray-700\/80 { background-color: rgba(255,255,255,0.10); }
+    html.oled .dark\:bg-gray-700\/50 { background-color: rgba(255,255,255,0.07); }
+    html.oled .dark\:bg-gray-700\/40 { background-color: rgba(255,255,255,0.055); }
+    html.oled .dark\:bg-gray-700\/30 { background-color: rgba(255,255,255,0.04); }
+
+    html.oled .dark\:border-gray-800 { border-color: rgba(255,255,255,0.08); }
+    html.oled .dark\:border-gray-700 { border-color: rgba(255,255,255,0.14); }
+    html.oled .dark\:border-gray-600 { border-color: rgba(255,255,255,0.22); }
+    html.oled .dark\:border-gray-500 { border-color: rgba(255,255,255,0.34); }
+    html.oled .dark\:border-gray-700\/50 { border-color: rgba(255,255,255,0.07); }
+    html.oled .dark\:border-gray-700\/30 { border-color: rgba(255,255,255,0.045); }
+    html.oled .dark\:divide-gray-700 > :not([hidden]) ~ :not([hidden]) {
+      border-color: rgba(255,255,255,0.14);
+    }
+
+    html.oled .dark\:hover\:bg-gray-700:hover { background-color: #161616; }
+    html.oled .dark\:hover\:bg-gray-600:hover { background-color: #222222; }
+    html.oled .dark\:hover\:bg-gray-500:hover { background-color: #2e2e2e; }
+    html.oled .dark\:hover\:bg-gray-700\/50:hover { background-color: rgba(255,255,255,0.07); }
+    html.oled .dark\:hover\:bg-gray-700\/20:hover { background-color: rgba(255,255,255,0.03); }
+    html.oled .dark\:focus\:ring-offset-gray-800:focus { --tw-ring-offset-color: #0a0a0a; }
+
+    /* ── Accessibility page — theme picker ────────────────────────────
+       Light side uses opl-* token literals (a <style> block cannot reach
+       the Tailwind class names — DESIGN.md §4.8). The dark side goes
+       through the op-* variables rather than copies of them, so pure
+       black follows without needing a third rule anywhere below. */
+    .a11y-theme-opt {
+      display: flex; align-items: center; gap: 11px;
+      padding: 10px 12px; border-radius: 10px; cursor: pointer;
+      border: 1px solid rgba(20,16,8,0.08);
+      transition: background .18s ease, border-color .18s ease;
+    }
+    .dark .a11y-theme-opt { border-color: var(--op-border); }
+    .a11y-theme-opt:hover { background: #fafaf6; }                    /* opl-panelHi */
+    .dark .a11y-theme-opt:hover { background: rgb(var(--op-panelHi)); }
+    .a11y-theme-opt:focus-visible { outline: 2px solid #22c55e; outline-offset: 2px; }
+    .a11y-theme-opt[aria-checked="true"] { border-color: #22c55e; background: rgba(34,197,94,0.07); }
+    .dark .a11y-theme-opt[aria-checked="true"] { background: rgba(34,197,94,0.10); }
+
+    /* The swatch is a literal sample of each theme's page ground, so the
+       inline background on it is the point — do not tokenise it. */
+    .a11y-sw {
+      width: 32px; height: 32px; border-radius: 8px; flex: none;
+      border: 1px solid rgba(20,16,8,0.14); position: relative; overflow: hidden;
+    }
+    .dark .a11y-sw { border-color: var(--op-borderHi); }
+    .a11y-sw::after {
+      content: ''; position: absolute; left: 6px; right: 6px; bottom: 6px;
+      height: 5px; border-radius: 2px; background: #22c55e; opacity: .85;
+    }
+
+    .a11y-lab { flex: 1; min-width: 0; }
+    .a11y-lab > b { display: block; font-size: 13px; font-weight: 600; color: #14110a; }   /* opl-ink */
+    .dark .a11y-lab > b { color: rgb(var(--op-ink)); }
+    .a11y-lab > span { display: block; font-size: 11.5px; margin-top: 1px; color: #6b6453; } /* opl-inkDim */
+    .dark .a11y-lab > span { color: rgb(var(--op-inkDim)); }
+
+    .a11y-radio {
+      width: 18px; height: 18px; border-radius: 50%; flex: none;
+      border: 2px solid #6b6453;                                      /* opl-inkDim */
+      display: grid; place-content: center;
+    }
+    .dark .a11y-radio { border-color: rgb(var(--op-inkDim)); }
+    .a11y-theme-opt[aria-checked="true"] .a11y-radio { border-color: #22c55e; }
+    .a11y-theme-opt[aria-checked="true"] .a11y-radio::after {
+      content: ''; width: 9px; height: 9px; border-radius: 50%; background: #22c55e;
+    }
+
     .loading-dot { animation: pulse 1.2s infinite; }
     @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
     /* Skeleton shimmer — same dimensions as the final content */
@@ -270,7 +405,7 @@
        so the sidebar's overflow:hidden doesn't clip it). */
     .sidebar-tip {
       position: fixed; z-index: 9999; transform: translateY(-50%);
-      background: #16203a; color: #e7ecf3; border: 1px solid rgba(255,255,255,0.1);
+      background: rgb(var(--op-panelHi)); color: rgb(var(--op-ink)); border: 1px solid rgba(255,255,255,0.1);
       padding: 6px 11px; border-radius: 9px; font-size: 12.5px; font-weight: 600;
       white-space: nowrap; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
       opacity: 0; pointer-events: none; transition: opacity 0.12s ease;
@@ -318,7 +453,7 @@
        face was just inconsistency. */
     .lp-eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
                   color: #6b6453; }
-    .dark .lp-eyebrow { color: #8893a7; }
+    .dark .lp-eyebrow { color: rgb(var(--op-inkDim)); }
     .lp-pill { display: inline-block; font-size: 10px; letter-spacing: 0.14em;
                text-transform: uppercase; padding: 4px 10px; border-radius: 999px;
                font-weight: 600; border: 1px solid; }
@@ -331,9 +466,9 @@
     .lp-tile-label { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
                      color: #22c55e; font-weight: 600; }
     .lp-tile-val { font-size: 17px; font-weight: 600; margin-top: 3px; }
-    .dark .sidebar .nav-item { color: #8893a7; }
+    .dark .sidebar .nav-item { color: rgb(var(--op-inkDim)); }
     .sidebar .nav-item:hover { background: rgba(20,16,8,0.035); color: #14110a; }
-    .dark .sidebar .nav-item:hover { background: rgba(255,255,255,0.04); color: #e7ecf3; }
+    .dark .sidebar .nav-item:hover { background: rgba(255,255,255,0.04); color: rgb(var(--op-ink)); }
     .sidebar .nav-item.active {
       background: rgba(34,197,94,0.10); color: #22c55e;
       border-left-color: transparent; font-weight: 600;
@@ -423,18 +558,18 @@
     /* ── Coach-marks (first-time hints) ── */
     .coach {
       position: fixed; z-index: 200; width: 232px;
-      background: #16203a; border: 1px solid rgba(34,197,94,.45);
+      background: rgb(var(--op-panelHi)); border: 1px solid rgba(34,197,94,.45);
       border-radius: 14px; padding: 12px 13px; box-shadow: 0 12px 32px rgba(0,0,0,.5);
       backdrop-filter: blur(6px); opacity: 0; transform: translateY(4px);
       transition: opacity .18s ease, transform .18s ease;
     }
     .coach.show { opacity: 1; transform: translateY(0); }
-    .coach .coach-txt { font-size: 12.5px; line-height: 1.45; color: #e7ecf3; font-weight: 500; }
+    .coach .coach-txt { font-size: 12.5px; line-height: 1.45; color: rgb(var(--op-ink)); font-weight: 500; }
     .coach .coach-txt b { color: #22c55e; font-weight: 700; }
     .coach .coach-row { margin-top: 9px; display: flex; align-items: center; justify-content: space-between; }
-    .coach .coach-step { font-size: 10.5px; color: #5a6478; font-weight: 600; }
+    .coach .coach-step { font-size: 10.5px; color: rgb(var(--op-inkDimmer)); font-weight: 600; }
     .coach .coach-got { cursor: pointer; font-size: 11.5px; font-weight: 700; color: #06210f; background: #22c55e; padding: 4px 11px; border-radius: 8px; border: 0; }
-    .coach .coach-caret { position: absolute; width: 13px; height: 13px; background: #16203a; border: 1px solid rgba(34,197,94,.45); transform: rotate(45deg); }
+    .coach .coach-caret { position: absolute; width: 13px; height: 13px; background: rgb(var(--op-panelHi)); border: 1px solid rgba(34,197,94,.45); transform: rotate(45deg); }
     .coach.below .coach-caret { top: -7px; border-right: 0; border-bottom: 0; }
     .coach.above .coach-caret { bottom: -7px; border-left: 0; border-top: 0; }
     .coach-pulse {
@@ -491,7 +626,7 @@
        would be unreadable mush — fall back to the solid panel colors. */
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
       .bn-float { background: #ffffff; }
-      .dark .bn-float { background: #101826; }
+      .dark .bn-float { background: rgb(var(--op-panel)); }
     }
     /* Labeled + compact: uniform 68px bar across roles. */
     .bn-skinny { min-height: 68px; }
@@ -575,8 +710,22 @@
     }
   </style>
   <script>
-    // Apply dark mode before paint to prevent flash
-    if (localStorage.getItem('darkMode') === 'true') document.documentElement.classList.add('dark');
+    // Apply the theme before paint to prevent flash.
+    //
+    // Three themes, two classes. `dark` is on for BOTH dark themes, so every
+    // dark: utility still matches and every isDark() check still answers yes;
+    // `oled` only retints on top. `darkMode` keeps its original meaning — is a
+    // dark theme active — and `darkFlavor` remembers which one, so the two-way
+    // sidebar switch returns you to the dark you actually picked.
+    (function () {
+      var root = document.documentElement;
+      var on = localStorage.getItem('darkMode') === 'true';
+      var oled = on && localStorage.getItem('darkFlavor') === 'oled';
+      if (on) root.classList.add('dark');
+      if (oled) root.classList.add('oled');
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.content = oled ? '#000000' : (on ? '#0a0f1a' : '#3BB54A');
+    })();
   </script>
 </head>
 <body class="bg-opl-bg dark:bg-op-bg font-geist relative transition-colors">
@@ -1795,9 +1944,9 @@
         .bd-tab{background:transparent;border:0;border-bottom:2px solid transparent;
           font:inherit;font-size:14px;font-weight:600;padding:9px 14px;cursor:pointer;
           color:#6b6453;transition:color .15s,border-color .15s}
-        .dark .bd-tab{color:#8893a7}
+        .dark .bd-tab{color:rgb(var(--op-inkDim))}
         .bd-tab:hover{color:#14110a}
-        .dark .bd-tab:hover{color:#e7ecf3}
+        .dark .bd-tab:hover{color:rgb(var(--op-ink))}
         .bd-tab[aria-selected="true"]{color:#166534;border-bottom-color:#166534}
         .dark .bd-tab[aria-selected="true"]{color:#22c55e;border-bottom-color:#22c55e}
         .bd-tab:focus-visible{outline:2px solid #166534;outline-offset:-3px;border-radius:4px}
@@ -1806,7 +1955,7 @@
           margin-left:6px;background:rgba(20,16,8,.07);color:#6b6453}
         /* .09 measured 4.48:1 — the badge's own wash lightens the panel just
            enough to break inkDim. .05 puts it at 5.06:1 and still reads as a chip. */
-        .dark .bd-tab-n{background:rgba(255,255,255,.05);color:#8893a7}
+        .dark .bd-tab-n{background:rgba(255,255,255,.05);color:rgb(var(--op-inkDim))}
         .bd-tab[aria-selected="true"] .bd-tab-n{background:rgba(34,197,94,.14);color:#166534}
         .dark .bd-tab[aria-selected="true"] .bd-tab-n{background:rgba(34,197,94,.16);color:#22c55e}
 
@@ -1826,20 +1975,20 @@
           color:#14110a;                           /* opl-ink — on the PANEL, not per child */
           color-scheme:light;                      /* or the UA paints inputs from the OS theme */
         }
-        .dark .bd-panel{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3;color-scheme:dark}
+        .dark .bd-panel{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.09);color:rgb(var(--op-ink));color-scheme:dark}
 
         .bd-bar{background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10);
           padding:11px 15px;display:flex;gap:11px;align-items:center;flex-wrap:wrap}
-        .dark .bd-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        .dark .bd-bar{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.09)}
         .bd-lbl{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
           color:#6b6453}                           /* opl-inkDim — 5.62:1 on panelHi */
-        .dark .bd-lbl{color:#8893a7}
+        .dark .bd-lbl{color:rgb(var(--op-inkDim))}
         .bd-bar-right{margin-left:auto;display:flex;gap:7px;align-items:center}
         .bd-sub{padding:9px 15px 0;font-size:12px;line-height:1.5;color:#6b6453}
-        .dark .bd-sub{color:#8893a7}
+        .dark .bd-sub{color:rgb(var(--op-inkDim))}
         .bd-legend{border-top:1px solid rgba(20,16,8,.10);padding:10px 15px;
           display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:#6b6453}
-        .dark .bd-legend{border-top-color:rgba(255,255,255,.09);color:#8893a7}
+        .dark .bd-legend{border-top-color:rgba(255,255,255,.09);color:rgb(var(--op-inkDim))}
         .bd-sw{width:22px;height:13px;border-radius:4px;border:1px solid rgba(20,16,8,.18);
           display:inline-block;vertical-align:-2px;margin-right:6px}
         .dark .bd-sw{border-color:rgba(255,255,255,.16)}
@@ -1851,7 +2000,7 @@
         .bd-sw-edit{background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45)}
         .dark .bd-sw-edit{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.45)}
         .bd-sw-plain{background:#ffffff}
-        .dark .bd-sw-plain{background:#101826}
+        .dark .bd-sw-plain{background:rgb(var(--op-panel))}
 
         /* Capture */
         .bd-cap{padding:28px 20px 24px;text-align:center}
@@ -1862,7 +2011,7 @@
         .bd-glyph svg{width:28px;height:28px}
         .bd-cap-t{font-size:16px;font-weight:700}
         .bd-cap-d{font-size:12.5px;color:#6b6453;margin:6px auto 17px;max-width:280px;line-height:1.55}
-        .dark .bd-cap-d{color:#8893a7}
+        .dark .bd-cap-d{color:rgb(var(--op-inkDim))}
         .bd-btn{font:inherit;font-weight:700;border-radius:10px;cursor:pointer;
           border:1px solid transparent;transition:filter .15s,background .15s;letter-spacing:.02em}
         .bd-btn:disabled{opacity:.45;cursor:not-allowed}
@@ -1872,9 +2021,9 @@
         .bd-primary.bd-big{padding:14px 44px;font-size:16px;border-radius:12px}
         .bd-ghost{background:transparent;border-color:rgba(20,16,8,.18);color:#14110a;
           padding:9px 15px;font-size:13px}
-        .dark .bd-ghost{border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .dark .bd-ghost{border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
         .bd-ghost:hover:not(:disabled){background:#fafaf6}
-        .dark .bd-ghost:hover:not(:disabled){background:#16203a}
+        .dark .bd-ghost:hover:not(:disabled){background:rgb(var(--op-panelHi))}
         .bd-sm{padding:6px 11px;font-size:11.5px;border-radius:8px}
         .bd-danger{background:transparent;border-color:rgba(192,57,43,.40);color:#c0392b}
         .dark .bd-danger{border-color:rgba(239,68,68,.42);color:#f87171}
@@ -1892,21 +2041,21 @@
         .bd-status{margin:0 15px 14px;border-radius:10px;padding:9px 12px;font-size:12.5px;
           display:flex;align-items:center;gap:9px;border:1px solid}
         .bd-status.ok{background:rgba(34,197,94,.10);border-color:rgba(22,101,52,.28);color:#14110a}
-        .dark .bd-status.ok{border-color:rgba(34,197,94,.28);color:#e7ecf3}
+        .dark .bd-status.ok{border-color:rgba(34,197,94,.28);color:rgb(var(--op-ink))}
         .bd-status.err{background:rgba(192,57,43,.10);border-color:rgba(192,57,43,.40);color:#14110a}
-        .dark .bd-status.err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.42);color:#e7ecf3}
+        .dark .bd-status.err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.42);color:rgb(var(--op-ink))}
 
         /* Week tiles */
         .bd-strip{display:flex;gap:9px}
         .bd-tile{flex:1;background:#fff;border:1px solid rgba(20,16,8,.10);border-radius:12px;
           padding:11px 13px;color:#14110a}
-        .dark .bd-tile{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3}
+        .dark .bd-tile{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.09);color:rgb(var(--op-ink))}
         .bd-tile-cap{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b6453}
-        .dark .bd-tile-cap{color:#8893a7}
+        .dark .bd-tile-cap{color:rgb(var(--op-inkDim))}
         .bd-tile-n{font-size:23px;font-weight:700;line-height:1.15;margin-top:3px;
           font-variant-numeric:tabular-nums;letter-spacing:-.02em}
         .bd-tile-s{font-size:11px;color:#6b6453;margin-top:1px}
-        .dark .bd-tile-s{color:#8893a7}
+        .dark .bd-tile-s{color:rgb(var(--op-inkDim))}
 
         /* Week accordions */
         .bd-wk{border-bottom:1px solid rgba(20,16,8,.10)}
@@ -1916,10 +2065,10 @@
           display:flex;align-items:center;gap:8px;padding:11px 15px;text-align:left;
           color:inherit;flex-wrap:wrap;transition:background .15s}
         .bd-wk-head:hover{background:#fafaf6}
-        .dark .bd-wk-head:hover{background:#16203a}
+        .dark .bd-wk-head:hover{background:rgb(var(--op-panelHi))}
         .bd-caret{width:9px;height:9px;flex-shrink:0;border-right:2px solid #6b6453;
           border-bottom:2px solid #6b6453;transform:rotate(-45deg);transition:transform .22s}
-        .dark .bd-caret{border-color:#8893a7}
+        .dark .bd-caret{border-color:rgb(var(--op-inkDim))}
         .bd-wk.open .bd-caret{transform:rotate(45deg)}
         .bd-wk-name{font-size:13px;font-weight:600;white-space:nowrap}
         .bd-badge{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
@@ -1928,40 +2077,40 @@
         .dark .bd-badge{border-color:rgba(34,197,94,.28);color:#22c55e}
         .bd-wk-meta{margin-left:auto;font-size:11.5px;color:#6b6453;
           font-variant-numeric:tabular-nums;white-space:nowrap}
-        .dark .bd-wk-meta{color:#8893a7}
+        .dark .bd-wk-meta{color:rgb(var(--op-inkDim))}
         .bd-wk-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows .26s cubic-bezier(.4,0,.2,1)}
         .bd-wk.open .bd-wk-body{grid-template-rows:1fr}
         .bd-wk-body > div{overflow:hidden}
 
         /* The log table */
         .bd-scroll{overflow-x:auto;background:#fff}
-        .dark .bd-scroll{background:#101826}
+        .dark .bd-scroll{background:rgb(var(--op-panel))}
         table.bd-tbl{border-collapse:collapse;width:100%;min-width:780px;font-variant-numeric:tabular-nums}
         table.bd-tbl th{height:30px;padding:0 10px;font-size:10px;font-weight:700;letter-spacing:.05em;
           text-transform:uppercase;text-align:left;background:#fafaf6;color:#6b6453;
           white-space:nowrap;   /* "ITEM #" wraps to two lines without this */
           border-bottom:1px solid rgba(20,16,8,.10)}
-        .dark table.bd-tbl th{background:#16203a;color:#8893a7;border-bottom-color:rgba(255,255,255,.09)}
+        .dark table.bd-tbl th{background:rgb(var(--op-panelHi));color:rgb(var(--op-inkDim));border-bottom-color:rgba(255,255,255,.09)}
         table.bd-tbl td{height:40px;padding:0 10px;font-size:12.5px;white-space:nowrap;
           border-bottom:1px solid rgba(20,16,8,.10)}
         .dark table.bd-tbl td{border-bottom-color:rgba(255,255,255,.09)}
         table.bd-tbl tr:last-child td{border-bottom:0}
         table.bd-tbl .num{text-align:right}
         table.bd-tbl .dim{color:#6b6453}
-        .dark table.bd-tbl .dim{color:#8893a7}
+        .dark table.bd-tbl .dim{color:rgb(var(--op-inkDim))}
         /* 🛑 A sticky column needs its OWN opaque background or the cells scroll under it. */
         table.bd-tbl .stick{position:sticky;left:0;background:#fff;z-index:1}
-        .dark table.bd-tbl .stick{background:#101826}
+        .dark table.bd-tbl .stick{background:rgb(var(--op-panel))}
         table.bd-tbl th.stick{background:#fafaf6;z-index:2}
-        .dark table.bd-tbl th.stick{background:#16203a}
+        .dark table.bd-tbl th.stick{background:rgb(var(--op-panelHi))}
         table.bd-tbl tr.edited td,table.bd-tbl tr.edited .stick{background:rgba(245,158,11,.16)}
         .dark table.bd-tbl tr.edited td,.dark table.bd-tbl tr.edited .stick{background:rgba(245,158,11,.14)}
         .bd-row-btn{background:transparent;border:1px solid rgba(20,16,8,.18);border-radius:6px;
           color:#6b6453;font:inherit;font-size:10.5px;font-weight:700;padding:3px 8px;
           cursor:pointer;letter-spacing:.05em}
-        .dark .bd-row-btn{border-color:rgba(255,255,255,.16);color:#8893a7}
+        .dark .bd-row-btn{border-color:rgba(255,255,255,.16);color:rgb(var(--op-inkDim))}
         .bd-row-btn:hover{color:#14110a;background:#fafaf6}
-        .dark .bd-row-btn:hover{color:#e7ecf3;background:#16203a}
+        .dark .bd-row-btn:hover{color:rgb(var(--op-ink));background:rgb(var(--op-panelHi))}
 
         /* Verify / edit form. Styled by CLASS, never input[type=text] — that
            selector matches the ATTRIBUTE, so an input without an explicit type
@@ -1969,15 +2118,15 @@
         .bd-fld{margin-bottom:11px}
         .bd-fld-l{display:flex;align-items:center;gap:7px;font-size:9.5px;font-weight:700;
           letter-spacing:.08em;text-transform:uppercase;color:#6b6453;margin-bottom:4px}
-        .dark .bd-fld-l{color:#8893a7}
+        .dark .bd-fld-l{color:rgb(var(--op-inkDim))}
         .bd-in{width:100%;font:inherit;font-size:14px;font-weight:600;padding:9px 11px;
           border-radius:9px;background:#fafaf6;border:1px solid rgba(20,16,8,.18);
           color:#14110a;font-variant-numeric:tabular-nums;transition:border-color .15s,box-shadow .15s}
-        .dark .bd-in{background:#16203a;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .dark .bd-in{background:rgb(var(--op-panelHi));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
         .bd-in:focus{outline:none;border-color:#166534;box-shadow:0 0 0 3px rgba(34,197,94,.16)}
         .dark .bd-in:focus{border-color:#22c55e}
         .bd-in::placeholder{color:#6b6453;font-weight:400}
-        .dark .bd-in::placeholder{color:#8893a7}
+        .dark .bd-in::placeholder{color:rgb(var(--op-inkDim))}
         .bd-fld.warn .bd-in{background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45)}
         .dark .bd-fld.warn .bd-in{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.45)}
         .bd-fld.miss .bd-in{background:rgba(192,57,43,.10);border-color:rgba(192,57,43,.40)}
@@ -1995,7 +2144,7 @@
         .bd-fld.miss .bd-tag{background:rgba(192,57,43,.10);border-color:rgba(192,57,43,.40);color:#c0392b}
         .dark .bd-fld.miss .bd-tag{border-color:rgba(239,68,68,.42);color:#f87171}  /* #ef4444 measured 4.45:1 on its own wash */
         .bd-note{font-size:11px;color:#6b6453;margin-top:4px}
-        .dark .bd-note{color:#8893a7}
+        .dark .bd-note{color:rgb(var(--op-inkDim))}
         .bd-shot{display:flex;gap:12px;align-items:flex-start;margin-bottom:14px;
           padding-bottom:13px;border-bottom:1px solid rgba(20,16,8,.10)}
         .dark .bd-shot{border-bottom-color:rgba(255,255,255,.09)}
@@ -2009,10 +2158,12 @@
         .bd-shot img{cursor:zoom-in}
         .bd-shot img:focus-visible{outline:2px solid #16a34a;outline-offset:2px}
 
-        /* The viewer is DARK IN BOTH THEMES deliberately: a photograph judged
-           against a light chrome reads differently, and this surface exists to
-           settle a digit. Chrome contrast measured against #101826 —
-           #e7ecf3 = 15.0:1, #8893a7 = 5.7:1. Both clear 4.5:1.
+        /* The viewer is DARK IN ALL THREE THEMES deliberately: a photograph
+           judged against a light chrome reads differently, and this surface
+           exists to settle a digit. The chrome tracks the op-* tokens, so it
+           follows pure black without following light. Contrast measured on
+           both dark grounds — ink 15.0:1 / inkDim 5.7:1 against op-panel
+           #101826, and 17.7:1 / 8.3:1 against #0a0a0a. All clear 4.5:1.
            🔑 display:flex below is BEATEN by "#page-bin-dump [hidden]" above, which
            is precisely why that rule exists. Toggle the ATTRIBUTE, never .style. */
         .bd-lb{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;
@@ -2025,16 +2176,16 @@
         .bd-lb-img.grabbing{cursor:grabbing}
         .bd-lb-bar{display:flex;align-items:center;gap:8px;padding:10px 12px;
           padding-bottom:calc(10px + env(safe-area-inset-bottom));
-          background:#101826;border-top:1px solid rgba(255,255,255,.10)}
+          background:rgb(var(--op-panel));border-top:1px solid rgba(255,255,255,.10)}
         .bd-lb-b{font:inherit;font-size:14px;font-weight:700;min-width:40px;height:36px;
           padding:0 11px;border-radius:9px;cursor:pointer;line-height:1;
-          background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#e7ecf3}
+          background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:rgb(var(--op-ink))}
         .bd-lb-b:hover:not(:disabled){background:rgba(255,255,255,.17)}
         .bd-lb-b:disabled{opacity:.4;cursor:not-allowed}
-        .bd-lb-pct{font-size:12px;font-weight:700;color:#8893a7;min-width:54px;
+        .bd-lb-pct{font-size:12px;font-weight:700;color:rgb(var(--op-inkDim));min-width:54px;
           text-align:center;font-variant-numeric:tabular-nums}
         .bd-empty{padding:22px 15px;text-align:center;font-size:12.5px;color:#6b6453}
-        .dark .bd-empty{color:#8893a7}
+        .dark .bd-empty{color:rgb(var(--op-inkDim))}
       </style>
 
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
@@ -2183,7 +2334,7 @@
           --moke:rgba(22,101,52,.28);--mbad:#c0392b;--mbadw:rgba(192,57,43,.10);--mbade:rgba(192,57,43,.30);
           --mwarn:#b45309;--mwarnw:rgba(245,158,11,.13);--mwarne:rgba(180,83,9,.30);
           --minfo:#1d4ed8;--minfow:rgba(59,130,246,.10);--minfoe:rgba(29,78,216,.28)}
-        .dark #page-mos{--mp:#101826;--mph:#16203a;--mi:#e7ecf3;--md:#8893a7;--mdd:#5a6478;
+        .dark #page-mos{--mp:rgb(var(--op-panel));--mph:rgb(var(--op-panelHi));--mi:rgb(var(--op-ink));--md:rgb(var(--op-inkDim));--mdd:rgb(var(--op-inkDimmer));
           --mh:rgba(255,255,255,.09);--mb:rgba(255,255,255,.16);--mok:#22c55e;--mokw:rgba(34,197,94,.10);
           --moke:rgba(34,197,94,.28);--mbad:#ef4444;--mbadw:rgba(239,68,68,.12);--mbade:rgba(239,68,68,.30);
           --mwarn:#f59e0b;--mwarnw:rgba(245,158,11,.13);--mwarne:rgba(245,158,11,.30);
@@ -2817,14 +2968,14 @@
     <div id="page-merch-manifests" class="hidden">
       <style>
         .mf-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;overflow:hidden;color:#14110a}
-        .dark .mf-panel{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3}
+        .dark .mf-panel{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.09);color:rgb(var(--op-ink))}
         .mf-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;
           background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
-        .dark .mf-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        .dark .mf-bar{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.09)}
         .mf-barlbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
-        .dark .mf-barlbl{color:#8893a7}
+        .dark .mf-barlbl{color:rgb(var(--op-inkDim))}
         .mf-sub{font-size:10px;color:#6b6453}
-        .dark .mf-sub{color:#8893a7}
+        .dark .mf-sub{color:rgb(var(--op-inkDim))}
         .mf-ans{font-size:11px;font-style:italic}
         .mf-grade{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.05em;
           text-transform:uppercase;border-radius:4px;padding:2px 6px;margin-left:6px}
@@ -2839,12 +2990,12 @@
         .mf-body{padding:18px}
         .mf-in{background:#ffffff;border:1px solid rgba(20,16,8,.18);border-radius:9px;padding:7px 11px;
           font-size:13px;color:#14110a}
-        .dark .mf-in{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .dark .mf-in{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
         .mf-btn{background:#22c55e;color:#06210f;border:none;border-radius:9px;padding:7px 14px;
           font-size:13px;font-weight:700;cursor:pointer}
         .mf-btn:disabled{opacity:.42;cursor:not-allowed}
         .mf-btn.ghost{background:transparent;color:#6b6453;border:1px solid rgba(20,16,8,.18);font-weight:600}
-        .dark .mf-btn.ghost{color:#8893a7;border-color:rgba(255,255,255,.16)}
+        .dark .mf-btn.ghost{color:rgb(var(--op-inkDim));border-color:rgba(255,255,255,.16)}
         .mf-scroll{overflow-x:auto}
         .mf-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
         .mf-tbl th,.mf-tbl td{text-align:right;padding:0 10px;height:40px;white-space:nowrap;
@@ -2852,14 +3003,14 @@
         .dark .mf-tbl th,.dark .mf-tbl td{border-bottom-color:rgba(255,255,255,.09)}
         .mf-tbl th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;height:34px;
           color:#6b6453;background:#fafaf6;position:sticky;top:0;z-index:3}
-        .dark .mf-tbl th{color:#8893a7;background:#16203a}
+        .dark .mf-tbl th{color:rgb(var(--op-inkDim));background:rgb(var(--op-panelHi))}
         .mf-tbl th.mf-l,.mf-tbl td.mf-l{text-align:left;white-space:normal;min-width:230px}
         .mf-tbl tr.mf-tot td{font-weight:700;background:#fafaf6}
-        .dark .mf-tbl tr.mf-tot td{background:#16203a}
+        .dark .mf-tbl tr.mf-tot td{background:rgb(var(--op-panelHi))}
         .mf-kpi{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end;padding:18px}
         .mf-big{font-size:30px;font-weight:700;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
         .mf-cap{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453;margin-bottom:5px}
-        .dark .mf-cap{color:#8893a7}
+        .dark .mf-cap{color:rgb(var(--op-inkDim))}
         .mf-v{font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;border-radius:4px;padding:2px 6px}
         .mf-pass{background:rgba(34,197,94,.18);color:#15803d}
         .dark .mf-pass{color:#4ade80}
@@ -2869,22 +3020,22 @@
         /* Neutral on purpose: an unjudged line is not a soft warning, it is an absence
            of information, and colouring it amber would read as a mild problem. */
         .mf-unknown{background:rgba(20,16,8,.10);color:#6b6453}
-        .dark .mf-unknown{background:rgba(255,255,255,.10);color:#8893a7}
+        .dark .mf-unknown{background:rgba(255,255,255,.10);color:rgb(var(--op-inkDim))}
         .dark .mf-fail{color:#f87171}
         .mf-flag{display:inline-block;font-size:10px;border-radius:4px;padding:1px 5px;margin-left:5px;
           background:rgba(20,16,8,.07);color:#6b6453}
-        .dark .mf-flag{background:rgba(255,255,255,.08);color:#8893a7}
+        .dark .mf-flag{background:rgba(255,255,255,.08);color:rgb(var(--op-inkDim))}
         /* Quiet until you look for it: destructive, so it should not compete with the
            row itself, but it must be findable without opening the manifest first. */
         .mf-x{background:none;border:none;color:#9c9484;cursor:pointer;font-size:17px;line-height:1;
           padding:2px 7px;border-radius:6px}
-        .dark .mf-x{color:#5a6478}
+        .dark .mf-x{color:rgb(var(--op-inkDimmer))}
         .mf-x:hover{color:#b91c1c;background:rgba(239,68,68,.12)}
         .mf-note{padding:12px 18px;font-size:12.5px;color:#6b6453;border-top:1px solid rgba(20,16,8,.10)}
-        .dark .mf-note{color:#8893a7;border-top-color:rgba(255,255,255,.09)}
+        .dark .mf-note{color:rgb(var(--op-inkDim));border-top-color:rgba(255,255,255,.09)}
         .mf-row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
         .mf-drop{border:1px dashed rgba(20,16,8,.24);border-radius:11px;padding:22px;text-align:center;font-size:13px;color:#6b6453}
-        .dark .mf-drop{border-color:rgba(255,255,255,.20);color:#8893a7}
+        .dark .mf-drop{border-color:rgba(255,255,255,.20);color:rgb(var(--op-inkDim))}
       </style>
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
         <div class="max-w-[1500px] mx-auto flex items-end justify-between gap-4 flex-wrap">
@@ -2918,44 +3069,44 @@
            which measures 1.18:1 here. Both themes, always. */
         #cv-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;
           overflow:hidden;color:#14110a}
-        .dark #cv-panel{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3}
+        .dark #cv-panel{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.09);color:rgb(var(--op-ink))}
         #cv-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;
           background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
-        .dark #cv-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        .dark #cv-bar{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.09)}
         #cv-bar .cv-barlbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
-        .dark #cv-bar .cv-barlbl{color:#8893a7}
+        .dark #cv-bar .cv-barlbl{color:rgb(var(--op-inkDim))}
         .cv-seg{display:inline-flex;border:1px solid rgba(20,16,8,.18);border-radius:9px;overflow:hidden}
         .dark .cv-seg{border-color:rgba(255,255,255,.16)}
         .cv-seg button{background:transparent;border:none;padding:6px 13px;font-size:12.5px;font-weight:600;
           cursor:pointer;color:#6b6453}
-        .dark .cv-seg button{color:#8893a7}
+        .dark .cv-seg button{color:rgb(var(--op-inkDim))}
         .cv-seg button.on{background:#22c55e;color:#06210f}
         #cv-scroll{overflow-x:auto}
         #cv-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;color:#14110a;
           font-variant-numeric:tabular-nums}
-        .dark #cv-tbl{color:#e7ecf3}
+        .dark #cv-tbl{color:rgb(var(--op-ink))}
         #cv-tbl th,#cv-tbl td{text-align:right;padding:0 10px;height:46px;white-space:nowrap;
           border-bottom:1px solid rgba(20,16,8,.10)}
         .dark #cv-tbl th,.dark #cv-tbl td{border-bottom-color:rgba(255,255,255,.09)}
         #cv-tbl th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;height:34px;
           color:#6b6453;background:#fafaf6;position:sticky;top:0;z-index:3}
-        .dark #cv-tbl th{color:#8893a7;background:#16203a}
+        .dark #cv-tbl th{color:rgb(var(--op-inkDim));background:rgb(var(--op-panelHi))}
         #cv-tbl th.cv-cat,#cv-tbl td.cv-cat{text-align:left;position:sticky;left:0;z-index:2;white-space:normal;
           min-width:210px;background:#ffffff;font-weight:600}
-        .dark #cv-tbl th.cv-cat,.dark #cv-tbl td.cv-cat{background:#101826}
+        .dark #cv-tbl th.cv-cat,.dark #cv-tbl td.cv-cat{background:rgb(var(--op-panel))}
         #cv-tbl th.cv-cat{z-index:4;background:#fafaf6}
-        .dark #cv-tbl th.cv-cat{background:#16203a}
+        .dark #cv-tbl th.cv-cat{background:rgb(var(--op-panelHi))}
         #cv-tbl tr.cv-total td{font-weight:700;background:#fafaf6}
-        .dark #cv-tbl tr.cv-total td{background:#16203a}
+        .dark #cv-tbl tr.cv-total td{background:rgb(var(--op-panelHi))}
         #cv-tbl tr.cv-rest td.cv-cat{font-weight:500;color:#6b6453}
-        .dark #cv-tbl tr.cv-rest td.cv-cat{color:#8893a7}
+        .dark #cv-tbl tr.cv-rest td.cv-cat{color:rgb(var(--op-inkDim))}
         /* Each cell carries TWO numbers — sales share over shelf share — because the
            whole point of the page is the gap between them. The tint encodes the ratio;
            the numbers say why, so the colour never has to be trusted on its own. */
         .cv-cell{display:flex;flex-direction:column;align-items:flex-end;gap:1px;line-height:1.15}
         .cv-sales{font-weight:600}
         .cv-shelf{font-size:11px;color:#6b6453}
-        .dark .cv-shelf{color:#8893a7}
+        .dark .cv-shelf{color:rgb(var(--op-inkDim))}
         .cv-pad{display:block;border-radius:7px;padding:5px 8px;margin:0 -2px}
         .cv-starved{background:rgba(34,197,94,.16);box-shadow:inset 0 0 0 1px rgba(34,197,94,.42)}
         .cv-dead{background:rgba(239,68,68,.14);box-shadow:inset 0 0 0 1px rgba(239,68,68,.40)}
@@ -2964,7 +3115,7 @@
         .cv-hero{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end;padding:18px}
         .cv-big{font-size:38px;font-weight:700;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
         .cv-cap{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453;margin-bottom:5px}
-        .dark .cv-cap{color:#8893a7}
+        .dark .cv-cap{color:rgb(var(--op-inkDim))}
         .cv-act{display:flex;align-items:baseline;gap:10px;padding:9px 18px;border-top:1px solid rgba(20,16,8,.10);font-size:13px}
         .dark .cv-act{border-top-color:rgba(255,255,255,.09)}
         .cv-kind{font-size:9.5px;font-weight:700;letter-spacing:.08em;border-radius:4px;padding:2px 6px;flex:none}
@@ -2972,10 +3123,10 @@
         .cv-FLOOR{color:#3b2400;background:#f59e0b}
         .cv-CUT{color:#fff;background:#ef4444}
         .cv-why{color:#6b6453}
-        .dark .cv-why{color:#8893a7}
+        .dark .cv-why{color:rgb(var(--op-inkDim))}
         #cv-legend{display:flex;gap:20px;flex-wrap:wrap;padding:12px 18px;font-size:12px;color:#6b6453;
           border-top:1px solid rgba(20,16,8,.10)}
-        .dark #cv-legend{color:#8893a7;border-top-color:rgba(255,255,255,.09)}
+        .dark #cv-legend{color:rgb(var(--op-inkDim));border-top-color:rgba(255,255,255,.09)}
         #cv-legend span{display:flex;align-items:center;gap:7px}
         #cv-legend i{width:22px;height:14px;border-radius:4px;display:inline-block}
       </style>
@@ -3019,26 +3170,26 @@
         #ps-wrap{max-width:520px;margin:0 auto}
         #ps-card{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:16px;
           overflow:hidden;color:#14110a}
-        .dark #ps-card{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3}
+        .dark #ps-card{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.09);color:rgb(var(--op-ink))}
         #ps-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;
           background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
-        .dark #ps-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        .dark #ps-bar{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.09)}
         .ps-lbl{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#6b6453}
-        .dark .ps-lbl{color:#8893a7}
+        .dark .ps-lbl{color:rgb(var(--op-inkDim))}
         /* Lifted from .pr-tab on Merch Products next door -- same green, same shape -- but at
            .ps-lbl's 11px/.09em, because that is the type it stands beside in this bar. */
         #ps-tabs{display:flex;align-items:center;gap:6px}
         .ps-tab{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
           border-radius:8px;padding:6px 11px;cursor:pointer;border:none;background:transparent;
           color:#6b6453;font-family:inherit}
-        .dark .ps-tab{color:#8893a7}
+        .dark .ps-tab{color:rgb(var(--op-inkDim))}
         .ps-tab.on{background:rgba(34,197,94,.16);color:#1c7a33}
         .dark .ps-tab.on{color:#5fd170}
         .ps-tab .n{font-variant-numeric:tabular-nums;opacity:.72;margin-left:5px}
         #ps-body{padding:16px;display:flex;flex-direction:column;gap:14px}
         .ps-in{width:100%;border:1px solid rgba(20,16,8,.18);border-radius:10px;padding:12px 13px;
           font-size:16px;background:#fff;color:#14110a;font-variant-numeric:tabular-nums}
-        .dark .ps-in{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .dark .ps-in{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
         .ps-in:focus{outline:2px solid #22c55e;outline-offset:1px}
         .ps-btn{background:#22c55e;color:#06210f;border:none;border-radius:11px;padding:13px;
           font-weight:700;font-size:15px;cursor:pointer;width:100%}
@@ -3074,7 +3225,7 @@
         .ps-recent-sub{font-size:11.5px;color:#6b6453;margin-top:1px}
         .dark .ps-recent-sub{color:#7c899e}
         .ps-stat{font-size:12px;line-height:1.4;color:#6b6453}
-        .dark .ps-stat{color:#8893a7}
+        .dark .ps-stat{color:rgb(var(--op-inkDim))}
         .ps-stat.no{color:#9a3412}
         .dark .ps-stat.no{color:#fca5a5}
         .ps-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
@@ -3082,7 +3233,7 @@
         .ps-ident{text-align:center;display:flex;flex-direction:column;gap:3px}
         .ps-nm{font-weight:600;font-size:15px;line-height:1.3}
         .ps-up{font-size:12px;color:#6b6453;font-variant-numeric:tabular-nums}
-        .dark .ps-up{color:#8893a7}
+        .dark .ps-up{color:rgb(var(--op-inkDim))}
         .ps-hero{font-weight:700;font-size:68px;line-height:.94;letter-spacing:-.045em;
           text-align:center;font-variant-numeric:tabular-nums}
         .ps-hero.bad{color:#8a4b00}
@@ -3094,27 +3245,27 @@
         .ps-chip.warn{background:rgba(245,158,11,.18);color:#8a4b00}
         .dark .ps-chip.warn{color:#f0a742}
         .ps-chip.flat{background:transparent;color:#6b6453;box-shadow:inset 0 0 0 1px rgba(20,16,8,.20)}
-        .dark .ps-chip.flat{color:#8893a7;box-shadow:inset 0 0 0 1px rgba(255,255,255,.20)}
+        .dark .ps-chip.flat{color:rgb(var(--op-inkDim));box-shadow:inset 0 0 0 1px rgba(255,255,255,.20)}
         /* A's reasoning, kept VISIBLE — the point of the hybrid */
         #ps-strip{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid rgba(20,16,8,.12);
           border-radius:12px;overflow:hidden;background:#fafaf6}
-        .dark #ps-strip{background:#16203a;border-color:rgba(255,255,255,.10)}
+        .dark #ps-strip{background:rgb(var(--op-panelHi));border-color:rgba(255,255,255,.10)}
         #ps-strip.bad{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.42)}
         .ps-cell{padding:10px 6px;text-align:center;border-right:1px solid rgba(20,16,8,.12)}
         .dark .ps-cell{border-right-color:rgba(255,255,255,.10)}
         .ps-cell:last-child{border-right:none}
         .ps-k{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#6b6453}
-        .dark .ps-k{color:#8893a7}
+        .dark .ps-k{color:rgb(var(--op-inkDim))}
         .ps-v{font-weight:700;font-size:17px;font-variant-numeric:tabular-nums;margin-top:1px}
         .ps-s{font-size:10px;color:#6b6453}
-        .dark .ps-s{color:#8893a7}
+        .dark .ps-s{color:rgb(var(--op-inkDim))}
         .ps-why{text-align:center;font-size:12.5px;color:#6b6453;line-height:1.45}
-        .dark .ps-why{color:#8893a7}
+        .dark .ps-why{color:rgb(var(--op-inkDim))}
         .ps-why.bad{color:#8a4b00;font-weight:600}
         .dark .ps-why.bad{color:#f0a742}
         .ps-catrow{display:flex;align-items:center;justify-content:space-between;gap:10px}
         .ps-l2{font-size:11px;color:#6b6453}
-        .dark .ps-l2{color:#8893a7}
+        .dark .ps-l2{color:rgb(var(--op-inkDim))}
         .ps-l3{font-weight:600;font-size:14px}
         .ps-link{font-size:12.5px;color:#1c7a33;font-weight:600;background:none;border:none;
           cursor:pointer;padding:0}
@@ -3124,21 +3275,21 @@
         .dark #ps-prev{border-top-color:rgba(255,255,255,.09)}
         .ps-pn{font-size:12.5px;font-weight:600}
         .ps-pm{font-size:10.5px;color:#6b6453}
-        .dark .ps-pm{color:#8893a7}
+        .dark .ps-pm{color:rgb(var(--op-inkDim))}
         .ps-pp{font-weight:700;font-size:19px;font-variant-numeric:tabular-nums}
         /* Deliberately the same control as the Products editor (.pr-fld). Two pages, two
            style blocks in this file, one look — per DESIGN.md, the Merchandising surfaces
            are meant to read as one thing, not as six different forms. */
         .ps-fld{display:flex;flex-direction:column;gap:5px}
         .ps-fld label{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b6453}
-        .dark .ps-fld label{color:#8893a7}
+        .dark .ps-fld label{color:rgb(var(--op-inkDim))}
         .ps-fld input,.ps-fld select{border:1px solid rgba(20,16,8,.18);border-radius:9px;padding:10px 11px;
           font-size:16px;background:#fff;color:#14110a;font-family:inherit;width:100%}
-        .dark .ps-fld input,.dark .ps-fld select{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .dark .ps-fld input,.dark .ps-fld select{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
         .ps-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
         #ps-edit{display:flex;flex-direction:column;gap:11px;padding:14px;border-radius:12px;
           background:#fafaf6;border:1px solid rgba(20,16,8,.10)}
-        .dark #ps-edit{background:#16203a;border-color:rgba(255,255,255,.09)}
+        .dark #ps-edit{background:rgb(var(--op-panelHi));border-color:rgba(255,255,255,.09)}
         /* 🛑 Source order beats Tailwind — both are single class selectors and this block
            comes after tailwind.css, so without this the collapsed editor still lays out. */
         #ps-edit.hidden{display:none}
@@ -3147,12 +3298,12 @@
         .fn-shot{border-radius:12px;display:grid;place-items:center;min-height:132px;gap:6px;
           font-size:12.5px;text-align:center;color:#6b6453;background:rgba(20,16,8,.06);
           border:1px dashed rgba(20,16,8,.18);cursor:pointer;overflow:hidden}
-        .dark .fn-shot{color:#8893a7;background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.18)}
+        .dark .fn-shot{color:rgb(var(--op-inkDim));background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.18)}
         .fn-shot img{width:100%;display:block;max-height:200px;object-fit:cover}
         .fn-seg{display:flex;gap:6px}
         .fn-seg button{flex:1 1 44%;min-width:0;padding:10px 6px;border-radius:9px;border:1px solid rgba(20,16,8,.18);
           background:transparent;color:#14110a;font-size:12.5px;font-family:inherit;cursor:pointer;line-height:1.25}
-        .dark .fn-seg button{color:#e7ecf3;border-color:rgba(255,255,255,.16)}
+        .dark .fn-seg button{color:rgb(var(--op-ink));border-color:rgba(255,255,255,.16)}
         .fn-seg button.on{background:rgba(34,197,94,.16);border-color:transparent;color:#1c7a33;font-weight:700}
         .dark .fn-seg button.on{color:#5fd170}
         .fn-match{display:grid;grid-template-columns:1fr 1fr;gap:9px}
@@ -3161,33 +3312,33 @@
         .fn-cell img{width:100%;height:86px;object-fit:cover;display:block}
         .fn-cell .cap{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
           color:#6b6453;padding:6px 4px 1px}
-        .dark .fn-cell .cap{color:#8893a7}
+        .dark .fn-cell .cap{color:rgb(var(--op-inkDim))}
         .fn-cell .val{font-size:17px;font-weight:700;padding-bottom:7px;font-variant-numeric:tabular-nums}
         .fn-cond{display:flex;flex-direction:column;gap:6px}
         .fn-cond button{display:block;width:100%;text-align:left;padding:11px;border-radius:10px;
           border:1px solid rgba(20,16,8,.18);background:transparent;color:#14110a;font-family:inherit;cursor:pointer}
-        .dark .fn-cond button{color:#e7ecf3;border-color:rgba(255,255,255,.16)}
+        .dark .fn-cond button{color:rgb(var(--op-ink));border-color:rgba(255,255,255,.16)}
         .fn-cond button.on{border-color:#22c55e;background:rgba(34,197,94,.16)}
         .fn-cond .nm{font-weight:600;font-size:13.5px}
         .fn-cond .ex{font-size:11.5px;color:#6b6453;line-height:1.3}
-        .dark .fn-cond .ex{color:#8893a7}
+        .dark .fn-cond .ex{color:rgb(var(--op-inkDim))}
         .fn-prices{display:flex;gap:7px}
         .fn-prices button{flex:1;padding:13px 4px;border-radius:10px;border:1px solid rgba(20,16,8,.18);
           background:transparent;cursor:pointer;font-family:inherit;text-align:center;color:#14110a}
-        .dark .fn-prices button{color:#e7ecf3;border-color:rgba(255,255,255,.16)}
+        .dark .fn-prices button{color:rgb(var(--op-ink));border-color:rgba(255,255,255,.16)}
         .fn-prices button.on{border-color:#22c55e;background:rgba(34,197,94,.16);color:#1c7a33}
         .dark .fn-prices button.on{color:#5fd170}
         .fn-prices .v{font-weight:700;font-size:19px;font-variant-numeric:tabular-nums}
         .fn-prices .t{font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#6b6453}
-        .dark .fn-prices .t{color:#8893a7}
+        .dark .fn-prices .t{color:rgb(var(--op-inkDim))}
         .ps-steps{display:flex;flex-direction:column;gap:2px;padding:2px 0}
         .ps-step{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13.5px;
           color:#9c9484;transition:color .25s}
-        .dark .ps-step{color:#5a6478}
+        .dark .ps-step{color:rgb(var(--op-inkDimmer))}
         .ps-step.on{color:#14110a;font-weight:600}
-        .dark .ps-step.on{color:#e7ecf3}
+        .dark .ps-step.on{color:rgb(var(--op-ink))}
         .ps-step.done{color:#6b6453}
-        .dark .ps-step.done{color:#8893a7}
+        .dark .ps-step.done{color:rgb(var(--op-inkDim))}
         .ps-dot{flex:none;width:18px;height:18px;border-radius:9px;display:grid;place-items:center;
           border:2px solid rgba(20,16,8,.18);transition:border-color .25s,background .25s}
         .dark .ps-dot{border-color:rgba(255,255,255,.18)}
@@ -3198,7 +3349,7 @@
           border-bottom:2px solid #06210f;transform:rotate(-45deg) translate(1px,-1px)}
         @keyframes psSpin{to{transform:rotate(360deg)}}
         .ps-el{margin-left:auto;font-size:11.5px;color:#9c9484;font-variant-numeric:tabular-nums}
-        .dark .ps-el{color:#5a6478}
+        .dark .ps-el{color:rgb(var(--op-inkDimmer))}
         @media (prefers-reduced-motion:reduce){ .ps-step.on .ps-dot{animation:none} }
       </style>
       <div id="ps-wrap" class="px-4 space-y-4 pt-[calc(env(safe-area-inset-top)+1.5rem)]"
@@ -3307,20 +3458,20 @@
            panel. #ps-card next door has always set it; this is the pattern to copy. */
         #pr-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;
           overflow:hidden;color:#14110a}
-        .dark #pr-panel{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3}
+        .dark #pr-panel{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.09);color:rgb(var(--op-ink))}
         #pr-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;
           background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
-        .dark #pr-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        .dark #pr-bar{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.09)}
         .pr-tab{font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
           border-radius:8px;padding:7px 12px;cursor:pointer;border:none;background:transparent;
           color:#6b6453;font-family:inherit}
-        .dark .pr-tab{color:#8893a7}
+        .dark .pr-tab{color:rgb(var(--op-inkDim))}
         .pr-tab.on{background:rgba(34,197,94,.16);color:#1c7a33}
         .dark .pr-tab.on{color:#5fd170}
         .pr-tab .n{font-variant-numeric:tabular-nums;opacity:.72;margin-left:5px}
         #pr-q{flex:1;min-width:150px;border:1px solid rgba(20,16,8,.18);border-radius:9px;
           padding:8px 11px;font-size:15px;background:#fff;color:#14110a}
-        .dark #pr-q{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .dark #pr-q{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
         #pr-q:focus{outline:2px solid #22c55e;outline-offset:1px}
         .pr-row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;
           padding:12px 14px;border-bottom:1px solid rgba(20,16,8,.08);cursor:pointer}
@@ -3328,28 +3479,28 @@
         .pr-row:last-child{border-bottom:none}
         .pr-nm{font-weight:600;font-size:14.5px;line-height:1.3}
         .pr-meta{font-size:11.5px;color:#6b6453;font-variant-numeric:tabular-nums;margin-top:2px}
-        .dark .pr-meta{color:#8893a7}
+        .dark .pr-meta{color:rgb(var(--op-inkDim))}
         /* 🛑 inkDimmer is 3.01:1 light and 2.99:1 dark against these panels — under the
            4.5:1 that 11px text needs, in BOTH themes. The category is not decoration; it
            is what an admin came here to check. inkDim instead: 5.88 and 5.74. Hierarchy
            comes from the weight and size of the name above it, not from fading this. */
         .pr-cat{font-size:11px;color:#6b6453;margin-top:2px}
-        .dark .pr-cat{color:#8893a7}
+        .dark .pr-cat{color:rgb(var(--op-inkDim))}
         .pr-px{text-align:right;font-weight:700;font-size:16px;font-variant-numeric:tabular-nums}
         .pr-px .sub{display:block;font-weight:600;font-size:10px;letter-spacing:.07em;
           text-transform:uppercase;color:#1c7a33;margin-top:2px}
         .dark .pr-px .sub{color:#5fd170}
         .pr-empty{padding:34px 16px;text-align:center;color:#6b6453;font-size:14px}
-        .dark .pr-empty{color:#8893a7}
+        .dark .pr-empty{color:rgb(var(--op-inkDim))}
         .pr-fld{display:flex;flex-direction:column;gap:5px}
         .pr-fld label{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b6453}
-        .dark .pr-fld label{color:#8893a7}
+        .dark .pr-fld label{color:rgb(var(--op-inkDim))}
         .pr-fld input,.pr-fld select{border:1px solid rgba(20,16,8,.18);border-radius:9px;padding:10px 11px;
           font-size:15px;background:#fff;color:#14110a;font-family:inherit;width:100%}
-        .dark .pr-fld input,.dark .pr-fld select{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .dark .pr-fld input,.dark .pr-fld select{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
         .pr-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
         .pr-hint{font-size:11.5px;color:#6b6453;line-height:1.45}
-        .dark .pr-hint{color:#8893a7}
+        .dark .pr-hint{color:rgb(var(--op-inkDim))}
         .pr-editor{display:flex;flex-direction:column;gap:11px;padding:4px 14px 16px;
           border-bottom:1px solid rgba(20,16,8,.08);background:#fafaf6}
         /* 🛑 SOURCE ORDER BEATS TAILWIND HERE. Both `.hidden` and `.pr-editor` are single
@@ -3357,12 +3508,12 @@
            tailwind.css. Without this the collapsed editors are display:flex with their
            padding intact, leaving a grey strip between every row. */
         .pr-editor.hidden{display:none}
-        .dark .pr-editor{background:#16203a;border-bottom-color:rgba(255,255,255,.07)}
+        .dark .pr-editor{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.07)}
         .pr-save,.pr-cancel{border-radius:10px;padding:11px;font-weight:700;font-size:14.5px;
           cursor:pointer;font-family:inherit;border:none}
         .pr-save{background:#22c55e;color:#06210f}
         .pr-cancel{background:transparent;color:#6b6453;box-shadow:inset 0 0 0 1px rgba(20,16,8,.20)}
-        .dark .pr-cancel{color:#8893a7;box-shadow:inset 0 0 0 1px rgba(255,255,255,.20)}
+        .dark .pr-cancel{color:rgb(var(--op-inkDim));box-shadow:inset 0 0 0 1px rgba(255,255,255,.20)}
       </style>
       <div class="px-4 space-y-4 pt-[calc(env(safe-area-inset-top)+1.5rem)]"
            style="padding-bottom:calc(104px + env(safe-area-inset-bottom))">
@@ -3389,38 +3540,38 @@
       <style>
         #vl-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;
           overflow:hidden;color:#14110a}
-        .dark #vl-panel{background:#101826;border-color:rgba(255,255,255,.09);color:#e7ecf3}
+        .dark #vl-panel{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.09);color:rgb(var(--op-ink))}
         #vl-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;
           background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
-        .dark #vl-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        .dark #vl-bar{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.09)}
         #vl-bar .vl-barlbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
-        .dark #vl-bar .vl-barlbl{color:#8893a7}
+        .dark #vl-bar .vl-barlbl{color:rgb(var(--op-inkDim))}
         .vl-seg{display:inline-flex;border:1px solid rgba(20,16,8,.18);border-radius:9px;overflow:hidden}
         .dark .vl-seg{border-color:rgba(255,255,255,.16)}
         .vl-seg button{background:transparent;border:none;padding:6px 13px;font-size:12.5px;font-weight:600;
           cursor:pointer;color:#6b6453}
-        .dark .vl-seg button{color:#8893a7}
+        .dark .vl-seg button{color:rgb(var(--op-inkDim))}
         .vl-seg button.on{background:#22c55e;color:#06210f}
         #vl-scroll{overflow-x:auto}
         #vl-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;color:#14110a;
           font-variant-numeric:tabular-nums}
-        .dark #vl-tbl{color:#e7ecf3}
+        .dark #vl-tbl{color:rgb(var(--op-ink))}
         #vl-tbl th,#vl-tbl td{text-align:right;padding:0 10px;height:44px;white-space:nowrap;
           border-bottom:1px solid rgba(20,16,8,.10)}
         .dark #vl-tbl th,.dark #vl-tbl td{border-bottom-color:rgba(255,255,255,.09)}
         #vl-tbl th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;height:34px;
           color:#6b6453;background:#fafaf6;position:sticky;top:0;z-index:3}
-        .dark #vl-tbl th{color:#8893a7;background:#16203a}
+        .dark #vl-tbl th{color:rgb(var(--op-inkDim));background:rgb(var(--op-panelHi))}
         /* A sticky column MUST carry its own background in both themes, or the scrolled
            rows show straight through it. §4.8 trap 2. */
         #vl-tbl th.vl-cat,#vl-tbl td.vl-cat{text-align:left;position:sticky;left:0;z-index:2;white-space:normal;
           min-width:230px;background:#ffffff;font-weight:600}
-        .dark #vl-tbl th.vl-cat,.dark #vl-tbl td.vl-cat{background:#101826}
+        .dark #vl-tbl th.vl-cat,.dark #vl-tbl td.vl-cat{background:rgb(var(--op-panel))}
         #vl-tbl th.vl-cat{z-index:4;background:#fafaf6}
-        .dark #vl-tbl th.vl-cat{background:#16203a}
+        .dark #vl-tbl th.vl-cat{background:rgb(var(--op-panelHi))}
         #vl-tbl tr.vl-kid td.vl-cat{font-weight:500;padding-left:30px}
         #vl-tbl td.vl-chain{font-weight:700;background:#fafaf6}
-        .dark #vl-tbl td.vl-chain{background:#16203a}
+        .dark #vl-tbl td.vl-chain{background:rgb(var(--op-panelHi))}
         .vl-tw{cursor:pointer;user-select:none}
         .vl-chev{display:inline-block;width:14px;font-size:12px;opacity:.75}
         .vl-pad{display:block;border-radius:7px;padding:5px 8px;margin:0 -2px}
@@ -3431,14 +3582,14 @@
            line. Same class, two contexts — the table's needs win, the legend overrides. */
         #vl-legend .vl-pad{display:inline-block;margin:0}
         .vl-nodata{color:#6b6453}
-        .dark .vl-nodata{color:#8893a7}
+        .dark .vl-nodata{color:rgb(var(--op-inkDim))}
         .vl-hero{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end;padding:18px}
         .vl-big{font-size:34px;font-weight:700;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
         .vl-cap{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453;margin-bottom:5px}
-        .dark .vl-cap{color:#8893a7}
+        .dark .vl-cap{color:rgb(var(--op-inkDim))}
         #vl-legend{display:flex;gap:20px;flex-wrap:wrap;padding:12px 18px;font-size:12px;color:#6b6453;
           border-top:1px solid rgba(20,16,8,.10)}
-        .dark #vl-legend{color:#8893a7;border-top-color:rgba(255,255,255,.09)}
+        .dark #vl-legend{color:rgb(var(--op-inkDim));border-top-color:rgba(255,255,255,.09)}
       </style>
       <div class="max-w-[1500px] mx-auto px-4 py-6 space-y-4">
         <div>
@@ -3467,17 +3618,17 @@
            below are the tokens' literals — a <style> block cannot use the Tailwind class
            names, so they are duplicated on purpose. */
         #mc-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;overflow:hidden}
-        .dark #mc-panel{background:#101826;border-color:rgba(255,255,255,.09)}
+        .dark #mc-panel{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.09)}
         /* The controls belong to the table, so they sit on it rather than floating above
            the page — the bar is what makes the picker read as "add a row to THIS". */
         #mc-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;
           background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
-        .dark #mc-bar{background:#16203a;border-bottom-color:rgba(255,255,255,.09)}
+        .dark #mc-bar{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.09)}
         #mc-bar .mc-barlbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
-        .dark #mc-bar .mc-barlbl{color:#8893a7}
+        .dark #mc-bar .mc-barlbl{color:rgb(var(--op-inkDim))}
         #mc-add{background:#ffffff;border:1px solid rgba(20,16,8,.18);border-radius:9px;padding:7px 11px;
           font-size:13px;color:#14110a;max-width:330px}
-        .dark #mc-add{background:#101826;border-color:rgba(255,255,255,.16);color:#e7ecf3}
+        .dark #mc-add{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
         #mc-add-btn{background:#22c55e;color:#06210f;border:none;border-radius:9px;padding:7px 14px;
           font-size:13px;font-weight:700;cursor:pointer}
         #mc-add-btn:disabled{opacity:.42;cursor:not-allowed}
@@ -3485,22 +3636,22 @@
 
         #mc-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;color:#14110a;
           font-variant-numeric:tabular-nums}
-        .dark #mc-tbl{color:#e7ecf3}
+        .dark #mc-tbl{color:rgb(var(--op-ink))}
         #mc-tbl th,#mc-tbl td{text-align:left;padding:0 10px;height:42px;white-space:nowrap;
           border-bottom:1px solid rgba(20,16,8,.10)}
         .dark #mc-tbl th,.dark #mc-tbl td{border-bottom-color:rgba(255,255,255,.09)}
         #mc-tbl th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
           height:34px;color:#6b6453;background:#fafaf6;position:sticky;top:0;z-index:3}
-        .dark #mc-tbl th{color:#8893a7;background:#16203a}
+        .dark #mc-tbl th{color:rgb(var(--op-inkDim));background:rgb(var(--op-panelHi))}
         /* The category column pins while the thresholds scroll sideways, so it needs an
            opaque background of its own or the cells slide under it. */
         #mc-tbl th.mc-cat,#mc-tbl td.mc-cat{position:sticky;left:0;z-index:2;white-space:normal;
           min-width:230px;background:#ffffff}
-        .dark #mc-tbl th.mc-cat,.dark #mc-tbl td.mc-cat{background:#101826}
+        .dark #mc-tbl th.mc-cat,.dark #mc-tbl td.mc-cat{background:rgb(var(--op-panel))}
         #mc-tbl th.mc-cat{z-index:4;background:#fafaf6}
-        .dark #mc-tbl th.mc-cat{background:#16203a}
+        .dark #mc-tbl th.mc-cat{background:rgb(var(--op-panelHi))}
         #mc-tbl tr.mc-chain td{font-weight:600;background:#fafaf6}
-        .dark #mc-tbl tr.mc-chain td{background:#16203a}
+        .dark #mc-tbl tr.mc-chain td{background:rgb(var(--op-panelHi))}
         #mc-tbl tr.mc-l2 td.mc-cat{font-weight:600}
         /* An L3 sits under its parent, indented, with a rule drawn back up to it — the
            inheritance is the point, so it is shown structurally rather than labelled. */
@@ -3511,13 +3662,13 @@
         .mc-lvl{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
           border:1px solid rgba(20,16,8,.18);border-radius:4px;padding:2px 5px;margin-right:9px;color:#9c9484;
           vertical-align:1px}
-        .dark .mc-lvl{border-color:rgba(255,255,255,.16);color:#5a6478}
+        .dark .mc-lvl{border-color:rgba(255,255,255,.16);color:rgb(var(--op-inkDimmer))}
         #mc-tbl tr.mc-l3 .mc-lvl{color:#22c55e;border-color:rgba(34,197,94,.4)}
         .mc-rm{background:none;border:none;color:#9c9484;cursor:pointer;font-size:15px;line-height:1;
           padding:2px 5px;margin-left:8px;border-radius:5px}
-        .dark .mc-rm{color:#5a6478}
+        .dark .mc-rm{color:rgb(var(--op-inkDimmer))}
         .mc-rm:hover{color:#14110a;background:rgba(20,16,8,.08)}
-        .dark .mc-rm:hover{color:#e7ecf3;background:rgba(255,255,255,.10)}
+        .dark .mc-rm:hover{color:rgb(var(--op-ink));background:rgba(255,255,255,.10)}
 
         #mc-tbl input[type=text]{width:82px;border-radius:6px;padding:3px 7px;font-size:13px;
           border:1px solid transparent;background:transparent;color:inherit;text-align:right;
@@ -3537,21 +3688,21 @@
            2.71:1 on opl-bg, under AA. inkDim is 5.29:1 and still unmistakably muted
            against a value set here, which is near-black at 16.96:1. */
         #mc-tbl input.mc-inherit{color:#6b6453}
-        .dark #mc-tbl input.mc-inherit{color:#8893a7}
+        .dark #mc-tbl input.mc-inherit{color:rgb(var(--op-inkDim))}
         #mc-tbl input.mc-override{border-color:rgba(20,16,8,.18);background:#fafaf6}
-        .dark #mc-tbl input.mc-override{border-color:rgba(255,255,255,.16);background:#16203a}
+        .dark #mc-tbl input.mc-override{border-color:rgba(255,255,255,.16);background:rgb(var(--op-panelHi))}
         #mc-tbl input.mc-dirty{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.55)}
         .dark #mc-tbl input.mc-dirty{background:rgba(245,158,11,.16)}
 
         #mc-legend{display:flex;gap:20px;flex-wrap:wrap;padding:12px 18px;font-size:12px;color:#6b6453;
           border-top:1px solid rgba(20,16,8,.10)}
-        .dark #mc-legend{color:#8893a7;border-top-color:rgba(255,255,255,.09)}
+        .dark #mc-legend{color:rgb(var(--op-inkDim));border-top-color:rgba(255,255,255,.09)}
         #mc-legend span{display:flex;align-items:center;gap:7px}
         #mc-legend i{width:22px;height:14px;border-radius:4px;display:inline-block;border:1px solid transparent}
         .mc-sw-inherit{background:transparent;border-color:rgba(20,16,8,.10)!important}
         .dark .mc-sw-inherit{border-color:rgba(255,255,255,.09)!important}
         .mc-sw-own{background:#fafaf6;border-color:rgba(20,16,8,.18)!important}
-        .dark .mc-sw-own{background:#16203a;border-color:rgba(255,255,255,.16)!important}
+        .dark .mc-sw-own{background:rgb(var(--op-panelHi));border-color:rgba(255,255,255,.16)!important}
         .mc-sw-dirty{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.55)!important}
       </style>
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
@@ -3767,15 +3918,15 @@
         .eb-chip{font-size:12px;padding:.25rem .625rem;border-radius:9999px;
           border:1px solid rgba(20,16,8,.1);cursor:pointer;transition:all .15s;
           color:#14110a}
-        .dark .eb-chip{border-color:rgba(255,255,255,.12);color:#e7ecf3}
+        .dark .eb-chip{border-color:rgba(255,255,255,.12);color:rgb(var(--op-ink))}
         .eb-chip-on{background:#3BB54A;border-color:#3BB54A;color:#04140a;font-weight:600}
         /* ⚠️ Must match `.dark .eb-chip`'s specificity (0,2,0) or it loses to it and
            the SELECTED chip turns white on green. The dark text is deliberate —
            it is the readable pairing against #3BB54A in either theme. */
         .dark .eb-chip-on{color:#04140a}
         .eb-banner{border-radius:.75rem;padding:.875rem 1rem;border:1px solid;font-size:14px;color:#14110a}
-        .dark .eb-pill{color:#8893a7}
-        .dark .eb-banner{color:#e7ecf3}
+        .dark .eb-pill{color:rgb(var(--op-inkDim))}
+        .dark .eb-banner{color:rgb(var(--op-ink))}
         .eb-banner-dead{background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.4);color:#b91c1c}
         .dark .eb-banner-dead{color:#fca5a5}
         .eb-banner-warn{background:rgba(217,119,6,.08);border-color:rgba(217,119,6,.4);color:#b45309}
@@ -3806,7 +3957,7 @@
            classes still win because a directly-applied rule always beats an
            inherited one. */
         .eb-case{color:#14110a}
-        .dark .eb-case{color:#e7ecf3}
+        .dark .eb-case{color:rgb(var(--op-ink))}
         .eb-case > summary{list-style:none;cursor:pointer;padding:12px 20px;
           display:grid;grid-template-columns:14px 1fr auto auto;gap:2px 12px;align-items:center}
         .eb-case > summary::-webkit-details-marker{display:none}
@@ -3816,24 +3967,24 @@
         .eb-case[open] > summary .eb-chev{transform:rotate(90deg)}
         .eb-nm{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         .eb-acct{grid-column:2;font-size:12px;color:#6b6453}
-        .dark .eb-acct{color:#8893a7}
+        .dark .eb-acct{color:rgb(var(--op-inkDim))}
         .eb-amt{font-weight:600;font-variant-numeric:tabular-nums}
         .eb-due{font-size:12px;font-weight:600;text-align:right;white-space:nowrap}
         .eb-body{padding:2px 20px 16px 46px;background:rgba(20,16,8,.015)}
         .dark .eb-body{background:rgba(255,255,255,.015)}
         .eb-dl{display:grid;grid-template-columns:112px 1fr;gap:7px 14px;margin:0;font-size:13.5px}
         .eb-dt{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:#6b6453;padding-top:3px}
-        .dark .eb-dt{color:#8893a7}
+        .dark .eb-dt{color:rgb(var(--op-inkDim))}
         .eb-dd{margin:0;min-width:0;overflow-wrap:anywhere}
         .eb-link,.eb-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600}
         .eb-link{color:#2563eb;text-decoration:none}
         .dark .eb-link{color:#60a5fa}
         .eb-link:hover{text-decoration:underline}
         .eb-cmt{font-style:italic;color:#6b6453;border-left:2px solid rgba(20,16,8,.12);padding-left:10px;display:inline-block}
-        .dark .eb-cmt{color:#8893a7;border-left-color:rgba(255,255,255,.12)}
+        .dark .eb-cmt{color:rgb(var(--op-inkDim));border-left-color:rgba(255,255,255,.12)}
         .eb-opt{display:inline-block;font-size:11px;border:1px solid rgba(20,16,8,.1);border-radius:5px;
           padding:2px 7px;margin:0 5px 5px 0;color:#6b6453}
-        .dark .eb-opt{border-color:rgba(255,255,255,.12);color:#8893a7}
+        .dark .eb-opt{border-color:rgba(255,255,255,.12);color:rgb(var(--op-inkDim))}
         /* Phone: the summary stacks rather than squeezing four columns. */
         @media (max-width:520px){
           .eb-case > summary{grid-template-columns:14px 1fr auto}
@@ -4037,6 +4188,21 @@
           </div>
         </div>
 
+        <!-- Accessibility row — navigates to its own page, unlike the
+             disclosure rows below it. Chevron points right for that reason. -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
+          <button onclick="navigateToPage('accessibility')" class="w-full flex items-center gap-4 px-5 py-4 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+            <span class="flex-shrink-0 w-8 h-8 rounded-lg bg-[#3BB54A]/10 flex items-center justify-center">
+              <svg class="w-4 h-4 text-accent-green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20z" fill="currentColor" stroke="none"/></svg>
+            </span>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-semibold text-gray-900 dark:text-white">Accessibility</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400">Theme, contrast &amp; display</p>
+            </div>
+            <svg class="w-4 h-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+
         <!-- Change Log row -->
         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
           <button onclick="toggleChangelog()" class="w-full flex items-center gap-4 px-5 py-4 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
@@ -4053,6 +4219,20 @@
           <div id="changelog-content" class="hidden border-t border-gray-100 dark:border-gray-700 px-5 py-4 space-y-4">
 
             <div>
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">New</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">Pure Black Mode &amp; Accessibility Page</span>
+                <span class="ml-auto text-xs text-gray-400 whitespace-nowrap">Sep 2026</span>
+              </div>
+              <ul class="text-sm text-gray-600 dark:text-gray-300 space-y-1 list-disc list-inside">
+                <li>New <em>Accessibility</em> page in Settings — pick Light, Dark, or Pure black</li>
+                <li>Pure black uses true #000 instead of dark mode's navy, so OLED phones switch those pixels off entirely</li>
+                <li>Dim text is a step brighter on pure black, which makes it the most readable of the three</li>
+                <li>The sidebar switch still just toggles on and off — it returns to whichever dark you chose</li>
+              </ul>
+            </div>
+
+            <div class="border-t border-gray-100 dark:border-gray-700 pt-4">
               <div class="flex items-center gap-2 mb-2">
                 <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">New</span>
                 <span class="text-sm font-semibold text-gray-900 dark:text-white">Face ID / Biometric Login</span>
@@ -4404,6 +4584,66 @@
 
       </div>
     </div><!-- end #page-settings -->
+
+    <!-- ── Accessibility page (child of Settings) ────────────────────
+         Reached only from the Settings row, so the app bar carries the
+         store-detail back button. `showOnlyPage` finds this by its
+         `page-` id prefix, and swipe-back works off navStack with no
+         extra wiring — the one registration needed is `morePages` in
+         syncBottomNav, so the ••• tab stays lit while you stand here. -->
+    <div id="page-accessibility" class="hidden">
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-3xl mx-auto flex items-center gap-3">
+          <button onclick="navigateToPage('settings')" aria-label="Back to settings"
+            class="w-9 h-9 flex-shrink-0 rounded-[10px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink hover:border-accent-green/40 transition-colors grid place-content-center">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <h1 class="text-2xl font-brand text-accent-green uppercase tracking-wide">Accessibility</h1>
+        </div>
+      </div>
+
+      <div class="max-w-3xl mx-auto px-6 py-6 space-y-2">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
+          <div class="px-5 pt-4 pb-1">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-400 dark:text-gray-500">Theme</p>
+          </div>
+          <div id="a11y-theme" role="radiogroup" aria-label="Theme" class="px-3 pb-3 pt-2 space-y-2">
+
+            <div class="a11y-theme-opt" role="radio" tabindex="-1" aria-checked="false" data-theme="light">
+              <span class="a11y-sw" style="background:#f4f3ee"></span>
+              <span class="a11y-lab">
+                <b>Light</b>
+                <span>Cream ground, dark ink. Best in daylight.</span>
+              </span>
+              <span class="a11y-radio"></span>
+            </div>
+
+            <div class="a11y-theme-opt" role="radio" tabindex="-1" aria-checked="false" data-theme="dark">
+              <span class="a11y-sw" style="background:#0a0f1a"></span>
+              <span class="a11y-lab">
+                <b>Dark</b>
+                <span>Deep navy panels. The default dark mode.</span>
+              </span>
+              <span class="a11y-radio"></span>
+            </div>
+
+            <div class="a11y-theme-opt" role="radio" tabindex="-1" aria-checked="false" data-theme="oled">
+              <span class="a11y-sw" style="background:#000000"></span>
+              <span class="a11y-lab">
+                <b>Pure black</b>
+                <span>True black. Saves battery on OLED screens.</span>
+              </span>
+              <span class="a11y-radio"></span>
+            </div>
+
+          </div>
+          <p class="px-5 pb-4 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+            Pure black switches off the pixels behind every panel on an OLED phone, and lifts the
+            dimmest text one step so it stays readable on the darker ground.
+          </p>
+        </div>
+      </div>
+    </div><!-- end #page-accessibility -->
 
     <!-- ── Admin Settings page ──────────────────────────────────── -->
     <div id="page-admin-settings" class="hidden">
@@ -5526,7 +5766,7 @@
     dot.style.cssText = 'position:absolute;width:7px;height:7px;border-radius:50%;background:' + color + ';transform:translate(-50%,-50%);opacity:0;pointer-events:none;box-shadow:0 0 0 2px rgba(10,15,26,0.9);transition:opacity .15s';
     slot.appendChild(dot);
     const tip = document.createElement('div');
-    tip.style.cssText = 'position:absolute;bottom:' + (H + 6) + 'px;background:rgba(16,24,38,0.95);color:#e7ecf3;font:600 10px Geist,system-ui;padding:4px 7px;border-radius:6px;white-space:nowrap;pointer-events:none;opacity:0;transform:translateX(-50%);transition:opacity .15s;z-index:20';
+    tip.style.cssText = 'position:absolute;bottom:' + (H + 6) + 'px;background:rgb(var(--op-panel) / 0.95);color:rgb(var(--op-ink));font:600 10px Geist,system-ui;padding:4px 7px;border-radius:6px;white-space:nowrap;pointer-events:none;opacity:0;transform:translateX(-50%);transition:opacity .15s;z-index:20';
     slot.appendChild(tip);
     const n = series.length;
     const valid = series.filter(v => v != null && isFinite(v));
@@ -5570,9 +5810,9 @@
   // uiAlert → Promise<void>. Text is set via textContent (no HTML injection).
   function _uiDialog({ message, title, okText = 'OK', cancelText = null, danger = false, prompt = null, choices = null }) {
     return new Promise(resolve => {
-      const dark = document.documentElement.classList.contains('dark');
-      const bg = dark ? '#0f1722' : '#ffffff', fg = dark ? '#e6edf3' : '#13243a';
-      const dim = dark ? '#9fb0c0' : '#5a6b7d', border = dark ? '#1f2d3d' : '#e5e9ee';
+      const _tc = window.themeColors();
+      const bg = _tc.dialogBg, fg = _tc.dialogFg;
+      const dim = _tc.dialogDim, border = _tc.dialogBorder;
       const okBg = danger ? '#c0392b' : '#3BB54A', okFg = danger ? '#ffffff' : '#06210f';
       const overlay = document.createElement('div');
       overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true');
@@ -7069,7 +7309,7 @@
     if (pill) {
       const dot = pill.querySelector("span");
       const txt = el("hero-live-text");
-      const liveCol = "#22c55e", offCol = "#8893a7";
+      const liveCol = "#22c55e", offCol = "rgb(var(--op-inkDim))";
       const on = showLive;
       pill.style.border = `1px solid ${on ? "rgba(34,197,94,0.4)" : "rgba(136,147,167,0.35)"}`;
       pill.style.color = on ? liveCol : offCol;
@@ -7912,8 +8152,8 @@
           </div>
           <div class="flex items-center gap-2">
             <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-[0.06em]"
-                  style="border:1px solid ${v1Live ? 'rgba(34,197,94,0.4)' : 'rgba(136,147,167,0.35)'};color:${v1Live ? V1G : '#8893a7'}">
-              <span style="width:6px;height:6px;border-radius:9999px;background:${v1Live ? V1G : '#8893a7'}"></span>${v1Live ? 'LIVE' : 'OFFLINE'}
+                  style="border:1px solid ${v1Live ? 'rgba(34,197,94,0.4)' : 'rgb(var(--op-inkDim) / 0.35)'};color:${v1Live ? V1G : 'rgb(var(--op-inkDim))'}">
+              <span style="width:6px;height:6px;border-radius:9999px;background:${v1Live ? V1G : 'rgb(var(--op-inkDim))'}"></span>${v1Live ? 'LIVE' : 'OFFLINE'}
             </span>
           </div>
         </div>
@@ -8670,9 +8910,9 @@
   function renderDailySalesChart(storeName) {
     const data = allStoreData[storeName] || [];
     const weekRows = [...data.filter(r => r.week === selectedWeek)].sort((a, b) => a.date - b.date);
-    const isDark = document.documentElement.classList.contains('dark');
-    const textColor = isDark ? '#9ca3af' : '#6b7280';
-    const gridColor = isDark ? 'rgba(75,85,99,0.18)' : 'rgba(0,0,0,0.08)';
+    const _tc = window.themeColors();
+    const textColor = _tc.chartText;
+    const gridColor = _tc.chartGrid;
 
     const labels = weekRows.map(r => r.date.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'}));
     const budgetData = weekRows.map(r => r.bTotal || 0);
@@ -8908,9 +9148,9 @@
         calloutsEl.innerHTML = '';
       }
 
-      const isDark = document.documentElement.classList.contains('dark');
-      const textColor = isDark ? '#9ca3af' : '#6b7280';
-      const gridColor = isDark ? 'rgba(75,85,99,0.3)' : 'rgba(0,0,0,0.1)';
+      const _tc = window.themeColors();
+      const textColor = _tc.chartText;
+      const gridColor = _tc.chartGridStrong;
 
       loadingEl.classList.add('hidden');
       chartWrap.classList.remove('hidden');
@@ -9180,7 +9420,7 @@
 
     // LIVE pill — green when current week + live sales present.
     const showLive = sm.isCurrentWeek && sm.liveSales != null && sm.liveSales > 0;
-    const liveCol = showLive ? '#22c55e' : '#8893a7';
+    const liveCol = showLive ? '#22c55e' : 'rgb(var(--op-inkDim))';
     const liveBorder = showLive ? 'rgba(34,197,94,0.4)' : 'rgba(136,147,167,0.35)';
     const wkLbl = sm.isCurrentWeek ? 'This Week' : `Week ${selectedWeek}`;
 
@@ -9289,7 +9529,7 @@
     // Show page — hide every other top-level page (previously only some were
     // listed, so drilling into a store from All Stores left both pages
     // visible stacked in the DOM).
-    const _pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','marketing','flow-calendar','inventory','supply-request','submit-photos','content','settings','users','admin-settings'];
+    const _pages = ['dashboard','store-detail','all-stores-detail','weekly-summary','marketing','flow-calendar','inventory','supply-request','submit-photos','content','settings','accessibility','users','admin-settings'];
     for (const _p of _pages) {
       const _pe = el('page-' + _p);
       if (_pe) _pe.classList.toggle('hidden', _p !== 'store-detail');
@@ -11869,7 +12109,7 @@
     const barW = pct != null ? Math.min(100, Math.max(0, pct)) : 0;
     const avgStore = t.storesReporting > 0 ? t.totalSales / t.storesReporting : 0;
     const showLive = t.isCurrentWeek && t.anyLive;
-    const liveCol = showLive ? '#22c55e' : '#8893a7';
+    const liveCol = showLive ? '#22c55e' : 'rgb(var(--op-inkDim))';
     const liveBorder = showLive ? 'rgba(34,197,94,0.4)' : 'rgba(136,147,167,0.35)';
     const wkLbl = t.isCurrentWeek ? 'This Week' : `Week ${selectedWeek}`;
 
@@ -12023,9 +12263,9 @@
   function renderAllStoresDailyChart() {
     const todayStr = etTodayStr();
     const isCurrentWeek = selectedWeek === currentWeek;
-    const isDark = document.documentElement.classList.contains('dark');
-    const textColor = isDark ? '#9ca3af' : '#6b7280';
-    const gridColor = isDark ? 'rgba(75,85,99,0.18)' : 'rgba(0,0,0,0.08)';
+    const _tc = window.themeColors();
+    const textColor = _tc.chartText;
+    const gridColor = _tc.chartGrid;
 
     // ── Current week: per-date totals across all stores (live-boosted today) ──
     const dateMap = {};
@@ -17608,7 +17848,7 @@
     const cPace = cBud > 0 ? (cNet / cBud) * 100 : null;
     const cAhead = cPace != null && cPace >= 100;
     const cBarW = cPace != null ? Math.min(100, Math.max(0, cPace)) : 0;
-    const cBarColor = cPace == null ? 'var(--tw-clr,#8893a7)' : (cAhead ? '#22c55e' : (cPace >= 95 ? '#f59e0b' : '#ef4444'));
+    const cBarColor = cPace == null ? 'var(--tw-clr,rgb(var(--op-inkDim)))' : (cAhead ? '#22c55e' : (cPace >= 95 ? '#f59e0b' : '#ef4444'));
     const cVarColor = cVar == null ? 'text-opl-inkDim dark:text-op-inkDim' : (cVar >= 0 ? 'text-accent-green' : 'text-op-bad');
     const cVarSign = cVar != null && cVar >= 0 ? '+' : '−';
     const tile = (lab, val) => `<div class="rounded-[11px] bg-opl-panelHi dark:bg-op-panelHi border border-[rgba(20,16,8,0.08)] dark:border-op-border px-2 py-2.5 text-center">
@@ -17645,7 +17885,7 @@
       const pace = bud > 0 ? (net / bud) * 100 : null;
       const ahead = pace != null && pace >= 100;
       const barW = pace != null ? Math.min(100, Math.max(0, pace)) : 0;
-      const barColor = pace == null ? '#5a6478' : (ahead ? '#22c55e' : (pace >= 95 ? '#f59e0b' : '#ef4444'));
+      const barColor = pace == null ? 'rgb(var(--op-inkDimmer))' : (ahead ? '#22c55e' : (pace >= 95 ? '#f59e0b' : '#ef4444'));
       const vDollar = r.t.varianceDollar != null ? r.t.varianceDollar : (bud ? net - bud : null);
       const vColor = vDollar == null ? 'text-opl-inkDim dark:text-op-inkDim' : (vDollar >= 0 ? 'text-accent-green' : 'text-op-bad');
       const vSign = vDollar != null && vDollar >= 0 ? '+' : '−';
@@ -18336,7 +18576,7 @@
     const sVar = totals.varianceDollar != null ? totals.varianceDollar : (sBud ? sNet - sBud : null);
     const sPace = sBud > 0 ? (sNet / sBud) * 100 : null;
     const sBarW = sPace != null ? Math.min(100, Math.max(0, sPace)) : 0;
-    const sBarColor = sPace == null ? '#5a6478' : (sPace >= 100 ? '#22c55e' : (sPace >= 95 ? '#f59e0b' : '#ef4444'));
+    const sBarColor = sPace == null ? 'rgb(var(--op-inkDimmer))' : (sPace >= 100 ? '#22c55e' : (sPace >= 95 ? '#f59e0b' : '#ef4444'));
     const sVarColor = sVar == null ? 'text-opl-inkDim dark:text-op-inkDim' : (sVar >= 0 ? 'text-accent-green' : 'text-op-bad');
     const sVarSign = sVar != null && sVar >= 0 ? '+' : '−';
     const dateRange = dates.length ? `${dates[0]} – ${dates[dates.length - 1]}` : '';
@@ -19001,6 +19241,9 @@
     window.navigateToPage = function(page) {
       orig(page);
       if (page === 'settings') { refreshItemCostsStatus(); initPrintRangeSelect(); }
+      // Re-sync on entry: the sidebar switch can change the theme while this
+      // page is off-screen, and its radios must not come back stale.
+      if (page === 'accessibility') syncThemeControls();
       // The category-cost editor markup lives in #page-admin-settings, NOT
       // #page-settings — so loading it only on 'settings' meant opening the
       // panel that actually shows it left ccCosts EMPTY. Save then POSTs
@@ -24197,25 +24440,124 @@
   // ═══════════════════════════════════════════════════════════════
   //  DARK MODE
   // ═══════════════════════════════════════════════════════════════
+  // ── Theme ───────────────────────────────────────────────────────
+  // Three themes ('light' | 'dark' | 'oled'), two classes. See the pre-paint
+  // boot script in <head> for why, and the :root / html.oled blocks in the
+  // first <style> for the token values.
+  const THEME_BAR_COLOR = { light: '#3BB54A', dark: '#0a0f1a', oled: '#000000' };
+
+  function currentTheme() {
+    const root = document.documentElement;
+    if (!root.classList.contains('dark')) return 'light';
+    return root.classList.contains('oled') ? 'oled' : 'dark';
+  }
+
+  // The dark flavour the two-way sidebar switch returns to. Read from storage
+  // rather than the DOM so it survives a trip through light mode.
+  function preferredDark() {
+    return localStorage.getItem('darkFlavor') === 'oled' ? 'oled' : 'dark';
+  }
+
+  // Colours that CSS variables cannot reach: canvas paints (Chart.js ticks and
+  // grids, the Marketing value-label plugin) read a string, not a computed
+  // style. Everything else in the app should go through the op-* tokens
+  // instead of this table.
+  //
+  // Chart grid on pure black is raised for the same reason the panel border
+  // is: rgba(75,85,99,.18) over #000 measures 1.06:1 and simply is not there.
+  // Exported on window because the callers sit on the far side of an IIFE.
+  const THEME_COLORS = {
+    light: {
+      chartText: '#6b7280', chartGrid: 'rgba(0,0,0,0.08)', chartGridStrong: 'rgba(0,0,0,0.1)',
+      dialogBg: '#ffffff', dialogFg: '#13243a', dialogDim: '#5a6b7d', dialogBorder: '#e5e9ee',
+    },
+    dark: {
+      chartText: '#9ca3af', chartGrid: 'rgba(75,85,99,0.18)', chartGridStrong: 'rgba(75,85,99,0.3)',
+      dialogBg: '#0f1722', dialogFg: '#e6edf3', dialogDim: '#9fb0c0', dialogBorder: '#1f2d3d',
+    },
+    oled: {
+      chartText: '#a8a8a8', chartGrid: 'rgba(255,255,255,0.14)', chartGridStrong: 'rgba(255,255,255,0.22)',
+      dialogBg: '#0a0a0a', dialogFg: '#f2f2f2', dialogDim: '#a8a8a8', dialogBorder: 'rgba(255,255,255,0.14)',
+    },
+  };
+  function themeColors() { return THEME_COLORS[currentTheme()]; }
+  window.themeColors = themeColors;
+
+  function applyTheme(theme) {
+    const root = document.documentElement;
+    root.classList.toggle('dark', theme !== 'light');
+    root.classList.toggle('oled', theme === 'oled');
+
+    localStorage.setItem('darkMode', theme !== 'light');
+    // Only a dark choice updates the remembered flavour — switching to light
+    // must not erase which dark you prefer.
+    if (theme !== 'light') localStorage.setItem('darkFlavor', theme);
+
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = THEME_BAR_COLOR[theme];
+
+    syncThemeControls();
+    // Charts and any other JS-painted colour are resolved at render time.
+    if (selectedWeek) renderDashboard();
+  }
+  window.applyTheme = applyTheme;
+
+  // Every control that displays the theme, re-read from the DOM. Called after
+  // any change and on page entry, so the sidebar switch and the Accessibility
+  // radios can never disagree about what is selected.
+  function syncThemeControls() {
+    const theme = currentTheme();
+    const on = theme !== 'light';
+
+    const toggle = el("dark-toggle");
+    if (toggle) {
+      toggle.classList.toggle('active', on);
+      toggle.setAttribute('aria-checked', String(on));
+    }
+    const stateLabel = el("dark-state");
+    if (stateLabel) stateLabel.textContent = on ? 'on' : 'off';
+
+    document.querySelectorAll('#a11y-theme .a11y-theme-opt').forEach(opt => {
+      const selected = opt.dataset.theme === theme;
+      opt.setAttribute('aria-checked', String(selected));
+      opt.tabIndex = selected ? 0 : -1;
+    });
+  }
+  window.syncThemeControls = syncThemeControls;
+
   function initDarkMode() {
     const toggle = el("dark-toggle");
-    const stateLabel = el("dark-state");
-    const isDark = document.documentElement.classList.contains('dark');
-    if (isDark) toggle.classList.add('active');
-    toggle.setAttribute('aria-checked', isDark);
-    if (stateLabel) stateLabel.textContent = isDark ? 'on' : 'off';
+    syncThemeControls();
 
-    function setDarkMode(on) {
-      document.documentElement.classList.toggle('dark', on);
-      toggle.classList.toggle('active', on);
-      toggle.setAttribute('aria-checked', on);
-      if (stateLabel) stateLabel.textContent = on ? 'on' : 'off';
-      localStorage.setItem('darkMode', on);
-      if (selectedWeek) renderDashboard();
-    }
-
-    toggle.onclick = () => setDarkMode(!document.documentElement.classList.contains('dark'));
+    // Two-way switch: off goes to light, on returns to the dark you picked.
+    toggle.onclick = () => applyTheme(currentTheme() === 'light' ? preferredDark() : 'light');
     toggle.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle.click(); } };
+  }
+
+  // The three-way picker on the Accessibility page. Real radiogroup
+  // semantics: one tab stop for the group, arrow keys move between options
+  // and select as they go, which is what a screen reader user expects from
+  // role="radio" — and this is the page where that has to be right.
+  function initA11yThemePicker() {
+    const group = el('a11y-theme');
+    if (!group) return;
+    const opts = Array.from(group.querySelectorAll('.a11y-theme-opt'));
+
+    opts.forEach((opt, i) => {
+      opt.onclick = () => applyTheme(opt.dataset.theme);
+      opt.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); applyTheme(opt.dataset.theme); return; }
+        const step = (e.key === 'ArrowDown' || e.key === 'ArrowRight') ? 1
+                   : (e.key === 'ArrowUp'   || e.key === 'ArrowLeft')  ? -1 : 0;
+        if (!step) return;
+        e.preventDefault();
+        const next = opts[(i + step + opts.length) % opts.length];
+        applyTheme(next.dataset.theme);
+        next.focus();
+      };
+    });
+
+    syncThemeControls();
   }
 
   // ── Inventory page ──────────────────────────────────────────────
@@ -27252,7 +27594,7 @@
   const GRANT_ROLE_LABEL = { admin: 'Admin', executive: 'Executive (read-only)',
                              manager: 'Manager', staff: 'Staff' };
   // Colour per role so a row's standing reads before the label does.
-  const ROLE_DOT = { superuser: '#f59e0b', admin: '#22c55e', district_manager: '#8b5cf6', manager: '#8893a7' };
+  const ROLE_DOT = { superuser: '#f59e0b', admin: '#22c55e', district_manager: '#8b5cf6', manager: 'rgb(var(--op-inkDim))' };
   // Single source for both modals' store pickers. Was six hardcoded <label>s per
   // modal (twelve total, codes only) plus a stale ALL_STORES that still listed
   // retired BL12 and omitted BL16.
@@ -27385,7 +27727,7 @@
         ? pill('#ef4444', 'SUSPENDED')
         : (u.last_login ? pill('#22c55e', 'ACTIVE') : pill('#f59e0b', 'INVITED'));
 
-      const dot = ROLE_DOT[u.role] || '#8893a7';
+      const dot = ROLE_DOT[u.role] || 'rgb(var(--op-inkDim))';
       const isMe = currentUser && u.id === currentUser.id;
       const roleCell = `<span class="inline-flex items-center gap-2 whitespace-nowrap">
         <span style="width:7px;height:7px;border-radius:9999px;background:${dot};flex:none"></span>
@@ -27950,6 +28292,7 @@
     initSidebar();
     initSidebarTips();
     initDarkMode();
+    initA11yThemePicker();
     // Desktop: when the sidebar is collapsed, hovering a nav icon shows a
     // floating tooltip with the page name. Positioned `fixed` so it isn't
     // clipped by the sidebar's overflow:hidden.
@@ -28597,7 +28940,7 @@
       // active tab
       // 'ebay-cases' has no bar tab of its own, so without it here every tab
       // sits dim while you are standing on the page.
-      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1, 'bin-dump': 1, 'mos': 1 };
+      var morePages = { 'marketing': 1, 'accessibility': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1, 'bin-dump': 1, 'mos': 1 };
       // ...unless it has its own tab, in which case that tab is what should light
       // up while you are standing on the page.
       if (binDumpInBar) delete morePages['bin-dump'];

@@ -1,5 +1,5 @@
 {
   "_why": "Pins the app shell to the service-worker cache key. If index.html changes and CACHE_NAME does not, installed apps serve the old build for a launch. Update BOTH when you change index.html.",
-  "cache_name": "dashboard-cache-v179",
-  "index_sha256": "c2b299f6b0a8e4a8b5923b75a650e4166008e2c5c3fa503af7382720be69748d"
+  "cache_name": "dashboard-cache-v180",
+  "index_sha256": "6e48f2bb24e54f6cb3ffd2dd2ae4760dde71a98b82fec83273b3942b572603ee"
 }
