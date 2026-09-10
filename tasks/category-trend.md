@@ -163,3 +163,49 @@ and "-4.4%" became 661444.4. Diagnosed before touching the code; the geometry wa
 correct all along (66,144 -> 95.6% of a 69,182 max). **A failing assertion is a claim
 about the test as much as about the code** — check which one is wrong before editing
 either.
+
+
+## Iteration 4 — "more like this graph" (Brian, 2026-09-10)
+
+Brian sent a screenshot of the dashboard's **Sales Trend** card — TW/LW/Budget legend
+pills, smooth green line with a soft fill, amber comparison line, dollar ticks,
+Sun..Sat axis — and asked for the Vs graph to look like that. It now is that card.
+
+- Colours are `CHART_COLORS` verbatim (index.html:8826): `#22c55e` current,
+  `#f59e0b` previous. Line weights, point radii and the `rgba(34,197,94,0.12)` fill
+  match the dashboard's dataset config; the curve uses **Chart.js's own splineCurve
+  maths at tension 0.3**, so it bends the same way rather than merely looking smooth.
+- Legend pills copy `legPill`/`solidSwatch` (index.html:8908) in shape, each carrying
+  its running total, with the headline movement on the right.
+- **The x-axis runs INSIDE the period** — that is what makes it a vs rather than a
+  trend. Sun..Sat for a week, days 1..N for a month, the 13 weeks for a quarter.
+- **Weeks now run Sunday to Saturday**, matching the dashboard card's own axis. They
+  ran Monday to Sunday before, which was wrong against the app.
+- The per-category rows stay underneath, now in the same two colours as the lines
+  above them, and clicking one redraws the card for that category alone.
+
+Verified: **89 checks**, all passing.
+
+**Two things this round worth remembering:**
+
+1. **The bars and the lines wore different colours.** The chart used the house
+   green/amber while the bars underneath kept the blue/grey from the previous
+   iteration — the same comparison told twice in two languages on one screen. Fixed,
+   and there is now a check that reads the computed background of both and requires
+   them to match the line strokes.
+2. **The synthetic data hid the chart's whole point.** Twelve categories across six
+   stores averaged out, so the two week lines sat on top of each other and the card
+   looked like it had nothing to compare. Added a per-week factor and a chain-wide
+   per-day shock — which is also how a real chain behaves, since weather or a promo
+   moves every store and category on the same day. **A preview whose data cannot
+   exercise the feature does not preview the feature.**
+
+**Also caught:** a screenshot I read back was stale — the console said $330,092 while
+the image showed $305,865. Re-captured to a fresh path rather than trusting it.
+Worth knowing that a re-read of the same path can serve the previous render.
+
+**What the card deliberately does NOT draw**, and why it is in the questions rather
+than the code: the dashboard card's **budget** line (budget has no category
+dimension — it is per store per day) and its **last-year** line (would need year-old
+`items:` KV, and Clover only reaches back ~90 days). Two honest series beat four with
+two invented.

@@ -223,18 +223,38 @@ html.light .sec-s{color:var(--inkDim);}
 .dl-v .pct{color:var(--inkDim);font-weight:500;margin-left:5px;}
 .dl-none{font-size:12px;color:var(--inkDim);padding:8px 0 12px;}
 
-/* ── Vs — two bars per category, current over previous ──────────────── */
-.vs-wrap{padding:2px 18px 8px;}
-.vs-row{display:grid;grid-template-columns:minmax(120px,1.15fr) minmax(90px,3fr) minmax(132px,auto);
-  align-items:center;gap:12px;padding:5px 0;border-bottom:1px solid var(--hairline);}
+/* ── Vs — the app's chart card, then the category breakdown ─────────── */
+/* Legend pills copy index.html:8908 legPill/solidSwatch verbatim in shape. */
+.vs-legend{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 18px 4px;}
+.vs-pill{display:inline-flex;align-items:center;gap:8px;padding:4px 10px;border-radius:999px;
+  border:1px solid var(--border);background:var(--panelHi);font-size:11.5px;font-weight:700;white-space:nowrap;}
+.vs-sw{display:inline-block;width:18px;height:3px;border-radius:2px;flex:none;}
+.vs-pl{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--inkDim);}
+.vs-pv{font-variant-numeric:tabular-nums;color:var(--ink);}
+.vs-headline{font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;margin-left:auto;white-space:nowrap;}
+.vs-chart{padding:2px 18px 0;}
+.vs-chart svg{display:block;}
+.vs-cap{padding:4px 18px 10px;font-size:11.5px;font-weight:600;color:var(--ink);}
+.vs-cap-h{font-weight:400;color:var(--inkDim);}
+
+.vs-wrap{padding:2px 18px 8px;border-top:1px solid var(--hairline);margin-top:4px;}
+.vs-row{display:grid;width:100%;grid-template-columns:minmax(120px,1.15fr) minmax(90px,3fr) minmax(132px,auto);
+  align-items:center;gap:12px;padding:5px 0;border-bottom:1px solid var(--hairline);
+  appearance:none;background:transparent;border-left:0;border-right:0;border-top:0;
+  font:inherit;text-align:left;cursor:pointer;color:var(--ink);}
 .vs-row:last-child{border-bottom:0;}
 .vs-row:hover{background:var(--panelHi);}
+.vs-row.on{background:var(--goodWash);}
+.vs-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
 .vs-nm{font-size:12px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .vs-bars{display:flex;flex-direction:column;gap:2px;/* the 2px surface gap, not a stroke */}
 .vs-track{height:9px;border-radius:3px;background:var(--hairline);overflow:hidden;}
 .vs-bar{height:100%;border-radius:3px;transition:width .3s cubic-bezier(.4,0,.2,1);}
-.vs-bar.cur{background:var(--s1);}
-.vs-bar.prv{background:var(--sOther);}
+/* The SAME two colours the chart above uses. Two periods wearing one pair of
+   colours in the chart and a different pair in the bars underneath is the same
+   comparison told twice in two languages. */
+.vs-bar.cur{background:#22c55e;}   /* CHART_COLORS.tw */
+.vs-bar.prv{background:#f59e0b;}   /* CHART_COLORS.lw */
 .vs-v{text-align:right;font-variant-numeric:tabular-nums;line-height:1.35;}
 .vs-cur{font-size:12.5px;font-weight:700;color:var(--ink);white-space:nowrap;}
 .vs-d{font-weight:600;margin-left:7px;}
@@ -339,10 +359,13 @@ table.mc tr.mc-l3 td{color:var(--inkDim);}
     quarter</b> — and read every category across those buckets, with a
     period-over-period change strip underneath. Every control below is live.
     <br><br>
-    <b>Vs is the default and the main event:</b> every category gets two bars — this
-    period and the one before it — on one shared scale, with the comparator spelled
-    out on every row. Because there are only ever <i>two</i> colours no matter how many
-    categories, it holds <b>all twelve L2s, or all fifty-six L3s</b>, in one chart.
+    <b>Vs is the default, and it is the chart card this app already draws.</b> Same
+    shape, same colours, same legend pills as the Sales Trend card on the dashboard:
+    green for this period, amber for the one before, a soft fill under the current
+    line. The x-axis runs <i>inside</i> the period — Sun to Sat for a week, the days of
+    the month for a month — so it shows <b>where</b> the difference came from, not just
+    that there was one. Underneath, the same comparison for <b>every</b> category;
+    click any row to redraw the card for it alone.
     <br><br>
     <b>Grid</b> gives each category its own panel and its shape across the whole window.
     <b>Table</b> gives each one a row of every bucket. <b>Trend</b> overlays up to six as
@@ -518,10 +541,11 @@ const ALL   = '__all__';
 const S = {
   level:'l2', parent:ALL, bucket:'week', measure:'net',
   view:'vs', store:'__all__', hidden:new Set([OTHER]), maxSeries:6,
-  picked:new Set(),        // categories explicitly promoted onto the Chart
+  picked:new Set(),        // categories explicitly promoted onto Trend
+  focus:null,              // the single category the Vs chart plots (null = all)
   gridScale:'own',         // 'own' | 'shared'
 };
-function resetHidden(){ S.hidden = new Set([OTHER]); S.picked = new Set(); }
+function resetHidden(){ S.hidden = new Set([OTHER]); S.picked = new Set(); S.focus = null; }
 
 /* ── Deterministic synthetic data ────────────────────────────────────── */
 // One store-day rate per (store, category). Every bucket is the SUM of its
@@ -556,9 +580,14 @@ function dayNet(store, l2, d){
   if (l2 === 'Seasonal')       seas *= 1 + 0.85*Math.sin((doy/365)*2*Math.PI - 0.35);
   if (l2 === 'Consumable Food')seas *= 1.04;
   const drift = 1 + 0.055*Math.sin((dayIdx(d)/610)*2*Math.PI + hash32(l2)%7);
-  const rnd   = 0.80 + 0.40*noise(key);
+  // A per-WEEK factor. Without it two consecutive weeks differ only by daily
+  // noise that averages out, the two lines sit on top of each other, and the
+  // preview shows a comparison chart that appears to have nothing to compare.
+  const wk    = 0.86 + 0.28*noise(store+'|'+l2+'|w'+Math.floor(dayIdx(d)/7));
+  const shock = 0.80 + 0.40*noise('chainday|'+dayIdx(d));
+  const rnd   = 0.86 + 0.28*noise(key);
   v = CHAIN_DAILY_NET * (L2_WEIGHT[l2]||.02) * (STORE_SCALE[store]||.5)
-      * dowF * Math.max(.15, seas) * drift * rnd / 3.26;       // /Σ store scale
+      * dowF * Math.max(.15, seas) * drift * wk * shock * rnd / 3.26;  // /Σ store scale
   _dayCache.set(key, v);
   return v;
 }
@@ -615,10 +644,11 @@ function periodBack(kind, i){
       long:ymd(d) };
   }
   if (kind === 'week'){
-    // Sunday-ended, the anchor ymdSundayOf / shelf_counts.week_ending use. The
-    // real feed keys weeks by daily_sales.week, so the LABELS come from there.
-    const endSun = new Date(TODAY.getTime() + ((7 - TODAY.getUTCDay()) % 7)*DAY_MS);
-    const e = new Date(endSun.getTime() - i*7*DAY_MS);
+    // Sunday -> Saturday, matching the Sales Trend card on the dashboard (its
+    // axis reads Sun..Sat) and the marketing side's grouping helper. The real
+    // feed keys weeks by daily_sales.week, so the LABELS come from there.
+    const endSat = new Date(TODAY.getTime() + ((6 - TODAY.getUTCDay() + 7) % 7)*DAY_MS);
+    const e = new Date(endSat.getTime() - i*7*DAY_MS);
     const s = new Date(e.getTime() - 6*DAY_MS);
     return { s, e, label:'Wk '+isoWeek(e), long:'Week '+isoWeek(e)+' · '+ymd(s)+' → '+ymd(e) };
   }
@@ -1042,45 +1072,241 @@ function drawDelta(buckets, allRows){
   });
 }
 
-/* ── Vs — the comparison IS the chart ─────────────────────────────────
-   Two bars per category: this period and the one before it. Because there
-   are only ever TWO series no matter how many categories, this is the one
-   chart form that can hold all 12 L2s — or all 56 L3s — at once without
-   running out of distinguishable colour.
+/* ── Vs — the chart card the app already draws ────────────────────────
+   Deliberately the SAME shape as the Sales Trend card on the dashboard
+   (index.html:8882 `_buildChartCardHTML`, colours from CHART_COLORS at 8826):
+   legend pills carrying running totals, a smooth green line with a soft fill
+   for the current period, a solid amber line for the one before it, dollar
+   ticks and a hairline grid. DESIGN.md says extend what is there rather than
+   deriving a new look, and this is the look.
 
-   Colour is emphasis, not identity: the current period takes the blue, the
-   previous takes the de-emphasis grey. Green and red stay reserved for the
-   direction of the change, which is what they mean everywhere else in this
-   app (DESIGN.md §2.1 pacing semantics). */
+   The x-axis is the INSIDE of the period, which is what makes it a "vs" and
+   not a trend: Sun..Sat for a week, the days of the month for a month, the
+   thirteen weeks for a quarter. You see WHERE in the period the difference
+   came from, not just that there was one. */
+const CHART_COLORS = { tw:'#22c55e', lw:'#f59e0b', bg:'#cbd5e1' };  // index.html:8826
+
+// Each point is a range on the current period and the matching range on the
+// previous one. Uniform across buckets so one drawing routine serves them all.
+function vsPoints(kind){
+  const dayPt = (c, p, label) => ({ label, cur:[c,c], prv:[p,p] });
+  if (kind === 'day'){
+    // A day has no sub-period in this data — item snapshots are per DAY, never
+    // per hour — so Day compares the last fortnight against the one before it,
+    // aligned by weekday. Anything finer would need data that does not exist.
+    const out = [];
+    for (let i = 13; i >= 0; i--){
+      const c = new Date(TODAY.getTime() - i*DAY_MS);
+      out.push(dayPt(c, new Date(c.getTime() - 14*DAY_MS),
+        c.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'})));
+    }
+    return { points: out, curLabel:'Last 14 days', prvLabel:'Previous 14 days' };
+  }
+  if (kind === 'week'){
+    const cur = periodBack('week', 0).e <= TODAY ? periodBack('week', 0) : periodBack('week', 1);
+    const back = periodBack('week', 0).e <= TODAY ? 1 : 2;
+    const prv = periodBack('week', back);
+    const out = [];
+    for (let i = 0; i < 7; i++){
+      const c = new Date(cur.s.getTime() + i*DAY_MS);
+      out.push(dayPt(c, new Date(prv.s.getTime() + i*DAY_MS),
+        c.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'})));
+    }
+    return { points: out, curLabel:'Wk '+isoWeek(cur.e), prvLabel:'Wk '+isoWeek(prv.e) };
+  }
+  if (kind === 'month'){
+    let k = 0; while (periodBack('month', k).e > TODAY) k++;
+    const cur = periodBack('month', k), prv = periodBack('month', k+1);
+    const days = new Date(Date.UTC(cur.s.getUTCFullYear(), cur.s.getUTCMonth()+1, 0)).getUTCDate();
+    const pDays = new Date(Date.UTC(prv.s.getUTCFullYear(), prv.s.getUTCMonth()+1, 0)).getUTCDate();
+    const out = [];
+    for (let i = 0; i < days; i++){
+      const c = new Date(cur.s.getTime() + i*DAY_MS);
+      // A 31st with no 31st to compare against is a GAP, not a zero.
+      const p = i < pDays ? new Date(prv.s.getTime() + i*DAY_MS) : null;
+      out.push({ label: String(i+1), cur:[c,c], prv: p ? [p,p] : null });
+    }
+    return { points: out, curLabel: cur.long, prvLabel: prv.long };
+  }
+  let k = 0; while (periodBack('quarter', k).e > TODAY) k++;
+  const cur = periodBack('quarter', k), prv = periodBack('quarter', k+1);
+  const out = [];
+  for (let i = 0; i < 13; i++){
+    const cs = new Date(cur.s.getTime() + i*7*DAY_MS);
+    const ps = new Date(prv.s.getTime() + i*7*DAY_MS);
+    if (cs > cur.e) break;
+    out.push({ label:'Wk '+(i+1),
+      cur:[cs, new Date(Math.min(cs.getTime()+6*DAY_MS, cur.e.getTime()))],
+      prv:[ps, new Date(Math.min(ps.getTime()+6*DAY_MS, prv.e.getTime()))] });
+  }
+  return { points: out, curLabel: cur.label.replace("'", " '"), prvLabel: prv.label.replace("'", " '") };
+}
+
+// Value of the focused category (or every category) over an inclusive range.
+function valueOver(range, focus){
+  if (!range) return null;
+  const stores = S.store === '__all__' ? STORE_KEYS : [S.store];
+  let acc = 0;
+  for (let t = range[0].getTime(); t <= range[1].getTime(); t += DAY_MS){
+    const d = new Date(t);
+    for (const st of stores){
+      if (!focus){
+        for (const l2 of L2S){
+          const net = dayNet(st, l2, d);
+          acc += S.measure === 'net' ? net : unitsFor(l2, net);
+        }
+      } else if (focus.l3){
+        const net = dayNet(st, focus.l2, d) * (l3Shares(st, focus.l2, d)[focus.l3] || 0);
+        acc += S.measure === 'net' ? net : unitsFor(focus.l2, net);
+      } else {
+        const net = dayNet(st, focus.key, d);
+        acc += S.measure === 'net' ? net : unitsFor(focus.key, net);
+      }
+    }
+  }
+  return acc;
+}
+
+// Chart.js's own control-point maths (splineCurve), so the curve matches the
+// dashboard's tension: 0.3 rather than merely looking smooth.
+function splinePath(pts, t){
+  if (pts.length < 2) return '';
+  let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+  const cp = [];
+  for (let i = 0; i < pts.length; i++){
+    const p0 = pts[i-1] || pts[i], p1 = pts[i], p2 = pts[i+1] || pts[i];
+    const d01 = Math.hypot(p1[0]-p0[0], p1[1]-p0[1]) || 1;
+    const d12 = Math.hypot(p2[0]-p1[0], p2[1]-p1[1]) || 1;
+    const fa = t * d01/(d01+d12), fb = t * d12/(d01+d12);
+    cp.push([[p1[0]-fa*(p2[0]-p0[0]), p1[1]-fa*(p2[1]-p0[1])],
+             [p1[0]+fb*(p2[0]-p0[0]), p1[1]+fb*(p2[1]-p0[1])]]);
+  }
+  for (let i = 1; i < pts.length; i++)
+    d += ` C ${cp[i-1][1][0].toFixed(1)} ${cp[i-1][1][1].toFixed(1)},`
+       + ` ${cp[i][0][0].toFixed(1)} ${cp[i][0][1].toFixed(1)},`
+       + ` ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)}`;
+  return d;
+}
+
+function vsFocusRow(rows){
+  if (S.focus === null) return null;
+  return rows.find(r => r.key === S.focus) || null;
+}
+
 function drawVs(buckets, rows){
   const host = document.getElementById('chart');
-  const n = buckets.length;
   host.textContent = '';
-  if (n < 2){
-    host.innerHTML = '<div class="dl-none" style="padding:14px 18px">'
-      + 'Only one closed period in this window — nothing to compare it against.</div>';
-    return;
-  }
-  const cur = buckets[n-1], prv = buckets[n-2];
+  const { points, curLabel, prvLabel } = vsPoints(S.bucket);
+  const focus = vsFocusRow(rows);
 
-  // One scale across every bar on screen, or the comparison is meaningless.
-  const max = Math.max(...rows.map(r => Math.max(r.values[n-1], r.values[n-2])), 1);
+  const cur = points.map(p => valueOver(p.cur, focus));
+  const prv = points.map(p => valueOver(p.prv, focus));
+  const sum = a => a.reduce((x,v)=> x + (v||0), 0);
+  const curTotal = sum(cur), prvTotal = sum(prv);
+
+  // ── Legend pills, the app's own (index.html:8908) ───────────────────
+  const lg = document.createElement('div'); lg.className = 'vs-legend';
+  const pill = (colour, lbl, val) => {
+    const w = document.createElement('span'); w.className = 'vs-pill';
+    const sw = document.createElement('span'); sw.className='vs-sw'; sw.style.background = colour;
+    const l = document.createElement('span'); l.className='vs-pl'; l.textContent = lbl;
+    const v = document.createElement('span'); v.className='vs-pv'; v.textContent = fmtVal(val);
+    w.append(sw, l, v); lg.appendChild(w);
+  };
+  pill(CHART_COLORS.tw, curLabel, curTotal);
+  pill(CHART_COLORS.lw, prvLabel, prvTotal);
+  const dl = document.createElement('span'); dl.className = 'vs-headline';
+  dl.style.color = curTotal >= prvTotal ? getCSS('--good') : getCSS('--bad');
+  dl.textContent = (curTotal >= prvTotal ? '▲ ' : '▼ ') + pctText(curTotal, prvTotal)
+    + '  ' + (curTotal >= prvTotal ? '+' : '−') + fmtVal(Math.abs(curTotal - prvTotal));
+  lg.appendChild(dl);
+  host.appendChild(lg);
+
+  // ── The chart ───────────────────────────────────────────────────────
+  const holder = document.createElement('div'); holder.className = 'vs-chart';
+  holder.innerHTML = vsChartSVG(points, cur, prv, host.clientWidth || 760);
+  host.appendChild(holder);
+
+  const cap = document.createElement('div'); cap.className = 'vs-cap';
+  cap.textContent = focus
+    ? (focus.l3 ? focus.l2 + ' → ' + focus.l3 : focus.key)
+    : 'All ' + S.level.toUpperCase() + ' categories';
+  const hint = document.createElement('span'); hint.className='vs-cap-h';
+  hint.textContent = focus ? ' · click its row again to go back to all' : ' · click a row to chart one category';
+  cap.appendChild(hint);
+  host.appendChild(cap);
+
+  // ── Per-category rows underneath — every category, still ────────────
+  host.appendChild(vsRows(buckets, rows, focus));
+}
+
+function vsChartSVG(points, cur, prv, hostW){
+  const W = Math.max(300, hostW - 4), narrow = W < 560;
+  const M = { t:14, r:14, b:30, l: narrow ? 46 : 62 };
+  const H = narrow ? 220 : 300;
+  const pw = W - M.l - M.r, ph = H - M.t - M.b;
+  const max = Math.max(...cur.filter(v=>v!=null), ...prv.filter(v=>v!=null), 1);
+  const ticks = niceTicks(max, 5), top = ticks[ticks.length-1];
+  const x = i => M.l + (points.length === 1 ? pw/2 : (i/(points.length-1))*pw);
+  const y = v => M.t + ph - (v/top)*ph;
+  const grid = getCSS('--hairline'), dim = getCSS('--inkDim'), surf = getCSS('--panel');
+
+  let g = '';
+  ticks.forEach(t => {
+    g += `<line x1="${M.l}" y1="${y(t).toFixed(1)}" x2="${M.l+pw}" y2="${y(t).toFixed(1)}" stroke="${grid}" stroke-width="1"/>`;
+    g += `<text x="${M.l-9}" y="${(y(t)+3.5).toFixed(1)}" text-anchor="end" font-size="10.5" fill="${dim}" font-family="Geist,sans-serif" style="font-variant-numeric:tabular-nums">${esc(fmtAxis(t))}</text>`;
+  });
+  const step = Math.max(1, Math.ceil(points.length / (narrow ? 4 : 7)));
+  points.forEach((p,i) => {
+    if (i % step !== 0 && i !== points.length-1) return;
+    const anchor = i === 0 ? 'start' : (i === points.length-1 ? 'end' : 'middle');
+    g += `<text x="${x(i).toFixed(1)}" y="${H-9}" text-anchor="${anchor}" font-size="10.5" fill="${dim}" font-family="Geist,sans-serif">${esc(p.label)}</text>`;
+  });
+
+  // A null is a GAP — the line breaks rather than diving to zero.
+  const runs = arr => {
+    const out = []; let run = [];
+    arr.forEach((v,i) => { if (v == null){ if (run.length) out.push(run); run = []; }
+                           else run.push([x(i), y(v)]); });
+    if (run.length) out.push(run); return out;
+  };
+  // Previous period first, so the current one sits on top (order 2 then 1).
+  runs(prv).forEach(r => {
+    g += `<path d="${splinePath(r, 0.3)}" fill="none" stroke="${CHART_COLORS.lw}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  });
+  runs(cur).forEach(r => {
+    const area = splinePath(r, 0.3) + ` L ${r[r.length-1][0].toFixed(1)} ${(M.t+ph).toFixed(1)}`
+               + ` L ${r[0][0].toFixed(1)} ${(M.t+ph).toFixed(1)} Z`;
+    g += `<path d="${area}" fill="rgba(34,197,94,0.12)" stroke="none"/>`;
+    g += `<path d="${splinePath(r, 0.3)}" fill="none" stroke="${CHART_COLORS.tw}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
+  });
+  // Markers carry a 2px surface ring so they stay legible where lines cross.
+  const dots = (arr, colour, r) => arr.forEach((v,i) => { if (v == null) return;
+    g += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${r}" fill="${colour}" stroke="${surf}" stroke-width="2"/>`; });
+  dots(prv, CHART_COLORS.lw, 3);
+  dots(cur, CHART_COLORS.tw, 3.5);
+
+  g += `<line id="xh" x1="0" y1="${M.t}" x2="0" y2="${M.t+ph}" stroke="${dim}" stroke-width="1" opacity="0"/>`;
+  g += `<rect id="hit" x="${M.l}" y="${M.t}" width="${pw}" height="${ph}" fill="transparent" style="cursor:crosshair"/>`;
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
+    aria-label="${esc(points.length + ' points, current period against the previous one. Every value is in the Table view.')}">${g}</svg>`;
+}
+
+// The category breakdown stays: every category, two bars, click to chart it.
+function vsRows(buckets, rows, focus){
+  const n = buckets.length;
+  const wrapEl = document.createElement('div'); wrapEl.className = 'vs-wrap';
+  if (n < 2) return wrapEl;
+  const cVal = r => r.values[n-1], pVal = r => r.values[n-2];
+  const max = Math.max(...rows.map(r => Math.max(cVal(r), pVal(r))), 1);
 
   const groups = [];
-  if (S.level === 'l2'){
-    groups.push({ l2:null, rows: rows.slice() });
-  } else {
-    activeParents().forEach(l2 => {
-      const g = rows.filter(r => r.l2 === l2);
-      if (g.length) groups.push({ l2, rows:g });
-    });
-  }
-  const cVal = r => r.values[n-1], pVal = r => r.values[n-2];
+  if (S.level === 'l2') groups.push({ l2:null, rows: rows.slice() });
+  else activeParents().forEach(l2 => {
+    const g = rows.filter(r => r.l2 === l2); if (g.length) groups.push({ l2, rows:g });
+  });
   groups.forEach(g => g.rows.sort((a,b) => cVal(b) - cVal(a)));
   groups.sort((a,b) => b.rows.reduce((x,r)=>x+cVal(r),0) - a.rows.reduce((x,r)=>x+cVal(r),0));
-
-  const wrapEl = document.createElement('div');
-  wrapEl.className = 'vs-wrap';
 
   groups.forEach(g => {
     if (g.l2){
@@ -1089,24 +1315,22 @@ function drawVs(buckets, rows){
       const gc = g.rows.reduce((x,r)=>x+cVal(r),0), gp = g.rows.reduce((x,r)=>x+pVal(r),0);
       const ct = document.createElement('span'); ct.className='grid-gh-c';
       ct.textContent = fmtVal(gc) + '  vs  ' + fmtVal(gp) + '  ';
-      // The parent's own movement, coloured the same way its children are —
-      // a group header that states a change and greys it reads as a caption.
       const gd = document.createElement('span'); gd.className='vs-d';
       gd.style.color = gc >= gp ? getCSS('--good') : getCSS('--bad');
-      gd.textContent = (gc >= gp ? '\u25b2 ' : '\u25bc ') + pctText(gc, gp);
-      ct.appendChild(gd);
-      h.append(nm, ct); wrapEl.appendChild(h);
+      gd.textContent = (gc >= gp ? '▲ ' : '▼ ') + pctText(gc, gp);
+      ct.appendChild(gd); h.append(nm, ct); wrapEl.appendChild(h);
     }
     g.rows.forEach(r => {
       const c = cVal(r), p = pVal(r);
-      if (c <= 0 && p <= 0) return;                 // never a row of two zeroes
-      const row = document.createElement('div'); row.className = 'vs-row';
-      row.title = (r.l3 ? r.l2 + ' → ' + r.l3 : r.key)
-        + `\n${cur.long}: ${fmtVal(c)}\n${prv.long}: ${fmtVal(p)}`;
+      if (c <= 0 && p <= 0) return;
+      const on = focus && focus.key === r.key;
+      const row = document.createElement('button');
+      row.type = 'button'; row.className = 'vs-row' + (on ? ' on' : '');
+      row.setAttribute('aria-pressed', String(!!on));
+      row.title = (r.l3 ? r.l2 + ' → ' + r.l3 : r.key) + ' · click to chart it';
+      row.onclick = () => { S.focus = on ? null : r.key; render(); };
 
-      const nm = document.createElement('div'); nm.className='vs-nm';
-      nm.textContent = r.label;
-
+      const nm = document.createElement('div'); nm.className='vs-nm'; nm.textContent = r.label;
       const bars = document.createElement('div'); bars.className='vs-bars';
       const bar = (v, cls) => {
         const t = document.createElement('div'); t.className='vs-track';
@@ -1120,12 +1344,9 @@ function drawVs(buckets, rows){
       const l1 = document.createElement('div'); l1.className='vs-cur';
       l1.textContent = c > 0 ? fmtVal(c) : '—';
       const d = document.createElement('span'); d.className='vs-d';
-      const delta = c - p;
-      d.style.color = delta >= 0 ? getCSS('--good') : getCSS('--bad');
-      d.textContent = (delta >= 0 ? '▲ ' : '▼ ') + pctText(c, p);
+      d.style.color = (c - p) >= 0 ? getCSS('--good') : getCSS('--bad');
+      d.textContent = ((c - p) >= 0 ? '▲ ' : '▼ ') + pctText(c, p);
       l1.appendChild(d);
-      // The comparator is spelled out on every row, the way a store card
-      // spells out "vs $budget" — never a bare percentage you have to trust.
       const l2l = document.createElement('div'); l2l.className='vs-prv';
       l2l.textContent = 'vs ' + (p > 0 ? fmtVal(p) : '—');
       val.append(l1, l2l);
@@ -1134,7 +1355,7 @@ function drawVs(buckets, rows){
       wrapEl.appendChild(row);
     });
   });
-  host.appendChild(wrapEl);
+  return wrapEl;
 }
 function pctText(c, p){
   if (p <= 0) return c > 0 ? 'new' : '—';
@@ -1313,7 +1534,8 @@ function drawStatus(buckets, series, allRows, open){
     + ` · <b>${scope}</b> · ${S.measure === 'net' ? 'net sales' : 'units'}`
     + ` · <b>all ${allRows.length} ${S.level.toUpperCase()} categor${allRows.length===1?'y':'ies'}</b>`
     + (S.view === 'vs'
-        ? ` — <b>${buckets[buckets.length-1].long.split(' · ')[0]}</b> against <b>${(buckets[buckets.length-2]||buckets[0]).long.split(' · ')[0]}</b>, two bars each, all on one scale`
+        ? ` — the card charts <b>${esc(vsPoints(S.bucket).curLabel)}</b> against <b>${esc(vsPoints(S.bucket).prvLabel)}</b>`
+          + ` ${S.bucket === 'quarter' ? 'week by week' : 'day by day'}; every category is compared underneath it`
       : S.view === 'trend'
         ? ` — Trend overlays ${drawn} at a time (click any Grid panel to swap one in); <b>Vs</b>, <b>Grid</b> and <b>Table</b> show every one of them`
         : (S.view === 'grid'
@@ -1355,8 +1577,9 @@ function drawPanelLegend(){
   // it uses. Explaining a change strip that is not on screen, or a series
   // colour in a view that has no series, teaches the reader to skim the legend.
   const R = {
-    vsBars: `<div class="pl-row">${dash('var(--s1)',14,9)}<span><b>Blue is this ${BUCKETS[S.bucket].unit}, grey is the one before it.</b> Every bar on screen is on one shared scale, so the lengths are directly comparable — across categories as well as between the two periods. Colour here is emphasis, not identity: with only two marks no matter how many categories, this is the one chart shape that holds <b>every</b> category at once.</span></div>`,
-    vsDelta: `<div class="pl-row">${box('var(--good)')}<span><b>Green is up on the ${BUCKETS[S.bucket].unit}, red is down</b> — and the two bar lengths say the same thing, so the reading never rests on the colour alone. The comparator is spelled out on every row (<b>vs $…</b>) rather than left as a percentage you have to take on trust.</span></div>`,
+    vsBars: `<div class="pl-row">${dash('#22c55e',14,3)}<span><b>Green is this ${BUCKETS[S.bucket].unit}, amber is the one before it</b> — the same two colours, and the same card, as the Sales Trend chart on the dashboard. The chart's x-axis runs <i>inside</i> the period, so it shows <b>where</b> the difference came from rather than only that there was one. The bars underneath repeat that comparison for every category, on one shared scale.</span></div>`,
+    vsDelta: `<div class="pl-row">${box('var(--goodWash)')}<span><b>Click any category row to chart it</b> — the card above redraws for that category alone, click again for all of them. The ▲▼ figure is up or down on the ${BUCKETS[S.bucket].unit}; the two bar lengths say the same thing, so the reading never rests on colour alone, and the comparator is spelled out on every row (<b>vs $…</b>) rather than left as a percentage you have to take on trust.</span></div>`,
+    vsNoBudget: `<div class="pl-row">${dash('#cbd5e1',14,3,'background:repeating-linear-gradient(90deg,#cbd5e1 0,#cbd5e1 4px,transparent 4px,transparent 7px)')}<span><b>No budget line, and no last-year line.</b> The dashboard card has both; neither exists per category. Budget is stored per store per day with no category dimension, and a last-year category line would need year-old <code>items:</code> KV. Drawing either would mean inventing it.</span></div>`,
     gridSpark: `<div class="pl-row">${line('var(--inkDim)')}<span><b>A Grid sparkline shows shape, not size.</b> On <b>Own</b> scale each panel runs between its own high and low — <b>the baseline is not zero</b> — because a category moving between $70k and $80k is a flat line if you draw it from zero. The number above it carries the magnitude. Switch <b>Scale</b> to <b>Shared</b> when you want heights to be comparable instead.</span></div>`,
     gridPick: `<div class="pl-row">${box('var(--goodWash)')}<span><b>A panel outlined in green is on the Trend chart.</b> Click any panel to add it, click again to drop it. Trend holds ${S.maxSeries} lines at most — past six no colourblind reader can separate the hues — so a seventh is refused rather than quietly evicting one.</span></div>`,
     trendLine: `<div class="pl-row">${line('var(--s1)')}<span><b>A coloured line is one category</b>, and its colour is fixed to it for the whole window — hiding a series never repaints the others. Six is the ceiling here; <b>Vs</b>, <b>Grid</b> and <b>Table</b> are where every category shows at once.</span></div>`,
@@ -1368,7 +1591,7 @@ function drawPanelLegend(){
     contrast: `<div class="pl-row">${box('var(--panelHi)')}<span><b>Every number the charts draw is also in Table</b>, unrounded — so no value is reachable only by hovering. Contrast is ≥4.5:1 in both themes; the three light-mode hues that sit under 3:1 against white are why direct labels and that table are not optional.</span></div>`,
   };
 
-  const rows = { vs:    [R.vsBars, R.vsDelta, R.closed, R.surfaces],
+  const rows = { vs:    [R.vsBars, R.vsDelta, R.vsNoBudget, R.closed, R.surfaces],
                  trend: [R.trendLine, R.trendOther, R.strip, R.closed, R.surfaces],
                  grid:  [R.gridSpark, R.gridPick, R.strip, R.closed, R.surfaces],
                  table: [R.hierarchy, R.strip, R.closed, R.surfaces, R.contrast] }[S.view];
@@ -1442,7 +1665,9 @@ function render(){
   } else {
     tipEl.classList.remove('on');
     lg.textContent = '';
-    if (S.view === 'vs'){ drawVs(buckets, rows); drawVsLegend(buckets); }
+    // No separate legend: the pills inside the card carry the two periods and
+    // their totals, exactly as the dashboard's chart card does.
+    if (S.view === 'vs'){ lg.hidden = true; drawVs(buckets, rows); }
     // Grid labels every panel and Table names every row, so an identity
     // key there would only restate what is already on screen.
     else { lg.hidden = true; if (S.view === 'grid') drawGrid(buckets, rows); else drawTable(buckets, rows); }
@@ -1478,8 +1703,10 @@ document.getElementById('qa').innerHTML = rowsHTML([
    'You said "under the different stores", which I read as <b>inside each store tab, below what is there now</b> — and that is also where day-grain is affordable, since one store is one read per day. But the same panel works scoped to All stores on the Summary tab. <b>My default is: build it once, mount it on the store tabs, and put an All-stores copy at the bottom of the Summary tab.</b> Say if you only want one of the two.'],
   ['Is “compare” period-over-period, or versus last year?',
    'I built <b>versus the previous bucket</b> — week 36 against week 35 — because that is what "week by week" reads as. For a seasonal retailer the comparison people usually reach for at month and quarter is <b>the same period last year</b>. That needs KV going back that far and a like-for-like rule (the existing YoY code notes last-year data carries no auction channel). <b>Not built here. Worth adding as a second toggle on the change strip?</b>'],
-  ['Bars against bars — or dots on a line?',
-   'You asked for the graph to <i>be</i> the comparison, so <b>Vs</b> is now the default: two bars per category, this period over the last, one shared scale. The usual alternative is a <b>dumbbell</b> — two dots joined by a connector, where the length of the connector <i>is</i> the change. It is more elegant and it reads the movement faster once you are used to it; bars read faster cold. <b>I went with bars. Say if you would rather see the dumbbell version.</b>'],
+  ['What the card cannot carry that the dashboard\u2019s can',
+   'The Sales Trend card has four series: this week, last week, last year, and a dashed budget line. This one has two, and the two missing ones are missing for a reason rather than an oversight. <b>Budget has no category dimension</b> — it is stored per store per day — so a per-category budget line would be invented. <b>Last year would need year-old <code>items:</code> KV</b>, and Clover only reaches back about 90 days, so where those snapshots were never taken the line cannot be reconstructed. I would rather show two honest series than four with two of them made up. <b>If per-category budgets exist somewhere I have not found, say where and the dashed line goes in.</b>'],
+  ['Day compares two fortnights, because a day has no inside',
+   'Every other bucket has sub-periods to plot: a week has its seven days, a month its days, a quarter its thirteen weeks. <b>A day would need hours, and the item snapshots are per day — there is no hourly category data at all.</b> So Day charts the last 14 days against the 14 before, aligned by weekday. It is a real day-level comparison and it uses data that exists. <b>If you want true hour-by-hour, that is a different and much larger piece of work</b> — say so and I will scope it separately.'],
   ['Vs compares the last two closed periods — is that the “vs” you meant?',
    'Week 36 against Week 35, August against July, Q2 against Q1. For a seasonal retailer the other candidate is <b>the same period last year</b>, which is a different question and a different data cost. The bucket pills already choose the grain; adding a <b>vs: previous | last year</b> control beside them would be small. <b>Worth it?</b>'],
   ['Grid sparklines are scaled to their own high and low, not to zero',
