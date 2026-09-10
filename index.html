@@ -812,6 +812,10 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg></span>
           <span class="nav-label">Bin Dump</span>
         </div>
+        <div id="nav-mos" class="hidden nav-item" data-page="mos" onclick="navigateToPage('mos')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 7.3 12 3 3.5 7.3v9.4L12 21l8.5-4.3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg></span>
+          <span class="nav-label">Mark Out of Stock</span>
+        </div>
         <div id="nav-labor" class="hidden nav-item" data-page="labor" onclick="navigateToPage('labor')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg></span>
           <span class="nav-label">Labor</span>
@@ -895,6 +899,9 @@
         <button id="bn-bin-dump" data-tab="bin-dump" aria-label="Bin Dump" onclick="navigateToPage('bin-dump')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
           <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg><span class="bn-lb">Bin Dump</span>
         </button>
+        <button id="bn-mos" data-tab="mos" aria-label="Mark Out of Stock" onclick="navigateToPage('mos')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
+          <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 7.3 12 3 3.5 7.3v9.4L12 21l8.5-4.3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg><span class="bn-lb">MOS</span>
+        </button>
         <button id="bn-scan" data-tab="merch-scan" aria-label="Price Scan" onclick="navigateToPage('merch-scan')" class="bn-tab hidden flex-1 flex-col items-center py-1 font-semibold text-opl-inkDim dark:text-op-inkDim">
           <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="10.5" y1="8" x2="10.5" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="17" y1="8" x2="17" y2="16"/></svg><span class="bn-lb">Scan</span>
         </button>
@@ -943,6 +950,9 @@
         </button>
         <button id="more-bin-dump" onclick="navigateToPage('bin-dump');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>Bin Dump
+        </button>
+        <button id="more-mos" onclick="navigateToPage('mos');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
+          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 7.3 12 3 3.5 7.3v9.4L12 21l8.5-4.3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg>Mark Out of Stock
         </button>
         <button id="more-supply" onclick="navigateToPage('supply-request');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>Supply Requests
@@ -2155,6 +2165,329 @@
       </div>
 
     </div><!-- end #page-bin-dump -->
+
+    <!-- ══ Mark Out of Stock ══════════════════════════════════════════════
+         Merchandise that left the floor without being sold. Follows DESIGN.md
+         §4.8: one panel owns the bar, the table and its legend.
+
+         🔑 Its own `mos-` classes rather than reusing `.bd-*`. Those are global
+         (declared inside #page-bin-dump but not scoped to it), so sharing them
+         would mean a Bin Dump restyle silently restyling this page too. §4.8's
+         rule is followed instead: token literals are duplicated here, in BOTH
+         themes, stated on the panel. -->
+    <div id="page-mos" class="hidden">
+      <style>
+        /* Token literals — DESIGN.md "Token literals for <style> blocks". */
+        #page-mos{--mp:#fff;--mph:#fafaf6;--mi:#14110a;--md:#6b6453;--mdd:#9c9484;
+          --mh:rgba(20,16,8,.10);--mb:rgba(20,16,8,.18);--mok:#166534;--mokw:rgba(34,197,94,.10);
+          --moke:rgba(22,101,52,.28);--mbad:#c0392b;--mbadw:rgba(192,57,43,.10);--mbade:rgba(192,57,43,.30);
+          --mwarn:#b45309;--mwarnw:rgba(245,158,11,.13);--mwarne:rgba(180,83,9,.30);
+          --minfo:#1d4ed8;--minfow:rgba(59,130,246,.10);--minfoe:rgba(29,78,216,.28)}
+        .dark #page-mos{--mp:#101826;--mph:#16203a;--mi:#e7ecf3;--md:#8893a7;--mdd:#5a6478;
+          --mh:rgba(255,255,255,.09);--mb:rgba(255,255,255,.16);--mok:#22c55e;--mokw:rgba(34,197,94,.10);
+          --moke:rgba(34,197,94,.28);--mbad:#ef4444;--mbadw:rgba(239,68,68,.12);--mbade:rgba(239,68,68,.30);
+          --mwarn:#f59e0b;--mwarnw:rgba(245,158,11,.13);--mwarne:rgba(245,158,11,.30);
+          --minfo:#60a5fa;--minfow:rgba(96,165,250,.12);--minfoe:rgba(96,165,250,.30)}
+        #page-mos [hidden]{display:none !important}
+        .mos-h1{color:#166534} .dark .mos-h1{color:#22c55e}
+
+        .mos-tabs{display:flex;gap:2px;margin-top:12px}
+        .mos-tab{font:inherit;font-size:12.5px;font-weight:600;padding:9px 15px;border:0;cursor:pointer;
+          background:transparent;color:var(--md);border-bottom:2px solid transparent;
+          display:flex;align-items:center;gap:7px}
+        .mos-tab[aria-selected="true"]{color:var(--mi);border-bottom-color:#22c55e}
+        .mos-tab-n{font-size:9.5px;font-weight:700;padding:1.5px 5px;border-radius:5px;
+          background:var(--mph);color:var(--md);font-variant-numeric:tabular-nums}
+
+        .mos-panel{border:1px solid var(--mh);border-radius:14px;overflow:hidden;background:var(--mp);color:var(--mi)}
+        .mos-bar{background:var(--mph);border-bottom:1px solid var(--mh);padding:12px 16px;
+          display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+        .mos-bar-l{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--md)}
+        .mos-bar .r{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+          font-size:11.5px;color:var(--md);font-variant-numeric:tabular-nums}
+
+        .mos-scan{display:flex;gap:9px;align-items:flex-end;flex-wrap:wrap;padding:16px}
+        .mos-codebox{flex:1 1 240px;min-width:0}
+        .mos-lbl{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+          color:var(--md);display:block;margin-bottom:6px}
+        .mos-in{width:100%;font-size:17px;font-weight:600;letter-spacing:.05em;
+          font-family:ui-monospace,SFMono-Regular,Menlo,monospace;padding:12px 13px;border-radius:10px;
+          border:1.5px solid var(--moke);background:var(--mp);color:var(--mi)}
+        .mos-in:focus{outline:2px solid #22c55e;outline-offset:1px}
+        .mos-btn{font:inherit;font-size:13px;font-weight:600;padding:12px 16px;border-radius:10px;cursor:pointer;
+          border:1px solid var(--mb);background:var(--mp);color:var(--mi);white-space:nowrap;
+          display:inline-flex;align-items:center;gap:7px}
+        .mos-btn:disabled{opacity:.5;cursor:default}
+        .mos-btn.go{background:#22c55e;border-color:#22c55e;color:#06210f}
+        .mos-btn.sm{font-size:12px;padding:7px 12px;border-radius:8px}
+        .mos-btn svg{width:15px;height:15px;flex-shrink:0}
+        .mos-hint{font-size:11px;color:var(--md);margin:0 16px 14px}
+
+        .mos-resolved{margin:0 16px 16px;border:1px solid var(--moke);background:var(--mokw);
+          border-radius:12px;overflow:hidden}
+        .mos-rtop{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--moke)}
+        .mos-rtop strong{font-size:12px;font-weight:600;color:var(--mi)}
+        .mos-rtop .src{margin-left:auto;font-size:10.5px;color:var(--md)}
+        .mos-tick{width:16px;height:16px;border-radius:50%;background:#22c55e;display:grid;place-content:center;flex-shrink:0}
+        .mos-tick svg{width:10px;height:10px;stroke:#06210f;stroke-width:3.5;fill:none}
+        .mos-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:1px;background:var(--mh)}
+        .mos-fld{background:var(--mp);padding:11px 14px;min-width:0}
+        .mos-fld dt{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--md);margin:0 0 3px}
+        .mos-fld dd{margin:0;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;
+          overflow-wrap:anywhere;color:var(--mi)}
+        .mos-fld dd.sm{font-size:12px;font-weight:500;line-height:1.35}
+        .mos-fld dd.none{color:var(--md);font-weight:500;font-size:12px}
+        .mos-fld.cost{background:var(--mokw)}
+        .mos-auto{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--md);
+          border:1px solid var(--mh);border-radius:4px;padding:1px 4px;margin-left:5px;vertical-align:1px}
+
+        /* Teaching a code nobody has named. Amber = a draft value, per §4.8. */
+        .mos-teach{margin:0 16px 16px;border:1px solid var(--mwarne);background:var(--mwarnw);
+          border-radius:12px;padding:13px 14px}
+        .mos-teach h4{margin:0 0 3px;font-size:12.5px;font-weight:600;color:var(--mi)}
+        .mos-teach p{margin:0 0 9px;font-size:11.5px;color:var(--md);line-height:1.45}
+        .mos-teach input{width:100%;font:inherit;font-size:13px;padding:9px 11px;border-radius:9px;
+          border:1px solid var(--mwarne);background:var(--mp);color:var(--mi)}
+
+        .mos-entry{display:grid;grid-template-columns:minmax(112px,144px) 1fr;gap:16px;padding:0 16px 16px;align-items:start}
+        @media (max-width:560px){.mos-entry{grid-template-columns:1fr}}
+        .mos-qty{display:flex;align-items:stretch;border:1px solid var(--mb);border-radius:10px;overflow:hidden}
+        .mos-qty button{font:inherit;font-size:17px;font-weight:600;width:38px;border:0;cursor:pointer;
+          background:var(--mph);color:var(--mi)}
+        .mos-qty input{flex:1;min-width:0;font:inherit;font-size:18px;font-weight:700;text-align:center;
+          font-variant-numeric:tabular-nums;border:0;padding:10px 0;background:var(--mp);color:var(--mi)}
+        .mos-reasons{display:flex;gap:7px;flex-wrap:wrap}
+        .mos-rz{font:inherit;font-size:12.5px;font-weight:600;padding:9px 13px;border-radius:9px;cursor:pointer;
+          border:1px solid var(--mb);background:var(--mp);color:var(--md)}
+        .mos-rz[data-r="Stolen"][aria-pressed="true"]{background:var(--mbadw);border-color:var(--mbade);color:var(--mbad)}
+        .mos-rz[data-r="Damaged"][aria-pressed="true"]{background:var(--mwarnw);border-color:var(--mwarne);color:var(--mwarn)}
+        .mos-rz[data-r="Expired"][aria-pressed="true"]{background:var(--minfow);border-color:var(--minfoe);color:var(--minfo)}
+        .mos-rz[data-r="Store Use"][aria-pressed="true"]{background:var(--mokw);border-color:var(--moke);color:var(--mok)}
+        .mos-req{color:var(--mbad);font-weight:700}
+
+        .mos-commit{display:flex;align-items:center;gap:16px;padding:13px 16px;border-top:1px solid var(--mh);
+          background:var(--mph);flex-wrap:wrap}
+        .mos-tot{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--md)}
+        .mos-tot b{display:block;font-size:17px;font-weight:700;letter-spacing:0;text-transform:none;
+          color:var(--mi);font-variant-numeric:tabular-nums;margin-top:1px}
+        .mos-tot.lead b{color:var(--mok)}
+        .mos-commit .mos-btn{margin-left:auto}
+
+        .mos-status{margin:0 16px 16px;font-size:12px;padding:9px 12px;border-radius:9px;
+          border:1px solid var(--moke);background:var(--mokw);color:var(--mok)}
+        .mos-status.err{border-color:var(--mbade);background:var(--mbadw);color:var(--mbad)}
+
+        /* Month accordions */
+        .mos-mo{border-bottom:1px solid var(--mh)}
+        .mos-mo:last-of-type{border-bottom:0}
+        .mos-mo-head{width:100%;font:inherit;background:transparent;border:0;cursor:pointer;text-align:left;
+          color:var(--mi);display:flex;align-items:center;gap:9px;padding:12px 16px;flex-wrap:wrap;transition:background .15s}
+        .mos-mo-head:hover{background:var(--mph)}
+        .mos-caret{width:9px;height:9px;flex-shrink:0;border-right:2px solid var(--md);
+          border-bottom:2px solid var(--md);transform:rotate(-45deg);transition:transform .22s}
+        .mos-mo.open .mos-caret{transform:rotate(45deg)}
+        .mos-mo-name{font-size:13.5px;font-weight:600}
+        .mos-badge{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;
+          border-radius:5px;border:1px solid var(--moke);background:var(--mokw);color:var(--mok)}
+        .mos-mo-meta{margin-left:auto;font-size:11.5px;color:var(--md);font-variant-numeric:tabular-nums;
+          display:flex;gap:11px;flex-wrap:wrap}
+        .mos-mo-meta b{color:var(--mi);font-weight:600}
+        .mos-mo-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows .26s cubic-bezier(.4,0,.2,1)}
+        .mos-mo.open .mos-mo-body{grid-template-rows:1fr}
+        .mos-mo-body > div{overflow:hidden}
+        .mos-split{display:flex;border-top:1px solid var(--mh);background:var(--mph);flex-wrap:wrap}
+        .mos-split div{padding:10px 16px;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+          color:var(--md);border-right:1px solid var(--mh);flex:1 1 auto}
+        .mos-split div:last-child{border-right:0}
+        .mos-split b{color:var(--mi);font-variant-numeric:tabular-nums;font-size:16px;font-weight:700;
+          display:block;margin-top:2px;letter-spacing:0;text-transform:none}
+        .mos-split div.lead b{color:var(--mok)}
+        .mos-split div.warn b{color:var(--mwarn)}
+
+        .mos-scroll{overflow-x:auto;background:var(--mp)}
+        table.mos-tbl{border-collapse:collapse;width:100%;min-width:800px;font-variant-numeric:tabular-nums}
+        table.mos-tbl th{height:30px;padding:0 11px;font-size:10px;font-weight:700;letter-spacing:.05em;
+          text-transform:uppercase;text-align:left;background:var(--mph);color:var(--md);white-space:nowrap;
+          border-bottom:1px solid var(--mh)}
+        table.mos-tbl td{height:46px;padding:0 11px;font-size:12.5px;white-space:nowrap;color:var(--mi);
+          border-bottom:1px solid var(--mh)}
+        table.mos-tbl tr:last-child td{border-bottom:0}
+        table.mos-tbl td.n{text-align:right}
+        table.mos-tbl td.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
+        table.mos-tbl td.desc{white-space:normal;min-width:175px;color:var(--md);font-size:12px}
+        .mos-ea{display:block;font-size:10.5px;color:var(--md);font-weight:400;margin-top:-1px}
+        .mos-chip{font-size:10px;font-weight:700;letter-spacing:.04em;padding:2.5px 7px;border-radius:5px;
+          border:1px solid var(--mh);white-space:nowrap}
+        .mos-chip.Stolen{background:var(--mbadw);border-color:var(--mbade);color:var(--mbad)}
+        .mos-chip.Damaged{background:var(--mwarnw);border-color:var(--mwarne);color:var(--mwarn)}
+        .mos-chip.Expired{background:var(--minfow);border-color:var(--minfoe);color:var(--minfo)}
+        .mos-chip.Store{background:var(--mokw);border-color:var(--moke);color:var(--mok)}
+        .mos-row-btn{font:inherit;font-size:11.5px;font-weight:600;padding:5px 9px;border-radius:7px;cursor:pointer;
+          border:1px solid var(--mb);background:var(--mp);color:var(--md)}
+        .mos-row-btn:hover{color:var(--mi)}
+        .mos-empty{padding:22px 15px;text-align:center;font-size:12.5px;color:var(--md)}
+        .mos-legend{border-top:1px solid var(--mh);padding:10px 16px;font-size:11px;color:var(--md);line-height:1.6}
+      </style>
+
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-7xl mx-auto flex items-end gap-3 flex-wrap">
+          <div class="flex-1 min-w-0">
+            <h1 class="text-2xl font-brand mos-h1 uppercase tracking-wide">Mark Out of Stock</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Scan a sticker, then say how many and why</p>
+          </div>
+          <select id="mos-store" onchange="mosStoreChange()" aria-label="Store"
+                  class="rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-sm px-3 py-2"></select>
+        </div>
+        <div class="max-w-7xl mx-auto">
+          <nav class="mos-tabs" role="tablist" aria-label="Mark Out of Stock sections">
+            <button type="button" id="mos-tab-mark" class="mos-tab" role="tab" aria-selected="true"
+                    aria-controls="mos-pane-mark" onclick="mosSetTab('mark')">Mark out</button>
+            <button type="button" id="mos-tab-log" class="mos-tab" role="tab" aria-selected="false"
+                    aria-controls="mos-pane-log" onclick="mosSetTab('log')">Log<span class="mos-tab-n" id="mos-tab-log-n">—</span></button>
+          </nav>
+        </div>
+      </div>
+
+      <div class="max-w-7xl mx-auto px-6 py-6">
+
+        <!-- ── Mark out ─────────────────────────────────────────────── -->
+        <div id="mos-pane-mark" role="tabpanel" aria-labelledby="mos-tab-mark" class="space-y-4">
+          <div class="mos-panel">
+            <div class="mos-bar"><span class="mos-bar-l">The sticker</span></div>
+
+            <div class="mos-scan">
+              <div class="mos-codebox">
+                <label class="mos-lbl" for="mos-code">Sticker code</label>
+                <input id="mos-code" class="mos-in" type="text" spellcheck="false" autocomplete="off"
+                       placeholder="BL-50038-1_5"
+                       onkeydown="if(event.key==='Enter'){event.preventDefault();mosLookup();}">
+              </div>
+              <button class="mos-btn go" type="button" id="mos-scan-btn" onclick="mosScan()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="14" x2="14" y2="21"/><line x1="18" y1="14" x2="21" y2="14"/><line x1="21" y1="18" x2="21" y2="21"/><line x1="14" y1="18" x2="17" y2="18"/></svg>
+                <span id="mos-scan-lbl">Scan QR</span>
+              </button>
+              <button class="mos-btn" type="button" onclick="document.getElementById('mos-photo').click()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                Photo
+              </button>
+              <input id="mos-photo" type="file" accept="image/*" capture="environment" class="hidden" onchange="mosPhoto(this)">
+              <button class="mos-btn" type="button" onclick="mosLookup()">Look it up</button>
+            </div>
+            <p class="mos-hint">Hold the QR in frame and it fills itself in. Typing works too — dots and
+              underscores both read, and case doesn't matter.</p>
+
+            <!-- Live scanner. Same camera lessons as Price Scan; see mosScan(). -->
+            <div id="mos-scanbox" hidden style="margin:0 16px 16px;position:relative;border-radius:12px;overflow:hidden;background:#000">
+              <video id="mos-video" playsinline muted style="width:100%;display:block;max-height:min(52vh,380px);object-fit:cover"></video>
+              <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+                          width:min(62%,240px);aspect-ratio:1;border:2px solid #22c55e;border-radius:10px;
+                          box-shadow:0 0 0 9999px rgba(0,0,0,.34)"></div>
+              <div id="mos-scanhint" style="position:absolute;left:0;right:0;bottom:7px;text-align:center;font-size:11.5px;
+                          color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.9)">Fill the square with the QR code</div>
+              <input id="mos-zoom" type="range" class="hidden" oninput="mosZoom(this.value)" aria-label="Camera zoom"
+                     style="position:absolute;left:12%;right:12%;bottom:30px;width:76%;accent-color:#22c55e">
+              <button id="mos-lens" type="button" onclick="mosNextLens()" hidden aria-label="Switch camera lens"
+                      style="position:absolute;top:8px;right:56px;height:40px;padding:0 12px;border-radius:20px;
+                             border:1px solid rgba(255,255,255,.45);background:rgba(0,0,0,.45);color:#fff;
+                             font-size:12px;font-weight:600;cursor:pointer">Lens</button>
+              <button id="mos-torch" type="button" onclick="mosTorch()" hidden aria-label="Toggle the camera light"
+                      style="position:absolute;top:8px;right:8px;width:40px;height:40px;border-radius:20px;
+                             border:1px solid rgba(255,255,255,.45);background:rgba(0,0,0,.45);color:#fff;
+                             font-size:18px;line-height:1;cursor:pointer">&#9728;</button>
+            </div>
+
+            <div id="mos-resolved" class="mos-resolved" hidden>
+              <div class="mos-rtop">
+                <span class="mos-tick"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></span>
+                <strong>Read from the sticker</strong>
+                <span class="src" id="mos-src"></span>
+              </div>
+              <dl class="mos-fields">
+                <div class="mos-fld"><dt>Item number <span class="mos-auto">auto</span></dt><dd id="mos-f-item">—</dd></div>
+                <div class="mos-fld"><dt>Item description <span class="mos-auto">auto</span></dt><dd class="sm" id="mos-f-desc">—</dd></div>
+                <div class="mos-fld cost"><dt>Cost each <span class="mos-auto">auto</span></dt><dd id="mos-f-cost">—</dd></div>
+                <div class="mos-fld"><dt>Retail each <span class="mos-auto">auto</span></dt><dd id="mos-f-price">—</dd></div>
+                <div class="mos-fld"><dt>Date of MOS <span class="mos-auto">auto</span></dt><dd class="sm" id="mos-f-when">—</dd></div>
+              </dl>
+            </div>
+
+            <div id="mos-teach" class="mos-teach" hidden>
+              <h4>Nothing on file names item <span id="mos-teach-no"></span> yet</h4>
+              <p>Its stock has left Clover, so the app can't look the name up. Type it once — exactly as it
+                reads on the tag — and every scan of this code after yours fills itself in.</p>
+              <input id="mos-teach-input" type="text" maxlength="120" spellcheck="false"
+                     placeholder="FG BL SEASONAL - SPRING/SUMMER">
+            </div>
+
+            <div class="mos-entry">
+              <div>
+                <label class="mos-lbl" for="mos-qty">Quantity</label>
+                <div class="mos-qty">
+                  <button type="button" aria-label="One fewer" onclick="mosBump(-1)">&minus;</button>
+                  <input id="mos-qty" type="text" inputmode="numeric" value="1" aria-label="Quantity" oninput="mosRecalc()">
+                  <button type="button" aria-label="One more" onclick="mosBump(1)">+</button>
+                </div>
+              </div>
+              <div>
+                <span class="mos-lbl">Reason <span class="mos-req">· required</span></span>
+                <div class="mos-reasons" id="mos-reasons" role="group" aria-label="Reason code"></div>
+              </div>
+            </div>
+
+            <div id="mos-status" class="mos-status" hidden></div>
+
+            <div class="mos-commit">
+              <span class="mos-tot lead">Cost<b id="mos-v-cost">—</b></span>
+              <span class="mos-tot">Retail<b id="mos-v-retail">—</b></span>
+              <button class="mos-btn go" type="button" id="mos-save" onclick="mosSave()" disabled>Mark out of stock</button>
+            </div>
+          </div>
+
+          <div class="mos-panel">
+            <div class="mos-bar">
+              <span class="mos-bar-l">Marked out today</span>
+              <div class="r" id="mos-today-meta">—</div>
+            </div>
+            <div class="mos-scroll">
+              <table class="mos-tbl">
+                <thead><tr>
+                  <th>Sticker</th><th>Item #</th><th>Description</th>
+                  <th class="n" style="text-align:right">Qty</th>
+                  <th class="n" style="text-align:right">Cost</th>
+                  <th class="n" style="text-align:right">Retail</th>
+                  <th>Reason</th><th></th>
+                </tr></thead>
+                <tbody id="mos-today"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Log ──────────────────────────────────────────────────── -->
+        <div id="mos-pane-log" role="tabpanel" aria-labelledby="mos-tab-log" hidden>
+          <div class="mos-panel">
+            <div class="mos-bar">
+              <span class="mos-bar-l">Marked out</span>
+              <div class="r">
+                <button class="mos-btn sm" type="button" onclick="mosExport()">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Export CSV
+                </button>
+              </div>
+            </div>
+            <div id="mos-log-status" class="mos-empty" hidden></div>
+            <div id="mos-months"></div>
+            <div class="mos-legend">
+              <b>Shrink</b> is Stolen, Damaged and Expired — merchandise lost. <b>Store use</b> is stock the
+              store consumed on purpose, so it is counted apart rather than added in.
+              A line whose category has no cost on file is listed but left out of the cost total, and the
+              month says how many.
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- end #page-mos -->
 
     <div id="page-supply-request" class="hidden">
       <!-- Sticky header -->
@@ -9291,6 +9624,11 @@
       // where the role check and the page check are two ways past one gate.
       if (!allowed.includes(role) && pageLevel('bin-dump') < 1) return;
     }
+    if (page === 'mos') {
+      const role = currentUser && currentUser.role;
+      const allowed = ['superuser', 'admin', 'executive', 'district_manager', 'manager'];
+      if (!allowed.includes(role) && pageLevel('mos') < 1) return;
+    }
     // eBay Cases belongs to E-Commerce, so the guard is the business you hold,
     // not your role — mirroring the worker's fail-closed business gate, which is
     // the real boundary. Without this a stale deep link or history entry would
@@ -9415,6 +9753,12 @@
     if (page === 'bin-dump') {
       if (typeof initBinDump === 'function') initBinDump();
     }
+    if (page === 'mos') {
+      if (typeof initMos === 'function') initMos();
+    }
+    // Leaving the page must kill the camera — a torch left on in a pocket is the
+    // failure people notice, and the stream holds the lens against Price Scan.
+    if (page !== 'mos' && typeof mosStopScan === 'function') mosStopScan();
     // Keep the Merchandising dropdown expanded while on any of its pages.
     if ((page === 'merch-scan' || page === 'merch-coverage' || page === 'merch-velocity' || page === 'merch-manifests' || page === 'merch-criteria' || page === 'merch-shelf-count' || page === 'merch-products') && typeof toggleMerchMenu === 'function') {
       toggleMerchMenu(true);
@@ -23044,6 +23388,690 @@
   }
   window.bdExportCsv = bdExportCsv;
 
+  // ═══════════════════════════════════════════════════════════════
+  //  MARK OUT OF STOCK
+  // ═══════════════════════════════════════════════════════════════
+  // Merchandise that left the floor without being sold. A sticker resolves to a
+  // category, a cost and a retail price; the person supplies quantity and reason.
+  //
+  // 🔑 The client computes NO money for the log. Line and month figures come from
+  // the worker, which snapshotted cost and price when the row was written — a
+  // total recomputed here would silently follow a later cost import and disagree
+  // with what the month actually was.
+
+  const MOS_LABELS = { BL1: 'Coliseum', BL2: 'South Bend', BL4: 'Dupont', BL8: 'Holland', BL14: 'Battle Creek', BL16: 'Indy East' };
+  const MOS_ALL_STORES = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
+  // Mirrors MOS_REASONS in worker.js. The worker is the gate; this only draws the
+  // buttons. Pinned by test-mos.mjs so the two lists cannot drift.
+  const MOS_REASON_LIST = ['Stolen', 'Damaged', 'Expired', 'Store Use'];
+  const mosState = { tab: 'mark', resolved: null, reason: null, rows: [], months: [],
+                     open: new Set(), busy: false, editing: null };
+
+  const mosMoney = (cents) => (cents === null || cents === undefined)
+    ? null : '$' + (cents / 100).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+  function mosStores() {
+    if (!currentUser) return [];
+    if (currentUser.role === 'superuser' || currentUser.role === 'admin') return MOS_ALL_STORES;
+    const s = currentUser.stores;
+    const held = Array.isArray(s) ? s : (() => { try { return JSON.parse(s || '[]'); } catch (e) { return []; } })();
+    return held.filter(x => MOS_ALL_STORES.includes(x));
+  }
+  // May this account ADD to the log, or only read it? Mirrors the worker, where
+  // mos-lookup / mos-log / mos-update all require the page at `edit`.
+  function mosCanEdit() {
+    return canSeeFinancials(currentUser) || pageLevel('mos') >= 2;
+  }
+  // Deleting a recorded loss is a manager's undo — mirrors the worker, which keeps
+  // mos-delete out of ACTION_PAGE entirely so no page grant reaches it.
+  function mosCanDelete() {
+    return ['superuser', 'admin', 'executive', 'manager'].includes(currentUser && currentUser.role);
+  }
+
+  function mosErr(j, r) {
+    switch (j && j.code) {
+      case 'UNCLASSIFIED_ACTION': return 'This dashboard is newer than the API — the worker half of the deploy is missing.';
+      case 'NEED_PAGE_VIEW':      return 'Your account has not been given the Mark Out of Stock page.';
+      case 'NEED_PAGE_EDIT':      return 'You can view this page but not add to it. Ask an admin for edit access.';
+      case 'NEED_MANAGER':        return 'Only a manager can remove a logged entry.';
+      case 'NO_FINANCIAL_ACCESS': return 'Only a manager can remove a logged entry.';
+      case 'NO_STORE_ACCESS':     return 'You are not assigned to that store.';
+      case 'NO_SESSION':          return 'Your session has expired — sign in again.';
+      case 'BAD_CODE':            return "That doesn't read as a shelf sticker. It looks like BL-50038-1_5.";
+      case 'BAD_QTY':             return 'Enter how many units, as a whole number.';
+      case 'BAD_REASON':          return 'Pick a reason before saving.';
+    }
+    return (j && j.error) || `HTTP ${r.status}`;
+  }
+
+  function mosSetStatus(msg, tone) {
+    const s = el('mos-status');
+    if (!s) return;
+    if (!msg) { s.hidden = true; return; }
+    s.className = 'mos-status' + (tone === 'err' ? ' err' : '');
+    s.textContent = msg;
+    s.hidden = false;
+  }
+  function mosSetLogStatus(msg) {
+    const s = el('mos-log-status');
+    if (!s) return;
+    s.textContent = msg || '';
+    s.hidden = !msg;
+  }
+
+  function mosSetTab(tab) {
+    // 🔑 View-only lands on the Log and cannot leave it. Offering the entry form to
+    // an account whose every lookup and save the worker refuses is offering a
+    // dead end — the same rule bdSetTab applies.
+    mosState.tab = (tab === 'log' || !mosCanEdit()) ? 'log' : 'mark';
+    for (const t of ['mark', 'log']) {
+      const on = t === mosState.tab;
+      el('mos-tab-' + t).setAttribute('aria-selected', String(on));
+      el('mos-pane-' + t).hidden = !on;
+    }
+    // Leaving the entry tab with the camera running would keep the torch on in
+    // someone's pocket.
+    if (mosState.tab !== 'mark') mosStopScan();
+  }
+  window.mosSetTab = mosSetTab;
+
+  function initMos() {
+    const sel = el('mos-store');
+    const stores = mosStores();
+    sel.innerHTML = (stores.length > 1 ? ['<option value="ALL">All stores</option>'] : [])
+      .concat(stores.map(s => `<option value="${s}">${escapeHtml(MOS_LABELS[s] || s)}</option>`)).join('');
+    // Opens on ONE store, not "All": marking out happens where you are standing.
+    if (stores.length) sel.value = stores[0];
+    if (!el('mos-reasons').children.length) {
+      el('mos-reasons').innerHTML = MOS_REASON_LIST.map(r =>
+        `<button type="button" class="mos-rz" data-r="${r}" aria-pressed="false"
+                 onclick="mosPickReason('${r}')">${r}</button>`).join('');
+    }
+    const canEdit = mosCanEdit();
+    el('mos-tab-mark').hidden = !canEdit;
+    if (!stores.length) {
+      mosSetLogStatus(canEdit
+        ? 'No store is assigned to your account, so there is nothing to mark out.'
+        : 'No store is assigned to your account, so there is nothing to show.');
+      el('mos-months').innerHTML = '';
+      return;
+    }
+    mosSetTab(canEdit ? 'mark' : 'log');
+    mosLoad();
+  }
+  window.initMos = initMos;
+
+  function mosStoreChange() { mosReset(); mosState.open.clear(); mosLoad(); }
+  window.mosStoreChange = mosStoreChange;
+
+  // The store a NEW entry lands in. "All stores" is a way of reading the log, never
+  // a place a loss can be recorded — same rule as Bin Dump's scan store.
+  function mosEntryStore() {
+    const v = el('mos-store').value;
+    if (v && v !== 'ALL') return v;
+    const s = mosStores();
+    return s.length ? s[0] : '';
+  }
+
+  function mosReset() {
+    mosState.resolved = null;
+    el('mos-resolved').hidden = true;
+    el('mos-teach').hidden = true;
+    el('mos-teach-input').value = '';
+    el('mos-code').value = '';
+    el('mos-qty').value = '1';
+    mosSetStatus('');
+    mosRecalc();
+  }
+
+  function mosPickReason(r) {
+    mosState.reason = r;
+    document.querySelectorAll('#mos-reasons .mos-rz').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.r === r)));
+    mosRecalc();
+  }
+  window.mosPickReason = mosPickReason;
+
+  function mosBump(d) {
+    const i = el('mos-qty');
+    i.value = String(Math.max(1, (parseInt(i.value, 10) || 0) + d));
+    mosRecalc();
+  }
+  window.mosBump = mosBump;
+
+  // Live totals for the row being entered, and the Save gate.
+  function mosRecalc() {
+    const r = mosState.resolved;
+    const q = parseInt(el('mos-qty').value, 10) || 0;
+    const cost = r && r.unit_cost_cents !== null && r.unit_cost_cents !== undefined
+      ? mosMoney(q * r.unit_cost_cents) : null;
+    const retail = r && r.unit_price_cents !== null && r.unit_price_cents !== undefined
+      ? mosMoney(q * r.unit_price_cents) : null;
+    el('mos-v-cost').textContent = cost || (r ? 'no cost on file' : '—');
+    el('mos-v-retail').textContent = retail || '—';
+    // Reason is required, so Save cannot be reached without one.
+    const needsName = r && r.needs_description;
+    const named = !needsName || el('mos-teach-input').value.trim().length >= 3;
+    el('mos-save').disabled = !(r && q >= 1 && mosState.reason && named);
+  }
+  window.mosRecalc = mosRecalc;
+
+  // ── Resolving a sticker ──────────────────────────────────────────────────
+  async function mosLookup(codeIn) {
+    const code = String(codeIn || el('mos-code').value || '').trim();
+    if (!code) { el('mos-code').focus(); return; }
+    el('mos-code').value = code;
+    mosSetStatus('');
+    try {
+      const store = mosEntryStore();
+      const r = await fetch(`${WORKER_BASE}?action=mos-lookup&store=${encodeURIComponent(store)}`
+        + `&code=${encodeURIComponent(code)}`, { credentials: 'include' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(mosErr(j, r));
+      mosApply(j);
+    } catch (e) {
+      mosState.resolved = null;
+      el('mos-resolved').hidden = true;
+      el('mos-teach').hidden = true;
+      mosSetStatus((e && e.message) || String(e), 'err');
+      mosRecalc();
+    }
+  }
+  window.mosLookup = mosLookup;
+
+  function mosApply(j) {
+    mosState.resolved = j;
+    el('mos-f-item').textContent = j.item_no;
+    const desc = el('mos-f-desc');
+    if (j.description) { desc.textContent = j.description; desc.className = 'sm'; }
+    else { desc.textContent = 'not on file yet'; desc.className = 'sm none'; }
+    const cost = el('mos-f-cost');
+    if (j.unit_cost_cents === null || j.unit_cost_cents === undefined) {
+      // 🔑 Never $0.00. Zero would read as free merchandise; this category simply
+      // has no cost imported, and four of the forty-six do not.
+      cost.textContent = 'no cost on file'; cost.className = 'none';
+    } else { cost.textContent = mosMoney(j.unit_cost_cents); cost.className = ''; }
+    el('mos-f-price').textContent = mosMoney(j.unit_price_cents) || '—';
+    const now = new Date();
+    el('mos-f-when').innerHTML = escapeHtml(now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))
+      + '<br><span style="color:var(--md);font-weight:500">'
+      + escapeHtml(now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })) + '</span>';
+    el('mos-src').textContent = j.description_source === 'learned' ? 'Known code'
+      : j.description_source === 'clover' ? 'Read from Clover' : '';
+    el('mos-resolved').hidden = false;
+    el('mos-teach-no').textContent = j.item_no;
+    el('mos-teach').hidden = !j.needs_description;
+    if (j.needs_description) setTimeout(() => { try { el('mos-teach-input').focus(); } catch (e) {} }, 40);
+    mosRecalc();
+  }
+
+  // ── The QR decoder, loaded on demand ─────────────────────────────────────
+  // 🔑 Not a <script> tag in the document. jsqr.min.js is 127KB and only matters
+  // to whoever taps Scan, so parsing it at every app start would cost every user
+  // — including everyone who never opens this page — for nothing. sw.js DOES
+  // precache it, so this injection is a cache hit and works with no signal.
+  let mosDecoderPromise = null;
+  function mosLoadDecoder() {
+    if (window.jsQR) return Promise.resolve(window.jsQR);
+    if (mosDecoderPromise) return mosDecoderPromise;
+    mosDecoderPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'jsqr.min.js';
+      s.onload = () => resolve(window.jsQR);
+      s.onerror = () => { mosDecoderPromise = null; reject(new Error('decoder failed to load')); };
+      document.head.appendChild(s);
+    });
+    return mosDecoderPromise;
+  }
+
+  // 🛑 A DECODE IS NOT ACCEPTED ON REED-SOLOMON ALONE. QR's error correction makes a
+  // garbled read fail rather than lie, but the camera will happily read SOME OTHER
+  // QR — a carton label, a poster, an employee's phone — and hand back a perfectly
+  // valid string that is not one of ours. The shape check is the real guard: it must
+  // look like BL-<digits>-<price> or it is ignored and scanning continues.
+  const MOS_CODE_RE = /^BL-\d{1,10}-\d+(?:[._]\d{1,2})?$/i;
+  const mosLooksLikeSticker = (s) => MOS_CODE_RE.test(String(s || '').trim().replace(/\s+/g, ''));
+
+  let mosStream = null, mosScanning = false, mosTorchOn = false;
+  let mosLenses = [], mosLensId = null, mosRaf = 0;
+
+  async function mosScan() {
+    if (mosScanning) { mosStopScan(); return; }
+    let decode;
+    try { decode = await mosLoadDecoder(); }
+    catch (e) { mosSetStatus('The QR reader could not load. Type the code, or use Photo.', 'err'); return; }
+
+    let stream;
+    try {
+      // The constraints and the reasoning behind them come from psBarcode(), which
+      // learned them the hard way on these phones. Two differences: a QR is 21
+      // modules across where a UPC is 95, so 1080p is plenty and 4K is not worth the
+      // battery; and the zoom trick still matters, because the iPhone's minimum
+      // focus distance is the actual failure and no decoder fixes a blurred frame.
+      const video0 = { width: { ideal: 1920 }, height: { ideal: 1080 },
+                       advanced: [{ focusMode: 'continuous' }] };
+      if (mosLensId) video0.deviceId = { exact: mosLensId };
+      else video0.facingMode = { ideal: 'environment' };
+      stream = await navigator.mediaDevices.getUserMedia({ video: video0 });
+    } catch (e) {
+      mosSetStatus('No camera available. Type the code, or use the Photo button.', 'err');
+      return;
+    }
+    mosStream = stream; mosScanning = true;
+    const video = el('mos-video');
+    video.srcObject = stream;
+    video.setAttribute('playsinline', '');
+    video.muted = true;
+    await video.play();
+    el('mos-scanbox').hidden = false;
+    el('mos-scan-lbl').textContent = 'Stop';
+    mosSetStatus('');
+
+    const track = mosStream.getVideoTracks()[0];
+    let caps = null;
+    try { caps = track?.getCapabilities?.() || null; } catch (e) { caps = null; }
+    mosTorchOn = false;
+    el('mos-torch').hidden = !(caps && 'torch' in caps);
+
+    const zoomEl = el('mos-zoom');
+    if (caps && caps.zoom && Number(caps.zoom.max) > 1) {
+      const zmin = Math.max(1, Number(caps.zoom.min) || 1);
+      zoomEl.min = zmin; zoomEl.max = Math.min(Number(caps.zoom.max), 6);
+      zoomEl.step = Number(caps.zoom.step) || 0.1;
+      zoomEl.value = Math.min(2, Number(caps.zoom.max));
+      zoomEl.classList.remove('hidden');
+      try { await track.applyConstraints({ advanced: [{ zoom: Number(zoomEl.value) }] }); } catch (e) {}
+    } else { zoomEl.classList.add('hidden'); }
+
+    try {
+      const devs = (await navigator.mediaDevices.enumerateDevices())
+        .filter(d => d.kind === 'videoinput');
+      mosLenses = devs.map(d => d.deviceId);
+      el('mos-lens').hidden = mosLenses.length < 2;
+    } catch (e) { el('mos-lens').hidden = true; }
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const started = Date.now();
+    let hinted = false;
+
+    const tick = () => {
+      if (!mosScanning) return;
+      const age = Date.now() - started;
+      if (age > 40000) { mosStopScan(); mosSetStatus('No code found — type it, or use Photo.', 'err'); return; }
+      if (age > 14000 && !hinted) {
+        hinted = true;
+        const h = el('mos-scanhint');
+        // Too close is the failure these lenses actually have, so the hint says back.
+        if (h) h.textContent = 'Move it further away — about 20cm — or tap Lens';
+      }
+      const w = video.videoWidth, h = video.videoHeight;
+      if (w && h) {
+        // 🔑 A CENTRED SQUARE, NOT THE WHOLE FRAME. jsQR's cost is per pixel, and a
+        // full 1080p frame is 2 megapixels per attempt — enough to drop the loop to a
+        // crawl on a mid-range phone. The square matches the overlay people are told
+        // to fill, capped at 480px, which is far more than a 21-module symbol needs.
+        const side = Math.min(w, h) * 0.62;
+        const sx = (w - side) / 2, sy = (h - side) / 2;
+        const out = Math.min(480, Math.round(side));
+        canvas.width = out; canvas.height = out;
+        ctx.drawImage(video, sx, sy, side, side, 0, 0, out, out);
+        const img = ctx.getImageData(0, 0, out, out);
+        let found = null;
+        try { found = decode(img.data, out, out, { inversionAttempts: 'attemptBoth' }); } catch (e) { found = null; }
+        if (found && found.data && mosLooksLikeSticker(found.data)) {
+          mosStopScan();
+          try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
+          mosLookup(found.data.trim());
+          return;
+        }
+      }
+      mosRaf = requestAnimationFrame(tick);
+    };
+    mosRaf = requestAnimationFrame(tick);
+  }
+  window.mosScan = mosScan;
+
+  function mosStopScan() {
+    mosScanning = false;
+    if (mosRaf) { cancelAnimationFrame(mosRaf); mosRaf = 0; }
+    try { mosStream && mosStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    mosStream = null;
+    const box = el('mos-scanbox'); if (box) box.hidden = true;
+    const lbl = el('mos-scan-lbl'); if (lbl) lbl.textContent = 'Scan QR';
+    const hint = el('mos-scanhint'); if (hint) hint.textContent = 'Fill the square with the QR code';
+  }
+  window.mosStopScan = mosStopScan;
+
+  async function mosZoom(v) {
+    const track = mosStream?.getVideoTracks?.()[0];
+    if (!track) return;
+    try { await track.applyConstraints({ advanced: [{ zoom: Number(v) }] }); } catch (e) {}
+  }
+  window.mosZoom = mosZoom;
+
+  async function mosNextLens() {
+    if (!mosLenses.length) return;
+    const cur = mosStream?.getVideoTracks?.()[0]?.getSettings?.().deviceId || mosLensId;
+    const i = mosLenses.indexOf(cur);
+    mosLensId = mosLenses[(i + 1) % mosLenses.length];
+    mosStopScan();
+    mosScan();
+  }
+  window.mosNextLens = mosNextLens;
+
+  async function mosTorch() {
+    if (!mosStream) return;
+    const track = mosStream.getVideoTracks()[0];
+    mosTorchOn = !mosTorchOn;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: mosTorchOn }] });
+      const b = el('mos-torch');
+      b.style.background = mosTorchOn ? 'rgba(255,255,255,.85)' : 'rgba(0,0,0,.45)';
+      b.style.color = mosTorchOn ? '#111' : '#fff';
+    } catch (e) { mosTorchOn = false; }
+  }
+  window.mosTorch = mosTorch;
+
+  // A still photo, decoded by the SAME reader — no model call and no endpoint. A
+  // 12-megapixel still is sharper than any preview frame, so a creased or curled
+  // label that the live loop keeps missing usually reads first time from a photo.
+  async function mosPhoto(input) {
+    const f = input.files && input.files[0];
+    input.value = '';
+    if (!f) return;
+    mosSetStatus('Reading the photo…');
+    let decode;
+    try { decode = await mosLoadDecoder(); }
+    catch (e) { mosSetStatus('The QR reader could not load. Type the code instead.', 'err'); return; }
+    try {
+      const bmp = await createImageBitmap(f);
+      // Capped: a 12MP still is 48MB of RGBA and jsQR walks all of it. 1400px on the
+      // long edge still leaves a QR held at arm's length far above the modules jsQR
+      // needs, and keeps one decode well under a second.
+      const scale = Math.min(1, 1400 / Math.max(bmp.width, bmp.height));
+      const w = Math.max(1, Math.round(bmp.width * scale));
+      const h = Math.max(1, Math.round(bmp.height * scale));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d', { willReadFrequently: true }).drawImage(bmp, 0, 0, w, h);
+      const img = c.getContext('2d').getImageData(0, 0, w, h);
+      const found = decode(img.data, w, h, { inversionAttempts: 'attemptBoth' });
+      if (found && found.data && mosLooksLikeSticker(found.data)) {
+        mosSetStatus('');
+        mosLookup(found.data.trim());
+      } else if (found && found.data) {
+        mosSetStatus('That QR is not a shelf sticker — it reads ' + found.data.slice(0, 40) + '.', 'err');
+      } else {
+        mosSetStatus("Couldn't read a QR in that photo. Try again closer, or type the code.", 'err');
+      }
+    } catch (e) {
+      mosSetStatus("Couldn't open that photo. Type the code instead.", 'err');
+    }
+  }
+  window.mosPhoto = mosPhoto;
+
+  // ── Saving ───────────────────────────────────────────────────────────────
+  async function mosSave() {
+    const r = mosState.resolved;
+    if (!r || mosState.busy) return;
+    const qty = parseInt(el('mos-qty').value, 10) || 0;
+    const btn = el('mos-save');
+    mosState.busy = true; btn.disabled = true;
+    mosSetStatus('');
+    try {
+      const body = { store: mosEntryStore(), code: r.code, qty, reason: mosState.reason };
+      if (r.needs_description) body.description = el('mos-teach-input').value.trim();
+      const resp = await fetch(`${WORKER_BASE}?action=mos-log`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(mosErr(j, resp));
+      const worth = mosMoney(j.unit_cost_cents === null ? null : qty * j.unit_cost_cents);
+      mosReset();
+      mosSetStatus(`Marked out · ${qty} × ${escapeHtml(j.description)}`
+        + (worth ? ` · ${worth} cost` : ' · no cost on file'));
+      el('mos-code').focus();
+      await mosLoad();
+    } catch (e) {
+      mosSetStatus((e && e.message) || String(e), 'err');
+    } finally {
+      mosState.busy = false;
+      mosRecalc();
+    }
+  }
+  window.mosSave = mosSave;
+
+  // ── The log ──────────────────────────────────────────────────────────────
+  async function mosLoad() {
+    mosSetLogStatus('Loading…');
+    try {
+      const store = el('mos-store').value || mosEntryStore();
+      const r = await fetch(`${WORKER_BASE}?action=mos-list&store=${encodeURIComponent(store)}&months=6`,
+        { credentials: 'include' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(mosErr(j, r));
+      mosState.rows = j.rows || [];
+      mosState.months = j.months || [];
+      // Newest month open by default; anything the user opened stays open.
+      if (mosState.months.length && !mosState.open.size) mosState.open.add(mosState.months[0].month);
+      mosSetLogStatus(j.truncated
+        ? 'Showing the most recent 500 lines. The month totals below cover every line.' : '');
+      mosRenderMonths();
+      mosRenderToday();
+      const n = mosState.months.reduce((a, m) => a + m.lines, 0);
+      el('mos-tab-log-n').textContent = n ? String(n) : '—';
+    } catch (e) {
+      mosSetLogStatus((e && e.message) || String(e));
+      el('mos-months').innerHTML = '';
+    }
+  }
+  window.mosLoad = mosLoad;
+
+  const MOS_MONTH_FMT = (m) => {
+    const [y, mm] = String(m).split('-');
+    const d = new Date(Number(y), Number(mm) - 1, 1);
+    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  function mosRowHtml(r, opts) {
+    const chip = r.reason === 'Store Use' ? 'Store' : r.reason;
+    const cost = r.unit_cost_cents === null || r.unit_cost_cents === undefined
+      ? '<span class="mos-ea">no cost on file</span>'
+      : `${mosMoney(r.qty * r.unit_cost_cents)}<span class="mos-ea">${mosMoney(r.unit_cost_cents)} ea</span>`;
+    const retail = `${mosMoney(r.qty * r.unit_price_cents)}<span class="mos-ea">${mosMoney(r.unit_price_cents)} ea</span>`;
+    const when = new Date(r.logged_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const act = (mosCanEdit() ? `<button class="mos-row-btn" onclick="mosEdit(${r.id})">Edit</button>` : '')
+      + (mosCanDelete() ? ` <button class="mos-row-btn" onclick="mosRemove(${r.id})">Remove</button>` : '');
+    return `<tr>
+      <td class="code">${escapeHtml(r.code)}</td>
+      <td>${escapeHtml(r.item_no)}</td>
+      <td class="desc">${escapeHtml(r.description || '—')}</td>
+      <td class="n" style="text-align:right">${r.qty}</td>
+      <td class="n" style="text-align:right">${cost}</td>
+      <td class="n" style="text-align:right">${retail}</td>
+      <td><span class="mos-chip ${chip}">${escapeHtml(r.reason)}</span></td>
+      ${opts && opts.when ? `<td style="color:var(--md);font-size:11.5px">${when}<span class="mos-ea">${escapeHtml(r.logged_by || '')}</span></td>` : ''}
+      <td style="text-align:right">${act}</td>
+    </tr>`;
+  }
+
+  function mosRenderMonths() {
+    const host = el('mos-months');
+    if (!mosState.months.length) {
+      host.innerHTML = '<div class="mos-empty">Nothing marked out yet.</div>';
+      return;
+    }
+    host.innerHTML = mosState.months.map(m => {
+      const open = mosState.open.has(m.month);
+      const rows = mosState.rows.filter(r => r.month === m.month);
+      const isNow = m.month === mosState.months[0].month;
+      const noCost = m.lines_without_cost
+        ? `<div class="warn">No cost on file<b>${m.lines_without_cost} line${m.lines_without_cost === 1 ? '' : 's'}</b></div>` : '';
+      return `<div class="mos-mo${open ? ' open' : ''}" id="mos-mo-${m.month}">
+        <button class="mos-mo-head" type="button" aria-expanded="${open}" onclick="mosToggleMonth('${m.month}')">
+          <span class="mos-caret"></span>
+          <span class="mos-mo-name">${escapeHtml(MOS_MONTH_FMT(m.month))}</span>
+          ${isNow ? '<span class="mos-badge">This month</span>' : ''}
+          <span class="mos-mo-meta">
+            <span>${m.lines} line${m.lines === 1 ? '' : 's'}</span>
+            <span><b>${m.units}</b> units</span>
+            <span><b>${mosMoney(m.cost_cents)}</b> cost</span>
+          </span>
+        </button>
+        <div class="mos-mo-body"><div>
+          <div class="mos-split">
+            <div class="lead">Cost marked out<b>${mosMoney(m.cost_cents)}</b></div>
+            <div>Retail value<b>${mosMoney(m.retail_cents)}</b></div>
+            <div>Shrink<b>${mosMoney(m.shrink_cents)}</b></div>
+            <div>Store use<b>${mosMoney(m.store_use_cents)}</b></div>
+            ${noCost}
+          </div>
+          <div class="mos-scroll">
+            <table class="mos-tbl">
+              <thead><tr>
+                <th>Sticker</th><th>Item #</th><th>Description</th>
+                <th style="text-align:right">Qty</th><th style="text-align:right">Cost</th>
+                <th style="text-align:right">Retail</th><th>Reason</th><th>When</th><th></th>
+              </tr></thead>
+              <tbody>${rows.map(r => mosRowHtml(r, { when: true })).join('')
+                || '<tr><td colspan="9" class="mos-empty">No lines in view for this month.</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div></div>
+      </div>`;
+    }).join('');
+  }
+
+  function mosToggleMonth(m) {
+    if (mosState.open.has(m)) mosState.open.delete(m); else mosState.open.add(m);
+    const n = document.getElementById('mos-mo-' + m);
+    if (n) {
+      n.classList.toggle('open');
+      n.querySelector('.mos-mo-head').setAttribute('aria-expanded', String(n.classList.contains('open')));
+    }
+  }
+  window.mosToggleMonth = mosToggleMonth;
+
+  function mosRenderToday() {
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const mine = mosState.rows.filter(r =>
+      new Date(r.logged_at).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) === today);
+    el('mos-today').innerHTML = mine.length
+      ? mine.map(r => mosRowHtml(r, { when: false })).join('')
+      : '<tr><td colspan="8" class="mos-empty">Nothing marked out today.</td></tr>';
+    const units = mine.reduce((a, r) => a + r.qty, 0);
+    const cost = mine.reduce((a, r) => a + (r.unit_cost_cents || 0) * r.qty, 0);
+    el('mos-today-meta').textContent = mine.length
+      ? `${mine.length} line${mine.length === 1 ? '' : 's'} · ${units} units · ${mosMoney(cost)} cost` : '—';
+  }
+
+  // ── Editing and removing ─────────────────────────────────────────────────
+  // Quantity and reason are the only two fields a person typed, and the only two
+  // this can change — see the worker's mos-update on why the sticker's own facts
+  // are not editable.
+  async function mosEdit(id) {
+    const row = mosState.rows.find(r => r.id === id);
+    if (!row) return;
+    const qty = await uiPrompt('How many units?',
+      `${row.description || row.code} · logged ${new Date(row.logged_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+      { value: String(row.qty) });
+    if (qty === null) return;
+    const n = parseInt(qty, 10);
+    if (!Number.isFinite(n) || n < 1) { await uiAlert('Enter a whole number of units.'); return; }
+    const reason = await uiChoose('Why did it leave the floor?', 'Currently ' + row.reason + '.',
+      MOS_REASON_LIST.map(r => ({ label: r, value: r })));
+    if (!reason) return;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=mos-update`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: row.id, qty: n, reason }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(mosErr(j, r));
+      await mosLoad();
+    } catch (e) { await uiAlert((e && e.message) || String(e)); }
+  }
+  window.mosEdit = mosEdit;
+
+  async function mosRemove(id) {
+    const row = mosState.rows.find(r => r.id === id);
+    if (!row) return;
+    // Names exactly what is going. A confirm that says "are you sure?" and nothing
+    // else is a button people learn to click through.
+    const go = await uiConfirm(
+      `${row.qty} × ${row.description || row.code}\n\nLogged ${new Date(row.logged_at).toLocaleString()} `
+      + `by ${row.logged_by || 'unknown'}.\n\nThis removes the line from the month's totals for good.`,
+      { title: 'Remove this entry?', okText: 'Remove', danger: true });
+    if (!go) return;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=mos-delete`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: row.id }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(mosErr(j, r));
+      await mosLoad();
+    } catch (e) { await uiAlert((e && e.message) || String(e)); }
+  }
+  window.mosRemove = mosRemove;
+
+  // ── Export ───────────────────────────────────────────────────────────────
+  const MOS_CSV_LIMIT = 5000;
+  const MOS_RANGES = [
+    { label: 'This month', value: 'this', months: 2 },
+    { label: 'Last 6 months', value: '6', months: 6 },
+    { label: 'Everything', value: 'all', months: 'all' },
+  ];
+
+  async function mosExport() {
+    const pick = await uiChoose('Export the log', 'How much of it?',
+      MOS_RANGES.map(r => ({ label: r.label, value: r.value })));
+    if (!pick) return;
+    const range = MOS_RANGES.find(r => r.value === pick);
+    try {
+      const store = el('mos-store').value || mosEntryStore();
+      const r = await fetch(`${WORKER_BASE}?action=mos-list&store=${encodeURIComponent(store)}`
+        + `&months=${range.months}&limit=${MOS_CSV_LIMIT}`, { credentials: 'include' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(mosErr(j, r));
+      let rows = j.rows || [];
+      if (range.value === 'this' && j.months && j.months.length) {
+        const now = j.months[0].month;
+        rows = rows.filter(x => x.month === now);
+      }
+      if (!rows.length) { await uiAlert('Nothing to export in that range.'); return; }
+      const cell = (v) => {
+        const s = v === null || v === undefined ? '' : String(v);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      };
+      const money = (c) => (c === null || c === undefined) ? '' : (c / 100).toFixed(2);
+      const head = ['Store', 'Retail Sticker', 'Item Number', 'Item Description', 'Quantity',
+                    'Unit Cost', 'Total Cost', 'Unit Retail', 'Total Retail',
+                    'Reason Code', 'Date of MOS', 'Logged By'];
+      const lines = [head.join(',')].concat(rows.map(x => [
+        x.store, x.code, x.item_no, x.description, x.qty,
+        money(x.unit_cost_cents), money(x.unit_cost_cents === null ? null : x.unit_cost_cents * x.qty),
+        money(x.unit_price_cents), money(x.unit_price_cents * x.qty),
+        x.reason, new Date(x.logged_at).toLocaleDateString('en-US'), x.logged_by,
+      ].map(cell).join(',')));
+      // 🔑 A BOM, so Excel opens it as UTF-8 rather than mangling the first header.
+      const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `mos-${store.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      mosSetLogStatus(`Exported ${rows.length} line${rows.length === 1 ? '' : 's'} · ${range.label.toLowerCase()}.`);
+      if (j.truncated) await uiAlert(`That range has more than ${MOS_CSV_LIMIT} lines. The file holds the most recent ${MOS_CSV_LIMIT}.`);
+    } catch (e) { await uiAlert((e && e.message) || String(e)); }
+  }
+  window.mosExport = mosExport;
+
   const SC_LABELS = { BL1: 'Coliseum', BL2: 'South Bend', BL4: 'Dupont', BL8: 'Holland', BL14: 'Battle Creek', BL16: 'Indy East' };
   // Holland (BL8) closed 2026-07-25. It still carries its budget into the chain's
   // financial rollups on purpose, but it has no shelves to count — so it is absent from
@@ -24533,6 +25561,7 @@
   // in one and not the other is a 403 with nothing on screen to explain it.
   const GRANTABLE_PAGES = [
     { id: 'bin-dump', label: 'Bin Dump', nav: 'nav-bin-dump' },
+    { id: 'mos', label: 'Mark Out of Stock', nav: 'nav-mos' },
   ];
   // Mirrors PAGE_LEVELS in worker.js. The worker is the real gate; this only
   // stops the UI offering what the API would refuse.
@@ -25303,6 +26332,7 @@
     'nav-ebay-cases': 'ecom',
     'nav-inventory': 'bl',
     'nav-bin-dump': 'bl',
+    'nav-mos': 'bl',
     'nav-labor': 'bl',
     'nav-supply-request': 'bl',
     'nav-users': 'bl',
@@ -25774,6 +26804,10 @@
     const binDumpRoles = ['superuser', 'admin', 'executive', 'district_manager', 'manager'];
     el('nav-bin-dump').classList.toggle('hidden',
       !binDumpRoles.includes(user.role) && pageLevel('bin-dump', user) < 1);
+    // Mark Out of Stock: same audience as Bin Dump — the people on the floor —
+    // plus any associate granted the page.
+    el('nav-mos').classList.toggle('hidden',
+      !binDumpRoles.includes(user.role) && pageLevel('mos', user) < 1);
     el('nav-supply-request').classList.toggle('hidden', !isAdmin && user.role !== 'district_manager' && user.role !== 'manager');
     el('nav-users').classList.toggle('hidden', !isAdmin);
     el('nav-admin-settings').classList.toggle('hidden', !isSuperuser);
@@ -27549,6 +28583,11 @@
       gate('more-merch-scan', !mgrBar && vis('nav-merch-scan'));       // managers have the bar tab
       gate('more-inventory', vis('nav-inventory'));                    // admin-only
       gate('more-bin-dump', vis('nav-bin-dump') && !binDumpInBar);      // managers too; an associate has the bar tab
+      // Same rule as Bin Dump above: a page an associate holds while holding no
+      // dashboard is their whole app, so it belongs in the bar, not under More.
+      var mosInBar = roleReady && vis('nav-mos') && !seesDash;
+      gate('bn-mos', mosInBar, 'flex');
+      gate('more-mos', vis('nav-mos') && !mosInBar);
       gate('more-supply', !mgrBar && vis('nav-supply-request'));       // admins: Supply lives here
       gate('more-marketing', vis('nav-marketing-ads'));
       gate('more-users', vis('nav-users'));
@@ -27558,7 +28597,7 @@
       // active tab
       // 'ebay-cases' has no bar tab of its own, so without it here every tab
       // sits dim while you are standing on the page.
-      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1, 'bin-dump': 1 };
+      var morePages = { 'marketing': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1, 'bin-dump': 1, 'mos': 1 };
       // ...unless it has its own tab, in which case that tab is what should light
       // up while you are standing on the page.
       if (binDumpInBar) delete morePages['bin-dump'];
@@ -27567,7 +28606,12 @@
       else { morePages['flow-calendar'] = 1; morePages['content'] = 1; }               // no bar tab for these
       // Detail pages are sub-pages of Dashboard — keep that tab highlighted.
       var detailPages = { 'store-detail': 1, 'all-stores-detail': 1 };
-      var activeTab = morePages[cur] ? 'more' : (detailPages[cur] ? 'dashboard' : cur);
+      // 🔑 A BAR TAB WINS OVER `morePages`. Both Bin Dump and MOS appear in the More
+      // sheet for a manager AND as a bar tab for an associate who holds only that
+      // page — so membership of morePages cannot decide this on its own, or the
+      // associate stands on their one page watching More light up instead of it.
+      var barTab = cur && nav && nav.querySelector('.bn-tab[data-tab="' + cur + '"]:not(.hidden)');
+      var activeTab = barTab ? cur : (morePages[cur] ? 'more' : (detailPages[cur] ? 'dashboard' : cur));
       (nav ? nav.querySelectorAll('.bn-tab') : []).forEach(function (t) {
         var on = (t.id === 'bn-more') ? (activeTab === 'more') : (t.getAttribute('data-tab') === activeTab);
         t.classList.toggle(ACTIVE, on);
