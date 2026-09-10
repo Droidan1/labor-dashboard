@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Retail Summary — Category Trend preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Lilita+One&display=swap" rel="stylesheet">
+<style>
+/* ─────────────────────────────────────────────────────────────────────────
+   Category Trend — interactive preview.
+
+   docs/ is EXCLUDED from scripts/build.sh (see its line 4), so this file
+   never reaches production. Nothing here is wired to the API.
+
+   Every colour below is a LITERAL copy of a token in tailwind.config.js, or
+   a validated chart hue. A <style> block cannot use the Tailwind token
+   classes, so the literal is duplicated with the token named in a comment —
+   DESIGN.md §4.8 trap 3. Nothing inherits a colour: both themes are stated
+   ON THE PANEL, not just on the chart.
+
+   Contrast was COMPUTED, never eyeballed (§4.8 trap 6). The series palette
+   was run through the dataviz validator against the REAL surfaces this app
+   paints on — #101826 (op-panel), #0a0a0a (oled panel) and #ffffff
+   (opl-panel) — not against the validator's own default surface. Figures
+   are in the legend at the bottom of the panel.
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root{
+  /* op-* — V1 Operator dark (primary) */
+  --bg:#0a0f1a;          /* op-bg      */
+  --panel:#101826;       /* op-panel   */
+  --panelHi:#16203a;     /* op-panelHi */
+  --ink:#e7ecf3;         /* op-ink     */
+  --inkDim:#8893a7;      /* op-inkDim — 5.74:1 on op-panel */
+  --inkDimmer:#5a6478;   /* op-inkDimmer — BORDERS/BADGES ONLY (2.99:1 as text) */
+  --hairline:rgba(255,255,255,.09);
+  --border:rgba(255,255,255,.16);
+  --accent:#22c55e;      /* accent-green — 7.81:1 on op-panel */
+  --accentInk:#06210f;   /* text on a solid accent button */
+  --good:#22c55e;        /* op-good */
+  --bad:#ef4444;         /* op-bad  */
+  --goodWash:rgba(34,197,94,.16);
+  --badWash:rgba(239,68,68,.16);
+  --amber:#f59e0b;       /* op-warn */
+  --amberWash:rgba(245,158,11,.14);
+  --amberEdge:rgba(245,158,11,.45);
+
+  /* Series palette — dark steps. Validated on #101826 AND #0a0a0a:
+     lightness band PASS · chroma floor PASS · CVD adjacent worst ΔE 8.4
+     (protan, ≥8 target) · normal-vision worst ΔE 19.3 (≥15 floor) · all
+     six ≥3:1 contrast. */
+  --s1:#3987e5;  /* blue    */
+  --s2:#d95926;  /* orange  */
+  --s3:#199e70;  /* aqua    */
+  --s4:#c98500;  /* yellow  */
+  --s5:#d55181;  /* magenta */
+  --s6:#008300;  /* green   */
+  --sOther:#8893a7; /* de-emphasis grey = op-inkDim, 5.74:1 */
+  color-scheme:dark;     /* §4.8 trap 4 — an unchecked box is UA-drawn */
+}
+html.light{
+  /* opl-* — V1 Operator light */
+  --bg:#f4f3ee;          /* opl-bg      */
+  --panel:#ffffff;       /* opl-panel   */
+  --panelHi:#fafaf6;     /* opl-panelHi */
+  --ink:#14110a;         /* opl-ink     */
+  --inkDim:#6b6453;      /* opl-inkDim — 5.29:1 on opl-bg */
+  --inkDimmer:#9c9484;   /* opl-inkDimmer — BORDERS ONLY (2.71:1 as text) */
+  --hairline:rgba(20,16,8,.10);
+  --border:rgba(20,16,8,.18);
+  --accent:#166534;      /* green-800. accent-green #22c55e is 2.28:1 on white — unusable as TEXT in light */
+  --accentInk:#ffffff;
+  --good:#166534;
+  --bad:#c0392b;         /* opl-bad — 5.44:1 */
+  --goodWash:rgba(34,197,94,.16);
+  --badWash:rgba(192,57,43,.12);
+  --amber:#92400e;       /* amber-800 — 7.09:1 on opl-panel */
+  --amberWash:rgba(245,158,11,.16);
+  --amberEdge:rgba(180,83,9,.45);
+
+  /* Series palette — light steps. Validated on #ffffff: band PASS · chroma
+     PASS · CVD adjacent worst ΔE 9.1 · normal-vision worst ΔE 19.6 · three
+     slots (aqua 2.82, yellow 2.17, magenta 2.69) sit below 3:1, which the
+     validator reports as the RELIEF band: legal only with visible labels or
+     a table view. Both ship here — direct end-labels and the Table tab. */
+  --s1:#2a78d6;
+  --s2:#eb6834;
+  --s3:#1baf7a;
+  --s4:#eda100;
+  --s5:#e87ba4;
+  --s6:#008300;
+  --sOther:#6b6453;
+  color-scheme:light;
+}
+
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:'Geist',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  padding:28px 16px 72px;
+}
+.wrap{max-width:1080px;margin:0 auto;}
+
+/* ── Document chrome (preview only — not part of the proposal) ────────── */
+.doc-kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--accent);margin-bottom:6px;}
+.doc-title{font-family:'Lilita One',cursive;font-size:30px;letter-spacing:.02em;
+  color:var(--ink);font-weight:400;line-height:1.15;}
+.doc-sub{font-size:13.5px;color:var(--inkDim);margin-top:8px;max-width:74ch;line-height:1.65;}
+.doc-sub b{color:var(--ink);font-weight:600;}
+.doc-note{margin:16px 0 20px;padding:11px 14px;border-radius:10px;
+  background:var(--amberWash);border:1px solid var(--amberEdge);
+  font-size:12.5px;color:var(--ink);line-height:1.6;}
+.doc-note b{font-weight:700;}
+.doc-note code,.qa-a code,.doc-sub code{background:var(--panelHi);border:1px solid var(--hairline);
+  border-radius:4px;padding:1px 5px;font-size:11.5px;}
+
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:20px;}
+.tb-lbl{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--inkDim);}
+.seg{display:inline-flex;gap:0;border:1px solid var(--border);border-radius:999px;overflow:hidden;}
+.seg button{appearance:none;border:0;background:transparent;color:var(--inkDim);
+  font:inherit;font-size:11.5px;font-weight:600;padding:5px 13px;cursor:pointer;
+  transition:background .2s,color .2s;}
+.seg button:hover{color:var(--ink);}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accentInk);}
+.tb-spacer{flex:1;}
+
+/* ── THE PANEL — DESIGN.md §4.8: one panel owns bar + chart + legend ──── */
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;
+  overflow:hidden;color:var(--ink);/* trap 3: colour stated ON THE PANEL */}
+
+.mc-bar{background:var(--panelHi);border-bottom:1px solid var(--hairline);
+  padding:13px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+.mc-bar-lbl{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--inkDim);white-space:nowrap;}
+.ctl{display:flex;align-items:center;gap:7px;}
+/* `display:flex` beats the UA's [hidden]{display:none}, so the hidden control
+   stays on screen as an empty stub. Same family as DESIGN.md §4.8 trap 1 —
+   a rule you assume the browser applies, silently outranked. */
+.ctl[hidden]{display:none;}
+.ctl-lbl{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--inkDimmer);}
+html.light .ctl-lbl{color:var(--inkDim);/* trap 5: inkDimmer fails AA on light */}
+
+/* Pill segmented control — the exact shape already on this page at
+   index.html:18347 (T13 Contribution|Penetration). */
+.pill{display:inline-flex;gap:6px;}
+.pill button{appearance:none;font:inherit;font-size:11px;font-weight:600;
+  padding:4px 10px;border-radius:999px;border:1px solid var(--border);
+  background:transparent;color:var(--inkDim);cursor:pointer;
+  transition:background .2s,color .2s,border-color .2s;white-space:nowrap;}
+.pill button:hover:not([aria-pressed="true"]):not(:disabled){color:var(--ink);}
+.pill button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accentInk);}
+.pill button:disabled{opacity:.45;cursor:not-allowed;}
+.pill button:focus-visible,.seg button:focus-visible,.chip:focus-visible,
+.lg-item:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+.mc-scope{padding:11px 18px;border-bottom:1px solid var(--hairline);
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.chip{appearance:none;font:inherit;font-size:11.5px;font-weight:600;
+  padding:4px 11px;border-radius:999px;border:1px solid var(--border);
+  background:transparent;color:var(--inkDim);cursor:pointer;transition:background .2s,color .2s,border-color .2s;}
+.chip:hover[aria-pressed="false"]{color:var(--ink);}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accentInk);}
+
+select.l2pick{appearance:none;font:inherit;font-size:11px;font-weight:600;
+  padding:4px 26px 4px 10px;border-radius:999px;border:1px solid var(--border);
+  background:var(--panel);color:var(--ink);cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),
+                   linear-gradient(135deg,currentColor 50%,transparent 50%);
+  background-position:calc(100% - 14px) 52%,calc(100% - 9px) 52%;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat;}
+
+.mc-status{padding:10px 18px 0;font-size:12px;color:var(--inkDim);line-height:1.6;}
+.mc-status b{color:var(--ink);font-weight:600;}
+.mc-status .warnDot{color:var(--amber);font-weight:700;}
+
+/* ── Chart ───────────────────────────────────────────────────────────── */
+.chart-host{position:relative;padding:6px 18px 0;}
+.chart-host svg{display:block;}
+.chart-host.stale{opacity:.45;transition:opacity .18s;/* refetch holds the frame */}
+
+.tip{position:absolute;pointer-events:none;z-index:5;min-width:158px;
+  background:var(--panelHi);border:1px solid var(--border);border-radius:9px;
+  padding:8px 10px;font-size:11.5px;box-shadow:0 6px 22px rgba(0,0,0,.35);
+  opacity:0;transition:opacity .12s;}
+html.light .tip{box-shadow:0 6px 22px rgba(20,16,8,.16);}
+.tip.on{opacity:1;}
+.tip-hd{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--inkDim);margin-bottom:6px;}
+.tip-row{display:flex;align-items:center;gap:7px;margin-top:3px;}
+.tip-key{width:11px;height:2.5px;border-radius:2px;flex:none;}
+.tip-val{font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink);margin-left:auto;}
+.tip-nm{color:var(--inkDim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
+
+/* ── Series legend (interactive) ──────────────────────────────────────── */
+.lg{display:flex;flex-wrap:wrap;gap:6px 14px;padding:12px 18px 14px;}
+.lg-item{appearance:none;background:transparent;border:0;font:inherit;cursor:pointer;
+  display:inline-flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink);
+  padding:2px 4px;border-radius:6px;transition:opacity .18s;}
+.lg-item[aria-pressed="false"]{opacity:.4;}
+.lg-key{width:14px;height:3px;border-radius:2px;flex:none;}
+.lg-val{color:var(--inkDim);font-variant-numeric:tabular-nums;}
+
+/* ── Change strip ─────────────────────────────────────────────────────── */
+.sec{border-top:1px solid var(--hairline);padding:14px 18px 4px;}
+.sec-hd{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:11px;}
+.sec-t{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--inkDim);}
+.sec-s{font-size:11.5px;color:var(--inkDimmer);}
+html.light .sec-s{color:var(--inkDim);}
+
+.dl-row{display:grid;grid-template-columns:minmax(96px,1.3fr) 1fr minmax(104px,auto);
+  align-items:center;gap:10px;padding:3px 0;}
+.dl-nm{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dl-dot{width:9px;height:9px;border-radius:3px;flex:none;}
+.dl-track{position:relative;height:17px;}
+.dl-mid{position:absolute;top:0;bottom:0;width:1px;background:var(--border);}
+.dl-bar{position:absolute;top:3px;height:11px;border-radius:3px;}
+.dl-v{text-align:right;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.dl-v .pct{color:var(--inkDim);font-weight:500;margin-left:5px;}
+.dl-none{font-size:12px;color:var(--inkDim);padding:8px 0 12px;}
+
+/* ── Table view ──────────────────────────────────────────────────────── */
+.tbl-scroll{overflow-x:auto;padding:0 0 4px;}
+table.mc{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;
+  color:var(--ink);/* trap 3 */}
+table.mc th,table.mc td{padding:0 10px;height:34px;white-space:nowrap;
+  border-bottom:1px solid var(--hairline);font-size:12px;text-align:right;}
+table.mc thead th{position:sticky;top:0;background:var(--panelHi);height:34px;
+  font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--inkDim);z-index:2;}
+table.mc th.k,table.mc td.k{text-align:left;position:sticky;left:0;
+  background:var(--panel);z-index:1;/* trap 2: sticky needs its own opaque bg */}
+table.mc thead th.k{background:var(--panelHi);z-index:3;}
+table.mc tbody tr:hover td{background:var(--panelHi);}
+table.mc tbody tr:hover td.k{background:var(--panelHi);}
+table.mc tr.tot td{font-weight:700;background:var(--panelHi);border-top:1px solid var(--border);}
+table.mc tr.tot td.k{background:var(--panelHi);}
+.k-dot{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:7px;vertical-align:-1px;}
+.na{color:var(--inkDim);}
+
+/* ── Panel legend — every visual state gets a row (§4.8) ─────────────── */
+.plegend{border-top:1px solid var(--hairline);padding:12px 18px 14px;
+  display:flex;flex-direction:column;gap:6px;}
+.pl-row{display:flex;align-items:flex-start;gap:9px;font-size:11.5px;color:var(--inkDim);line-height:1.55;}
+.pl-row b{color:var(--ink);font-weight:600;}
+.pl-swatch{flex:none;margin-top:3px;}
+
+/* ── Q&A blocks (preview only) ───────────────────────────────────────── */
+.h2{font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--inkDim);margin:34px 0 12px;}
+.qa{background:var(--panel);border:1px solid var(--border);border-radius:14px;
+  padding:6px 16px;color:var(--ink);}
+.qa-row{display:flex;gap:11px;padding:12px 0;border-bottom:1px solid var(--hairline);}
+.qa-row:last-child{border-bottom:0;}
+.qa-n{flex:none;width:21px;height:21px;border-radius:7px;background:var(--panelHi);
+  border:1px solid var(--border);color:var(--inkDim);font-size:10.5px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;margin-top:1px;}
+.qa-q{display:block;font-size:13.5px;font-weight:600;color:var(--ink);}
+.qa-a{display:block;font-size:12.5px;color:var(--inkDim);margin-top:5px;line-height:1.65;}
+.qa-a b{color:var(--ink);font-weight:600;}
+
+@media (max-width:560px){
+  body{padding:20px 12px 56px;}
+  .doc-title{font-size:24px;}
+  .mc-bar,.mc-scope,.chart-host,.lg,.sec,.plegend,.mc-status{padding-left:12px;padding-right:12px;}
+  .dl-row{grid-template-columns:minmax(78px,1.1fr) 1fr minmax(88px,auto);gap:7px;}
+  .dl-nm{font-size:11px;}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="doc-kicker">Bargain Lane · Retail Summary</div>
+  <h1 class="doc-title">Category Trend — panel preview</h1>
+  <p class="doc-sub">
+    A working click-through of the proposed <b>Category Trend</b> panel for the Retail
+    Summary page: pick <b>L2 or L3</b>, pick the bucket — <b>day, week, month or
+    quarter</b> — and read every category's line across those buckets, with a
+    period-over-period change strip underneath. Every control below is live.
+  </p>
+  <div class="doc-note">
+    <b>Nothing is wired up, and no app code has been changed.</b> This is a static
+    prototype in <code>docs/</code> — a directory <code>scripts/build.sh</code>
+    deliberately excludes, so it never reaches production. <b>The numbers are
+    synthetic</b> (seeded, so they are stable between reloads) — plausible shapes on
+    real category names, not your sales. Read the layout and the behaviour, not the
+    figures.
+  </div>
+
+  <div class="toolbar">
+    <span class="tb-lbl">Theme</span>
+    <span class="seg">
+      <button id="th-dark"  aria-pressed="true">Dark</button>
+      <button id="th-light" aria-pressed="false">Light</button>
+    </span>
+    <span class="tb-spacer"></span>
+  </div>
+
+  <!-- ══ THE PROPOSED PANEL ════════════════════════════════════════════ -->
+  <div class="panel" id="panel">
+
+    <div class="mc-bar">
+      <span class="mc-bar-lbl">Category Trend</span>
+
+      <span class="ctl">
+        <span class="ctl-lbl">Level</span>
+        <span class="pill" id="ctl-level"></span>
+      </span>
+
+      <span class="ctl" id="ctl-parent-wrap" hidden>
+        <span class="ctl-lbl">Within</span>
+        <select class="l2pick" id="ctl-parent"></select>
+      </span>
+
+      <span class="ctl">
+        <span class="ctl-lbl">Bucket</span>
+        <span class="pill" id="ctl-bucket"></span>
+      </span>
+
+      <span class="ctl">
+        <span class="ctl-lbl">Measure</span>
+        <span class="pill" id="ctl-measure"></span>
+      </span>
+
+      <span class="tb-spacer"></span>
+
+      <span class="pill" id="ctl-view"></span>
+    </div>
+
+    <div class="mc-scope">
+      <span class="ctl-lbl" style="margin-right:2px">Store</span>
+      <span id="ctl-store" style="display:contents"></span>
+    </div>
+
+    <div class="mc-status" id="status"></div>
+
+    <div class="chart-host" id="chart-host">
+      <div id="chart"></div>
+      <div class="tip" id="tip"></div>
+    </div>
+
+    <div class="lg" id="legend"></div>
+
+    <div class="sec" id="delta-sec">
+      <div class="sec-hd">
+        <span class="sec-t" id="delta-t">Change</span>
+        <span class="sec-s" id="delta-s"></span>
+      </div>
+      <div id="delta"></div>
+    </div>
+
+    <div class="plegend" id="plegend"></div>
+  </div>
+
+  <div class="h2">What this panel is reading</div>
+  <div class="qa" id="src"></div>
+
+  <div class="h2">Questions for you — these change what gets built</div>
+  <div class="qa" id="qa"></div>
+
+  <div class="h2">How it would be built</div>
+  <div class="qa" id="build"></div>
+
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   Prototype logic. Seeded synthetic data only — no network, no storage.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Theme ───────────────────────────────────────────────────────────── */
+const root = document.documentElement;
+const thDark  = document.getElementById('th-dark');
+const thLight = document.getElementById('th-light');
+function setTheme(light){
+  root.classList.toggle('light', light);
+  thDark.setAttribute('aria-pressed', String(!light));
+  thLight.setAttribute('aria-pressed', String(light));
+  render();                       // the SVG carries resolved colours
+}
+thDark.onclick  = () => setTheme(false);
+thLight.onclick = () => setTheme(true);
+
+/* ── The real taxonomy ───────────────────────────────────────────────── */
+// The 12 display L2s — index.html:18016 T13_L2_CATS. The other three real L2s
+// (Custom Sales / Refund / Sku Book Items) are diagnostics and stay excluded.
+const L2S = [
+  'Softline - Apparel', 'Consumable Food', 'Softline - Shoes', 'Home',
+  'Hardlines', 'Consumable HBA', 'Seasonal', 'Softline - Accessories',
+  'Consumable Other', 'Furniture', 'Bin Products', 'Gift Cards',
+];
+// Rough share of chain net, from the shapes in tasks/t13-l3-reroll-impact.md.
+const L2_WEIGHT = {
+  'Softline - Apparel':.215,'Consumable Food':.155,'Softline - Shoes':.130,
+  'Home':.100,'Hardlines':.095,'Consumable HBA':.070,'Seasonal':.062,
+  'Softline - Accessories':.052,'Consumable Other':.045,'Furniture':.040,
+  'Bin Products':.030,'Gift Cards':.006,
+};
+// Real Clover L3 keys (worker.js:160 L3_TO_L2). 'Other / unmapped' is the
+// L3_OTHER bucket normalizeL3Key folds the bracketed sources into.
+const L3S = {
+  'Consumable Food':['FG BL CONSUMABLES - FOOD - SNACKS','FG BL CONSUMABLES - FOOD - BEVERAGES',
+    'FG BL CONSUMABLES - FOOD - CANDY','FG BL CONSUMABLES - FOOD - PANTRY',
+    'FG BL CONSUMABLES - FOOD - FROZEN','FG BL CONSUMABLES - FOOD - COFFEE & TEA',
+    'FG BL CONSUMABLES - FOOD - BREAKFAST','FG BL CONSUMABLES - FOOD - CANNED GOODS',
+    'FG BL CONSUMABLES - FOOD - ENERGY DRINKS','Other / unmapped'],
+  'Hardlines':['FG BL HARDLINES - TOYS','FG BL HARDLINES - ELECTRONICS',
+    'FG BL HARDLINES - GENERAL MERCHANDISE','FG BL HARDLINES - SPORTING GOODS',
+    'FG BL HARDLINES - OFFICE PRODUCTS','FG BL HARDLINES - STORAGE',
+    'FG BL HARDLINES - LUGGAGE','FG BL HARDLINES - BABY','APPLIANCES - BL STORES','Other / unmapped'],
+  'Home':['FG BL HOME - KITCHEN','FG BL HOME - HOME DECOR','FG BL HOME - BEDDING & PILLOWS',
+    'FG BL HOME - BATH','FG BL HOME - RUGS','FG BL HAMILTON BEACH','Other / unmapped'],
+  'Softline - Apparel':['FG BL SOFTLINES - APPAREL','Apparel','Other / unmapped'],
+  'Softline - Shoes':['FG BL SOFTLINES - SHOES','Other / unmapped'],
+  'Consumable HBA':['FG BL CONSUMABLES - HBA - PERSONAL CARE','FG BL CONSUMABLES - HBA - OTC',
+    'FG BL CONSUMABLES - HBA - COSMETICS','FG BL CONSUMABLES - HBA - PAPER','Other / unmapped'],
+  'Seasonal':['FG BL SEASONAL - CHRISTMAS','FG BL SEASONAL - SPRING/SUMMER',
+    'FG BL SEASONAL - FALL/HARVEST','FG BL SEASONAL - LAWN & GARDEN','Other / unmapped'],
+  'Softline - Accessories':['FG BL SOFTLINES - ACCESSORIES','Other / unmapped'],
+  'Consumable Other':['FG BL CONSUMABLES - OTHER - CLEANING','FG BL CONSUMABLES - OTHER - PET',
+    'FG BL CONSUMABLES - OTHER - LAUNDRY','Other / unmapped'],
+  'Furniture':['FG BL FURNITURE - UPHOLSTERY','FG BL FURNITURE - CASEGOODS',
+    'FG BL FURNITURE - MATTRESS','Other / unmapped'],
+  'Bin Products':['Bin Products','Other / unmapped'],
+  'Gift Cards':['Gift Cards','Other / unmapped'],
+};
+// index.html:14822. BL12 Wyoming is flagged "Closed · historical" at 18613.
+const STORE_KEYS  = ['BL1','BL2','BL4','BL8','BL14','BL16'];
+const STORE_NAMES = { BL1:'Coliseum', BL2:'South Bend', BL4:'Dupont',
+                      BL8:'Holland', BL14:'Battle Creek', BL16:'Indy East' };
+const STORE_SCALE = { BL1:1.00, BL2:.82, BL4:.71, BL8:.66, BL14:.58, BL16:.49 };
+
+/* ── State ───────────────────────────────────────────────────────────── */
+// "Other" starts HIDDEN. A sum of seven categories outranks every real one,
+// so drawing it by default makes the fold bucket look like the top seller and
+// buries the comparison the chart exists to make. It stays one click away in
+// the legend, and the Table always carries it.
+const OTHER = '__other__';
+const S = {
+  level:'l2', parent:'Consumable Food', bucket:'week', measure:'net',
+  view:'chart', store:'__all__', hidden:new Set([OTHER]), maxSeries:6,
+};
+function resetHidden(){ S.hidden = new Set([OTHER]); }
+
+/* ── Deterministic synthetic data ────────────────────────────────────── */
+// One store-day rate per (store, category). Every bucket is the SUM of its
+// days, so day/week/month/quarter stay consistent with each other — the same
+// property the real feed has, where the store-day is the unit of truth.
+function hash32(str){
+  let h = 2166136261 >>> 0;
+  for (let i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h >>> 0;
+}
+function noise(seedStr){                     // deterministic 0..1
+  let x = hash32(seedStr);
+  x ^= x << 13; x >>>= 0; x ^= x >> 17; x ^= x << 5; x >>>= 0;
+  return x / 4294967296;
+}
+const DAY_MS = 86400000;
+const TODAY  = new Date(Date.UTC(2026, 8, 6));   // Sun 2026-09-06 — a closed week end
+function ymd(d){ return d.toISOString().slice(0,10); }
+function dayIdx(d){ return Math.floor(d.getTime()/DAY_MS); }
+
+const CHAIN_DAILY_NET = 34500;               // whole chain, all categories
+const _dayCache = new Map();
+function dayNet(store, l2, d){
+  const key = store+'|'+l2+'|'+dayIdx(d);
+  let v = _dayCache.get(key);
+  if (v !== undefined) return v;
+  const dow  = d.getUTCDay();                                  // 0 Sun
+  const dowF = [1.14,0.80,0.82,0.86,0.95,1.15,1.28][dow];      // weekend-heavy
+  const doy  = (Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+                - Date.UTC(d.getUTCFullYear(),0,1)) / DAY_MS;
+  let seas = 1 + 0.16*Math.sin((doy/365)*2*Math.PI - 1.1);     // spring/holiday swell
+  if (l2 === 'Seasonal')       seas *= 1 + 0.85*Math.sin((doy/365)*2*Math.PI - 0.35);
+  if (l2 === 'Consumable Food')seas *= 1.04;
+  const drift = 1 + 0.055*Math.sin((dayIdx(d)/610)*2*Math.PI + hash32(l2)%7);
+  const rnd   = 0.80 + 0.40*noise(key);
+  v = CHAIN_DAILY_NET * (L2_WEIGHT[l2]||.02) * (STORE_SCALE[store]||.5)
+      * dowF * Math.max(.15, seas) * drift * rnd / 3.26;       // /Σ store scale
+  _dayCache.set(key, v);
+  return v;
+}
+// L3 shares MOVE over time — each sub-category has its own slow drift and its
+// own weekday lean, so Snacks and Frozen do not rise and fall in lockstep.
+// (First pass held them fixed, and every L3 in the change strip then reported
+//  the identical +22.9%: six rows agreeing to four significant figures is
+//  never data, it is one number wearing six labels.)
+// Shares are renormalised per day, which preserves the invariant worker.js:2734
+// rests on — L3 sums to its L2 exactly.
+const _shareCache = new Map();
+function l3Shares(store, l2, d){
+  const di  = dayIdx(d);
+  const key = store+'|'+l2+'|'+di;
+  let s = _shareCache.get(key);
+  if (s) return s;
+  const names = L3S[l2] || ['Other / unmapped'];
+  const raw = names.map((n,i) => {
+    const base   = (0.25 + noise(store+'|'+l2+'|'+n)) / (1 + i*0.38);
+    const period = 240 + (hash32(n) % 460);                 // 240–700 days
+    const phase  = (hash32(n+'p') % 1000) / 1000 * 2*Math.PI;
+    const drift  = 1 + 0.20*Math.sin((di/period)*2*Math.PI + phase);
+    const dow    = 1 + 0.12*Math.sin((d.getUTCDay()/7)*2*Math.PI + phase);
+    return Math.max(0.02, base * drift * dow);
+  });
+  const sum = raw.reduce((a,b)=>a+b,0);
+  s = {}; names.forEach((n,i)=> s[n] = raw[i]/sum);
+  if (_shareCache.size > 20000) _shareCache.clear();
+  _shareCache.set(key, s);
+  return s;
+}
+function unitsFor(l2, net){                  // ASP varies by category
+  const asp = { 'Furniture':64, 'Hardlines':9.2, 'Home':7.4, 'Softline - Apparel':5.1,
+    'Softline - Shoes':8.3, 'Softline - Accessories':4.2, 'Consumable Food':2.35,
+    'Consumable HBA':3.1, 'Consumable Other':3.4, 'Seasonal':6.1,
+    'Bin Products':1.85, 'Gift Cards':25 }[l2] || 6;
+  return net / asp;
+}
+
+/* ── Buckets ─────────────────────────────────────────────────────────── */
+const BUCKETS = {
+  day:     { label:'Day',     n:14, unit:'day',     vs:'previous day' },
+  week:    { label:'Week',    n:13, unit:'week',    vs:'previous week' },
+  month:   { label:'Month',   n:12, unit:'month',   vs:'previous month' },
+  quarter: { label:'Quarter', n:8,  unit:'quarter', vs:'previous quarter' },
+};
+// `i` counts periods back; i=0 is the period CONTAINING today. Each returns
+// its natural [s,e] — the calendar bounds, NOT clamped to today.
+function periodBack(kind, i){
+  if (kind === 'day'){
+    const d = new Date(TODAY.getTime() - i*DAY_MS);
+    return { s:new Date(d), e:new Date(d),
+      label:d.toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'}),
+      long:ymd(d) };
+  }
+  if (kind === 'week'){
+    // Sunday-ended, the anchor ymdSundayOf / shelf_counts.week_ending use. The
+    // real feed keys weeks by daily_sales.week, so the LABELS come from there.
+    const endSun = new Date(TODAY.getTime() + ((7 - TODAY.getUTCDay()) % 7)*DAY_MS);
+    const e = new Date(endSun.getTime() - i*7*DAY_MS);
+    const s = new Date(e.getTime() - 6*DAY_MS);
+    return { s, e, label:'Wk '+isoWeek(e), long:'Week '+isoWeek(e)+' · '+ymd(s)+' → '+ymd(e) };
+  }
+  if (kind === 'month'){
+    const s = new Date(Date.UTC(TODAY.getUTCFullYear(), TODAY.getUTCMonth()-i, 1));
+    const e = new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth()+1, 0));
+    return { s, e, label:s.toLocaleDateString('en-US',{month:'short',timeZone:'UTC'})
+      + (s.getUTCMonth()===0 ? " '"+String(s.getUTCFullYear()).slice(2) : ''),
+      long:s.toLocaleDateString('en-US',{month:'long',year:'numeric',timeZone:'UTC'}) };
+  }
+  let q = Math.floor(TODAY.getUTCMonth()/3) - i, y = TODAY.getUTCFullYear();
+  while (q < 0){ q += 4; y -= 1; }
+  const s = new Date(Date.UTC(y, q*3, 1));
+  const e = new Date(Date.UTC(y, q*3+3, 0));
+  return { s, e, label:'Q'+(q+1)+" '"+String(y).slice(2),
+    long:'Q'+(q+1)+' '+y+' · '+ymd(s)+' → '+ymd(e) };
+}
+
+// EVERY BUCKET IS A CLOSED PERIOD. The period in progress is dropped, never
+// clamped — a 68-day Q3 plotted beside three 92-day quarters reads as a 25%
+// collapse in every category at once, which is the shape of a missing month,
+// not of a business. (lessons.md: "An entry surface opens on the period you
+// HAVE data for"; "An empty answer is a fault, not a fact".) What was dropped
+// is reported in the status line rather than silently discarded.
+function buildBuckets(kind){
+  const n = BUCKETS[kind].n;
+  const all = [];
+  for (let i = n + 1; i >= 0; i--) all.push(periodBack(kind, i));
+  const closed = all.filter(b => b.e.getTime() <= TODAY.getTime());
+  const open   = all.length > closed.length ? all[all.length-1] : null;
+  return { list: closed.slice(-n), open };
+}
+function isoWeek(d){
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay()||7));
+  const y0 = new Date(Date.UTC(t.getUTCFullYear(),0,1));
+  return Math.ceil((((t-y0)/DAY_MS)+1)/7);
+}
+
+/* ── Series assembly ─────────────────────────────────────────────────── */
+function seriesFor(){
+  const { list: buckets, open } = buildBuckets(S.bucket);
+  const stores  = S.store === '__all__' ? STORE_KEYS : [S.store];
+  const keys    = S.level === 'l2' ? L2S : (L3S[S.parent] || []);
+  const rows = keys.map(k => ({ key:k, label:shortLabel(k), values:buckets.map(()=>0) }));
+
+  buckets.forEach((b, bi) => {
+    for (let t = b.s.getTime(); t <= b.e.getTime(); t += DAY_MS){
+      const d = new Date(t);
+      for (const st of stores){
+        if (S.level === 'l2'){
+          rows.forEach(r => {
+            const net = dayNet(st, r.key, d);
+            r.values[bi] += S.measure === 'net' ? net : unitsFor(r.key, net);
+          });
+        } else {
+          const parentNet = dayNet(st, S.parent, d);
+          const sh = l3Shares(st, S.parent, d);
+          rows.forEach(r => {
+            const net = parentNet * (sh[r.key] || 0);
+            r.values[bi] += S.measure === 'net' ? net : unitsFor(S.parent, net);
+          });
+        }
+      }
+    }
+  });
+  return { buckets, rows, open };
+}
+// L3 keys are long ("FG BL CONSUMABLES - FOOD - SNACKS"). The chart shows the
+// tail; the full key stays in the tooltip and the table.
+function shortLabel(k){
+  if (!k.includes(' - ')) return k;
+  if (k.startsWith('Softline - ') || k.startsWith('Consumable ')) return k;
+  const tail = k.split(' - ').pop();
+  return tail.charAt(0) + tail.slice(1).toLowerCase();
+}
+
+/* Colour follows the ENTITY, not its rank in the current view. The ordering
+   and the fold-to-Other set are computed from the WHOLE window, once, before
+   any legend toggle — so hiding a series never repaints the survivors. */
+function paletteVar(i){ return getCSS(i < 6 ? '--s'+(i+1) : '--sOther'); }
+function getCSS(v){ return getComputedStyle(root).getPropertyValue(v).trim(); }
+
+function foldSeries(rows){
+  const totals = rows.map(r => ({ r, t:r.values.reduce((a,b)=>a+b,0) }));
+  totals.sort((a,b) => b.t - a.t);
+  const keep = totals.slice(0, S.maxSeries).map(x => x.r);
+  const tail = totals.slice(S.maxSeries).map(x => x.r).filter(r => r.values.some(v=>v>0));
+  keep.forEach((r,i) => { r.slot = i; r.total = totals.find(t=>t.r===r).t; });
+  if (tail.length){
+    const other = { key:OTHER, label:'Other ('+tail.length+')', slot:6,
+      values:keep[0].values.map((_,i)=> tail.reduce((a,r)=>a+r.values[i],0)),
+      members:tail.map(r=>r.label) };
+    other.total = other.values.reduce((a,b)=>a+b,0);
+    return keep.concat([other]);
+  }
+  return keep;
+}
+
+/* ── Formatting (DESIGN.md §8) ───────────────────────────────────────── */
+const fmtD0  = v => '$' + Math.round(v).toLocaleString('en-US');
+const fmtU0  = v => Math.round(v).toLocaleString('en-US');
+const fmtVal = v => S.measure === 'net' ? fmtD0(v) : fmtU0(v);
+function fmtAxis(v){
+  if (S.measure !== 'net') return v >= 1000 ? Math.round(v/1000)+'k' : String(Math.round(v));
+  if (v >= 1000) return '$' + Math.round(v/1000) + 'k';
+  return '$' + Math.round(v);
+}
+const fmtSigned = v => (v >= 0 ? '+' : '−') + fmtVal(Math.abs(v));
+
+/* ── Chart (inline SVG — see "How it would be built") ────────────────── */
+const hostEl = document.getElementById('chart-host');
+const chartEl = document.getElementById('chart');
+const tipEl   = document.getElementById('tip');
+let LAST = null;
+
+function drawChart(buckets, series){
+  const W = Math.max(300, chartEl.clientWidth || 700);
+  const narrow = W < 560;
+  const visible = series.filter(s => !S.hidden.has(s.key));
+  const labelRoom = (!narrow && visible.length <= 4 && visible.length > 0) ? 84 : 10;
+  const M = { t:14, r:labelRoom, b:30, l:narrow ? 40 : 52 };
+  const H = narrow ? 210 : 262;
+  const pw = W - M.l - M.r, ph = H - M.t - M.b;
+
+  let max = 0;
+  visible.forEach(s => s.values.forEach(v => { if (v > max) max = v; }));
+  if (max <= 0) max = 1;
+  const ticks = niceTicks(max, 4);
+  const top = ticks[ticks.length-1];
+
+  const x = i => M.l + (buckets.length === 1 ? pw/2 : (i/(buckets.length-1))*pw);
+  const y = v => M.t + ph - (v/top)*ph;
+
+  const ink=getCSS('--ink'), dim=getCSS('--inkDim'), grid=getCSS('--hairline'),
+        surf=getCSS('--panel');
+
+  let g = '';
+  // Gridlines — solid hairlines, one shade off the surface. Never dashed.
+  ticks.forEach(t => {
+    g += `<line x1="${M.l}" y1="${y(t).toFixed(1)}" x2="${M.l+pw}" y2="${y(t).toFixed(1)}" stroke="${grid}" stroke-width="1"/>`;
+    g += `<text x="${M.l-8}" y="${(y(t)+3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="${dim}" font-family="Geist,sans-serif" style="font-variant-numeric:tabular-nums">${fmtAxis(t)}</text>`;
+  });
+
+  // X labels — thinned so they never collide.
+  const step = Math.max(1, Math.ceil(buckets.length / (narrow ? 4 : 8)));
+  buckets.forEach((b,i) => {
+    if (i % step !== 0 && i !== buckets.length-1) return;
+    // The end labels anchor inward, or the last one is clipped by the viewBox.
+    const anchor = i === 0 ? 'start' : (i === buckets.length-1 ? 'end' : 'middle');
+    g += `<text x="${x(i).toFixed(1)}" y="${H-10}" text-anchor="${anchor}" font-size="10" fill="${dim}" font-family="Geist,sans-serif">${esc(b.label)}</text>`;
+  });
+
+  // Lines — 2px, round join. Dots carry a 2px surface ring (never a border).
+  visible.forEach(s => {
+    const c = paletteVar(s.slot);
+    const pts = s.values.map((v,i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    g += `<polyline points="${pts}" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    if (buckets.length <= 16){
+      s.values.forEach((v,i) => {
+        g += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="3.5" fill="${c}" stroke="${surf}" stroke-width="2"/>`;
+      });
+    }
+  });
+
+  // Direct end-labels at ≤4 series — text wears an INK token, never the
+  // series colour; the coloured line-key beside it carries identity.
+  if (labelRoom > 10){
+    const placed = [];
+    visible.slice().sort((a,b)=> b.values[b.values.length-1]-a.values[a.values.length-1])
+      .forEach(s => {
+        let ly = y(s.values[s.values.length-1]);
+        while (placed.some(p => Math.abs(p-ly) < 12)) ly += 12;
+        placed.push(ly);
+        const lx = M.l + pw + 8;
+        g += `<line x1="${(M.l+pw+2).toFixed(1)}" y1="${y(s.values[s.values.length-1]).toFixed(1)}" x2="${lx-2}" y2="${ly.toFixed(1)}" stroke="${paletteVar(s.slot)}" stroke-width="1" opacity=".65"/>`;
+        g += `<rect x="${lx}" y="${(ly-1.5).toFixed(1)}" width="9" height="3" rx="1.5" fill="${paletteVar(s.slot)}"/>`;
+        g += `<text x="${lx+13}" y="${(ly+3.5).toFixed(1)}" font-size="10.5" fill="${ink}" font-family="Geist,sans-serif">${esc(clip(s.label, 11))}</text>`;
+      });
+  }
+
+  // Crosshair layer — the reader aims at a bucket, never at a 2px line.
+  g += `<line id="xh" x1="0" y1="${M.t}" x2="0" y2="${M.t+ph}" stroke="${dim}" stroke-width="1" opacity="0"/>`;
+  g += `<rect id="hit" x="${M.l}" y="${M.t}" width="${pw}" height="${ph}" fill="transparent" style="cursor:crosshair"/>`;
+
+  chartEl.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
+     aria-label="${esc(chartAria(buckets, visible))}">${g}</svg>`;
+
+  LAST = { buckets, visible, x, y, M, ph, W, H };
+  wireCrosshair();
+}
+function chartAria(buckets, visible){
+  return `${visible.length} categories across ${buckets.length} ${BUCKETS[S.bucket].unit}s, `
+    + `${buckets[0].label} to ${buckets[buckets.length-1].label}. Full values in the Table view.`;
+}
+function niceTicks(max, n){
+  const raw = max/n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1,1.5,2,2.5,3,4,5,7.5,10].map(m=>m*mag).find(s => s >= raw) || 10*mag;
+  const out = []; for (let v=0; v<=max+step*0.001; v+=step) out.push(v);
+  if (out[out.length-1] < max) out.push(out[out.length-1]+step);
+  return out;
+}
+function clip(s,n){ return s.length > n ? s.slice(0,n-1)+'…' : s; }
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+/* Crosshair + one tooltip listing EVERY series at that bucket. */
+function wireCrosshair(){
+  const svg = chartEl.querySelector('svg');
+  const hit = svg.querySelector('#hit'), xh = svg.querySelector('#xh');
+  const { buckets, visible, x, M, ph } = LAST;
+  const move = ev => {
+    const r = svg.getBoundingClientRect();
+    const px = (ev.clientX - r.left) * (LAST.W / r.width);
+    let bi = 0, best = Infinity;
+    buckets.forEach((_,i) => { const d = Math.abs(x(i)-px); if (d < best){ best = d; bi = i; } });
+    xh.setAttribute('x1', x(bi)); xh.setAttribute('x2', x(bi));
+    xh.setAttribute('opacity', '0.55');
+    showTip(bi, r);
+  };
+  hit.addEventListener('pointermove', move);
+  hit.addEventListener('pointerdown', move);
+  hit.addEventListener('pointerleave', () => { xh.setAttribute('opacity','0'); tipEl.classList.remove('on'); });
+}
+function showTip(bi, svgRect){
+  const { buckets, visible, x, W } = LAST;
+  const b = buckets[bi];
+  // Labels are untrusted data: textContent, never innerHTML concatenation.
+  tipEl.textContent = '';
+  const hd = document.createElement('div'); hd.className = 'tip-hd';
+  hd.textContent = b.long;
+  tipEl.appendChild(hd);
+  visible.slice().sort((a,c)=> c.values[bi]-a.values[bi]).forEach(s => {
+    const row = document.createElement('div'); row.className = 'tip-row';
+    const k = document.createElement('span'); k.className = 'tip-key';
+    k.style.background = paletteVar(s.slot);
+    const nm = document.createElement('span'); nm.className = 'tip-nm';
+    nm.textContent = s.key === OTHER ? s.label : s.key;   // full L3 key here
+    const v = document.createElement('span'); v.className = 'tip-val';
+    v.textContent = fmtVal(s.values[bi]);
+    row.append(k, nm, v); tipEl.appendChild(row);
+  });
+  const hostRect = hostEl.getBoundingClientRect();
+  const px = (x(bi) / W) * svgRect.width + (svgRect.left - hostRect.left);
+  const tw = tipEl.offsetWidth || 170;
+  tipEl.style.left = Math.max(6, Math.min(hostRect.width - tw - 6, px - tw/2)) + 'px';
+  tipEl.style.top  = '10px';
+  tipEl.classList.add('on');
+}
+
+/* ── Legend ──────────────────────────────────────────────────────────── */
+function drawLegend(series){
+  const el = document.getElementById('legend');
+  el.textContent = '';
+  series.forEach(s => {
+    const b = document.createElement('button');
+    b.className = 'lg-item'; b.type = 'button';
+    b.setAttribute('aria-pressed', String(!S.hidden.has(s.key)));
+    const k = document.createElement('span'); k.className='lg-key'; k.style.background = paletteVar(s.slot);
+    const n = document.createElement('span');
+    n.textContent = s.key === OTHER ? s.label : s.label;
+    if (s.key === OTHER && s.members) n.title = s.members.join(', ');
+    else n.title = s.key;
+    const v = document.createElement('span'); v.className='lg-val'; v.textContent = fmtVal(s.total);
+    b.append(k, n, v);
+    b.onclick = () => {
+      if (S.hidden.has(s.key)) S.hidden.delete(s.key); else S.hidden.add(s.key);
+      if (series.every(x => S.hidden.has(x.key))) S.hidden.delete(s.key);  // never blank the chart
+      render();
+    };
+    el.appendChild(b);
+  });
+}
+
+/* ── Change strip ────────────────────────────────────────────────────── */
+function drawDelta(buckets, series){
+  const el = document.getElementById('delta');
+  el.textContent = '';
+  document.getElementById('delta-t').textContent =
+    'Change vs ' + BUCKETS[S.bucket].vs;
+  const n = buckets.length;
+  if (n < 2){ el.innerHTML = '<div class="dl-none">Not enough closed periods to compare.</div>'; return; }
+  const cur = buckets[n-1], prv = buckets[n-2];
+  document.getElementById('delta-s').textContent = prv.long + '  →  ' + cur.long;
+
+  const rows = series.map(s => ({ s, d: s.values[n-1] - s.values[n-2],
+    pct: s.values[n-2] > 0 ? (s.values[n-1]-s.values[n-2])/s.values[n-2] : null }));
+  rows.sort((a,b) => b.d - a.d);
+  const span = Math.max(...rows.map(r => Math.abs(r.d)), 1);
+
+  rows.forEach(r => {
+    const row = document.createElement('div'); row.className = 'dl-row';
+    const nm = document.createElement('div'); nm.className = 'dl-nm';
+    const dot = document.createElement('span'); dot.className='dl-dot';
+    dot.style.background = paletteVar(r.s.slot);
+    const nmT = document.createElement('span');
+    nmT.textContent = r.s.label; nmT.title = r.s.key === OTHER ? (r.s.members||[]).join(', ') : r.s.key;
+    nm.append(dot, nmT);
+
+    const track = document.createElement('div'); track.className='dl-track';
+    const mid = document.createElement('div'); mid.className='dl-mid'; mid.style.left='50%';
+    const bar = document.createElement('div'); bar.className='dl-bar';
+    const w = (Math.abs(r.d)/span) * 48;
+    bar.style.background = r.d >= 0 ? getCSS('--good') : getCSS('--bad');
+    if (r.d >= 0){ bar.style.left = '50%'; bar.style.width = w + '%'; }
+    else { bar.style.right = '50%'; bar.style.width = w + '%'; }
+    track.append(mid, bar);
+
+    const v = document.createElement('div'); v.className='dl-v';
+    v.style.color = r.d >= 0 ? getCSS('--good') : getCSS('--bad');
+    v.textContent = fmtSigned(r.d);
+    const p = document.createElement('span'); p.className='pct';
+    p.textContent = r.pct == null ? 'new' : (r.pct>=0?'+':'−') + Math.abs(r.pct*100).toFixed(1) + '%';
+    v.appendChild(p);
+
+    row.append(nm, track, v);
+    el.appendChild(row);
+  });
+}
+
+/* ── Table view — the WCAG-clean twin. Every value here, none gated. ─── */
+function drawTable(buckets, series){
+  const host = document.getElementById('chart');
+  const rows = series.slice().sort((a,b)=> b.total - a.total);
+  let h = '<div class="tbl-scroll"><table class="mc"><thead><tr>';
+  h += `<th class="k">${S.level === 'l2' ? 'L2 category' : 'L3 · ' + esc(S.parent)}</th>`;
+  buckets.forEach(b => h += `<th>${esc(b.label)}</th>`);
+  h += '<th>Total</th></tr></thead><tbody>';
+  rows.forEach(s => {
+    h += `<tr><td class="k"><span class="k-dot" style="background:${paletteVar(s.slot)}"></span>${esc(s.key===OTHER?s.label:s.key)}</td>`;
+    s.values.forEach(v => h += `<td>${v > 0 ? esc(fmtVal(v)) : '<span class="na">—</span>'}</td>`);
+    h += `<td>${esc(fmtVal(s.total))}</td></tr>`;
+  });
+  const tot = buckets.map((_,i) => series.reduce((a,s)=>a+s.values[i],0));
+  h += `<tr class="tot"><td class="k">Total</td>`;
+  tot.forEach(v => h += `<td>${esc(fmtVal(v))}</td>`);
+  h += `<td>${esc(fmtVal(tot.reduce((a,b)=>a+b,0)))}</td></tr>`;
+  h += '</tbody></table></div>';
+  host.innerHTML = h;
+}
+
+/* ── Status line — one sentence, and it says what is NOT knowable ────── */
+function drawStatus(buckets, series, allRows, open){
+  const el = document.getElementById('status');
+  const b0 = buckets[0], b1 = buckets[buckets.length-1];
+  const scope = S.store === '__all__'
+    ? STORE_KEYS.length + ' stores' : STORE_NAMES[S.store];
+  const shown = series.filter(s => s.key !== OTHER).length;
+  const folded = allRows.length - shown;
+  const dayCount = Math.round((b1.e - b0.s)/DAY_MS) + 1;
+  const storeDays = dayCount * (S.store === '__all__' ? STORE_KEYS.length : 1);
+
+  let txt = `<b>${buckets.length} ${BUCKETS[S.bucket].unit}s</b> to ${b1.long.split(' · ')[0]}`
+    + ` · <b>${scope}</b> · ${S.measure === 'net' ? 'net sales' : 'units'}`
+    + ` · ${shown} of ${allRows.length} ${S.level.toUpperCase()} categor${allRows.length===1?'y':'ies'} drawn`
+    + (folded > 0 ? `, the other ${folded} folded into <b>Other</b> (off by default — switch it on in the legend)` : '');
+
+  // The honest part: say where the numbers come from and what it costs.
+  if (S.bucket === 'day' || S.bucket === 'month' || S.bucket === 'quarter'){
+    const over = storeDays > 840;
+    txt += `.<br>Built from <b>day snapshots</b> — ${dayCount} days × ${S.store==='__all__'?STORE_KEYS.length:1} store`
+      + `${S.store==='__all__'?'s':''} = <b>${storeDays.toLocaleString()}</b> KV reads`
+      + (over
+        ? ` <span class="warnDot">▲ over the ~840 subrequest budget</span> — this combination would fall back to week rollups, and calendar edges would be approximate.`
+        : ` — inside the ~840 subrequest budget, so the buckets are true calendar periods.`);
+  } else {
+    txt += `.<br>Built from the <b>pre-rolled week summaries</b> — 1 read per store-week `
+      + `(${buckets.length} × ${S.store==='__all__'?STORE_KEYS.length:1} = ${(buckets.length*(S.store==='__all__'?STORE_KEYS.length:1))}), the cheapest grain there is.`;
+  }
+  if (open){
+    txt += `<br><span class="warnDot">▲</span> <b>${esc(open.long.split(' · ')[0])} is still in progress and is left out</b>`
+      + ` — a part-length period plotted beside full ones reads as a collapse in every category at once.`;
+  }
+  if (S.level === 'l3' && S.bucket === 'week'){
+    txt += `<br><span class="warnDot">▲</span> At week grain the L3 keys are the <b>normalised</b> ones — heuristic, IM and pattern matches are already folded into <b>Other / unmapped</b> before storage.`;
+  }
+  el.innerHTML = txt;
+}
+
+/* ── Panel legend (§4.8: every visual state gets a row) ──────────────── */
+function drawPanelLegend(){
+  const el = document.getElementById('plegend');
+  const sw = (css) => `<span class="pl-swatch" style="display:inline-block;width:14px;height:3px;border-radius:2px;background:${css}"></span>`;
+  el.innerHTML = `
+    <div class="pl-row">${sw('var(--s1)')}<span><b>A coloured line is one category.</b> The colour is fixed to that category for the whole window — hiding a series in the legend never repaints the others.</span></div>
+    <div class="pl-row">${sw('var(--sOther)')}<span><b>Grey is “Other”</b> — every category past the top ${S.maxSeries}, summed, and <b>switched off by default</b>: a sum of the tail outranks every real category, so drawing it makes the fold bucket look like the top seller. Click it in the legend to bring it in; hover to see which categories it holds. Six hues is the ceiling — a seventh would be indistinguishable to a colourblind reader, so the tail folds rather than growing a new colour.</span></div>
+    <div class="pl-row"><span class="pl-swatch" style="display:inline-block;width:11px;height:11px;border-radius:3px;background:var(--good)"></span><span><b>Green in the change strip is up, red is down</b>, versus the ${BUCKETS[S.bucket].vs}. The bar's <i>direction</i> carries the same meaning as its colour, so the pair still reads under red-green colour blindness.</span></div>
+    <div class="pl-row"><span class="pl-swatch" style="display:inline-block;width:11px;height:11px;border-radius:3px;border:1px solid var(--border)"></span><span><b>A dash (—) is no sale in that period; it is never a zero passed off as data.</b> Every bucket drawn is a <b>closed</b> period — the one still in progress is named in the status line and left out, so a part-length period can never masquerade as a decline.</span></div>
+    <div class="pl-row"><span class="pl-swatch" style="display:inline-block;width:11px;height:11px;border-radius:3px;background:var(--panelHi);border:1px solid var(--border)"></span><span><b>Table</b> holds every value the chart draws, unrounded and unhidden — so no number is reachable only by hovering. Contrast is ≥4.5:1 in both themes; the three light-mode hues that sit under 3:1 against white are the reason direct labels and this table are not optional.</span></div>`;
+}
+
+/* ── Controls ────────────────────────────────────────────────────────── */
+function pillGroup(hostId, opts, get, set){
+  const host = document.getElementById(hostId);
+  host.textContent = '';
+  opts.forEach(([val,label,dis]) => {
+    const b = document.createElement('button'); b.type='button';
+    b.textContent = label;
+    b.setAttribute('aria-pressed', String(get() === val));
+    if (dis){ b.disabled = true; b.title = dis; }
+    else b.onclick = () => { set(val); render(); };
+    host.appendChild(b);
+  });
+}
+function buildControls(){
+  pillGroup('ctl-level', [['l2','L2'],['l3','L3']], ()=>S.level,
+    v => { S.level = v; resetHidden(); });
+  pillGroup('ctl-bucket', Object.entries(BUCKETS).map(([k,v])=>[k,v.label]),
+    ()=>S.bucket, v => { S.bucket = v; });
+  pillGroup('ctl-measure', [['net','Net $'],['units','Units']], ()=>S.measure,
+    v => { S.measure = v; });
+  pillGroup('ctl-view', [['chart','Chart'],['table','Table']], ()=>S.view,
+    v => { S.view = v; });
+
+  const wrap = document.getElementById('ctl-parent-wrap');
+  const sel  = document.getElementById('ctl-parent');
+  wrap.hidden = S.level !== 'l3';
+  if (S.level === 'l3'){
+    sel.textContent = '';
+    L2S.forEach(l2 => {
+      const o = document.createElement('option'); o.value = l2; o.textContent = l2;
+      if (l2 === S.parent) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.onchange = () => { S.parent = sel.value; resetHidden(); render(); };
+  }
+
+  const sc = document.getElementById('ctl-store');
+  sc.textContent = '';
+  [['__all__','All stores']].concat(STORE_KEYS.map(k=>[k,STORE_NAMES[k]])).forEach(([k,n]) => {
+    const b = document.createElement('button'); b.type='button'; b.className='chip';
+    b.textContent = n; b.setAttribute('aria-pressed', String(S.store === k));
+    b.onclick = () => { S.store = k; render(); };
+    sc.appendChild(b);
+  });
+}
+
+/* ── Render ──────────────────────────────────────────────────────────── */
+function render(){
+  buildControls();
+  const { buckets, rows, open } = seriesFor();
+  const series = foldSeries(rows);
+  drawStatus(buckets, series, rows, open);
+  if (S.view === 'chart'){
+    drawChart(buckets, series);
+  } else {
+    tipEl.classList.remove('on');
+    drawTable(buckets, series);
+  }
+  drawLegend(series);
+  drawDelta(buckets, series.filter(s => !S.hidden.has(s.key)));
+  drawPanelLegend();
+}
+let rt; new ResizeObserver(() => {
+  clearTimeout(rt); rt = setTimeout(() => { if (S.view === 'chart') render(); }, 90);
+}).observe(chartEl);
+
+/* ── Prose blocks ────────────────────────────────────────────────────── */
+const rowsHTML = (list, dot) => list.map(([q,a],i) =>
+  `<div class="qa-row"><span class="qa-n"${dot?' style="background:var(--goodWash);border-color:var(--accent);color:var(--accent)"':''}>${dot?'&#9679;':i+1}</span>
+   <span><span class="qa-q">${q}</span><span class="qa-a">${a}</span></span></div>`).join('');
+
+document.getElementById('src').innerHTML = rowsHTML([
+  ['Week buckets are already sitting there, fully built',
+   '<code>?action=weekly-t13&amp;end=</code> already returns <code>perStoreL2Net</code>, <code>perStoreL2Units</code>, <code>perStoreL3Net</code> and <code>perStoreL3Units</code> — thirteen weeks, per store, both measures, L2 <i>and</i> L3. <b>The week view needs no backend work at all.</b> It is capped at 13 weeks by a literal <code>LIMIT 13</code>; lifting that to a parameter is the single smallest change that unlocks the rest. One caveat I have not resolved: <b>week boundaries come from <code>daily_sales.week</code></b>, which is sheet-derived and not strictly ISO, so the real panel would take its week labels from there rather than computing them — this preview approximates with Sunday-ended weeks.'],
+  ['Day buckets cost one KV read per store per day',
+   'Category data lives in KV, not D1 — <code>items:&lt;store&gt;:&lt;date&gt;</code> per store-day, <code>week-summary:&lt;store&gt;:&lt;week&gt;</code> per store-week. The worker already caps a full range at <b>120 days</b> because "120 days × 7 stores ≈ 840 KV, a safe margin under 1000". <b>That cap is per store-day, which is why the store chips matter</b>: one store over a year is 365 reads and fine; seven stores over a year is 2,555 and is not. The status line above recomputes this live — switch to Quarter with All stores and watch it go over.'],
+  ['Month and quarter do not exist anywhere yet',
+   'There is no monthly or quarterly rollup in KV or D1. They can be built two ways and the difference is real: <b>summed from day snapshots</b> gives true calendar months but costs the reads above; <b>summed from week rollups</b> is nearly free but a week straddling 30 September lands wholly in one month or the other. I have defaulted this preview to true calendar periods and made the panel say so.'],
+  ['One correctness trap I would carry over',
+   'BL12 and BL16 share a Clover merchant, split by <code>WRS_CUTOVER = "2026-06-14"</code> via <code>wrsGateDates</code>. T13 already zeroes the non-operating side per week. <b>Any new time series has to apply the same gate or it double-counts</b> — so the series builder would call the existing gate rather than re-deriving one. (BL12 Wyoming is closed, so this preview shows six stores.)'],
+], true);
+
+document.getElementById('qa').innerHTML = rowsHTML([
+  ['Where does this panel go?',
+   'You said "under the different stores", which I read as <b>inside each store tab, below what is there now</b> — and that is also where day-grain is affordable, since one store is one read per day. But the same panel works scoped to All stores on the Summary tab. <b>My default is: build it once, mount it on the store tabs, and put an All-stores copy at the bottom of the Summary tab.</b> Say if you only want one of the two.'],
+  ['Is “compare” period-over-period, or versus last year?',
+   'I built <b>versus the previous bucket</b> — week 36 against week 35 — because that is what "week by week" reads as. For a seasonal retailer the comparison people usually reach for at month and quarter is <b>the same period last year</b>. That needs KV going back that far and a like-for-like rule (the existing YoY code notes last-year data carries no auction channel). <b>Not built here. Worth adding as a second toggle on the change strip?</b>'],
+  ['Top 6 plus a switched-off “Other” — is that the right cut?',
+   'There are 12 L2 categories and up to 10 L3s under one parent, and six is the hard ceiling for lines a colourblind reader can still tell apart. So the top 6 draw, and the tail folds into a grey <b>Other</b> that starts switched off — my first pass drew it and it immediately became the tallest line on the chart, which is a sum of seven things pretending to be a category. <b>The legend switches any series on or off</b>; the Table always shows all of them. If you would rather pin a fixed six — Apparel, Food, Shoes, Home, Hardlines, HBA — instead of "whatever is biggest this window", that is a one-line change and arguably steadier to read week to week.'],
+  ['Should Auction appear?',
+   'It cannot, honestly. Auction is a manual sheet entry with no items behind it; the worker injects a synthetic Auction row with <code>qty: 0</code> so the store table foots to net sales. Putting it in a category chart would draw a flat zero line in Units and a line with no category detail in Net. <b>I have left it out</b> — tell me if you want it in the Net view only.'],
+  ['Do you want the period you are <i>in</i>, compared like-for-like?',
+   'Right now the panel <b>drops</b> the period in progress and compares the last two closed ones. It has to: my first pass plotted a 68-day Q3 next to three 92-day quarters and the change strip reported <b>every single category down 24.7%</b> — the shape of a missing month wearing the costume of a business result. The alternative is a <b>quarter-to-date</b> comparison: Q3’s first 68 days against Q2’s first 68 days. That is genuinely useful mid-quarter and it is honest, but it is a second code path and a second label. <b>Worth it, or is "last two closed periods" enough?</b>'],
+  ['Day view: 14 days, or a month?',
+   'Fourteen fits on a phone without the x-axis turning to mush, and it gives you two of every weekday. Thirty would need labels every fourth day. <b>Default 14, and the page date range can override it</b> — or say the word and it is 28.'],
+], false);
+
+document.getElementById('build').innerHTML = rowsHTML([
+  ['Inline SVG, not a <code>&lt;canvas&gt;</code> — and this is the load-bearing choice',
+   'Chart.js is loaded on the page but is wrong here for two concrete reasons. First, <code>renderWrsSummary</code> builds one string and assigns <code>innerHTML</code> once, so any chart instance inside it leaks on every tab switch and range change. Second, <b>the PDF and CSV export scrape the live DOM of the visible pane</b> — a canvas would very likely come out blank in your PDF. Inline SVG has neither problem, matches the <code>v1Sparkline</code> helper already in the file, and is what this preview draws.'],
+  ['One panel, following DESIGN.md §4.8, not a bare chart',
+   'Panel with a <code>panelHi</code> bar carrying the controls, a one-sentence status line, the plot, then a legend that says what every visual state means. All eight of the traps §4.8 lists were checked — sticky cells carry their own opaque background, colour is stated on the panel rather than inherited, <code>inkDimmer</code> is not used as text in light mode, and the render target holds only what the render owns.'],
+  ['The palette was computed, not chosen',
+   'Six categorical hues run through the validator against the <b>real</b> surfaces this app paints on — <code>#101826</code>, pure-black <code>#0a0a0a</code>, and <code>#ffffff</code> — not against a generic one. Worst adjacent colourblind separation ΔE 8.4 dark / 9.1 light against a target of 8; all six clear 3:1 on both dark grounds. Three light-mode hues sit under 3:1 on white, which is exactly why the direct end-labels and the Table view are part of the build and not extras.'],
+  ['Backend: one parameter first, one endpoint second',
+   'Phase one is the week view off the existing T13 feed with <code>LIMIT 13</code> lifted to a bounded parameter — small, and it ships the whole L2/L3 toggle. Phase two adds a category-series action that buckets day snapshots into true calendar days, months and quarters, <b>refusing rather than truncating</b> when store-days would exceed the subrequest budget, so a too-wide request gets an honest message instead of a quietly short answer.'],
+  ['What I would prove before calling it done',
+   'That L3 still sums to its L2 to the cent across every bucket (the invariant the T13 card rests on), that the BL12/BL16 gate is applied so the shared merchant is not double-counted, that a week with no L3 roll renders as <b>unknown rather than zero</b>, that the second render works and not just the first, and that contrast is computed in both themes at ≥4.5:1. Plus the service-worker <code>CACHE_NAME</code> bumped in the same commit, or installed phones keep serving the old bundle.'],
+], true);
+
+/* ── Boot ────────────────────────────────────────────────────────────── */
+render();
+</script>
+</body>
+</html>
