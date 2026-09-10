@@ -161,6 +161,22 @@ own hostnames from this session. The first real request will be a human one.
 The new worker is backward-compatible with the frontend currently on `main`: it only
 ADDS actions, and the rename is internal.
 
+## The bottom bar, when an associate holds both pages
+
+An associate holding a page but NOT the dashboard gets that page as a bar tab rather than
+buried under More, on the reasoning that their whole app may be the one page. With both
+Bin Dump and MOS granted that is two tabs, and the bar reads **Bin Dump · MOS · More**.
+
+🔑 **Brian chose to keep both in the bar (2026-09-10), when offered the alternative of
+moving one under More.** Recording it because two tabs plus More looks like something to
+tidy up, and tidying it would quietly undo a decision rather than make one.
+
+Measured at 360 / 390 / 414px before it was left this way: no tab overlaps another,
+nothing spills outside the bar, no label is cut off, and the narrowest touch target is
+comfortably over 44px. A page a person is standing on lights its own tab, not More —
+which needed a fix, since both pages also appear in `morePages` for a manager and
+membership of that list used to decide the highlight on its own.
+
 ## Still open
 
 - **The frontend.** Until #207 merges, production has no MOS page — the endpoints are
