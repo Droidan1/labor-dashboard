@@ -111,5 +111,52 @@ const body = async r => JSON.parse(await r.text());
   ok(b.dates.length === b.weeks.length, 'and one date range per week');
 }
 
+/* ── Week LABELS repeat every year; real weeks do not ──────────────── */
+{
+  // daily_sales.week is a bare sheet number that restarts each January, so
+  // "week 26" names a different week in every year present. Grouping on the
+  // label alone capped any window at the number of distinct labels (~52) and
+  // merged years into one row — and a merged row's start year chooses the
+  // week-summary: KV key, so a week shown as recent read an older year.
+  db.prepare('DELETE FROM daily_sales').run();
+  const start = Date.UTC(2024, 0, 7);          // a Sunday
+  let last = '';
+  for (let w = 0; w < 120; w++) {
+    const wStart = start + w * 7 * DAY;
+    const wEnd = wStart + 6 * DAY;
+    const yr = new Date(wEnd).getUTCFullYear();
+    // The label restarts every calendar year, exactly as the sheet does.
+    const label = String(Math.floor((wEnd - Date.UTC(yr, 0, 1)) / (7 * DAY)) + 1);
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(wStart + i * DAY).toISOString().slice(0, 10);
+      for (const s of STORES) ins.run(s, d, label, 500, 400, 100, 0, 25, 600, 12);
+      last = d;
+    }
+  }
+  const labels = db.prepare('SELECT COUNT(DISTINCT week) c FROM daily_sales').get();
+  ok(labels.c <= 53, `the fixture really does reuse labels across years (${labels.c} distinct for 120 weeks)`);
+
+  const b = JSON.parse(await (await call(`end=${last}&weeks=108`)).text());
+  ok(b.weeks.length === 108,
+     `a 108-week window returns 108 rows, not one per distinct label (${b.weeks.length})`);
+
+  // Every row must be ONE week. A merged row spans years and months of days.
+  const wide = (b.dates || []).filter(d =>
+    (new Date(d.end + 'T00:00:00Z') - new Date(d.start + 'T00:00:00Z')) / DAY > 6);
+  ok(wide.length === 0,
+     `no row covers more than seven days (${wide.length} do${wide.length ? `, e.g. ${wide[0].start} to ${wide[0].end}` : ''})`);
+
+  // Boundaries stay Sun..Sat, which is what the T13 tab has always drawn.
+  const misaligned = (b.dates || []).filter(d =>
+    new Date(d.start + 'T00:00:00Z').getUTCDay() !== 0 || new Date(d.end + 'T00:00:00Z').getUTCDay() !== 6);
+  ok(misaligned.length === 0,
+     `every row runs Sunday to Saturday (${misaligned.length} do not)`);
+
+  // Ordered oldest to newest, no repeats of the same real week.
+  const ends = (b.dates || []).map(d => d.end);
+  ok(ends.length === new Set(ends).size, 'no real week appears twice');
+  ok(ends.join('|') === [...ends].sort().join('|'), 'and they run oldest to newest');
+}
+
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

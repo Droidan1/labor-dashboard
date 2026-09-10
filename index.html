@@ -17662,9 +17662,12 @@
   let ctWeekly = null;           // ?action=weekly-t13 payload for THIS tab's bucket
   let ctWeeksKey = '';           // the feed URL that payload was fetched from
   let ctWeeksShort = null;       // set when the feed did not honour the window
+  let ctWeeksThin = null;        // set when it did, but the history is too short
   // Cleared together or not at all: a live verdict against a dropped payload
   // would show the version warning where "not loaded yet" is the truth.
-  const ctResetWeekly = () => { ctWeekly = null; ctWeeksKey = ''; ctWeeksShort = null; };
+  const ctResetWeekly = () => {
+    ctWeekly = null; ctWeeksKey = ''; ctWeeksShort = null; ctWeeksThin = null;
+  };
 
   const ctPtdOn = () => ctState.ptd && ctState.bucket !== 'day';
   const ctIsDark = () => document.documentElement.classList.contains('dark');
@@ -18073,6 +18076,16 @@
                     && (ctState.bucket === 'month' || ctState.bucket === 'quarter'))
       ? { want: wantWeeks, got: (ctWeekly.weeks || []).length }
       : null;
+    // Honoured, but the history does not reach back far enough to fill the ask.
+    // A different failure from the one above, with a different remedy: these
+    // periods ARE correct, there are simply fewer of them than the control
+    // implies. So draw them — and say why there are not more, rather than
+    // leaving a two-column quarter chart to be read as a bug.
+    const gotWeeks = (ctWeekly && (ctWeekly.weeks || []).length) || 0;
+    ctWeeksThin = (!ctWeeksShort && ctWeekly && gotWeeks < wantWeeks
+                   && (ctState.bucket === 'month' || ctState.bucket === 'quarter'))
+      ? { want: wantWeeks, got: gotWeeks, since: ((ctWeekly.dates || [])[0] || {}).start || '' }
+      : null;
     const w = ctVsWindow();
     const key = `${w.from}|${w.to}|${ctState.level}|${ctState.store}`;
     if (key !== ctDailyKey) {
@@ -18258,6 +18271,15 @@
            + ` end date — a week straddling the boundary lands in one ${unit} rather than being split.`
            + ` The <b>Vs</b> card is not: it reads day snapshots, so it is calendar-exact.`
            + ` Expect small differences between the two.`;
+      }
+      // Why there are two columns and not eight. Without this the control
+      // promises quarter-over-quarter and quietly delivers a pair of bars.
+      if (ctWeeksThin) {
+        t += `<br><span class="ct-warn">▲</span> <b>Only ${ctWeeksThin.got} of the ${ctWeeksThin.want} weeks this view asks for exist</b>`
+           + (ctWeeksThin.since ? `, going back to ${escapeHtml(ctWeeksThin.since)}` : '')
+           + ` — so <b>${buckets.length} full ${unit}${buckets.length === 1 ? '' : 's'}</b>`
+           + ` can be drawn. Part-covered ${unit}s are dropped rather than drawn short,`
+           + ` which is why the count is lower still.`;
       }
     }
     if (l3Missing > 0) {
