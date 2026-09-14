@@ -131,8 +131,8 @@ monthly total cost MOS'ed", and answers settling the scan (real QR), the categor
       tables created, every neighbouring row count unchanged
 - [x] Deploy the worker to both — staging `9df48b9d`, production `b3df90ac`, verified by
       bundle over three consecutive identical hashes
-- [ ] **Merge PR #207** — Brian's click; that is the last step
-- [ ] Scan a real sticker and confirm the flow end to end
+- [x] **Merge PR #207** — Brian's click; that is the last step
+- [x] Scan a real sticker and confirm the flow end to end
 
 Full write-up in [mos.md](mos.md). Two findings worth reading before the deploy: the
 description lookup cannot name stock that has left Clover (which is what MOS is for), and
@@ -167,7 +167,7 @@ card and a way to ask for a reset that only an admin can action.
       identical body hashes on production, old surface intact.
 - [x] **Merge PR #205** — merged by Brian as `49ed4f4`; Pages built `main` (`55d223df`).
       The whole feature is live at www.retjghub.com.
-- [ ] Create the first associate and confirm the flow on a real phone. Nothing here has
+- [x] Create the first associate and confirm the flow on a real phone. Nothing here has
       been exercised by a live request yet.
 
 ## Found while deploying, NOT part of this change
@@ -1439,3 +1439,101 @@ printer's font is proportional and the preview's is not.
 ### Still open
 
 - Nobody has scanned a magnification-3 label at a till (carried).
+
+---
+
+# Categories tab — two date ranges instead of fixed buckets
+
+Decision taken (Brian, 2026-09-10): **B defaults to the same span of the previous
+period, boundary-anchored** ("same span, prev period"). The other six preview
+questions stand as built-as-shown.
+
+## Why
+
+Two explicit ranges are answered by `category-series`, the per-day feed, so the
+weekly-rollup path leaves this tab entirely. That removes the 108-week wall
+(quarter-over-quarter works on existing data) and the "a month means two things"
+split, because one feed is left.
+
+## Plan
+
+### 1. State and data  ⬅ the core
+- [x] Replace `ctState.bucket` / `ctState.ptd` with `ctA`, `ctB`, `ctBPinned`,
+      `ctRule` ('aligned' | 'rolling'), `ctGran` ('auto'|'day'|'week'|'month').
+- [x] `ctAutoB(a)` — aligned uses `a.prevStart`; rolling and any custom range use
+      the n days immediately before A.
+- [x] Fetch TWO `category-series` payloads, one per range. Each has its own
+      840 store-day budget; compute store-days client-side and refuse BEFORE
+      asking rather than taking a 413.
+- [x] Bucket days into the x-axis by granularity; label part-covered END buckets
+      by what they hold ("Jul 1–4"), never as a whole week/month.
+
+### 2. Controls
+- [x] Two range chips (A green = CHART_COLORS.tw, B amber = .lw), ⇄ pin toggle,
+      Match length when lengths differ.
+- [x] `Compare to` pills (aligned default) and `X-axis` pills (auto default).
+- [x] Presets fill BOTH chips. Reuse `RANGE_PRESETS` + `resolvePreset`; extend
+      them with `prevStart` so aligned has a boundary to anchor on.
+- [x] Calendar: extract the two-month grid pair into a renderer that takes a host,
+      so the page picker and the CT picker share one calendar rather than two.
+      The page picker's behaviour must not change.
+
+### 3. Views
+- [x] Vs — unchanged shape, now A vs B over the chosen granularity.
+- [x] Trend — range A for the top 6; click a category to chart A vs B for it.
+- [x] Grid — one panel per category, A vs B, own-scale with the baseline stated.
+- [x] Table — A total, B total, Δ, Δ%.
+
+### 4. Removal (all Categories-tab-local)
+- [x] `CT_WEEKS_FOR`, `ctWeekly`, `ctWeeksKey`, `ctWeeksShort`, `ctWeeksThin`,
+      `ctWeeksHonoured`, `ctResetWeekly`, the `weekly-t13` fetch, the version-guard
+      render branch, the short-history caption, the week-derived caveat.
+- [x] KEEP the worker's `weeksWindow` echo and the `weekday 6` grouping — the T13
+      tab reads `weekly-t13` directly and both are load-bearing there.
+
+### 5. Verification
+- [x] Browser harness rewritten against the real `index.html`: both rules, pin,
+      match-length, budget refusal before request, four views, part-covered
+      labelling, the page-level range picker still works untouched.
+- [x] Repo suite (worker) must stay at 4,025 — nothing here touches worker.js.
+- [x] `CACHE_NAME` bump + `shell-cache.json` re-pin.
+
+## Review
+
+Landed. The move that made it small: `ctVsWindow()` already returned
+`{points:[{label,cur,prv}]}` and every chart consumed that shape, so replacing how
+the two periods are CHOSEN left the whole drawing layer untouched. What was a
+rewrite became a swap of the data layer underneath it.
+
+**Two feeds became one.** Nothing on this tab asks `weekly-t13` any more — the
+harness asserts zero such requests. So the version guard and the short-history
+caption from phases 3 and 4 are gone with it. The worker fixes behind them stay:
+the T13 tab reads that endpoint directly and was the surface actually reading the
+wrong year's numbers.
+
+**The budget is spent before it is asked for.** Two ranges are two requests, each
+with its own 840 store-day allowance, which is why two quarters are affordable
+where 108 weeks of rollups were not. A range that would not fit is refused
+client-side with its arithmetic and sends nothing — asserted by counting requests,
+not by reading the message.
+
+**One calendar, not two.** `_wrsMonthGridHTML` took a click-handler parameter and
+the Categories picker renders the app's real calendar. `resolvePreset` learned
+quarters; `RANGE_PRESETS` was deliberately NOT touched, so the page-level picker's
+list is unchanged — there is a regression check on exactly that.
+
+### Two mistakes worth keeping
+
+**The legend lied for a fourth time.** The rows survived the rewrite and went on
+saying "Green is this week, amber is the one before it" over two arbitrary spans,
+plus a to-date row for a mode that no longer exists. It is derived from the live
+ranges now, and the harness asserts the legend against the chips in all four views.
+
+**A failed script reported success.** Five substitutions printed `ok` and then a
+TypeError aborted the run before the write, so none of them persisted — and the
+browser suite passed, because the file was unchanged. `grep` for the symbol that
+should have been deleted is what caught it. Print-then-write is not evidence;
+check the file.
+
+**And one near-miss:** `cat > tasks/todo.md` truncated 1,441 lines of existing
+plan. Restored from HEAD and appended. Append to a tracked file, never truncate it.
