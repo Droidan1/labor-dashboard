@@ -52,6 +52,11 @@ const WRS_RANGE_FULL_MAX_DAYS = 120;
 // the ~1000 subrequest cap, but REFUSED rather than degraded — a partial
 // category series would read as a real decline.
 const CATEGORY_SERIES_MAX_STORE_DAYS = 840;
+// Hours exist ONLY in Clover's raw orders — nothing in D1 or KV has ever stored a
+// sub-day grain — and Clover's retention is ~90 days and decays continuously. So an
+// hourly x-axis is capped by DAYS (not store-days): 7 days is 168 slots, which is
+// already the point where a table stops being readable. Refused, never truncated.
+const CATEGORY_HOURS_MAX_DAYS = 7;
 // weekly-t13's trailing window. One KV key per store-week, so 110 x 7 = 770.
 const WEEKLY_TRAILING_MAX_WEEKS = 110;
 
@@ -162,6 +167,32 @@ function getStartOfDayET(dateStr) {
   const utcOffsetHours = isDST ? 4 : 5;
   return new Date(dateStr + 'T00:00:00Z').getTime() + (utcOffsetHours * 3600000);
 }
+
+// The ET hour an order was rung, as `YYYY-MM-DDTHH`. This is the key for every
+// hourly rollup, chosen so it sorts lexically, carries its own date, and cannot be
+// confused with a plain `YYYY-MM-DD` by anything downstream.
+//
+// 🔑 The `% 24` is not defensive padding. Intl with hour12:false returns "24" for
+// midnight in some runtimes — ?action=hourly documents the same trap and applies the
+// same fix. en-CA already formats that instant's DATE as the correct day, so mapping
+// hour 24 → 00 lands it in the right slot rather than inventing a 25th hour.
+const ET_HOUR_SLOT_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York',
+  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false,
+});
+function etHourSlot(ms) {
+  const p = {};
+  for (const part of ET_HOUR_SLOT_FMT.formatToParts(new Date(ms))) p[part.type] = part.value;
+  let h = parseInt(p.hour, 10);
+  if (!Number.isFinite(h)) h = 0;
+  return `${p.year}-${p.month}-${p.day}T${String(h % 24).padStart(2, '0')}`;
+}
+
+// The instant a sale actually happened, preferring the register's own clock.
+// `snapshotDayByClientTime` already uses exactly this precedence to decide which DAY
+// a late-synced offline order belongs to; an hour slot has to agree with the day it
+// sits inside, so it uses the same rule rather than a second opinion.
+const orderSaleTime = (o) => (o && o.clientCreatedTime != null ? o.clientCreatedTime : (o ? o.createdTime : null));
 
 // L3 (Clover category name) → L2 (rollup category) mapping
 const L3_TO_L2 = {
@@ -2017,14 +2048,117 @@ function aggregateOrders(elements, sinceTimestamp) {
   };
 }
 
+// ─── Per-hour item rollup for ONE store-day ─────────────────────
+//
+// Partition a day's orders by the ET hour they were rung, then run the EXISTING
+// aggregateItemSales once per non-empty hour. The aggregator is a pure function over
+// an array of orders, so this needs no change inside it — which matters, because that
+// function IS the category definition (override → Clover L3 → name → IM# → heuristic
+// → pattern) and a second copy of that ladder would drift from the first.
+//
+// Refunds bucket by their OWN createdTime, not the original sale's: a refund issued at
+// 4pm against a 10am sale is 4pm's number. Clover's /v3/refunds carries no client clock,
+// so createdTime is the only instant it has.
+//
+// 🔑 REFUNDS CROSS HOURS, so every bucket needs the WHOLE day as its attribution pool.
+// A refund rung at 18:00 against a 09:30 sale has to find that 09:30 order to know which
+// category it reverses, and that order lives in another bucket. aggregateItemSales already
+// has the mechanism — `extraOrdersForRefundLookup`, built for cross-DAY refunds — and its
+// entries add no revenue, only line-item attribution. Same problem one grain down.
+//
+// But the pool must EXCLUDE the bucket's own orders: the extras loop appends to
+// orderLineItemMap rather than replacing, so an order present in both the sales list and
+// the pool gets its line items counted twice and the refund distributes against a doubled
+// basis. Caught by a test asserting an 18:00 refund lands negative in its own hour.
+function buildItemHourBuckets(elements, itemCatMap, store, dateStr, overrides, itemCosts,
+                              refundElements, extraOrders, manualRefundElements) {
+  const byHour = new Map();
+  const put = (slot, kind, el) => {
+    let b = byHour.get(slot);
+    if (!b) { b = { orders: [], refunds: [], manual: [] }; byHour.set(slot, b); }
+    b[kind].push(el);
+  };
+  for (const o of (elements || [])) {
+    const ts = orderSaleTime(o);
+    if (ts == null) continue;
+    put(etHourSlot(ts), 'orders', o);
+  }
+  for (const r of (refundElements || [])) {
+    if (r && r.createdTime != null) put(etHourSlot(r.createdTime), 'refunds', r);
+  }
+  for (const m of (manualRefundElements || [])) {
+    if (m && m.createdTime != null) put(etHourSlot(m.createdTime), 'manual', m);
+  }
+  const dayPool = (elements || []).concat(extraOrders || []);
+  const out = {};
+  for (const [slot, b] of byHour) {
+    const own = new Set(b.orders.map(o => o && o.id));
+    out[slot] = aggregateItemSales(b.orders, itemCatMap, store, dateStr, overrides, itemCosts,
+                                   b.refunds, dayPool.filter(o => o && !own.has(o.id)), b.manual);
+  }
+  return out;
+}
+
+// ─── Normalise ONE item-sales rollup into series [net, qty] pairs ───────────
+//
+// Shared by category-series (keyed per DATE) and category-hours (keyed per HOUR SLOT),
+// so a category line means the same thing at either grain — same rounding, same L3 key
+// normalisation, same "a period with no data is ABSENT, not zero" rule. Two copies of
+// this drift, and a drifted copy looks like a data bug rather than a code bug.
+function seriesRowsFromSnapshot(snap, level) {
+  if (!snap) return null;
+  const merged = mergeItemSnapshots([snap]);
+  const perL2 = {}, perL3 = {};
+  for (const c of (merged.categories || [])) {
+    if (!c || !c.category) continue;
+    perL2[c.category] = [roundCents(c.netSales || 0), Math.round(c.qty || 0)];
+    if (level === "l3") {
+      const kids = {};
+      for (const r of (c.l3Rows || [])) {
+        if (!r || !r.l3) continue;
+        const key = normalizeL3Key(r.l3);
+        const prev = kids[key] || [0, 0];
+        kids[key] = [roundCents(prev[0] + (r.netSales || 0)), prev[1] + Math.round(r.qty || 0)];
+      }
+      if (Object.keys(kids).length) perL3[c.category] = kids;
+    }
+  }
+  return {
+    l2: Object.keys(perL2).length ? perL2 : null,
+    l3: Object.keys(perL3).length ? perL3 : null,
+  };
+}
+
 // ─── Save item sales snapshot to KV ─────────────────────────────
-async function saveItemSalesSnapshot(env, store, dateStr, itemData) {
-  if (env.SALES_SNAPSHOTS) {
-    const key = `items:${store.toLowerCase()}:${dateStr}`;
-    await env.SALES_SNAPSHOTS.put(key, JSON.stringify({
-      ...itemData,
-      snapshotTime: new Date().toISOString()
+//
+// `hourSlots` is optional. When present the per-hour rollup is banked too, under a
+// SEPARATE `item-hours:` key — never inside the day snapshot, so nothing that already
+// reads `items:` changes shape and no stored history is rewritten to gain the feature.
+//
+// 🔑 BOTH KEYS CARRY THE SAME snapshotTime, and the hour key repeats it as
+// `daySnapshotTime`. That one field is what keeps the two grains honest: a repair or
+// rebuild that rewrites `items:` without hours leaves a bank whose stamp no longer
+// matches, and category-hours then ignores it and recomputes rather than serving hours
+// that disagree with the day everyone else sees. Stale-but-plausible numbers are the
+// failure mode this repo keeps paying for; this makes them impossible by construction.
+//
+// Banking must never cost the day its snapshot, so its failure is logged and swallowed.
+async function saveItemSalesSnapshot(env, store, dateStr, itemData, hourSlots = null) {
+  if (!env.SALES_SNAPSHOTS) return;
+  const lc = store.toLowerCase();
+  const snapshotTime = new Date().toISOString();
+  await env.SALES_SNAPSHOTS.put(`items:${lc}:${dateStr}`, JSON.stringify({
+    ...itemData,
+    snapshotTime,
+  }));
+  if (!hourSlots) return;
+  try {
+    await env.SALES_SNAPSHOTS.put(`item-hours:${lc}:${dateStr}`, JSON.stringify({
+      store, date: dateStr, slots: hourSlots,
+      daySnapshotTime: snapshotTime, snapshotTime,
     }));
+  } catch (e) {
+    console.warn(`[item-hours] bank failed ${store}/${dateStr}: ${e.message}`);
   }
 }
 
@@ -3984,7 +4118,7 @@ async function snapshotDayByClientTime(store, env, dateStr, lookForwardDays = 3)
 
   // Category-based bin/retail/total (same derivation as the nightly cron), and
   // refresh the item-sales snapshot so the Item Sales tab stays correct too.
-  let binRetailOverride = null, itemData = null;
+  let binRetailOverride = null, itemData = null, hourSlots = null;
   try {
     const itemCatMap = await fetchItemCategoryMap(store, env);
     const [overrides, itemCosts] = await Promise.all([fetchItemOverrides(env), fetchItemCosts(env)]);
@@ -3992,6 +4126,14 @@ async function snapshotDayByClientTime(store, env, dateStr, lookForwardDays = 3)
     const manualRefundElements = await fetchManualRefunds(store, env, dayStart, dayEnd);
     const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, bucket, refundElements);
     itemData = aggregateItemSales(bucket, itemCatMap, store, dateStr, overrides, itemCosts, refundElements, extraOrders, manualRefundElements);
+    // Bank the hours from THIS bucket, not the cron's narrower one. `bucket` is the
+    // wide fetch already filtered to this day by the register's own clock, so an order
+    // rung offline and synced late is banked under the hour it actually happened.
+    // This sweep runs for today + 2 prior nights, so the bank self-corrects the same
+    // way the day snapshot does. Hours cost no extra Clover call here — it is the same
+    // orders, bucketed.
+    hourSlots = buildItemHourBuckets(bucket, itemCatMap, store, dateStr, overrides, itemCosts,
+                                     refundElements, extraOrders, manualRefundElements);
     let binNet = 0, retailNet = 0;
     for (const c of (itemData.categories || [])) {
       if (c.category === "Bin Products") binNet += c.netSales; else retailNet += c.netSales;
@@ -4006,7 +4148,7 @@ async function snapshotDayByClientTime(store, env, dateStr, lookForwardDays = 3)
   const data = await fetchAggregateAndSnapshot(store, env, dayStart, dateStr, dayEnd, binRetailOverride, bucket);
 
   if (itemData && data && !data.skippedManualOverride) {
-    try { await saveItemSalesSnapshot(env, store, dateStr, itemData); } catch (e) {
+    try { await saveItemSalesSnapshot(env, store, dateStr, itemData, hourSlots); } catch (e) {
       console.warn(`[clienttime-sweep] item snapshot save failed ${store}/${dateStr}: ${e.message}`);
     }
   }
@@ -4238,6 +4380,7 @@ const ACTION_BUSINESS = new Map([
   ["weekly-summary", "bl"],
   ["weekly-t13", "bl"],
   ["category-series", "bl"],
+  ["category-hours", "bl"],
 ]);
 
 // Hex SHA-256 of a string. Used as the eBay audit-line dedupe key: hashing the
@@ -18406,31 +18549,13 @@ export default {
             ? env.SALES_SNAPSHOTS.get(`items:${lc}:${d}`, "json")
             : Promise.resolve(null)));
           dates.forEach((d, i) => {
-            const snap = snaps[i];
-            if (!snap) return;                 // a day with no snapshot is ABSENT, not zero
-            // Merging a single day reuses the one true normaliser, so rounding,
-            // sort order and the l3Rows shape match what every other consumer
-            // of this data already parses.
-            const merged = mergeItemSnapshots([snap]);
-            const perL2 = {}, perL3 = {};
-            for (const c of (merged.categories || [])) {
-              if (!c || !c.category) continue;
-              perL2[c.category] = [roundCents(c.netSales || 0), Math.round(c.qty || 0)];
-              if (level === "l3") {
-                const kids = {};
-                for (const r of (c.l3Rows || [])) {
-                  if (!r || !r.l3) continue;
-                  // Same normalisation the week rollups use, so an L3 line here
-                  // and the same L3 in weekly-t13 are the same category.
-                  const key = normalizeL3Key(r.l3);
-                  const prev = kids[key] || [0, 0];
-                  kids[key] = [roundCents(prev[0] + (r.netSales || 0)), prev[1] + Math.round(r.qty || 0)];
-                }
-                if (Object.keys(kids).length) perL3[c.category] = kids;
-              }
-            }
-            if (Object.keys(perL2).length) l2Out[store][d] = perL2;
-            if (level === "l3" && Object.keys(perL3).length) l3Out[store][d] = perL3;
+            // seriesRowsFromSnapshot is shared with category-hours so the two grains
+            // cannot drift; it merges the single day through the one true normaliser,
+            // so rounding, sort order and the l3Rows shape match every other consumer.
+            const rows = seriesRowsFromSnapshot(snaps[i], level);
+            if (!rows) return;                 // a day with no snapshot is ABSENT, not zero
+            if (rows.l2) l2Out[store][d] = rows.l2;
+            if (level === "l3" && rows.l3) l3Out[store][d] = rows.l3;
           });
         }));
 
@@ -18444,6 +18569,149 @@ export default {
         }), { headers: corsJson });
       } catch (err) {
         return new Response(JSON.stringify({ error: "category-series failed", detail: err.message }),
+          { status: 500, headers: corsJson });
+      }
+    }
+
+    // ── Public: per-HOUR category series ──────────────────────────────
+    //    GET ?action=category-hours&from=YYYY-MM-DD&to=YYYY-MM-DD[&level=l2|l3][&store=BL1]
+    //
+    // category-series keyed per DATE; this is the same payload keyed per ET HOUR SLOT
+    // (`YYYY-MM-DDTHH`). Two sources, preferred in order:
+    //   1. `item-hours:<store>:<date>` in KV — banked by the ingest, one read, exact.
+    //   2. A live Clover read of that store-day, bucketed here.
+    //
+    // 🔑 ONE fetch per store-DAY, not 24. fetchItemOrders pages at limit 1000, so a day
+    // is almost always a single request; partitioning in memory and running the existing
+    // aggregator per bucket costs ~24x less than 24 one-hour windows. (items-hour uses a
+    // one-hour window, which is right for ONE clicked hour and wrong for a series.)
+    //
+    // Capped by DAYS, not store-days: hours live only in Clover's raw orders, retention
+    // is ~90 days and decaying, and 7 days is already 168 slots. Refused, not truncated.
+    if (url.searchParams.get("action") === "category-hours") {
+      try {
+        const from = url.searchParams.get("from");
+        const to   = url.searchParams.get("to");
+        const level = url.searchParams.get("level") === "l3" ? "l3" : "l2";
+        const one  = (url.searchParams.get("store") || "").toUpperCase();
+        if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+          return new Response(JSON.stringify({ error: "from and to are required (YYYY-MM-DD)", code: "BAD_RANGE" }),
+            { status: 400, headers: corsJson });
+        }
+        if (to < from) {
+          return new Response(JSON.stringify({ error: "to is before from", code: "BAD_RANGE" }),
+            { status: 400, headers: corsJson });
+        }
+
+        const _allow = allowedStores(currentUser);
+        let scoped = _allow
+          ? WRS_STORES.filter(s => _allow.includes(s) || (s === "BL12" && _allow.includes("BL16")))
+          : WRS_STORES;
+        if (one) scoped = scoped.filter(s => s === one);
+        if (!scoped.length) {
+          return new Response(JSON.stringify({ error: "No stores in scope", code: "NO_STORES" }),
+            { status: 403, headers: corsJson });
+        }
+
+        const allDates = enumDatesInclusive(from, to);
+        if (allDates.length > CATEGORY_HOURS_MAX_DAYS) {
+          return new Response(JSON.stringify({
+            error: "Range too long for an hour-by-hour breakdown",
+            code: "BUDGET_EXCEEDED",
+            days: allDates.length, limit: CATEGORY_HOURS_MAX_DAYS,
+            slots: allDates.length * 24,
+            hint: "Narrow the range to " + CATEGORY_HOURS_MAX_DAYS + " days or fewer.",
+          }), { status: 413, headers: corsJson });
+        }
+
+        const nextDay = (d) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + 1); return x.toISOString().slice(0, 10); };
+
+        // Global lookups, fetched ONCE for the whole request rather than per store-day.
+        const [overrides, itemCosts] = await Promise.all([fetchItemOverrides(env), fetchItemCosts(env)]);
+
+        const l2Out = {}, l3Out = {};
+        const src = { banked: 0, live: 0, staleBanks: 0 };
+        const missing = [];
+        await Promise.all(scoped.map(async (store) => {
+          const lc = store.toLowerCase();
+          // Same per-store date gate as category-series: BL12 keeps only pre-cutover
+          // dates and BL16 only post-cutover, or the shared Clover account double-counts.
+          const dates = wrsGateDates(store, allDates);
+          l2Out[store] = {};
+          if (level === "l3") l3Out[store] = {};
+
+          const emit = (slots, forDate) => {
+            for (const slot of Object.keys(slots || {})) {
+              // A slot must sit inside the day it was built for. Orders are fetched by
+              // createdTime but slotted by the register's clock, so a late-synced offline
+              // order can carry a slot from a neighbouring day; without this it would be
+              // reported under a date the caller did not ask for.
+              if (forDate && slot.slice(0, 10) !== forDate) continue;
+              const rows = seriesRowsFromSnapshot(slots[slot], level);
+              if (!rows) continue;
+              if (rows.l2) l2Out[store][slot] = rows.l2;
+              if (level === "l3" && rows.l3) l3Out[store][slot] = rows.l3;
+            }
+          };
+
+          // Read the bank AND the day snapshot it claims to describe, in parallel.
+          // A bank is only usable if its daySnapshotTime still matches: a repair or
+          // rebuild rewrites `items:` without hours, and serving the old hours next to
+          // the new day total is exactly the silent disagreement this check prevents.
+          const [banked, daySnaps] = await Promise.all([
+            Promise.all(dates.map(d => env.SALES_SNAPSHOTS
+              ? env.SALES_SNAPSHOTS.get(`item-hours:${lc}:${d}`, "json") : Promise.resolve(null))),
+            Promise.all(dates.map(d => env.SALES_SNAPSHOTS
+              ? env.SALES_SNAPSHOTS.get(`items:${lc}:${d}`, "json") : Promise.resolve(null))),
+          ]);
+
+          const liveDates = [];
+          dates.forEach((d, i) => {
+            const b = banked[i], day = daySnaps[i];
+            const fresh = b && b.slots && day && b.daySnapshotTime === day.snapshotTime;
+            if (fresh) { emit(b.slots, d); src.banked++; }
+            else { if (b && b.slots) src.staleBanks++; liveDates.push(d); }
+          });
+
+          if (!liveDates.length) return;
+          const itemCatMap = await fetchItemCategoryMap(store, env);
+
+          // Live days run ONE AT A TIME per store. Seven stores already means seven
+          // concurrent Clover conversations; fanning the days out too would multiply
+          // that by seven again and earn the 429s the retry layer then has to unwind.
+          for (const d of liveDates) {
+            const dayStart = getStartOfDayET(d);
+            const dayEnd = getStartOfDayET(nextDay(d));
+            const [elements, refundElements, manualRefundElements] = await Promise.all([
+              fetchItemOrders(store, env, dayStart, dayEnd),
+              fetchRefundElements(store, env, dayStart, dayEnd),
+              fetchManualRefunds(store, env, dayStart, dayEnd),
+            ]);
+            // null is fetchItemOrders' "could not fetch" signal, NOT an empty day.
+            // Reporting it as zero is the Clover-degrades-by-returning-less trap.
+            if (!elements) { missing.push(`${store}/${d}`); continue; }
+            const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
+            emit(buildItemHourBuckets(elements, itemCatMap, store, d, overrides, itemCosts,
+                                      refundElements, extraOrders, manualRefundElements), d);
+            src.live++;
+          }
+        }));
+
+        return new Response(JSON.stringify({
+          from, to, level,
+          dates: allDates,
+          stores: scoped,
+          l2: l2Out,
+          l3: level === "l3" ? l3Out : undefined,
+          days: allDates.length,
+          // Where the numbers came from, and which store-days could not be read at all.
+          // A caller that cannot tell "no sales" from "no fetch" will draw the second
+          // as a floor of zero, which is the failure mode this field exists to prevent.
+          source: src,
+          missing,
+        }), { headers: corsJson });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "category-hours failed", detail: err.message }),
           { status: 500, headers: corsJson });
       }
     }

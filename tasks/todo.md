@@ -1581,3 +1581,65 @@ Measured before -> after, Apply button inside the viewport:
 Full suite: 4048 assertions across 64 suites, all passing. The two-range browser suite
 (43 checks) still passes, so the Categories tab's behaviour is unchanged — only its
 geometry moved. Frontend only; nothing to deploy beyond the Pages rebuild on merge.
+
+## Hour-by-hour categories (2026-09-14)
+
+Brian: "Can we add hour by hour?" → sourced **live now + banked going forward**, x-axis capped at **7 days**.
+
+### What the research established
+
+- **Nothing hourly is persisted.** D1 is store-day (`daily_sales`, `channel_sales`, `last_year_sales`);
+  KV is store-day (`items:`, `sales:`) or store-week (`week-summary:`). No hour dimension anywhere.
+- **But the ingest already has the timestamp in scope and throws it away.** Inside
+  `aggregateItemSales`, the per-order loop (worker.js:2963) wraps the line-item L2/L3 walk
+  (worker.js:3042), so at the exact moment it knows "this $X is Softlines / Womens Tops" it also
+  holds `order.createdTime` and `order.clientCreatedTime`. Grepping the whole function body for
+  either: zero matches. Read as a filter predicate, then dropped.
+- **`?action=items-hour` already proves the aggregation works per hour** — it narrows Clover to a
+  1-hour window and runs the same `aggregateItemSales`. It is one store / one date / one hour.
+- `fetchItemOrders` pages at limit 1000, so a whole store-DAY is usually ONE call. Bucketing one
+  day-fetch in memory is ~24x cheaper than 24 hour-window fetches.
+- **Frontend blocker:** the bucket primitive bottoms out at one day. `ctCuts` emits
+  `{key, days:[ymd...]}`; `ctVsWindow` collapses to `[firstYmd,lastYmd]`; `ctDayValue` steps
+  `t += CT_DAY_MS` and indexes `ctDaily.l2[store][ymd]`. Nothing below a day is expressible.
+- **`ctState.gran` is absent from `ctDailyKey`**, so today every granularity re-buckets the same
+  payload for free. Hour breaks that invariant: it needs a different payload, so it must refetch.
+
+### Plan
+
+**Phase 1 — worker: `category-hours` (live), read-banked-if-present**
+- [x] `ctHourSlot` key format `YYYY-MM-DDTHH`, ET, from `clientCreatedTime ?? createdTime`
+      (same precedence `snapshotDayByClientTime` already uses, so a late offline order lands
+      on the hour the register rang it, not the hour it synced)
+- [x] `buildItemHourBuckets(elements, refunds, manualRefunds, ...)` — partition by ET hour,
+      run the EXISTING `aggregateItemSales` once per non-empty hour. No aggregator changes.
+- [x] New action `category-hours&from&to&level[&store]`, same response shape as
+      `category-series` but slot-keyed; `slots[]` instead of `dates[]`
+- [x] Prefer banked `item-hours:<store-lc>:<date>` when present (a no-op until phase 3)
+- [x] `CATEGORY_HOURS_MAX_DAYS = 7`, refused with its arithmetic like the store-day guard
+- [x] Register in `ACTION_BUSINESS` ("bl") — the business gate is fail-closed
+- [x] `wrsGateDates` per store, so BL12/BL16 never double-count the shared merchant
+- [x] Tests: slot format, ET/DST correctness, refund attribution, budget refusal, gate
+
+**Phase 2 — frontend: Hour on the x-axis**
+- [ ] Generalise the bucket primitive from "date list" to "slot list" — `ctDayValue` sums an
+      explicit list instead of re-deriving by stepping. Removes date arithmetic from the value
+      path; hour slots then fall out with no special-casing.
+- [ ] `'hour'` in `ctGranFor` / `ctCuts` / the X-axis pill, enabled only within the 7-day cap
+      and greyed with the reason otherwise
+- [ ] Add `gran` to `ctDailyKey` — hour needs a DIFFERENT payload, so it must refetch where
+      day/week/month do not. This is the one invariant the feature breaks; make it explicit.
+- [ ] Table view: 168 columns needs horizontal scroll (DESIGN.md §4.8 overflow rule)
+- [ ] Labels/legend/status derive the unit noun from granularity — "hours", not "weeks"
+- [ ] Tests: geometry + bucket count + refetch-on-gran-change + both themes
+
+**Phase 3 — bank hours going forward**
+- [x] Write `item-hours:<store-lc>:<date>` from the nightly cron and the clientCreatedTime sweep
+- [x] 🔑 A NEW key. It never touches `items:` — no stored history is overwritten, so this is
+      outside the failure class in MEMORY.md entirely.
+- [x] A failed hour-bank must NOT fail the day snapshot; log and continue
+- [x] Tests: bank-then-read round trip, and that the day snapshot survives a bank failure
+
+### Deploy order
+Worker first (the frontend depends on the new action; the reverse is not true), verified per
+CLAUDE.md rule 5. Phase 3 is additive-write and can follow independently.
