@@ -1680,3 +1680,37 @@ two-range suite still passes so day/week/month behaviour is unchanged. Full suit
 one-point chart by default, and hours would fix that — but auto is the path everything takes
 without asking, and hours cost a live Clover read per store-day. Worth revisiting once enough
 days are banked that the cost is a KV read.
+
+## Auto picks Hour for a single day (2026-09-14)
+
+Brian: "yes make auto pick hour for a single day" — reversing the call I made when hours
+shipped, where auto deliberately never chose them because they cost a live Clover read.
+
+- [x] `ctGranFor`: auto returns 'hour' when the range is exactly one day
+- [x] 🔑 Guard on the COMPARISON range too. An unpinned B always matches A's length, but a
+      PINNED B need not — one day against a pinned month is 24 slots against 720, over the
+      7-day cap. Without the guard, picking a one-day range would turn a chart that used to
+      draw into a budget refusal caused by a setting nobody touched.
+- [x] Checked for circularity first: `ctRangeB` → `ctAutoB` → `ctDays`/`ctPrevStart`, never
+      back into `ctGranFor`, so reading B inside it is safe.
+- [x] Inverted the invariant test that asserted the opposite, and added the pinned-B guard
+- [x] Browser: auto-hour with the grain pill still reading Auto; explicitly choosing Hour
+      afterwards refetches nothing because it is the same grain
+- [x] CACHE_NAME v190 → v191
+
+### Review
+
+One-line behaviour change, one real trap. The trap was the pinned B: auto must never select
+a grain the loader would then refuse, or the panel refuses on a setting the person did not
+touch. `ctGranFor` now measures B before returning 'hour'.
+
+The existing test asserted "auto never selects hour by itself", which was correct when
+written and is now deliberately false — inverted rather than deleted, so the reversal is
+recorded in the suite rather than silently dropped.
+
+Verification: 34 frontend invariants, 32 browser checks across both themes (including the
+pinned-B guard falling back to the day series with no refusal and the chart still drawing),
+two-range suite still green, full suite 4143 across 66. Screenshot confirms the Auto pill
+stays selected while the axis is hours.
+
+Frontend only — no worker change, so Pages carries it on merge with nothing to deploy.

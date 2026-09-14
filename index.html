@@ -17897,9 +17897,17 @@
     // the one thing the person needs to know — that the range is too long.
     if (ctState.gran !== 'auto') return ctState.gran;
     const n = ctDays(a.from, a.to);
-    // Auto deliberately never picks 'hour'. Every other grain is free to switch
-    // to — it re-cuts a payload already in memory — but hours are a different
-    // payload and a live Clover read, so nothing spends that without being asked.
+    // One day cut by 'day' is a ONE-POINT chart, which is no chart at all. That
+    // is the only range where hours are unambiguously better than what auto used
+    // to do, so it is the only range where auto reaches for them.
+    //
+    // 🔑 It weighs the COMPARISON range too. An unpinned B always matches A's
+    // length, but a PINNED B need not — and auto must never choose a grain the
+    // loader would then refuse. Without this, showing one day against a pinned
+    // month turns a chart that used to draw into a budget refusal, caused by a
+    // setting nobody touched.
+    const b = ctRangeB();
+    if (n === 1 && ctDays(b.from, b.to) === 1) return 'hour';
     return n <= 31 ? 'day' : n <= 182 ? 'week' : 'month';
   }
 
