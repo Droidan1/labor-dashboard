@@ -87,15 +87,28 @@ ok(wCap && fCap && wCap === fCap, `the two halves agree on the cap (worker ${wCa
 ok(/ctDays\(r\.from, r\.to\) > CT_MAX_HOUR_DAYS/.test(load), 'the hour range is refused BEFORE a request goes out');
 ok(/which, hour: true, days:/.test(load), 'and the refusal is tagged so it can say WHICH ceiling was hit');
 
-// 6. Hours are opt-in. Auto must never spend a live Clover read on its own.
-// Comments stripped: the reason auto avoids hour is written in one, and matching
-// the prose instead of the code is how an assertion passes while the code rots.
+// 6. Auto reaches for hours on a single day, and ONLY there.
+//
+// This is a deliberate reversal: hours cost a live Clover read per store-day, so auto
+// originally refused to spend that unasked. But a one-day range cut by 'day' is a
+// one-point chart, which is no chart at all, and that is the one case where hours are
+// unambiguously the better default.
+//
+// Comments stripped before matching: the reasoning is written in one, and matching the
+// prose instead of the code is how an assertion passes while the code rots.
 const granFor = fnSrc('ctGranFor', 'ctStoreDays').replace(/\/\/[^\n]*/g, '');
 const autoBranch = granFor.split("if (ctState.gran !== 'auto') return ctState.gran;")[1] || '';
-ok(!/'hour'/.test(autoBranch),
-  'auto never selects hour by itself — a different payload is not a free re-cut');
+ok(/if \(n === 1 && ctDays\(b\.from, b\.to\) === 1\) return 'hour';/.test(autoBranch),
+  'auto picks hour for a single day');
+ok(/const b = ctRangeB\(\);/.test(autoBranch),
+  'and weighs the COMPARISON range too — a pinned B need not match A\u2019s length');
+ok((autoBranch.match(/'hour'/g) || []).length === 1,
+  'hour appears exactly once in the auto branch — it is the single-day case, nothing wider');
 ok(/return n <= 31 \? 'day' : n <= 182 \? 'week' : 'month';/.test(autoBranch),
-  'and auto still picks day/week/month exactly as it did before');
+  'every other range still picks day/week/month exactly as before');
+// The guard is the whole point: auto must never land in a state the loader refuses.
+ok(autoBranch.indexOf('ctRangeB()') < autoBranch.indexOf("return 'hour'"),
+  'B is measured BEFORE hour is returned, so a pinned long B cannot be auto-selected into a refusal');
 
 // 7. The one-day plural, which an hour axis makes the common case.
 ok(/const ctPlural = \(n, noun\)/.test(html), 'there is a plural helper');
