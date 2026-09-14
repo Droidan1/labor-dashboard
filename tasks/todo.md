@@ -1537,3 +1537,47 @@ check the file.
 
 **And one near-miss:** `cat > tasks/todo.md` truncated 1,441 lines of existing
 plan. Restored from HEAD and appended. Append to a tracked file, never truncate it.
+
+## Categories range popover — Apply button off-screen (2026-09-14)
+
+Reported by Brian: "when selecting the date the apply button doesn't display."
+
+- [x] Reproduce with real geometry rather than guessing at the cause
+- [x] Root-cause it: three compounding faults, not one
+- [x] Fix placement: measure after render, clamp both edges, flip up when roomier
+- [x] Make the footer sticky so Apply never depends on scroll position
+- [x] Preserve scrollTop across the innerHTML re-render
+- [x] Match the two sibling pickers' "— now pick end" confirmation
+- [x] Verify: 36 geometry checks across 6 viewports x 2 chips, both themes
+- [x] Lock it: scripts/test-ct-range-popover.mjs (22 assertions)
+- [x] Prove the test fails on the pre-fix file (20 of 22 fail)
+- [x] Bump CACHE_NAME v188 -> v189 and re-record the shell-cache fixture
+- [x] Capture the lesson in tasks/lessons.md (rules 9–13)
+
+### Review
+
+The button was never missing from the DOM — it was parked below the bottom of the
+screen, and at 1512x820 **no scroll position revealed it** (footer y 878–925, viewport
+ends 820). Three faults compounded:
+
+1. `top = Math.min(box.bottom + 6, Math.max(8, innerHeight - 430))` guessed a 430px
+   popover. The real content is ~861px: preset list + two stacked month grids + footer.
+2. The CSS `max-height: 86vh` reads like a viewport clamp but bounds the box's *height*,
+   not where it *ends* — 86vh from a top of 226px overhangs a 900px screen by 100px.
+3. `ctRenderPop()` replaces innerHTML, resetting scrollTop to 0 on every date click, so
+   the user was thrown back to the top each time they picked a date.
+
+Fix: `ctPlacePop()` runs after every render (height changes with the grids and with every
+pick), sizes from the room that actually exists below — or above — the chip, and clamps
+the top against both screen edges using the measured height. The footer is sticky and
+opaque in both themes. No magic constants remain.
+
+Measured before -> after, Apply button inside the viewport:
+
+    1440x900    no -> yes      1440x700    no -> yes
+    1512x820    no -> yes      390x844     no -> yes
+    1280x1000   no -> yes      1400x1400  yes -> yes
+
+Full suite: 4048 assertions across 64 suites, all passing. The two-range browser suite
+(43 checks) still passes, so the Categories tab's behaviour is unchanged — only its
+geometry moved. Frontend only; nothing to deploy beyond the Pages rebuild on merge.

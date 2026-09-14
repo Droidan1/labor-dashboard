@@ -1611,3 +1611,60 @@ was far cheaper to check and was the thing forcing all the inference.
 8. **When someone asks you to do the thing you said you could not do, look before answering.**
    The request is evidence: they may know something about your access that you do not.
 </rules>
+
+## The button was in the DOM, the assertion passed, and nobody could click it (2026-09-14)
+
+Brian: *"when selecting the date the apply button doesn't display."*
+
+The Apply button was in the markup. It had always been in the markup. The two-range
+picker's browser suite — 43 checks — passed on every one of them, because every check
+asked whether an element **existed**, matched text, or fired a handler. Not one asked
+whether it was **on the screen**.
+
+It was not. Placement guessed the popover's height once, at open time:
+
+    top = Math.min(box.bottom + 6, Math.max(8, innerHeight - 430))
+
+430 was a fair guess for the popover that constant was written for. The popover I then
+shipped stacks a preset list on top of *two* month grids on top of the footer: 861px. A
+CSS `max-height: 86vh` looks like a viewport clamp and is not one — 86% of the viewport,
+measured downward from a top of 226px, ends 100px past the bottom of a 900px screen. So
+the box hung off the bottom, the footer was the last thing inside a scrolling column, and
+at 1512x820 the Apply button sat at y 878–925 with the screen ending at 820 **at every
+possible scroll position**. Not "hard to reach". Unreachable.
+
+Three separate things had to be true for me not to notice, and all three were mine:
+
+1. I changed the popover's content without re-checking its geometry. The 430 was correct
+   when written; I invalidated it and never looked at it.
+2. My assertions tested existence, and I read them as testing visibility. `count()===1`
+   and `innerText` are satisfied by an element parked 100px below the fold.
+3. I screenshotted the tab, not the **open popover**, so the one artifact that would have
+   shown it was never produced. I have a note three lessons up that a screenshot caught a
+   bug 28 passing assertions missed. I did not take the screenshot.
+
+The sibling picker on the same page had the answer the whole time: `#wrs-chip-panel` shows
+the preset list **or** the calendar, never both stacked, which is why its footer has never
+fallen off. I did not look at how the neighbour solved the same problem before inventing
+my own arrangement of the same parts.
+
+<rules>
+9. **"Exists in the DOM" is not "visible to a human". Assert geometry.** For anything a user
+   must click, check `getBoundingClientRect()` against `innerWidth/innerHeight` AND
+   `elementFromPoint` at its centre. An element can pass every text and count assertion from
+   entirely off-screen. The assertion to write is the one a person would make with their eyes.
+10. **A magic pixel constant is a dependency on content you are about to change.** Any literal
+   that encodes "how tall this thing is" (`innerHeight - 430`) breaks silently the moment the
+   content grows, and breaks in the direction of invisibility, which is the direction nobody
+   reports for weeks. Measure after render — `scrollHeight`, `offsetWidth` — or don't place it.
+11. **`max-height: Nvh` is not a viewport clamp for a positioned element.** It bounds the box's
+   height, not where the box ends. A 86vh box that starts at 226px still overhangs. Clamp the
+   *edge*: `Math.min(desiredTop, innerHeight - margin - height)`.
+12. **Actions that live at the bottom of a scrolling container must be sticky.** Otherwise their
+   visibility is a function of scrollTop — and if that container also re-renders via innerHTML,
+   scrollTop resets to 0 on every interaction, so the user is thrown back to the top each time
+   they click the very thing they came to click.
+13. **Before inventing a layout, read how the neighbouring surface solved it.** Two other range
+   pickers ship in this file. Both avoid this failure, one of them by construction. CLAUDE.md
+   already says extend what is there; the cost of not looking was a shipped-broken control.
+</rules>
