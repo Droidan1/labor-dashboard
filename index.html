@@ -17741,6 +17741,11 @@
   // range is refused with its arithmetic BEFORE a request goes out, rather than
   // discovered as a 413 after the wait.
   const CT_MAX_STORE_DAYS = 840;
+  // Mirrors CATEGORY_HOURS_MAX_DAYS in worker.js. Hours are capped by DAYS, not
+  // store-days, because they are the one grain that is NOT already in KV: they
+  // exist only in Clover's raw orders (~90 days of retention, decaying), so the
+  // cost is a live read per store-day and 7 days is already 168 columns.
+  const CT_MAX_HOUR_DAYS = 7;
   const ctIsDark = () => document.documentElement.classList.contains('dark');
   const ctHue = i => (i < CT_MAX_LINES ? CT_SERIES[ctIsDark() ? 'dark' : 'light'][i]
                                        : (ctIsDark() ? '#8893a7' : '#6b6453'));
@@ -17839,6 +17844,9 @@
      empty map there means UNKNOWN, not zero, and the status line says so. */
   // ── The two ranges ────────────────────────────────────────────────
   const ctDays = (from, to) => Math.round((ctParse(to) - ctParse(from)) / CT_DAY_MS) + 1;
+  // "the same 1 days of the previous period" was always wrong; an Hour axis makes
+  // single-day ranges the normal case, so it stopped being rare enough to ignore.
+  const ctPlural = (n, noun) => n + ' ' + noun + (n === 1 ? '' : 's');
   const ctQuarterStart = ymd => {
     const d = ctParse(ymd);
     return ctYmd(new Date(Date.UTC(d.getUTCFullYear(), Math.floor(d.getUTCMonth() / 3) * 3, 1)));
@@ -17874,18 +17882,24 @@
     const n = ctDays(a.from, a.to);
     const ps = ctState.rule === 'aligned' ? ctPrevStart(a.presetId, a.from) : null;
     if (ps) return { from: ps, to: ymdShift(ps, n - 1), presetId: null,
-                     label: 'Same ' + n + ' days, previous period', derived: 'aligned' };
+                     label: 'Same ' + ctPlural(n, 'day') + ', previous period', derived: 'aligned' };
     const to = ymdShift(a.from, -1);
     return { from: ymdShift(to, -(n - 1)), to, presetId: null,
-             label: 'Preceding ' + n + ' days', derived: 'rolling' };
+             label: 'Preceding ' + ctPlural(n, 'day'), derived: 'rolling' };
   }
   const ctRangeB = () => (ctBPinned && ctB) ? ctB : ctAutoB(ctRangeA());
 
   // Granularity is how the x-axis is CUT, not what is being compared. Keeping
   // those two ideas apart is what makes an arbitrary range tractable at all.
   function ctGranFor(a) {
+    // Hour is returned whenever it was ASKED for, even past the cap, so the
+    // loader can refuse with the arithmetic. Quietly demoting to day would hide
+    // the one thing the person needs to know — that the range is too long.
     if (ctState.gran !== 'auto') return ctState.gran;
     const n = ctDays(a.from, a.to);
+    // Auto deliberately never picks 'hour'. Every other grain is free to switch
+    // to — it re-cuts a payload already in memory — but hours are a different
+    // payload and a live Clover read, so nothing spends that without being asked.
     return n <= 31 ? 'day' : n <= 182 ? 'week' : 'month';
   }
 
@@ -17898,22 +17912,41 @@
   // Cut a range into x-axis buckets. `partial` marks a bucket that does not
   // hold a whole unit — only ever the first or last, because you asked for
   // these dates and nothing in between is dropped.
+  //
+  // 🔑 A bucket carries `slots`: the exact payload keys it covers. It used to
+  // carry `days` and everything downstream re-derived the list by stepping one
+  // CT_DAY_MS at a time, which is precisely what made anything finer than a day
+  // inexpressible. A slot is `YYYY-MM-DD` at day-or-coarser and `YYYY-MM-DDTHH`
+  // at hour, and nothing below here has to know which.
   function ctCuts(r, g) {
     const out = [];
     let cur = null;
     for (let t = ctParse(r.from).getTime(); t <= ctParse(r.to).getTime(); t += CT_DAY_MS) {
       const d = new Date(t), ds = ctYmd(d);
+      if (g === 'hour') {
+        // EVERY hour, not only the ones that sold. A and B are matched by INDEX,
+        // so a day that opened late in one range and early in the other would
+        // otherwise pair 9am against 8am and present it as a comparison. A closed
+        // hour is a real zero; a missing one would be a silent misalignment.
+        for (let h = 0; h < 24; h++) {
+          const slot = ds + 'T' + String(h).padStart(2, '0');
+          out.push({ key: slot, slots: [slot] });
+        }
+        continue;
+      }
       const key = g === 'day' ? ds
         : g === 'week' ? ctYmd(new Date(t - d.getUTCDay() * CT_DAY_MS))
         : ds.slice(0, 7);
-      if (!cur || cur.key !== key) { cur = { key, days: [] }; out.push(cur); }
-      cur.days.push(ds);
+      if (!cur || cur.key !== key) { cur = { key, slots: [] }; out.push(cur); }
+      cur.slots.push(ds);
     }
     out.forEach((c, i) => {
-      const last = c.days[c.days.length - 1];
-      c.partial = g === 'day' ? false
-        : g === 'week' ? c.days.length < 7
-        : !(c.days[0].slice(8) === '01' && last === ymdLastOfMonth(c.days[0]));
+      const last = c.slots[c.slots.length - 1];
+      // An hour is never partial: it is the smallest unit there is, so it always
+      // holds exactly itself.
+      c.partial = (g === 'day' || g === 'hour') ? false
+        : g === 'week' ? c.slots.length < 7
+        : !(c.slots[0].slice(8) === '01' && last === ymdLastOfMonth(c.slots[0]));
       c.end = i === 0 || i === out.length - 1;
     });
     return out;
@@ -17930,7 +17963,7 @@
     const buckets = w.points.map(pt => ({ key: pt.cur[0], label: pt.label, long: pt.long }));
     const rows = ctVsRows();
     rows.forEach(r => {
-      r.values = w.points.map(pt => ctDayValue(pt.cur, r) || 0);
+      r.values = w.points.map(pt => ctSlotValue(pt.cur, r) || 0);
       r.total = r.values.reduce((x, y) => x + y, 0);
     });
     return { buckets, rows };
@@ -17954,20 +17987,20 @@
   const ctLastClosedDay = () => new Date(ctParse(etTodayStr()).getTime() - CT_DAY_MS);
   /* ── The Vs window ─────────────────────────────────────────────────
      Both ranges are cut by the same granularity and matched by INDEX, so each
-     runs from its own day 1. The shape returned is unchanged — a list of
-     points, each carrying a [from,to] on A and the matching one on B — so every
-     drawing routine below works on two arbitrary ranges without knowing it. */
+     runs from its own day 1. Each point carries the SLOT LIST it covers on A and
+     the matching one on B, so every drawing routine below works on two arbitrary
+     ranges at any grain without knowing which grain it is. */
   function ctVsWindow() {
     const a = ctRangeA(), b = ctRangeB(), g = ctGranFor(a);
     const A = ctCuts(a, g), B = ctCuts(b, g);
     const mo = d => d.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' });
     const label = c => {
-      const s = ctParse(c.days[0]), e = ctParse(c.days[c.days.length - 1]);
+      const s = ctParse(c.slots[0]), e = ctParse(c.slots[c.slots.length - 1]);
       // A part-covered END bucket is named by what it HOLDS. Calling four days
       // "wk Jun 28" claims a whole week that is not there — the partial-period
       // lie one level down from the quarter chart that used to tell it.
       if (c.partial && c.end) {
-        return c.days.length === 1 ? mo(s) + ' ' + s.getUTCDate()
+        return c.slots.length === 1 ? mo(s) + ' ' + s.getUTCDate()
           : mo(s) + ' ' + s.getUTCDate() + '–'
             + (mo(e) === mo(s) ? e.getUTCDate() : mo(e) + ' ' + e.getUTCDate());
       }
@@ -17976,14 +18009,29 @@
         : g === 'week' ? 'wk ' + mo(s) + ' ' + s.getUTCDate()
         : s.toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
     };
+    // fmtHour, not a fourth copy of the same ternary. Over one day the hour alone
+    // is unambiguous; over several it has to say WHICH day, or 9 AM appears seven
+    // times down the axis meaning seven different things.
+    const multiDay = ctDays(a.from, a.to) > 1;
+    const hourLabel = (slot) => {
+      const h = fmtHour(Number(slot.slice(11)));
+      if (!multiDay) return h;
+      const d = ctParse(slot.slice(0, 10));
+      return d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }) + ' ' + h;
+    };
+    const nameOf = c => g === 'hour' ? hourLabel(c.slots[0]) : label(c);
     const points = A.map((c, i) => {
       const m = B[i];
       return {
-        label: label(c),
-        long: c.days[0] + ' → ' + c.days[c.days.length - 1],
-        cur: [c.days[0], c.days[c.days.length - 1]],
+        label: nameOf(c),
+        long: g === 'hour'
+          ? c.slots[0].slice(0, 10) + ' ' + fmtHour(Number(c.slots[0].slice(11)))
+          : c.slots[0] + ' → ' + c.slots[c.slots.length - 1],
+        // The slots themselves, not their endpoints. ctSlotValue sums exactly
+        // these keys; nothing re-derives a range by stepping.
+        cur: c.slots,
         // A bucket with no counterpart in B is a GAP, never a zero.
-        prv: m ? [m.days[0], m.days[m.days.length - 1]] : null,
+        prv: m ? m.slots : null,
       };
     });
     return {
@@ -17992,19 +18040,23 @@
       curLabel: fmtRangeShort(a.from, a.to),
       prvLabel: fmtRangeShort(b.from, b.to),
       subUnit: g,
-      partials: A.filter(c => c.partial && c.end).map(c => ({ label: label(c), days: c.days.length })),
+      partials: A.filter(c => c.partial && c.end).map(c => ({ label: nameOf(c), days: c.slots.length })),
       shorter: B.length < A.length ? A.length - B.length : 0,
     };
   }
 
   // Value of a category (or every category) over an inclusive date range.
-  function ctDayValue(range, focus) {
-    if (!ctDaily || !range) return null;
+  // Sum one bucket's worth of the merged series.
+  //
+  // 🔑 Takes the bucket's OWN slot keys rather than a [from,to] to re-walk. The
+  // payload is keyed by whatever grain was fetched, and the bucket already knows
+  // exactly which keys it holds because ctCuts built it from them. Stepping a day
+  // at a time here is what used to make an hour axis impossible.
+  function ctSlotValue(slots, focus) {
+    if (!ctDaily || !slots || !slots.length) return null;
     const unit = ctState.measure === 'net' ? 0 : 1;
-    const [from, to] = Array.isArray(range) ? range : [range, range];
     let acc = 0;
-    for (let t = ctParse(from).getTime(); t <= ctParse(to).getTime(); t += CT_DAY_MS) {
-      const d = ctYmd(new Date(t));
+    for (const d of slots) {
       for (const st of ctStores()) {
         if (!focus) {
           const m = ((ctDaily.l2 || {})[st] || {})[d] || {};
@@ -18023,29 +18075,36 @@
 
 
   /* ── Loading ─────────────────────────────────────────────────────
-     Two ranges, two requests, one merged payload — so ctDayValue below keeps
+     Two ranges, two requests, one merged payload — so ctSlotValue below keeps
      working on a single map and every drawing routine is untouched. Each
-     request carries its own store-day budget, which is why two quarters are
-     affordable here where 108 weeks of rollups were not. */
-  async function ctFetchRange(r) {
+     request carries its own budget, which is why two quarters are affordable
+     here where 108 weeks of rollups were not.
+
+     Two endpoints, same payload shape, different KEY GRAIN: category-series is
+     keyed per date and reads KV; category-hours is keyed per ET hour slot and
+     falls back to a live Clover read when a day has not been banked yet. */
+  async function ctFetchRange(r, hourly) {
     const qs = new URLSearchParams({ from: r.from, to: r.to, level: ctState.level });
     if (ctState.store !== CT_ALL) qs.set('store', ctState.store);
-    const res = await fetch(`${WORKER_BASE}?action=category-series&${qs}`, { credentials: 'include' });
+    const action = hourly ? 'category-hours' : 'category-series';
+    const res = await fetch(`${WORKER_BASE}?action=${action}&${qs}`, { credentials: 'include' });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
       // j.code is the useful half of the response; j.error is the generic half.
       // Showing only the error sends someone hunting a permission problem that
       // may not exist.
       throw new Error(j.code === 'BUDGET_EXCEEDED'
-        ? `That range needs ${j.storeDays} store-days of snapshots and the limit is ${j.limit}. Pick one store, or a shorter range.`
+        ? (hourly
+            ? `Hour by hour is capped at ${j.limit} days and that range is ${j.days}. Pick a shorter range.`
+            : `That range needs ${j.storeDays} store-days of snapshots and the limit is ${j.limit}. Pick one store, or a shorter range.`)
         : j.code === 'UNCLASSIFIED_ACTION'
           ? 'The worker half of this deploy is missing — the API does not know this endpoint yet.'
           : (j.error || `HTTP ${res.status}`));
     }
     return j;
   }
-  // Merge two payloads into the one shape ctDayValue reads. The maps are keyed
-  // by store then DATE, and the two ranges never share a date, so this is a
+  // Merge two payloads into the one shape ctSlotValue reads. The maps are keyed
+  // by store then SLOT, and the two ranges never share a slot, so this is a
   // union and not a sum — no double counting is possible.
   function ctMergeSeries(x, y) {
     const out = { dates: [], stores: [], l2: {}, l3: undefined };
@@ -18066,19 +18125,31 @@
 
   async function loadCatTrend() {
     const a = ctRangeA(), b = ctRangeB();
+    const hourly = ctGranFor(a) === 'hour';
     // Refuse BEFORE asking. The worker would refuse too, but only after the
     // wait, and a 413 arriving late reads like a failure rather than a choice.
-    const over = [['showing', a], ['comparing', b]]
-      .filter(([, r]) => ctStoreDays(r) > CT_MAX_STORE_DAYS)
-      .map(([which, r]) => ({ which, need: ctStoreDays(r), days: ctDays(r.from, r.to) }));
+    // Hours have their own ceiling and their own arithmetic, so their own refusal.
+    const over = (hourly
+      ? [['showing', a], ['comparing', b]]
+          .filter(([, r]) => ctDays(r.from, r.to) > CT_MAX_HOUR_DAYS)
+          .map(([which, r]) => ({ which, hour: true, days: ctDays(r.from, r.to) }))
+      : [['showing', a], ['comparing', b]]
+          .filter(([, r]) => ctStoreDays(r) > CT_MAX_STORE_DAYS)
+          .map(([which, r]) => ({ which, need: ctStoreDays(r), days: ctDays(r.from, r.to) })));
     ctBudget = over.length ? over : null;
     if (ctBudget) { ctDaily = null; ctError = ''; ctLoading = false; renderCatTrend(); return; }
 
-    const key = `${a.from}|${a.to}|${b.from}|${b.to}|${ctState.level}|${ctState.store}`;
+    // 🔑 The grain IS part of the cache key, unlike every other granularity.
+    // Day, week and month all re-cut one payload that is already in memory, which
+    // is why switching between them costs nothing. Hours are a DIFFERENT payload
+    // from a different endpoint, so selecting them has to refetch — and leaving
+    // the grain out of this key is how it would silently draw day numbers on an
+    // hour axis instead.
+    const key = `${a.from}|${a.to}|${b.from}|${b.to}|${ctState.level}|${ctState.store}|${hourly ? 'hour' : 'day'}`;
     if (key !== ctDailyKey) {
       ctLoading = true; ctError = ''; renderCatTrend();
       try {
-        const [pa, pb] = await Promise.all([ctFetchRange(a), ctFetchRange(b)]);
+        const [pa, pb] = await Promise.all([ctFetchRange(a, hourly), ctFetchRange(b, hourly)]);
         ctDaily = ctMergeSeries(pa, pb);
         ctDailyKey = key;
       } catch (e) {
@@ -18112,10 +18183,14 @@
       // Refused before asking, with the arithmetic and the way out. Nothing was
       // requested, so this is a choice the panel made, not a failure it hit.
       body.innerHTML = `<div style="padding:22px 18px;text-align:center;font-size:13px" class="ct-lgr">
-        ${ctBudget.map(x => `<b>The range you are ${x.which} is ${x.days} days across ${
-          ctState.store === CT_ALL ? WRS_STORE_KEYS.length + ' stores' : 'one store'
-        } — ${x.need.toLocaleString()} store-days against a limit of ${CT_MAX_STORE_DAYS}.</b>`).join('<br>')}
-        <br>Pick one store, or a shorter range. Nothing was fetched.</div>`;
+        ${ctBudget.map(x => x.hour
+          ? `<b>Hour by hour is capped at ${CT_MAX_HOUR_DAYS} days, and the range you are ${x.which} is ${x.days}.</b>`
+          : `<b>The range you are ${x.which} is ${x.days} days across ${
+              ctState.store === CT_ALL ? WRS_STORE_KEYS.length + ' stores' : 'one store'
+            } — ${x.need.toLocaleString()} store-days against a limit of ${CT_MAX_STORE_DAYS}.</b>`).join('<br>')}
+        <br>${ctBudget.some(x => x.hour)
+          ? `Hours are not stored the way days are — they come from Clover, which keeps about 90 days and drops them as it goes. Shorten the range, or switch the x-axis back to Day.`
+          : `Pick one store, or a shorter range.`} Nothing was fetched.</div>`;
     } else if (ctLoading) {
       body.innerHTML = `<div style="padding:28px 18px;text-align:center;font-size:13px" class="ct-lgr">Loading day-by-day category sales…</div>`;
     } else if (ctError) {
@@ -18317,8 +18392,21 @@
       [['aligned', 'Same span, prev period'], ['rolling', 'The days just before']],
       () => ctState.rule,
       v => { ctState.rule = v; ctBPinned = false; ctDailyKey = ''; });
-    ctPillGroup(el('ct-gran'), [['auto', 'Auto'], ['day', 'Day'], ['week', 'Week'], ['month', 'Month']],
-      () => ctState.gran, v => { ctState.gran = v; ctState.focus = null; });
+    // Hour carries a reason when it is unavailable, because a pill that simply
+    // does nothing when clicked is indistinguishable from a broken one.
+    const hourSpan = Math.max(ctDays(a.from, a.to), ctDays(b.from, b.to));
+    const hourWhy = hourSpan > CT_MAX_HOUR_DAYS
+      ? `Hour by hour is capped at ${CT_MAX_HOUR_DAYS} days — this range is ${hourSpan}.`
+      : null;
+    ctPillGroup(el('ct-gran'),
+      [['auto', 'Auto'], ['hour', 'Hour', hourWhy], ['day', 'Day'], ['week', 'Week'], ['month', 'Month']],
+      () => ctState.gran,
+      // Deliberately does NOT clear ctDailyKey. The grain is part of that key, so
+      // Hour misses it and refetches while Day/Week/Month share one key and keep
+      // re-cutting the payload already in memory — which is the property that
+      // makes switching grains feel free. Clearing it here threw that away and
+      // made every grain change a round trip; a test counting requests caught it.
+      v => { ctState.gran = v; ctState.focus = null; });
     ctPillGroup(el('ct-measure'), [['net', 'Net $'], ['units', 'Units']], () => ctState.measure,
       v => { ctState.measure = v; });
     ctPillGroup(el('ct-view'), [['vs', 'Vs'], ['trend', 'Trend'], ['grid', 'Grid'], ['table', 'Table']],
@@ -18379,8 +18467,8 @@
     // said out loud rather than left as a difference nobody can see.
     if (!ctBPinned) {
       t += ` The comparison range is <b>${b.derived === 'aligned'
-        ? 'the same ' + bn + ' days of the previous period'
-        : 'the ' + bn + ' days immediately before'}</b>, chosen for you.`;
+        ? 'the same ' + ctPlural(bn, 'day') + ' of the previous period'
+        : 'the ' + ctPlural(bn, 'day') + ' immediately before'}</b>, chosen for you.`;
       if (ctState.rule === 'aligned' && b.derived === 'rolling') {
         t += ` <span class="ct-warn">▲</span> This range has no period boundary to align to, so it rolled instead.`;
       }
@@ -18411,8 +18499,8 @@
     const w = ctVsWindow();
     const focus = ctFocusRow(rows);
     const cutoff = w.points.length;
-    const cur = w.points.map((p, i) => i < cutoff ? ctDayValue(p.cur, focus) : null);
-    const prv = w.points.map(p => ctDayValue(p.prv, focus));
+    const cur = w.points.map((p, i) => i < cutoff ? ctSlotValue(p.cur, focus) : null);
+    const prv = w.points.map(p => ctSlotValue(p.prv, focus));
     const sum = a => a.reduce((x, v) => x + (v || 0), 0);
     const curTotal = sum(cur), prvSame = sum(prv.slice(0, cutoff)), prvFull = sum(prv);
 
@@ -18513,7 +18601,7 @@
     rows.forEach(r => {
       let c = 0, p = 0;
       for (let i = 0; i < w.points.length; i++) {
-        if (i < cutoff) { c += ctDayValue(w.points[i].cur, r) || 0; p += ctDayValue(w.points[i].prv, r) || 0; }
+        if (i < cutoff) { c += ctSlotValue(w.points[i].cur, r) || 0; p += ctSlotValue(w.points[i].prv, r) || 0; }
       }
       cVal.set(r, c); pVal.set(r, p);
     });

@@ -1622,16 +1622,16 @@ Brian: "Can we add hour by hour?" → sourced **live now + banked going forward*
 - [x] Tests: slot format, ET/DST correctness, refund attribution, budget refusal, gate
 
 **Phase 2 — frontend: Hour on the x-axis**
-- [ ] Generalise the bucket primitive from "date list" to "slot list" — `ctDayValue` sums an
+- [x] Generalise the bucket primitive from "date list" to "slot list" — `ctDayValue` sums an
       explicit list instead of re-deriving by stepping. Removes date arithmetic from the value
       path; hour slots then fall out with no special-casing.
-- [ ] `'hour'` in `ctGranFor` / `ctCuts` / the X-axis pill, enabled only within the 7-day cap
+- [x] `'hour'` in `ctGranFor` / `ctCuts` / the X-axis pill, enabled only within the 7-day cap
       and greyed with the reason otherwise
-- [ ] Add `gran` to `ctDailyKey` — hour needs a DIFFERENT payload, so it must refetch where
+- [x] Add `gran` to `ctDailyKey` — hour needs a DIFFERENT payload, so it must refetch where
       day/week/month do not. This is the one invariant the feature breaks; make it explicit.
-- [ ] Table view: 168 columns needs horizontal scroll (DESIGN.md §4.8 overflow rule)
-- [ ] Labels/legend/status derive the unit noun from granularity — "hours", not "weeks"
-- [ ] Tests: geometry + bucket count + refetch-on-gran-change + both themes
+- [x] Table view: 168 columns needs horizontal scroll (DESIGN.md §4.8 overflow rule)
+- [x] Labels/legend/status derive the unit noun from granularity — "hours", not "weeks"
+- [x] Tests: geometry + bucket count + refetch-on-gran-change + both themes
 
 **Phase 3 — bank hours going forward**
 - [x] Write `item-hours:<store-lc>:<date>` from the nightly cron and the clientCreatedTime sweep
@@ -1643,3 +1643,40 @@ Brian: "Can we add hour by hour?" → sourced **live now + banked going forward*
 ### Deploy order
 Worker first (the frontend depends on the new action; the reverse is not true), verified per
 CLAUDE.md rule 5. Phase 3 is additive-write and can follow independently.
+
+### Review — hour-by-hour, both halves (2026-09-14)
+
+Worker (#220) and frontend landed on one branch because pushes are restricted to
+`claude/hopeful-goldberg-x2yg5a`, so they could not be split into two PRs.
+
+**The skew is survivable anyway.** `category-hours` is registered in the fail-closed
+`ACTION_BUSINESS` registry, so a worker that predates it answers 403 `UNCLASSIFIED_ACTION`,
+and `ctFetchRange` already turns exactly that code into "The worker half of this deploy is
+missing — the API does not know this endpoint yet." Day/Week/Month are untouched (they still
+read `category-series`), so only the Hour pill degrades, and it degrades honestly rather than
+drawing something wrong. Still: deploy the worker promptly after merge.
+
+**Two real bugs the tests caught, neither of which a passing assertion would have shown:**
+
+1. *Cross-hour refund attribution.* A refund rung at 18:00 against a 09:30 sale needs that
+   order to know what it reverses, and it lives in another bucket. Every bucket now gets the
+   whole day as its lookup pool MINUS its own orders — the extras loop appends to
+   `orderLineItemMap` rather than replacing, so an order in both lists doubles the basis.
+2. *Every grain change became a round trip.* I added `ctDailyKey = ''` to the grain setter,
+   which is both unnecessary (the grain is already in the key) and harmful — it destroyed the
+   property that Day/Week/Month re-cut in memory for free. A browser check that counts
+   requests caught it; no static assertion would have.
+
+**And one the screenshot caught:** the status line read "the same 1 days of the previous
+period". Pre-existing, but an Hour axis makes single-day ranges the normal case, so it stopped
+being rare enough to ignore. Now `ctPlural`.
+
+Verification: 59 worker assertions, 31 frontend invariant assertions (23 of 31 fail against
+the pre-Hour file), 25 browser checks across both themes with zero page errors, and the
+two-range suite still passes so day/week/month behaviour is unchanged. Full suite 4140 across
+66 suites. CACHE_NAME v189 → v190.
+
+**Left deliberately undone:** auto-granularity still never picks Hour. A one-day range draws a
+one-point chart by default, and hours would fix that — but auto is the path everything takes
+without asking, and hours cost a live Clover read per store-day. Worth revisiting once enough
+days are banked that the cost is a KV read.
