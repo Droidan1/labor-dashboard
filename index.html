@@ -18375,11 +18375,16 @@
     const bctl = el('ct-bctl');
     bctl.innerHTML = '';
     const pin = document.createElement('button');
-    pin.type = 'button'; pin.textContent = '⇄';
+    pin.type = 'button';
+    // 🔑 TEXT, NOT A GLYPH. This was ⇄ — the universal SWAP icon — on a control that
+    // pins. It invited exactly the click it does not perform, and the state it leaves
+    // behind (a comparison range that no longer follows) is invisible until the numbers
+    // look wrong. "Match length" beside it is already a text button; this matches it.
+    pin.textContent = 'Pinned';
     pin.setAttribute('aria-pressed', String(ctBPinned));
     pin.title = ctBPinned
-      ? 'Following is off — the comparison range stays where you put it'
-      : 'The comparison range follows the one you are showing';
+      ? 'Pinned — the comparison range stays where you put it. Click to let it follow the range you are showing.'
+      : 'Following the range you are showing. Click to pin it where it is.';
     pin.onclick = () => {
       if (!ctBPinned) ctB = Object.assign({}, ctRangeB());
       ctBPinned = !ctBPinned; ctDailyKey = ''; loadCatTrend();
@@ -18480,6 +18485,19 @@
       if (ctState.rule === 'aligned' && b.derived === 'rolling') {
         t += ` <span class="ct-warn">▲</span> This range has no period boundary to align to, so it rolled instead.`;
       }
+    }
+    // Identical dates is a comparison that CANNOT say anything: every row reads 0.0%
+    // against itself, and the two series draw exactly on top of each other so the
+    // second one is not even visible. It is only reachable by pinning B onto A's
+    // dates — easy to do by accident, and impossible to spot afterwards. Every other
+    // way this panel can mislead is called out here; this was the gap.
+    if (a.from === b.from && a.to === b.to) {
+      t += `<br><span class="ct-warn">▲</span> <b>Both ranges are the same dates</b>`
+         + ` — everything is being compared against itself, so every change reads 0.0%`
+         + ` and the comparison line draws hidden under the current one.`
+         + (ctBPinned
+             ? ` The comparison range is <b>pinned</b>; unpin it beside the chip to let it follow again.`
+             : ` Pick different dates for one of them.`);
     }
     if (an !== bn) {
       t += `<br><span class="ct-warn">▲</span> <b>The two ranges are different lengths</b> — ${an} days against ${bn}.`

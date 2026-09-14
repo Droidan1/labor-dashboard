@@ -1714,3 +1714,40 @@ two-range suite still green, full suite 4143 across 66. Screenshot confirms the 
 stays selected while the axis is hours.
 
 Frontend only — no worker change, so Pages carries it on merge with nothing to deploy.
+
+## Two ways the comparison could mislead in silence (2026-09-14)
+
+Brian hit a screen where every row read ▲ 0.0% and asked why auto was not working. Auto WAS
+working — the range was 4 days, and auto picks Hour only at exactly one. The actual problem
+was that the comparison range had been pinned onto the same dates as the range being shown,
+so the panel was comparing a period against itself. He spotted it himself, then asked for
+both fixes.
+
+- [x] The pin toggle beside the comparison chip was labelled **⇄** — the universal SWAP
+      icon — on a button that PINS. It invited exactly the click it does not perform, and
+      the state it leaves behind is invisible until the numbers look wrong. Now reads
+      "Pinned", matching the text "Match length" button beside it, with a tooltip that
+      describes both states.
+- [x] Nothing said when the two ranges were identical. Every row reads 0.0% and the
+      comparison series draws exactly under the current one, so it cannot even be seen.
+      The status line already calls out short history, part-covered end buckets, unequal
+      lengths and the rolling fallback — this was the gap, and it is the one someone
+      actually hit. Reported FIRST, because it subsumes every other reading of the chart.
+- [x] Keyed on the DATES matching, not on ctBPinned — so it stays true however the state
+      is reached — but it names the pin as the cause only when the pin is the cause.
+- [x] scripts/test-ct-compare-honesty.mjs (16 assertions; 10 fail against the prior file)
+- [x] CACHE_NAME v191 → v192
+
+### Review
+
+Neither of these was a bug in the sense of wrong output. Both were the panel declining to
+explain a state it had let someone reach — which is the same failure mode as the legend that
+lied four times and the Apply button nobody could see. The pattern worth keeping: when a
+control can put the page into a state that looks fine and means nothing, the status line is
+where that gets said.
+
+Verification: 16 invariants, 18 browser checks over both themes (button label, tooltip flip
+on state, warning raised by pinning B onto A's dates, warning cleared and B moving back off A
+when unpinned), two-range and hours suites both still green, full suite 4160 across 67.
+
+Frontend only — Pages carries it on merge, nothing to deploy.
