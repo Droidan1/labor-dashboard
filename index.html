@@ -3750,9 +3750,12 @@
           color:rgb(var(--op-ink))}
         .dark .ct-range:hover{border-color:rgb(var(--op-inkDim))}
         .dark .ct-range b{color:rgb(var(--op-inkDim))}
+        /* No max-height here on purpose: 86vh measured from a top of ~226px still
+           hangs off the bottom of a laptop screen. ctPlacePop() sets max-height
+           inline from the space that actually exists below (or above) the chip. */
         #ct-pop{position:fixed;z-index:60;width:304px;padding:6px;border-radius:12px;
           background:#ffffff;border:1px solid rgba(20,16,8,.18);color:#14110a;
-          box-shadow:0 18px 48px rgba(20,16,8,.22);max-height:86vh;overflow-y:auto}
+          box-shadow:0 18px 48px rgba(20,16,8,.22);overflow-y:auto;overscroll-behavior:contain}
         .dark #ct-pop{background:rgb(var(--op-panel));border-color:var(--op-border);
           color:rgb(var(--op-ink));box-shadow:0 18px 48px rgba(0,0,0,.55)}
         /* A bare [hidden] loses to display:flex/block, every time. */
@@ -3777,9 +3780,13 @@
         .ct-popnav{appearance:none;border:0;background:transparent;cursor:pointer;
           font-size:15px;line-height:1;padding:2px 7px;border-radius:6px;color:#14110a}
         .dark .ct-popnav{color:rgb(var(--op-ink))}
-        .ct-popfoot{display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:11.5px;
+        /* Sticky, because Apply is the last thing in a scrolling column and was
+           landing below the fold. bottom:0 pins it to the scrollport, which is
+           #ct-pop's padding box, so it sits flush inside the rounded corners. */
+        .ct-popfoot{position:sticky;bottom:0;z-index:1;background:#ffffff;
+          display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:11.5px;
           border-top:1px solid rgba(20,16,8,.10)}
-        .dark .ct-popfoot{border-top-color:rgba(255,255,255,.09)}
+        .dark .ct-popfoot{background:rgb(var(--op-panel));border-top-color:rgba(255,255,255,.09)}
         .ct-popfoot span{flex:1;color:#6b6453}
         .dark .ct-popfoot span{color:rgb(var(--op-inkDim))}
         .ct-popapply{appearance:none;border:0;border-radius:7px;cursor:pointer;
@@ -18158,6 +18165,7 @@
     'thisMonth', 'lastMonth', 'last30', 'thisQuarter', 'lastQuarter',
     'last3mo', 'last6mo', 'thisYear', 'last12mo'];
   let ctPopFor = null;
+  let ctPopBox = null;   // the chip's rect, measured when the popover opened
 
   function ctOpenRange(which, ev) {
     ev.stopPropagation();
@@ -18171,16 +18179,37 @@
       document.body.appendChild(pop);
       pop.addEventListener('click', e => e.stopPropagation());
     }
+    ctPopBox = ev.currentTarget.getBoundingClientRect();
     pop.hidden = false;
-    ctRenderPop();
-    const box = ev.currentTarget.getBoundingClientRect();
-    pop.style.left = Math.max(8, Math.min(box.left, window.innerWidth - 320)) + 'px';
-    pop.style.top = Math.min(box.bottom + 6, Math.max(8, window.innerHeight - 430)) + 'px';
+    ctRenderPop();   // places the popover itself, once it knows how tall it is
   }
   window.ctOpenRange = ctOpenRange;
 
+  // Size and place the popover against the room that actually exists. Its height
+  // is not knowable before it renders — it changes with the month grids and with
+  // every pick — so this runs after every render. The old code guessed 430px once
+  // at open time; the real box is ~861px, so the footer, and with it the Apply
+  // button, sat below the bottom of the screen at every laptop height, at any
+  // scroll position. Measure, do not guess.
+  function ctPlacePop() {
+    const pop = el('ct-pop'); if (!pop || pop.hidden || !ctPopBox) return;
+    const M = 8, GAP = 6;                       // clearance from the screen edge
+    const below = window.innerHeight - ctPopBox.bottom - GAP - M;
+    const above = ctPopBox.top - GAP - M;
+    const down = below >= above;                // open downward unless up is roomier
+    const room = Math.max(160, Math.floor(down ? below : above));
+    pop.style.maxHeight = room + 'px';
+    const h = Math.min(pop.scrollHeight, room);
+    pop.style.left = Math.max(M, Math.min(ctPopBox.left, window.innerWidth - pop.offsetWidth - M)) + 'px';
+    pop.style.top = Math.max(M, Math.min(down ? ctPopBox.bottom + GAP : ctPopBox.top - GAP - h,
+                                         window.innerHeight - M - h)) + 'px';
+  }
+
   function ctRenderPop() {
     const pop = el('ct-pop'); if (!pop || pop.hidden) return;
+    const keepScroll = pop.scrollTop;   // innerHTML below resets it, and every
+                                        // date click re-renders. Restored after
+                                        // ctPlacePop sizes the scrollport.
     const cur = ctPopFor === 'a' ? ctRangeA() : ctRangeB();
     const opts = CT_PRESET_IDS.map(id => {
       const v = resolvePreset(id);
@@ -18197,8 +18226,13 @@
            <span style="flex:1;text-align:center">Custom</span>
            <button type="button" class="ct-popnav" onclick="ctCalNav(1)">›</button></div>
          <div class="ct-popcal">${_wrsMonthGridHTML(prevM, 'ctCalPick')}${_wrsMonthGridHTML(_wrsRcMonth, 'ctCalPick')}</div>
-         <div class="ct-popfoot"><span>${_wrsRcStart ? escapeHtml(fmtRangeShort(_wrsRcStart, _wrsRcEnd || _wrsRcStart)) : 'Pick a start date'}</span>
+         <div class="ct-popfoot"><span>${_wrsRcStart
+             ? escapeHtml(_wrsRcEnd ? fmtRangeShort(_wrsRcStart, _wrsRcEnd)
+                                    : fmtRangeShort(_wrsRcStart, _wrsRcStart) + ' — now pick end')
+             : 'Pick a start date'}</span>
            <button type="button" class="ct-popapply" ${_wrsRcStart ? '' : 'disabled'} onclick="ctApplyCustom()">Apply</button></div></div>`;
+    ctPlacePop();
+    pop.scrollTop = keepScroll;
   }
   function ctCalNav(dir) {
     const d = ymdToUTC(_wrsRcMonth + '-01'); d.setUTCMonth(d.getUTCMonth() + dir);
