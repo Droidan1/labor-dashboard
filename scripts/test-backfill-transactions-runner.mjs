@@ -182,6 +182,19 @@ const A = ["--store", "BL1", "--start", "2026-09-01", "--end", "2026-09-02"];
   }
 }
 
+// ── 10a. 🛑 A piped stdin must NOT hang on the prompt ─────────────────────
+// The runner asks for the secret interactively when it is missing. The failure
+// mode that introduces is a script that blocks forever the moment it is run
+// unattended — from a cron, a CI job, or a pipeline. It only prompts when
+// stdin is a terminal; everywhere else it must still fail fast.
+{
+  const started = Date.now();
+  const r = await run([...A], { SNAPSHOT_SECRET: "" });
+  ok(r.code === 1, `no secret and no terminal exits 1, got ${r.code}`);
+  ok(Date.now() - started < 5000, "and returns immediately rather than waiting on a prompt");
+  ok(/SNAPSHOT_SECRET is not set/.test(r.err), "and still says so by name");
+}
+
 // ── 10. The literal placeholder is refused before any request ─────────────
 {
   const { server, seen } = mock();

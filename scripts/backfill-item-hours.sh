@@ -30,7 +30,14 @@
 #    day we decline to bank — leaving the hourly view absent is recoverable,
 #    leaving it quietly disagreeing with the daily view everyone reads is not.
 #
-# Usage:
+# Usage — it ASKS for the secret, so there is nothing to paste wrong:
+#
+#   bash scripts/backfill-item-hours.sh                 # dry run
+#   bash scripts/backfill-item-hours.sh --write         # bank for real
+#
+# Every flag below also works. SNAPSHOT_SECRET may be exported ahead of time for
+# unattended runs; a real value, never the example text.
+#
 #   SNAPSHOT_SECRET=... bash scripts/backfill-item-hours.sh                 # dry run
 #   SNAPSHOT_SECRET=... bash scripts/backfill-item-hours.sh --write         # bank for real
 #   SNAPSHOT_SECRET=... bash scripts/backfill-item-hours.sh --store BL1     # one store
@@ -67,6 +74,21 @@ while [ $# -gt 0 ]; do
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+# 🛑 NO PLACEHOLDER TO MISPASTE. The secret is asked for, interactively, when it
+# is not already in the environment. Two runs were lost to a usage line here
+# being copied literally: first `SNAPSHOT_SECRET='...'`, which sent three dots
+# and got NO_SESSION eighteen times, then `SNAPSHOT_SECRET=<the real value>`,
+# where zsh read `<` as an input redirect and died with
+# "no such file or directory: the" before bash ever started.
+#
+# Prompting also keeps the secret out of ~/.zsh_history, which the env form
+# cannot do.
+if [ -z "${SNAPSHOT_SECRET:-}" ] && [ -t 0 ]; then
+  printf 'SNAPSHOT_SECRET (input hidden): ' >&2
+  read -rs SNAPSHOT_SECRET
+  printf '\n' >&2
+fi
 
 if [ -z "${SNAPSHOT_SECRET:-}" ]; then
   cat >&2 <<'MSG'
