@@ -21,10 +21,14 @@ const SH = join(dirname(fileURLToPath(import.meta.url)), "backfill-transactions.
 let pass = 0, fail = 0;
 const ok = (cond, msg) => (cond ? (pass++, true) : (fail++, console.log("  FAIL " + msg), false));
 
-function mock(reply = null) {
+function mock(reply = null, status = 200) {
   const seen = [];
   const server = createServer((req, res) => {
     seen.push({ url: req.url, method: req.method, secret: req.headers["x-snapshot-secret"] });
+    if (status !== 200) {
+      res.writeHead(status, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ error: "Unauthorized", code: "NO_SESSION" }));
+    }
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify(reply ?? {
       dry: true, storeDays: 2, wrote: 1, incomplete: 0, skipped: 1, itemsFailed: 0,
@@ -158,6 +162,35 @@ const A = ["--store", "BL1", "--start", "2026-09-01", "--end", "2026-09-02"];
   ok(ranges[1] === "2026-07-18..2026-08-16", `chunk 2 (got ${ranges[1]})`);
   ok(ranges[2] === "2026-08-17..2026-08-26", `chunk 3 is short and clamps to --end (got ${ranges[2]})`);
   ok(/\(70 days\)/.test(r.out), "the span is counted inclusively");
+}
+
+// ── 9. 🛑 A rejected secret stops at the FIRST chunk ──────────────────────
+// The first real run of this script sent all 18 chunks with a bad secret and
+// printed 18 identical NO_SESSION blobs over a summary of zeros. The one fact
+// that mattered — the secret was rejected — was the one thing it never said.
+{
+  for (const status of [401, 403]) {
+    const { server, seen } = mock(null, status);
+    const port = await listen(server);
+    const r = await run(["--store", "BL1 BL2", "--start", "2026-06-18", "--end", "2026-08-26",
+                         "--host", `http://127.0.0.1:${port}`]);
+    server.close();
+    ok(seen.length === 1, `HTTP ${status} stops after ONE request, not 6 (got ${seen.length})`);
+    ok(r.code === 1, `HTTP ${status} is a non-zero exit (got ${r.code})`);
+    ok(/rejected the secret/.test(r.err), `HTTP ${status} names the secret, not the session`);
+    ok(/NOTHING was written/.test(r.err), `HTTP ${status} says nothing was written`);
+  }
+}
+
+// ── 10. The literal placeholder is refused before any request ─────────────
+{
+  const { server, seen } = mock();
+  const port = await listen(server);
+  const r = await run([...A, "--host", `http://127.0.0.1:${port}`], { SNAPSHOT_SECRET: "..." });
+  server.close();
+  ok(seen.length === 0, `the placeholder sends NOTHING, got ${seen.length} requests`);
+  ok(r.code === 1, `exit 1 on the placeholder, got ${r.code}`);
+  ok(/literal/.test(r.err), "and says it is the example value, by name");
 }
 
 console.log(`${pass} passed, ${fail} failed`);

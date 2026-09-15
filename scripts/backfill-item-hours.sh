@@ -80,6 +80,12 @@ MSG
   exit 1
 fi
 
+if [ "$SNAPSHOT_SECRET" = "..." ]; then
+  echo "SNAPSHOT_SECRET is the literal '...' from the usage line above — replace it" >&2
+  echo "with the real value. Nothing was sent." >&2
+  exit 1
+fi
+
 # ── Dates, portably ─────────────────────────────────────────────────────────
 # 🛑 NOT `date -d`. That is GNU-only: macOS ships BSD date, where -d means
 # something else entirely and this script dies on its first line of arithmetic.
@@ -154,6 +160,30 @@ for store in $STORES; do
     if [ "$code" != "200" ]; then
       echo "HTTP $code"
       sed -n '1,4p' "$TMP/$store-$chunk_start.json" | sed 's/^/        /'
+      # 🛑 STOP ON THE FIRST REJECTION. A wrong secret fails identically on every
+      # chunk, and repeating it 18 times buries the one fact that matters under
+      # 18 copies of the same blob — which is exactly how the first real run of
+      # this script read. The endpoint falls through to session auth when the
+      # secret does not match, so the error says NO_SESSION rather than anything
+      # about a secret; name it here instead of leaving that to be decoded.
+      case "$code" in
+        401|403)
+          cat >&2 <<MSG
+
+The endpoint rejected the secret (HTTP $code) and NOTHING was written.
+
+  * A NO_SESSION error here means the X-Snapshot-Secret header did not match.
+    The request then fell through to normal session auth, which a shell has no
+    cookie for — so the message names the session, not the secret.
+  * If you pasted the usage line as written, the secret is the literal "..."
+    from the example.
+  * The real value cannot be read back from Cloudflare. It is the same value
+    the nightly auction feeder presents.
+
+Stopping rather than repeating this for the remaining chunks.
+MSG
+          exit 1 ;;
+      esac
       FAILED=1
     else
       python3 - "$TMP/$store-$chunk_start.json" <<'PY'
