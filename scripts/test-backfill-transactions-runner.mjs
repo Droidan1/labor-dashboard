@@ -123,7 +123,44 @@ const A = ["--store", "BL1", "--start", "2026-09-01", "--end", "2026-09-02"];
   server.close();
   ok(/WOULD_LOSE_ROWS/.test(r.out), "names WOULD_LOSE_ROWS in the summary");
   ok(/receipt lines\s+37/.test(r.out), "counts the receipt lines banked");
-  ok(/NOT re-run those with --force/.test(r.out), "tells the reader not to force past it");
+  ok(/--force/.test(r.out), "tells the reader not to force past it");
+}
+
+// ── 11. 🛑 Advice only for reasons that actually occurred ─────────────────
+// The first version printed the WOULD_LOSE_ROWS paragraph unconditionally, so a
+// run whose only problem was a transient INCOMPLETE_FETCH was warned off using
+// --force on a guard that had never fired. Advice about something that did not
+// happen is worse than none — it teaches the reader to skim the section.
+{
+  const only = (skipped, note) => ({
+    dry: true, storeDays: 30, wrote: 0, incomplete: 0, skipped: 1, itemsFailed: 0,
+    needsAttention: [{ store: 'BL14', date: '2026-08-06', skipped, note }],
+    report: [{ store: 'BL14', date: '2026-08-06', skipped, items: 0 }],
+  });
+
+  // Only INCOMPLETE_FETCH → no --force paragraph, and the retry hint instead.
+  let m = mock(only('INCOMPLETE_FETCH', 'Clover did not return a complete order list'));
+  let port = await listen(m.server);
+  let r = await run([...A, "--host", `http://127.0.0.1:${port}`]);
+  m.server.close();
+  ok(!/--force/.test(r.out), "a run with no WOULD_LOSE_ROWS never mentions --force");
+  ok(/INCOMPLETE_FETCH —/.test(r.out), "and does explain INCOMPLETE_FETCH");
+  ok(/--start <DAY> --end <DAY>/.test(r.out), "with the single-day retry command");
+
+  // Only WOULD_LOSE_ROWS → the --force warning, and no retry hint.
+  m = mock(only('WOULD_LOSE_ROWS', 'already banked with 422 rows'));
+  port = await listen(m.server);
+  r = await run([...A, "--host", `http://127.0.0.1:${port}`]);
+  m.server.close();
+  ok(/WOULD_LOSE_ROWS —/.test(r.out), "WOULD_LOSE_ROWS gets its paragraph when it happens");
+  ok(/--force/.test(r.out), "which is where the --force warning belongs");
+  ok(!/--start <DAY> --end <DAY>/.test(r.out), "and it does not offer the retry that does not apply");
+
+  // A single day is listed ONCE. The old block printed earliest and latest, which
+  // were the same row when there was only one.
+  ok((r.out.match(/BL14 2026-08-06/g) || []).length === 1,
+     `one affected day prints once, not twice (got ${(r.out.match(/BL14 2026-08-06/g) || []).length})`);
+  ok(/the day needing attention/.test(r.out), "and is headed in the singular");
 }
 
 // ── 7. 🛑 Dates must work on a Mac ────────────────────────────────────────
