@@ -490,6 +490,73 @@ the detail grid's 1 px gap painted hairline as a solid block across the last row
 cells. A third came from re-reading §4.8 rather than from any test: past the retention wall
 the hero printed **$0.00** and the tab counts **0**, directly under a banner saying the data
 could not be retrieved — the panel contradicting itself. Absent data now reads `—`.
+# Hourly backfill: window measured, endpoint now live (2026-09-15)
+
+Brian: "do the backfill" — bank the ~90-day window of hourly history that predates nightly
+banking.
+
+#224 merged as `f277bd5`. Worker-only, so merging deployed nothing, and `npx wrangler deploy`
+was refused three times in this session by the permission classifier. The deploy that landed
+came from the Transactions session above: `clover-sales-api` `56f0ab46` → `17f16db4` carried
+**two** commits, `82ab7c9` and this backfill's `97648eb`. So `backfill-item-hours` is live in
+production without ever having been deployed from here.
+
+- [x] **Full suite re-run on merged `main`** — 4212 assertions across 69 suites, all pass.
+- [x] **Staging worker deployed** — version `ef89e209`, active at 100%.
+- [x] **Window measured against prod KV** (read-only, ns `8f6062a7`):
+
+  | | |
+  |---|---|
+  | `items:` keys | 1663, spanning 2025-04-01 → 2026-09-14 |
+  | `item-hours:` keys | 18 — exactly the nightly bank, 6 stores × Sep 12/13/14 |
+  | candidates (day snapshot exists, no bank, inside the 120d cap) | **734 store-days** |
+
+  Per store: BL1/BL2/BL4/BL8/BL14/BL16 at 117 days each (2026-05-18 → 2026-09-11),
+  BL12 at 32 (2026-05-18 → 2026-06-18).
+
+- [x] **BL12 is unreachable by this endpoint** — the handler resolves `store` against
+      `ALL_STORES`, which excludes it (it lives in `WRS_STORES`). Moot in practice: its
+      candidates stop at 2026-06-18, already behind Clover's ~90-day cliff. Reachable
+      target is **702 store-days** = 6 stores × 117 days. 117 sits just under
+      `BACKFILL_HOURS_MAX_STORE_DAYS` (120), so the window chunks as one invocation per
+      store, six in total; `store=all` would cap at 20 days per call and need six passes
+      anyway.
+- [x] **Verified live against the served bytes**, not taken on trust: `17f16db4` at 100%, a
+      907,780-byte bundle, and `["backfill-item-hours", "bl"]` present in `ACTION_BUSINESS` —
+      the entry without which the fail-closed business gate 403s every session call.
+- [x] **`scripts/backfill-item-hours.sh`** — chunks the window at the 120 cap, dry run unless
+      `--write`, and a write names the namespace, the key pattern and the store-day count and
+      waits for confirmation (rule 7). 27 assertions in
+      `scripts/test-backfill-hours-runner.mjs`, all against a local mock: rule 3 forbids
+      proving "dry by default" by calling production. Mutation-checked — dropping the `dry=1`
+      default kills exactly the two assertions that should die.
+- [x] **Documented** in README §8.4, which the endpoint was missing from.
+- [ ] **No dry run yet, and no `item-hours:` key written.**
+
+## Blocked on one thing only: the secret
+
+The endpoint is live and the runner is tested, but invoking it needs
+`X-Snapshot-Secret`. `SNAPSHOT_SECRET` is a Worker secret, deliberately absent from
+`wrangler.toml` (public repo), and it is not in this session's environment. So the dry run
+has to be started by someone holding it:
+
+```bash
+SNAPSHOT_SECRET='...' bash scripts/backfill-item-hours.sh --start 2026-05-18 --end 2026-09-11
+```
+
+That is a dry run; it writes nothing and prints the reconcile rate. Then, and only then,
+the same command with `--write`.
+
+Expect the failures to cluster at the old end: Clover's ~90 days puts the cliff near
+2026-06-17, so roughly 87 of each store's 117 days sit inside nominal retention and ~30
+behind it. The dry run exists because nobody actually knows where Clover stops reproducing
+exactly.
+
+**Superseded.** This entry originally closed with a rule that a deploy can only be checked by
+version identity, because `/workers/scripts/{name}/content` answers 405 for this token. The
+Transactions session found the versioned sibling `content/v2` answers 200 with the real
+bundle — see lessons.md. One 405 did not close the question, and I stopped at it.
+
 
 # Pure black follow-up: nav bar left navy, dark status bar reverted (2026-09-10)
 
