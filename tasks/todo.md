@@ -1,3 +1,55 @@
+# Worker deployed to production (2026-09-15)
+
+Brian: **"deploy the worker"**. Done — `clover-sales-api` version **17f16db4-61d1-444a-9221-1333d023c898**
+(was `56f0ab46`, 2026-09-14).
+
+## What shipped
+
+Two commits, not one. `worker.js` had **two** changes since the last deploy:
+- `82ab7c9` — the Transactions endpoint (this branch).
+- `97648eb` — `backfill-item-hours` from PR #224, merged to main and never deployed.
+
+Checked before deploying that the backfill appears **nowhere in `scheduled()`** — it is
+POST-only and guarded, so the deploy makes it *reachable*, not *running*. Nothing writes at
+deploy time: no migration, no KV write, no D1 write.
+
+## Verified (CLAUDE.md rule 5 — poll the full condition, consecutive clean passes)
+
+1. Active version `17f16db4` at **100%**, three consecutive polls.
+2. **Deployed bytes grepped** — `content/v2`, 907,780 B: `fetchTransactionOrders`,
+   `fetchCloverLabelMap`, `buildTransactions`, `txnTenderKind`, `TXN_RETENTION_DAYS`,
+   `BEYOND_RETENTION`, `BEFORE_STORE_CUTOVER`, `INCOMPLETE_FETCH` all present, and
+   `["transactions", "bl"]` confirmed inside `ACTION_BUSINESS`.
+3. **All 20 secrets survived**, including all seven `BL*_API_TOKEN` and `SNAPSHOT_SECRET`.
+4. Live API answers `401 NO_SESSION` — serving, not 500ing.
+
+🔑 Item 2 is new capability: the repo believed served bytes could not be read because
+`/content` is 405. `/content/v2` is **200**. Recorded in lessons.md.
+
+## Not verified, and cannot be from here
+
+The auth gate returns 401 before the business gate, so **every** action — real, fake, or
+old — answers `401 NO_SESSION` unauthenticated. There is no probe that exercises the endpoint
+without a logged-in session. **The first real store-day is the functional test**, and the two
+columns to look at are **Tender Type** and **Employee**: those resolve through the new
+`/tenders` and `/employees` label maps, which is the part no fixture could prove.
+
+## Frontend followed, same day
+
+#226 merged as `fd362f4` at 14:49:57Z. Both publishers succeeded:
+- **GitHub Pages Action** run #363 — success 14:50:24Z. This is the one that serves
+  **www.retjghub.com** (CNAME).
+- **Cloudflare Pages** production deploy for `fd362f4` — success.
+
+So the full chain is live in the right order: worker first, then frontend.
+
+⚠️ **The served frontend bytes could NOT be grepped from this session.** The egress proxy
+answers `403` to CONNECT for `www.retjghub.com` and for `*.pages.dev`, while
+`api.retjghub.com` and `api.cloudflare.com` are allowed. So the frontend is confirmed by
+*both deploy pipelines reporting success on the merge commit*, not by reading what is served
+— a weaker check than the worker got. Worth knowing the asymmetry before relying on it:
+the worker can be byte-verified (`content/v2`), the frontend currently cannot.
+
 # Transactions tab — BUILT (read-only, no Authorizations) (2026-09-15)
 
 Brian, on the preview: **"cut the authorizations tab and build it read-only"**. Both done.
