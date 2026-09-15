@@ -200,5 +200,93 @@ ok(px && px.tender === null && px.employee === null, 'an unresolvable id degrade
 ok(px && px.tenderKind === 'other', 'an unknown tender takes the neutral glyph');
 ok(px && px.amount === 1.00, 'the row still carries its money');
 
+// ── 8. The receipt ────────────────────────────────────────────────────────
+// 🔑 LINE ITEMS BELONG TO THE ORDER, NOT THE PAYMENT. Clover has no notion of
+// which items a given payment covers, so the only two honest answers are "the
+// order's basket, labelled as the whole order" and "nothing at all". A guess at
+// one payment's share would be invented data, and 0.94% of production orders
+// are split-tender, so the case is real rather than theoretical.
+const li = (name, priceCents, extra = {}) => ({ name, price: priceCents, ...extra });
+stub({
+  tenders: TENDERS, employees: EMPLOYEES,
+  orders: [
+    // Three of one thing. Clover writes one line PER UNIT with no quantity field.
+    { id: 'o-a', createdTime: at('09:00'),
+      lineItems: { elements: [li('Denim jacket', 999), li('Denim jacket', 999), li('Denim jacket', 999), li('Mug', 250)] },
+      payments: { elements: [{ id: 'p-a', amount: 3247, createdTime: at('09:00'), tender: { id: 't-cash' }, result: 'SUCCESS' }] } },
+    // Both discount spellings. Reading only `amount` once missed ~70% of them.
+    { id: 'o-b', createdTime: at('09:30'),
+      lineItems: { elements: [
+        li('Lamp', 2000, { discounts: { elements: [{ amount: -500 }] } }),
+        li('Rug', 4000, { discounts: { elements: [{ percentage: 25 }] } }),
+      ] },
+      payments: { elements: [{ id: 'p-b', amount: 4500, createdTime: at('09:30'), tender: { id: 't-cash' }, result: 'SUCCESS' }] } },
+    // Weighed goods: unitQty in thousandths is the one quantity Clover models.
+    { id: 'o-c', createdTime: at('09:45'),
+      lineItems: { elements: [li('Loose beads', 400, { unitQty: 1500 })] },
+      payments: { elements: [{ id: 'p-c', amount: 600, createdTime: at('09:45'), tender: { id: 't-cash' }, result: 'SUCCESS' }] } },
+    // One basket, two payments.
+    { id: 'o-d', createdTime: at('10:15'),
+      lineItems: { elements: [li('Armchair', 12000)] },
+      payments: { elements: [
+        { id: 'p-d1', amount: 6000, createdTime: at('10:15'), tender: { id: 't-cash' }, result: 'SUCCESS' },
+        { id: 'p-d2', amount: 6000, createdTime: at('10:16'), tender: { id: 't-visa' }, result: 'SUCCESS' },
+      ] } },
+    { id: 'o-e', createdTime: at('10:30'),
+      lineItems: { elements: [li('Bike', 8000)] },
+      payments: { elements: [{ id: 'p-e', amount: 8000, createdTime: at('10:30'), tender: { id: 't-cash' }, voided: true, result: 'SUCCESS' }] } },
+    // Same item, same price, one of them returned.
+    { id: 'o-f', createdTime: at('10:45'),
+      lineItems: { elements: [li('Kettle', 1500, { refunded: true }), li('Kettle', 1500)] },
+      payments: { elements: [{ id: 'p-f', amount: 3000, createdTime: at('10:45'), tender: { id: 't-cash' }, result: 'SUCCESS' }] } },
+    // A custom-amount sale: an order Clover holds no line items for at all.
+    { id: 'o-g', createdTime: at('11:00'),
+      payments: { elements: [{ id: 'p-g', amount: 500, createdTime: at('11:00'), tender: { id: 't-cash' }, result: 'SUCCESS' }] } },
+  ],
+  refunds: [
+    { id: 'r-f', amount: 1500, createdTime: at('11:30'), payment: { id: 'p-f', tender: { id: 't-cash' } }, orderRef: { id: 'o-f' } },
+    // The original sale was rung on an earlier day, so its order is not in hand.
+    { id: 'r-old', amount: 999, createdTime: at('11:45'), payment: { id: 'p-old', tender: { id: 't-cash' } }, orderRef: { id: 'o-from-march' } },
+  ],
+});
+const dr = await body(await call('store=BL1'));
+const R = Object.fromEntries((dr.rows || []).map(r => [r.id, r]));
+
+const itemsA = R['p-a'].items;
+ok(itemsA.length === 2, `identical lines merge into one row (got ${itemsA.length})`);
+ok(itemsA[0].name === 'Denim jacket' && itemsA[0].qty === 3 && itemsA[0].price === 29.97,
+   `three units merge to qty 3 at the LINE total (got ${JSON.stringify(itemsA[0])})`);
+ok(itemsA[1].qty === 1 && itemsA[1].price === 2.50, 'a single unit reads qty 1');
+
+const itemsB = R['p-b'].items;
+ok(itemsB[0].price === 15.00, `an amount discount comes off the price shown (got ${itemsB[0].price})`);
+ok(itemsB[1].price === 30.00, `a percentage discount comes off too (got ${itemsB[1].price})`);
+
+ok(R['p-c'].items[0].qty === 1.5 && R['p-c'].items[0].price === 6.00,
+   `unitQty gives a fractional quantity (got ${JSON.stringify(R['p-c'].items[0])})`);
+
+// 🛑 The split-tender case. Both payments carry the WHOLE basket, and both say so.
+ok(JSON.stringify(R['p-d1'].items) === JSON.stringify(R['p-d2'].items),
+   'both payments on one order carry the same basket');
+ok(/settled with 2 payments/.test(R['p-d1'].itemsNote || ''),
+   `and each names the split rather than implying a share (got ${R['p-d1'].itemsNote})`);
+ok(R['p-a'].itemsNote === null, 'a single-payment order carries no caveat — there is nothing to caveat');
+
+ok(/voided/.test(R['p-e'].itemsNote || ''), "a void's basket is labelled as never having completed");
+
+const itemsF = R['p-f'].items;
+ok(itemsF.length === 2, 'a returned line does not merge into the identical one that stood');
+ok(itemsF.some(i => i.refunded === true) && itemsF.some(i => i.refunded === false),
+   'and the returned line is marked');
+
+ok(Array.isArray(R['r-f'].items) && /original order/.test(R['r-f'].itemsNote || ''),
+   'a refund shows the original basket, labelled as the order and not as what came back');
+
+// 🛑 The two silences. Neither may be filled with a guess or an empty basket.
+ok(R['r-old'].items === undefined,
+   'a refund whose original order is not in this day carries NO items key');
+ok(R['p-g'].items === undefined,
+   'a custom-amount sale with no line items carries no items key either');
+
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

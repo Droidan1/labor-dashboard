@@ -1695,6 +1695,37 @@
             .dark .txn-dt-k{color:rgb(var(--op-inkDim))}
             .txn-dt-v{font-size:13.5px;margin-top:4px;font-variant-numeric:tabular-nums}
             .txn-dt-v.txn-big{font-size:20px;font-weight:600}
+            /* The receipt — folded into the drawer, opened by a click. Every
+               colour is stated for BOTH themes ON THIS BLOCK rather than
+               inherited (§4.8 trap 3), because the drawer sits on the panel and
+               the panel is a different ground in each of the three themes. */
+            .txn-items{border-top:1px solid rgba(20,16,8,.10);background:#ffffff;color:#14110a}
+            .dark .txn-items{border-top-color:rgba(255,255,255,.09);background:rgb(var(--op-panel));color:rgb(var(--op-ink))}
+            .txn-items-tog{display:flex;align-items:center;gap:9px;width:100%;padding:11px 18px;
+              background:#fafaf6;border:0;cursor:pointer;text-align:left;font-size:12.5px;
+              font-weight:700;color:#166534}
+            .dark .txn-items-tog{background:rgb(var(--op-panelHi));color:#22c55e}
+            .txn-items-tog:hover{text-decoration:underline}
+            .txn-items-chev{display:inline-block;font-size:10px;transition:transform .15s ease}
+            .txn-items-tog[aria-expanded="true"] .txn-items-chev{transform:rotate(90deg)}
+            /* Same amber wash as the retention wall, and measured the same way:
+               ink on the composited colour, not on the wash alone. */
+            .txn-items-note{padding:10px 18px;font-size:11.5px;line-height:1.55;color:#14110a;
+              background:rgba(245,158,11,.16);border-bottom:1px solid rgba(180,83,9,.45)}
+            .dark .txn-items-note{color:rgb(var(--op-ink));background:rgba(245,158,11,.14);
+              border-bottom-color:rgba(245,158,11,.45)}
+            .txn-it-tbl{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+            .txn-it-tbl td{padding:9px 10px;font-size:13px;vertical-align:top;
+              border-bottom:1px solid rgba(20,16,8,.07)}
+            .dark .txn-it-tbl td{border-bottom-color:rgba(255,255,255,.07)}
+            .txn-it-tbl tr:last-child td{border-bottom:0}
+            /* The gutter padding is set on the class, not with !important:
+               .txn-it-tbl td.txn-it-q is (0,2,1) and already outranks (0,1,1). */
+            .txn-it-tbl td.txn-it-q{width:54px;padding-left:18px;text-align:right;font-weight:600;color:#6b6453}
+            .dark .txn-it-tbl td.txn-it-q{color:rgb(var(--op-inkDim))}
+            .txn-it-tbl td.txn-it-p{width:112px;padding-right:18px;text-align:right;font-weight:600}
+            .txn-it-u{display:block;margin-top:3px;font-size:11px;color:#6b6453}
+            .dark .txn-it-u{color:rgb(var(--op-inkDim))}
             /* The retention wall — Clover's limit, stated on the surface */
             .txn-wall{padding:11px 18px;background:rgba(245,158,11,.16);
               border-bottom:1px solid rgba(180,83,9,.45);font-size:12px;line-height:1.55}
@@ -12556,6 +12587,11 @@
   let txnCache = {};             // "STORE:YYYY-MM-DD" -> payload | {__err}
   let txnTab = 'payment';
   let txnSelected = null;        // payment id of the open detail row
+  // The receipt is folded by default and belongs to whichever row is open. One
+  // boolean is enough because only one transaction is ever open at a time, and
+  // opening a different one starts it folded again — so the drawer's height
+  // stays predictable while someone is scanning down the list.
+  let txnItemsOpen = false;
   let selectedTxnDate = null;    // null = today
 
   // Clover timestamps are epoch ms; the store trades in ET, so the clock the
@@ -12582,6 +12618,12 @@
   }
   function openTxnDetail(id) {
     txnSelected = (txnSelected === id) ? null : id;
+    txnItemsOpen = false;        // the receipt belongs to the row that opened it
+    const key = _txnKey();
+    if (txnCache[key]) renderTransactions(txnCache[key]);
+  }
+  function toggleTxnItems() {
+    txnItemsOpen = !txnItemsOpen;
     const key = _txnKey();
     if (txnCache[key]) renderTransactions(txnCache[key]);
   }
@@ -12597,6 +12639,7 @@
   window.selectTxnDay = selectTxnDay;
   window.setTxnTab = setTxnTab;
   window.openTxnDetail = openTxnDetail;
+  window.toggleTxnItems = toggleTxnItems;
   window.refreshTransactions = refreshTransactions;
 
   // Loading / error both keep the day strip on screen, so the picker never
@@ -12816,6 +12859,7 @@
         <span class="txn-lg"><span class="txn-chip txn-refund">Manual refund</span> keyed by hand, <b>no parent payment</b></span>
         <span class="txn-lg"><span class="txn-chip txn-void">Void</span> cancelled before it settled — <b>never in the day's total</b></span>
         <span class="txn-lg"><span class="txn-none">none attached</span> a value Clover does not hold — <b>named, never blank</b></span>
+        <span class="txn-lg"><b>Items sold</b> the order's receipt, folded into an open transaction — a line marked <b>Refunded</b> came back</span>
       </div>`;
 
     body.innerHTML = `
@@ -12827,6 +12871,58 @@
       </div>
       <div class="txn-tabs" role="tablist" aria-label="Transaction types">${tabsHTML}</div>
       ${sum}${archiveWarn}${status}${table}${detail}${legend}`;
+  }
+
+  // Merged quantity. Clover writes one line per unit, so this is usually a small
+  // integer; weighed goods arrive as unitQty/1000 and can be fractional. The
+  // rounding is what keeps the common case clean — Math.round(3 * 1000) / 1000 is
+  // 3, and String(3) is "3", so nothing carries a trailing ".0".
+  const _txnQty = (q) => String(Math.round((Number(q) || 0) * 1000) / 1000);
+
+  // The receipt, folded into the open transaction.
+  //
+  // Absent entirely when the row carries no items — a manual refund with no
+  // order, or a refund whose original sale was rung on an earlier day. That is
+  // the same conditional treatment `Cash tendered`, `Reason` and `Result` already
+  // get in this drawer: a field with no value is named, a section we do not hold
+  // is simply not drawn, rather than asserting an empty basket.
+  function _txnItemsHTML(r) {
+    const items = Array.isArray(r.items) ? r.items : [];
+    if (!items.length) return '';
+
+    // Units, not lines: three of one thing is three items sold.
+    const units = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
+    // The heading carries the semantics the worker attached the list under, so
+    // a void's basket never reads as a sale.
+    const heading = r.kind === 'payment' ? 'Items sold'
+      : r.kind === 'void' ? 'Items on the voided order'
+      : 'Items on the original order';
+
+    const lines = items.map(it => {
+      const q = Number(it.qty) || 0;
+      const each = q > 1 ? `<span class="txn-it-u">${fmtDollar((it.price || 0) / q)} each</span>` : '';
+      const rf = it.refunded ? ' <span class="txn-chip txn-refund">Refunded</span>' : '';
+      return `<tr>
+          <td class="txn-it-q">${_txnQty(q)} &times;</td>
+          <td class="txn-it-n">${it.name ? escapeHtml(it.name) : _txnNone('unnamed item')}${rf}${each}</td>
+          <td class="txn-it-p">${fmtDollar(it.price || 0)}</td>
+        </tr>`;
+    }).join('');
+
+    // 🛑 The caveat opens WITH the list, never folded away underneath it. A
+    // split-tender order's basket is not that payment's basket, and reading it
+    // as one is the single way this panel can mislead.
+    const note = (txnItemsOpen && r.itemsNote)
+      ? `<div class="txn-items-note">${escapeHtml(r.itemsNote)}</div>` : '';
+
+    return `
+      <div class="txn-items">
+        <button type="button" class="txn-items-tog" aria-expanded="${txnItemsOpen ? 'true' : 'false'}"
+                onclick="toggleTxnItems()">
+          <span class="txn-items-chev">&#9656;</span>${heading} (${_txnQty(units)})
+        </button>
+        ${txnItemsOpen ? `${note}<table class="txn-it-tbl"><tbody>${lines}</tbody></table>` : ''}
+      </div>`;
   }
 
   function _txnDetailHTML(r) {
@@ -12864,6 +12960,7 @@
           ${r.reason ? cell('Reason', escapeHtml(r.reason)) : ''}
           ${r.result ? cell('Result', escapeHtml(r.result)) : ''}
         </div>
+        ${_txnItemsHTML(r)}
       </div>`;
   }
 

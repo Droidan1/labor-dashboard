@@ -22,8 +22,10 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL: ' + m)
 
 const worker = await loadWorker(repo);
 const { db, env } = makeEnv(repo);
-// The archive tables are born in migration-063; the harness does not build them.
+// The archive tables are born in migration-063, its line items in migration-064;
+// the harness builds neither.
 db.exec(fs.readFileSync(path.join(repo, 'migration-063.sql'), 'utf8'));
+db.exec(fs.readFileSync(path.join(repo, 'migration-064.sql'), 'utf8'));
 applyMigrationAlters(db, repo);   // re-run: the harness note says a migration that
                                   // creates tables must be followed by this.
 for (const s of ['BL1', 'BL2']) { env[`${s}_MERCHANT_ID`] = 'M'; env[`${s}_API_TOKEN`] = 'T'; }
@@ -170,6 +172,81 @@ stub({ orders: [pay('live1', D1, 9, 7777)] });
 const fresh = await body(await read(`store=BL1&date=${D1}`));
 ok(fresh.archived !== true, 'a date inside the window is read LIVE, not from the archive');
 ok(fresh.rows.some(r => r.id === 'live1'), 'and reflects what Clover says now');
+
+// ── 8. 🛑 The receipt outlives Clover too ─────────────────────────────────
+// Everything above protects the payments. This protects what was actually sold,
+// which decays on the same clock and is not recoverable either.
+const itemCount = (store, date) =>
+  db.prepare('SELECT count(*) c FROM payment_archive_items WHERE store=? AND date=?').get(store, date).c;
+
+const OLD2 = shift(TODAY, -205);
+const sofaOrder = (lines) => ({
+  id: 'o-w', createdTime: at(OLD2, 12),
+  lineItems: lines ? { elements: lines } : undefined,
+  // One basket, two payments — the 0.94% case, banked once.
+  payments: { elements: [
+    { id: 'w1', amount: 11500, taxAmount: 0, createdTime: at(OLD2, 12), tender: { id: 't-cash' }, employee: { id: 'e-1' }, result: 'SUCCESS' },
+    { id: 'w2', amount: 11500, taxAmount: 0, createdTime: at(OLD2, 12), tender: { id: 't-cash' }, employee: { id: 'e-1' }, result: 'SUCCESS' },
+  ] },
+});
+stub({ orders: [sofaOrder([{ name: 'Sofa', price: 20000 }, { name: 'Cushion', price: 1500 }, { name: 'Cushion', price: 1500 }])] });
+setSales('BL1', OLD2, 230.00);
+// A backfill is PLANNED from the dry output, so the receipt is previewed there
+// on the same terms as the rows — a count that only appears once you have
+// already written is not a preview.
+const dryItems = await body(await bank(`store=BL1&start=${OLD2}&end=${OLD2}`));
+ok(dryItems.report[0].items === 2, `a dry run previews the receipt (got ${dryItems.report[0].items})`);
+ok(itemCount('BL1', OLD2) === 0, 'and still writes nothing');
+
+const banked = await body(await bank(`store=BL1&start=${OLD2}&end=${OLD2}&dry=0`));
+ok(banked.report[0].items === 2,
+   `the basket banks ONCE PER ORDER, not once per payment (got ${banked.report[0].items})`);
+ok(itemCount('BL1', OLD2) === 2, 'two merged lines in D1 for a two-payment order');
+
+const back = await body(await read(`store=BL1&date=${OLD2}`));
+const w1 = back.rows.find(r => r.id === 'w1');
+ok(w1.items && w1.items.length === 2, 'the archived transaction opens to its receipt');
+ok(w1.items[0].name === 'Sofa' && w1.items[0].price === 200,
+   'with the name and price SNAPSHOTTED at bank time, not re-resolved from a catalogue');
+ok(w1.items[1].qty === 2 && w1.items[1].price === 30, 'and the merge preserved through D1');
+ok(/settled with 2 payments/.test(w1.itemsNote || ''),
+   'and the split-tender caveat rebuilt from the archive — one labelling function, two sources');
+
+// A re-bank REPLACES the day's receipt rather than mixing two of them. These
+// rows are keyed by a DERIVED (order_id, seq), unlike payment_archive, whose key
+// is Clover's own payment id and whose leftovers are real transactions.
+stub({ orders: [sofaOrder([{ name: 'Sofa', price: 20000 }])] });
+await bank(`store=BL1&start=${OLD2}&end=${OLD2}&dry=0`);
+ok(itemCount('BL1', OLD2) === 1,
+   `a re-bank replaces the receipt rather than orphaning the lines it dropped (got ${itemCount('BL1', OLD2)})`);
+
+// 🛑 ...but a fetch that comes back with NO line items must not delete a receipt
+// banked when they were still there. Clover degrades by returning less.
+stub({ orders: [sofaOrder(null)] });
+await bank(`store=BL1&start=${OLD2}&end=${OLD2}&dry=0`);
+ok(itemCount('BL1', OLD2) === 1, 'a fetch holding no line items leaves the banked receipt alone');
+
+// ── 9. 🛑 The receipt is never worth a day's payments ─────────────────────
+// If migration-064 has not run, the items write throws. The payments are the
+// financial record; the receipt hangs off it. A day that ages out unbanked
+// cannot be recovered, so the day banks anyway and the failure is NAMED.
+db.exec('DROP TABLE payment_archive_items');
+const D6 = shift(TODAY, -15);
+stub({ orders: [{ id: 'o-m', createdTime: at(D6, 10),
+  lineItems: { elements: [{ name: 'Toaster', price: 1200 }] },
+  payments: { elements: [{ id: 'm1', amount: 1200, taxAmount: 0, createdTime: at(D6, 10), tender: { id: 't-cash' }, employee: { id: 'e-1' }, result: 'SUCCESS' }] } }] });
+setSales('BL1', D6, 12.00);
+const noTable = await body(await bank(`store=BL1&start=${D6}&end=${D6}&dry=0`));
+ok(noTable.wrote === 1, 'the payments still bank when the items table does not exist');
+ok(noTable.report[0].items === null && /payment_archive_items/.test(noTable.report[0].itemsError || ''),
+   `and the failure is named in the report rather than swallowed (got ${noTable.report[0].itemsError})`);
+ok(rowCount('BL1', D6) === 1, 'so the day is in the archive, re-bankable for its receipt later');
+ok(noTable.itemsFailed === 1 && noTable.needsAttention.some(a => a.date === D6 && a.itemsError),
+   'and the day is listed as needing attention, alongside the other ways a day goes wrong');
+
+const degraded = await body(await read(`store=BL1&date=${OLD2}`));
+ok(degraded.rows.length === 2 && degraded.rows.every(r => r.items === undefined),
+   'and an archived day still SERVES its transactions, just without their receipt');
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

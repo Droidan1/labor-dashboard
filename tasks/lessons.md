@@ -1,3 +1,24 @@
+## `cat >` on a tracked file I had never read (2026-09-15)
+
+CLAUDE.md says to write the plan to `tasks/todo.md`, so I wrote it — with `cat > tasks/todo.md`,
+without reading the file first. `todo.md` is not a scratchpad. It is a **newest-first append log**,
+21 entries and 2262 lines of why every previous decision was made, and I replaced all of it with
+a 43-line plan. `git diff --stat` showed `2278 deletions` and that is the only reason I noticed.
+
+Nothing was lost: it was uncommitted, `git checkout HEAD -- tasks/todo.md` brought it back, and
+the new entry went on the front where the convention puts it. But the guard was luck — I happened
+to read the stat line before committing.
+
+**The rule.** A redirect (`>`) onto a path that already exists is an overwrite, and an overwrite
+of a tracked file needs the same look-before-you-write as a database mutation. Read the head of it
+first; if it has content, append or prepend rather than replace. `>>` and a prepend are cheap; the
+history is not reconstructible from anywhere else.
+
+**Why the instinct failed.** "Write the plan to todo.md" reads like an instruction to create a
+file. It is an instruction to add an entry to one. The same shape appears in `tasks/lessons.md`,
+`DESIGN.md` and `MEMORY.md` — every long-lived document in this repo is a log, and none of them
+should ever be the target of a `>`.
+
 ## A find-and-replace would have broken dark mode (2026-09-15)
 
 Fixing inkDimmer-as-text. `.eb-chev` and `.eb-sec-chev` write `color:#9c9484` and have **no

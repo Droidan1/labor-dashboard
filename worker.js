@@ -1816,7 +1816,14 @@ async function fetchCloverLabelMap(store, env, resource) {
   return map;
 }
 
-// Orders for one day with their payments and customer attached.
+// Orders for one day with their payments, customer and line items attached.
+//
+// `lineItems` rides along because the receipt is what the drawer expands into,
+// and these are the same orders the payments come from — so the items cost no
+// extra call. `lineItems.discounts` comes too: a line discounted at the register
+// must display the price that was CHARGED, not the shelf price, or the receipt
+// contradicts the payment above it. fetchItemOrders has expanded exactly this
+// on the same endpoint since long before now.
 //
 // Deliberately NOT filtered to `state=locked`, unlike fetchItemOrders: that
 // filter exists so a day's TOTAL only counts completed orders, but a voided or
@@ -1837,7 +1844,7 @@ async function fetchTransactionOrders(store, env, sinceTimestamp, untilTimestamp
   while (true) {
     let url = `https://api.clover.com/v3/merchants/${merchantId}/orders`
       + `?filter=createdTime>=${sinceTimestamp}`
-      + `&expand=payments,customers`
+      + `&expand=payments,customers,lineItems,lineItems.discounts`
       + `&limit=${limit}&offset=${offset}`;
     if (untilTimestamp) url += `&filter=createdTime<${untilTimestamp}`;
     const resp = await cloverFetch(url, { headers });
@@ -1864,6 +1871,118 @@ function txnTenderKind(label) {
   if (/gift|store credit/.test(s)) return "gift";
   if (/credit|debit|card|visa|mastercard|amex|discover/.test(s)) return "card";
   return "other";
+}
+
+// ═══ THE RECEIPT ══════════════════════════════════════════════════════════
+// 🔑 LINE ITEMS BELONG TO THE ORDER, NOT TO THE PAYMENT. Clover has no notion of
+// "which items this payment covers" — a split-tender order has one basket and
+// several payments against it. Measured on production: of 115,798 orders with a
+// payment, 1,091 (0.94%) carry more than one, worst case five. Every payment has
+// an order; none is orphaned. So 99% of the time the order's items ARE that
+// transaction's items — and the other 1% is LABELLED rather than guessed at.
+
+// One order's line items, collapsed the way a receipt reads.
+//
+// Clover writes one lineItem PER UNIT: three of the same thing on a ticket is
+// three elements, each at the full price, with no quantity field. Printing them
+// as three rows is technically faithful and reads as a bug, so identical lines
+// merge into `3 × Name`. Weighed goods are the exception Clover does model —
+// `unitQty` in thousandths — and `unitQty / 1000` is how every other line-item
+// loop in this file reads it.
+function buildOrderItems(order) {
+  const lines = order?.lineItems?.elements || [];
+  if (!lines.length) return [];
+
+  const merged = new Map();
+  for (const li of lines) {
+    const qty = li.unitQty != null ? li.unitQty / 1000 : 1;
+    const grossCents = (li.price || 0) * qty;
+
+    // The same two discount spellings the item-sales path already handles: an
+    // `amount` in cents, or a `percentage` carrying no amount at all. Reading
+    // only the first once missed ~70% of discounts ($936/day at BL1).
+    let discCents = 0;
+    for (const d of (li.discounts?.elements || [])) {
+      if (d.amount != null && d.amount !== 0) discCents += Math.abs(d.amount);
+      else if (d.percentage) discCents += Math.round(Math.abs(grossCents) * Number(d.percentage) / 100);
+    }
+    // A discount reduces the magnitude whichever way the line points; negative
+    // lines exist, because Clover writes some refunds back onto the order.
+    const netCents = grossCents >= 0 ? grossCents - discCents : grossCents + discCents;
+
+    const refunded = li.refunded === true;
+    // Merge on the EFFECTIVE unit price, not the shelf price. Two lines of the
+    // same item priced differently because only one was discounted are two
+    // different things to whoever is reading, and merging them hides the
+    // discount inside an average.
+    const unitCents = qty ? Math.round(netCents / qty) : Math.round(netCents);
+    const key = JSON.stringify([li.name ?? null, unitCents, refunded]);
+    const hit = merged.get(key);
+    if (hit) { hit.qty += qty; hit.cents += netCents; }
+    else merged.set(key, { name: li.name || null, qty, cents: netCents, refunded });
+  }
+
+  const r2 = (n) => Math.round(n * 100) / 100;
+  return [...merged.values()].map(m => ({
+    name: m.name,
+    qty: r2(m.qty),
+    // The LINE total, so `3 × Widget … $29.97` reads like a receipt. A merged
+    // row's unit price is price / qty, which the client derives when qty > 1.
+    price: Math.round(m.cents) / 100,
+    refunded: m.refunded,
+  }));
+}
+
+// orderId → items, for a whole day of orders.
+function buildItemsByOrder(orders) {
+  const map = new Map();
+  for (const order of orders || []) {
+    if (!order?.id) continue;
+    const items = buildOrderItems(order);
+    if (items.length) map.set(order.id, items);
+  }
+  return map;
+}
+
+// Hang the receipt off each transaction row, and say plainly when the receipt is
+// NOT simply "what this transaction bought".
+//
+// 🛑 ONE FUNCTION, TWO SOURCES. The live path feeds it a map built from Clover's
+// orders; the archive path feeds it a map built from D1. Both must produce rows
+// of the same shape — the client is not meant to be able to tell a banked day
+// from a live one, and a second copy of this labelling would drift from the first.
+function attachTransactionItems(rows, itemsByOrder) {
+  if (!itemsByOrder || !itemsByOrder.size) return rows;
+
+  // How many payments settled each order. A void counts: an order settled by one
+  // payment that was then voided is not split, and calling it split would be a
+  // caveat about a problem that does not exist.
+  const settlers = new Map();
+  for (const r of rows) {
+    if (!r.orderId) continue;
+    if (r.kind === "payment" || r.kind === "void") settlers.set(r.orderId, (settlers.get(r.orderId) || 0) + 1);
+  }
+
+  for (const r of rows) {
+    const items = r.orderId ? itemsByOrder.get(r.orderId) : null;
+    if (!items || !items.length) continue;   // no order in hand → no list, and no guess
+    r.items = items;
+    const n = settlers.get(r.orderId) || 0;
+    if (r.kind === "payment") {
+      r.itemsNote = n > 1
+        ? `This order was settled with ${n} payments. The items below are the whole order, not this payment's share.`
+        : null;
+    } else if (r.kind === "void") {
+      r.itemsNote = "The payment was voided, so the order never completed. These are the items that were rung up.";
+    } else {
+      // Refunds and manual refunds. Clover marks a line `refunded` when the
+      // refund was taken against that line; an amount-only refund marks none,
+      // and there is then no record of which items it covered. Say so, rather
+      // than letting the list read as "this whole basket came back".
+      r.itemsNote = "These are the items on the original order, not a list of what was refunded. A line marked Refunded was returned; an amount-only refund marks none.";
+    }
+  }
+  return rows;
 }
 
 // Assemble one store-day's rows from the three Clover payloads. Pure — no fetch,
@@ -1957,6 +2076,11 @@ function buildTransactions(orders, refunds, credits, tenderMap, employeeMap, sto
   // Newest first, matching Clover. A row with no timestamp sorts last rather
   // than to the top, where a missing value would masquerade as the latest sale.
   rows.sort((a, b) => (b.ts ?? -Infinity) - (a.ts ?? -Infinity));
+
+  // The receipt, hung off every row whose order is in hand. A refund whose
+  // original order was rung on an earlier day simply gets none — silence is the
+  // honest answer there, and the drawer draws no Items row at all.
+  attachTransactionItems(rows, buildItemsByOrder(orders));
 
   const counts = { payment: 0, refund: 0, manual: 0, void: 0 };
   let payments = 0, tax = 0, tip = 0, refunded = 0;
@@ -2052,6 +2176,10 @@ async function bankTransactionsDay(store, env, dateStr, { dry = false, force = f
   const built = buildTransactions(orders, refunds, credits, tenderMap, employeeMap, store, dateStr);
   out.rows = built.rows.length;
   out.payments = built.totals.count;
+  // Built here rather than at the write below, so a dry run previews the receipt
+  // on the same terms as the rows — a backfill is planned from the dry output.
+  const itemsByOrder = buildItemsByOrder(orders);
+  out.items = [...itemsByOrder.values()].reduce((n, v) => n + v.length, 0);
 
   const salesRow = await env.DB.prepare(
     "SELECT total, order_count FROM daily_sales WHERE store = ? AND date = ?"
@@ -2093,6 +2221,53 @@ async function bankTransactionsDay(store, env, dateStr, { dry = false, force = f
       r.employee ?? null, r.customer ?? null, r.source ?? null, r.cashTendered ?? null,
       r.result ?? null, r.reason ?? null, r.refundOf ?? null, bankedAt)));
   }
+
+  // ── The receipt ────────────────────────────────────────────────────────────
+  // Stored per ORDER, not per payment: the items belong to the order, so a
+  // split-tender ticket would otherwise bank the same basket two to five times.
+  //
+  // 🔑 DELETE-THEN-INSERT, unlike payment_archive above, and the difference is
+  // deliberate. Those rows are keyed by Clover's own immutable payment id, so a
+  // re-bank can never write a DIFFERENT row at the same key, and a leftover is a
+  // real transaction Clover has since stopped returning — exactly what you want
+  // kept. These rows are keyed by a DERIVED (order_id, seq): a re-bank whose
+  // merge came out differently would leave contradictions at the overlapping
+  // keys and orphans past the new length. That is not old truth, it is a mixed
+  // record. The shrinking case — the dangerous one — is already refused by
+  // WOULD_LOSE_ROWS before execution reaches here.
+  //
+  // 🛑 NEVER FATAL TO THE PAYMENTS. If migration-064 has not run yet, this
+  // throws; the payments are the financial record and the items are detail hung
+  // off it, so the day still banks and the failure is NAMED in the report. The
+  // opposite order — losing a day's payments to protect its receipt — would be
+  // the wrong trade, and a day that ages out unbanked cannot be recovered.
+  if (itemsByOrder.size) {
+    try {
+      const itemStmt = env.DB.prepare(
+        `INSERT OR REPLACE INTO payment_archive_items
+           (store, date, order_id, seq, name, qty, price, refunded, banked_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`
+      );
+      const binds = [];
+      for (const [orderId, items] of itemsByOrder) {
+        items.forEach((it, seq) => binds.push(itemStmt.bind(
+          store, dateStr, orderId, seq, it.name ?? null, it.qty ?? null,
+          it.price ?? null, it.refunded ? 1 : 0, bankedAt)));
+      }
+      // The wipe rides in the FIRST batch, which D1 runs as one transaction, so
+      // the day is never left with its old items gone and no replacement.
+      const wipe = env.DB.prepare("DELETE FROM payment_archive_items WHERE store = ? AND date = ?")
+        .bind(store, dateStr);
+      for (let i = 0; i < binds.length; i += 100) {
+        await env.DB.batch(i === 0 ? [wipe, ...binds.slice(0, 100)] : binds.slice(i, i + 100));
+      }
+    } catch (e) {
+      out.items = null;
+      out.itemsError = e.message;
+    }
+  }
+  // itemsByOrder empty → nothing is wiped. A fetch that came back with no line
+  // items must not delete a receipt that was banked when they were still there.
   await env.DB.prepare(
     `INSERT OR REPLACE INTO payment_archive_days
        (store, date, rows, payments, gross, net, expected_net, complete, note, banked_at)
@@ -2139,6 +2314,28 @@ async function readArchivedDay(store, env, dateStr) {
     result: r.result, reason: r.reason,
     ...(r.refund_of ? { refundOf: r.refund_of } : {}),
   }));
+
+  // The receipt, if migration-064 has run. Same tolerance as the day lookup
+  // above, for the same reason: a worker that reaches production before the
+  // migration must still serve archived transactions — without their items,
+  // which is a smaller loss than a 500 where a table used to be.
+  let itemsByOrder = null;
+  try {
+    const items = await env.DB.prepare(
+      `SELECT order_id, name, qty, price, refunded FROM payment_archive_items
+         WHERE store = ? AND date = ? ORDER BY order_id, seq`
+    ).bind(store, dateStr).all();
+    itemsByOrder = new Map();
+    for (const it of items.results || []) {
+      const arr = itemsByOrder.get(it.order_id);
+      const row = { name: it.name, qty: it.qty, price: it.price, refunded: it.refunded === 1 };
+      if (arr) arr.push(row); else itemsByOrder.set(it.order_id, [row]);
+    }
+  } catch (e) {
+    console.warn(`payment archive items unreadable (migration-064 applied?): ${e.message}`);
+  }
+  attachTransactionItems(rows, itemsByOrder);
+
   const counts = { payment: 0, refund: 0, manual: 0, void: 0 };
   let tax = 0, tip = 0, refunded = 0;
   for (const r of rows) {
@@ -24027,12 +24224,21 @@ export default {
       const wrote = report.filter(r => r.wrote).length;
       const incomplete = report.filter(r => r.wrote && !r.complete);
       const skipped = report.filter(r => r.skipped && r.skipped !== "DRY_RUN");
+      // A day whose payments banked but whose receipt did not is re-bankable now
+      // and unrecoverable later, so it belongs in the same list as the rest.
+      const itemsFailed = report.filter(r => r.itemsError);
+      // Set on the report objects themselves, so a day that went wrong two ways
+      // is named once.
+      const attention = [...new Set([...incomplete, ...skipped, ...itemsFailed])];
       return new Response(JSON.stringify({
         dry, force, stores, days: days.length, storeDays,
-        wrote, incomplete: incomplete.length, skipped: skipped.length,
+        wrote, incomplete: incomplete.length, skipped: skipped.length, itemsFailed: itemsFailed.length,
         // Named explicitly: these are the days that must be re-banked while they
         // are still inside Clover's window, or they are lost in that state.
-        needsAttention: [...incomplete, ...skipped].map(r => ({ store: r.store, date: r.date, skipped: r.skipped, note: r.note })),
+        needsAttention: attention.map(r => ({
+          store: r.store, date: r.date, skipped: r.skipped, note: r.note,
+          ...(r.itemsError ? { itemsError: r.itemsError } : {}),
+        })),
         report,
       }), { headers: corsJson });
     }
