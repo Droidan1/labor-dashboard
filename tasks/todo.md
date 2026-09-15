@@ -1,3 +1,45 @@
+# 18 identical 401s and a summary of zeros (2026-09-15)
+
+The first real run of `scripts/backfill-transactions.sh`. Every one of the 18
+chunks returned `{"error":"Unauthorized","code":"NO_SESSION"}`, twice over — dry
+then `--write`. Nothing was written, which is the one thing that went right.
+
+**Cause: the secret was the literal `...` from my own usage line.** I told Brian
+to run `SNAPSHOT_SECRET='...' bash scripts/backfill-transactions.sh` and he
+pasted it as written. The placeholder looked like something to type.
+
+Verified the script itself was correct before concluding that: `snapshotSecretSlot`
+reads the `X-Snapshot-Secret` header and compares it to `env.SNAPSHOT_SECRET`,
+which the runner sends and which `wrangler secret list` confirms exists on the
+production worker. So the mechanism was right and the value was wrong.
+
+**The error message could not have told him that.** When the header does not
+match, `hasSnapshotSecret` returns false and the request falls through to normal
+session auth — which a shell has no cookie for. So the endpoint answers
+`NO_SESSION`, naming the session rather than the secret. Correct, and useless
+here.
+
+## Two fixes
+
+1. **Stop on the first rejection.** A wrong secret fails identically on every
+   chunk; repeating it 18 times buried the single fact that mattered under 18
+   copies of the same blob. On 401/403 the runner now prints one message saying
+   the secret was rejected, that `NO_SESSION` means the header did not match,
+   and that nothing was written — then exits.
+2. **Refuse the literal `...` before sending anything.**
+
+Both applied to `backfill-item-hours.sh` too; it had the identical shape.
+
+11 new assertions, including that a 401 stops after ONE request rather than six.
+
+## State
+
+| | staging | production |
+|---|---|---|
+| `migration-064` | ✅ | ✅ |
+| worker | ✅ | ✅ `fc6a4c90` |
+| backfill | — | ❌ still not run |
+
 # The backfill runners could not run on the only machine that runs them (2026-09-15)
 
 Brian ran `npx wrangler deploy` — **production worker is live, version
