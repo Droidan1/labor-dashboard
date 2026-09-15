@@ -1,3 +1,181 @@
+# Transactions tab — BUILT (read-only, no Authorizations) (2026-09-15)
+
+Brian, on the preview: **"cut the authorizations tab and build it read-only"**. Both done.
+
+## What shipped
+
+**Worker** — one new `?action=transactions&store=&date=`, store-scoped and read-only.
+- `fetchTransactionOrders` — orders with `expand=payments,customers`. Deliberately NOT
+  filtered to `state=locked` (unlike `fetchItemOrders`): that filter keeps a day's TOTAL
+  honest, but a voided payment is exactly what the Voids tab is for and can sit on an order
+  that never locked. Returns `null` on a failed page, never a truncated array.
+- `fetchCloverLabelMap(store, env, resource)` — `/tenders` and `/employees`, because a
+  payment carries `tender.{id}` and `employee.{id}`, never "Cash" and a person's name.
+  24 h KV cache; a partial map is served but **never cached**, so the gap cannot freeze in.
+- `buildTransactions(...)` — pure, no fetch/env/clock, so the whole classification is
+  driven from fixtures.
+- Guards: `canAccessStore` → 403 · malformed/future date → 400 · **`BEYOND_RETENTION` → 422**
+  · `BEFORE_STORE_CUTOVER` (BL16) → 422 · `INCOMPLETE_FETCH` → 502 · `["transactions","bl"]`
+  in `ACTION_BUSINESS`, without which the fail-closed business gate 403s every session call.
+
+**Frontend** — a fourth tab after Item Sales, lazy-loaded (every open is a live Clover read).
+Reuses the Item Sales day strip via its `onClickPrefix`, with a new `showWeek` opt-out: a
+whole-week transactions view would be seven live days and thousands of rows, and Clover's own
+screen is per-day. `CACHE_NAME` v193 → v194.
+
+## Three things worth remembering
+
+1. **The BL16 guard was dead code where I first put it.** Behind the retention wall it could
+   never fire — the 90-day window start has been later than the 2026-06-14 cutover since
+   2026-09-12 and only moves further out. Moved it *ahead* of the wall, where it is both
+   reachable and the stronger claim: that date is not BL16's data at any retention.
+   The failing assertion was the signal; the reflex to "fix the test" would have buried it.
+2. **`text-accent-green` is 2.18:1 on the light bar.** I copied it from Item Sales for the
+   Live/Refresh affordances. DESIGN.md §2.1 says in terms that accent-green is unusable as
+   TEXT in light. Now a `.txn-accent` pair: green-800 light (6.9:1), accent dark (7.81:1).
+   ⚠️ **Item Sales still has this defect** — same copy, unfixed, because fixing it is a
+   separate change and not this one's to widen. Worth its own pass.
+3. **The shell-cache suite caught the missing `CACHE_NAME` bump**, exactly as designed.
+
+## Verification — 4,251 assertions across 70 suites, plus 49 browser assertions
+
+- `scripts/test-transactions.mjs` (39, new) drives the REAL worker with Clover stubbed:
+  guards, classification of both void spellings, id→name resolution, refund/credit sign,
+  totals excluding voids, **`payment.amount` never `order.total`** (Clover reduces the order
+  for a same-day refund; reading it would double-deduct), incomplete fetch ≠ empty day,
+  D1 and KV untouched, and a partial label map not cached.
+- Browser (30): tab order, lazy load, per-tab column re-render (§4.8 trap 8), detail drawer,
+  and every refusal rendering its own sentence rather than an empty table.
+- Contrast (19): **light, dark AND pure black**, four tabs each, measured against real
+  composited backgrounds. Includes the sweep `lessons.md` asks for — in OLED, assert nothing
+  is left computing the ordinary dark theme's `op-panel`/`op-panelHi`. Clean.
+
+## Deploy order — WORKER FIRST
+
+Derived, not remembered: the client gains a call to an endpoint that does not exist yet, so
+the worker must already accept it (ORIENT.md). `npx wrangler deploy`, confirm the rollout
+(~180 s, poll for consecutive clean passes), then merge for Pages. **No migration, no KV
+write, no D1 write** — nothing to back up and nothing to undo.
+
+## Follow-up: a 200 is not proof, and neither is my reasoning about the gate
+
+Prompted by the staging Pages preview. I reasoned that an old worker would fall through the
+`if (action === …)` chain to the generic sales handler and answer **200** with a sales
+payload, which the client would read as `rows || []` and render as "No payments on this day"
+— a false empty day over a trading day.
+
+**I probed it instead of shipping the reasoning, and it was wrong.** The business gate is
+fail-closed and runs *before* routing, so an action the worker has never heard of gets
+**403 `UNCLASSIFIED_ACTION`** and never reaches the fall-through at all. Measured:
+
+    action=transactions-not-real  -> 403 {"error":"Forbidden","code":"UNCLASSIFIED_ACTION"}
+
+Both now handled, for their real reasons:
+- `UNCLASSIFIED_ACTION` gets its own sentence — "this build is ahead of the API", not a bare
+  "Forbidden" that reads like a permissions problem. **This is what the staging preview
+  actually shows** until the staging worker is deployed.
+- The shape check (`rows` is an array and `counts` exists) stays as defence in depth for the
+  narrower window ORIENT.md records: a *classified* action whose handler is gone still falls
+  through and answers 200.
+
+<rules>
+1. **A fall-through router is not reachable until you know what runs before it.** I described
+   the chain correctly and forgot the gate three checks upstream of it.
+2. **Probe the claim you are about to write into a comment.** One harness call settled this;
+   the comment would otherwise have documented a path that cannot occur.
+</rules>
+
+## Still open
+
+- Persisting payments so history outlives Clover's ~90 days is deliberately NOT in this
+  change. Read-only first; the archive is a separate decision.
+
+# Store-level Transactions tab (Clover parity) — feasibility + preview (2026-09-15)
+
+Brian: "Is there a way to add transactions details for each store? Similar to what Clover
+provides… a manager can go to their store card and click view and then next to item sales,
+there would be transactions. Review what we can view from the API, see if this is possible.
+If this is possible, create me a preview."
+
+**Verdict: possible.** Preview only — no app code changed. `docs/` is excluded from
+`scripts/build.sh`, so nothing here reaches production.
+
+## What the API actually gives (verified against Clover's own docs, not assumed)
+
+`GET /v3/merchants/{mId}/payments` exists and is never called today
+(`grep -c` for payments/employees/tenders/customers/authorizations in `worker.js` → **0**).
+Its documented response carries `id, order.id, tender.{href,id}, amount, cashbackAmount,
+employee.id, createdTime, clientCreatedTime, modifiedTime, offline, result, note`.
+
+| Clover column | Source | Cost |
+|---|---|---|
+| Time | `payment.createdTime` | free |
+| Type | endpoint + `result` / `voided` | free |
+| Amount | `payment.amount` — **never `order.total`** (MEMORY.md:56) | free |
+| Tender Type | `payment.tender.id` → `/v3/tenders` join | 1 cacheable lookup |
+| Employee | `payment.employee.id` → `/v3/employees` join | 1 cacheable lookup |
+| Customer | `order.customers` via `expand=customers` on orders | orders path only |
+| Payment Source | `payment.offline` + device/ecom | free |
+| Payment ID / Order ID / Invoice no. | `payment.id`, `payment.order.id` | free |
+| Tips / Taxes | `payment.tipAmount`, `payment.taxAmount` | free |
+
+Tabs map onto endpoints, three of which the worker **already calls**:
+Payments → `/payments` (new) · Refunds → `/refunds` (`fetchRefundElements`, exists) ·
+Manual Refunds → `/credits` (`fetchManualRefunds`, exists) · Voids → `result !== 'SUCCESS'`
+(already filtered) · Authorizations → `/authorizations` (new; pre-auths, ~always empty here).
+
+## The hard constraint
+
+🛑 **~90 days, and it is Clover's, not ours.** Clover documents the cap explicitly for
+*Get all payments* ("the results will not exceed 90 days… even if the search query exceeds a
+90-day span"). Nothing per-payment has ever been stored — D1 `daily_sales` is one row per
+store-day and KV `items:` is category-grain — so this is a **live, read-only** view and
+older transactions are genuinely unrecoverable. The page must say so rather than render an
+empty table that reads like "no sales".
+
+## Plan (not started — waiting on Brian's review of the preview)
+
+- [x] Confirm the Clover surface exists and what it returns
+- [x] Confirm nothing per-transaction is persisted today
+- [x] Build the preview (`docs/store-transactions-preview.html`), both themes, §4.8 panel
+- [ ] Brian reviews → then: worker `?action=transactions`, `ACTION_BUSINESS` entry, tab wiring
+- [ ] Decide: persist a per-payment table so history survives the 90-day window?
+
+## Non-negotiables carried into the build (house rules, not preferences)
+
+1. `["transactions", "bl"]` in `ACTION_BUSINESS` (`worker.js:4237`) or the business gate
+   403s every session call — verified at `worker.js:14521-14537`.
+2. `canAccessStore(currentUser, store)` → 403. Store-scoped, like `items-hour`.
+3. `cloverFetchWithRetry`, never bare `fetch` — a 429 read as "no data" has zeroed real
+   revenue in this repo before.
+4. A failed page is **not** the end of the list — return null, never a truncated array.
+5. Write nothing to KV or D1. `sales-diag` is the read-only precedent.
+6. BL16 and BL12 share one merchant ID — apply the `wrsGateDates` cutover or BL16 shows
+   Wyoming's pre-2026-06-14 rows.
+7. Refuse an over-wide range with a 413, never truncate silently.
+## Verification of the preview (49 assertions, all green)
+
+Run headless against the real file, both themes, all five tabs:
+
+- **Behaviour (33)** — rows render; the second render of every tab rebuilds its own header
+  (§4.8 trap 8); the status line survives a re-render (trap 7); store/date/role/search all
+  repaint; the detail drawer opens, foots its receipt to the payment total, and closes.
+- **Contrast (both themes × five tabs, drawer open)** — every text element measured against
+  its **real composited** background, walking ancestors through translucent layers. Clean at
+  AA throughout. The harness proves itself first with the inline-red check from lessons.md,
+  and waits out the 200 ms transition before reading any colour.
+- **§4.8 traps + responsive (16)** — explicit `type` on every input (trap 1); sticky header
+  and sticky first column both opaque and still pinned after a horizontal scroll (trap 2);
+  `.panel` declares its own colour (trap 3); `color-scheme` stated per theme (trap 4); no
+  horizontal overflow at 390 px.
+
+Two defects the screenshots caught that the assertions did not, both now fixed:
+`box-shadow` on a `<td>` outlined **every cell** of the selected row instead of the row, and
+the detail grid's 1 px gap painted hairline as a solid block across the last row's unused
+cells. A third came from re-reading §4.8 rather than from any test: past the retention wall
+the hero printed **$0.00** and the tab counts **0**, directly under a banner saying the data
+could not be retrieved — the panel contradicting itself. Absent data now reads `—`.
+
 # Pure black follow-up: nav bar left navy, dark status bar reverted (2026-09-10)
 
 Brian, after merging: "revert dark back to green and look at the nav bar on mobile that
