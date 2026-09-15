@@ -12661,13 +12661,21 @@
     const d = payload.__detail || {};
     const retry = `<button onclick="refreshTransactions()" class="mt-3 text-[12px] font-bold text-accent-green hover:underline">Try again</button>`;
     switch (payload.__err) {
-      case 'BEYOND_RETENTION':
+      case 'BEYOND_RETENTION': {
+        // The archive changes what this means: before it existed, out-of-window
+        // was simply gone. Now it depends on whether that day was ever banked,
+        // so say which — and where the archive starts, so a manager can tell
+        // "before we kept these" from "this one day is missing".
+        const since = d.archiveStart
+          ? `This store's archive starts <b class="text-opl-ink dark:text-op-ink font-semibold">${escapeHtml(d.archiveStart)}</b>; ${escapeHtml(payload.date)} predates it.`
+          : `Nothing has been archived for this store yet.`;
         return `<div class="p-8 text-center">
           <div class="text-[14px] font-bold text-opl-ink dark:text-op-ink">No transaction detail this far back</div>
           <div class="text-[12.5px] text-opl-inkDim dark:text-op-inkDim mt-2 max-w-[52ch] mx-auto leading-relaxed">
-            ${escapeHtml(payload.date)} is ${d.ageDays} days ago, and Clover returns at most about ${d.retentionDays} days of payment history — so these transactions cannot be retrieved, today or later.
+            ${escapeHtml(payload.date)} is ${d.ageDays} days ago, and Clover returns at most about ${d.retentionDays} days of payment history. ${since}
             <b class="text-opl-ink dark:text-op-ink font-semibold">This is not a zero-sales day</b>; the day's totals are still on the Daily tab, only the per-transaction detail is gone.
           </div></div>`;
+      }
       case 'BEFORE_STORE_CUTOVER':
         return `<div class="p-8 text-center">
           <div class="text-[14px] font-bold text-opl-ink dark:text-op-ink">Before Indy East opened</div>
@@ -12750,7 +12758,21 @@
       </div>`;
 
     const label = (TXN_TABS.find(x => x[0] === txnTab) || ['', ''])[1].toLowerCase();
-    const status = `<div class="txn-status"><b>${escapeHtml(shortName(storeName))}</b> · ${escapeHtml(dateStr)} · <b>${mine.length.toLocaleString()}</b> ${escapeHtml(label)} · read live from Clover, nothing written back.</div>`;
+    // Where the rows came from is part of the reading, not a detail. Clover only
+    // holds ~90 days; past that this is our own banked copy.
+    const provenance = data.archived
+      ? `from the archive, banked ${data.bankedAt ? escapeHtml(String(data.bankedAt).slice(0, 10)) : 'earlier'} — Clover no longer holds this day.`
+      : 'read live from Clover, nothing written back.';
+    const status = `<div class="txn-status"><b>${escapeHtml(shortName(storeName))}</b> · ${escapeHtml(dateStr)} · <b>${mine.length.toLocaleString()}</b> ${escapeHtml(label)} · ${provenance}</div>`;
+
+    // 🛑 An archived day that never reconciled against the day's stored total
+    // must not read as the whole truth. It cannot be re-banked either — Clover
+    // is past holding it — so this says plainly what is and is not knowable.
+    const archiveWarn = (data.archived && data.archiveComplete === false)
+      ? `<div class="txn-wall"><b>This archived day is incomplete.</b> When it was banked, the transactions retrieved did not
+           reconcile with the day's recorded total, so some are missing and Clover is now past returning them.
+           <b>The day's total on the Daily tab is still correct</b> — it was computed at the time. Only this list is short.</div>`
+      : '';
 
     let table;
     if (!mine.length) {
@@ -12804,7 +12826,7 @@
         ${refreshBtn}
       </div>
       <div class="txn-tabs" role="tablist" aria-label="Transaction types">${tabsHTML}</div>
-      ${sum}${status}${table}${detail}${legend}`;
+      ${sum}${archiveWarn}${status}${table}${detail}${legend}`;
   }
 
   function _txnDetailHTML(r) {
