@@ -143,6 +143,31 @@ ok(rowCount('BL1', D1) === 2, 'and the banked day still has both rows');
 const forced = await body(await bank(`store=BL1&start=${D1}&end=${D1}&dry=0&force=1`));
 ok(forced.wrote === 1, 'force=1 is the deliberate override, and it is not the default');
 
+// 🛑 ...AND AN INCOMPLETE DAY IS PROTECTED THE SAME WAY. The guard used to test
+// `complete === 1`, which left exactly the days already known to be short as the
+// only ones a thinner re-bank could overwrite. Production held one such day when
+// this was found — 422 rows, 85 days old, decaying. A re-bank returning fewer
+// would have rewritten the ledger while every original row stayed in
+// payment_archive, leaving the day listing 422 transactions under a total
+// computed from a fraction of them.
+const D7 = shift(TODAY, -16);
+stub({ orders: [pay('s1', D7, 10, 1000), pay('s2', D7, 11, 2000), pay('s3', D7, 12, 3000)] });
+setSales('BL1', D7, 999.00);                    // forces a drift, so complete = 0
+await bank(`store=BL1&start=${D7}&end=${D7}&dry=0`);
+ok(dayRow('BL1', D7).complete === 0 && rowCount('BL1', D7) === 3,
+   'a day banked at complete=0 still holds its rows');
+stub({ orders: [pay('s1', D7, 10, 1000)] });    // Clover has since decayed
+const thinIncomplete = await body(await bank(`store=BL1&start=${D7}&end=${D7}&dry=0`));
+ok(thinIncomplete.report[0].skipped === 'WOULD_LOSE_ROWS',
+   'a thinner fetch is refused on an INCOMPLETE day too, not just a complete one');
+ok(dayRow('BL1', D7).rows === 3,
+   `and the ledger still says 3 rows (got ${dayRow('BL1', D7).rows})`);
+// A FATTER fetch is how an incomplete day gets better, so it must still land.
+stub({ orders: [pay('s1', D7, 10, 1000), pay('s2', D7, 11, 2000), pay('s3', D7, 12, 3000), pay('s4', D7, 13, 4000)] });
+const fatter = await body(await bank(`store=BL1&start=${D7}&end=${D7}&dry=0`));
+ok(fatter.wrote === 1 && dayRow('BL1', D7).rows === 4,
+   'but a fetch with MORE rows still lands — that is how an incomplete day improves');
+
 // ── 7. The archive serves what Clover no longer can ───────────────────────
 const OLD = shift(TODAY, -200);
 stub({ orders: [pay('z1', OLD, 12, 4200)] });

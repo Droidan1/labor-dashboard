@@ -2190,15 +2190,29 @@ async function bankTransactionsDay(store, env, dateStr, { dry = false, force = f
   out.net = verdict.net;
   out.expectedNet = verdict.expected;
 
-  // 🛑 Never replace a day already banked whole with a thinner one. This is the
-  // magnitude guard, applied to the archive: the older a date gets, the fewer
-  // rows Clover will return for it, so a re-bank is exactly when detail is lost.
+  // 🛑 Never replace a banked day with a thinner one. This is the magnitude
+  // guard, applied to the archive: the older a date gets, the fewer rows Clover
+  // will return for it, so a re-bank is exactly when detail is lost.
+  //
+  // 🔑 THE COMPLETENESS FLAG IS NOT PART OF THIS TEST, and used to be. Requiring
+  // `complete === 1` left every day banked at complete=0 unprotected — which is
+  // backwards, because those are the days already known to be short. Found while
+  // preparing the items backfill: production held exactly one, BL1 2026-06-22,
+  // 422 rows at 85 days old and decaying. A re-bank returning 300 would have
+  // rewritten the ledger to 300 while all 422 rows stayed in payment_archive
+  // (nothing deletes them), leaving the day listing 422 transactions under a
+  // total computed from 300 of them.
+  //
+  // A thinner fetch is never an improvement, whatever the flag says. A FATTER one
+  // still lands — that is how an incomplete day gets better — and `force=1`
+  // remains the deliberate override for the rare case of banking something
+  // genuinely smaller on purpose.
   const existing = await env.DB.prepare(
     "SELECT rows, complete FROM payment_archive_days WHERE store = ? AND date = ?"
   ).bind(store, dateStr).first();
-  if (existing && existing.complete === 1 && built.rows.length < existing.rows && !force) {
+  if (existing && built.rows.length < existing.rows && !force) {
     out.skipped = "WOULD_LOSE_ROWS";
-    out.note = `already banked complete with ${existing.rows} rows; this fetch returned ${built.rows.length}`;
+    out.note = `already banked with ${existing.rows} rows (complete=${existing.complete}); this fetch returned ${built.rows.length}`;
     return out;
   }
 

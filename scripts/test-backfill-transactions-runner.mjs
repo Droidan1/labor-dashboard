@@ -1,0 +1,125 @@
+// scripts/backfill-transactions.sh drives a PRODUCTION admin endpoint that
+// re-banks the payment archive. Three properties keep it safe, and each is
+// tested here: it is a dry run unless asked, a write is confirmed by hand, and
+// it NEVER sends force=1.
+//
+// That last one is the whole reason this file exists. force=1 disables the
+// worker's refusal to overwrite a banked day with a thinner fetch — and the
+// older half of this script's default window is exactly where Clover has
+// decayed, so a stray force would trade a complete record for a short one
+// across hundreds of store-days.
+//
+// Tested against a local mock, never the real endpoint. CLAUDE.md rule 3: never
+// verify a guard with a probe that performs the damage if the guard is absent.
+import { createServer } from "node:http";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const SH = join(dirname(fileURLToPath(import.meta.url)), "backfill-transactions.sh");
+let pass = 0, fail = 0;
+const ok = (cond, msg) => (cond ? (pass++, true) : (fail++, console.log("  FAIL " + msg), false));
+
+function mock(reply = null) {
+  const seen = [];
+  const server = createServer((req, res) => {
+    seen.push({ url: req.url, method: req.method, secret: req.headers["x-snapshot-secret"] });
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(reply ?? {
+      dry: true, storeDays: 2, wrote: 1, incomplete: 0, skipped: 1, itemsFailed: 0,
+      needsAttention: [{ store: "BL1", date: "2026-06-20", skipped: "WOULD_LOSE_ROWS",
+                         note: "already banked with 422 rows (complete=0); this fetch returned 300" }],
+      report: [{ store: "BL1", date: "2026-09-01", wrote: true, items: 37 },
+               { store: "BL1", date: "2026-06-20", skipped: "WOULD_LOSE_ROWS", items: 0 }],
+    }));
+  });
+  return { server, seen };
+}
+const listen = (s) => new Promise(r => s.listen(0, "127.0.0.1", () => r(s.address().port)));
+
+function run(args, env = {}, stdin = "") {
+  return new Promise((resolve) => {
+    const p = spawn("bash", [SH, ...args], { env: { ...process.env, SNAPSHOT_SECRET: "test-secret", ...env } });
+    let out = "", err = "";
+    p.stdout.on("data", d => (out += d));
+    p.stderr.on("data", d => (err += d));
+    p.on("close", code => resolve({ out, err, code }));
+    if (stdin) p.stdin.write(stdin);
+    p.stdin.end();
+  });
+}
+
+const A = ["--store", "BL1", "--start", "2026-09-01", "--end", "2026-09-02"];
+
+// ── 1. Dry by default ─────────────────────────────────────────────────────
+{
+  const { server, seen } = mock();
+  const port = await listen(server);
+  const r = await run([...A, "--host", `http://127.0.0.1:${port}`]);
+  server.close();
+  ok(seen.length === 1, `one request, got ${seen.length}`);
+  ok(seen[0]?.url.includes("dry=1"), "the default run sends dry=1");
+  ok(seen[0]?.method === "POST", "sends POST");
+  ok(seen[0]?.secret === "test-secret", "forwards X-Snapshot-Secret");
+  ok(!r.out.includes("test-secret"), "never echoes the secret");
+  ok(r.out.includes("dry run"), "announces itself as a dry run");
+  ok(r.code === 0, `exit 0, got ${r.code}`);
+}
+
+// ── 2. A write is confirmed by hand, and says what it touches ─────────────
+{
+  const { server, seen } = mock();
+  const port = await listen(server);
+  const r = await run([...A, "--host", `http://127.0.0.1:${port}`, "--write"], {}, "no\n");
+  server.close();
+  ok(seen.length === 0, `a declined confirmation makes NO request, got ${seen.length}`);
+  ok(r.out.includes("payment_archive_items"), "names the table it fills");
+  ok(r.out.includes("untouched"), "states what it does not touch");
+  ok(/REFUSED|refused/.test(r.out), "warns that thin days are refused, not overwritten");
+  ok(r.code !== 0, "aborting is a non-zero exit");
+}
+
+// ── 3. A confirmed write sends dry=0 ──────────────────────────────────────
+{
+  const { server, seen } = mock();
+  const port = await listen(server);
+  await run([...A, "--host", `http://127.0.0.1:${port}`, "--write", "--yes"]);
+  server.close();
+  ok(seen[0]?.url.includes("dry=0"), "a confirmed write sends dry=0");
+}
+
+// ── 4. 🛑 force is NEVER sent, on any path ────────────────────────────────
+{
+  for (const extra of [[], ["--write", "--yes"]]) {
+    const { server, seen } = mock();
+    const port = await listen(server);
+    await run([...A, "--host", `http://127.0.0.1:${port}`, ...extra]);
+    server.close();
+    ok(seen.every(s => !/force/.test(s.url)),
+       `force=1 is never sent (${extra.length ? "write" : "dry"} path)`);
+  }
+  // ...and it is not even an accepted argument, so it cannot be passed through.
+  const r = await run([...A, "--force"]);
+  ok(r.code === 2 && /unknown argument/.test(r.err), "--force is not an accepted flag");
+}
+
+// ── 5. No secret, no run ──────────────────────────────────────────────────
+{
+  const r = await run([...A], { SNAPSHOT_SECRET: "" });
+  ok(r.code === 1, `exit 1 without a secret, got ${r.code}`);
+  ok(/SNAPSHOT_SECRET is not set/.test(r.err), "and says so by name");
+}
+
+// ── 6. The summary surfaces the guard rather than burying it ──────────────
+{
+  const { server } = mock();
+  const port = await listen(server);
+  const r = await run([...A, "--host", `http://127.0.0.1:${port}`]);
+  server.close();
+  ok(/WOULD_LOSE_ROWS/.test(r.out), "names WOULD_LOSE_ROWS in the summary");
+  ok(/receipt lines\s+37/.test(r.out), "counts the receipt lines banked");
+  ok(/NOT re-run those with --force/.test(r.out), "tells the reader not to force past it");
+}
+
+console.log(`${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);
