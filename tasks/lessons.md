@@ -1,3 +1,40 @@
+## 34 assertions passed and it still looked broken (2026-09-15)
+
+The Items-sold receipt. Before Brian ever saw it I had: 4316 unit assertions green, contrast
+computed against the composited background in all three themes (worst 5.65:1), and a scripted
+behaviour pass — opens folded, aria flips, caveat appears, next row re-folds. All of it passed.
+All of it was true. Then he asked for a preview, I rendered an actual picture, and two defects
+were obvious in under a second:
+
+1. **"Items sold (9.5)"** — the heading summed raw quantities, and a 1.5 lb bag of beads makes
+   a nine-item basket read as nine and a half. A weighed line is ONE item however much it
+   weighs; the weight belongs in the row, not in a count of things.
+2. **`1.5 ×` wrapped onto two lines** — the qty column was 54px with no `nowrap`, so the `×`
+   fell under the `1.5`. Every integer quantity fit, so nothing I had exercised showed it.
+
+Neither is subtle. Both survived because **everything I checked, I checked as a number.**
+Contrast is a number. `aria-expanded` is a string. Row counts are numbers. Nothing I ran
+rendered a fractional quantity and looked at the result, and the two suites that touch this
+code path (`test-transactions.mjs`, `test-payment-archive.mjs`) assert on the JSON the worker
+returns — where `qty: 1.5` is simply correct.
+
+**The rule.** Numeric verification is necessary and not sufficient. When a change draws
+something, RENDER IT AND LOOK before saying it is done — and render the awkward case, not the
+tidy one. A fixture of `1 × Widget` would have proved nothing here; the basket had to hold a
+fraction, a merged line, a refunded line and a nameless line at the same time.
+
+**What was actually missing.** This repo had no way to render a surface at all — 71 suites,
+none of them opening a browser. So I wrote `scripts/check-receipt-render.mjs`: behaviour plus
+contrast against the real composited background, deliberately NOT named `test-*.mjs`, because
+`test.sh` globs that and every other suite is pure Node — putting a browser in that glob would
+fail the whole suite on any machine without Chromium.
+
+**And a check is guilty until proven to bite.** Three of its first five failures were its own
+bugs, not the app's: a wrong expected count, a wrap probe reading cell height (which tracks the
+row, not the text), and a caveat measured on a row that has no caveat. After fixing those I
+broke `dist/index.html` on purpose twice — a 1.74:1 colour and a wrapping qty cell — and
+confirmed each failure was caught before trusting the green.
+
 ## `cat >` on a tracked file I had never read (2026-09-15)
 
 CLAUDE.md says to write the plan to `tasks/todo.md`, so I wrote it — with `cat > tasks/todo.md`,

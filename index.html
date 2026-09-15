@@ -1721,7 +1721,8 @@
             .txn-it-tbl tr:last-child td{border-bottom:0}
             /* The gutter padding is set on the class, not with !important:
                .txn-it-tbl td.txn-it-q is (0,2,1) and already outranks (0,1,1). */
-            .txn-it-tbl td.txn-it-q{width:54px;padding-left:18px;text-align:right;font-weight:600;color:#6b6453}
+            .txn-it-tbl td.txn-it-q{width:62px;padding-left:18px;text-align:right;font-weight:600;
+              white-space:nowrap;color:#6b6453}
             .dark .txn-it-tbl td.txn-it-q{color:rgb(var(--op-inkDim))}
             .txn-it-tbl td.txn-it-p{width:112px;padding-right:18px;text-align:right;font-weight:600}
             .txn-it-u{display:block;margin-top:3px;font-size:11px;color:#6b6453}
@@ -12891,7 +12892,15 @@
     if (!items.length) return '';
 
     // Units, not lines: three of one thing is three items sold.
-    const units = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
+    //
+    // A WEIGHED LINE COUNTS AS ONE, however much it weighs. Summing the raw
+    // quantities turns a basket of nine things plus a 1.5 lb bag of beads into
+    // "Items sold (9.5)", which reads as a bug. The weight is still the truth of
+    // that row and shows there; it is just not a number of items.
+    const units = items.reduce((n, it) => {
+      const q = Number(it.qty) || 0;
+      return n + (Number.isInteger(q) ? q : 1);
+    }, 0);
     // The heading carries the semantics the worker attached the list under, so
     // a void's basket never reads as a sale.
     const heading = r.kind === 'payment' ? 'Items sold'

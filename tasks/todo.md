@@ -69,14 +69,24 @@ if the table is missing the day's **payments still bank** and the failure is nam
 
 **Proof.**
 
-- `bash scripts/test.sh` — **4313 assertions across 71 suites, all passing** (27 of them new:
+- `bash scripts/test.sh` — **4316 assertions across 71 suites, all passing** (27 of them new:
   15 on the live receipt, 12 on the archived one).
+- `node scripts/check-receipt-render.mjs` — **34 assertions**, a new browser check (behaviour +
+  contrast) that did not exist before. Deliberately not named `test-*.mjs`: `test.sh` globs that
+  and every other suite is pure Node.
 - Rendered through the real `index.html` in Chromium, all three themes, contrast **computed
   against the composited background** rather than eyeballed:
   light worst **5.88:1**, dark worst **5.65:1**, pure black worst **6.35:1**. All ≥ AA.
 - Behaviour checked in the same pass: no Items row until a transaction is open, opens folded,
   `aria-expanded` flips, the caveat appears with the list, the next row re-folds, and a
   single-payment order shows no caveat.
+
+**Two defects that all of that missed.** Brian asked for a preview; rendering an actual picture
+showed both in a second. `Items sold (9.5)` — the heading summed raw quantities, so a 1.5 lb
+weighed line made a nine-item basket read as nine and a half. And `1.5 ×` wrapped onto two lines,
+because the qty column was 54px with no `nowrap` and every integer quantity fit. Everything I had
+verified, I had verified as a NUMBER. Fixed: a weighed line counts as one item however much it
+weighs, and the qty cell is 62px and `nowrap`. `tasks/lessons.md` carries the rule.
 
 # The payment archive — transaction detail that outlives Clover (2026-09-15)
 
