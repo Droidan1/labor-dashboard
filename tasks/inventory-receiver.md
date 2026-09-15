@@ -8,29 +8,46 @@ truck. When the trailer is empty, "Truck Down" closes it. Trucks are filed by mo
 
 ## Decisions (Brian, 2026-09-15)
 
+- 🔑 **Receiving is a different OPERATION from bin dumping.** Brian's correction, and it is the
+  load-bearing one: *"they have nothing to do with the bin dump page, they are operations and
+  procedures."* The original brief said "the same rules for duplicates as bin dump"; that was a
+  misspeak and is retracted. The two features share a tag reader and nothing else.
 - **A manager approves a duplicate on the spot** — not "a manager must be logged in", and not
   "a manager fixes it afterwards". An associate keeps the phone; a manager enters a six-digit
   PIN to approve that one pallet. Chosen knowing it is the most machinery of the three options.
-- **Its own table, `truck_pallets`** — receiving a pallet off a truck is a different event from
-  dumping it into a bin. `bin_dumps` is not touched and Bin Dump keeps working exactly as it does.
+- **Its own table, `truck_pallets`** — because receiving a pallet off a trailer and dumping one
+  into a bin are different events, not because it is cheaper. `bin_dumps` is untouched and Bin
+  Dump keeps working exactly as it does.
+- **Duplicate pallet = same barcode, any truck, any store, 90 days — within `truck_pallets`.**
+  The same window and reach as Bin Dump's rule, deliberately, but over the receiving table only.
+- **Duplicate BOL = blocked**, with the same manager override. Two half-received trucks carrying
+  one BOL number is worse than an interruption.
+- **Its own page grant.** `inventory-receiver` joins `GRANTABLE_PAGES`, independent of Bin Dump's:
+  the people who unload trucks are not necessarily the people who dump bins, and Brian wants to
+  hand out one without the other.
 - **Filed by the month the truck was OPENED**, derived Eastern. A truck opened Sep 30 that comes
   down Oct 1 stays in September, and never moves.
 - **One open truck per store at a time.** No truck picker on a pallet scan; a pallet cannot be
   filed against the wrong BOL because there is only one it could go to.
 
-## 🛑 The gap this combination leaves, stated once
+## 🔑 Why the check does NOT also read `bin_dumps`
 
-The duplicate rule the brief asked for is "the same rules as bin dump". Bin Dump's rule is
-**same barcode, any store, 90 days** — over `bin_dumps`. With a separate table, the check
-becomes **same barcode, any store, 90 days, over `truck_pallets`**: same window, same
-cross-store reach, same redaction, but it **cannot see a pallet that was bin-dumped rather
-than received**. A pallet logged through Bin Dump last week comes off a truck today and reads
-as new.
+A barcode appearing in both tables is **correct, not a double count** — the pallet was received
+off a trailer and later dumped into a bin, which is the normal life of a pallet. Joining the two
+would manufacture a false block on a legitimate pallet every time the process worked. The
+separation is the feature.
 
-It is one extra `SELECT` to close — `binDumpBarcodeMatches()` already exists and takes the
-table as the only thing that would vary. **Not built unless Brian says so**, because a
-false block ("this pallet was already logged" for a pallet that legitimately was, in a
-different sense) is its own kind of wrong and he owns that call.
+## ⚠️ What the 90-day window will eventually do, recorded now
+
+`PRM-<truck>-<index>` barcodes are only as unique as truck numbers, **and truck numbers cycle** —
+this is the documented reason Bin Dump's window is 90 days and not forever. Over a long enough
+horizon a cycled barcode will collide with a genuinely different pallet and the block will fire
+on a pallet that is not a duplicate.
+
+That is survivable here only because the manager override exists: the release valve is a manager
+PIN and a reason, not a dead end someone works around by typing a fake barcode. **If the override
+starts getting used routinely with reasons like "different pallet, same code", the window is too
+wide** — and that is a number to shorten, not a guard to remove.
 
 ## The paperwork
 
@@ -100,7 +117,7 @@ CREATE TABLE truck_pallets (
 | action | does |
 |---|---|
 | `truck-bol-scan` | BOL photo in, ten fields out. **Stores nothing.** |
-| `truck-open` | writes the confirmed truck + the BOL photo to R2. Refuses if one is open. |
+| `truck-open` | writes the confirmed truck + the BOL photo to R2. Refuses if one is open, and refuses a `bol_no` already received at this store unless approved. |
 | `truck-current` | the open truck for a store, with its pallets |
 | `truck-pallet-scan` | reuses `BIN_TAG_PROMPT` verbatim — no second prompt to drift |
 | `truck-pallet-recent` | the duplicate pre-flight, on its own so a slow answer never costs a submit |
@@ -115,6 +132,7 @@ Carried over from Bin Dump without change, because each was learned the hard way
 - **Refuse before the R2 put.** A 409 after an upload leaves an object with no row forever.
 - **`allow_duplicate !== true`** — strict identity. `'false'`, `0`, `''`, `null` all still refuse.
 - **A blank barcode is not a duplicate of every other blank**, via an early return, not SQL.
+  The same applies to a blank `bol_no` — a torn header must not make every torn header a repeat.
 - **Redact, don't exclude** — a match at a store the caller does not hold returns a date and
   nothing else. No store, no name, no pallet.
 - **`limit + 1`** is the only honest way to report truncation.
@@ -138,6 +156,10 @@ MOS has its own `mos-*`.
 - Nav: sidebar item, `NAV_BUSINESS` entry (`test-nav-registry.mjs` fails without it),
   `applyRoleUI` toggle, `navigateToPage` guard, init hook, **and the mobile More-sheet row** —
   skipping the last one makes the page unreachable on phones, which is where it will be used.
+- 🔑 **`GRANTABLE_PAGES` is a closed list** (today `bin-dump` and `mos`). Adding
+  `inventory-receiver` is one entry there **plus** its actions in the worker's `ACTION_PAGE` —
+  `scripts/test-associate.mjs` pins the two against each other, because a page in one and not
+  the other is a 403 with nothing on screen to explain it.
 
 ## Checklist
 
@@ -146,10 +168,14 @@ MOS has its own `mos-*`.
 - [ ] `BOL_PROMPT` — worked example from the real BOL, explicit `null`, self-check
       (a date must be a date, a carrier must be a company), ignore list
 - [ ] `truckMonthOf()` — ET-derived, pinned by a test that passes under UTC, ET and Auckland
-- [ ] The eight worker actions + `ACTION_BUSINESS` + `ACTION_PAGE` registration
+- [ ] The worker actions + `ACTION_BUSINESS` + `ACTION_PAGE` registration
+- [ ] `inventory-receiver` added to `GRANTABLE_PAGES` on **both** sides, per `test-associate.mjs`
+- [ ] Duplicate barcode: any truck, any store, 90 days, `truck_pallets` only — and a test that
+      pins it does **not** read `bin_dumps`, since that separation is a decision, not an omission
+- [ ] Duplicate `bol_no` at the same store → blocked on `truck-open`, same override
 - [ ] `truck-approve-dup` — lockout checked **before** the hash, identical failure body for
       every cause, failure counter on mismatch
-- [ ] The page, both tabs, both modals, the month accordions
+- [ ] The page, both tabs, the modals, the month accordions
 - [ ] Raise the downscale cap for the BOL and **measure the read on a real photo**
 - [ ] `scripts/test-inventory-receiver.mjs` — assert on the prompt text itself, both tag
       fixtures, every duplicate refusal, and the refuse-before-put ordering
