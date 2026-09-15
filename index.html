@@ -179,6 +179,44 @@
     html:not(.dark) .text-op-warn { color: #92400e; }
     .dark .text-op-bad            { color: #f87171; }
 
+    /* ── inkDimmer is a BORDER colour that 159 sites use as text ───────
+       DESIGN.md §4.8 trap 5 says it outright: "inkDimmer fails AA on
+       opl-bg (2.71:1). Use inkDim (5.29:1) for muted-but-readable text;
+       keep inkDimmer for borders and badges." The text utilities went on
+       being written anyway — `text-opl-inkDimmer` x72 and
+       `dark:text-op-inkDimmer` x87. Those are the ONLY two spellings in
+       the file: no bare `text-op-inkDimmer`, no hover, group-hover or
+       focus variant. Checked, because a missed spelling is exactly how
+       the pure-black nav bar shipped navy.
+
+                        opl-bg  panel  panelHi  sidebar
+         light  today     2.71   3.01     2.87     2.46   FAIL
+                inkDim    5.29   5.88     5.62     4.80   PASS
+         dark   today     3.22   2.99     2.71     3.31   FAIL
+                inkDim    6.18   5.74     5.21     6.35   PASS
+
+       Pure black already passed on its own (it re-points --op-inkDimmer
+       to #8a8a8a, 5.24-6.08). It is brought along anyway: carving it out
+       left three themes behaving differently for one token, and every
+       hand-written site below would have needed its own exclusion.
+       Including it only RAISES its contrast, 5.73 -> 8.33.
+
+       THE DARK VALUE IS A VARIABLE, NOT A LITERAL. Writing #8893a7
+       here would paint dark's blue-grey onto pure black's neutral ground
+       the moment anyone widened that selector — the exact shape of the
+       bug that left a navy nav bar on a black screen.
+       rgb(var(--op-inkDim)) follows whatever the theme re-points it to.
+
+       Specificity: Tailwind emits `.dark\:text-op-inkDimmer:is(.dark *)`
+       at (0,2,0); `html.dark .dark\:text-op-inkDimmer` is (0,3,1).
+
+       NOT TOUCHED, because there inkDimmer is doing its real job: the
+       `.mc-lvl` level badge (DESIGN.md §4.8 prescribes inkDimmer for it,
+       and its border carries the meaning), and the two pace-bar FILLS,
+       which are not text at all. */
+    html:not(.dark) .text-opl-inkDimmer { color: #6b6453; }
+    html.dark .dark\:text-op-inkDimmer { color: rgb(var(--op-inkDim)); }
+
     /* ── Accessibility page — theme picker ────────────────────────────
        Light side uses opl-* token literals (a <style> block cannot reach
        the Tailwind class names — DESIGN.md §4.8). The dark side goes
@@ -629,7 +667,7 @@
     .coach .coach-txt { font-size: 12.5px; line-height: 1.45; color: rgb(var(--op-ink)); font-weight: 500; }
     .coach .coach-txt b { color: #22c55e; font-weight: 700; }
     .coach .coach-row { margin-top: 9px; display: flex; align-items: center; justify-content: space-between; }
-    .coach .coach-step { font-size: 10.5px; color: rgb(var(--op-inkDimmer)); font-weight: 600; }
+    .coach .coach-step { font-size: 10.5px; color: rgb(var(--op-inkDim)); font-weight: 600; }
     .coach .coach-got { cursor: pointer; font-size: 11.5px; font-weight: 700; color: #06210f; background: #22c55e; padding: 4px 11px; border-radius: 8px; border: 0; }
     .coach .coach-caret { position: absolute; width: 13px; height: 13px; background: rgb(var(--op-panelHi)); border: 1px solid rgba(34,197,94,.45); transform: rotate(45deg); }
     .coach.below .coach-caret { top: -7px; border-right: 0; border-bottom: 0; }
@@ -768,7 +806,7 @@
       #print-report th.pr-l, #print-report td.pr-l { text-align: left; }
       #print-report td { text-align: right; padding: 3px 2px; border-bottom: 0.5pt solid #e5e3db; }
       #print-report tr.pr-tot td { border-top: 1pt solid #14110a; border-bottom: none; font-weight: 600; padding-top: 4px; }
-      #print-report .pr-ft { display: flex; justify-content: space-between; font-size: 5.8pt; color: #9c9484; margin-top: 12px; border-top: 0.5pt solid #d6d3ca; padding-top: 5px; }
+      #print-report .pr-ft { display: flex; justify-content: space-between; font-size: 5.8pt; color: #6b6453; margin-top: 12px; border-top: 0.5pt solid #d6d3ca; padding-top: 5px; }
     }
   </style>
   <script>
@@ -3246,9 +3284,9 @@
         .dark .mf-flag{background:rgba(255,255,255,.08);color:rgb(var(--op-inkDim))}
         /* Quiet until you look for it: destructive, so it should not compete with the
            row itself, but it must be findable without opening the manifest first. */
-        .mf-x{background:none;border:none;color:#9c9484;cursor:pointer;font-size:17px;line-height:1;
+        .mf-x{background:none;border:none;color:#6b6453;cursor:pointer;font-size:17px;line-height:1;
           padding:2px 7px;border-radius:6px}
-        .dark .mf-x{color:rgb(var(--op-inkDimmer))}
+        .dark .mf-x{color:rgb(var(--op-inkDim))}
         .mf-x:hover{color:#b91c1c;background:rgba(239,68,68,.12)}
         .mf-note{padding:12px 18px;font-size:12.5px;color:#6b6453;border-top:1px solid rgba(20,16,8,.10)}
         .dark .mf-note{color:rgb(var(--op-inkDim));border-top-color:rgba(255,255,255,.09)}
@@ -3552,8 +3590,8 @@
         .dark .fn-prices .t{color:rgb(var(--op-inkDim))}
         .ps-steps{display:flex;flex-direction:column;gap:2px;padding:2px 0}
         .ps-step{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13.5px;
-          color:#9c9484;transition:color .25s}
-        .dark .ps-step{color:rgb(var(--op-inkDimmer))}
+          color:#6b6453;transition:color .25s}
+        .dark .ps-step{color:rgb(var(--op-inkDim))}
         .ps-step.on{color:#14110a;font-weight:600}
         .dark .ps-step.on{color:rgb(var(--op-ink))}
         .ps-step.done{color:#6b6453}
@@ -3567,8 +3605,8 @@
         .ps-step.done .ps-dot::after{content:"";width:9px;height:5px;border-left:2px solid #06210f;
           border-bottom:2px solid #06210f;transform:rotate(-45deg) translate(1px,-1px)}
         @keyframes psSpin{to{transform:rotate(360deg)}}
-        .ps-el{margin-left:auto;font-size:11.5px;color:#9c9484;font-variant-numeric:tabular-nums}
-        .dark .ps-el{color:rgb(var(--op-inkDimmer))}
+        .ps-el{margin-left:auto;font-size:11.5px;color:#6b6453;font-variant-numeric:tabular-nums}
+        .dark .ps-el{color:rgb(var(--op-inkDim))}
         @media (prefers-reduced-motion:reduce){ .ps-step.on .ps-dot{animation:none} }
       </style>
       <div id="ps-wrap" class="px-4 space-y-4 pt-[calc(env(safe-area-inset-top)+1.5rem)]"
@@ -3883,9 +3921,9 @@
           vertical-align:1px}
         .dark .mc-lvl{border-color:rgba(255,255,255,.16);color:rgb(var(--op-inkDimmer))}
         #mc-tbl tr.mc-l3 .mc-lvl{color:#22c55e;border-color:rgba(34,197,94,.4)}
-        .mc-rm{background:none;border:none;color:#9c9484;cursor:pointer;font-size:15px;line-height:1;
+        .mc-rm{background:none;border:none;color:#6b6453;cursor:pointer;font-size:15px;line-height:1;
           padding:2px 5px;margin-left:8px;border-radius:5px}
-        .dark .mc-rm{color:rgb(var(--op-inkDimmer))}
+        .dark .mc-rm{color:rgb(var(--op-inkDim))}
         .mc-rm:hover{color:#14110a;background:rgba(20,16,8,.08)}
         .dark .mc-rm:hover{color:rgb(var(--op-ink));background:rgba(255,255,255,.10)}
 
@@ -4379,7 +4417,7 @@
         .eb-sec > summary::-webkit-details-marker{display:none}
         .eb-sec > summary:hover{background:rgba(20,16,8,.02)}
         .dark .eb-sec > summary:hover{background:rgba(255,255,255,.02)}
-        .eb-sec-chev{display:inline-block;color:#9c9484;font-size:10px;margin-right:8px;
+        .eb-sec-chev{display:inline-block;color:#6b6453;font-size:10px;margin-right:8px;
           transition:transform .15s;vertical-align:middle}
         .eb-sec[open] > summary .eb-sec-chev{transform:rotate(90deg)}
         /* A collapsed section should not keep the divider that separated it
@@ -4400,7 +4438,8 @@
         .eb-case > summary::-webkit-details-marker{display:none}
         .eb-case > summary:hover{background:rgba(20,16,8,.02)}
         .dark .eb-case > summary:hover{background:rgba(255,255,255,.02)}
-        .eb-chev{color:#9c9484;font-size:10px;transition:transform .15s}
+        .eb-chev{color:#6b6453;font-size:10px;transition:transform .15s}
+        .dark .eb-sec-chev,.dark .eb-chev{color:rgb(var(--op-inkDim))}
         .eb-case[open] > summary .eb-chev{transform:rotate(90deg)}
         .eb-nm{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         .eb-acct{grid-column:2;font-size:12px;color:#6b6453}

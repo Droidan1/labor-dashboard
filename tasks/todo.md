@@ -1,3 +1,50 @@
+# inkDimmer as text — fixed everywhere it was one (2026-09-15)
+
+Brian: **"fix the inkdimmer text sites too"** — the ~74/89 I had reported and deliberately
+held back on #228 as a design decision. Done, and the sweep found more than the utilities.
+
+## Two populations, not one
+
+| | sites | fixed by |
+|---|---|---|
+| Tailwind utilities `text-opl-inkDimmer` ×74, `dark:text-op-inkDimmer` ×88 | 162 | two CSS rules |
+| Hand-written `<style>` blocks — print footer, coach step, price-scan step/elapsed, manifest & criteria close buttons, eBay chevrons | 13 | edited in place |
+
+The second population is the one a grep for the *class name* never finds. It writes the same
+colour as `#9c9484` or `rgb(var(--op-inkDimmer))` directly.
+
+## What was deliberately NOT changed
+
+- **`.mc-lvl`, the level badge.** DESIGN.md §4.8 prescribes inkDimmer for it by name, and its
+  border carries the meaning. Asserted in the suite that it still reads `#9c9484`.
+- **The two pace-bar fills** (`barColor` / `sBarColor`) — not text at all.
+- **The `--op-inkDimmer` token itself**, asserted still `90 100 120`. Borders and badges keep
+  the level; only *text* moved off it.
+- `--mdd` in `#page-mos` is a **dead variable** — nothing reads it. Left alone.
+
+## Two catches worth keeping
+
+1. **`.eb-chev` / `.eb-sec-chev` had no dark rule at all** — they painted `#9c9484` in *both*
+   themes, which happens to read fine on a dark ground. Swapping the single value to inkDim
+   would have **broken dark mode** (1.9:1). They needed a dark counterpart added, not a swap.
+   A blind find-and-replace would have shipped that.
+2. **I first excluded pure black and then undid it.** OLED already passed (5.24–6.08, because
+   that theme re-points the token to `#8a8a8a`), so `html.dark:not(.oled)` looked like the
+   minimal-impact choice. It was the wrong kind of clever: it left three themes behaving
+   differently for one token, and every hand-written site would have needed its own carve-out.
+   Bringing OLED along only raises its contrast (5.73 → 8.33). One rule, one meaning.
+
+## Verified — 4,251 repo assertions + 83 browser assertions
+
+The decisive one is a sweep for **any element painting an inkDimmer value as text**, by
+computed colour rather than by class — so it catches the hand-written sites too:
+
+    light  0        dark  0        oled  0
+
+Plus: each utility asserted to resolve per theme; `.mc-lvl` and the token asserted unchanged;
+Item Sales 44/44 AA in three themes; Transactions 37 behaviour + 19 contrast still clean.
+`CACHE_NAME` v195 → v196.
+
 # Item Sales contrast — fixed, and it was four defects, not one (2026-09-15)
 
 Brian: **"fix the item sales contrast issue"**. Done — but the surface had **four** failures,
