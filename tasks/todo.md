@@ -1813,3 +1813,47 @@ now fan out to exactly five stores with no BL8. A stale card could hide; a reque
 
 Verification: 17 invariants, 12 browser checks, all four existing browser suites still green,
 full suite 4178 across 68. Frontend only — nothing to deploy beyond the Pages rebuild.
+
+## Hour backfill — banking the window before the nightly bank (2026-09-15)
+
+Brian: "do the backfill". Hours exist only in Clover's raw orders, ~90 days of retention,
+decaying daily. Nightly banking started 2026-09-15; everything before it is a window closing
+a day at a time.
+
+### The endpoint that already existed, and why it must NOT be used
+
+`?action=resnapshot-clienttime` walks a date range and calls `snapshotDayByClientTime`, which
+banks hours as of this week's change — so it looks like the tool for the job. It is not. It
+also **re-writes `daily_sales` and the `items:` snapshot**. Pointing it at ~90 healthy days is
+precisely the re-pull that has cost this repo data three times: Clover returns LESS as it
+ages, so refunds that have aged out would vanish from days that were correct when written.
+
+### The guard that makes a backfill safe
+
+The same decay makes a naive hours-only backfill wrong in a quieter way: an old day can come
+back short, and banking it leaves the hourly view disagreeing with the daily view everyone
+else reads — silently, because each looks fine alone.
+
+So the endpoint **reconciles before it writes**. For each store-day it sums the hour buckets
+it just computed and compares them against the existing day snapshot; a day that does not
+match to the cent is SKIPPED and reported, never banked. This is the same check that proved
+the nightly bank correct this morning (15 of 15 store-days, delta 0.00). A day Clover can no
+longer reproduce is a day we decline to bank.
+
+- [x] `?action=backfill-item-hours&store=&start=&end=[&dry=1]`, admin-gated
+- [x] Writes `item-hours:` ONLY — never `items:`, never D1. Asserted by a test that greps the
+      handler for day-snapshot writers and for `DB.prepare`.
+- [x] Stamps `daySnapshotTime` from the snapshot it reconciled against, so the reader's
+      freshness check treats a backfilled bank exactly like a nightly one
+- [x] Skips days already banked, at zero Clover cost
+- [x] `dry=1` previews without writing — asserted, because a preview that writes is not one
+- [x] `BACKFILL_HOURS_MAX_STORE_DAYS = 120` per invocation; the caller walks the window in
+      chunks, because the subrequest ceiling is per invocation
+- [x] Registered in the fail-closed ACTION_BUSINESS registry
+- [x] scripts/test-backfill-item-hours.mjs — 33 assertions
+
+### Still to do (needs the worker deployed first)
+
+- [ ] Merge + deploy the worker
+- [ ] Dry-run the whole window, store by store, and read the reconcile rate
+- [ ] Run it for real in chunks, and report how far back the window actually reaches
