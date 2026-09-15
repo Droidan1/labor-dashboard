@@ -57,6 +57,11 @@ const CATEGORY_SERIES_MAX_STORE_DAYS = 840;
 // hourly x-axis is capped by DAYS (not store-days): 7 days is 168 slots, which is
 // already the point where a table stops being readable. Refused, never truncated.
 const CATEGORY_HOURS_MAX_DAYS = 7;
+// Store-days one backfill invocation will attempt. Each costs ~5 subrequests
+// (orders + refunds + credits + cross-day lookup, plus the per-store category map)
+// against the ~1000 ceiling, so this leaves generous headroom. The caller walks
+// the window in chunks rather than the endpoint trying to do it all at once.
+const BACKFILL_HOURS_MAX_STORE_DAYS = 120;
 // weekly-t13's trailing window. One KV key per store-week, so 110 x 7 = 770.
 const WEEKLY_TRAILING_MAX_WEEKS = 110;
 
@@ -4237,6 +4242,7 @@ const ACTION_BUSINESS = new Map([
   ["backfill", "bl"],
   ["backfill-category-orders", "bl"],
   ["backfill-items-snapshots", "bl"],
+  ["backfill-item-hours", "bl"],
   ["bin-dump-scan", "bl"],
   ["bin-dump-log", "bl"],
   ["bin-dump-recent", "bl"],
@@ -23325,6 +23331,130 @@ export default {
           status: 500, headers: corsJson,
         });
       }
+    }
+
+    // ── Admin: backfill per-hour rollups for days already snapshotted ──
+    //    POST ?action=backfill-item-hours&store=BL1|all&start=YYYY-MM-DD&end=YYYY-MM-DD[&dry=1]
+    //
+    // Hours only exist in Clover's raw orders and Clover keeps ~90 days, decaying.
+    // Banking runs nightly from now on, but everything BEFORE that is a window that
+    // closes a day at a time. This walks it and banks what it still can.
+    //
+    // 🛑 WHY NOT resnapshot-clienttime: that endpoint re-writes daily_sales AND the
+    // items: snapshot. Pointing it at ~90 healthy days is precisely the re-pull this
+    // repo has lost data to — Clover returns LESS as it ages, so refunds that have
+    // aged out would vanish from days that were correct. This writes item-hours: and
+    // NOTHING else. No existing key is touched.
+    //
+    // 🔑 RECONCILE BEFORE BANKING. The same decay that makes the re-pull dangerous
+    // makes a naive backfill wrong in a quieter way: an old day can come back short,
+    // and banking it would leave the hourly view disagreeing with the daily view that
+    // everyone else reads, with nothing to show for it. So each store-day's hour
+    // buckets are summed and compared against the EXISTING day snapshot, and a day
+    // that does not reconcile to the cent is SKIPPED and reported rather than banked.
+    // A day Clover can no longer reproduce is a day we decline to bank.
+    if (request.method === "POST" && url.searchParams.get("action") === "backfill-item-hours") {
+      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson);
+      if (unauth) return unauth;
+
+      const storeParam = (url.searchParams.get("store") || "").toUpperCase();
+      const start = url.searchParams.get("start") || "";
+      const end = url.searchParams.get("end") || start;
+      const dry = url.searchParams.get("dry") === "1";
+      if (!storeParam || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || end < start) {
+        return new Response(JSON.stringify({ error: "need store (or 'all'), start=YYYY-MM-DD, end=YYYY-MM-DD (end >= start)" }),
+          { status: 400, headers: corsJson });
+      }
+      if (!env.SALES_SNAPSHOTS) {
+        return new Response(JSON.stringify({ error: "KV not bound" }), { status: 500, headers: corsJson });
+      }
+
+      const stores = storeParam === "ALL" ? ALL_STORES : (ALL_STORES.includes(storeParam) ? [storeParam] : []);
+      if (!stores.length) {
+        return new Response(JSON.stringify({ error: `unknown store ${storeParam}` }), { status: 400, headers: corsJson });
+      }
+      const dates = enumDatesInclusive(start, end);
+      const storeDays = dates.length * stores.length;
+      if (storeDays > BACKFILL_HOURS_MAX_STORE_DAYS) {
+        return new Response(JSON.stringify({
+          error: "Too many store-days for one pass",
+          code: "BUDGET_EXCEEDED",
+          storeDays, limit: BACKFILL_HOURS_MAX_STORE_DAYS,
+          hint: "Walk the window in chunks — the subrequest ceiling is per invocation.",
+        }), { status: 413, headers: corsJson });
+      }
+
+      const nextDay = (d) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + 1); return x.toISOString().slice(0, 10); };
+      const dayNet = (snap) => {
+        if (!snap) return null;
+        const t = snap.totals || {};
+        if (t.netSales != null) return roundCents(Number(t.netSales) || 0);
+        return roundCents((snap.categories || []).reduce((a, c) => a + (Number(c.netSales) || 0), 0));
+      };
+
+      const [overrides, itemCosts] = await Promise.all([fetchItemOverrides(env), fetchItemCosts(env)]);
+      const out = { banked: [], skipped: [], errors: [], dry, storeDays };
+
+      for (const store of stores) {
+        const lc = store.toLowerCase();
+        let itemCatMap = null;
+        for (const d of wrsGateDates(store, dates)) {
+          try {
+            const [daySnap, existing] = await Promise.all([
+              env.SALES_SNAPSHOTS.get(`items:${lc}:${d}`, "json"),
+              env.SALES_SNAPSHOTS.get(`item-hours:${lc}:${d}`, "json"),
+            ]);
+            // Nothing to reconcile against. Banking hours for a day with no day
+            // snapshot would create a grain that answers to nothing.
+            if (!daySnap) { out.skipped.push({ store, date: d, why: "no day snapshot" }); continue; }
+            if (existing && existing.slots && existing.daySnapshotTime === daySnap.snapshotTime) {
+              out.skipped.push({ store, date: d, why: "already banked" }); continue;
+            }
+            const expect = dayNet(daySnap);
+
+            if (!itemCatMap) itemCatMap = await fetchItemCategoryMap(store, env);
+            const dayStart = getStartOfDayET(d), dayEnd = getStartOfDayET(nextDay(d));
+            const [elements, refundElements, manualRefundElements] = await Promise.all([
+              fetchItemOrders(store, env, dayStart, dayEnd),
+              fetchRefundElements(store, env, dayStart, dayEnd),
+              fetchManualRefunds(store, env, dayStart, dayEnd),
+            ]);
+            // null is "could not fetch", NOT an empty day. Banking zeros here would
+            // be the Clover-degrades-by-returning-less trap in its purest form.
+            if (!elements) { out.skipped.push({ store, date: d, why: "fetch failed" }); continue; }
+            const extraOrders = await fetchCrossDayOrdersForRefunds(store, env, elements, refundElements);
+            const slots = buildItemHourBuckets(elements, itemCatMap, store, d, overrides, itemCosts,
+                                               refundElements, extraOrders, manualRefundElements);
+            // Drop anything that landed outside the day, same as category-hours.
+            for (const k of Object.keys(slots)) if (k.slice(0, 10) !== d) delete slots[k];
+
+            const got = roundCents(Object.values(slots).reduce((a, r) =>
+              a + ((r.categories || []).reduce((x, c) => x + (Number(c.netSales) || 0), 0)), 0));
+            const delta = roundCents(got - expect);
+            if (Math.abs(delta) > 0.01) {
+              // Clover can no longer reproduce this day. Decline rather than bank a
+              // disagreement nobody would see until they compared two views.
+              out.skipped.push({ store, date: d, why: "does not reconcile", expect, got, delta });
+              continue;
+            }
+            if (!dry) {
+              await env.SALES_SNAPSHOTS.put(`item-hours:${lc}:${d}`, JSON.stringify({
+                store, date: d, slots,
+                // Stamped with the snapshot it was reconciled against, so the reader's
+                // freshness check treats it exactly like a nightly bank.
+                daySnapshotTime: daySnap.snapshotTime,
+                snapshotTime: new Date().toISOString(),
+                backfilled: true,
+              }));
+            }
+            out.banked.push({ store, date: d, slots: Object.keys(slots).length, net: got });
+          } catch (e) {
+            out.errors.push({ store, date: d, error: String(e && e.message || e).slice(0, 200) });
+          }
+        }
+      }
+      out.summary = { banked: out.banked.length, skipped: out.skipped.length, errors: out.errors.length };
+      return new Response(JSON.stringify(out), { headers: corsJson });
     }
 
     // ── Channel split (Retail vs BIN) summed over a date range ─────
