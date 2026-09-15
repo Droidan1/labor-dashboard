@@ -57,6 +57,34 @@ the worker must already accept it (ORIENT.md). `npx wrangler deploy`, confirm th
 (~180 s, poll for consecutive clean passes), then merge for Pages. **No migration, no KV
 write, no D1 write** — nothing to back up and nothing to undo.
 
+## Follow-up: a 200 is not proof, and neither is my reasoning about the gate
+
+Prompted by the staging Pages preview. I reasoned that an old worker would fall through the
+`if (action === …)` chain to the generic sales handler and answer **200** with a sales
+payload, which the client would read as `rows || []` and render as "No payments on this day"
+— a false empty day over a trading day.
+
+**I probed it instead of shipping the reasoning, and it was wrong.** The business gate is
+fail-closed and runs *before* routing, so an action the worker has never heard of gets
+**403 `UNCLASSIFIED_ACTION`** and never reaches the fall-through at all. Measured:
+
+    action=transactions-not-real  -> 403 {"error":"Forbidden","code":"UNCLASSIFIED_ACTION"}
+
+Both now handled, for their real reasons:
+- `UNCLASSIFIED_ACTION` gets its own sentence — "this build is ahead of the API", not a bare
+  "Forbidden" that reads like a permissions problem. **This is what the staging preview
+  actually shows** until the staging worker is deployed.
+- The shape check (`rows` is an array and `counts` exists) stays as defence in depth for the
+  narrower window ORIENT.md records: a *classified* action whose handler is gone still falls
+  through and answers 200.
+
+<rules>
+1. **A fall-through router is not reachable until you know what runs before it.** I described
+   the chain correctly and forgot the gate three checks upstream of it.
+2. **Probe the claim you are about to write into a comment.** One harness call settled this;
+   the comment would otherwise have documented a path that cannot occur.
+</rules>
+
 ## Still open
 
 - Persisting payments so history outlives Clover's ~90 days is deliberately NOT in this

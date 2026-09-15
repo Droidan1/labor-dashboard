@@ -12537,6 +12537,24 @@
         renderTransactions(txnCache[key]);
         return;
       }
+      // 🛑 A 200 is not proof this is a transactions payload. The worker routes
+      // on a fall-through `if (action === …)` chain, so a CLASSIFIED action whose
+      // handler is gone lands on the generic sales handler and answers 200 with a
+      // sales payload — no `rows`, no `counts` (ORIENT.md records exactly this:
+      // a removed endpoint answering `{"error":"Please specify a store"}`).
+      // Reading that as `rows || []` would print "No payments on this day" over a
+      // day the store traded, which is the one thing this surface exists never to
+      // do. So check the shape, not the status.
+      //
+      // Measured: an action the worker does not know at all is caught earlier, by
+      // the fail-closed business gate, and answers 403 UNCLASSIFIED_ACTION — see
+      // that case below. This guard is for the narrower window where the gate
+      // entry outlives its handler.
+      if (!Array.isArray(data.rows) || !data.counts) {
+        txnCache[key] = { __err: 'ENDPOINT_MISSING', __detail: {}, store: storeKey, date: target };
+        renderTransactions(txnCache[key]);
+        return;
+      }
       txnCache[key] = data;
       renderTransactions(data);
     } catch (err) {
@@ -12569,6 +12587,25 @@
           <div class="text-[12.5px] text-opl-inkDim dark:text-op-inkDim mt-2 max-w-[52ch] mx-auto leading-relaxed">
             Part of the order list failed to load, so this would be an incomplete list rather than a quiet day. Nothing has been changed.
           </div>${retry}</div>`;
+      case 'ENDPOINT_MISSING':
+        return `<div class="p-8 text-center">
+          <div class="text-[14px] font-bold text-opl-ink dark:text-op-ink">Transactions aren't available on this API yet</div>
+          <div class="text-[12.5px] text-opl-inkDim dark:text-op-inkDim mt-2 max-w-[52ch] mx-auto leading-relaxed">
+            The server answered, but not with transaction data — this build of the app is ahead of the API it's talking to.
+            <b class="text-opl-ink dark:text-op-ink font-semibold">This is not an empty day.</b> The day's totals are still on the Daily tab.
+          </div></div>`;
+      // The worker's business gate is fail-closed: an action it has never heard
+      // of is refused here rather than routed. That is what a frontend ahead of
+      // its worker actually gets — the staging Pages build (worker deploys are
+      // manual), or a prod deploy done frontend-first. Say so, rather than
+      // leaving a bare "Forbidden" that reads like a permissions problem.
+      case 'UNCLASSIFIED_ACTION':
+        return `<div class="p-8 text-center">
+          <div class="text-[14px] font-bold text-opl-ink dark:text-op-ink">Transactions aren't available on this API yet</div>
+          <div class="text-[12.5px] text-opl-inkDim dark:text-op-inkDim mt-2 max-w-[52ch] mx-auto leading-relaxed">
+            This build of the app is ahead of the API it's talking to — the transactions endpoint hasn't been deployed there.
+            <b class="text-opl-ink dark:text-op-ink font-semibold">This is not an empty day</b>, and it isn't a permissions problem. The day's totals are still on the Daily tab.
+          </div></div>`;
       case 'HTTP_403':
         return `<div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim text-sm">You don't have access to this store's transactions.</div>`;
       default:
