@@ -246,6 +246,29 @@ for f in sorted(glob.glob(os.path.join(sys.argv[1], "*.json"))):
         why[a.get("skipped") or ("itemsError" if a.get("itemsError") else "incomplete")] += 1
         attention.append(a)
 
+# 🔑 ADVICE IS PER REASON, AND ONLY FOR REASONS ACTUALLY PRESENT. The first
+# version printed the WOULD_LOSE_ROWS paragraph unconditionally, so a run whose
+# only problem was a transient INCOMPLETE_FETCH was told not to use --force on a
+# guard that had never fired. Advice about a thing that did not happen is worse
+# than none: it teaches the reader to skim the section.
+ADVICE = {
+    "WOULD_LOSE_ROWS":
+        "the guard doing its job. Clover now returns FEWER rows for that day than\n"
+        "    are already banked, so it was left alone. Do NOT re-run these with\n"
+        "    --force — the banked record is the better one.",
+    "INCOMPLETE_FETCH":
+        "Clover did not return a complete order list, so NOTHING was banked for that\n"
+        "    day rather than a partial one. Usually transient. Re-run just those days:\n"
+        "      bash scripts/backfill-transactions.sh --store <STORE> --start <DAY> --end <DAY> --write",
+    "incomplete":
+        "banked, but the figures did not reconcile against daily_sales. The day is\n"
+        "    short, and permanently so if it has passed Clover's ~90-day window.",
+    "itemsError":
+        "the payments banked but the receipt did not — check migration-064 has been\n"
+        "    applied, then re-run those days.",
+    "ERROR":
+        "the request itself failed. The note beside each day below says how.",
+}
 print(f"store-days considered   {tot['storeDays']}")
 print(f"  banked                {tot['wrote']}")
 print(f"  receipt lines         {tot['items']}")
@@ -256,14 +279,17 @@ if why:
     print("\nneeds attention, by reason:")
     for k, v in why.most_common():
         print(f"  {v:5d}  {k}")
-    print("\n  WOULD_LOSE_ROWS is the guard doing its job: Clover now returns fewer")
-    print("  rows for that day than are already banked, so it was left alone. Do")
-    print("  NOT re-run those with --force; the banked record is the better one.")
+    for k, _ in why.most_common():
+        if k in ADVICE:
+            print(f"\n  {k} — {ADVICE[k]}")
 if attention:
     attention.sort(key=lambda a: (a.get("date") or "", a.get("store") or ""))
-    print(f"\nearliest / latest:")
-    for a in (attention[0], attention[-1]):
-        print(f"  {a.get('store')} {a.get('date')}  {a.get('skipped') or ''}  {a.get('note') or a.get('itemsError') or ''}")
+    print(f"\n{'the day' if len(attention) == 1 else 'days'} needing attention:")
+    for a in attention[:5]:
+        print(f"  {a.get('store')} {a.get('date')}  {a.get('skipped') or ''}  "
+              f"{a.get('note') or a.get('itemsError') or ''}")
+    if len(attention) > 5:
+        print(f"  ... and {len(attention) - 5} more")
 PY
 
 exit $FAILED
