@@ -1,3 +1,67 @@
+# Transactions tab — BUILT (read-only, no Authorizations) (2026-09-15)
+
+Brian, on the preview: **"cut the authorizations tab and build it read-only"**. Both done.
+
+## What shipped
+
+**Worker** — one new `?action=transactions&store=&date=`, store-scoped and read-only.
+- `fetchTransactionOrders` — orders with `expand=payments,customers`. Deliberately NOT
+  filtered to `state=locked` (unlike `fetchItemOrders`): that filter keeps a day's TOTAL
+  honest, but a voided payment is exactly what the Voids tab is for and can sit on an order
+  that never locked. Returns `null` on a failed page, never a truncated array.
+- `fetchCloverLabelMap(store, env, resource)` — `/tenders` and `/employees`, because a
+  payment carries `tender.{id}` and `employee.{id}`, never "Cash" and a person's name.
+  24 h KV cache; a partial map is served but **never cached**, so the gap cannot freeze in.
+- `buildTransactions(...)` — pure, no fetch/env/clock, so the whole classification is
+  driven from fixtures.
+- Guards: `canAccessStore` → 403 · malformed/future date → 400 · **`BEYOND_RETENTION` → 422**
+  · `BEFORE_STORE_CUTOVER` (BL16) → 422 · `INCOMPLETE_FETCH` → 502 · `["transactions","bl"]`
+  in `ACTION_BUSINESS`, without which the fail-closed business gate 403s every session call.
+
+**Frontend** — a fourth tab after Item Sales, lazy-loaded (every open is a live Clover read).
+Reuses the Item Sales day strip via its `onClickPrefix`, with a new `showWeek` opt-out: a
+whole-week transactions view would be seven live days and thousands of rows, and Clover's own
+screen is per-day. `CACHE_NAME` v193 → v194.
+
+## Three things worth remembering
+
+1. **The BL16 guard was dead code where I first put it.** Behind the retention wall it could
+   never fire — the 90-day window start has been later than the 2026-06-14 cutover since
+   2026-09-12 and only moves further out. Moved it *ahead* of the wall, where it is both
+   reachable and the stronger claim: that date is not BL16's data at any retention.
+   The failing assertion was the signal; the reflex to "fix the test" would have buried it.
+2. **`text-accent-green` is 2.18:1 on the light bar.** I copied it from Item Sales for the
+   Live/Refresh affordances. DESIGN.md §2.1 says in terms that accent-green is unusable as
+   TEXT in light. Now a `.txn-accent` pair: green-800 light (6.9:1), accent dark (7.81:1).
+   ⚠️ **Item Sales still has this defect** — same copy, unfixed, because fixing it is a
+   separate change and not this one's to widen. Worth its own pass.
+3. **The shell-cache suite caught the missing `CACHE_NAME` bump**, exactly as designed.
+
+## Verification — 4,251 assertions across 70 suites, plus 49 browser assertions
+
+- `scripts/test-transactions.mjs` (39, new) drives the REAL worker with Clover stubbed:
+  guards, classification of both void spellings, id→name resolution, refund/credit sign,
+  totals excluding voids, **`payment.amount` never `order.total`** (Clover reduces the order
+  for a same-day refund; reading it would double-deduct), incomplete fetch ≠ empty day,
+  D1 and KV untouched, and a partial label map not cached.
+- Browser (30): tab order, lazy load, per-tab column re-render (§4.8 trap 8), detail drawer,
+  and every refusal rendering its own sentence rather than an empty table.
+- Contrast (19): **light, dark AND pure black**, four tabs each, measured against real
+  composited backgrounds. Includes the sweep `lessons.md` asks for — in OLED, assert nothing
+  is left computing the ordinary dark theme's `op-panel`/`op-panelHi`. Clean.
+
+## Deploy order — WORKER FIRST
+
+Derived, not remembered: the client gains a call to an endpoint that does not exist yet, so
+the worker must already accept it (ORIENT.md). `npx wrangler deploy`, confirm the rollout
+(~180 s, poll for consecutive clean passes), then merge for Pages. **No migration, no KV
+write, no D1 write** — nothing to back up and nothing to undo.
+
+## Still open
+
+- Persisting payments so history outlives Clover's ~90 days is deliberately NOT in this
+  change. Read-only first; the archive is a separate decision.
+
 # Store-level Transactions tab (Clover parity) — feasibility + preview (2026-09-15)
 
 Brian: "Is there a way to add transactions details for each store? Similar to what Clover

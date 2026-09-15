@@ -1448,6 +1448,8 @@
             class="px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Chart</button>
           <button id="sd-tab-items" type="button" onclick="switchStoreTab('items')"
             class="px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Item Sales</button>
+          <button id="sd-tab-txns" type="button" onclick="switchStoreTab('txns')"
+            class="px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Transactions</button>
         </div>
 
         <!-- Tab panels -->
@@ -1466,6 +1468,160 @@
           <div id="items-day-selector"></div>
           <div id="items-table-container">
             <div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim text-sm">Select a day to view category breakdown.</div>
+          </div>
+        </div>
+        <div id="sd-content-txns" class="hidden bg-opl-panel dark:bg-op-panel border border-[rgba(20,16,8,0.08)] dark:border-op-border rounded-card overflow-hidden transition-colors">
+          <style>
+            /* DESIGN.md §4.8. Colour is set on the PANEL, not just the table —
+               this panel holds a summary strip, a status line and a detail
+               drawer as well as a table, and anything outside the table would
+               otherwise inherit body's colour. Both themes, always.
+
+               🔑 Every dark value is rgb(var(--op-*)), never the literal hex.
+               The pure-black theme re-points those variables, so a literal here
+               is a navy patch on a black screen — the exact defect that shipped
+               in the bottom nav on 2026-09-10. */
+            #sd-content-txns{color:#14110a}
+            .dark #sd-content-txns{color:rgb(var(--op-ink))}
+            .txn-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:11px 18px;
+              background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
+            .dark .txn-bar{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.09)}
+            .txn-barlbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
+            .dark .txn-barlbl{color:rgb(var(--op-inkDim))}
+            .txn-spacer{flex:1}
+            /* Type tabs */
+            .txn-tabs{display:flex;gap:2px;flex-wrap:wrap;padding:0 18px;background:#fafaf6;
+              border-bottom:1px solid rgba(20,16,8,.10)}
+            .dark .txn-tabs{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.09)}
+            .txn-tabs button{appearance:none;border:0;background:transparent;font:inherit;font-size:12.5px;
+              font-weight:600;padding:9px 12px 8px;cursor:pointer;border-bottom:2px solid transparent;
+              margin-bottom:-1px;white-space:nowrap;display:inline-flex;align-items:center;gap:7px;color:#6b6453}
+            .dark .txn-tabs button{color:rgb(var(--op-inkDim))}
+            .txn-tabs button[aria-selected="true"]{color:#14110a;border-bottom-color:#22c55e}
+            .dark .txn-tabs button[aria-selected="true"]{color:rgb(var(--op-ink))}
+            .txn-tabs .txn-cnt{font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:999px;
+              background:#ffffff;border:1px solid rgba(20,16,8,.18);font-variant-numeric:tabular-nums}
+            .dark .txn-tabs .txn-cnt{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16)}
+            /* Summary strip */
+            .txn-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+              border-bottom:1px solid rgba(20,16,8,.10)}
+            .dark .txn-sum{border-bottom-color:rgba(255,255,255,.09)}
+            .txn-sum-c{padding:12px 18px;border-right:1px solid rgba(20,16,8,.10)}
+            .dark .txn-sum-c{border-right-color:rgba(255,255,255,.09)}
+            .txn-sum-c:last-child{border-right:0}
+            .txn-sum-k{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
+            .dark .txn-sum-k{color:rgb(var(--op-inkDim))}
+            .txn-sum-v{font-size:21px;font-weight:600;margin-top:3px;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+            .txn-sum-s{font-size:11px;color:#6b6453;margin-top:2px}
+            .dark .txn-sum-s{color:rgb(var(--op-inkDim))}
+            /* Status line — its own element, NOT inside the render target (§4.8 trap 7) */
+            .txn-status{padding:10px 18px;font-size:12px;color:#6b6453;line-height:1.55;
+              border-bottom:1px solid rgba(20,16,8,.06)}
+            .dark .txn-status{color:rgb(var(--op-inkDim));border-bottom-color:rgba(255,255,255,.06)}
+            .txn-status b{color:#14110a;font-weight:600}
+            .dark .txn-status b{color:rgb(var(--op-ink))}
+            /* Table */
+            .txn-scroll{overflow-x:auto;overflow-y:auto;max-height:min(62vh,620px)}
+            .txn-tbl{width:100%;border-collapse:separate;border-spacing:0;font-variant-numeric:tabular-nums}
+            .txn-tbl th{position:sticky;top:0;z-index:3;height:34px;background:#fafaf6;color:#6b6453;
+              font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;text-align:left;
+              padding:0 10px;white-space:nowrap;border-bottom:1px solid rgba(20,16,8,.18)}
+            .dark .txn-tbl th{background:rgb(var(--op-panelHi));color:rgb(var(--op-inkDim));
+              border-bottom-color:rgba(255,255,255,.16)}
+            .txn-tbl td{height:42px;padding:0 10px;font-size:12.5px;white-space:nowrap;
+              border-bottom:1px solid rgba(20,16,8,.10)}
+            .dark .txn-tbl td{border-bottom-color:rgba(255,255,255,.09)}
+            .txn-tbl tbody tr{cursor:pointer}
+            .txn-tbl tbody tr:hover td{background:#fafaf6}
+            .dark .txn-tbl tbody tr:hover td{background:rgb(var(--op-panelHi))}
+            /* A sticky column needs its OWN opaque background or cells scroll
+               under it (§4.8 trap 2). The selected row is marked once, on that
+               first cell — an inset shadow on every td draws a box per cell. */
+            .txn-tbl th.txn-stick,.txn-tbl td.txn-stick{position:sticky;left:0;z-index:2}
+            .txn-tbl th.txn-stick{z-index:4;background:#fafaf6}
+            .dark .txn-tbl th.txn-stick{background:rgb(var(--op-panelHi))}
+            .txn-tbl td.txn-stick{background:#ffffff}
+            .dark .txn-tbl td.txn-stick{background:rgb(var(--op-panel))}
+            .txn-tbl tbody tr:hover td.txn-stick{background:#fafaf6}
+            .dark .txn-tbl tbody tr:hover td.txn-stick{background:rgb(var(--op-panelHi))}
+            .txn-tbl tbody tr.txn-on td{background:#fafaf6}
+            .dark .txn-tbl tbody tr.txn-on td{background:rgb(var(--op-panelHi))}
+            .txn-tbl tbody tr.txn-on td.txn-stick{box-shadow:inset 3px 0 0 #22c55e}
+            .txn-num{text-align:right}
+            .txn-amt{font-weight:600}
+            /* op-bad #ef4444 is only 4.16:1 on the refund wash in dark; red-400
+               is 5.67:1 there and 6.43:1 plain. Light uses a darker red for the
+               same reason in reverse. Measured, not eyeballed (§4.8 trap 6). */
+            .txn-amt.txn-neg{color:#a5281a}
+            .dark .txn-amt.txn-neg{color:#f87171}
+            /* Type chips */
+            .txn-chip{display:inline-flex;align-items:center;font-size:10.5px;font-weight:700;
+              letter-spacing:.03em;text-transform:uppercase;padding:2.5px 8px;border-radius:999px;
+              border:1px solid transparent;white-space:nowrap}
+            .txn-chip.txn-payment{background:rgba(34,197,94,.16);color:#166534;border-color:rgba(34,197,94,.35)}
+            .dark .txn-chip.txn-payment{background:rgba(34,197,94,.14);color:#22c55e}
+            .txn-chip.txn-refund{background:rgba(192,57,43,.12);color:#a5281a;border-color:rgba(239,68,68,.35)}
+            .dark .txn-chip.txn-refund{background:rgba(239,68,68,.14);color:#f87171}
+            .txn-chip.txn-void{background:rgba(245,158,11,.16);color:#92400e;border-color:rgba(245,158,11,.45)}
+            .dark .txn-chip.txn-void{background:rgba(245,158,11,.14);color:#f59e0b}
+            /* Tender glyph — shape AND label, never colour alone (§9) */
+            .txn-tender{display:inline-flex;align-items:center;gap:7px}
+            .txn-g{flex:none;width:21px;height:14px;border-radius:3px;display:inline-flex;align-items:center;
+              justify-content:center;font-size:7.5px;font-weight:800;border:1px solid rgba(20,16,8,.18);
+              background:#fafaf6;color:#6b6453}
+            .dark .txn-g{border-color:rgba(255,255,255,.16);background:rgb(var(--op-panelHi));color:rgb(var(--op-inkDim))}
+            .txn-g.txn-cash{background:rgba(34,197,94,.16);border-color:rgba(34,197,94,.45);color:#166534}
+            .dark .txn-g.txn-cash{color:#22c55e}
+            .txn-g.txn-card{background:rgba(59,130,246,.14);border-color:rgba(59,130,246,.45);color:#1e40af}
+            .dark .txn-g.txn-card{color:#93c5fd}
+            .txn-g.txn-gift{background:rgba(245,158,11,.16);border-color:rgba(245,158,11,.45);color:#92400e}
+            .dark .txn-g.txn-gift{color:#f59e0b}
+            /* A value Clover does not hold is NAMED, never blanked or zero-filled */
+            .txn-none{color:#6b6453;font-style:italic;font-size:11.5px}
+            .dark .txn-none{color:rgb(var(--op-inkDim))}
+            /* Detail drawer */
+            .txn-dt{border-top:1px solid rgba(20,16,8,.18)}
+            .dark .txn-dt{border-top-color:rgba(255,255,255,.16)}
+            .txn-dt-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 18px;background:#fafaf6}
+            .dark .txn-dt-bar{background:rgb(var(--op-panelHi))}
+            .txn-dt-id{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:13px;font-weight:600}
+            .txn-dt-sub{font-size:11.5px;color:#6b6453}
+            .dark .txn-dt-sub{color:rgb(var(--op-inkDim))}
+            .txn-dt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+            .txn-dt-cell{padding:12px 18px;border-right:1px solid rgba(20,16,8,.10);
+              border-bottom:1px solid rgba(20,16,8,.10)}
+            .dark .txn-dt-cell{border-right-color:rgba(255,255,255,.09);border-bottom-color:rgba(255,255,255,.09)}
+            .txn-dt-k{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
+            .dark .txn-dt-k{color:rgb(var(--op-inkDim))}
+            .txn-dt-v{font-size:13.5px;margin-top:4px;font-variant-numeric:tabular-nums}
+            .txn-dt-v.txn-big{font-size:20px;font-weight:600}
+            /* The retention wall — Clover's limit, stated on the surface */
+            .txn-wall{padding:11px 18px;background:rgba(245,158,11,.16);
+              border-bottom:1px solid rgba(180,83,9,.45);font-size:12px;line-height:1.55}
+            .dark .txn-wall{background:rgba(245,158,11,.14);border-bottom-color:rgba(245,158,11,.45)}
+            /* 🛑 accent-green #22c55e is 2.18:1 on the light bar — DESIGN.md §2.1:
+               "unusable as TEXT in light". Tailwind's text-accent-green is one
+               value for both themes, so an accent that must be READ needs this
+               pair instead: green-800 light (6.9:1), the accent in dark (7.81:1).
+               A dot or a fill can stay accent-green; only text is the problem. */
+            .txn-accent{color:#166534}
+            .dark .txn-accent{color:#22c55e}
+            .txn-accent:hover{text-decoration:underline}
+            /* Legend */
+            .txn-legend{display:flex;gap:9px 20px;flex-wrap:wrap;padding:12px 18px;font-size:11.5px;
+              color:#6b6453;border-top:1px solid rgba(20,16,8,.10)}
+            .dark .txn-legend{color:rgb(var(--op-inkDim));border-top-color:rgba(255,255,255,.09)}
+            .txn-legend span.txn-lg{display:flex;align-items:center;gap:8px}
+            .txn-legend b{color:#14110a;font-weight:600}
+            .dark .txn-legend b{color:rgb(var(--op-ink))}
+          </style>
+          <!-- Populated by renderTransactions. The day strip and the body are
+               separate regions: the body is replaced wholesale on every render,
+               so anything else living inside it would vanish on first paint and
+               throw on every refresh after (§4.8 trap 7). -->
+          <div id="txn-day-selector"></div>
+          <div id="txn-body">
+            <div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim text-sm">Select a day to view transactions.</div>
           </div>
         </div>
       </div>
@@ -11779,8 +11935,8 @@
 
   function switchStoreTab(tab) {
     currentStoreTab = tab;
-    const tabs = { weekly: el('sd-tab-weekly'), chart: el('sd-tab-chart'), items: el('sd-tab-items') };
-    const panels = { weekly: el('sd-content-weekly'), chart: el('sd-content-chart'), items: el('sd-content-items') };
+    const tabs = { weekly: el('sd-tab-weekly'), chart: el('sd-tab-chart'), items: el('sd-tab-items'), txns: el('sd-tab-txns') };
+    const panels = { weekly: el('sd-content-weekly'), chart: el('sd-content-chart'), items: el('sd-content-items'), txns: el('sd-content-txns') };
     const base = 'px-3.5 py-1.5 rounded-[9px] text-[12.5px] font-bold transition-colors';
     const active = `${base} bg-accent-green text-[#0b1220]`;
     const inactive = `${base} text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink`;
@@ -11794,6 +11950,12 @@
     if (tab === 'items' && currentStoreName) {
       drilledCategory = null; // reset drill on tab re-entry
       loadItemSales(currentStoreName, selectedItemDate);
+    }
+    // Lazy-load transactions likewise. Every open of this tab costs a live
+    // Clover read, so it must not fire until someone asks for it.
+    if (tab === 'txns' && currentStoreName) {
+      txnSelected = null;   // a re-entry starts with no row expanded
+      loadTransactions(currentStoreName, selectedTxnDate);
     }
   }
 
@@ -12030,7 +12192,7 @@
 
   // Build the Sun-first day chip strip + "View Whole Week" dashed button.
   // Returns HTML (does NOT inject). When drilled, returns '' so the strip hides.
-  function _buildItemsDayStripHTML(storeName, activeDate, isDrilled, onClickPrefix) {
+  function _buildItemsDayStripHTML(storeName, activeDate, isDrilled, onClickPrefix, showWeek = true) {
     if (isDrilled) return '';
     const data = allStoreData[storeName] || [];
     const sorted = [...data.filter(r => r.week === selectedWeek)].sort((a, b) => a.date - b.date);
@@ -12059,13 +12221,14 @@
     const wkCls = isWeek
       ? 'bg-accent-green text-[#0b1220] border-accent-green'
       : 'text-opl-inkDim dark:text-op-inkDim border-dashed border-[rgba(20,16,8,0.18)] dark:border-op-borderHi hover:text-opl-ink dark:hover:text-op-ink';
-    return `
-      <div class="px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex flex-col gap-2.5">
-        <div class="grid grid-cols-7 gap-1.5">${chips}</div>
+    const weekBtn = showWeek ? `
         <button onclick="${onClickPrefix}('WEEK')" class="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[9px] border text-[12px] font-bold transition-colors ${wkCls}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
           View Whole Week (combined)
-        </button>
+        </button>` : '';
+    return `
+      <div class="px-4 sm:px-5 py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex flex-col gap-2.5">
+        <div class="grid grid-cols-7 gap-1.5">${chips}</div>${weekBtn}
       </div>`;
   }
 
@@ -12282,6 +12445,276 @@
   }
 
   // Shared dropdown for both store-detail and All Stores items tabs.
+  // ══ Transactions tab ══════════════════════════════════════════════════
+  // Clover's per-payment detail for one store-day. Every open is a LIVE read —
+  // nothing per-payment is stored anywhere — so results are cached per
+  // store+date and the tab never fetches until someone switches to it.
+  //
+  // There is no Authorizations tab: an authorization is a card hold captured
+  // later, and a register that rings a sale and takes payment in one step never
+  // creates one. A tab that is empty every day is worse than no tab.
+  const TXN_TABS = [['payment', 'Payments'], ['refund', 'Refunds'], ['manual', 'Manual Refunds'], ['void', 'Voids']];
+  const TXN_COLS = {
+    payment: ['Time', 'Type', 'Amount', 'Tender Type', 'Employee', 'Customer', 'Payment Source'],
+    refund:  ['Time', 'Type', 'Amount', 'Tender Type', 'Employee', 'Reason', 'Refund of'],
+    manual:  ['Time', 'Type', 'Amount', 'Tender Type', 'Employee', 'Reason', 'Order'],
+    void:    ['Time', 'Type', 'Amount', 'Tender Type', 'Employee', 'Result', 'Order'],
+  };
+  let txnCache = {};             // "STORE:YYYY-MM-DD" -> payload | {__err}
+  let txnTab = 'payment';
+  let txnSelected = null;        // payment id of the open detail row
+  let selectedTxnDate = null;    // null = today
+
+  // Clover timestamps are epoch ms; the store trades in ET, so the clock the
+  // row shows must be ET too — not the viewer's.
+  function _txnTime(ts) {
+    if (!ts) return '—';
+    return new Date(ts).toLocaleTimeString('en-US', {
+      timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit',
+    });
+  }
+  const _txnNone = (t) => `<span class="txn-none">${escapeHtml(t)}</span>`;
+  const _txnVal = (v, missing) => (v ? escapeHtml(v) : _txnNone(missing));
+
+  function selectTxnDay(dateStr) {
+    selectedTxnDate = dateStr;
+    txnSelected = null;          // a different day cannot keep a row open
+    if (currentStoreName) loadTransactions(currentStoreName, dateStr);
+  }
+  function setTxnTab(kind) {
+    txnTab = kind;
+    txnSelected = null;          // the open row belongs to the tab that listed it
+    const key = _txnKey();
+    if (txnCache[key]) renderTransactions(txnCache[key]);
+  }
+  function openTxnDetail(id) {
+    txnSelected = (txnSelected === id) ? null : id;
+    const key = _txnKey();
+    if (txnCache[key]) renderTransactions(txnCache[key]);
+  }
+  function refreshTransactions() {
+    const key = _txnKey();
+    delete txnCache[key];
+    if (currentStoreName) loadTransactions(currentStoreName, selectedTxnDate);
+  }
+  function _txnKey() {
+    const storeKey = (currentStoreName || '').split('/')[0];
+    return `${storeKey}:${selectedTxnDate || getETTodayStr()}`;
+  }
+  window.selectTxnDay = selectTxnDay;
+  window.setTxnTab = setTxnTab;
+  window.openTxnDetail = openTxnDetail;
+  window.refreshTransactions = refreshTransactions;
+
+  // Loading / error both keep the day strip on screen, so the picker never
+  // disappears underneath the person using it.
+  function _txnState(storeName, dateStr, html) {
+    const strip = el('txn-day-selector');
+    if (strip) strip.innerHTML = _buildItemsDayStripHTML(storeName, dateStr || getETTodayStr(), false, 'selectTxnDay', false);
+    const body = el('txn-body');
+    if (body) body.innerHTML = html;
+  }
+
+  async function loadTransactions(storeName, dateStr) {
+    if (!storeName) return;
+    const storeKey = storeName.split('/')[0];
+    const todayStr = getETTodayStr();
+    // 'WEEK' is not offered here (the strip's week button is suppressed), but a
+    // stale value could survive from the Item Sales tab — fall back to today.
+    const target = (!dateStr || dateStr === 'WEEK') ? todayStr : dateStr;
+    const key = `${storeKey}:${target}`;
+
+    if (txnCache[key]) { renderTransactions(txnCache[key]); return; }
+
+    _txnState(storeName, target, `<div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim"><div class="animate-pulse text-sm">Loading transactions from Clover…</div></div>`);
+    try {
+      const resp = await fetch(`${WORKER_BASE}?action=transactions&store=${encodeURIComponent(storeKey)}&date=${encodeURIComponent(target)}`, { credentials: 'include' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        // The endpoint refuses by NAME rather than returning an empty day, so
+        // each refusal gets the sentence that actually explains it.
+        txnCache[key] = { __err: data.code || `HTTP_${resp.status}`, __detail: data, store: storeKey, date: target };
+        renderTransactions(txnCache[key]);
+        return;
+      }
+      txnCache[key] = data;
+      renderTransactions(data);
+    } catch (err) {
+      // Not cached: a network blip should retry on the next open, not stick.
+      renderTransactions({ __err: 'NETWORK', __detail: { detail: err.message }, store: storeKey, date: target });
+    }
+  }
+  window.loadTransactions = loadTransactions;
+
+  function _txnErrorHTML(payload) {
+    const d = payload.__detail || {};
+    const retry = `<button onclick="refreshTransactions()" class="mt-3 text-[12px] font-bold txn-accent">Try again</button>`;
+    switch (payload.__err) {
+      case 'BEYOND_RETENTION':
+        return `<div class="p-8 text-center">
+          <div class="text-[14px] font-bold text-opl-ink dark:text-op-ink">No transaction detail this far back</div>
+          <div class="text-[12.5px] text-opl-inkDim dark:text-op-inkDim mt-2 max-w-[52ch] mx-auto leading-relaxed">
+            ${escapeHtml(payload.date)} is ${d.ageDays} days ago, and Clover returns at most about ${d.retentionDays} days of payment history — so these transactions cannot be retrieved, today or later.
+            <b class="text-opl-ink dark:text-op-ink font-semibold">This is not a zero-sales day</b>; the day's totals are still on the Daily tab, only the per-transaction detail is gone.
+          </div></div>`;
+      case 'BEFORE_STORE_CUTOVER':
+        return `<div class="p-8 text-center">
+          <div class="text-[14px] font-bold text-opl-ink dark:text-op-ink">Before Indy East opened</div>
+          <div class="text-[12.5px] text-opl-inkDim dark:text-op-inkDim mt-2 max-w-[52ch] mx-auto leading-relaxed">
+            ${escapeHtml(payload.date)} predates the ${escapeHtml(d.cutover || '')} handover, when this register belonged to Wyoming. Showing it here would report another store's sales as Indy East's.
+          </div></div>`;
+      case 'INCOMPLETE_FETCH':
+        return `<div class="p-8 text-center">
+          <div class="text-[14px] font-bold text-opl-ink dark:text-op-ink">Clover did not return the full day</div>
+          <div class="text-[12.5px] text-opl-inkDim dark:text-op-inkDim mt-2 max-w-[52ch] mx-auto leading-relaxed">
+            Part of the order list failed to load, so this would be an incomplete list rather than a quiet day. Nothing has been changed.
+          </div>${retry}</div>`;
+      case 'HTTP_403':
+        return `<div class="p-8 text-center text-opl-inkDim dark:text-op-inkDim text-sm">You don't have access to this store's transactions.</div>`;
+      default:
+        return `<div class="p-8 text-center">
+          <div class="text-[14px] font-bold text-op-bad">Couldn't load transactions</div>
+          <div class="text-[12.5px] text-opl-inkDim dark:text-op-inkDim mt-2">${escapeHtml(d.error || d.detail || payload.__err || 'Unknown error')}</div>
+          ${retry}</div>`;
+    }
+  }
+
+  function renderTransactions(data) {
+    const storeName = currentStoreName || '';
+    const dateStr = data.date || selectedTxnDate || getETTodayStr();
+    const strip = el('txn-day-selector');
+    if (strip) strip.innerHTML = _buildItemsDayStripHTML(storeName, dateStr, false, 'selectTxnDay', false);
+    const body = el('txn-body');
+    if (!body) return;
+
+    if (data.__err) { body.innerHTML = _txnErrorHTML(data); return; }
+
+    const rows = data.rows || [];
+    const counts = data.counts || {};
+    const t = data.totals || {};
+    const mine = rows.filter(r => r.kind === txnTab);
+    const isToday = dateStr === getETTodayStr();
+
+    const tabsHTML = TXN_TABS.map(([k, label]) =>
+      `<button type="button" role="tab" aria-selected="${k === txnTab}" onclick="setTxnTab('${k}')">${label}<span class="txn-cnt">${(counts[k] || 0).toLocaleString()}</span></button>`).join('');
+
+    const liveTag = isToday
+      ? `<span class="inline-flex items-center gap-1 text-[9.5px] font-bold tracking-[0.06em] uppercase txn-accent"><span class="w-1.5 h-1.5 rounded-full bg-accent-green"></span>Live</span>`
+      : '';
+    const refreshBtn = isToday ? `<button type="button" onclick="refreshTransactions()" class="text-[11.5px] font-bold txn-accent">Refresh</button>` : '';
+
+    const sum = `
+      <div class="txn-sum">
+        <div class="txn-sum-c"><div class="txn-sum-k">Payments total</div>
+          <div class="txn-sum-v">${fmtDollar(t.payments || 0)}</div>
+          <div class="txn-sum-s">from ${(t.count || 0).toLocaleString()} payment${t.count === 1 ? '' : 's'}</div></div>
+        <div class="txn-sum-c"><div class="txn-sum-k">Tips</div>
+          <div class="txn-sum-v">${fmtDollar(t.tip || 0)}</div>
+          <div class="txn-sum-s">as recorded by Clover</div></div>
+        <div class="txn-sum-c"><div class="txn-sum-k">Taxes and fees</div>
+          <div class="txn-sum-v">${fmtDollar(t.tax || 0)}</div>
+          <div class="txn-sum-s">included in the total above</div></div>
+        <div class="txn-sum-c"><div class="txn-sum-k">Refunded</div>
+          <div class="txn-sum-v">${t.refunded ? '−' + fmtDollar(t.refunded) : fmtDollar(0)}</div>
+          <div class="txn-sum-s">refunds + manual refunds</div></div>
+      </div>`;
+
+    const label = (TXN_TABS.find(x => x[0] === txnTab) || ['', ''])[1].toLowerCase();
+    const status = `<div class="txn-status"><b>${escapeHtml(shortName(storeName))}</b> · ${escapeHtml(dateStr)} · <b>${mine.length.toLocaleString()}</b> ${escapeHtml(label)} · read live from Clover, nothing written back.</div>`;
+
+    let table;
+    if (!mine.length) {
+      // Zero here IS a real reading — the day loaded and held none of this kind.
+      // Say that, rather than leaving a blank panel that reads as a failure.
+      table = `<div class="p-8 text-center">
+        <div class="text-[13.5px] font-semibold text-opl-ink dark:text-op-ink">No ${escapeHtml(label)} on this day</div>
+        <div class="text-[12px] text-opl-inkDim dark:text-op-inkDim mt-2">Nothing of this type was recorded. That is a real reading, not a failure to load.</div>
+      </div>`;
+    } else {
+      const head = TXN_COLS[txnTab].map((c, i) =>
+        `<th class="${i === 0 ? 'txn-stick' : ''}${c === 'Amount' ? ' txn-num' : ''}">${escapeHtml(c)}</th>`).join('');
+      const bodyRows = mine.map(r => {
+        const chipCls = r.kind === 'payment' ? 'txn-payment' : r.kind === 'void' ? 'txn-void' : 'txn-refund';
+        const chipTxt = r.kind === 'payment' ? 'Payment' : r.kind === 'void' ? 'Void' : r.kind === 'manual' ? 'Manual refund' : 'Refund';
+        const tender = r.tender
+          ? `<span class="txn-tender"><span class="txn-g txn-${escapeHtml(r.tenderKind || 'other')}">${escapeHtml((r.tenderKind || 'other').slice(0, 4).toUpperCase())}</span>${escapeHtml(r.tender)}</span>`
+          : _txnNone('unnamed tender');
+        const common = `<td class="txn-stick">${_txnTime(r.ts)}</td>`
+          + `<td><span class="txn-chip ${chipCls}">${chipTxt}</span></td>`
+          + `<td class="txn-num txn-amt${r.amount < 0 ? ' txn-neg' : ''}">${fmtDollar(r.amount || 0)}</td>`
+          + `<td>${tender}</td>`
+          + `<td>${_txnVal(r.employee, 'not recorded')}</td>`;
+        let tail;
+        if (txnTab === 'payment')      tail = `<td>${_txnVal(r.customer, 'none attached')}</td><td>${_txnVal(r.source, 'unknown')}</td>`;
+        else if (txnTab === 'void')    tail = `<td>${_txnVal(r.result, 'voided')}</td><td class="font-mono text-[11.5px]">${_txnVal(r.orderId, 'no order')}</td>`;
+        else if (txnTab === 'refund')  tail = `<td>${_txnVal(r.reason, 'no reason given')}</td><td class="font-mono text-[11.5px]">${_txnVal(r.refundOf, 'unlinked')}</td>`;
+        else                           tail = `<td>${_txnVal(r.reason, 'no reason given')}</td><td class="font-mono text-[11.5px]">${_txnVal(r.orderId, 'no order')}</td>`;
+        const on = txnSelected === r.id ? ' class="txn-on"' : '';
+        return `<tr${on} onclick="openTxnDetail(${JSON.stringify(String(r.id)).replace(/"/g, '&quot;')})">${common}${tail}</tr>`;
+      }).join('');
+      table = `<div class="txn-scroll"><table class="txn-tbl"><thead><tr>${head}</tr></thead><tbody>${bodyRows}</tbody></table></div>`;
+    }
+
+    const detail = txnSelected ? _txnDetailHTML(rows.find(r => r.id === txnSelected)) : '';
+
+    const legend = `
+      <div class="txn-legend">
+        <span class="txn-lg"><span class="txn-chip txn-payment">Payment</span> a completed sale</span>
+        <span class="txn-lg"><span class="txn-chip txn-refund">Refund</span> money returned <b>against a payment</b></span>
+        <span class="txn-lg"><span class="txn-chip txn-refund">Manual refund</span> keyed by hand, <b>no parent payment</b></span>
+        <span class="txn-lg"><span class="txn-chip txn-void">Void</span> cancelled before it settled — <b>never in the day's total</b></span>
+        <span class="txn-lg"><span class="txn-none">none attached</span> a value Clover does not hold — <b>named, never blank</b></span>
+      </div>`;
+
+    body.innerHTML = `
+      <div class="txn-bar">
+        <span class="txn-barlbl">Transactions</span>
+        ${liveTag}
+        <span class="txn-spacer"></span>
+        ${refreshBtn}
+      </div>
+      <div class="txn-tabs" role="tablist" aria-label="Transaction types">${tabsHTML}</div>
+      ${sum}${status}${table}${detail}${legend}`;
+  }
+
+  function _txnDetailHTML(r) {
+    if (!r) return '';
+    const cell = (k, v, big) => `<div class="txn-dt-cell"><div class="txn-dt-k">${escapeHtml(k)}</div><div class="txn-dt-v${big ? ' txn-big' : ''}">${v}</div></div>`;
+    const chipCls = r.kind === 'payment' ? 'txn-payment' : r.kind === 'void' ? 'txn-void' : 'txn-refund';
+    const chipTxt = r.kind === 'payment' ? 'Payment' : r.kind === 'void' ? 'Void' : r.kind === 'manual' ? 'Manual refund' : 'Refund';
+    const change = (r.cashTendered != null) ? Math.round((r.cashTendered - Math.abs(r.amount)) * 100) / 100 : null;
+    const tender = r.tender
+      ? `<span class="txn-tender"><span class="txn-g txn-${escapeHtml(r.tenderKind || 'other')}">${escapeHtml((r.tenderKind || 'other').slice(0, 4).toUpperCase())}</span>${escapeHtml(r.tender)}</span>`
+      : _txnNone('unnamed tender');
+    const dateLabel = r.ts
+      ? new Date(r.ts).toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+      : '—';
+    return `
+      <div class="txn-dt">
+        <div class="txn-dt-bar">
+          <span class="txn-chip ${chipCls}">${chipTxt}</span>
+          <span class="txn-dt-id">${escapeHtml(String(r.id || ''))}</span>
+          <span class="txn-dt-sub">${r.orderId ? 'Order ' + escapeHtml(r.orderId) : 'No linked order'}</span>
+          <span class="txn-spacer"></span>
+          <button type="button" onclick="openTxnDetail(${JSON.stringify(String(r.id)).replace(/"/g, '&quot;')})" class="text-[11.5px] font-bold txn-accent">Close</button>
+        </div>
+        <div class="txn-dt-grid">
+          ${cell('Amount', fmtDollar(r.amount || 0), true)}
+          ${cell('Date', escapeHtml(dateLabel))}
+          ${cell('Time', escapeHtml(_txnTime(r.ts)))}
+          ${cell('Tender type', tender)}
+          ${cell('Employee', _txnVal(r.employee, 'not recorded'))}
+          ${cell('Customer', _txnVal(r.customer, 'none attached'))}
+          ${cell('Source', _txnVal(r.source, 'unknown'))}
+          ${cell('Tax', fmtDollar(r.tax || 0))}
+          ${r.cashTendered != null ? cell('Cash tendered', fmtDollar(r.cashTendered)) : ''}
+          ${change != null ? cell('Change given', fmtDollar(change)) : ''}
+          ${r.reason ? cell('Reason', escapeHtml(r.reason)) : ''}
+          ${r.result ? cell('Result', escapeHtml(r.result)) : ''}
+        </div>
+      </div>`;
+  }
+
   function _itemsSortDropdownHTML(onChangeName) {
     const opts = [['netSales','Net Sales'],['qty','Qty'],['asp','ASP'],['pctNet','% of Net']];
     const sel = (v) => v === itemSortCol ? 'selected' : '';
