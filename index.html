@@ -5813,21 +5813,31 @@
   // load-time call would have thrown "Cannot access 'WORKER_BASE' before
   // initialization". Keep this above all uses; don't move it back down.
   const WORKER_BASE = 'https://api.retjghub.com/';
-  // Dashboard store roster. Wyoming (BL12) is removed here because the store
-  // is closed — it still appears on the Weekly Retail Summary page, which uses
-  // its own WRS_STORE_KEYS list. Indy East (BL16/BL17) is added as a card;
-  // its data is wired up later.
+  // Stores that still TRADE. A closed store leaves this list: it stops getting a
+  // dashboard card, a per-store D1 read and a live Clover fetch on every load, and
+  // it stops being counted in "N of M reporting". Its history is untouched — the
+  // Weekly Retail Summary runs off its own WRS_STORE_KEYS, which keeps every
+  // closed store so the numbers it earned stay readable.
+  //
+  // 🔑 THIS LIST DOES NOT DECIDE BUDGET. Chain financials scope to ALL_STORES in
+  // worker.js, and Holland's budget is deliberately still in there — see the note
+  // in STORE_CLOSED_FROM (worker.js): the company plan was never revised for the
+  // closure, so the shortfall is a real miss the chain is meant to carry. Removing
+  // Holland from this list changes what the dashboard DRAWS, not what it COUNTS.
   const STORES = [
     "BL1/BL6 Coliseum",
     "BL2/BL7 South Bend",
     "BL4/BL5 Dupont",
     "BL14/B15 Battle Creek",
     "BL16/BL17 Indy East",
-    "BL8/BL9 Holland",       // shown last everywhere (cards + dropdowns) per request
   ];
-  // Parallel to STORES by index (metrics map uses COLORS[i]); Holland's amber
-  // moved to the end alongside it so every store keeps its accent color.
-  const COLORS = ["#3BB54A","#194975","#00B8FF","#ef4444","#ec4899","#f59e0b"];
+  // Parallel to STORES by index (metrics map uses COLORS[i]). Holland's amber came
+  // out alongside it, so the remaining five keep the accent colors they already had.
+  const COLORS = ["#3BB54A","#194975","#00B8FF","#ef4444","#ec4899"];
+  // Closed stores, mirroring STORE_CLOSED_FROM in worker.js. The worker owns what a
+  // closure MEANS (reporting status, refusing writes); this only answers "is it
+  // closed", for the badge on its Retail Summary tab. One line per future closure.
+  const CLOSED_STORES = { BL8: '2026-07-25', BL12: '2026-06-15' };
   // (MAX_TXN_DURATION_MS removed with the client-side aggregation — the
   // transaction-time filter now lives only in the worker.)
   const C = {
@@ -19993,7 +20003,7 @@
         <div class="flex items-center justify-between gap-2">
           <div class="flex items-center gap-2 min-w-0">
             <h2 class="text-lg font-extrabold text-opl-ink dark:text-op-ink truncate">${escapeHtml(storeName)}</h2>
-            ${storeKey === 'BL12' ? `<span class="flex-shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-[0.05em] border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">Closed · historical</span>` : ''}
+            ${CLOSED_STORES[storeKey] ? `<span class="flex-shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-[0.05em] border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">Closed · historical</span>` : ''}
           </div>
           <div class="flex-shrink-0 px-2.5 py-1 rounded-[11px] border border-[rgba(20,16,8,0.08)] dark:border-op-border bg-[rgba(20,16,8,0.04)] dark:bg-[rgba(255,255,255,0.04)] text-[12px] font-bold tabular-nums text-opl-ink dark:text-op-ink whitespace-nowrap">${escapeHtml(wrsRangeLabel())}</div>
         </div>

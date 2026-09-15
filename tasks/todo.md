@@ -1751,3 +1751,65 @@ on state, warning raised by pinning B onto A's dates, warning cleared and B movi
 when unpinned), two-range and hours suites both still green, full suite 4160 across 67.
 
 Frontend only — Pages carries it on merge, nothing to deploy.
+
+## Holland (BL8) off the dashboard roster (2026-09-15)
+
+Brian: "gate BL8 like BL12", after I flagged BL8 reporting $0 for eight weeks.
+
+### What the research changed about the ask
+
+I had to correct myself twice here, and both corrections mattered.
+
+1. **BL8 was already ~70% gated.** `STORE_CLOSED_FROM.BL8 = '2026-07-25'` already existed —
+   with exactly the cutover date I was about to propose — and already drives reporting
+   status, refuses writes with a 409, and excludes BL8 from Bin Dump, Markdown/OOS, Shelf
+   Count and Labor, each with its own comment.
+2. **The "phantom budget" I flagged as a distortion is a deliberate decision.** The comment
+   in `STORE_CLOSED_FROM` records Brian's call of 2026-08-11: the company plan was never
+   revised for the closure, so the $813,563 shortfall is a real miss the chain is meant to
+   carry, and it says in terms not to undo it without asking. My framing of "77.9% is wrong,
+   91.3% is right" had it backwards — 77.9% is the intended number.
+
+So the full BL12 treatment was the one change the codebase explicitly warns against. Brian
+chose dashboard cleanup only, budget untouched.
+
+### Why the two closed stores are handled differently
+
+BL12's register was physically MOVED to BL16 and shares its Clover merchant, so polling it
+would fetch Indy East and write it under 'BL12' — silently doubling Indy. Its absence from
+ALL_STORES is the only thing preventing that. BL8 has its own merchant that simply returns
+nothing, so there is no double-count hazard and no successor to gate dates against.
+
+- [x] Remove BL8 from the frontend `STORES` roster — no card, no per-store D1 read, no live
+      Clover poll every load, and the store counts read 5 instead of 6
+- [x] Drop the matching `COLORS` entry so the arrays stay index-parallel
+- [x] Generalise the "Closed · historical" badge from the `'BL12'` literal to a
+      `CLOSED_STORES` map mirroring the worker — the next closure is one line
+- [x] scripts/test-closed-stores.mjs (17 assertions; 5 fail against the prior file)
+- [x] CACHE_NAME v192 → v193
+
+### Deliberately NOT touched
+
+- `worker.js ALL_STORES` — carries the budget. This is the whole point.
+- `PS_STORES` — `scripts/test-price-scan.mjs` pins it to ALL_STORES byte-for-byte, order
+  included. Editing one without the other fails that test immediately.
+- `WRS_STORE_KEYS` — keeps Holland's history readable in the Retail Summary.
+- `SR_ALL` — drives the supply-request table's columns; dropping BL8 would hide historical
+  BL8 requests rather than tidy anything.
+- The admin/repair pickers (repair console, re-snapshot, ISR, overrides) — you need those to
+  inspect a closed store's history.
+
+### Review
+
+Four failed test runs before this went green, and every one was my fixture, not the feature:
+the stub never authenticated, so `navigateToPage` refused to open the page, so wrsData stayed
+null, so `renderWrsStore` returned at its first guard and the badge was never rendered. The
+pane was empty rather than wrong, which should have told me sooner — a broken fixture that
+looks like a broken feature. The fix was a real `auth-me` payload.
+
+The strongest evidence the roster actually changed is the request log, not the card count:
+the per-store history read and the live Clover poll are driven straight off `STORES`, and both
+now fan out to exactly five stores with no BL8. A stale card could hide; a request cannot.
+
+Verification: 17 invariants, 12 browser checks, all four existing browser suites still green,
+full suite 4178 across 68. Frontend only — nothing to deploy beyond the Pages rebuild.
