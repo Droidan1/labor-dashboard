@@ -1,3 +1,89 @@
+# Store-level Transactions tab (Clover parity) — feasibility + preview (2026-09-15)
+
+Brian: "Is there a way to add transactions details for each store? Similar to what Clover
+provides… a manager can go to their store card and click view and then next to item sales,
+there would be transactions. Review what we can view from the API, see if this is possible.
+If this is possible, create me a preview."
+
+**Verdict: possible.** Preview only — no app code changed. `docs/` is excluded from
+`scripts/build.sh`, so nothing here reaches production.
+
+## What the API actually gives (verified against Clover's own docs, not assumed)
+
+`GET /v3/merchants/{mId}/payments` exists and is never called today
+(`grep -c` for payments/employees/tenders/customers/authorizations in `worker.js` → **0**).
+Its documented response carries `id, order.id, tender.{href,id}, amount, cashbackAmount,
+employee.id, createdTime, clientCreatedTime, modifiedTime, offline, result, note`.
+
+| Clover column | Source | Cost |
+|---|---|---|
+| Time | `payment.createdTime` | free |
+| Type | endpoint + `result` / `voided` | free |
+| Amount | `payment.amount` — **never `order.total`** (MEMORY.md:56) | free |
+| Tender Type | `payment.tender.id` → `/v3/tenders` join | 1 cacheable lookup |
+| Employee | `payment.employee.id` → `/v3/employees` join | 1 cacheable lookup |
+| Customer | `order.customers` via `expand=customers` on orders | orders path only |
+| Payment Source | `payment.offline` + device/ecom | free |
+| Payment ID / Order ID / Invoice no. | `payment.id`, `payment.order.id` | free |
+| Tips / Taxes | `payment.tipAmount`, `payment.taxAmount` | free |
+
+Tabs map onto endpoints, three of which the worker **already calls**:
+Payments → `/payments` (new) · Refunds → `/refunds` (`fetchRefundElements`, exists) ·
+Manual Refunds → `/credits` (`fetchManualRefunds`, exists) · Voids → `result !== 'SUCCESS'`
+(already filtered) · Authorizations → `/authorizations` (new; pre-auths, ~always empty here).
+
+## The hard constraint
+
+🛑 **~90 days, and it is Clover's, not ours.** Clover documents the cap explicitly for
+*Get all payments* ("the results will not exceed 90 days… even if the search query exceeds a
+90-day span"). Nothing per-payment has ever been stored — D1 `daily_sales` is one row per
+store-day and KV `items:` is category-grain — so this is a **live, read-only** view and
+older transactions are genuinely unrecoverable. The page must say so rather than render an
+empty table that reads like "no sales".
+
+## Plan (not started — waiting on Brian's review of the preview)
+
+- [x] Confirm the Clover surface exists and what it returns
+- [x] Confirm nothing per-transaction is persisted today
+- [x] Build the preview (`docs/store-transactions-preview.html`), both themes, §4.8 panel
+- [ ] Brian reviews → then: worker `?action=transactions`, `ACTION_BUSINESS` entry, tab wiring
+- [ ] Decide: persist a per-payment table so history survives the 90-day window?
+
+## Non-negotiables carried into the build (house rules, not preferences)
+
+1. `["transactions", "bl"]` in `ACTION_BUSINESS` (`worker.js:4237`) or the business gate
+   403s every session call — verified at `worker.js:14521-14537`.
+2. `canAccessStore(currentUser, store)` → 403. Store-scoped, like `items-hour`.
+3. `cloverFetchWithRetry`, never bare `fetch` — a 429 read as "no data" has zeroed real
+   revenue in this repo before.
+4. A failed page is **not** the end of the list — return null, never a truncated array.
+5. Write nothing to KV or D1. `sales-diag` is the read-only precedent.
+6. BL16 and BL12 share one merchant ID — apply the `wrsGateDates` cutover or BL16 shows
+   Wyoming's pre-2026-06-14 rows.
+7. Refuse an over-wide range with a 413, never truncate silently.
+## Verification of the preview (49 assertions, all green)
+
+Run headless against the real file, both themes, all five tabs:
+
+- **Behaviour (33)** — rows render; the second render of every tab rebuilds its own header
+  (§4.8 trap 8); the status line survives a re-render (trap 7); store/date/role/search all
+  repaint; the detail drawer opens, foots its receipt to the payment total, and closes.
+- **Contrast (both themes × five tabs, drawer open)** — every text element measured against
+  its **real composited** background, walking ancestors through translucent layers. Clean at
+  AA throughout. The harness proves itself first with the inline-red check from lessons.md,
+  and waits out the 200 ms transition before reading any colour.
+- **§4.8 traps + responsive (16)** — explicit `type` on every input (trap 1); sticky header
+  and sticky first column both opaque and still pinned after a horizontal scroll (trap 2);
+  `.panel` declares its own colour (trap 3); `color-scheme` stated per theme (trap 4); no
+  horizontal overflow at 390 px.
+
+Two defects the screenshots caught that the assertions did not, both now fixed:
+`box-shadow` on a `<td>` outlined **every cell** of the selected row instead of the row, and
+the detail grid's 1 px gap painted hairline as a solid block across the last row's unused
+cells. A third came from re-reading §4.8 rather than from any test: past the retention wall
+the hero printed **$0.00** and the tab counts **0**, directly under a banner saying the data
+could not be retrieved — the panel contradicting itself. Absent data now reads `—`.
+
 # Pure black follow-up: nav bar left navy, dark status bar reverted (2026-09-10)
 
 Brian, after merging: "revert dark back to green and look at the nav bar on mobile that
