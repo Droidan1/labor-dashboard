@@ -220,3 +220,63 @@ them. Migrations are a manual `wrangler d1 execute`; a bare `wrangler deploy` ta
 
 Merging to `main` deploys the frontend via Pages. It does **not** deploy the worker or run a
 migration. Auto-merge does not work on this repo; the PR needs Brian's click.
+
+## Deployed — 2026-09-15
+
+Order was **migrations → worker → frontend**, except that the frontend went FIRST by
+accident of process: merging #239 makes Pages rebuild `main`, so the page was live on
+www.retjghub.com before either migration ran. Harmless here — the page cannot write, and
+every `truck-*` call was refused by the fail-closed action gate as `UNCLASSIFIED_ACTION`,
+which the client maps to "That action is not available on this deployment." Worth knowing
+for the next feature: **merging IS deploying, for the frontend, and it does not wait.**
+
+### Databases — schema READ, not inferred from a command not erroring
+
+Both were clean before: neither table existed, neither column existed.
+
+```
+                trucks  truck_pallets  approval cols | users  associates  bin_dumps
+  STAGING       24 cols     20 cols          2       |   4        0           0
+  PRODUCTION    24 cols     20 cols          2       |  17        3          26
+```
+
+🔑 **`associates` is the number that mattered.** It counts `pin_hash IS NOT NULL`, which
+is what `getAuthUser` uses to decide someone is an associate. It read 3 on production
+before migration-066 and 3 after — proof that adding `approval_pin_hash` reclassified
+nobody. `users` (17) and `bin_dumps` (26) also unchanged; the migrations are additive and
+the counts say so rather than the diff merely implying it.
+
+✅ **The partial unique index genuinely enforces**, confirmed on STAGING by inserting a
+second open truck at one store and being refused by the database:
+`UNIQUE constraint failed: trucks.store`. Both probe rows deleted, table back to 0.
+🛑 Not repeated on production — the guard was already proven, and a probe that performs
+the damage if the guard is absent is exactly what this repo's rules forbid.
+
+### Worker
+
+| env | version | crons |
+|---|---|---|
+| staging (`-e staging`) | `0878c1ed-83fe-4860-a5f0-85552c320219` | 2 |
+| production (bare `deploy`) | `ec9a820a-7c5a-4d09-8e02-2ab49a82cc00` | **6** |
+
+Deploy output checked for the three things a past deploy silently dropped — `MEDIA`
+binding, `BL16_MERCHANT_ID`, and all six production crons (`55 3 * * *`, `* * * * *`,
+`0 12 * * *`, `0 11 * * 1`, `0 * * * *`, `30 10 * * *`). All present on both.
+
+Rollout confirmed by reading the DEPLOYED BUNDLE back from the Cloudflare API three
+times, identical each pass: `truck-pallet-log` ×3, `BOL_PROMPT` ×2, `approval_pin_hash`
+×4, `truckBarcodeMatches` ×5, 963,268 bytes. `api.retjghub.com` answers
+`401 NO_SESSION` on `?action=truck-current` — the worker boots and refuses cleanly.
+
+⚠️ **What was NOT verified, and could not be.** No pre-auth action differs between the
+old worker and the new one, so there is no unauthenticated HTTP probe that distinguishes
+them — the bundle read above is proof the deployed VERSION carries the code, not a
+sample of what a logged-in phone gets from a given edge. The end-to-end path has
+therefore never been exercised by a real session.
+
+### Still outstanding, and neither is code
+
+- [ ] **Nobody has an approval PIN.** `approval_pin_hash` is NULL on all 17 production
+      accounts, so a duplicate barcode or repeated BOL currently has no one who can
+      approve it — the block is a dead end until a manager is given a code.
+- [ ] **The BOL read has still never met a real camera.** Watch the seal number.
