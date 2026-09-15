@@ -1,3 +1,68 @@
+# The backfill ran: 265,245 receipt lines, nothing lost (2026-09-15)
+
+`bash scripts/backfill-transactions.sh --write`, after a dry run and a targeted
+retry of the one day that had failed to fetch.
+
+| | before | after |
+|---|---|---|
+| `payment_archive_items` | 0 | **265,245** |
+| `payment_archive` | 117,402 | 117,402 |
+| `payment_archive_days` | 534 (533 complete) | 534 (533 complete) |
+| stored gross | $2,765,121.53 | $2,765,121.53 |
+| summed `amount` | $2,751,160.58 | $2,751,160.58 |
+
+**Zero days regressed.** The reconciliation query — any day where rows, gross or
+completeness fell below the pre-run backup — returned empty across all 534.
+
+## What the guard actually did
+
+Nothing, and that is the finding. I predicted the June end would refuse with
+`WOULD_LOSE_ROWS`; **there were none**. Clover still returns at least as many
+rows as are banked all the way back to 18 June, so the magnitude guard had
+nothing to refuse. It was in place and correct; the decay simply had not reached
+the window yet.
+
+BL1 2026-06-22 — the day the guard fix was written for — re-banked without
+losing a row, and remains `complete = 0` with the same 10.0% drift. That day is
+permanently short (≈$800 of refunds aged out of Clover before it was first
+banked) and no re-bank can fix it.
+
+One day needed a retry: **BL14 2026-08-06**, `INCOMPLETE_FETCH` on the dry run,
+banked 315 lines on a targeted re-run. Transient, exactly what that guard is for.
+
+## Data quality across all 265,245 rows
+
+unnamed 0 · null price 0 · bad qty 0 · refunded lines 319 · price range
+−$219.35 to $1,500 · max qty 192.
+
+Spot-checked BL1 2026-06-22 and the merge and discount logic both hold:
+`$2 Bin × 12 = $24.00` (merge, exact unit price), `$3 Accessories × 2 = $5.00`
+(a dollar off list, so the line discount came through).
+
+## 🛑 The incident in the middle of this
+
+Brian's `npx wrangler deploy` shipped his **unpulled** checkout and rolled
+production back past the Transactions tab entirely — no `fetchTransactionOrders`,
+no `payment_archive`, no `bank-transactions`. Confirmed by pulling the deployed
+bundle from the Cloudflare API and grepping it: every marker at 0, upload 828 KiB
+against main's 901 KiB.
+
+The tab was broken on www.retjghub.com for roughly 40 minutes. The backfill's 18
+POSTs hit an unknown action, returned 200 with no `report` key, and my summary
+dutifully reported zeros — which is what surfaced it. **Nothing was written**;
+every table matched its backup afterwards.
+
+Fixed by pulling and redeploying: 901.67 KiB, version `befbf5c6`, all markers
+present.
+
+## Left over
+
+- The summary prints the `WOULD_LOSE_ROWS` explainer even when the only reason
+  was `INCOMPLETE_FETCH`. Cosmetic.
+- `SNAPSHOT_SECRET` rotation — the repo copy in `scripts/auction-drive-ingest.gs`
+  turned out to be STALE (it was rejected), so the public exposure is of a dead
+  value, not the live one. Lower priority than I first said, still worth doing.
+
 # Two runs lost to my own placeholders (2026-09-15)
 
 Attempt 1: `SNAPSHOT_SECRET='...' bash scripts/backfill-transactions.sh` — pasted
