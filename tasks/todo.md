@@ -258,15 +258,31 @@ production without ever having been deployed from here.
       `BACKFILL_HOURS_MAX_STORE_DAYS` (120), so the window chunks as one invocation per
       store, six in total; `store=all` would cap at 20 days per call and need six passes
       anyway.
+- [x] **Verified live against the served bytes**, not taken on trust: `17f16db4` at 100%, a
+      907,780-byte bundle, and `["backfill-item-hours", "bl"]` present in `ACTION_BUSINESS` —
+      the entry without which the fail-closed business gate 403s every session call.
+- [x] **`scripts/backfill-item-hours.sh`** — chunks the window at the 120 cap, dry run unless
+      `--write`, and a write names the namespace, the key pattern and the store-day count and
+      waits for confirmation (rule 7). 27 assertions in
+      `scripts/test-backfill-hours-runner.mjs`, all against a local mock: rule 3 forbids
+      proving "dry by default" by calling production. Mutation-checked — dropping the `dry=1`
+      default kills exactly the two assertions that should die.
+- [x] **Documented** in README §8.4, which the endpoint was missing from.
 - [ ] **No dry run yet, and no `item-hours:` key written.**
 
-## Still to do, in order
+## Blocked on one thing only: the secret
 
-1. Dry-run **one** store-day, then confirm via the KV API that no key appeared. Rule 3 —
-   never test a guard with a probe that does the damage if the guard is missing, and
-   `dry=1` is that guard.
-2. Dry-run all 702; report the reconcile rate and the skip list.
-3. **Stop.** Rule 7 — no write without explicit confirmation.
+The endpoint is live and the runner is tested, but invoking it needs
+`X-Snapshot-Secret`. `SNAPSHOT_SECRET` is a Worker secret, deliberately absent from
+`wrangler.toml` (public repo), and it is not in this session's environment. So the dry run
+has to be started by someone holding it:
+
+```bash
+SNAPSHOT_SECRET='...' bash scripts/backfill-item-hours.sh --start 2026-05-18 --end 2026-09-11
+```
+
+That is a dry run; it writes nothing and prints the reconcile rate. Then, and only then,
+the same command with `--write`.
 
 Expect the failures to cluster at the old end: Clover's ~90 days puts the cliff near
 2026-06-17, so roughly 87 of each store's 117 days sit inside nominal retention and ~30
