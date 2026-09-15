@@ -1,3 +1,93 @@
+# Items sold, inside the transaction drawer (2026-09-15)
+
+Brian: *"When a user clicks on a transaction can we add the items sold as clickable an option?"*
+Answers to the two clarifying questions:
+- **The items list is the click.** Detail drawer as now, plus an `Items sold (N)` row that
+  expands into the receipt. Items are listed only — no navigation anywhere else.
+- **Archive them too.** New table + re-run the 534-store-day backfill, so old transactions
+  keep their items.
+
+## What makes this non-obvious
+
+Line items belong to the **order**, not to the payment. Measured against production D1:
+
+| | |
+|---|---|
+| orders with a payment | 115,798 |
+| of those, split-tender | 1,091 (**0.94 %**) — worst case 5 payments on one order |
+| payments with no order | 0 |
+
+So 99 % of the time the order's items *are* that transaction's items, unambiguously. The
+remaining 0.94 % must be **labelled**, never quietly presented as one payment's basket.
+
+## Plan
+
+- [x] `fetchTransactionOrders` — widen the expand to carry `lineItems` + `lineItems.discounts`
+- [x] `buildItemsByOrder` / `buildOrderItems` — pure; merge identical lines, apply the
+      line-level discount so the price shown is the price charged
+- [x] `attachTransactionItems` — one function, shared by the live path and the archive path,
+      so the client cannot tell which source a row came from
+- [x] `itemsNote` for the three cases where the list is not "what this payment bought":
+      split tender, a void, a refund
+- [x] `migration-064.sql` — `payment_archive_items`, keyed on `(store, date, order_id, seq)`
+- [x] Bank the items alongside the payments; read them back in `readArchivedDay`
+- [x] Frontend: expandable `Items sold (N)` row in `_txnDetailHTML`, both themes measured
+- [x] Tests: extend `test-transactions.mjs` and `test-payment-archive.mjs`
+- [x] `CACHE_NAME` v197 → v198 + re-pin the shell-cache fixture
+- [ ] **Present** the migration and the re-backfill to Brian — both are database mutations
+      (CLAUDE.md rule 7), so neither runs without his explicit go-ahead
+
+## Review
+
+Built and tested; **nothing has been run against a database**.
+
+**What shipped in code.** `fetchTransactionOrders` now expands `lineItems,lineItems.discounts`
+on the orders it was already fetching, so live days cost no extra Clover call. Three pure
+functions do the work — `buildOrderItems` (merge, discount, weigh), `buildItemsByOrder`,
+`attachTransactionItems` — and the third is called by BOTH the live path and the archive read,
+so a banked day and a live day come back in the same shape. The drawer grows one expandable
+`Items sold (N)` row; it opens folded, and a different transaction opens folded again.
+
+**The three things that could have made this dishonest, and what was done instead.**
+
+| | |
+|---|---|
+| A split-tender order's basket shown as one payment's | the caveat opens **with** the list, naming the payment count |
+| A discounted line shown at shelf price | line-level discounts applied, both the `amount` and `percentage` spellings |
+| A refund's basket read as "what came back" | labelled as the original order; `refunded` lines carry a badge |
+
+And two silences kept silent: a refund whose original order was rung on an earlier day, and a
+custom-amount sale with no line items, both carry **no** `items` key rather than an empty basket.
+
+**Where it differs from migration-063 on purpose.** `payment_archive` never deletes, because its
+key is Clover's own payment id and a leftover row is a real transaction Clover has stopped
+returning. `payment_archive_items` is keyed on a DERIVED `(order_id, seq)`, so a re-bank whose
+merge came out differently would leave contradictions rather than old truth — it wipes the
+store-day first, in the same D1 batch as the first insert. The items write is also wrapped:
+if the table is missing the day's **payments still bank** and the failure is named in
+`needsAttention`. Losing a day's payments to protect its receipt would be the wrong trade.
+
+**Proof.**
+
+- `bash scripts/test.sh` — **4316 assertions across 71 suites, all passing** (27 of them new:
+  15 on the live receipt, 12 on the archived one).
+- `node scripts/check-receipt-render.mjs` — **34 assertions**, a new browser check (behaviour +
+  contrast) that did not exist before. Deliberately not named `test-*.mjs`: `test.sh` globs that
+  and every other suite is pure Node.
+- Rendered through the real `index.html` in Chromium, all three themes, contrast **computed
+  against the composited background** rather than eyeballed:
+  light worst **5.88:1**, dark worst **5.65:1**, pure black worst **6.35:1**. All ≥ AA.
+- Behaviour checked in the same pass: no Items row until a transaction is open, opens folded,
+  `aria-expanded` flips, the caveat appears with the list, the next row re-folds, and a
+  single-payment order shows no caveat.
+
+**Two defects that all of that missed.** Brian asked for a preview; rendering an actual picture
+showed both in a second. `Items sold (9.5)` — the heading summed raw quantities, so a 1.5 lb
+weighed line made a nine-item basket read as nine and a half. And `1.5 ×` wrapped onto two lines,
+because the qty column was 54px with no `nowrap` and every integer quantity fit. Everything I had
+verified, I had verified as a NUMBER. Fixed: a weighed line counts as one item however much it
+weighs, and the qty cell is 62px and `nowrap`. `tasks/lessons.md` carries the rule.
+
 # The payment archive — transaction detail that outlives Clover (2026-09-15)
 
 Brian: **"persist the payments so history outlives the 90 days"**. Built, tested, NOT applied.

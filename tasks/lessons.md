@@ -1,3 +1,61 @@
+## 34 assertions passed and it still looked broken (2026-09-15)
+
+The Items-sold receipt. Before Brian ever saw it I had: 4316 unit assertions green, contrast
+computed against the composited background in all three themes (worst 5.65:1), and a scripted
+behaviour pass — opens folded, aria flips, caveat appears, next row re-folds. All of it passed.
+All of it was true. Then he asked for a preview, I rendered an actual picture, and two defects
+were obvious in under a second:
+
+1. **"Items sold (9.5)"** — the heading summed raw quantities, and a 1.5 lb bag of beads makes
+   a nine-item basket read as nine and a half. A weighed line is ONE item however much it
+   weighs; the weight belongs in the row, not in a count of things.
+2. **`1.5 ×` wrapped onto two lines** — the qty column was 54px with no `nowrap`, so the `×`
+   fell under the `1.5`. Every integer quantity fit, so nothing I had exercised showed it.
+
+Neither is subtle. Both survived because **everything I checked, I checked as a number.**
+Contrast is a number. `aria-expanded` is a string. Row counts are numbers. Nothing I ran
+rendered a fractional quantity and looked at the result, and the two suites that touch this
+code path (`test-transactions.mjs`, `test-payment-archive.mjs`) assert on the JSON the worker
+returns — where `qty: 1.5` is simply correct.
+
+**The rule.** Numeric verification is necessary and not sufficient. When a change draws
+something, RENDER IT AND LOOK before saying it is done — and render the awkward case, not the
+tidy one. A fixture of `1 × Widget` would have proved nothing here; the basket had to hold a
+fraction, a merged line, a refunded line and a nameless line at the same time.
+
+**What was actually missing.** This repo had no way to render a surface at all — 71 suites,
+none of them opening a browser. So I wrote `scripts/check-receipt-render.mjs`: behaviour plus
+contrast against the real composited background, deliberately NOT named `test-*.mjs`, because
+`test.sh` globs that and every other suite is pure Node — putting a browser in that glob would
+fail the whole suite on any machine without Chromium.
+
+**And a check is guilty until proven to bite.** Three of its first five failures were its own
+bugs, not the app's: a wrong expected count, a wrap probe reading cell height (which tracks the
+row, not the text), and a caveat measured on a row that has no caveat. After fixing those I
+broke `dist/index.html` on purpose twice — a 1.74:1 colour and a wrapping qty cell — and
+confirmed each failure was caught before trusting the green.
+
+## `cat >` on a tracked file I had never read (2026-09-15)
+
+CLAUDE.md says to write the plan to `tasks/todo.md`, so I wrote it — with `cat > tasks/todo.md`,
+without reading the file first. `todo.md` is not a scratchpad. It is a **newest-first append log**,
+21 entries and 2262 lines of why every previous decision was made, and I replaced all of it with
+a 43-line plan. `git diff --stat` showed `2278 deletions` and that is the only reason I noticed.
+
+Nothing was lost: it was uncommitted, `git checkout HEAD -- tasks/todo.md` brought it back, and
+the new entry went on the front where the convention puts it. But the guard was luck — I happened
+to read the stat line before committing.
+
+**The rule.** A redirect (`>`) onto a path that already exists is an overwrite, and an overwrite
+of a tracked file needs the same look-before-you-write as a database mutation. Read the head of it
+first; if it has content, append or prepend rather than replace. `>>` and a prepend are cheap; the
+history is not reconstructible from anywhere else.
+
+**Why the instinct failed.** "Write the plan to todo.md" reads like an instruction to create a
+file. It is an instruction to add an entry to one. The same shape appears in `tasks/lessons.md`,
+`DESIGN.md` and `MEMORY.md` — every long-lived document in this repo is a log, and none of them
+should ever be the target of a `>`.
+
 ## A find-and-replace would have broken dark mode (2026-09-15)
 
 Fixing inkDimmer-as-text. `.eb-chev` and `.eb-sec-chev` write `color:#9c9484` and have **no
