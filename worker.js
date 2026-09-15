@@ -4868,6 +4868,20 @@ const ACTION_BUSINESS = new Map([
   ["bin-dump-update", "bl"],
   ["bin-dump-delete", "bl"],
   ["bin-dump-photo", "bl"],
+  // Inventory Receiver. A different operation from Bin Dump — see the route block —
+  // but the same business: Bargain Lane's own dock.
+  ["truck-approvers", "bl"],
+  ["truck-bol-scan", "bl"],
+  ["truck-open", "bl"],
+  ["truck-current", "bl"],
+  ["truck-pallet-scan", "bl"],
+  ["truck-pallet-recent", "bl"],
+  ["truck-pallet-log", "bl"],
+  ["truck-down", "bl"],
+  ["truck-list", "bl"],
+  ["truck-pallet-update", "bl"],
+  ["truck-pallet-delete", "bl"],
+  ["truck-photo", "bl"],
   ["mos-lookup", "bl"],
   ["mos-log", "bl"],
   ["mos-list", "bl"],
@@ -7449,7 +7463,7 @@ function autoWeekOf(d) {                       // Sunday that starts the retail 
 
 // ── Bin Dump: reading a pallet tag ──────────────────────────────────────────
 // The seven fields Brian asked for, in the order they read on the tag.
-const BIN_DUMP_FIELDS = ["barcode", "item_no", "pallet_name", "sup_ref", "po", "units", "created_by_tag", "truck_no"];
+const PALLET_TAG_FIELDS = ["barcode", "item_no", "pallet_name", "sup_ref", "po", "units", "created_by_tag", "truck_no"];
 
 // How far back the soft duplicate check looks. One receiving session: a truck of
 // 30 pallets is unloaded over hours, and the duplicate this guards against is the
@@ -7477,10 +7491,10 @@ const BIN_DUMP_BARCODE_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 // hold comes back as a date and nothing else, which is enough to stop them without
 // leaking another store's operations.
 //
-// 🛑 A blank barcode is not a duplicate of every other blank. binDumpText turns "", "null"
+// 🛑 A blank barcode is not a duplicate of every other blank. tagText turns "", "null"
 // and "n/a" into null, and null returns no matches at all — a torn tag must stay loggable.
 async function binDumpBarcodeMatches(env, barcode, user, isAdminSecret, excludeId) {
-  const code = binDumpText(barcode, 60);
+  const code = tagText(barcode, 60);
   if (!code || !env.DB) return [];
   const since = new Date(Date.now() - BIN_DUMP_BARCODE_WINDOW_MS).toISOString();
   const { results } = await env.DB.prepare(
@@ -7582,7 +7596,7 @@ function binDumpWeekOf(iso) {
 
 // One tag field: a trimmed string, or null. Never "" — an empty string would be a
 // value that says "read, and empty", which is a different claim from "not read".
-function binDumpText(v, max) {
+function tagText(v, max) {
   if (v === null || v === undefined) return null;
   const s = String(v).trim();
   if (!s || s.toLowerCase() === "null" || s.toLowerCase() === "n/a") return null;
@@ -7591,7 +7605,7 @@ function binDumpText(v, max) {
 
 // Normalise whatever the model (or the client) hands back into the seven fields.
 // Shared by the scan, the log and the edit so all three agree on what a field is.
-function binDumpFields(raw) {
+function palletTagFields(raw) {
   const units = (() => {
     const v = raw?.units;
     if (v === null || v === undefined || String(v).trim() === "") return null;
@@ -7600,14 +7614,14 @@ function binDumpFields(raw) {
     return Number.isInteger(n) && n >= 0 ? n : null;
   })();
   return {
-    barcode: binDumpText(raw?.barcode, 60),
-    item_no: binDumpText(raw?.item_no, 40),
-    pallet_name: binDumpText(raw?.pallet_name, 160),
-    sup_ref: binDumpText(raw?.sup_ref, 60),
-    po: binDumpText(raw?.po, 40),
+    barcode: tagText(raw?.barcode, 60),
+    item_no: tagText(raw?.item_no, 40),
+    pallet_name: tagText(raw?.pallet_name, 160),
+    sup_ref: tagText(raw?.sup_ref, 60),
+    po: tagText(raw?.po, 40),
     units,
-    created_by_tag: binDumpText(raw?.created_by_tag, 80),
-    truck_no: binDumpText(raw?.truck_no, 40),
+    created_by_tag: tagText(raw?.created_by_tag, 80),
+    truck_no: tagText(raw?.truck_no, 40),
   };
 }
 
@@ -7620,7 +7634,7 @@ function binDumpFields(raw) {
 // tag, not on every vendor's — so a barcode shaped differently produces no hint at
 // all rather than warning on every pallet. It is a hint, never a refusal: the
 // manager can always submit either value.
-function binDumpTruckHint(fields) {
+function palletTagTruckHint(fields) {
   if (!fields.barcode || !fields.truck_no) return null;
   const m = /^[A-Za-z]+-(\d+)-\d+$/.exec(fields.barcode);
   if (!m) return null;
@@ -7657,6 +7671,207 @@ function storeActionGuard(storeRaw, currentUser, isAdminSecret, corsJson, opts) 
   }
   return null;
 }
+
+
+// ── Inventory Receiver: reading a Bill of Lading, and the truck it opens ─────
+//
+// 🔑 A DIFFERENT OPERATION FROM BIN DUMP, sharing only the pallet-tag reader. Brian,
+// 2026-09-15: "they have nothing to do with the bin dump page, they are operations and
+// procedures." Receiving is a pallet coming off a trailer; a bin dump is that pallet
+// later going into the bins. So truckBarcodeMatches below reads `truck_pallets` and
+// never `bin_dumps` — a barcode in both is the normal life of a pallet, not a double
+// count, and joining them would refuse a legitimate pallet every time the process
+// worked. The pallet TAG, though, is the same piece of cardboard, so PALLET_TAG_FIELDS,
+// BIN_TAG_PROMPT and palletTagFields() are CALLED here rather than copied.
+
+// The ten fields a Bill of Lading carries. bol_no and ship_from lead because those two
+// identify the truck — they are what the verify popup puts at the top, and what Brian
+// named when he described the flow.
+const TRUCK_BOL_FIELDS = ["bol_no", "ship_from", "ship_from_addr", "ship_to", "bol_date",
+                          "carrier", "trailer_no", "seal_no", "pro_no", "pallet_count"];
+
+// 🔑 THE SAME NINETY DAYS AS BIN_DUMP_BARCODE_WINDOW_MS, and for the same reason rather
+// than by inheritance: `PRM-<truck>-<index>` is only as unique as truck numbers, and
+// those cycle. An all-time check eventually matches a fresh pallet against a years-old
+// one, and a block that fires on good pallets teaches people to click through it.
+//
+// ⚠️ It WILL fire on a genuinely different pallet once the numbers come back around.
+// That is survivable only because a manager can approve past it with a reason on the
+// row. If those reasons start reading "different pallet, same code", this number is too
+// large — shorten it. Do not remove the guard.
+const TRUCK_BARCODE_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+
+// The month a truck belongs to, anchored to the STORE's day rather than UTC, exactly as
+// binDumpWeekOf anchors a week. A truck opened 9pm ET on the 30th is 01:00 UTC on the
+// 1st, so a UTC month files it under a month the store had not begun working — and at a
+// month boundary that error is a whole reporting period, not a day.
+//
+// 🔑 Derived from `opened_at` and never stored, so a truck that takes two days to unload
+// stays in the month it arrived, and no truck ever changes month after the fact.
+function truckMonthOf(iso) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" })
+    .format(new Date(iso)).slice(0, 7);          // "2026-09"
+}
+
+// A date off the paperwork, as an ISO calendar date, or null.
+//
+// 🛑 NULL RATHER THAN A GUESS. The samples are US forms printing M/D/YYYY, so that is
+// what is accepted alongside ISO. A value that does not fit either — a two-digit year, a
+// month over 12, a scrawl the model half-read — comes back null and the person types it.
+// A silently reinterpreted date is the failure this whole file is written to avoid: it
+// looks right and files the truck in the wrong month forever.
+function truckBolDate(v) {
+  const s = tagText(v, 40);
+  if (!s) return null;
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if (m) { var [y, mo, d] = [+m[1], +m[2], +m[3]]; }
+  else {
+    m = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/.exec(s);
+    if (!m) return null;
+    [y, mo, d] = [+m[3], +m[1], +m[2]];          // US convention on these forms: M/D/YYYY
+  }
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const iso = `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  // Round-trips only for a date that actually exists — 2/30 parses above and dies here.
+  const probe = new Date(iso + "T12:00:00Z");
+  return Number.isNaN(probe.getTime()) || probe.toISOString().slice(0, 10) !== iso ? null : iso;
+}
+
+// Normalise whatever the model (or the client) hands back into the ten BOL fields.
+// Shared by the scan and the open so both agree on what a field is, exactly as
+// palletTagFields is shared by the pallet scan and the pallet log.
+function truckBolFields(raw) {
+  const palletCount = (() => {
+    const v = raw?.pallet_count;
+    if (v === null || v === undefined || String(v).trim() === "") return null;
+    // "40 pallets" and "40" both appear in Additional Shipper Info; keep the digits.
+    const n = parseInt(String(v).replace(/[^\d]/g, ""), 10);
+    return Number.isInteger(n) && n > 0 && n <= 200 ? n : null;
+  })();
+  return {
+    bol_no: tagText(raw?.bol_no, 40),
+    ship_from: tagText(raw?.ship_from, 80),
+    ship_from_addr: tagText(raw?.ship_from_addr, 160),
+    ship_to: tagText(raw?.ship_to, 80),
+    bol_date: truckBolDate(raw?.bol_date),
+    carrier: tagText(raw?.carrier, 80),
+    trailer_no: tagText(raw?.trailer_no, 40),
+    seal_no: tagText(raw?.seal_no, 40),
+    pro_no: tagText(raw?.pro_no, 40),
+    pallet_count: palletCount,
+  };
+}
+
+// Has this exact pallet already been received?
+//
+// 🔑 CROSSES STORES, like Bin Dump's equivalent and for the same reason: one pallet
+// cannot come off two trailers, so a hit at another store is a real mistake. What the
+// caller may SEE is still scoped — a row at a store they do not hold comes back as a
+// date and nothing else, enough to stop them without leaking another store's operations.
+//
+// 🛑 READS `truck_pallets` ONLY. Not a join with bin_dumps, not a UNION. See the block
+// comment at the top of this section; the separation is the decision.
+//
+// 🛑 A blank barcode is not a duplicate of every other blank. tagText folds "", "null"
+// and "n/a" to null, and null returns no matches at all — a torn tag must stay loggable.
+// SQL's `= NULL` would match nothing either way, so this early return cannot be caught
+// behaviourally and is pinned at the source instead.
+async function truckBarcodeMatches(env, barcode, user, isAdminSecret, excludeId) {
+  const code = tagText(barcode, 60);
+  if (!code || !env.DB) return [];
+  const since = new Date(Date.now() - TRUCK_BARCODE_WINDOW_MS).toISOString();
+  const { results } = await env.DB.prepare(
+    `SELECT p.id, p.store, p.pallet_name, p.units, p.logged_by, p.logged_at, t.bol_no
+       FROM truck_pallets p JOIN trucks t ON t.id = p.truck_id
+      WHERE p.barcode = ? AND p.logged_at >= ? ORDER BY p.logged_at DESC LIMIT 5`
+  ).bind(code, since).all();
+  const allow = isAdminSecret ? null : allowedStores(user);   // null means every store
+  return (results || [])
+    .filter(r => !(excludeId != null && r.id === excludeId))
+    .map(r => (allow === null || allow.includes(r.store))
+      ? { id: r.id, store: r.store, bol_no: r.bol_no, pallet_name: r.pallet_name,
+          units: r.units, logged_by: r.logged_by, logged_at: r.logged_at, redacted: false }
+      : { logged_at: r.logged_at, redacted: true });
+}
+
+// Has this BOL number already been received at this store?
+//
+// 🔑 STORE-SCOPED, unlike the barcode check above, and the difference is not an oversight.
+// A BOL number is a shipper's own sequence: two shippers reach 7679 independently, and two
+// stores receiving from different shippers would collide constantly. The same number at
+// the SAME store almost always means one truck being opened twice.
+//
+// 🛑 A blank bol_no matches nothing, for the same reason a blank barcode does — a torn
+// header must not make every other torn header a repeat.
+async function truckBolMatches(env, store, bolNo, excludeId) {
+  const no = tagText(bolNo, 40);
+  if (!no || !env.DB) return [];
+  const { results } = await env.DB.prepare(
+    `SELECT id, bol_no, ship_from, opened_by, opened_at, closed_at, pallet_count
+       FROM trucks WHERE store = ? AND bol_no = ? ORDER BY opened_at DESC LIMIT 5`
+  ).bind(store, no).all();
+  return (results || []).filter(r => !(excludeId != null && r.id === excludeId));
+}
+
+// 🛑 A BILL OF LADING IS A FORM, NOT A TAG, so this is its own prompt rather than a
+// variation on BIN_TAG_PROMPT. The pallet tag's hard problem is pairing drifting
+// right-aligned values to left-hand labels by ORDER. The BOL's is different and in two
+// parts: the fields sit in named boxes scattered across the page rather than in a
+// column, and the three that matter operationally — trailer, seal, pallet count — are
+// HANDWRITTEN on every sample seen so far. Carrying over the tag's ordering rule would
+// be advice about a layout this document does not have.
+const BOL_PROMPT = [
+  "You are reading ONE Bill of Lading, photographed on a receiving dock.",
+  "",
+  'Return ONLY JSON, with exactly these keys: {"bol_no":null,"ship_from":null,"ship_from_addr":null,"ship_to":null,"bol_date":null,"carrier":null,"trailer_no":null,"seal_no":null,"pro_no":null,"pallet_count":null}',
+  "",
+  "HOW THE FORM IS LAID OUT.",
+  "It is the standard VICS/industry Bill of Lading. Fields live in labelled boxes, and",
+  "the label is printed immediately before its value on the same line, e.g.",
+  "'Date:9/11/2026' or 'CARRIER NAME: Arrive Logistics'. Read the label, then take what",
+  "follows it. Boxes left blank on the form are genuinely blank — that is normal.",
+  "",
+  "THE TWO THAT MATTER MOST. Get these right before anything else:",
+  "- bol_no: labelled 'Bill of Lading Number:', in the box at the TOP RIGHT. On the",
+  "  sample it reads 7679. It is NOT the trailer number and NOT the seal number.",
+  "- ship_from: the 'Name:' inside the SHIP FROM block at the TOP LEFT. It is a short",
+  "  site code, not a company — on the sample it reads RM1. Do not substitute the",
+  "  carrier's name or the street address for it.",
+  "",
+  "THE REST",
+  "- ship_from_addr: the Address and City/State/Zip lines of that same SHIP FROM block,",
+  "  joined into one string: '1450 Atlantic Ave, Rocky Mount NC 27801'.",
+  "- ship_to: the 'Name:' inside the SHIP TO block, directly below SHIP FROM. Also a",
+  "  short site code, e.g. FW2.",
+  "- bol_date: labelled 'Date:', top left of the header. Copy the digits EXACTLY as",
+  "  printed, e.g. '9/11/2026'. Do not reformat it, do not reorder it, and do not",
+  "  convert it to another calendar convention.",
+  "- carrier: 'CARRIER NAME:'. A freight company, e.g. 'Arrive Logistics'.",
+  "- trailer_no: 'Trailer number:'. OFTEN HANDWRITTEN.",
+  "- seal_no: 'Seal number(s):'. ALMOST ALWAYS HANDWRITTEN, and usually the hardest",
+  "  thing on the page to read. If any digit is uncertain, return null for the whole",
+  "  field rather than a best effort — see the rule at the bottom.",
+  "- pro_no: 'Pro number:'. Frequently blank.",
+  "- pallet_count: how many pallets the shipment contains. It is usually HANDWRITTEN in",
+  "  the ADDITIONAL SHIPPER INFO column, e.g. '40 pallets'. Return the number only: 40.",
+  "",
+  "CHECK YOURSELF BEFORE ANSWERING. bol_no must be a number or short code and NOT a",
+  "company name. ship_from and ship_to must be short site codes and NOT street",
+  "addresses. carrier must read like a company. bol_date must contain a year. If any",
+  "of those is false, you have read the wrong box — go back and find the labelled one.",
+  "",
+  "IGNORE the pre-printed legal text at the foot of the form, the 'BAR CODE SPACE' and",
+  "'RECEIVING STAMP SPACE' placeholders, the COD and Fee Terms boxes, the empty",
+  "CUSTOMER ORDER INFORMATION and CARRIER INFORMATION grids, every signature, and any",
+  "hand or background visible around the edges of the page.",
+  "",
+  "USE null FOR ANYTHING THIS FORM DOES NOT SHOW OR YOU CANNOT READ CONFIDENTLY —",
+  "blank on the form, cut off, under glare, or handwriting you cannot make out. A wrong",
+  "value is far worse than a missing one: a blank is obvious and somebody types it,",
+  "while a plausible wrong digit is copied into the record and never questioned. This",
+  "matters most for seal_no and trailer_no, where there is no second copy of the number",
+  "anywhere to catch it against. Never invent a value to fill out the shape.",
+].join("\n");
 
 async function ensureAutoDraftForPhotos(env, store, now) {
   if (!env.DB) return { skipped: "no D1" };
@@ -13265,6 +13480,25 @@ const ACTION_PAGE = new Map([
   ["mos-lookup",      ["mos", "edit"]],
   ["mos-log",         ["mos", "edit"]],
   ["mos-update",      ["mos", "edit"]],
+  // Inventory Receiver. Its OWN grantable page, not Bin Dump's: the people who unload
+  // trucks are not necessarily the people who dump bins, and Brian wants to hand out one
+  // without the other. GRANTABLE_PAGES below derives itself from this map, so these
+  // entries are the whole of what makes the page tickable.
+  //
+  // 🛑 `truck-pallet-delete` is deliberately ABSENT, for the same reason bin-dump-delete
+  // and mos-delete are: removing a received pallet is a manager's undo, not a floor
+  // action. Absent here means no page grant reaches it at any level.
+  ["truck-list",          ["inventory-receiver", "view"]],
+  ["truck-current",       ["inventory-receiver", "view"]],
+  ["truck-photo",         ["inventory-receiver", "view"]],
+  ["truck-approvers",     ["inventory-receiver", "edit"]],
+  ["truck-bol-scan",      ["inventory-receiver", "edit"]],
+  ["truck-open",          ["inventory-receiver", "edit"]],
+  ["truck-pallet-scan",   ["inventory-receiver", "edit"]],
+  ["truck-pallet-recent", ["inventory-receiver", "edit"]],
+  ["truck-pallet-log",    ["inventory-receiver", "edit"]],
+  ["truck-down",          ["inventory-receiver", "edit"]],
+  ["truck-pallet-update", ["inventory-receiver", "edit"]],
 ]);
 
 // The closed set an admin may tick, DERIVED from the map above rather than
@@ -21840,12 +22074,12 @@ export default {
           return new Response(JSON.stringify({ error: "Could not read that photo — try again, or type the tag in by hand" }),
             { status: 502, headers: corsJson });
         }
-        const fields = binDumpFields(got);
-        const read = BIN_DUMP_FIELDS.filter(k => fields[k] !== null).length;
+        const fields = palletTagFields(got);
+        const read = PALLET_TAG_FIELDS.filter(k => fields[k] !== null).length;
         return new Response(JSON.stringify({
-          ok: true, fields, read, of: BIN_DUMP_FIELDS.length,
-          // A soft hint, never a refusal — see binDumpTruckHint.
-          truck_hint: binDumpTruckHint(fields),
+          ok: true, fields, read, of: PALLET_TAG_FIELDS.length,
+          // A soft hint, never a refusal — see palletTagTruckHint.
+          truck_hint: palletTagTruckHint(fields),
         }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
@@ -21864,7 +22098,7 @@ export default {
 
         // 🔑 Re-validated here, not trusted from the popup. The verify step is a
         // convenience for the person; it is not the boundary.
-        const fields = binDumpFields(body);
+        const fields = palletTagFields(body);
         if (!fields.item_no && !fields.pallet_name && !fields.po && !fields.barcode) {
           return new Response(JSON.stringify({
             error: "A pallet needs at least one of: barcode, item number, pallet name, or PO / WO",
@@ -22018,7 +22252,7 @@ export default {
         const denied = storeActionGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
         if (denied) return denied;
 
-        const fields = binDumpFields(body);
+        const fields = palletTagFields(body);
         if (!fields.item_no && !fields.pallet_name && !fields.po && !fields.barcode) {
           return new Response(JSON.stringify({
             error: "A pallet needs at least one of: barcode, item number, pallet name, or PO / WO",
@@ -22100,6 +22334,611 @@ export default {
       const h = new Headers(corsHeaders);
       h.set("Content-Type", row.content_type || "image/jpeg");
       // A tag photo never changes once written → cache hard in the browser.
+      h.set("Cache-Control", "private, max-age=2592000, immutable");
+      return new Response(obj.body, { headers: h });
+    }
+
+    // ══ Inventory Receiver ════════════════════════════════════════════════
+    //
+    // A truck arrives, its Bill of Lading is photographed to open it, every pallet that
+    // comes off is scanned against that BOL, and Truck Down closes it. Trucks are filed
+    // by the MONTH THEY WERE OPENED, derived Eastern — see truckMonthOf.
+    //
+    // 🔑 A DIFFERENT OPERATION FROM BIN DUMP. The pallet tag is the same cardboard, so
+    // BIN_TAG_PROMPT and palletTagFields are called rather than copied; everything else
+    // — the table, the duplicate rule, the page grant — is this feature's own.
+    //
+    // 🛑 CONSENT TO A DUPLICATE IS A VERIFIED MANAGER, NOT A BOOLEAN. Bin Dump takes
+    // `allow_duplicate: true`, which is right there because Bin Dump is already gated to
+    // manager+ — the person who can send it is the person allowed to decide. Receiving is
+    // open to associates by page grant, so a boolean would be consent that anyone who can
+    // POST can mint. Here the override carries a manager's name and six-digit approval
+    // PIN, verified in the SAME request that writes the row. That also makes it
+    // unreplayable: there is no token to reuse against a different pallet.
+
+    // Verify a manager's on-the-spot approval. Returns { label } on success, or a
+    // Response to return as-is.
+    //
+    // 🛑 Dies at INPUT VALIDATION before anything is looked up or counted, so a malformed
+    // request can neither probe for manager names nor burn somebody's remaining attempts.
+    // Lockout is checked BEFORE the hash, so a locked account cannot be used as an oracle
+    // by watching how long the answer takes. Both rules are associate-login's, and they
+    // are the reason this is written out rather than improvised.
+    const verifyApproval = async (approval, store) => {
+      const name = normName(approval && approval.name);
+      const pin = String((approval && approval.pin) || "").trim();
+      if (!name || !/^\d{6}$/.test(pin)) {
+        return { err: new Response(JSON.stringify({
+          error: "A manager has to pick their name and enter their six-digit code",
+          code: "NEED_APPROVAL",
+        }), { status: 403, headers: corsJson }) };
+      }
+      const generic = () => ({ err: new Response(JSON.stringify({
+        error: "That name and code didn't match", code: "BAD_APPROVAL",
+      }), { status: 401, headers: corsJson }) });
+      const row = await env.DB.prepare(
+        `SELECT id, name, email, role, stores, approval_pin_hash, approval_pin_failures, status
+           FROM users WHERE approval_pin_hash IS NOT NULL AND lower(name) = lower(?)`
+      ).bind(name).first();
+      if (!row || row.status !== "active") return generic();
+      // The approver must be a manager AND hold the store the truck is at. A manager from
+      // another store cannot wave a pallet through somewhere they do not work.
+      if (!canSeeFinancials(row) || !canAccessStore(row, store)) return generic();
+      if ((row.approval_pin_failures || 0) >= PIN_MAX_FAILURES) {
+        return { err: new Response(JSON.stringify({
+          error: "Too many wrong codes. Ask an admin to set a new one.", code: "APPROVAL_LOCKED",
+        }), { status: 401, headers: corsJson }) };
+      }
+      if ((await pinHash(env, pin)) !== row.approval_pin_hash) {
+        await env.DB.prepare("UPDATE users SET approval_pin_failures = approval_pin_failures + 1 WHERE id = ?")
+          .bind(row.id).run().catch(() => {});
+        return generic();
+      }
+      await env.DB.prepare("UPDATE users SET approval_pin_failures = 0 WHERE id = ?").bind(row.id).run().catch(() => {});
+      return { label: row.name || row.email };
+    };
+
+    // GET ?action=truck-approvers&store=BL1 — names for the approval picker.
+    // Names only: no email, no role, no id. Enough to pick "Kevin R." off a list,
+    // nothing that is useful anywhere else.
+    if (url.searchParams.get("action") === "truck-approvers" && request.method === "GET") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      const denied = storeActionGuard(url.searchParams.get("store"), currentUser, isAdminSecret, corsJson, { allowClosed: true });
+      if (denied) return denied;
+      const store = String(url.searchParams.get("store")).toUpperCase();
+      const { results } = await env.DB.prepare(
+        `SELECT name, role, stores FROM users
+          WHERE approval_pin_hash IS NOT NULL AND status = 'active' AND name IS NOT NULL
+          ORDER BY name`
+      ).all();
+      const names = (results || [])
+        .filter(u => canSeeFinancials(u) && canAccessStore(u, store))
+        .map(u => u.name);
+      return new Response(JSON.stringify({ ok: true, names }), { headers: corsJson });
+    }
+
+    // POST ?action=truck-bol-scan — Bill of Lading photo in, ten fields out.
+    // 🛑 STORES NOTHING. Same reasoning as bin-dump-scan: writing the photo here and
+    // returning a key would create R2 objects with no row pointing at them, growing
+    // forever and needing a purge job to ever go away. Two uploads of a downscaled JPEG
+    // is the cheaper price, and it makes this handler a pure function of its input.
+    if (url.searchParams.get("action") === "truck-bol-scan" && request.method === "POST") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.ANTHROPIC_API_KEY) {
+        return new Response(JSON.stringify({ error: "Paperwork reading is not configured on this environment" }), { status: 400, headers: corsJson });
+      }
+      try {
+        const body = await request.json();
+        const b64 = String(body?.image_b64 || "");
+        if (!b64) return new Response(JSON.stringify({ error: "No photo" }), { status: 400, headers: corsJson });
+        // 🔑 A BOL is photographed closer and at higher resolution than a pallet tag —
+        // see IR_BOL_MAX_PX on the client — so the ceiling here is the API's own 5 MB
+        // limit on the decoded image rather than bin-dump-scan's 8 MB of base64.
+        if (b64.length > 6_500_000) {
+          return new Response(JSON.stringify({ error: "That photo is too large — try again a little further back" }), { status: 400, headers: corsJson });
+        }
+        const mt = ["image/jpeg", "image/png", "image/webp"].includes(body?.media_type) ? body.media_type : "image/jpeg";
+
+        const t0 = Date.now();
+        let ok = false, got = {}, status = null;
+        try {
+          const vis = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-6",
+              max_tokens: 700,          // ten fields, one of them an address line
+              thinking: { type: "disabled" },
+              system: BOL_PROMPT,
+              messages: [{ role: "user", content: [
+                { type: "image", source: { type: "base64", media_type: mt, data: b64 } },
+                { type: "text", text: "Read this Bill of Lading." },
+              ]}],
+            }),
+          });
+          status = vis.status;
+          ok = vis.ok;
+          if (ok) {
+            const vj = await vis.json();
+            const txt = (vj.content || []).filter(c => c.type === "text").map(c => c.text).join("");
+            try { got = JSON.parse((txt.match(/\{[\s\S]*\}/) || ["{}"])[0]); } catch (_) { got = {}; }
+          } else {
+            const err = await vis.text().catch(() => "");
+            console.error(`BOL scan API ${vis.status}: ${err.slice(0, 200)}`);
+          }
+        } catch (e) {
+          ok = false;
+          console.error("BOL scan failed:", (e && e.message) || e);
+        }
+        await retailLog(env, { provider: "claude", detail: "bill of lading", ok, status, ms: Date.now() - t0 });
+        if (!ok) {
+          return new Response(JSON.stringify({ error: "Could not read that photo — try again, or type the BOL in by hand" }),
+            { status: 502, headers: corsJson });
+        }
+        const fields = truckBolFields(got);
+        const read = TRUCK_BOL_FIELDS.filter(k => fields[k] !== null).length;
+        return new Response(JSON.stringify({ ok: true, fields, read, of: TRUCK_BOL_FIELDS.length }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // POST ?action=truck-open — the confirmed BOL becomes a truck on the dock.
+    if (url.searchParams.get("action") === "truck-open" && request.method === "POST") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const denied = storeActionGuard(body?.store, currentUser, isAdminSecret, corsJson,
+          { closedMsg: "it cannot receive a truck" });
+        if (denied) return denied;
+        const store = String(body.store).toUpperCase();
+
+        // 🔑 Re-validated here, not trusted from the popup. The verify step is a
+        // convenience for the person; it is not the boundary.
+        const fields = truckBolFields(body);
+        if (!fields.bol_no && !fields.ship_from) {
+          return new Response(JSON.stringify({
+            error: "A truck needs at least a BOL number or who it shipped from",
+          }), { status: 400, headers: corsJson });
+        }
+
+        // One truck on the dock at a time. Checked here for a sentence a person can read;
+        // the partial unique index is what actually holds when two phones race.
+        const open = await env.DB.prepare(
+          "SELECT id, bol_no FROM trucks WHERE store = ? AND closed_at IS NULL"
+        ).bind(store).first();
+        if (open) {
+          return new Response(JSON.stringify({
+            error: `BOL ${open.bol_no || open.id} is still on the dock. Take it down before receiving another.`,
+            code: "TRUCK_ALREADY_OPEN", truck_id: open.id,
+          }), { status: 409, headers: corsJson });
+        }
+
+        // 🛑 The duplicate refusal precedes the R2 put, so a blocked open leaves no object
+        // with no row pointing at it.
+        const bolDupes = await truckBolMatches(env, store, fields.bol_no, null);
+        let approvedBy = null, approvedReason = null;
+        if (bolDupes.length) {
+          const appr = await verifyApproval(body?.approval, store);
+          if (appr.err) {
+            return new Response(JSON.stringify({
+              error: "This BOL has already been received at this store",
+              code: "DUPLICATE_BOL",
+              matches: bolDupes,
+              // The approval attempt's own verdict, so the client can tell "we have not
+              // asked yet" from "a manager typed the wrong code".
+              approval: await appr.err.clone().json().catch(() => null),
+            }), { status: 409, headers: corsJson });
+          }
+          approvedBy = appr.label;
+          approvedReason = tagText(body?.approval?.reason, 200);
+        }
+
+        let key = null, ctype = null;
+        const b64 = String(body?.image_b64 || "");
+        if (b64) {
+          if (b64.length > 6_500_000) {
+            return new Response(JSON.stringify({ error: "That photo is too large" }), { status: 400, headers: corsJson });
+          }
+          ctype = ["image/jpeg", "image/png", "image/webp"].includes(body?.media_type) ? body.media_type : "image/jpeg";
+          const now = new Date();
+          const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+          key = `bol/${store}/${ym}/${crypto.randomUUID()}.${ctype === "image/png" ? "png" : ctype === "image/webp" ? "webp" : "jpg"}`;
+          await env.MEDIA.put(key, Uint8Array.from(atob(b64), c => c.charCodeAt(0)), { httpMetadata: { contentType: ctype } });
+        }
+
+        const at = new Date().toISOString();
+        let res;
+        try {
+          res = await env.DB.prepare(
+            `INSERT INTO trucks (store, bol_no, ship_from, ship_from_addr, ship_to, bol_date,
+               carrier, trailer_no, seal_no, pro_no, pallet_count, r2_key, content_type,
+               opened_by, opened_at, dup_approved_by, dup_approved_at, dup_reason)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          ).bind(store, fields.bol_no, fields.ship_from, fields.ship_from_addr, fields.ship_to,
+                 fields.bol_date, fields.carrier, fields.trailer_no, fields.seal_no, fields.pro_no,
+                 fields.pallet_count, key, ctype, actorLabel(currentUser), at,
+                 approvedBy, approvedBy ? at : null, approvedReason).run();
+        } catch (e) {
+          // The partial unique index fired — somebody else opened a truck between the
+          // check above and this insert. Report it as the same 409 rather than a 500.
+          if (/UNIQUE|constraint/i.test(String((e && e.message) || e))) {
+            return new Response(JSON.stringify({
+              error: "Another truck was just opened at this store. Refresh to see it.",
+              code: "TRUCK_ALREADY_OPEN",
+            }), { status: 409, headers: corsJson });
+          }
+          throw e;
+        }
+
+        const id = res.meta?.last_row_id ?? null;
+        return new Response(JSON.stringify({
+          ok: true, id, store, opened_at: at, month: truckMonthOf(at),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=truck-current&store=BL1 — the open truck and everything on it.
+    if (url.searchParams.get("action") === "truck-current" && request.method === "GET") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "view", corsJson);
+      if (pageDenied) return pageDenied;
+      const denied = storeActionGuard(url.searchParams.get("store"), currentUser, isAdminSecret, corsJson, { allowClosed: true });
+      if (denied) return denied;
+      const store = String(url.searchParams.get("store")).toUpperCase();
+      const truck = await env.DB.prepare(
+        "SELECT * FROM trucks WHERE store = ? AND closed_at IS NULL"
+      ).bind(store).first();
+      if (!truck) return new Response(JSON.stringify({ ok: true, truck: null, pallets: [] }), { headers: corsJson });
+      const { results } = await env.DB.prepare(
+        `SELECT id, barcode, item_no, pallet_name, sup_ref, po, units, created_by_tag, truck_no,
+                r2_key, logged_by, logged_at, dup_approved_by, dup_reason, edited_by, edited_at
+           FROM truck_pallets WHERE truck_id = ? ORDER BY logged_at DESC`
+      ).bind(truck.id).all();
+      return new Response(JSON.stringify({
+        ok: true,
+        truck: { ...truck, r2_key: undefined, has_photo: !!truck.r2_key, month: truckMonthOf(truck.opened_at) },
+        pallets: (results || []).map(r => ({ ...r, r2_key: undefined, has_photo: !!r.r2_key })),
+      }), { headers: corsJson });
+    }
+
+    // POST ?action=truck-pallet-scan — the pallet tag, read by Bin Dump's own prompt.
+    if (url.searchParams.get("action") === "truck-pallet-scan" && request.method === "POST") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.ANTHROPIC_API_KEY) {
+        return new Response(JSON.stringify({ error: "Tag reading is not configured on this environment" }), { status: 400, headers: corsJson });
+      }
+      try {
+        const body = await request.json();
+        const b64 = String(body?.image_b64 || "");
+        if (!b64) return new Response(JSON.stringify({ error: "No photo" }), { status: 400, headers: corsJson });
+        if (b64.length > 8_000_000) {
+          return new Response(JSON.stringify({ error: "That photo is too large — try again a little further back" }), { status: 400, headers: corsJson });
+        }
+        const mt = ["image/jpeg", "image/png", "image/webp"].includes(body?.media_type) ? body.media_type : "image/jpeg";
+
+        const t0 = Date.now();
+        let ok = false, got = {}, status = null;
+        try {
+          const vis = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-6",
+              max_tokens: 500,
+              thinking: { type: "disabled" },
+              // 🔑 BIN_TAG_PROMPT, called not copied. The tag is the same cardboard, and
+              // two prompts for one document is two things to keep in step — the
+              // order-pairing rule in there was learned from two real tags and would be
+              // re-learned the hard way in a fork.
+              system: BIN_TAG_PROMPT,
+              messages: [{ role: "user", content: [
+                { type: "image", source: { type: "base64", media_type: mt, data: b64 } },
+                { type: "text", text: "Read this pallet tag." },
+              ]}],
+            }),
+          });
+          status = vis.status;
+          ok = vis.ok;
+          if (ok) {
+            const vj = await vis.json();
+            const txt = (vj.content || []).filter(c => c.type === "text").map(c => c.text).join("");
+            try { got = JSON.parse((txt.match(/\{[\s\S]*\}/) || ["{}"])[0]); } catch (_) { got = {}; }
+          } else {
+            const err = await vis.text().catch(() => "");
+            console.error(`Truck pallet scan API ${vis.status}: ${err.slice(0, 200)}`);
+          }
+        } catch (e) {
+          ok = false;
+          console.error("Truck pallet scan failed:", (e && e.message) || e);
+        }
+        await retailLog(env, { provider: "claude", detail: "truck pallet tag", ok, status, ms: Date.now() - t0 });
+        if (!ok) {
+          return new Response(JSON.stringify({ error: "Could not read that photo — try again, or type the tag in by hand" }),
+            { status: 502, headers: corsJson });
+        }
+        const fields = palletTagFields(got);
+        const read = PALLET_TAG_FIELDS.filter(k => fields[k] !== null).length;
+        return new Response(JSON.stringify({
+          ok: true, fields, read, of: PALLET_TAG_FIELDS.length,
+          truck_hint: palletTagTruckHint(fields),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // GET ?action=truck-pallet-recent&barcode=… — the duplicate pre-flight.
+    // 🔑 On its own so it can run while the person is still looking at the popup, and so
+    // a slow or failed answer costs a warning and never the submission. It is NOT the
+    // boundary; truck-pallet-log re-runs the same check.
+    if (url.searchParams.get("action") === "truck-pallet-recent" && request.method === "GET") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      const matches = await truckBarcodeMatches(env, url.searchParams.get("barcode"), currentUser, isAdminSecret, null);
+      return new Response(JSON.stringify({ ok: true, barcode_matches: matches }), { headers: corsJson });
+    }
+
+    // POST ?action=truck-pallet-log — a pallet comes off the trailer.
+    if (url.searchParams.get("action") === "truck-pallet-log" && request.method === "POST") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB || !env.MEDIA) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const truckId = parseInt(body?.truck_id, 10);
+        if (!Number.isInteger(truckId)) return new Response(JSON.stringify({ error: "Invalid truck" }), { status: 400, headers: corsJson });
+
+        // 🔑 The store comes from the TRUCK ROW, never from the client. Same invariant as
+        // bin-dump-delete: the caller says which truck, the database says which store.
+        const truck = await env.DB.prepare("SELECT id, store, closed_at FROM trucks WHERE id = ?").bind(truckId).first();
+        if (!truck) return new Response(JSON.stringify({ error: "No such truck" }), { status: 404, headers: corsJson });
+        const denied = storeActionGuard(truck.store, currentUser, isAdminSecret, corsJson,
+          { closedMsg: "it cannot receive a truck" });
+        if (denied) return denied;
+        if (truck.closed_at) {
+          return new Response(JSON.stringify({
+            error: "That truck has already been taken down. Reopen it or start a new one.",
+            code: "TRUCK_CLOSED",
+          }), { status: 409, headers: corsJson });
+        }
+
+        const fields = palletTagFields(body);
+        if (!fields.item_no && !fields.pallet_name && !fields.po && !fields.barcode) {
+          return new Response(JSON.stringify({
+            error: "A pallet needs at least one of: barcode, item number, pallet name, or PO / WO",
+          }), { status: 400, headers: corsJson });
+        }
+
+        // 🛑 BEFORE the R2 upload. A rejection after the put leaves an object with no row.
+        const dupes = await truckBarcodeMatches(env, fields.barcode, currentUser, isAdminSecret, null);
+        let approvedBy = null, approvedReason = null;
+        if (dupes.length) {
+          const appr = await verifyApproval(body?.approval, truck.store);
+          if (appr.err) {
+            return new Response(JSON.stringify({
+              error: "This barcode has already been received",
+              code: "DUPLICATE_BARCODE",
+              matches: dupes,
+              approval: await appr.err.clone().json().catch(() => null),
+            }), { status: 409, headers: corsJson });
+          }
+          approvedBy = appr.label;
+          approvedReason = tagText(body?.approval?.reason, 200);
+        }
+
+        let key = null, ctype = null;
+        const b64 = String(body?.image_b64 || "");
+        if (b64) {
+          if (b64.length > 8_000_000) {
+            return new Response(JSON.stringify({ error: "That photo is too large" }), { status: 400, headers: corsJson });
+          }
+          ctype = ["image/jpeg", "image/png", "image/webp"].includes(body?.media_type) ? body.media_type : "image/jpeg";
+          const now = new Date();
+          const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+          key = `truck-tags/${truck.store}/${ym}/${crypto.randomUUID()}.${ctype === "image/png" ? "png" : ctype === "image/webp" ? "webp" : "jpg"}`;
+          await env.MEDIA.put(key, Uint8Array.from(atob(b64), c => c.charCodeAt(0)), { httpMetadata: { contentType: ctype } });
+        }
+
+        const at = new Date().toISOString();
+        const res = await env.DB.prepare(
+          `INSERT INTO truck_pallets (truck_id, store, barcode, item_no, pallet_name, sup_ref, po,
+             units, created_by_tag, truck_no, r2_key, content_type, logged_by, logged_at,
+             dup_approved_by, dup_approved_at, dup_reason)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        ).bind(truck.id, truck.store, fields.barcode, fields.item_no, fields.pallet_name, fields.sup_ref,
+               fields.po, fields.units, fields.created_by_tag, fields.truck_no, key, ctype,
+               actorLabel(currentUser), at, approvedBy, approvedBy ? at : null, approvedReason).run();
+
+        return new Response(JSON.stringify({
+          ok: true, id: res.meta?.last_row_id ?? null, truck_id: truck.id, logged_at: at,
+          dup_approved_by: approvedBy,
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=truck-down — the trailer is empty.
+    if (url.searchParams.get("action") === "truck-down" && request.method === "POST") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const id = parseInt(body?.truck_id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid truck" }), { status: 400, headers: corsJson });
+        const truck = await env.DB.prepare("SELECT id, store, closed_at, pallet_count FROM trucks WHERE id = ?").bind(id).first();
+        if (!truck) return new Response(JSON.stringify({ error: "No such truck" }), { status: 404, headers: corsJson });
+        const denied = storeActionGuard(truck.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+        if (truck.closed_at) {
+          return new Response(JSON.stringify({ error: "That truck is already down", code: "TRUCK_CLOSED" }), { status: 409, headers: corsJson });
+        }
+        const at = new Date().toISOString();
+        await env.DB.prepare("UPDATE trucks SET closed_by = ?, closed_at = ?, close_note = ? WHERE id = ?")
+          .bind(actorLabel(currentUser), at, tagText(body?.note, 200), id).run();
+        const got = await env.DB.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(units),0) AS u FROM truck_pallets WHERE truck_id = ?")
+          .bind(id).first();
+        return new Response(JSON.stringify({
+          ok: true, id, closed_at: at, received: got?.n ?? 0, units: got?.u ?? 0,
+          // What the BOL claimed, so the caller can say "28 short" without a second read.
+          expected: truck.pallet_count ?? null,
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=truck-list&store=&months=&limit= — the Trucks tab.
+    if (url.searchParams.get("action") === "truck-list" && request.method === "GET") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "view", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      const storeParam = String(url.searchParams.get("store") || "").trim().toUpperCase();
+      const binds = [];
+      let where = "WHERE 1=1";
+      if (storeParam && storeParam !== "ALL") {
+        const denied = storeActionGuard(storeParam, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+        where += " AND t.store = ?";
+        binds.push(storeParam);
+      } else {
+        const allow = isAdminSecret ? ALL_STORES : allowedStores(currentUser) || ALL_STORES;
+        if (!allow.length) return new Response(JSON.stringify({ ok: true, rows: [], truncated: false }), { headers: corsJson });
+        where += ` AND t.store IN (${allow.map(() => "?").join(",")})`;
+        binds.push(...allow);
+      }
+      // "all" lifts the time bound entirely. 24 is the numeric maximum and stops being
+      // "everything" the moment this table is two years old, so `all` is a distinct value
+      // rather than a large number — bin-dump-list learned this the same way.
+      const monthsRaw = String(url.searchParams.get("months") || "6");
+      if (monthsRaw !== "all") {
+        const n = Math.min(24, Math.max(1, parseInt(monthsRaw, 10) || 6));
+        where += " AND t.opened_at >= ?";
+        binds.push(new Date(Date.now() - n * 31 * 24 * 3600 * 1000).toISOString());
+      }
+      // 🛑 Parse, check finiteness, THEN clamp. `parseInt(...) || 500` turns limit=0 into
+      // 500, which is how a caller asking for nothing silently gets everything.
+      const limitRaw = parseInt(url.searchParams.get("limit") || "", 10);
+      const limit = Number.isFinite(limitRaw) ? Math.min(2000, Math.max(1, limitRaw)) : 400;
+      // 🛑 limit + 1 is the only honest way to report truncation: a length check alone
+      // cannot tell "there were exactly limit rows" from "there were more".
+      const { results } = await env.DB.prepare(
+        `SELECT t.*, COUNT(p.id) AS received, COALESCE(SUM(p.units),0) AS units,
+                SUM(CASE WHEN p.dup_approved_by IS NOT NULL THEN 1 ELSE 0 END) AS dup_approved
+           FROM trucks t LEFT JOIN truck_pallets p ON p.truck_id = t.id
+           ${where} GROUP BY t.id ORDER BY t.opened_at DESC LIMIT ?`
+      ).bind(...binds, limit + 1).all();
+      const found = results || [];
+      const rows = found.slice(0, limit).map(r => ({
+        ...r, r2_key: undefined, has_photo: !!r.r2_key, month: truckMonthOf(r.opened_at),
+      }));
+      return new Response(JSON.stringify({
+        ok: true, rows, months: monthsRaw, truncated: found.length > limit,
+      }), { headers: corsJson });
+    }
+
+    // POST ?action=truck-pallet-update — a correction.
+    // ⚠️ NEVER touches logged_at. A correction is a correction, not a re-receipt; moving
+    // the timestamp would silently move the pallet within the truck's own ordering.
+    if (url.searchParams.get("action") === "truck-pallet-update" && request.method === "POST") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "edit", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const id = parseInt(body?.id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        const row = await env.DB.prepare("SELECT id, store FROM truck_pallets WHERE id = ?").bind(id).first();
+        if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        const denied = storeActionGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+
+        const fields = palletTagFields(body);
+        if (!fields.item_no && !fields.pallet_name && !fields.po && !fields.barcode) {
+          return new Response(JSON.stringify({
+            error: "A pallet needs at least one of: barcode, item number, pallet name, or PO / WO",
+          }), { status: 400, headers: corsJson });
+        }
+        const dupes = await truckBarcodeMatches(env, fields.barcode, currentUser, isAdminSecret, id);
+        let approvedBy = null, approvedReason = null;
+        if (dupes.length) {
+          const appr = await verifyApproval(body?.approval, row.store);
+          if (appr.err) {
+            return new Response(JSON.stringify({
+              error: "This barcode has already been received",
+              code: "DUPLICATE_BARCODE", matches: dupes,
+              approval: await appr.err.clone().json().catch(() => null),
+            }), { status: 409, headers: corsJson });
+          }
+          approvedBy = appr.label;
+          approvedReason = tagText(body?.approval?.reason, 200);
+        }
+        const at = new Date().toISOString();
+        await env.DB.prepare(
+          `UPDATE truck_pallets SET barcode = ?, item_no = ?, pallet_name = ?, sup_ref = ?, po = ?,
+             units = ?, created_by_tag = ?, truck_no = ?, edited_by = ?, edited_at = ?
+             ${approvedBy ? ", dup_approved_by = ?, dup_approved_at = ?, dup_reason = ?" : ""}
+           WHERE id = ?`
+        ).bind(fields.barcode, fields.item_no, fields.pallet_name, fields.sup_ref, fields.po,
+               fields.units, fields.created_by_tag, fields.truck_no, actorLabel(currentUser), at,
+               ...(approvedBy ? [approvedBy, at, approvedReason] : []), id).run();
+        return new Response(JSON.stringify({ ok: true, id, edited_at: at }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // POST ?action=truck-pallet-delete — a manager's undo.
+    // 🔑 NOT in ACTION_PAGE, deliberately, exactly as bin-dump-delete is not. Removing a
+    // received pallet stays a manager's undo: an associate who mis-scans one asks for it
+    // to be taken out. Absent from that map means no page grant reaches it at any level.
+    if (url.searchParams.get("action") === "truck-pallet-delete" && request.method === "POST") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      if (!env.DB) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const id = parseInt(body?.id, 10);
+        if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+        const row = await env.DB.prepare("SELECT id, store, r2_key FROM truck_pallets WHERE id = ?").bind(id).first();
+        if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+        // 🔑 Store re-derived FROM THE ROW, never from anything the client sent, and with
+        // allowClosed so a closed store's history stays correctable.
+        const denied = storeActionGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+        if (denied) return denied;
+        await env.DB.prepare("DELETE FROM truck_pallets WHERE id = ?").bind(id).run();
+        if (row.r2_key && env.MEDIA) await env.MEDIA.delete(row.r2_key).catch(() => {});
+        return new Response(JSON.stringify({ ok: true, id }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
+    }
+
+    // GET ?action=truck-photo&id=&kind=bol|pallet — serves a stored photo.
+    if (url.searchParams.get("action") === "truck-photo" && request.method === "GET") {
+      if (!canUsePage(currentUser, isAdminSecret, "inventory-receiver", "view")) return new Response("Forbidden", { status: 403, headers: corsHeaders });
+      if (!env.DB || !env.MEDIA) return new Response("Storage not configured", { status: 500, headers: corsHeaders });
+      const id = parseInt(url.searchParams.get("id") || "", 10);
+      if (!Number.isInteger(id)) return new Response("Invalid id", { status: 400, headers: corsHeaders });
+      const table = url.searchParams.get("kind") === "bol" ? "trucks" : "truck_pallets";
+      const row = await env.DB.prepare(`SELECT r2_key, content_type, store FROM ${table} WHERE id = ?`).bind(id).first();
+      if (!row || !row.r2_key) return new Response("Not found", { status: 404, headers: corsHeaders });
+      // Re-checked here and not only on the list that produced the id.
+      const allow = currentUser ? allowedStores(currentUser) : null;
+      if (allow && !allow.includes(row.store)) return new Response("Forbidden", { status: 403, headers: corsHeaders });
+      const obj = await env.MEDIA.get(row.r2_key);
+      if (!obj) return new Response("Gone", { status: 404, headers: corsHeaders });
+      const h = new Headers(corsHeaders);
+      h.set("Content-Type", row.content_type || "image/jpeg");
       h.set("Cache-Control", "private, max-age=2592000, immutable");
       return new Response(obj.body, { headers: h });
     }
@@ -22196,7 +23035,7 @@ export default {
         // store and every future entry. Requires real text — length, and at least one
         // letter, so "-", "1" and "n/a" cannot become a category name.
         if (!description) {
-          const typed = binDumpText(body?.description, 120);
+          const typed = tagText(body?.description, 120);
           if (typed && typed.length >= 3 && /[a-z]/i.test(typed)) {
             description = typed;
             source = "user";

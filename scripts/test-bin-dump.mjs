@@ -153,7 +153,7 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   })));
   const j = await json(await call('/?action=bin-dump-scan', { user: 'u-mgr1', method: 'POST', body: IMG, env }));
   // units is where the shift becomes visible: a name is not a count, and
-  // binDumpFields refuses to turn one into a number.
+  // palletTagFields refuses to turn one into a number.
   eq(j.fields.units, null, 'a NAME in units is not coerced into a number');
   ok(j.read < 7, 'a shifted read does not report as fully read');
   ok(j.fields.item_no !== TAG.item_no, 'the shifted item number is not the real one');
@@ -619,7 +619,7 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
      'a pallet whose barcode could not be read still logs');
   eq((await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST', body: blank, env })).status, 200,
      '🔑 and so does a SECOND one — blanks are not duplicates of one another');
-  // binDumpText folds these to null too, so they must behave the same way.
+  // tagText folds these to null too, so they must behave the same way.
   for (const empty of ['', '   ', 'null', 'N/A']) {
     eq((await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
         body: { ...blank, barcode: empty }, env })).status, 200,
@@ -627,9 +627,9 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   }
 
   // 🔑 ASSERTED AT THE SOURCE, because no behavioural test can reach it. Deleting the
-  // early return is a mutation this suite survives: binDumpText already folds blanks to
+  // early return is a mutation this suite survives: tagText already folds blanks to
   // null, and SQL's `barcode = NULL` matches nothing, so the query returns [] either way.
-  // The guard is what keeps that true if binDumpText ever returns "" instead of null —
+  // The guard is what keeps that true if tagText ever returns "" instead of null —
   // at which point `barcode = ''` WOULD match every other blank and a torn tag would
   // become unloggable. Cheap insurance; it must not be tidied away as redundant.
   const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
