@@ -1064,6 +1064,10 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg></span>
           <span class="nav-label">Bin Dump</span>
         </div>
+        <div id="nav-inventory-receiver" class="hidden nav-item" data-page="inventory-receiver" onclick="navigateToPage('inventory-receiver')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 7h12v9H1z"/><path d="M13 10h4.5l3.5 3.5V16H13z"/><circle cx="5.5" cy="18.5" r="1.9"/><circle cx="17" cy="18.5" r="1.9"/></svg></span>
+          <span class="nav-label">Inventory Receiver</span>
+        </div>
         <div id="nav-mos" class="hidden nav-item" data-page="mos" onclick="navigateToPage('mos')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 7.3 12 3 3.5 7.3v9.4L12 21l8.5-4.3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg></span>
           <span class="nav-label">Mark Out of Stock</span>
@@ -1202,6 +1206,9 @@
         </button>
         <button id="more-bin-dump" onclick="navigateToPage('bin-dump');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>Bin Dump
+        </button>
+        <button id="more-inventory-receiver" onclick="navigateToPage('inventory-receiver');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
+          <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 7h12v9H1z"/><path d="M13 10h4.5l3.5 3.5V16H13z"/><circle cx="5.5" cy="18.5" r="1.9"/><circle cx="17" cy="18.5" r="1.9"/></svg>Inventory Receiver
         </button>
         <button id="more-mos" onclick="navigateToPage('mos');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 7.3 12 3 3.5 7.3v9.4L12 21l8.5-4.3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg>Mark Out of Stock
@@ -2601,6 +2608,465 @@
       </div>
 
     </div><!-- end #page-bin-dump -->
+
+    <!-- ══ Inventory Receiver ═══════════════════════════════════════════════
+         A truck arrives, its Bill of Lading opens it, pallets are scanned onto
+         it, Truck Down closes it. Trucks are filed by the month they opened.
+
+         🔑 Its own `ir-` classes rather than reusing `.bd-*`. Those are global —
+         declared inside #page-bin-dump but not scoped to it — so sharing them
+         would mean a Bin Dump restyle silently restyling this page. Mark Out of
+         Stock made the same call for the same reason. DESIGN.md §4.8's rule is
+         followed instead: token literals duplicated here, in BOTH themes,
+         stated ON THE PANEL so nothing is inherited. -->
+    <div id="page-inventory-receiver" class="hidden">
+      <style>
+        /* Contrast computed against the real ground in both themes, not eyeballed:
+           every pair below runs ≥ 4.5:1. accent-green #22c55e is 2.28:1 on the light
+           panel and is therefore NOT used as text there — #166534 (7.13:1) is. */
+        .ir-h1{color:#166534}
+        .dark .ir-h1{color:#22c55e}
+
+        /* 🛑 `hidden` LOSES TO AN AUTHOR `display`. The UA sheet's [hidden]{display:none}
+           is beaten by any author rule setting display, and this page styles several
+           things display:flex by class. Bin Dump shipped an empty green status pill to
+           production on exactly this. Fixed once for the whole page so the next flex
+           thing taking a `hidden` attribute cannot reintroduce it. */
+        #page-inventory-receiver [hidden]{display:none !important}
+
+        .ir-tabs{display:flex;gap:2px;margin:12px 0 -16px}
+        .ir-tab{background:transparent;border:0;border-bottom:2px solid transparent;
+          font:inherit;font-size:14px;font-weight:600;padding:9px 14px;cursor:pointer;
+          color:#6b6453;transition:color .15s,border-color .15s}
+        .dark .ir-tab{color:rgb(var(--op-inkDim))}
+        .ir-tab:hover{color:#14110a}
+        .dark .ir-tab:hover{color:rgb(var(--op-ink))}
+        .ir-tab[aria-selected="true"]{color:#166534;border-bottom-color:#166534}
+        .dark .ir-tab[aria-selected="true"]{color:#22c55e;border-bottom-color:#22c55e}
+        .ir-tab:focus-visible{outline:2px solid #166534;outline-offset:-3px;border-radius:4px}
+        .dark .ir-tab:focus-visible{outline-color:#22c55e}
+        .ir-tab-n{font-size:11px;font-weight:700;padding:1px 6px;border-radius:999px;
+          margin-left:6px;background:rgba(20,16,8,.07);color:#6b6453}
+        .dark .ir-tab-n{background:rgba(255,255,255,.05);color:rgb(var(--op-inkDim))}
+        .ir-tab[aria-selected="true"] .ir-tab-n{background:rgba(34,197,94,.14);color:#166534}
+        .dark .ir-tab[aria-selected="true"] .ir-tab-n{background:rgba(34,197,94,.16);color:#22c55e}
+
+        .ir-panel{
+          background:#ffffff;                      /* opl-panel */
+          border:1px solid rgba(20,16,8,.10);      /* hairline */
+          border-radius:14px;overflow:hidden;
+          color:#14110a;                           /* opl-ink — on the PANEL, not per child */
+          color-scheme:light;                      /* or the UA paints inputs from the OS theme */
+        }
+        .dark .ir-panel{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.09);
+          color:rgb(var(--op-ink));color-scheme:dark}
+
+        .ir-bar{background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10);
+          padding:11px 15px;display:flex;gap:11px;align-items:center;flex-wrap:wrap}
+        .dark .ir-bar{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.09)}
+        .ir-lbl{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+          color:#6b6453}
+        .dark .ir-lbl{color:rgb(var(--op-inkDim))}
+        .ir-bar-right{margin-left:auto;display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+        .ir-sub{padding:9px 15px 0;font-size:12px;line-height:1.5;color:#6b6453}
+        .dark .ir-sub{color:rgb(var(--op-inkDim))}
+        .ir-legend{border-top:1px solid rgba(20,16,8,.10);padding:10px 15px;
+          display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:#6b6453}
+        .dark .ir-legend{border-top-color:rgba(255,255,255,.09);color:rgb(var(--op-inkDim))}
+        /* 🛑 Each swatch states BOTH themes and matches what the table really paints.
+           Inline styles cannot carry a `.dark` variant, which is how Bin Dump's
+           "as first logged" swatch rendered as a white block on the dark panel. */
+        .ir-sw{width:22px;height:13px;border-radius:4px;border:1px solid rgba(20,16,8,.18);
+          display:inline-block;vertical-align:-2px;margin-right:6px}
+        .dark .ir-sw{border-color:rgba(255,255,255,.16)}
+        .ir-sw-dup{background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45)}
+        .dark .ir-sw-dup{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.45)}
+        .ir-sw-plain{background:#ffffff}
+        .dark .ir-sw-plain{background:rgb(var(--op-panel))}
+        .ir-sw-open{background:rgba(34,197,94,.10);border-color:rgba(22,101,52,.28)}
+        .dark .ir-sw-open{background:rgba(34,197,94,.10);border-color:rgba(34,197,94,.28)}
+
+        .ir-cap{padding:28px 20px 24px;text-align:center}
+        .ir-glyph{width:58px;height:58px;margin:0 auto 13px;border-radius:16px;
+          background:rgba(34,197,94,.10);border:1px solid rgba(22,101,52,.28);
+          display:flex;align-items:center;justify-content:center;color:#166534}
+        .dark .ir-glyph{border-color:rgba(34,197,94,.28);color:#22c55e}
+        .ir-glyph svg{width:29px;height:29px}
+        .ir-cap-t{font-size:16px;font-weight:700}
+        .ir-cap-d{font-size:12.5px;color:#6b6453;margin:6px auto 17px;max-width:330px;line-height:1.55}
+        .dark .ir-cap-d{color:rgb(var(--op-inkDim))}
+
+        .ir-btn{font:inherit;font-weight:700;border-radius:10px;cursor:pointer;
+          border:1px solid transparent;transition:filter .15s,background .15s;letter-spacing:.02em}
+        .ir-btn:disabled{opacity:.45;cursor:not-allowed}
+        .ir-primary{background:#166534;color:#fff;padding:11px 30px;font-size:14.5px}
+        .dark .ir-primary{background:#22c55e;color:#06210f}
+        .ir-primary:hover:not(:disabled){filter:brightness(1.08)}
+        .ir-primary.ir-big{padding:14px 40px;font-size:16px;border-radius:12px}
+        .ir-ghost{background:transparent;border-color:rgba(20,16,8,.18);color:#14110a;
+          padding:9px 15px;font-size:13px}
+        .dark .ir-ghost{border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
+        .ir-ghost:hover:not(:disabled){background:#fafaf6}
+        .dark .ir-ghost:hover:not(:disabled){background:rgb(var(--op-panelHi))}
+        .ir-sm{padding:6px 11px;font-size:11.5px;border-radius:8px}
+        .ir-danger{background:transparent;border-color:rgba(192,57,43,.40);color:#c0392b}
+        .dark .ir-danger{border-color:rgba(239,68,68,.42);color:#f87171}
+        .ir-danger:hover:not(:disabled){background:rgba(192,57,43,.08)}
+        .dark .ir-danger:hover:not(:disabled){background:rgba(239,68,68,.12)}
+
+        .ir-reading{padding:32px 20px;text-align:center}
+        .ir-spin{width:34px;height:34px;margin:0 auto 13px;border-radius:50%;
+          border:3px solid rgba(20,16,8,.10);border-top-color:#166534;animation:ir-sp .85s linear infinite}
+        .dark .ir-spin{border-color:rgba(255,255,255,.09);border-top-color:#22c55e}
+        @keyframes ir-sp{to{transform:rotate(360deg)}}
+        @media (prefers-reduced-motion:reduce){.ir-spin{animation-duration:2.4s}}
+
+        .ir-status{margin:0 15px 14px;border-radius:10px;padding:9px 12px;font-size:12.5px;
+          display:flex;align-items:center;gap:9px;border:1px solid}
+        .ir-status.ok{background:rgba(34,197,94,.10);border-color:rgba(22,101,52,.28);color:#14110a}
+        .dark .ir-status.ok{border-color:rgba(34,197,94,.28);color:rgb(var(--op-ink))}
+        .ir-status.err{background:rgba(192,57,43,.10);border-color:rgba(192,57,43,.40);color:#14110a}
+        .dark .ir-status.err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.42);color:rgb(var(--op-ink))}
+        .ir-status.warn{background:rgba(245,158,11,.16);border-color:rgba(180,83,9,.45);color:#14110a}
+        .dark .ir-status.warn{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.45);color:rgb(var(--op-ink))}
+
+        /* The open truck */
+        .ir-truck{padding:14px 15px;display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+        .ir-bol{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;
+          letter-spacing:-.02em;line-height:1.1}
+        .ir-bol-cap{font-size:9.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#6b6453}
+        .dark .ir-bol-cap{color:rgb(var(--op-inkDim))}
+        .ir-route{font-size:13px;color:#6b6453;margin-top:5px;line-height:1.6}
+        .dark .ir-route{color:rgb(var(--op-inkDim))}
+        .ir-route b{color:#14110a;font-weight:600}
+        .dark .ir-route b{color:rgb(var(--op-ink))}
+        .ir-arrow{color:#9c9484;margin:0 5px}
+        .dark .ir-arrow{color:rgb(var(--op-inkDimmer))}
+        .ir-pill{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;
+          font-size:10.5px;font-weight:700;letter-spacing:.06em;white-space:nowrap;
+          border:1px solid rgba(22,101,52,.28);background:rgba(34,197,94,.10);color:#166534}
+        .dark .ir-pill{border-color:rgba(34,197,94,.28);color:#22c55e}
+        .ir-pill .ir-dot{width:6px;height:6px;border-radius:9999px;background:currentColor}
+        .ir-pill.down{border-color:rgba(20,16,8,.18);background:transparent;color:#6b6453}
+        .dark .ir-pill.down{border-color:rgba(255,255,255,.16);color:rgb(var(--op-inkDim))}
+
+        .ir-prog-wrap{padding:0 15px 14px}
+        .ir-prog-top{display:flex;align-items:baseline;gap:8px;margin-bottom:7px;flex-wrap:wrap}
+        .ir-prog-n{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
+        .ir-prog-s{font-size:12px;color:#6b6453}
+        .dark .ir-prog-s{color:rgb(var(--op-inkDim))}
+        .ir-prog-r{margin-left:auto;font-size:12px;color:#6b6453;font-variant-numeric:tabular-nums}
+        .dark .ir-prog-r{color:rgb(var(--op-inkDim))}
+        .ir-track{height:10px;border-radius:999px;overflow:hidden;background:rgba(20,16,8,.06)}
+        .dark .ir-track{background:rgba(255,255,255,.06)}
+        .ir-fill{height:100%;border-radius:999px;background:#166534;
+          transition:width .5s cubic-bezier(.4,0,.2,1)}
+        .dark .ir-fill{background:#22c55e}
+
+        .ir-strip{display:flex;gap:9px}
+        .ir-tile{flex:1;background:#fff;border:1px solid rgba(20,16,8,.10);border-radius:12px;
+          padding:11px 13px;color:#14110a;min-width:0}
+        .dark .ir-tile{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.09);color:rgb(var(--op-ink))}
+        .ir-tile-cap{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b6453}
+        .dark .ir-tile-cap{color:rgb(var(--op-inkDim))}
+        .ir-tile-n{font-size:23px;font-weight:700;line-height:1.15;margin-top:3px;
+          font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+        .ir-tile-s{font-size:11px;color:#6b6453;margin-top:1px}
+        .dark .ir-tile-s{color:rgb(var(--op-inkDim))}
+
+        /* Month accordions */
+        .ir-mo{border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark .ir-mo{border-bottom-color:rgba(255,255,255,.09)}
+        .ir-mo:last-of-type{border-bottom:0}
+        .ir-mo-head{width:100%;background:transparent;border:0;font:inherit;cursor:pointer;
+          display:flex;align-items:center;gap:8px;padding:11px 15px;text-align:left;
+          color:inherit;flex-wrap:wrap;transition:background .15s}
+        .ir-mo-head:hover{background:#fafaf6}
+        .dark .ir-mo-head:hover{background:rgb(var(--op-panelHi))}
+        .ir-caret{width:9px;height:9px;flex-shrink:0;border-right:2px solid #6b6453;
+          border-bottom:2px solid #6b6453;transform:rotate(-45deg);transition:transform .22s}
+        .dark .ir-caret{border-color:rgb(var(--op-inkDim))}
+        .ir-mo.open .ir-caret{transform:rotate(45deg)}
+        .ir-mo-name{font-size:13px;font-weight:600;white-space:nowrap}
+        .ir-mo-meta{margin-left:auto;font-size:11.5px;color:#6b6453;
+          font-variant-numeric:tabular-nums;white-space:nowrap}
+        .dark .ir-mo-meta{color:rgb(var(--op-inkDim))}
+        .ir-mo-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows .26s cubic-bezier(.4,0,.2,1)}
+        .ir-mo.open .ir-mo-body{grid-template-rows:1fr}
+        .ir-mo-body > div{overflow:hidden}
+
+        /* Tables */
+        .ir-scroll{overflow-x:auto;background:#fff}
+        .dark .ir-scroll{background:rgb(var(--op-panel))}
+        table.ir-tbl{border-collapse:collapse;width:100%;min-width:760px;font-variant-numeric:tabular-nums}
+        table.ir-tbl th{height:30px;padding:0 10px;font-size:10px;font-weight:700;letter-spacing:.05em;
+          text-transform:uppercase;text-align:left;background:#fafaf6;color:#6b6453;
+          white-space:nowrap;   /* "ITEM #" wraps to two lines without this */
+          border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark table.ir-tbl th{background:rgb(var(--op-panelHi));color:rgb(var(--op-inkDim));
+          border-bottom-color:rgba(255,255,255,.09)}
+        table.ir-tbl td{height:40px;padding:0 10px;font-size:12.5px;white-space:nowrap;
+          border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark table.ir-tbl td{border-bottom-color:rgba(255,255,255,.09)}
+        table.ir-tbl tr:last-child td{border-bottom:0}
+        table.ir-tbl .num{text-align:right}
+        table.ir-tbl .dim{color:#6b6453}
+        .dark table.ir-tbl .dim{color:rgb(var(--op-inkDim))}
+        /* 🛑 A sticky column needs its OWN opaque background or the cells scroll under it. */
+        table.ir-tbl .stick{position:sticky;left:0;background:#fff;z-index:1}
+        .dark table.ir-tbl .stick{background:rgb(var(--op-panel))}
+        table.ir-tbl th.stick{background:#fafaf6;z-index:2}
+        .dark table.ir-tbl th.stick{background:rgb(var(--op-panelHi))}
+        table.ir-tbl tr.dup td,table.ir-tbl tr.dup .stick{background:rgba(245,158,11,.16)}
+        .dark table.ir-tbl tr.dup td,.dark table.ir-tbl tr.dup .stick{background:rgba(245,158,11,.14)}
+        .ir-row-btn{background:transparent;border:1px solid rgba(20,16,8,.18);border-radius:6px;
+          color:#6b6453;font:inherit;font-size:10.5px;font-weight:700;padding:3px 8px;
+          cursor:pointer;letter-spacing:.05em}
+        .dark .ir-row-btn{border-color:rgba(255,255,255,.16);color:rgb(var(--op-inkDim))}
+        .ir-row-btn:hover{color:#14110a;background:#fafaf6}
+        .dark .ir-row-btn:hover{color:rgb(var(--op-ink));background:rgb(var(--op-panelHi))}
+        .ir-badge{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+          padding:2px 6px;border-radius:5px;white-space:nowrap;border:1px solid rgba(180,83,9,.45);
+          background:rgba(245,158,11,.16);color:#8a4b09}
+        .dark .ir-badge{border-color:rgba(245,158,11,.45);background:rgba(245,158,11,.14);color:#f59e0b}
+
+        /* Verify / edit form. Styled by CLASS, never input[type=text] — that selector
+           matches the ATTRIBUTE, so an input without an explicit type renders as a
+           browser-default white box in both themes. Every input below carries one. */
+        .ir-f{display:flex;flex-direction:column;gap:3px;margin-bottom:10px}
+        .ir-f-l{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b6453}
+        .dark .ir-f-l{color:rgb(var(--op-inkDim))}
+        .ir-in{background:#fafaf6;border:1px solid rgba(20,16,8,.18);border-radius:8px;
+          color:#14110a;font:inherit;font-size:14px;padding:9px 11px;width:100%}
+        .dark .ir-in{background:rgb(var(--op-panelHi));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
+        .ir-in:focus{outline:2px solid #166534;outline-offset:-1px;border-color:transparent}
+        .dark .ir-in:focus{outline-color:#22c55e}
+        .ir-in.key{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+        .ir-in.miss{border-color:rgba(192,57,43,.40);background:rgba(192,57,43,.10)}
+        .dark .ir-in.miss{border-color:rgba(239,68,68,.42);background:rgba(239,68,68,.12)}
+        .ir-f-hint{font-size:11px;color:#6b6453}
+        .dark .ir-f-hint{color:rgb(var(--op-inkDim))}
+        .ir-f-hint.miss{color:#c0392b}
+        .dark .ir-f-hint.miss{color:#f87171}
+        .ir-grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 11px}
+        @media (max-width:430px){.ir-grid2{grid-template-columns:1fr}}
+        .ir-note{font-size:11.5px;color:#6b6453;line-height:1.5}
+        .dark .ir-note{color:rgb(var(--op-inkDim))}
+        .ir-shot{display:flex;gap:11px;align-items:flex-start;margin-bottom:13px}
+        .ir-shot img{width:82px;height:104px;object-fit:cover;flex-shrink:0;border-radius:7px;
+          border:1px solid rgba(20,16,8,.18);cursor:zoom-in;background:#fff}
+        .dark .ir-shot img{border-color:rgba(255,255,255,.16)}
+        .ir-empty{padding:34px 20px;text-align:center;color:#6b6453;font-size:13px}
+        .dark .ir-empty{color:rgb(var(--op-inkDim))}
+      </style>
+
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="max-w-7xl mx-auto flex items-end gap-3 flex-wrap">
+          <div class="flex-1 min-w-0">
+            <h1 class="text-2xl font-brand ir-h1 uppercase tracking-wide">Inventory Receiver</h1>
+            <p class="text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">Receive a truck, pallet by pallet, from its paperwork</p>
+          </div>
+          <select id="ir-store" onchange="irStoreChange()" class="rounded-lg border border-gray-200 dark:border-op-border bg-white dark:bg-[rgba(255,255,255,0.04)] text-gray-900 dark:text-op-ink text-sm px-3 py-2"></select>
+        </div>
+        <div class="max-w-7xl mx-auto">
+          <nav class="ir-tabs" role="tablist" aria-label="Inventory Receiver sections">
+            <button type="button" id="ir-tab-receive" class="ir-tab" role="tab" aria-selected="true"
+                    aria-controls="ir-pane-receive" onclick="irSetTab('receive')">Receive</button>
+            <button type="button" id="ir-tab-trucks" class="ir-tab" role="tab" aria-selected="false"
+                    aria-controls="ir-pane-trucks" onclick="irSetTab('trucks')">Trucks<span class="ir-tab-n" id="ir-tab-trucks-n">—</span></button>
+          </nav>
+        </div>
+      </div>
+
+      <div class="max-w-7xl mx-auto px-6 py-6">
+       <div id="ir-pane-receive" role="tabpanel" aria-labelledby="ir-tab-receive" class="space-y-4">
+        <div class="ir-panel" id="ir-begin-panel">
+          <div id="ir-begin" class="ir-cap">
+            <div class="ir-glyph">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M1 7h12v9H1z"/><path d="M13 10h4.5l3.5 3.5V16H13z"/><circle cx="5.5" cy="18.5" r="1.9"/><circle cx="17" cy="18.5" r="1.9"/></svg>
+            </div>
+            <div class="ir-cap-t">Receive a truck</div>
+            <div class="ir-cap-d">Photograph the Bill of Lading. You'll check the BOL number and who it shipped from before the truck is opened.</div>
+            <button type="button" class="ir-btn ir-primary ir-big" onclick="irBeginBol()">Receive Truck</button>
+            <div class="ir-cap-d" style="margin:15px auto 0;font-size:11.5px">One truck on the dock at a time. This button comes back when the last one is taken down.</div>
+          </div>
+          <div id="ir-reading" class="ir-reading" hidden>
+            <div class="ir-spin"></div>
+            <div class="ir-cap-t" id="ir-reading-t">Reading Bill of Lading…</div>
+            <div class="ir-cap-d" id="ir-reading-sub">Sending the photo to Claude</div>
+          </div>
+          <div id="ir-status" class="ir-status ok" hidden></div>
+        </div>
+
+        <div id="ir-open" hidden>
+          <div class="ir-panel">
+            <div class="ir-bar">
+              <span class="ir-lbl">Truck on the dock</span>
+              <span class="ir-bar-right">
+                <span class="ir-pill" id="ir-truck-pill"><span class="ir-dot"></span>OPEN</span>
+                <button type="button" class="ir-btn ir-ghost ir-sm" id="ir-btn-down" onclick="irAskDown()">Truck Down</button>
+              </span>
+            </div>
+            <div class="ir-truck" id="ir-truck-head"></div>
+            <div class="ir-prog-wrap" id="ir-prog-wrap" hidden>
+              <div class="ir-prog-top">
+                <span class="ir-prog-n" id="ir-prog-n">0</span>
+                <span class="ir-prog-s" id="ir-prog-s">pallets</span>
+                <span class="ir-prog-r" id="ir-prog-r"></span>
+              </div>
+              <div class="ir-track"><div class="ir-fill" id="ir-prog-fill" style="width:0%"></div></div>
+            </div>
+            <div style="padding:0 15px 16px;text-align:center">
+              <button type="button" class="ir-btn ir-primary ir-big" id="ir-btn-pallet" onclick="irBeginPallet()" style="width:100%;max-width:340px">Scan Pallet Tag</button>
+            </div>
+          </div>
+
+          <div class="ir-strip" style="margin-top:16px">
+            <div class="ir-tile">
+              <div class="ir-tile-cap">This truck</div>
+              <div class="ir-tile-n" id="ir-tile-pallets">—</div>
+              <div class="ir-tile-s">pallets received</div>
+            </div>
+            <div class="ir-tile">
+              <div class="ir-tile-cap">Units</div>
+              <div class="ir-tile-n" id="ir-tile-units">—</div>
+              <div class="ir-tile-s">on those pallets</div>
+            </div>
+          </div>
+
+          <div class="ir-panel" style="margin-top:16px">
+            <div class="ir-bar">
+              <span class="ir-lbl" id="ir-pallets-lbl">Pallets on this truck</span>
+              <span class="ir-bar-right">
+                <button type="button" class="ir-btn ir-ghost ir-sm" onclick="irLoadCurrent()">Refresh</button>
+              </span>
+            </div>
+            <!-- 🛑 Separate targets. A render target holds ONLY what that render owns:
+                 Coverage put its status line inside the div its render overwrites and it
+                 vanished on first paint, then threw on every refresh after. -->
+            <div class="ir-sub" id="ir-pallets-sub">No pallets yet.</div>
+            <div id="ir-pallets" class="mt-2"></div>
+            <div class="ir-legend">
+              <span><span class="ir-sw ir-sw-plain"></span>Received clean</span>
+              <span><span class="ir-sw ir-sw-dup"></span>Duplicate barcode, added by a manager</span>
+            </div>
+          </div>
+        </div>
+       </div><!-- /#ir-pane-receive -->
+
+       <div id="ir-pane-trucks" role="tabpanel" aria-labelledby="ir-tab-trucks" hidden>
+        <div class="ir-panel">
+          <div class="ir-bar">
+            <span class="ir-lbl">Trucks received</span>
+            <span class="ir-bar-right">
+              <button type="button" class="ir-btn ir-ghost ir-sm" onclick="irExportCsv()">Export CSV</button>
+              <button type="button" class="ir-btn ir-ghost ir-sm" onclick="irLoadTrucks()">Refresh</button>
+            </span>
+          </div>
+          <div class="ir-sub" id="ir-trucks-status">Loading…</div>
+          <div id="ir-months" class="mt-2"></div>
+          <div class="ir-legend">
+            <span><span class="ir-sw ir-sw-open"></span>Still on the dock</span>
+            <span><span class="ir-sw ir-sw-dup"></span>Carries an approved duplicate, or came up short</span>
+            <span><span class="ir-sw ir-sw-plain"></span>Received clean and taken down</span>
+          </div>
+        </div>
+       </div><!-- /#ir-pane-trucks -->
+      </div>
+
+      <input id="ir-photo" type="file" accept="image/*" capture="environment" class="hidden" onchange="irPhoto(this)">
+
+      <!-- Inline display, not hidden+flex: those two Tailwind classes have equal
+           specificity and .hidden only wins on source order. -->
+      <div id="ir-modal" class="fixed inset-0 z-50 items-center justify-center bg-black/60 p-4" style="display:none">
+        <div class="ir-panel w-full max-w-md" style="max-height:92vh;overflow:auto" role="dialog" aria-modal="true" aria-labelledby="ir-m-title">
+          <div class="ir-bar" style="position:sticky;top:0;z-index:2">
+            <span class="ir-lbl" id="ir-m-title" style="font-size:12px">Verify</span>
+            <span class="ir-bar-right">
+              <button type="button" class="ir-btn ir-ghost ir-sm" onclick="irCloseModal()" aria-label="Close">&times;</button>
+            </span>
+          </div>
+          <div style="padding:14px 15px">
+            <div class="ir-shot" id="ir-m-shot" hidden>
+              <img id="ir-m-photo" alt="Photo — activate to enlarge" role="button" tabindex="0"
+                   onclick="irLbOpen()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();irLbOpen()}">
+              <span>
+                <span class="ir-cap-t" id="ir-m-read" style="font-size:12.5px"></span>
+                <span class="ir-note" id="ir-m-readsub" style="display:block;margin-top:4px"></span>
+              </span>
+            </div>
+            <div id="ir-m-fields"></div>
+            <div id="ir-m-warn" class="ir-status err" style="margin:0 0 11px" hidden></div>
+          </div>
+          <div class="ir-bar" style="border-bottom:0;border-top:1px solid rgba(20,16,8,.10);position:sticky;bottom:0">
+            <button type="button" class="ir-btn ir-ghost ir-sm" id="ir-m-retake" onclick="irRetake()">Retake</button>
+            <button type="button" class="ir-btn ir-danger ir-sm" id="ir-m-delete" onclick="irDeletePallet()" hidden>Delete</button>
+            <span class="ir-bar-right">
+              <button type="button" class="ir-btn ir-ghost ir-sm" onclick="irCloseModal()">Cancel</button>
+              <button type="button" class="ir-btn ir-primary ir-sm" id="ir-m-submit" onclick="irSubmit()">Submit</button>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Manager approval. Its own overlay at z-60 so it lands ABOVE the verify modal
+           (z-50) that raised it, and below the uiConfirm overlays (z-80). -->
+      <div id="ir-appr" class="fixed inset-0 items-center justify-center bg-black/70 p-4" style="display:none;z-index:60">
+        <div class="ir-panel w-full max-w-md" style="max-height:92vh;overflow:auto" role="dialog" aria-modal="true" aria-labelledby="ir-appr-t">
+          <div class="ir-bar" style="position:sticky;top:0;z-index:2">
+            <span class="ir-lbl" id="ir-appr-t" style="font-size:12px;color:#c0392b">Already received</span>
+            <span class="ir-bar-right">
+              <button type="button" class="ir-btn ir-ghost ir-sm" onclick="irApprCancel()" aria-label="Close">&times;</button>
+            </span>
+          </div>
+          <div style="padding:14px 15px">
+            <div class="ir-status err" style="margin:0 0 12px" id="ir-appr-what"></div>
+            <p class="ir-note" style="margin:0 0 13px" id="ir-appr-why"></p>
+            <div class="ir-status warn" style="margin:0 0 14px" id="ir-appr-who"></div>
+            <div class="ir-f">
+              <label class="ir-f-l" for="ir-appr-name">Manager</label>
+              <select class="ir-in" id="ir-appr-name"></select>
+              <span class="ir-f-hint">Managers who hold this store and have an approval code</span>
+            </div>
+            <div class="ir-f">
+              <label class="ir-f-l" for="ir-appr-pin">Approval code</label>
+              <!-- 🛑 type="text" + inputmode, never type="number": a number input drops
+                   leading zeros, and 012345 is a different code from 12345. -->
+              <input class="ir-in key" type="text" id="ir-appr-pin" inputmode="numeric"
+                     pattern="[0-9]*" maxlength="6" autocomplete="off" placeholder="••••••">
+              <span class="ir-f-hint">Six digits. Not a login — it approves this one thing.</span>
+            </div>
+            <div class="ir-f">
+              <label class="ir-f-l" for="ir-appr-reason">Reason</label>
+              <input class="ir-in" type="text" id="ir-appr-reason" maxlength="200" placeholder="e.g. tag reprinted, pallet rebuilt">
+              <span class="ir-f-hint">Kept on the row, so the double count can be explained a month later</span>
+            </div>
+            <div id="ir-appr-err" class="ir-status err" style="margin:0" hidden></div>
+          </div>
+          <div class="ir-bar" style="border-bottom:0;border-top:1px solid rgba(20,16,8,.10)">
+            <button type="button" class="ir-btn ir-ghost ir-sm" onclick="irApprCancel()">Don't add it</button>
+            <span class="ir-bar-right">
+              <button type="button" class="ir-btn ir-primary ir-sm" id="ir-appr-go" onclick="irApprGo()">Approve &amp; Add</button>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Full-screen photo viewer. z-70: above the approval overlay (60) and the verify
+           modal (50), below the uiConfirm overlays (80), so a confirmation still lands on
+           top of everything. Dark chrome in BOTH themes deliberately — a photograph judged
+           against a light surround reads differently. -->
+      <div id="ir-lb" hidden role="dialog" aria-modal="true" aria-label="Photo"
+           style="position:fixed;inset:0;z-index:70;background:#0a0a0a;display:flex;flex-direction:column">
+        <div style="flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;padding:12px">
+          <img id="ir-lb-img" alt="Enlarged" style="max-width:100%;height:auto">
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;padding:10px 14px calc(env(safe-area-inset-bottom) + 10px);background:#000">
+          <button type="button" class="ir-btn ir-ghost ir-sm" style="color:#f2f2f2;border-color:rgba(255,255,255,.22)" onclick="irLbClose()">Close</button>
+        </div>
+      </div>
+
+    </div><!-- end #page-inventory-receiver -->
 
     <!-- ══ Mark Out of Stock ══════════════════════════════════════════════
          Merchandise that left the floor without being sold. Follows DESIGN.md
@@ -10405,6 +10871,12 @@
       // where the role check and the page check are two ways past one gate.
       if (!allowed.includes(role) && pageLevel('bin-dump') < 1) return;
     }
+    // Inventory Receiver: same shape as Bin Dump's guard, against its own grant.
+    if (page === 'inventory-receiver') {
+      const role = currentUser && currentUser.role;
+      const allowed = ['superuser', 'admin', 'executive', 'district_manager', 'manager'];
+      if (!allowed.includes(role) && pageLevel('inventory-receiver') < 1) return;
+    }
     if (page === 'mos') {
       const role = currentUser && currentUser.role;
       const allowed = ['superuser', 'admin', 'executive', 'district_manager', 'manager'];
@@ -10533,6 +11005,9 @@
     }
     if (page === 'bin-dump') {
       if (typeof initBinDump === 'function') initBinDump();
+    }
+    if (page === 'inventory-receiver') {
+      if (typeof initInventoryReceiver === 'function') initInventoryReceiver();
     }
     if (page === 'mos') {
       if (typeof initMos === 'function') initMos();
@@ -24383,19 +24858,24 @@
   // A modern phone camera produces 3-6 MB, which is slow to upload on warehouse wifi and
   // far more detail than reading a label needs. Downscaled to 1280px on the longest edge
   // before it ever leaves the device.
-  function psShrink(file) {
+  // 🔑 `max` and `quality` are PARAMETERS, defaulting to the values every existing
+  // caller was hardcoded to. 1280px / q0.82 was tuned for a printed pallet tag and a
+  // product shot; a Bill of Lading is a dense form whose trailer and seal numbers are
+  // handwritten in ballpoint, and at 1280 those are a few pixels tall. Inventory
+  // Receiver passes IR_BOL_MAX_PX for the BOL and the default for the pallet tag.
+  function psShrink(file, max, quality) {
     return new Promise((resolve, reject) => {
       const img = new Image();
       const url = URL.createObjectURL(file);
       img.onload = () => {
         URL.revokeObjectURL(url);
-        const max = 1280;
+        max = max || 1280;
         const scale = Math.min(1, max / Math.max(img.width, img.height));
         const c = document.createElement('canvas');
         c.width = Math.round(img.width * scale);
         c.height = Math.round(img.height * scale);
         c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-        const dataUrl = c.toDataURL('image/jpeg', 0.82);
+        const dataUrl = c.toDataURL('image/jpeg', quality || 0.82);
         resolve(dataUrl.slice(dataUrl.indexOf(',') + 1));
       };
       img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('that image could not be opened')); };
@@ -25736,6 +26216,677 @@
     }
   }
   window.bdExportCsv = bdExportCsv;
+
+  // ═══════════════════════════════════════════════════════════════
+  //  INVENTORY RECEIVER
+  // ═══════════════════════════════════════════════════════════════
+  // A truck arrives, its Bill of Lading opens it, every pallet that comes off is
+  // scanned onto it, Truck Down closes it. Trucks are filed by the month they were
+  // OPENED — the worker derives that in Eastern and never stores it.
+  //
+  // 🔑 A different operation from Bin Dump, sharing only the pallet-tag reader. The
+  // duplicate rule here reads truck_pallets and never bin_dumps: a barcode in both is
+  // a pallet received and later dumped, which is the normal life of a pallet.
+
+  const IR_LABELS = { BL1: 'Coliseum', BL2: 'South Bend', BL4: 'Dupont', BL8: 'Holland', BL14: 'Battle Creek', BL16: 'Indy East' };
+  const IR_ALL_STORES = ['BL1', 'BL2', 'BL4', 'BL14', 'BL16'];
+
+  // 🔑 A BOL is photographed at a HIGHER resolution than a pallet tag. The shared
+  // psShrink default of 1280px was tuned for a printed tag; a BOL's trailer and seal
+  // numbers are handwritten in ballpoint and at 1280 they are a few pixels tall. 1800px
+  // at q0.88 keeps the decoded image inside the vision API's 5 MB ceiling with room to
+  // spare while leaving the handwriting legible.
+  const IR_BOL_MAX_PX = 1800;
+  const IR_BOL_QUALITY = 0.88;
+
+  const IR_BOL_FIELDS = [
+    { k: 'bol_no', l: 'BOL number', key: true, hint: 'Top right of the form' },
+    { k: 'ship_from', l: 'Ship from — name', key: true, hint: 'Top left of the form' },
+    { k: 'bol_date', l: 'Date', half: true },
+    { k: 'ship_to', l: 'Ship to', half: true },
+    { k: 'carrier', l: 'Carrier', half: true },
+    { k: 'trailer_no', l: 'Trailer #', half: true },
+    { k: 'seal_no', l: 'Seal #', half: true },
+    { k: 'pallet_count', l: 'Pallets on BOL', half: true },
+    { k: 'ship_from_addr', l: 'Ship from — address' },
+    { k: 'pro_no', l: 'Pro number' },
+  ];
+  const IR_TAG_FIELDS = [
+    { k: 'barcode', l: 'Barcode', key: true },
+    { k: 'pallet_name', l: 'Pallet name' },
+    { k: 'item_no', l: 'Item #', half: true },
+    { k: 'po', l: 'PO / WO', half: true },
+    { k: 'sup_ref', l: 'Sup. Ref', half: true },
+    { k: 'units', l: '# of Units', half: true },
+    { k: 'created_by_tag', l: 'Created by', half: true },
+    { k: 'truck_no', l: 'Truck #', half: true },
+  ];
+
+  const irState = {
+    store: null, mode: null, busy: false, seeded: false,
+    truck: null, pallets: [], trucks: [],
+    photo: null, mediaType: null, fields: {}, editId: null,
+    pending: null,                 // the submit waiting on a manager approval
+  };
+
+  function irCanDelete() {
+    return ['superuser', 'admin', 'executive', 'manager'].includes(currentUser && currentUser.role);
+  }
+
+  function irStores() {
+    if (!currentUser) return [];
+    if (currentUser.role === 'superuser' || currentUser.role === 'admin') return IR_ALL_STORES;
+    const s = currentUser.stores;
+    const held = Array.isArray(s) ? s : (() => { try { return JSON.parse(s || '[]'); } catch (e) { return []; } })();
+    return held.filter(x => IR_ALL_STORES.includes(x));
+  }
+
+  function irEsc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // Refusal codes → a sentence somebody on a dock can act on.
+  function irErr(j, r) {
+    const c = j && j.code;
+    if (c === 'NEED_PAGE_EDIT' || c === 'NEED_PAGE_VIEW') return "You don't have access to Inventory Receiver. Ask an admin.";
+    if (c === 'NEED_MANAGER') return 'Only a manager can do that.';
+    if (c === 'NO_STORE_ACCESS') return "You don't have access to that store.";
+    if (c === 'NO_SESSION') return 'Your session expired — sign in again.';
+    if (c === 'TRUCK_CLOSED') return 'That truck is already down.';
+    if (c === 'UNCLASSIFIED_ACTION') return 'That action is not available on this deployment.';
+    if (j && j.error) return j.error;
+    return `Something went wrong (${(r && r.status) || '?'}).`;
+  }
+
+  function irSetStatus(msg, kind) {
+    const e = el('ir-status');
+    if (!e) return;
+    if (!msg) { e.hidden = true; return; }
+    e.className = 'ir-status ' + (kind || 'ok');
+    e.textContent = msg;
+    e.hidden = false;
+  }
+
+  function irSetTab(which) {
+    const r = which === 'receive';
+    el('ir-pane-receive').hidden = !r;
+    el('ir-pane-trucks').hidden = r;
+    el('ir-tab-receive').setAttribute('aria-selected', String(r));
+    el('ir-tab-trucks').setAttribute('aria-selected', String(!r));
+    if (!r) irLoadTrucks();
+  }
+  window.irSetTab = irSetTab;
+
+  function irScanStore() {
+    // A write never uses the "All stores" sentinel — somebody is standing in one store.
+    const v = el('ir-store') && el('ir-store').value;
+    return v && v !== 'ALL' ? v : (irStores()[0] || null);
+  }
+
+  function irStoreChange() {
+    irState.store = irScanStore();
+    irState.seeded = false;
+    irLoadCurrent();
+    if (!el('ir-pane-trucks').hidden) irLoadTrucks();
+  }
+  window.irStoreChange = irStoreChange;
+
+  function initInventoryReceiver() {
+    const sel = el('ir-store');
+    const stores = irStores();
+    if (!stores.length) {
+      el('ir-begin-panel').innerHTML = '<div class="ir-empty">No store is assigned to your account, so there is nothing to receive into. Ask an admin.</div>';
+      el('ir-open').hidden = true;
+      return;
+    }
+    if (!sel.options.length) {
+      sel.innerHTML = stores.map(s => `<option value="${s}">${irEsc(IR_LABELS[s] || s)}</option>`).join('');
+      // No "All stores" option on Receive: a truck is at one dock. The Trucks tab
+      // spans the caller's stores server-side when no store is passed.
+      sel.value = stores[0];
+    }
+    irState.store = irScanStore();
+    irSetTab('receive');
+    irLoadCurrent();
+  }
+  window.initInventoryReceiver = initInventoryReceiver;
+
+  async function irPost(action, payload) {
+    const r = await fetch(`${WORKER_BASE}?action=${action}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const e = new Error(irErr(j, r));
+      e.code = j && j.code; e.matches = j && j.matches; e.approval = j && j.approval; e.status = r.status;
+      throw e;
+    }
+    return j;
+  }
+
+  async function irGet(action, params) {
+    const q = new URLSearchParams(params || {}).toString();
+    const r = await fetch(`${WORKER_BASE}?action=${action}${q ? '&' + q : ''}`, { credentials: 'include' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(irErr(j, r)); e.code = j && j.code; throw e; }
+    return j;
+  }
+
+  // ── Camera ────────────────────────────────────────────────────────────────
+  // 🔑 The native camera via <input capture>, not getUserMedia — it is what survives
+  // inside an installed PWA, which is where this page lives.
+  function irBeginBol() { irState.mode = 'bol'; irCloseModal(); irSetStatus(null); el('ir-photo').click(); }
+  function irBeginPallet() { irState.mode = 'pallet'; irCloseModal(); irSetStatus(null); el('ir-photo').click(); }
+  function irRetake() { if (irState.mode) { irCloseModal(); el('ir-photo').click(); } }
+  window.irBeginBol = irBeginBol; window.irBeginPallet = irBeginPallet; window.irRetake = irRetake;
+
+  async function irPhoto(input) {
+    const f = input.files && input.files[0];
+    input.value = '';
+    if (!f) return;
+    const isBol = irState.mode === 'bol';
+    el('ir-begin').hidden = true;
+    el('ir-reading').hidden = false;
+    el('ir-reading-t').textContent = isBol ? 'Reading Bill of Lading…' : 'Reading tag…';
+    try {
+      const b64 = isBol ? await psShrink(f, IR_BOL_MAX_PX, IR_BOL_QUALITY) : await psShrink(f);
+      irState.photo = b64;
+      irState.mediaType = 'image/jpeg';
+      const j = await irPost(isBol ? 'truck-bol-scan' : 'truck-pallet-scan',
+        { image_b64: b64, media_type: 'image/jpeg' });
+      irOpenVerify(j, null);
+    } catch (e) {
+      // ⚠️ A failed read must not cost the truck. Open the form empty and editable so a
+      // torn BOL or a glare-blown tag can still be keyed in by hand, and say what broke.
+      const list = isBol ? IR_BOL_FIELDS : IR_TAG_FIELDS;
+      irOpenVerify({ fields: {}, read: 0, of: list.length },
+        `Couldn't read it — ${(e && e.message) || e}. Type it in, or retake the photo.`);
+    } finally {
+      el('ir-reading').hidden = true;
+      el('ir-begin').hidden = !!irState.truck;
+    }
+  }
+  window.irPhoto = irPhoto;
+
+  // ── Verify popup ──────────────────────────────────────────────────────────
+  function irFieldRow(f, v) {
+    const missing = v === null || v === undefined || v === '';
+    const cls = 'ir-in' + (f.key ? ' key' : '') + (missing ? ' miss' : '');
+    const hint = missing
+      ? `<span class="ir-f-hint miss">Not read — left empty rather than guessed</span>`
+      : (f.hint ? `<span class="ir-f-hint">${irEsc(f.hint)}</span>` : '');
+    return `<div class="ir-f">
+      <label class="ir-f-l" for="ir-f-${f.k}">${irEsc(f.l)}</label>
+      <input class="${cls}" type="text" id="ir-f-${f.k}" value="${irEsc(missing ? '' : v)}"
+             placeholder="${missing ? 'not on the paperwork' : ''}">
+      ${hint}</div>`;
+  }
+
+  function irOpenVerify(j, warn) {
+    const isBol = irState.mode === 'bol';
+    const list = isBol ? IR_BOL_FIELDS : IR_TAG_FIELDS;
+    irState.fields = (j && j.fields) || {};
+    el('ir-m-title').textContent = isBol
+      ? 'Verify Bill of Lading'
+      : `Verify pallet tag${irState.truck && irState.truck.bol_no ? ' · BOL ' + irState.truck.bol_no : ''}`;
+    const halves = list.filter(f => f.half), fulls = list.filter(f => !f.half);
+    const leading = fulls.filter(f => f.key), trailing = fulls.filter(f => !f.key);
+    el('ir-m-fields').innerHTML =
+      leading.map(f => irFieldRow(f, irState.fields[f.k])).join('')
+      + (halves.length ? `<div class="ir-grid2">${halves.map(f => irFieldRow(f, irState.fields[f.k])).join('')}</div>` : '')
+      + trailing.map(f => irFieldRow(f, irState.fields[f.k])).join('');
+    el('ir-m-read').textContent = `Read ${(j && j.read) || 0} of ${(j && j.of) || list.length} fields`;
+    el('ir-m-readsub').textContent = isBol
+      ? 'Check the BOL number and who it shipped from — those two identify the truck.'
+      : 'Anything blank was not readable. Type it in if you can see it.';
+    if (irState.photo) {
+      el('ir-m-photo').src = 'data:image/jpeg;base64,' + irState.photo;
+      el('ir-m-shot').hidden = false;
+    } else {
+      el('ir-m-shot').hidden = true;
+    }
+    const w = el('ir-m-warn');
+    const hint = (j && j.truck_hint) || null;
+    if (warn || hint) { w.textContent = warn || hint; w.hidden = false; } else { w.hidden = true; }
+    el('ir-m-submit').textContent = isBol ? 'Open Truck' : 'Add to Truck';
+    el('ir-m-delete').hidden = !(irState.editId && irCanDelete());
+    el('ir-m-retake').hidden = !!irState.editId;
+    el('ir-modal').style.display = 'flex';
+  }
+
+  function irCloseModal() { el('ir-modal').style.display = 'none'; }
+  window.irCloseModal = irCloseModal;
+
+  function irReadFields() {
+    const list = irState.mode === 'bol' ? IR_BOL_FIELDS : IR_TAG_FIELDS;
+    const out = {};
+    for (const f of list) {
+      const e = el('ir-f-' + f.k);
+      out[f.k] = e && e.value.trim() ? e.value.trim() : null;
+    }
+    return out;
+  }
+
+  // ── Submit ────────────────────────────────────────────────────────────────
+  async function irSubmit() {
+    if (irState.busy) return;
+    irState.busy = true;
+    const btn = el('ir-m-submit');
+    btn.disabled = true;
+    try {
+      const v = irReadFields();
+      const isBol = irState.mode === 'bol';
+      const payload = isBol
+        ? { ...v, store: irScanStore(), image_b64: irState.photo, media_type: irState.mediaType }
+        : irState.editId
+          ? { ...v, id: irState.editId }
+          : { ...v, truck_id: irState.truck && irState.truck.id, image_b64: irState.photo, media_type: irState.mediaType };
+      const action = isBol ? 'truck-open' : irState.editId ? 'truck-pallet-update' : 'truck-pallet-log';
+      await irSend(action, payload);
+    } catch (e) {
+      const w = el('ir-m-warn');
+      w.textContent = (e && e.message) || String(e);
+      w.hidden = false;
+    } finally {
+      irState.busy = false;
+      btn.disabled = false;
+    }
+  }
+  window.irSubmit = irSubmit;
+
+  // One send, with the duplicate detour. 🔑 The WORKER is the boundary — this never
+  // decides a duplicate is acceptable, it only collects the manager's approval and
+  // hands it back for the worker to verify.
+  async function irSend(action, payload) {
+    try {
+      const j = await irPost(action, payload);
+      irAfterSend(action, j);
+    } catch (e) {
+      if (e && (e.code === 'DUPLICATE_BARCODE' || e.code === 'DUPLICATE_BOL')) {
+        irApprOpen(e, action, payload);
+        return;
+      }
+      throw e;
+    }
+  }
+
+  function irAfterSend(action, j) {
+    irCloseModal();
+    irState.photo = null; irState.editId = null;
+    if (action === 'truck-open') {
+      irSetStatus(`Truck open — BOL ${j.id ? (el('ir-f-bol_no') && el('ir-f-bol_no').value) || j.id : ''}`.trim(), 'ok');
+    } else if (j && j.dup_approved_by) {
+      irSetStatus(`Added — approved by ${j.dup_approved_by}.`, 'warn');
+    } else {
+      irSetStatus('Pallet received.', 'ok');
+    }
+    irLoadCurrent();
+  }
+
+  // ── Manager approval ──────────────────────────────────────────────────────
+  async function irApprOpen(err, action, payload) {
+    irState.pending = { action, payload };
+    const isBol = err.code === 'DUPLICATE_BOL';
+    const m = (err.matches && err.matches[0]) || null;
+    el('ir-appr-t').textContent = isBol ? 'BOL already received' : 'Barcode already received';
+    el('ir-appr-what').textContent = irApprText(m, isBol);
+    el('ir-appr-why').textContent = isBol
+      ? 'Usually this means the number was misread, or this truck is already on the dock. Two half-received trucks sharing one number is hard to untangle afterwards.'
+      : 'A barcode identifies one physical pallet, so this looks like the same pallet twice — which would count its units in twice.';
+    el('ir-appr-who').textContent = 'A manager has to approve this. Hand them the phone — their name goes on the row.';
+    el('ir-appr-err').hidden = true;
+    el('ir-appr-pin').value = '';
+    el('ir-appr-reason').value = '';
+    const sel = el('ir-appr-name');
+    sel.innerHTML = '<option value="">Loading…</option>';
+    el('ir-appr').style.display = 'flex';
+    try {
+      const j = await irGet('truck-approvers', { store: irScanStore() });
+      const names = (j && j.names) || [];
+      sel.innerHTML = names.length
+        ? '<option value="">Who\'s approving?</option>' + names.map(n => `<option value="${irEsc(n)}">${irEsc(n)}</option>`).join('')
+        : '<option value="">No manager here has an approval code yet</option>';
+    } catch (e) {
+      sel.innerHTML = '<option value="">Could not load managers</option>';
+    }
+  }
+
+  function irApprText(m, isBol) {
+    if (!m) return isBol ? 'This BOL has already been received at this store.' : 'This barcode has already been received.';
+    const when = new Date(m.logged_at || m.opened_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    // 🔑 A match at a store the caller does not hold comes back redacted — a date and
+    // nothing else. Enough to stop them, nothing leaked.
+    if (m.redacted) return `This barcode was already received at another store on ${when}.`;
+    if (isBol) {
+      return `BOL ${m.bol_no} was received here on ${when} by ${m.opened_by || 'someone'}`
+        + `${m.pallet_count != null ? ` — ${m.pallet_count} pallets` : ''}.`;
+    }
+    return `${m.barcode || 'That barcode'} was received ${when}`
+      + `${m.store ? ` at ${IR_LABELS[m.store] || m.store}` : ''}`
+      + `${m.bol_no ? ` on BOL ${m.bol_no}` : ''}`
+      + `${m.pallet_name ? ` — ${m.pallet_name}` : ''}`
+      + `${m.units != null ? `, ${m.units} unit${m.units === 1 ? '' : 's'}` : ''}.`;
+  }
+
+  function irApprCancel() {
+    el('ir-appr').style.display = 'none';
+    irState.pending = null;
+  }
+  window.irApprCancel = irApprCancel;
+
+  async function irApprGo() {
+    if (!irState.pending) return irApprCancel();
+    const name = el('ir-appr-name').value;
+    const pin = el('ir-appr-pin').value.trim();
+    const errBox = el('ir-appr-err');
+    if (!name || !/^\d{6}$/.test(pin)) {
+      errBox.textContent = 'Pick a manager and enter their six-digit code.';
+      errBox.hidden = false;
+      return;
+    }
+    const go = el('ir-appr-go');
+    go.disabled = true;
+    try {
+      const { action, payload } = irState.pending;
+      const j = await irPost(action, {
+        ...payload,
+        approval: { name, pin, reason: el('ir-appr-reason').value.trim() || null },
+      });
+      irApprCancel();
+      irAfterSend(action, j);
+    } catch (e) {
+      // A wrong code comes back as the same 409 with a fresh approval verdict inside.
+      const a = e && e.approval;
+      errBox.textContent = (a && a.error) || (e && e.message) || 'That did not go through.';
+      errBox.hidden = false;
+      el('ir-appr-pin').value = '';
+    } finally {
+      go.disabled = false;
+    }
+  }
+  window.irApprGo = irApprGo;
+
+  // ── The open truck ────────────────────────────────────────────────────────
+  async function irLoadCurrent() {
+    const store = irScanStore();
+    if (!store) return;
+    try {
+      const j = await irGet('truck-current', { store });
+      irState.truck = j.truck || null;
+      irState.pallets = j.pallets || [];
+      irRenderCurrent();
+    } catch (e) {
+      irSetStatus((e && e.message) || String(e), 'err');
+    }
+  }
+  window.irLoadCurrent = irLoadCurrent;
+
+  function irRenderCurrent() {
+    const t = irState.truck;
+    el('ir-open').hidden = !t;
+    el('ir-begin').hidden = !!t;
+    if (!t) return;
+    const opened = new Date(t.opened_at);
+    el('ir-truck-head').innerHTML =
+      `<div><div class="ir-bol-cap">Bill of Lading</div><div class="ir-bol">${irEsc(t.bol_no || '—')}</div></div>
+       <div style="flex:1;min-width:190px">
+         <div class="ir-route"><b>${irEsc(t.ship_from || '?')}</b><span class="ir-arrow">&rarr;</span><b>${irEsc(t.ship_to || irScanStore())}</b>
+         ${t.ship_from_addr ? `<br>${irEsc(t.ship_from_addr)}` : ''}</div>
+         ${t.carrier || t.trailer_no || t.seal_no ? `<div class="ir-route" style="margin-top:2px">${
+           [t.carrier, t.trailer_no ? 'trailer ' + t.trailer_no : null, t.seal_no ? 'seal ' + t.seal_no : null]
+             .filter(Boolean).map(irEsc).join(' · ')}</div>` : ''}
+       </div>
+       <div style="text-align:right;min-width:120px">
+         <div class="ir-bol-cap">Opened</div>
+         <div style="font-size:13px;font-weight:600;margin-top:2px">${opened.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</div>
+         <div class="ir-note">${irEsc(irSince(t.opened_at))}</div>
+       </div>`;
+
+    const n = irState.pallets.length;
+    const units = irState.pallets.reduce((a, p) => a + (p.units || 0), 0);
+    el('ir-tile-pallets').textContent = n;
+    el('ir-tile-units').textContent = units.toLocaleString();
+    // 🔑 The bar only appears when the BOL actually printed a pallet count. With no
+    // claim to measure against, "12 of —" is noise, so the bar is hidden rather than
+    // shown empty.
+    const expect = t.pallet_count;
+    el('ir-prog-wrap').hidden = !expect;
+    if (expect) {
+      el('ir-prog-n').textContent = n;
+      el('ir-prog-s').textContent = `of ${expect} pallets on the BOL`;
+      el('ir-prog-r').textContent = n >= expect ? 'all accounted for' : `${expect - n} to go`;
+      el('ir-prog-fill').style.width = Math.min(100, expect ? (n / expect) * 100 : 0) + '%';
+    }
+    el('ir-pallets-sub').textContent = n
+      ? `${n} pallet${n === 1 ? '' : 's'} · ${units.toLocaleString()} units · newest first`
+      : 'No pallets yet. Scan the first tag off the trailer.';
+    irRenderPallets();
+  }
+
+  function irSince(iso) {
+    const ms = Date.now() - new Date(iso).getTime();
+    const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+    return h ? `on the dock ${h}h ${m}m` : `on the dock ${m}m`;
+  }
+
+  function irRenderPallets() {
+    const box = el('ir-pallets');
+    if (!irState.pallets.length) { box.innerHTML = ''; return; }
+    box.innerHTML = `<div class="ir-scroll"><table class="ir-tbl"><thead><tr>
+        <th class="stick">Barcode</th><th>Pallet</th><th>Item #</th><th>PO / WO</th>
+        <th>Sup. Ref</th><th class="num">Units</th><th>Built by</th><th>Received</th><th></th>
+      </tr></thead><tbody>${irState.pallets.map(p => `
+        <tr class="${p.dup_approved_by ? 'dup' : ''}">
+          <td class="stick" style="font-weight:600">${irEsc(p.barcode || '—')}${
+            p.dup_approved_by ? ` <span class="ir-badge" title="Approved by ${irEsc(p.dup_approved_by)}">dup ok</span>` : ''}</td>
+          <td>${irEsc(p.pallet_name || '—')}</td>
+          <td class="dim">${irEsc(p.item_no || '—')}</td>
+          <td class="dim">${irEsc(p.po || '—')}</td>
+          <td class="dim">${irEsc(p.sup_ref || '—')}</td>
+          <td class="num">${p.units == null ? '—' : p.units.toLocaleString()}</td>
+          <td class="dim">${irEsc(p.created_by_tag || '—')}</td>
+          <td class="dim">${new Date(p.logged_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</td>
+          <td><button type="button" class="ir-row-btn" onclick="irEditPallet(${p.id})">Edit</button></td>
+        </tr>`).join('')}</tbody></table></div>`;
+  }
+
+  function irEditPallet(id) {
+    const p = irState.pallets.find(x => x.id === id);
+    if (!p) return;
+    irState.mode = 'pallet';
+    irState.editId = id;
+    irState.photo = null;
+    irOpenVerify({ fields: p, read: IR_TAG_FIELDS.filter(f => p[f.k] != null).length, of: IR_TAG_FIELDS.length }, null);
+  }
+  window.irEditPallet = irEditPallet;
+
+  async function irDeletePallet() {
+    if (!irState.editId) return;
+    const go = await uiConfirm('This removes the pallet from the truck for good.',
+      { title: 'Remove this pallet?', okText: 'Remove', danger: true });
+    if (!go) return;
+    try {
+      await irPost('truck-pallet-delete', { id: irState.editId });
+      irCloseModal();
+      irState.editId = null;
+      irSetStatus('Pallet removed.', 'ok');
+      irLoadCurrent();
+    } catch (e) {
+      await uiAlert((e && e.message) || String(e), { title: "Couldn't remove it" });
+    }
+  }
+  window.irDeletePallet = irDeletePallet;
+
+  // ── Truck down ────────────────────────────────────────────────────────────
+  async function irAskDown() {
+    const t = irState.truck;
+    if (!t) return;
+    const n = irState.pallets.length;
+    const expect = t.pallet_count;
+    const short = expect && n < expect ? expect - n : 0;
+    const msg = short
+      ? `The BOL says ${expect} pallets. You've received ${n}.\n\nTaking it down now records the truck as ${short} short.`
+      : `${n} pallet${n === 1 ? '' : 's'} received.\n\nTaking it down frees the dock for the next truck.`;
+    const go = await uiConfirm(msg, { title: `Take BOL ${t.bol_no || t.id} down?`, okText: 'Truck Down' });
+    if (!go) return;
+    try {
+      const j = await irPost('truck-down', { truck_id: t.id });
+      irSetStatus(`Truck down — ${j.received} pallet${j.received === 1 ? '' : 's'}, ${(j.units || 0).toLocaleString()} units.`
+        + (j.expected && j.received < j.expected ? ` ${j.expected - j.received} short of the BOL.` : ''), 'ok');
+      irState.truck = null; irState.pallets = [];
+      irRenderCurrent();
+      el('ir-open').hidden = true;
+      el('ir-begin').hidden = false;
+    } catch (e) {
+      await uiAlert((e && e.message) || String(e), { title: "Couldn't take it down" });
+    }
+  }
+  window.irAskDown = irAskDown;
+
+  // ── Trucks by month ───────────────────────────────────────────────────────
+  async function irLoadTrucks() {
+    el('ir-trucks-status').textContent = 'Loading…';
+    try {
+      const j = await irGet('truck-list', { store: irScanStore(), months: '12', limit: '400' });
+      irState.trucks = j.rows || [];
+      el('ir-tab-trucks-n').textContent = irState.trucks.length;
+      el('ir-trucks-status').textContent = irState.trucks.length
+        ? `${irState.trucks.length} truck${irState.trucks.length === 1 ? '' : 's'} · newest first`
+          + (j.truncated ? ' · more exist than are shown' : '')
+        : 'No trucks received yet.';
+      irRenderMonths();
+    } catch (e) {
+      el('ir-trucks-status').textContent = (e && e.message) || String(e);
+      el('ir-months').innerHTML = '';
+    }
+  }
+  window.irLoadTrucks = irLoadTrucks;
+
+  function irMonthLabel(key) {
+    const [y, m] = key.split('-');
+    return new Date(Date.UTC(+y, +m - 1, 1)).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  }
+
+  function irRenderMonths() {
+    const box = el('ir-months');
+    if (!irState.trucks.length) { box.innerHTML = ''; return; }
+    const byMonth = new Map();
+    for (const t of irState.trucks) {
+      if (!byMonth.has(t.month)) byMonth.set(t.month, []);
+      byMonth.get(t.month).push(t);
+    }
+    const keys = [...byMonth.keys()].sort().reverse();
+    box.innerHTML = keys.map((k, i) => {
+      const rows = byMonth.get(k);
+      const pallets = rows.reduce((a, t) => a + (t.received || 0), 0);
+      const units = rows.reduce((a, t) => a + (t.units || 0), 0);
+      const open = rows.filter(t => !t.closed_at).length;
+      return `<div class="ir-mo${i === 0 ? ' open' : ''}">
+        <button type="button" class="ir-mo-head" onclick="irToggleMonth(this)">
+          <span class="ir-caret"></span>
+          <span class="ir-mo-name">${irEsc(irMonthLabel(k))}</span>
+          ${open ? `<span class="ir-pill"><span class="ir-dot"></span>${open} OPEN</span>` : ''}
+          <span class="ir-mo-meta">${rows.length} truck${rows.length === 1 ? '' : 's'} · ${pallets} pallets · ${units.toLocaleString()} units</span>
+        </button>
+        <div class="ir-mo-body"><div><div class="ir-scroll"><table class="ir-tbl"><thead><tr>
+          <th class="stick">BOL #</th><th>Ship from</th><th>Carrier</th><th>Trailer</th>
+          <th class="num">Pallets</th><th class="num">Units</th><th>Opened</th><th>Down</th><th>Status</th>
+        </tr></thead><tbody>${rows.map(t => irTruckRow(t)).join('')}</tbody></table></div></div></div>
+      </div>`;
+    }).join('');
+  }
+
+  function irTruckRow(t) {
+    const short = t.pallet_count && t.received < t.pallet_count ? t.pallet_count - t.received : 0;
+    const flagged = short || t.dup_approved;
+    const status = !t.closed_at
+      ? '<span class="ir-pill"><span class="ir-dot"></span>OPEN</span>'
+      : short ? `<span class="ir-badge">${short} short</span>`
+      : t.dup_approved ? `<span class="ir-badge">${t.dup_approved} dup approved</span>`
+      : '<span class="ir-pill down">DOWN</span>';
+    const fmt = iso => iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      + ' · ' + new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
+    return `<tr class="${flagged && t.closed_at ? 'dup' : ''}">
+      <td class="stick" style="font-weight:700">${irEsc(t.bol_no || t.id)}</td>
+      <td>${irEsc(t.ship_from || '—')}</td>
+      <td class="dim">${irEsc(t.carrier || '—')}</td>
+      <td class="dim">${irEsc(t.trailer_no || '—')}</td>
+      <td class="num">${t.received}${t.pallet_count ? `<span class="dim"> / ${t.pallet_count}</span>` : ''}</td>
+      <td class="num">${(t.units || 0).toLocaleString()}</td>
+      <td class="dim">${fmt(t.opened_at)}</td>
+      <td class="dim">${fmt(t.closed_at)}</td>
+      <td>${status}</td>
+    </tr>`;
+  }
+
+  function irToggleMonth(btn) { btn.parentNode.classList.toggle('open'); }
+  window.irToggleMonth = irToggleMonth;
+
+  // ── Export ────────────────────────────────────────────────────────────────
+  // 🔑 FETCHES rather than building from what is on screen: a file called
+  // inventory-receiver.csv that quietly meant "the 12 months the tab happens to hold"
+  // is exactly the fault Bin Dump's export shipped with and nobody noticed for months.
+  async function irExportCsv() {
+    const range = await uiChoose('Export trucks', 'Which trucks should the file cover?', [
+      { label: 'This month', value: 'this' },
+      { label: 'Last 12 months', value: '12' },
+      { label: 'Everything', value: 'all' },
+    ]);
+    if (range === null) return;
+    el('ir-trucks-status').textContent = 'Building the file…';
+    try {
+      const months = range === 'this' ? '2' : range === '12' ? '12' : 'all';
+      const j = await irGet('truck-list', { store: irScanStore(), months, limit: '2000' });
+      let rows = j.rows || [];
+      if (range === 'this') {
+        // 🔑 Narrowed by MONTH KEY, not by days: months=1 is "the last 31 days", which
+        // is a different set from "this month" on every day but the first.
+        const now = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()).slice(0, 7);
+        rows = rows.filter(t => t.month === now);
+      }
+      const head = ['BOL', 'Store', 'Ship from', 'Ship to', 'Carrier', 'Trailer', 'Seal', 'BOL date',
+                    'Pallets on BOL', 'Pallets received', 'Units', 'Opened', 'Opened by', 'Down', 'Down by', 'Note'];
+      const cell = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+      const csv = [head.map(cell).join(',')].concat(rows.map(t => [
+        t.bol_no, t.store, t.ship_from, t.ship_to, t.carrier, t.trailer_no, t.seal_no, t.bol_date,
+        t.pallet_count, t.received, t.units, t.opened_at, t.opened_by, t.closed_at, t.closed_by, t.close_note,
+      ].map(cell).join(','))).join('\n');
+      // 🔑 UTF-8 BOM, like downloadWrsAsCsv. Without it Excel renders an en-dash in a
+      // carrier name as mojibake, which reads as bad data rather than a bad encoding.
+      const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `trucks-${irScanStore()}-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      // 🛑 A truncated export raises a MODAL, not a status line: somebody who misses it
+      // hands over a partial file and nothing downstream ever says so.
+      if (j.truncated) {
+        await uiAlert('This range holds more trucks than the file could carry, so it has the newest and stops there.\n\nOlder trucks are missing from it.',
+          { title: 'Only part of the list' });
+      }
+      el('ir-trucks-status').textContent = `Exported ${rows.length} truck${rows.length === 1 ? '' : 's'}.`;
+    } catch (e) {
+      el('ir-trucks-status').textContent = (e && e.message) || String(e);
+    }
+  }
+  window.irExportCsv = irExportCsv;
+
+  // ── Photo viewer ──────────────────────────────────────────────────────────
+  function irLbOpen() {
+    const src = el('ir-m-photo').src;
+    if (!src) return;
+    el('ir-lb-img').src = src;
+    el('ir-lb').hidden = false;
+  }
+  function irLbClose() { el('ir-lb').hidden = true; el('ir-lb-img').src = ''; }
+  window.irLbOpen = irLbOpen; window.irLbClose = irLbClose;
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && el('ir-lb') && !el('ir-lb').hidden) { e.preventDefault(); irLbClose(); }
+  });
 
   // ═══════════════════════════════════════════════════════════════
   //  MARK OUT OF STOCK
@@ -28021,6 +29172,7 @@
   // in one and not the other is a 403 with nothing on screen to explain it.
   const GRANTABLE_PAGES = [
     { id: 'bin-dump', label: 'Bin Dump', nav: 'nav-bin-dump' },
+    { id: 'inventory-receiver', label: 'Inventory Receiver', nav: 'nav-inventory-receiver' },
     { id: 'mos', label: 'Mark Out of Stock', nav: 'nav-mos' },
   ];
   // Mirrors PAGE_LEVELS in worker.js. The worker is the real gate; this only
@@ -28792,6 +29944,7 @@
     'nav-ebay-cases': 'ecom',
     'nav-inventory': 'bl',
     'nav-bin-dump': 'bl',
+    'nav-inventory-receiver': 'bl',
     'nav-mos': 'bl',
     'nav-labor': 'bl',
     'nav-supply-request': 'bl',
@@ -29264,6 +30417,10 @@
     const binDumpRoles = ['superuser', 'admin', 'executive', 'district_manager', 'manager'];
     el('nav-bin-dump').classList.toggle('hidden',
       !binDumpRoles.includes(user.role) && pageLevel('bin-dump', user) < 1);
+    // Inventory Receiver: the dock. Its OWN page grant, not Bin Dump's — the people
+    // who unload trucks are not necessarily the people who dump bins.
+    el('nav-inventory-receiver').classList.toggle('hidden',
+      !binDumpRoles.includes(user.role) && pageLevel('inventory-receiver', user) < 1);
     // Mark Out of Stock: same audience as Bin Dump — the people on the floor —
     // plus any associate granted the page.
     el('nav-mos').classList.toggle('hidden',
@@ -31044,6 +32201,7 @@
       gate('more-merch-scan', !mgrBar && vis('nav-merch-scan'));       // managers have the bar tab
       gate('more-inventory', vis('nav-inventory'));                    // admin-only
       gate('more-bin-dump', vis('nav-bin-dump') && !binDumpInBar);      // managers too; an associate has the bar tab
+      gate('more-inventory-receiver', vis('nav-inventory-receiver'));   // the dock lives under More
       // Same rule as Bin Dump above: a page an associate holds while holding no
       // dashboard is their whole app, so it belongs in the bar, not under More.
       var mosInBar = roleReady && vis('nav-mos') && !seesDash;
@@ -31058,7 +32216,7 @@
       // active tab
       // 'ebay-cases' has no bar tab of its own, so without it here every tab
       // sits dim while you are standing on the page.
-      var morePages = { 'marketing': 1, 'accessibility': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1, 'bin-dump': 1, 'mos': 1 };
+      var morePages = { 'marketing': 1, 'accessibility': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1, 'bin-dump': 1, 'mos': 1, 'inventory-receiver': 1 };
       // ...unless it has its own tab, in which case that tab is what should light
       // up while you are standing on the page.
       if (binDumpInBar) delete morePages['bin-dump'];

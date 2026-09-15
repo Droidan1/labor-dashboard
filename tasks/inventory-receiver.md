@@ -161,25 +161,55 @@ MOS has its own `mos-*`.
   `scripts/test-associate.mjs` pins the two against each other, because a page in one and not
   the other is a 403 with nothing on screen to explain it.
 
-## Checklist
+## Checklist — built 2026-09-15
 
-- [ ] `migration-065.sql` — `trucks`, `truck_pallets`, indexes, partial unique index
-- [ ] `migration-066.sql` — `users.approval_pin_hash`, `approval_pin_failures`
-- [ ] `BOL_PROMPT` — worked example from the real BOL, explicit `null`, self-check
-      (a date must be a date, a carrier must be a company), ignore list
-- [ ] `truckMonthOf()` — ET-derived, pinned by a test that passes under UTC, ET and Auckland
-- [ ] The worker actions + `ACTION_BUSINESS` + `ACTION_PAGE` registration
-- [ ] `inventory-receiver` added to `GRANTABLE_PAGES` on **both** sides, per `test-associate.mjs`
-- [ ] Duplicate barcode: any truck, any store, 90 days, `truck_pallets` only — and a test that
-      pins it does **not** read `bin_dumps`, since that separation is a decision, not an omission
-- [ ] Duplicate `bol_no` at the same store → blocked on `truck-open`, same override
-- [ ] `truck-approve-dup` — lockout checked **before** the hash, identical failure body for
-      every cause, failure counter on mismatch
-- [ ] The page, both tabs, the modals, the month accordions
-- [ ] Raise the downscale cap for the BOL and **measure the read on a real photo**
-- [ ] `scripts/test-inventory-receiver.mjs` — assert on the prompt text itself, both tag
-      fixtures, every duplicate refusal, and the refuse-before-put ordering
-- [ ] `sw.js` CACHE_NAME bump + `scripts/fixtures/shell-cache.json` in the same commit
+- [x] `migration-065.sql` — `trucks`, `truck_pallets`, indexes, and the partial unique
+      index that enforces one open truck per store in the DATABASE, not the handler
+- [x] `migration-066.sql` — `users.approval_pin_hash`, `approval_pin_failures`
+- [x] `BOL_PROMPT` — worked example from the real BOL, explicit `null`, self-check, ignore list
+- [x] `truckMonthOf()` — ET-derived; the suite's clock is pinned to 9pm ET on the 30th
+      (01:00 UTC on the 1st) so a UTC month is visibly the wrong MONTH, not the wrong day
+- [x] Eleven worker actions + `ACTION_BUSINESS` + `ACTION_PAGE` registration
+- [x] `inventory-receiver` grantable on both sides (`GRANTABLE_PAGES` derives from `ACTION_PAGE`)
+- [x] Duplicate barcode: any truck, any store, 90 days, `truck_pallets` only — pinned
+      behaviourally in BOTH directions and at the source
+- [x] Duplicate `bol_no` at the same store → blocked on `truck-open`, same override
+- [x] The page, both tabs, the modals, the month accordions
+- [x] `psShrink` parameterised; the BOL goes at 1800px / q0.88
+- [x] `scripts/test-inventory-receiver.mjs` — **144 assertions**
+- [x] `scripts/browser-inventory-receiver.mjs` — **50 assertions** in a real browser
+- [x] `sw.js` CACHE_NAME → **v199**, fixture in the same commit
+- [x] Full suite **4544 assertions across 74 suites**, green
+
+### Three things built differently from the plan above
+
+**The approval is inline, not a token.** The plan had `truck-approve-dup` mint a
+short-lived token for one barcode. Verifying the manager's name and PIN in the SAME
+request that writes the row is simpler and strictly stronger: there is no token
+lifecycle, no expiry window, and nothing to replay against a different pallet.
+
+**A failed approval is still a 409, with the approval's verdict nested inside.** The outer
+status answers "did the pallet go on?" — no, it is still a duplicate. The inner
+`approval.code` answers "why not?". The client needs both to tell "we have not asked a
+manager yet" from "a manager typed the wrong code", and collapsing them loses that.
+
+**The shared tag helpers were renamed before the second caller arrived** — `BIN_DUMP_FIELDS`
+→ `PALLET_TAG_FIELDS`, `binDumpFields` → `palletTagFields`, `binDumpText` → `tagText`,
+`binDumpTruckHint` → `palletTagTruckHint`. This repo already wrote that lesson down on
+`storeActionGuard`. The alternative was a second copy of "what a pallet tag field is",
+and two copies drift.
+
+### What is NOT done, and is not code
+
+- [ ] **Nobody has an approval PIN yet.** `approval_pin_hash` is NULL for every account,
+      so the duplicate override currently has no one to approve it. Setting the first
+      codes is an admin action on real accounts and is Brian's to make, not a migration's.
+- [ ] **The BOL read has never met a real camera.** Every assertion in the suite runs
+      against a fixture derived from one photograph. A green suite proves the code is
+      self-consistent about a layout nobody has checked against a lens — exactly what
+      Bin Dump's own notes say a green suite could not prove. The failure to watch for is
+      not a blank but a **plausible wrong digit in the seal number**, and the fix for one
+      is `BOL_PROMPT` plus a worker redeploy, not a rebuild.
 
 ## Deploy order
 
