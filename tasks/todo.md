@@ -1,3 +1,71 @@
+# The payment archive — transaction detail that outlives Clover (2026-09-15)
+
+Brian: **"persist the payments so history outlives the 90 days"**. Built, tested, NOT applied.
+
+## ⏸ NOTHING HAS BEEN RUN. Two things need Brian's explicit go (rule 7)
+
+1. **`migration-063.sql`** — creates two tables. Additive; touches no existing table.
+   ```
+   STAGING  npx wrangler d1 execute b40982c2-4009-4842-bc17-fa0977468b07 --remote -y --file=migration-063.sql
+   PROD     npx wrangler d1 execute 3fa911d7-31d6-438c-985f-7ac08c407d2d --remote -y --file=migration-063.sql
+   ```
+   🔑 Those UUIDs are **not** in the order the file suggests — `3fa911d7` is PROD. Labelled in
+   the migration header for exactly that reason.
+2. **The one-time backfill** that seeds the archive with the ~90 days Clover still holds.
+   Dry run by default; `&dry=0` writes. Suggested: one store at a time.
+
+## The asymmetry the whole design turns on
+
+Once a date leaves Clover's window there is **no re-pull**. So a day banked incompletely and
+recorded as complete is permanent and unfixable, while a complete day recorded as incomplete
+costs one re-bank. Every judgement leans the second way.
+
+| guard | what it prevents |
+|---|---|
+| A failed Clover page banks **nothing** | a permanently truncated day |
+| Completeness is **earned** by reconciling against `daily_sales` (±5%) | the retention-edge failure where Clover returns fewer rows and the count is merely non-zero |
+| A day already `complete=1` is **refused a thinner replacement** | a re-bank quietly losing detail |
+| Dry run is the **default** | an accidental write |
+| Range refused past 400 store-days | a silent truncation |
+
+`payment_archive_days.complete` is a stored fact, not an assumption. A day at `complete=0` is
+visibly partial, is listed under `needsAttention`, and can be re-banked while Clover still has it.
+
+## Two things found by reading the code, not by planning
+
+1. **The nightly bank runs at `todayStr − 3`, not yesterday.** The clientCreatedTime sweep in
+   the same cron re-snapshots today + 2 prior days, so `daily_sales` for anything newer can
+   still move when an offline-rung order syncs late. Reconciling against a total that has not
+   settled would mark good days unreconciled. Three days back it is final — and still 87 days
+   inside Clover's window.
+2. **A range IS allowed here, unlike `repair-run`.** That rule exists because re-pulling a
+   healthy date *overwrites* a good snapshot with one that has lost aged-out refunds. Nothing
+   is overwritten here: the archive starts empty, the row key is Clover's own payment id, and
+   a complete day is refused a thinner replacement.
+
+## Deploy order — and why it does not actually matter
+
+Migration first, then worker. But `readArchivedDay` **tolerates the tables not existing**:
+without that, a worker reaching prod before the hand-run migration would turn every
+out-of-window request into a 500 instead of a clean refusal. Found because
+`test-transactions.mjs` (which does not apply the migration) started throwing — so that suite
+now doubles as the proof of the un-migrated path.
+
+## Verified — 4,286 repo assertions across 71 suites + 88 browser assertions
+
+`scripts/test-payment-archive.mjs` (35, new) drives the real worker with Clover stubbed:
+POST-only and superuser-only; dry-run default writes nothing; a clean day banks and
+reconciles; re-banking does not duplicate; **a failed page banks nothing**; under-reporting
+against `daily_sales` lands at `complete=0` with the drift recorded; an empty fetch against a
+trading day is never complete; a complete day refuses a thinner fetch unless forced; the
+archive serves a date past retention with names resolved **at bank time**; an unbanked
+out-of-window date still refuses by name and says where the archive starts; and a date inside
+the window is still read live.
+
+Frontend: an archived day says so and drops the "read live" wording; an unreconciled one gets
+a banner separating what is wrong (this list) from what is not (the day's total).
+`CACHE_NAME` v196 → v197.
+
 # inkDimmer as text — fixed everywhere it was one (2026-09-15)
 
 Brian: **"fix the inkdimmer text sites too"** — the ~74/89 I had reported and deliberately
