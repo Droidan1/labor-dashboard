@@ -1,3 +1,47 @@
+# The backfill runners could not run on the only machine that runs them (2026-09-15)
+
+Brian ran `npx wrangler deploy` — **production worker is live, version
+`fc6a4c90`** — then the two backfill lines, which failed with
+`No such file or directory` because his checkout predates #232. Harmless.
+
+But the pull would not have helped. He is on a MacBook, and both runners did
+their date arithmetic with `date -u -d`, which is **GNU-only**. macOS ships BSD
+date, which rejects `-d` outright. `scripts/backfill-transactions.sh` would have
+died on line 83, before a single request; `scripts/backfill-item-hours.sh` from
+#225 had the same defect in seven places.
+
+I wrote that script *for* him and never considered the machine it runs on. The
+repo already knew — `scripts/migrate-secrets.sh` carries
+`date -v-2d +%F 2>/dev/null || date -d '2 days ago' +%F`, and `build.sh` uses
+perl over sed "for macOS/Linux portability".
+
+**Fix: no `date` arithmetic at all.** Both runners already require `python3` for
+their JSON summaries, so the arithmetic goes there — portable by construction,
+and testable from the machine that wrote it, which a BSD-vs-GNU branch would not
+have been. ISO-8601 dates also compare correctly as strings, so the chunk loop
+drops its epoch conversions entirely.
+
+Locked by two kinds of assertion: a grep proving neither script uses `date -d`
+**or** `date -v` (comment lines stripped first — both scripts explain in prose
+that they avoid it, and the first version of the test matched its own warning),
+and an exact chunk-boundary check, 70 days at 30 a chunk, that proves the
+arithmetic still produces the same windows it did before.
+
+Default window verified against production: **2026-06-18 → 2026-09-14, 89 days**,
+which is exactly the span `payment_archive_days` covers.
+
+## State
+
+| | staging | production |
+|---|---|---|
+| `migration-064` | ✅ | ✅ |
+| worker | ✅ `e4aaabd5` | ✅ **`fc6a4c90`** |
+| backfill | — | ❌ not run |
+
+Left: merge this, `git pull`, then the dry run. The dry run doubles as the
+rollout check — an old worker instance returns no `items` field at all, so a
+chunk reporting `items 0` across the board means the rollout has not finished.
+
 # Running the three: migration applied, worker half-deployed, a guard bug found (2026-09-15)
 
 Brian: **"run all three"** — migration-064, the worker deploy, the backfill.

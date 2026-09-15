@@ -80,11 +80,28 @@ MSG
   exit 1
 fi
 
-[ -n "$END" ]   || END=$(date -u -d 'yesterday' +%F)
-[ -n "$START" ] || START=$(date -u -d "$END - 88 days" +%F)
+# ── Dates, portably ─────────────────────────────────────────────────────────
+# 🛑 NOT `date -d`. That is GNU-only: macOS ships BSD date, where -d means
+# something else entirely and this script dies on its first line of arithmetic.
+# BSD's equivalent (-j -v+30d -f %Y-%m-%d) shares no syntax with it, so rather
+# than branch on which date is installed — and ship a branch that cannot be
+# tested from the machine that wrote it — the arithmetic goes through python3,
+# which this script already requires for its JSON summaries.
+#
+# ISO-8601 dates also compare correctly as plain strings, which is why the loop
+# below uses `<` on them instead of converting to epochs at all.
+d_shift() {   # $1 = YYYY-MM-DD, $2 = days (may be negative) -> YYYY-MM-DD
+  python3 -c 'import sys,datetime;print(datetime.date.fromisoformat(sys.argv[1])+datetime.timedelta(days=int(sys.argv[2])))' "$1" "$2"
+}
+d_span() {    # inclusive day count between two YYYY-MM-DD
+  python3 -c 'import sys,datetime;a,b=(datetime.date.fromisoformat(x) for x in sys.argv[1:3]);print((b-a).days+1)' "$1" "$2"
+}
+d_le() { [ "$1" = "$2" ] || [ "$1" \< "$2" ]; }
 
-days_between() { echo $(( ( $(date -u -d "$2" +%s) - $(date -u -d "$1" +%s) ) / 86400 + 1 )); }
-SPAN=$(days_between "$START" "$END")
+[ -n "$END" ]   || END=$(d_shift "$(date -u +%F)" -1)
+[ -n "$START" ] || START=$(d_shift "$END" -88)
+
+SPAN=$(d_span "$START" "$END")
 [ "$SPAN" -gt 0 ] || { echo "end ($END) is before start ($START)" >&2; exit 2; }
 
 echo "host    $HOST"
@@ -122,9 +139,9 @@ FAILED=0
 
 for store in $STORES; do
   chunk_start="$START"
-  while [ "$(date -u -d "$chunk_start" +%s)" -le "$(date -u -d "$END" +%s)" ]; do
-    chunk_end=$(date -u -d "$chunk_start + $((CHUNK - 1)) days" +%F)
-    [ "$(date -u -d "$chunk_end" +%s)" -gt "$(date -u -d "$END" +%s)" ] && chunk_end="$END"
+  while d_le "$chunk_start" "$END"; do
+    chunk_end=$(d_shift "$chunk_start" $((CHUNK - 1)))
+    d_le "$chunk_end" "$END" || chunk_end="$END"
 
     # $HOST may carry its own scheme (the mock server in the tests does).
     case "$HOST" in *://*) base="$HOST" ;; *) base="https://$HOST" ;; esac
@@ -152,7 +169,7 @@ print(f"wrote {d.get('wrote', 0):3d}  items {items:6d}  "
 PY
     fi
 
-    chunk_start=$(date -u -d "$chunk_end + 1 day" +%F)
+    chunk_start=$(d_shift "$chunk_end" 1)
   done
 done
 

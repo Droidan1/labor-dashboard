@@ -15,6 +15,7 @@ import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
 
 const SH = join(dirname(fileURLToPath(import.meta.url)), "backfill-transactions.sh");
 let pass = 0, fail = 0;
@@ -119,6 +120,44 @@ const A = ["--store", "BL1", "--start", "2026-09-01", "--end", "2026-09-02"];
   ok(/WOULD_LOSE_ROWS/.test(r.out), "names WOULD_LOSE_ROWS in the summary");
   ok(/receipt lines\s+37/.test(r.out), "counts the receipt lines banked");
   ok(/NOT re-run those with --force/.test(r.out), "tells the reader not to force past it");
+}
+
+// ── 7. 🛑 Dates must work on a Mac ────────────────────────────────────────
+// `date -d` is GNU-only. macOS ships BSD date, which rejects it outright — and
+// this repo is driven from a MacBook, so a GNU-ism here is not a portability
+// nicety, it is the script failing on its first line of arithmetic for the one
+// person who runs it. Both runners do the arithmetic in python3 instead, which
+// they already require for their JSON summaries.
+{
+  const DIR = dirname(fileURLToPath(import.meta.url));
+  for (const f of ["backfill-transactions.sh", "backfill-item-hours.sh"]) {
+    // Comment lines are stripped first: both scripts explain IN PROSE that they
+    // do not use `date -d`, and a grep over the whole file matches that warning.
+    const src = readFileSync(join(DIR, f), "utf8")
+      .split("\n").filter(l => !/^\s*#/.test(l)).join("\n");
+    ok(!/\bdate\s+(-u\s+)?-d\b/.test(src), `${f} uses no GNU-only \`date -d\``);
+    ok(!/\bdate\s+.*-v[+-]/.test(src), `${f} uses no BSD-only \`date -v\` either`);
+  }
+}
+
+// ── 8. The window is chunked correctly ────────────────────────────────────
+// The arithmetic moved to python3; this is what proves it still produces the
+// same windows. 70 days at 30 a chunk is three calls, the last one short.
+{
+  const { server, seen } = mock();
+  const port = await listen(server);
+  const r = await run(["--store", "BL1", "--start", "2026-06-18", "--end", "2026-08-26",
+                       "--host", `http://127.0.0.1:${port}`]);
+  server.close();
+  const ranges = seen.map(x => {
+    const u = new URL("http://x" + x.url);
+    return `${u.searchParams.get("start")}..${u.searchParams.get("end")}`;
+  });
+  ok(ranges.length === 3, `70 days at 30 a chunk is 3 calls, got ${ranges.length}`);
+  ok(ranges[0] === "2026-06-18..2026-07-17", `chunk 1 (got ${ranges[0]})`);
+  ok(ranges[1] === "2026-07-18..2026-08-16", `chunk 2 (got ${ranges[1]})`);
+  ok(ranges[2] === "2026-08-17..2026-08-26", `chunk 3 is short and clamps to --end (got ${ranges[2]})`);
+  ok(/\(70 days\)/.test(r.out), "the span is counted inclusively");
 }
 
 console.log(`${pass} passed, ${fail} failed`);
