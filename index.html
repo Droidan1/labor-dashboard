@@ -117,6 +117,68 @@
     html.oled .dark\:hover\:bg-gray-700\/20:hover { background-color: rgba(255,255,255,0.03); }
     html.oled .dark\:focus\:ring-offset-gray-800:focus { --tw-ring-offset-color: #0a0a0a; }
 
+    /* ── Light mode: accent-green is a FILL colour, not a text colour ──
+       `accent-green` #22c55e measures 2.28:1 on opl-panel, 2.18 on
+       opl-panelHi, 2.05 on opl-bg and 1.86 on opl-sidebar. Every one of
+       those fails AA, and DESIGN.md §2.1 already says it in terms:
+       "accent-green #22c55e is 2.28:1 on white — unusable as TEXT in
+       light". It is nonetheless what 164 sites write, because the same
+       class reads correctly in dark (7.81:1 on op-panel).
+
+       So retint the TEXT utility in light only. green-800 measures
+       6.42 / 7.13 / 6.81 / 5.82 on those four grounds, and 5.49-6.55 on
+       an accent tint (`bg-accent-green/10` and `/20`), which is where
+       most of these actually sit.
+
+       🔑 ONE RULE, NOT 164 EDITS. Tailwind emits `.text-accent-green` at
+       (0,1,0); `html:not(.dark) .text-accent-green` is (0,2,1) and wins
+       on specificity alone, so load order is irrelevant and no
+       !important is needed — the same technique as the pure-black block
+       above. Rewriting 164 markup sites would carry typo risk, would
+       miss every site added afterwards, and would have to be redone the
+       next time someone writes the class.
+
+       BACKGROUNDS, BORDERS AND RINGS ARE DELIBERATELY UNTOUCHED
+       (`bg-accent-green` ×127, `border-` ×89, `ring-` ×92). There the
+       accent is the surface, not the ink, and it is doing its job; what
+       sits ON it is already a dark literal. Only `text-` is wrong.
+
+       Checked before writing this: no site puts accent TEXT on a dark
+       fill. The only two class lists holding both `text-accent-green`
+       and `bg-op-bad` are ternaries — `text-op-bad bg-op-bad/10` OR
+       `text-accent-green bg-accent-green/10` — so they never co-apply. */
+    html:not(.dark) .text-accent-green { color: #166534; }
+
+    /* ── The same defect, the same fix: semantic colours used as TEXT ──
+       Found by sweeping the Item Sales surface, not by reading the diff —
+       the accent fix above was one of FOUR contrast failures on that one
+       panel, and the other three are app-wide.
+
+       Measured on each theme's real grounds, against the element's own
+       10% tint (`bg-op-bad/10`, `bg-op-warn/10`), which is where most of
+       these sit, and on the plain panel underneath:
+
+         text-op-bad   light  #ef4444  2.99 / 3.30 / 3.17   FAIL
+                       light  #a5281a  5.72 / 6.32 / 6.05   PASS  (red-800)
+                       dark   #ef4444  4.34 / 3.94 / 4.88   FAIL
+                       dark   #f87171  5.91 / 5.36 / 6.63   PASS  (red-400)
+         text-op-warn  light  #f59e0b  1.81 / 1.99 / 1.91   FAIL
+                       light  #92400e  5.96 / 6.57 / 6.30   PASS  (amber-800)
+                       dark   #f59e0b  7.08 / 6.39 / 8.09   PASS — left alone
+
+       op-bad is the one that fails in BOTH themes, because a saturated
+       red on a red wash is low-contrast whichever way the ground goes.
+
+       Same specificity trick, same reasons (see the accent note above),
+       and again TEXT ONLY: `bg-op-bad` ×29 and `bg-op-warn` ×23 are
+       untouched, as are every border and ring. Checked that no site puts
+       this text on a dark ground in light mode — the only three class
+       lists pairing `text-op-bad` with `bg-op-panel` write it as
+       `bg-opl-panel dark:bg-op-panel`, i.e. white in light. */
+    html:not(.dark) .text-op-bad  { color: #a5281a; }
+    html:not(.dark) .text-op-warn { color: #92400e; }
+    .dark .text-op-bad            { color: #f87171; }
+
     /* ── Accessibility page — theme picker ────────────────────────────
        Light side uses opl-* token literals (a <style> block cannot reach
        the Tailwind class names — DESIGN.md §4.8). The dark side goes
@@ -1599,14 +1661,6 @@
             .txn-wall{padding:11px 18px;background:rgba(245,158,11,.16);
               border-bottom:1px solid rgba(180,83,9,.45);font-size:12px;line-height:1.55}
             .dark .txn-wall{background:rgba(245,158,11,.14);border-bottom-color:rgba(245,158,11,.45)}
-            /* 🛑 accent-green #22c55e is 2.18:1 on the light bar — DESIGN.md §2.1:
-               "unusable as TEXT in light". Tailwind's text-accent-green is one
-               value for both themes, so an accent that must be READ needs this
-               pair instead: green-800 light (6.9:1), the accent in dark (7.81:1).
-               A dot or a fill can stay accent-green; only text is the problem. */
-            .txn-accent{color:#166534}
-            .dark .txn-accent{color:#22c55e}
-            .txn-accent:hover{text-decoration:underline}
             /* Legend */
             .txn-legend{display:flex;gap:9px 20px;flex-wrap:wrap;padding:12px 18px;font-size:11.5px;
               color:#6b6453;border-top:1px solid rgba(20,16,8,.10)}
@@ -12403,7 +12457,7 @@
             <div class="flex items-center gap-2 min-w-0">
               <span class="w-2 h-2 rounded-sm flex-shrink-0" style="background:${sw}"></span>
               <span class="text-[14px] font-bold text-opl-ink dark:text-op-ink truncate">${escapeHtml(c.category)}</span>
-              <span class="text-[12px] text-opl-inkDimmer dark:text-op-inkDimmer">›</span>
+              <span class="text-[12px] text-opl-inkDim dark:text-op-inkDim">›</span>
             </div>
             <div class="flex items-center gap-2.5 flex-wrap text-[11px] text-opl-inkDim dark:text-op-inkDim">
               <span><b class="text-opl-ink dark:text-op-ink font-semibold tabular-nums">${(c.qty || 0).toLocaleString()}</b> qty</span>
@@ -12566,7 +12620,7 @@
 
   function _txnErrorHTML(payload) {
     const d = payload.__detail || {};
-    const retry = `<button onclick="refreshTransactions()" class="mt-3 text-[12px] font-bold txn-accent">Try again</button>`;
+    const retry = `<button onclick="refreshTransactions()" class="mt-3 text-[12px] font-bold text-accent-green hover:underline">Try again</button>`;
     switch (payload.__err) {
       case 'BEYOND_RETENTION':
         return `<div class="p-8 text-center">
@@ -12636,9 +12690,9 @@
       `<button type="button" role="tab" aria-selected="${k === txnTab}" onclick="setTxnTab('${k}')">${label}<span class="txn-cnt">${(counts[k] || 0).toLocaleString()}</span></button>`).join('');
 
     const liveTag = isToday
-      ? `<span class="inline-flex items-center gap-1 text-[9.5px] font-bold tracking-[0.06em] uppercase txn-accent"><span class="w-1.5 h-1.5 rounded-full bg-accent-green"></span>Live</span>`
+      ? `<span class="inline-flex items-center gap-1 text-[9.5px] font-bold tracking-[0.06em] uppercase text-accent-green"><span class="w-1.5 h-1.5 rounded-full bg-accent-green"></span>Live</span>`
       : '';
-    const refreshBtn = isToday ? `<button type="button" onclick="refreshTransactions()" class="text-[11.5px] font-bold txn-accent">Refresh</button>` : '';
+    const refreshBtn = isToday ? `<button type="button" onclick="refreshTransactions()" class="text-[11.5px] font-bold text-accent-green hover:underline">Refresh</button>` : '';
 
     const sum = `
       <div class="txn-sum">
@@ -12733,7 +12787,7 @@
           <span class="txn-dt-id">${escapeHtml(String(r.id || ''))}</span>
           <span class="txn-dt-sub">${r.orderId ? 'Order ' + escapeHtml(r.orderId) : 'No linked order'}</span>
           <span class="txn-spacer"></span>
-          <button type="button" onclick="openTxnDetail(${JSON.stringify(String(r.id)).replace(/"/g, '&quot;')})" class="text-[11.5px] font-bold txn-accent">Close</button>
+          <button type="button" onclick="openTxnDetail(${JSON.stringify(String(r.id)).replace(/"/g, '&quot;')})" class="text-[11.5px] font-bold text-accent-green hover:underline">Close</button>
         </div>
         <div class="txn-dt-grid">
           ${cell('Amount', fmtDollar(r.amount || 0), true)}
@@ -13359,7 +13413,7 @@
             <div class="flex items-center gap-2 min-w-0">
               <span class="w-2 h-2 rounded-sm flex-shrink-0" style="background:${sw}"></span>
               <span class="text-[14px] font-bold text-opl-ink dark:text-op-ink truncate">${escapeHtml(c.category)}</span>
-              <span class="text-[12px] text-opl-inkDimmer dark:text-op-inkDimmer">›</span>
+              <span class="text-[12px] text-opl-inkDim dark:text-op-inkDim">›</span>
             </div>
             <div class="flex items-center gap-2.5 flex-wrap text-[11px] text-opl-inkDim dark:text-op-inkDim">
               <span><b class="text-opl-ink dark:text-op-ink font-semibold tabular-nums">${(c.qty || 0).toLocaleString()}</b> qty</span>

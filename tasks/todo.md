@@ -1,3 +1,61 @@
+# Item Sales contrast — fixed, and it was four defects, not one (2026-09-15)
+
+Brian: **"fix the item sales contrast issue"**. Done — but the surface had **four** failures,
+not the one I had reported. Found by rendering Item Sales with real data and sweeping every
+text element against its real composited background, rather than checking the thing I knew about.
+
+| element | light | dark | fix |
+|---|---|---|---|
+| `text-accent-green` — Live / Refresh / Grand Total | 2.18 | pass | green-800 in light |
+| `text-op-warn` — the `disc` pill | 1.99 | pass | amber-800 in light |
+| `text-op-bad` — the `ref` pill | 3.30 | **4.34** | red-800 light, red-400 dark |
+| `text-*-inkDimmer` — the `›` chevron | 3.01 | 2.99 | inkDim (local) |
+
+`text-op-bad` fails in **both** themes — a saturated red on its own red wash is low-contrast
+whichever way the ground goes.
+
+## Four CSS rules, not 292 markup edits
+
+```
+html:not(.dark) .text-accent-green { color: #166534; }
+html:not(.dark) .text-op-bad       { color: #a5281a; }
+html:not(.dark) .text-op-warn      { color: #92400e; }
+.dark           .text-op-bad       { color: #f87171; }
+```
+
+Same specificity technique as the pure-black block above them: Tailwind emits
+`.text-accent-green` at (0,1,0), `html:not(.dark) .text-accent-green` is (0,2,1) and wins
+without `!important` or load-order luck. A rule cannot typo across 292 sites and cannot miss
+the site someone adds tomorrow.
+
+🔑 **TEXT ONLY.** `bg-accent-green` ×127, `border-` ×89, `ring-` ×92, `bg-op-bad` ×29,
+`bg-op-warn` ×23 are all untouched and asserted untouched — there the colour is the surface,
+not the ink. Checked first that no site puts this text on a dark ground in light mode: the
+only three class lists pairing `text-op-bad` with `bg-op-panel` write it
+`bg-opl-panel dark:bg-op-panel`, i.e. white in light.
+
+Also deleted `.txn-accent`, the local class added with Transactions — the global rule gives
+the identical pair, and two mechanisms for one rule is one too many.
+
+## ⏸ NOT fixed, and it is a decision for Brian
+
+`text-opl-inkDimmer` / `dark:text-op-inkDimmer` used as TEXT runs to **74 / 89 sites** and
+measures 2.71–3.01 light, 2.71–3.33 dark. DESIGN.md §4.8 trap 5 already says inkDimmer is for
+borders and badges and `inkDim` is the muted-but-readable step — so the spec agrees it is
+wrong. But darkening every dim label in the app is a **visible design change**, not just a
+correctness fix, so only the two Item Sales chevrons were changed. The rest is his call.
+
+## Verified — 4,251 repo assertions + 78 browser assertions
+
+- **Item Sales with real data, all three themes**: all 44 text elements ≥ AA. This is the
+  check that found the three extra defects; the app-wide sweep could not reach them, because
+  Item Sales only exists in the DOM once it has data.
+- **App-wide, 28 pages revealed, all three themes**: every rendered `text-accent-green` /
+  `text-op-bad` / `text-op-warn` ≥ AA, each utility asserted to resolve to its intended value
+  per theme, and every fill/border asserted UNCHANGED.
+- **Transactions** (which lost `.txn-accent`): 37 behaviour + 19 contrast, still clean.
+- `CACHE_NAME` v194 → v195.
+
 # Worker deployed to production (2026-09-15)
 
 Brian: **"deploy the worker"**. Done — `clover-sales-api` version **17f16db4-61d1-444a-9221-1333d023c898**

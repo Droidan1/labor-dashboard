@@ -1,3 +1,51 @@
+## I swept the surface, not the diff — and found three more defects than I reported (2026-09-15)
+
+**Context:** I had flagged one contrast bug on Item Sales — `text-accent-green` at 2.18:1 on
+the light bar — discovered while building Transactions, because I had *copied* the class from
+Item Sales. Brian said "fix the item sales contrast issue". Singular.
+
+It was not singular. Rendering Item Sales with real data and sweeping **every** text element
+against its real composited background found **four** failures, of which mine was one:
+
+| element | light | dark |
+|---|---|---|
+| `text-accent-green` — Live / Refresh / Grand Total | 2.18 | pass |
+| `text-op-warn` — the `−$20.00 disc` pill | 1.99 | pass |
+| `text-op-bad` — the `−$40.00 ref` pill | 3.30 | **4.34** |
+| `text-*-inkDimmer` — the `›` disclosure chevron | 3.01 | 2.99 |
+
+I would have reported one and shipped a surface still carrying three, because the one I knew
+about was the one I had personally touched. **The bug I introduce is the bug I look for.**
+
+`text-op-bad` is the interesting one: it fails in BOTH themes, because a saturated red on a
+red wash is low-contrast whichever way the ground goes. No amount of theme-swapping finds
+that — only measuring against the *composited* background does.
+
+**Scope, and where I drew the line.** Three of the four are app-wide, not Item Sales': 164
+`text-accent-green`, 96 `text-op-bad`, 32 `text-op-warn`. I fixed those with four CSS rules
+overriding the TEXT utilities per theme on specificity — the technique the pure-black block
+already uses — rather than editing 292 markup sites. One rule cannot typo, cannot miss a site
+added tomorrow, and leaves `bg-`/`border-`/`ring-` untouched, which matters: there the accent
+IS the surface and is doing its job.
+
+The fourth I deliberately did NOT globalise. `text-*-inkDimmer` runs to 74/89 sites and
+darkening all of them is a visible design change, not a correctness fix — so the chevron was
+fixed where it was found and the rest was reported as a decision, not absorbed.
+
+<rules>
+1. **Sweep the SURFACE, not the diff.** A check built from what you changed can only confirm
+   what you changed. Render the real thing with real data and measure everything on it.
+2. **A single reported defect is a sample, not a census.** When someone asks you to fix "the"
+   issue, find out whether it is one.
+3. **Measure against the composited background, not the token.** `#ef4444` looks fine until
+   it sits on `bg-op-bad/10` — its own tint is what makes it fail.
+4. **One rule beats N edits when the defect is in a utility, not in the markup.** But only
+   after proving no site depends on the old value: I checked every class list pairing these
+   with a dark fill before touching anything.
+5. **Correctness fixes globalise; aesthetic ones ask.** Retinting an unreadable red is the
+   first. Darkening every dim label in the app is the second.
+</rules>
+
 ## A deploy CAN be verified against the served bytes — `/content` is 405, `/content/v2` is 200 (2026-09-15)
 
 **Context:** deploying the worker for the Transactions endpoint. The working belief going in
