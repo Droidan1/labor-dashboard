@@ -1,3 +1,39 @@
+## A deploy CAN be verified against the served bytes — `/content` is 405, `/content/v2` is 200 (2026-09-15)
+
+**Context:** deploying the worker for the Transactions endpoint. The working belief going in
+was that this API token cannot read the deployed script, so a deploy is verified by *version
+identity* — wrangler's printed Version ID matching the active version at 100% — and not by
+grepping what is actually being served.
+
+That belief is half right. `GET /accounts/{acc}/workers/scripts/{name}/content` does answer
+**405**. But the versioned endpoint does not:
+
+    workers/scripts/clover-sales-api/content      -> HTTP 405,     134 bytes
+    workers/scripts/clover-sales-api/content/v2   -> HTTP 200, 907,780 bytes
+
+`content/v2` returns the real bundle, and greps against it turn "the right version is active"
+into "the running code contains this symbol". Both were confirmed here, plus the 20 secrets
+and 11 other bindings that survived the upload — a dropped `BL*_API_TOKEN` would break every
+Clover fetch and is invisible to a version check.
+
+Note `.../versions/{id}?include_modules=true` is NOT the way in: it returns ~4 KB of metadata
+(etag, handlers, bindings) and no module content. Grepping *that* for my own symbols printed
+six confident MISSING lines — about a metadata blob, not about the deploy.
+
+**And the grep that mattered most failed on its spelling.** `["transactions","bl"]` returned
+nothing; the bundle writes `["transactions", "bl"]`, with a space. That entry is the single
+thing that makes the endpoint reachable at all — without it the fail-closed business gate
+403s every session call — so an empty grep there looked exactly like a broken deploy.
+
+<rules>
+1. **One 405 does not close the question.** Try the versioned sibling (`content/v2`) before
+   concluding a capability is unavailable to this token.
+2. **Check the size of what came back before grepping it.** 4 KB cannot be an 886 KB worker.
+   A MISSING against the wrong payload is a fact about the probe.
+3. **Verify bindings, not just code.** A deploy that silently dropped a secret passes every
+   version-identity check and fails on the first Clover call.
+4. Same family as "a colour has more than one spelling": before believing an empty grep,
+   print how the thing is actually written in the file you are searching.
 ## `cat > file` on a tracked file I had never read (2026-09-15)
 
 **Context:** CLAUDE.md says to write the plan to `tasks/todo.md`. I did, with a heredoc:

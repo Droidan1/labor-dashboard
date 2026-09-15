@@ -1749,6 +1749,226 @@ async function fetchManualRefunds(store, env, sinceTimestamp, untilTimestamp = n
   return all;
 }
 
+// ═══ TRANSACTIONS — per-payment detail for one store-day ══════════════════
+// Clover's own Transactions screen, rebuilt from the API for the store-detail
+// page. READ-ONLY: nothing here writes to KV or D1 (sales-diag is the
+// precedent). Nothing here is used by the nightly rollup — the totals a day
+// reports are still built by aggregateItemSales, untouched.
+//
+// 🔑 Clover caps payment history at ~90 days and says so in terms ("the results
+// will not exceed 90 days", Get all payments). Nothing per-payment has ever been
+// stored on our side — daily_sales is one row per store-day, the KV item
+// snapshot is category-grain — so there is no local copy to fall back on. A date
+// past the wall is REFUSED with a named code rather than served as an empty
+// list: an empty list reads as "the store took nothing that day", which is a lie
+// about a day it traded.
+const TXN_RETENTION_DAYS = 90;
+
+// A payment carries its tender and its employee as IDs — `tender.{id}` and
+// `employee.{id}`, never "Cash" and a person's name — so each needs its own
+// lookup. Both are small and change rarely, so they cache like the category map
+// (which is also why this costs ~0 subrequests after the first call of the day).
+//
+// Degrades, never breaks: a failed or partial fetch returns what it has and is
+// NOT cached, so the next request retries. Callers fall back to the raw id, so
+// a missing map costs a name, not the page. Never cache a partial map — the TTL
+// would freeze the gap in place (the lesson fetchItemCategoryMap already carries).
+async function fetchCloverLabelMap(store, env, resource) {
+  const cacheKey = `clover-${resource}:${store}`;
+  if (env.SALES_SNAPSHOTS) {
+    const cached = await env.SALES_SNAPSHOTS.get(cacheKey, "json");
+    if (cached && Object.keys(cached).length > 0) return cached;
+  }
+  const merchantId = env[`${store}_MERCHANT_ID`];
+  const apiToken = env[`${store}_API_TOKEN`];
+  if (!merchantId || !apiToken) return {};
+
+  const map = {};
+  let offset = 0;
+  const limit = 1000;
+  let complete = true;
+  const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
+  while (true) {
+    const url = `https://api.clover.com/v3/merchants/${merchantId}/${resource}`
+      + `?limit=${limit}&offset=${offset}`;
+    // cloverFetch (not bare fetch) so a 429 is retried rather than read as "no data".
+    const resp = await cloverFetch(url, { headers });
+    // A failed page is NOT the end of the list.
+    if (!resp.ok) { complete = false; break; }
+    const data = await resp.json();
+    if (!data?.elements?.length) break;
+    for (const e of data.elements) {
+      // Tenders carry `label`, employees carry `name`. Take whichever is there
+      // so one helper serves both rather than two near-identical copies.
+      const label = e.label || e.name;
+      if (e.id && label) map[e.id] = label;
+    }
+    if (data.elements.length < limit) break;
+    offset += limit;
+  }
+  if (env.SALES_SNAPSHOTS && complete) {
+    await env.SALES_SNAPSHOTS.put(cacheKey, JSON.stringify(map), { expirationTtl: 86400 });
+  }
+  return map;
+}
+
+// Orders for one day with their payments and customer attached.
+//
+// Deliberately NOT filtered to `state=locked`, unlike fetchItemOrders: that
+// filter exists so a day's TOTAL only counts completed orders, but a voided or
+// declined payment is exactly what the Voids tab is for, and it can sit on an
+// order that never locked. Hiding it here would make the tab silently wrong.
+//
+// Returns null on a failed page — never a truncated array a caller cannot tell
+// from a genuinely quiet day.
+async function fetchTransactionOrders(store, env, sinceTimestamp, untilTimestamp) {
+  const merchantId = env[`${store}_MERCHANT_ID`];
+  const apiToken = env[`${store}_API_TOKEN`];
+  if (!merchantId || !apiToken) return null;
+
+  const all = [];
+  let offset = 0;
+  const limit = 1000;
+  const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
+  while (true) {
+    let url = `https://api.clover.com/v3/merchants/${merchantId}/orders`
+      + `?filter=createdTime>=${sinceTimestamp}`
+      + `&expand=payments,customers`
+      + `&limit=${limit}&offset=${offset}`;
+    if (untilTimestamp) url += `&filter=createdTime<${untilTimestamp}`;
+    const resp = await cloverFetch(url, { headers });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (!data?.elements?.length) break;
+    all.push(...data.elements);
+    if (data.elements.length < limit) break;
+    offset += limit;
+  }
+  return all;
+}
+
+// Clover money is always cents. One place converts, so no caller has to remember.
+const txnDollars = (cents) => Math.round((Number(cents) || 0)) / 100;
+
+// The glyph the UI draws beside a tender name. Derived from the LABEL because
+// Clover's tender ids are per-merchant and carry no type; the label is what the
+// merchant named it ("Cash", "Credit Card", "Gift Card"). Anything unrecognised
+// gets the neutral glyph rather than being forced into one of the three.
+function txnTenderKind(label) {
+  const s = String(label || "").toLowerCase();
+  if (/\bcash\b/.test(s)) return "cash";
+  if (/gift|store credit/.test(s)) return "gift";
+  if (/credit|debit|card|visa|mastercard|amex|discover/.test(s)) return "card";
+  return "other";
+}
+
+// Assemble one store-day's rows from the three Clover payloads. Pure — no fetch,
+// no env, no clock — so the whole classification can be driven from fixtures.
+function buildTransactions(orders, refunds, credits, tenderMap, employeeMap, store, dateStr) {
+  const rows = [];
+  const nameOf = (map, ref) => (ref?.id ? (map[ref.id] || null) : null);
+
+  for (const order of orders || []) {
+    const customer = order.customers?.elements?.[0];
+    const customerName = customer
+      ? ([customer.firstName, customer.lastName].filter(Boolean).join(" ") || null)
+      : null;
+    for (const p of order.payments?.elements || []) {
+      // Two spellings of the same state: some payloads flag `voided`, others
+      // carry a non-SUCCESS `result`. Accept either — a void missed here would
+      // be counted as a sale, which is the expensive direction to be wrong in.
+      const voided = p.voided === true || (p.result && p.result !== "SUCCESS");
+      const tenderLabel = nameOf(tenderMap, p.tender);
+      rows.push({
+        kind: voided ? "void" : "payment",
+        id: p.id,
+        orderId: order.id || p.order?.id || null,
+        ts: p.createdTime ?? order.createdTime ?? null,
+        amount: txnDollars(p.amount),
+        tax: txnDollars(p.taxAmount),
+        tip: txnDollars(p.tipAmount),
+        tender: tenderLabel,
+        tenderKind: txnTenderKind(tenderLabel),
+        employee: nameOf(employeeMap, p.employee),
+        customer: customerName,
+        // Every one of these is rung on a register, so "Device" is the honest
+        // default; `offline` is the one distinction Clover documents on the
+        // payment itself, and an external id means it came in another way.
+        source: p.externalPaymentId ? "External" : (p.offline === true ? "Device · offline" : "Device"),
+        cashTendered: p.cashTendered != null ? txnDollars(p.cashTendered) : null,
+        result: p.result || null,
+        reason: null,
+      });
+    }
+  }
+
+  for (const r of refunds || []) {
+    const tenderLabel = nameOf(tenderMap, r.payment?.tender);
+    rows.push({
+      kind: "refund",
+      id: r.id,
+      orderId: r.orderRef?.id || r.payment?.order?.id || null,
+      refundOf: r.payment?.id || null,
+      ts: r.createdTime ?? null,
+      // Negative: a refund is money leaving, and the sign is what the column
+      // reads. Clover reports the magnitude.
+      amount: -Math.abs(txnDollars(r.amount)),
+      tax: -Math.abs(txnDollars(r.taxAmount)),
+      tip: 0,
+      tender: tenderLabel,
+      tenderKind: txnTenderKind(tenderLabel),
+      employee: nameOf(employeeMap, r.employee),
+      customer: null,
+      source: "Device",
+      cashTendered: null,
+      result: r.result || null,
+      reason: r.reason || null,
+    });
+  }
+
+  // fetchManualRefunds already drops voided and non-SUCCESS credits, which is
+  // right: those are not manual refunds that happened. Clover's own Voids tab
+  // lists voided PAYMENTS, so nothing is lost by not re-deriving them here.
+  for (const c of credits || []) {
+    const tenderLabel = nameOf(tenderMap, c.tender);
+    rows.push({
+      kind: "manual",
+      id: c.id,
+      orderId: c.orderRef?.id || null,
+      ts: c.createdTime ?? null,
+      amount: -Math.abs(txnDollars(c.amount)),
+      tax: -Math.abs(txnDollars(c.taxAmount)),
+      tip: 0,
+      tender: tenderLabel,
+      tenderKind: txnTenderKind(tenderLabel),
+      employee: nameOf(employeeMap, c.employee),
+      customer: null,
+      source: "Device",
+      cashTendered: null,
+      result: c.result || null,
+      reason: null,
+    });
+  }
+
+  // Newest first, matching Clover. A row with no timestamp sorts last rather
+  // than to the top, where a missing value would masquerade as the latest sale.
+  rows.sort((a, b) => (b.ts ?? -Infinity) - (a.ts ?? -Infinity));
+
+  const counts = { payment: 0, refund: 0, manual: 0, void: 0 };
+  let payments = 0, tax = 0, tip = 0, refunded = 0;
+  for (const r of rows) {
+    counts[r.kind] = (counts[r.kind] || 0) + 1;
+    if (r.kind === "payment") { payments += r.amount; tax += r.tax; tip += r.tip; }
+    // A void never counted toward the day, so it never counts here either.
+    if (r.kind === "refund" || r.kind === "manual") refunded += Math.abs(r.amount);
+  }
+  const r2 = (n) => Math.round(n * 100) / 100;
+  return {
+    store, date: dateStr, rows, counts,
+    totals: { payments: r2(payments), count: counts.payment, tax: r2(tax), tip: r2(tip), refunded: r2(refunded) },
+  };
+}
+
 // sameDayOrders: the locked-order elements already fetched for this day window.
 // When provided, same-day refunds (where Clover has already zeroed or reduced
 // order.total before the snapshot runs) are detected and skipped to avoid
@@ -4380,6 +4600,7 @@ const ACTION_BUSINESS = new Map([
   ["thumbnail-generate", "bl"],
   ["thumbnail-upload", "bl"],
   ["thumbnails", "bl"],
+  ["transactions", "bl"],
   ["update-clover-item", "bl"],
   ["update-user", "bl"],
   ["weekly-store-detail", "bl"],
@@ -23554,6 +23775,88 @@ export default {
     }
 
     // ── Item sales by L2 category: ?action=items&store=BL1[&date=2026-04-08]
+    // ─── Transactions: Clover's per-payment detail for one store-day ────
+    // Store-scoped, read-only, live. Writes nothing; serves nothing from KV
+    // except the two small label maps, which are a cache, not a record.
+    if (url.searchParams.get("action") === "transactions") {
+      const store = (url.searchParams.get("store") || "").toUpperCase();
+      if (!store) {
+        return new Response(JSON.stringify({ error: "Missing store param" }), { status: 400, headers: corsJson });
+      }
+      if (!canAccessStore(currentUser, store)) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+      }
+
+      const { dateStr: txnToday } = getETToday();
+      const dateParam = url.searchParams.get("date") || txnToday;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        return new Response(JSON.stringify({ error: "Invalid date param (expected YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+      }
+      if (dateParam > txnToday) {
+        return new Response(JSON.stringify({ error: "Date is in the future", code: "FUTURE_DATE" }), { status: 400, headers: corsJson });
+      }
+
+      // BL16 and the closed BL12 (Wyoming) share one Clover merchant account, so
+      // a pre-cutover date asked of BL16 would return Wyoming's payments under
+      // Indy East's name. Checked BEFORE the retention wall deliberately: this
+      // is the stronger claim (that date is not BL16's data at ANY retention),
+      // and behind the wall it would be unreachable code — the window start has
+      // been later than the cutover since 2026-09-12 and only moves further out.
+      if (store === "BL16" && dateParam < WRS_CUTOVER) {
+        return new Response(JSON.stringify({
+          error: "Date precedes the Indy East handover",
+          code: "BEFORE_STORE_CUTOVER", store, date: dateParam, cutover: WRS_CUTOVER,
+        }), { status: 422, headers: corsJson });
+      }
+
+      // 🛑 The retention wall. Clover returns at most ~90 days of payment
+      // history and degrades by returning LESS rather than erroring, so a date
+      // past the wall would come back as a plausible-looking empty day. Refuse
+      // it by name: the client draws "not retrievable", never "$0.00".
+      const txnAgeDays = Math.round((getStartOfDayET(txnToday) - getStartOfDayET(dateParam)) / 86400000);
+      if (txnAgeDays > TXN_RETENTION_DAYS) {
+        return new Response(JSON.stringify({
+          error: "Past Clover's retention window",
+          code: "BEYOND_RETENTION",
+          store, date: dateParam, ageDays: txnAgeDays, retentionDays: TXN_RETENTION_DAYS,
+        }), { status: 422, headers: corsJson });
+      }
+
+      const merchantId = env[`${store}_MERCHANT_ID`];
+      const apiToken = env[`${store}_API_TOKEN`];
+      if (!merchantId || !apiToken) {
+        return new Response(JSON.stringify({ error: "Store keys not found" }), { status: 404, headers: corsJson });
+      }
+
+      const txnStart = getStartOfDayET(dateParam);
+      const txnEnd = txnStart + 86400000;
+      try {
+        const [orders, refunds, credits, tenderMap, employeeMap] = await Promise.all([
+          fetchTransactionOrders(store, env, txnStart, txnEnd),
+          fetchRefundElements(store, env, txnStart, txnEnd),
+          fetchManualRefunds(store, env, txnStart, txnEnd),
+          fetchCloverLabelMap(store, env, "tenders"),
+          fetchCloverLabelMap(store, env, "employees"),
+        ]);
+        // null means a page failed, NOT a quiet day. Serving [] here would show
+        // a trading day as empty, which is the failure mode this repo has paid
+        // for twice. Say so instead and let the client offer a retry.
+        if (orders === null) {
+          return new Response(JSON.stringify({
+            error: "Clover did not return a complete order list", code: "INCOMPLETE_FETCH", store, date: dateParam,
+          }), { status: 502, headers: corsJson });
+        }
+        const result = buildTransactions(orders, refunds, credits, tenderMap, employeeMap, store, dateParam);
+        result.live = dateParam === txnToday;
+        result.retentionDays = TXN_RETENTION_DAYS;
+        return new Response(JSON.stringify(result), { headers: corsJson });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "Transactions fetch failed", detail: err.message }), {
+          status: 500, headers: corsJson,
+        });
+      }
+    }
+
     if (url.searchParams.get("action") === "items") {
       const store = (url.searchParams.get("store") || "").toUpperCase();
       if (!store) {

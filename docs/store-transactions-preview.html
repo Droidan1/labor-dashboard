@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Store Transactions — tab preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&family=Lilita+One&display=swap" rel="stylesheet">
+<style>
+/* ─────────────────────────────────────────────────────────────────────────
+   Store detail → TRANSACTIONS — interactive preview.
+
+   docs/ is EXCLUDED from scripts/build.sh (see its line 4 comment), so this
+   file never reaches production. Nothing here is wired to the API and no app
+   code has been changed.
+
+   Layout follows DESIGN.md §4.8 (one panel owns bar + status + table +
+   legend; sticky header AND sticky first column each carry their own opaque
+   background; numbers are right-aligned tabular-nums; every visual state
+   gets a legend row).
+
+   Numbers are SEEDED SYNTHETIC — stable between reloads, plausible for a
+   liquidation retailer, and not anyone's real sales.
+   ───────────────────────────────────────────────────────────────────────── */
+/* ═══ TOKENS ═══════════════════════════════════════════════════════════════
+   DESIGN.md §4.8 trap 3: a <style> block cannot use the Tailwind token
+   classes, so every literal below is a copy of a token in tailwind.config.js
+   and is NAMED in its comment. Both themes are stated ON THE PANEL — nothing
+   inherits a colour from body.
+   Every ratio below was COMPUTED against the real composited background
+   (§4.8 trap 6), never eyeballed. Figures live in the panel legend.
+   ────────────────────────────────────────────────────────────────────────── */
+:root{
+  --bg:#0a0f1a;          /* op-bg      */
+  --panel:#101826;       /* op-panel   */
+  --panelHi:#16203a;     /* op-panelHi */
+  --ink:#e7ecf3;         /* op-ink      — 14.98:1 on op-panel */
+  --inkDim:#8893a7;      /* op-inkDim   — 5.74:1 on panel, 5.21:1 on panelHi */
+  --inkDimmer:#5a6478;   /* op-inkDimmer — BORDERS/BADGES ONLY (2.99:1 as text, §4.8 trap 5) */
+  --hairline:rgba(255,255,255,.09);
+  --border:rgba(255,255,255,.16);
+  --accent:#22c55e;      /* accent-green — 7.81:1 on op-panel */
+  --accentInk:#06210f;
+  --good:#22c55e;        /* op-good — 7.81:1 */
+  --bad:#f87171;         /* red-400. op-bad #ef4444 is only 4.29:1 on panelHi
+                            and 4.16:1 on the refund wash — this is 6.43/5.83
+                            plain and 5.67/5.15 on the wash. */
+  --warn:#f59e0b;        /* op-warn — 8.28:1 */
+  --info:#93c5fd;        /* blue-300 — 8.06:1 on the auth wash */
+  --goodWash:rgba(34,197,94,.14);
+  --badWash:rgba(239,68,68,.14);
+  --warnWash:rgba(245,158,11,.14);
+  --infoWash:rgba(59,130,246,.16);
+  --amberEdge:rgba(245,158,11,.45);
+  color-scheme:dark;     /* §4.8 trap 4 — an unchecked box is UA-drawn */
+}
+html.light{
+  --bg:#f4f3ee;          /* opl-bg      */
+  --panel:#ffffff;       /* opl-panel   */
+  --panelHi:#fafaf6;     /* opl-panelHi */
+  --ink:#14110a;         /* opl-ink     — 18.85:1 */
+  --inkDim:#6b6453;      /* opl-inkDim  — 5.88:1 on panel, 5.62:1 on panelHi */
+  --inkDimmer:#9c9484;   /* opl-inkDimmer — BORDERS ONLY (3.01:1 as text) */
+  --hairline:rgba(20,16,8,.10);
+  --border:rgba(20,16,8,.18);
+  --accent:#166534;      /* green-800 — 7.13:1. accent-green is 2.28:1 on white,
+                            unusable as TEXT in light. */
+  --accentInk:#ffffff;
+  --good:#166534;
+  --bad:#a5281a;         /* 6.01:1 on the refund wash; opl-bad #c0392b is 5.44:1 plain */
+  --warn:#92400e;        /* amber-800 — 7.09:1 */
+  --info:#1e40af;        /* blue-800 — 7.46:1 on the auth wash */
+  --goodWash:rgba(34,197,94,.16);
+  --badWash:rgba(192,57,43,.12);
+  --warnWash:rgba(245,158,11,.16);
+  --infoWash:rgba(59,130,246,.14);
+  --amberEdge:rgba(180,83,9,.45);
+  color-scheme:light;
+}
+
+*{margin:0;padding:0;box-sizing:border-box;}
+/* The UA's [hidden] rule is display:none at (0,1,0); ANY class that sets
+   display beats it and the element stays on screen as an empty stub. */
+[hidden]{display:none !important;}
+body{background:var(--bg);color:var(--ink);
+  font-family:'Geist',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  padding:28px 16px 72px;}
+.wrap{max-width:1180px;margin:0 auto;}
+
+/* ── Document chrome (preview only — not part of the proposal) ─────────── */
+.doc-kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--accent);margin-bottom:6px;}
+.doc-title{font-family:'Lilita One',cursive;font-size:30px;letter-spacing:.02em;
+  color:var(--ink);font-weight:400;line-height:1.15;}
+.doc-sub{font-size:13.5px;color:var(--inkDim);margin-top:8px;max-width:78ch;line-height:1.65;}
+.doc-sub b{color:var(--ink);font-weight:600;}
+.doc-note{margin:16px 0 20px;padding:11px 14px;border-radius:10px;
+  background:var(--warnWash);border:1px solid var(--amberEdge);
+  font-size:12.5px;color:var(--ink);line-height:1.6;}
+.doc-note b{font-weight:700;}
+.doc-note code,.qa-a code,.doc-sub code,.lg-row code{background:var(--panelHi);
+  border:1px solid var(--hairline);border-radius:4px;padding:1px 5px;font-size:11.5px;
+  font-family:'JetBrains Mono',ui-monospace,monospace;}
+
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:20px;}
+.tb-lbl{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--inkDim);}
+.seg{display:inline-flex;gap:0;border:1px solid var(--border);border-radius:999px;overflow:hidden;}
+.seg button{appearance:none;border:0;background:transparent;color:var(--inkDim);
+  font:inherit;font-size:11.5px;font-weight:600;padding:5px 13px;cursor:pointer;
+  transition:background .2s,color .2s;}
+.seg button:hover{color:var(--ink);}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accentInk);}
+.tb-spacer{flex:1;}
+
+/* ── Q&A / feasibility blocks (preview only) ──────────────────────────── */
+.h2{font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--inkDim);margin:34px 0 12px;}
+.qa{background:var(--panel);border:1px solid var(--border);border-radius:14px;
+  padding:6px 16px;color:var(--ink);}
+.qa-row{display:flex;gap:11px;padding:12px 0;border-bottom:1px solid var(--hairline);}
+.qa-row:last-child{border-bottom:0;}
+.qa-n{flex:none;width:21px;height:21px;border-radius:7px;background:var(--panelHi);
+  border:1px solid var(--border);color:var(--inkDim);font-size:10.5px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;margin-top:1px;}
+.qa-n.ok{background:var(--goodWash);border-color:rgba(34,197,94,.35);color:var(--good);}
+.qa-n.no{background:var(--badWash);border-color:rgba(239,68,68,.35);color:var(--bad);}
+.qa-q{display:block;font-size:13.5px;font-weight:600;color:var(--ink);}
+.qa-a{display:block;font-size:12.5px;color:var(--inkDim);margin-top:5px;line-height:1.65;}
+.qa-a b{color:var(--ink);font-weight:600;}
+
+@media (max-width:640px){
+  body{padding:20px 12px 56px;}
+  .doc-title{font-size:24px;}
+  .mc-bar,.mc-status,.lg,.tabs{padding-left:12px;padding-right:12px;}
+  .dt-bar,.dt-cell,.dt-lines-h{padding-left:12px;padding-right:12px;}
+  table.li td{padding-left:12px;padding-right:12px;}
+}
+
+/* ═══ §4.8 PANEL — one panel owns bar + status + table + legend ════════════ */
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;
+  overflow:hidden;color:var(--ink);}            /* colour at the PANEL, trap 3 */
+
+/* Bar — panelHi, bottom border, 13px/18px, gap 14, wraps. Controls that ACT
+   ON THE TABLE live here; page-level actions stay in the page header. */
+.mc-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  background:var(--panelHi);border-bottom:1px solid var(--border);padding:13px 18px;}
+.mc-lbl{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--inkDim);white-space:nowrap;}
+.mc-spacer{flex:1;}
+
+/* Tabs — Payments · Refunds · Manual Refunds · Voids · Authorizations */
+.tabs{display:flex;gap:2px;flex-wrap:wrap;padding:0 18px;background:var(--panelHi);
+  border-bottom:1px solid var(--border);}
+.tabs button{appearance:none;border:0;background:transparent;color:var(--inkDim);
+  font:inherit;font-size:12.5px;font-weight:600;padding:9px 12px 8px;cursor:pointer;
+  border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:7px;}
+.tabs button:hover{color:var(--ink);}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent);}
+.tabs .cnt{font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:999px;
+  background:var(--panel);border:1px solid var(--border);color:var(--inkDim);
+  font-variant-numeric:tabular-nums;}
+.tabs button[aria-selected="true"] .cnt{color:var(--ink);}
+
+/* Status line — one sentence, inkDim. Trap 7: a render target holds ONLY what
+   that render owns, so the status line is its own element outside #tx-rows. */
+.mc-status{padding:10px 18px;font-size:12px;color:var(--inkDim);line-height:1.55;
+  border-bottom:1px solid var(--hairline);}
+.mc-status b{color:var(--ink);font-weight:600;}
+
+/* Scroller + table */
+.mc-scroll{overflow-x:auto;overflow-y:auto;max-height:560px;}
+table.tx{width:100%;border-collapse:separate;border-spacing:0;
+  font-variant-numeric:tabular-nums;}   /* §4.8: tabular-nums on the TABLE */
+table.tx thead th{position:sticky;top:0;z-index:3;height:34px;
+  background:var(--panelHi);            /* trap 2 — sticky needs its own opaque bg */
+  color:var(--inkDim);font-size:10.5px;font-weight:700;letter-spacing:.05em;
+  text-transform:uppercase;text-align:left;padding:0 10px;white-space:nowrap;
+  border-bottom:1px solid var(--border);}
+table.tx tbody td{height:42px;padding:0 10px;font-size:12.5px;color:var(--ink);
+  border-bottom:1px solid var(--hairline);white-space:nowrap;}
+table.tx tbody tr:last-child td{border-bottom:0;}
+table.tx tbody tr{cursor:pointer;}
+table.tx tbody tr:hover td{background:var(--panelHi);}
+/* A selected row is marked ONCE, on its first cell — an inset box-shadow on a
+   <td> draws a box around every cell, which reads as a broken grid. */
+table.tx tbody tr[aria-selected="true"] td{background:var(--panelHi);}
+table.tx tbody tr[aria-selected="true"] td.stick{box-shadow:inset 3px 0 0 var(--accent);}
+.num{text-align:right;font-variant-numeric:tabular-nums;}
+.col-time{width:1%;}
+/* Sticky first column — its own opaque background or cells scroll under it. */
+th.stick,td.stick{position:sticky;left:0;z-index:2;}
+thead th.stick{z-index:4;background:var(--panelHi);}
+tbody td.stick{background:var(--panel);}
+tbody tr:hover td.stick,tbody tr[aria-selected="true"] td.stick{background:var(--panelHi);}
+
+/* ═══ CHIPS ════════════════════════════════════════════════════════════════
+   Type chip = translucent wash + text in the theme's own accessible hue.
+   Every pair computed over the REAL composited row background, on BOTH
+   .panel and .panelHi (rows sit on panel; hover/selected rows on panelHi):
+     dark  PAYMENT 6.19 / 5.56   REFUND 5.67 / 5.15   VOID 6.54 / 5.91   AUTH 8.06 / 7.22
+     light PAYMENT 6.23 / 5.99   REFUND 6.01 / 5.78   VOID 6.25 / 6.02   AUTH 7.46 / 7.11
+   ────────────────────────────────────────────────────────────────────────── */
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;
+  letter-spacing:.03em;text-transform:uppercase;padding:2.5px 8px;border-radius:999px;
+  border:1px solid transparent;white-space:nowrap;}
+.chip.payment{background:var(--goodWash);color:var(--good);border-color:rgba(34,197,94,.35);}
+.chip.refund {background:var(--badWash); color:var(--bad); border-color:rgba(239,68,68,.35);}
+.chip.void   {background:var(--warnWash);color:var(--warn);border-color:var(--amberEdge);}
+.chip.auth   {background:var(--infoWash);color:var(--info);border-color:rgba(59,130,246,.38);}
+
+/* Tender — glyph + label. The glyph is a bordered square, NOT a colour-only
+   signal: §9 and the legend both require the meaning be readable without hue. */
+.tender{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink);}
+.tender .g{flex:none;width:20px;height:14px;border-radius:3px;border:1px solid var(--inkDimmer);
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:8px;font-weight:800;letter-spacing:.02em;color:var(--inkDim);background:var(--panelHi);}
+.tender .g.cash{background:var(--goodWash);border-color:rgba(34,197,94,.45);color:var(--good);}
+.tender .g.card{background:var(--infoWash);border-color:rgba(59,130,246,.45);color:var(--info);}
+.tender .g.gift{background:var(--warnWash);border-color:var(--amberEdge);color:var(--warn);}
+
+/* A value this app cannot know is named, never zero-filled or blank.
+   §4.8 scorecard rule: a missing input reads "no count", never "0%". */
+.none{color:var(--inkDim);font-style:italic;font-size:11.5px;}
+
+/* Legend — every visual state the table uses gets a row. */
+.lg{border-top:1px solid var(--border);padding:12px 18px 14px;
+  display:flex;flex-wrap:wrap;gap:8px 22px;}
+.lg-row{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--inkDim);line-height:1.5;}
+.lg-row b{color:var(--ink);font-weight:600;}
+.lg-h{width:100%;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--inkDim);margin-bottom:2px;}
+
+/* ═══ DETAIL — the payment drawer (Clover's "Payment ID: …" screen) ════════ */
+.dt{border-top:1px solid var(--border);background:var(--panel);}
+.dt-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 18px;
+  background:var(--panelHi);border-bottom:1px solid var(--hairline);}
+.dt-id{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:13px;font-weight:600;color:var(--ink);}
+.dt-sub{font-size:11.5px;color:var(--inkDim);}
+.dt-sub a{color:var(--accent);text-decoration:none;border-bottom:1px solid transparent;}
+.dt-sub a:hover{border-bottom-color:currentColor;}
+.dt-close{appearance:none;border:1px solid var(--border);background:transparent;color:var(--inkDim);
+  font:inherit;font-size:11.5px;font-weight:600;padding:4px 11px;border-radius:999px;cursor:pointer;}
+.dt-close:hover{color:var(--ink);}
+.dt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+  background:var(--panel);}
+.dt-cell{background:var(--panel);padding:12px 18px;
+  border-right:1px solid var(--hairline);border-bottom:1px solid var(--hairline);}
+.dt-k{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--inkDim);}
+.dt-v{font-size:13.5px;color:var(--ink);margin-top:4px;font-variant-numeric:tabular-nums;}
+.dt-v.big{font-size:20px;font-weight:600;}
+.dt-lines{border-top:1px solid var(--border);}
+.dt-lines-h{padding:11px 18px 6px;font-size:10.5px;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--inkDim);}
+table.li{width:100%;border-collapse:separate;border-spacing:0;font-variant-numeric:tabular-nums;}
+table.li td{padding:7px 18px;font-size:12.5px;color:var(--ink);border-bottom:1px solid var(--hairline);}
+table.li tr:last-child td{border-bottom:0;}
+table.li td.q{color:var(--inkDim);width:1%;white-space:nowrap;}
+table.li tr.tot td{font-weight:600;background:var(--panelHi);}
+
+/* ═══ STORE-CARD CONTEXT — where the tab lives (§4.6 card + View Details) ══ */
+.ctx{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px;
+  padding:12px 16px;background:var(--panel);border:1px solid var(--border);border-radius:14px;}
+.ctx-nm{font-family:'Lilita One',cursive;font-size:19px;font-weight:400;color:var(--ink);letter-spacing:.01em;}
+.ctx-code{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--inkDim);}
+.ctx-crumb{font-size:12px;color:var(--inkDim);}
+.ctx-crumb b{color:var(--ink);font-weight:600;}
+
+/* Sibling page tabs — Overview · Daily · Item Sales · TRANSACTIONS (new) */
+.ptabs{display:flex;gap:2px;flex-wrap:wrap;margin-bottom:14px;border-bottom:1px solid var(--border);}
+.ptabs span{font-size:13px;font-weight:600;color:var(--inkDim);padding:8px 13px;
+  border-bottom:2px solid transparent;margin-bottom:-1px;}
+.ptabs span.on{color:var(--ink);border-bottom-color:var(--accent);}
+.ptabs span.new{color:var(--accent);}
+.ptabs span.new::after{content:'NEW';margin-left:7px;font-size:9px;font-weight:800;letter-spacing:.06em;
+  padding:1px 5px;border-radius:999px;background:var(--goodWash);border:1px solid rgba(34,197,94,.35);}
+
+/* ═══ BAR CONTROLS + SUMMARY STRIP ════════════════════════════════════════ */
+.ctl{display:inline-flex;align-items:center;gap:7px;}
+.ctl select,.ctl input[type=text]{   /* trap 1 — an <input> needs an explicit
+       type attribute or input[type=text] never matches it and the cell paints
+       a browser-default white box in BOTH themes. */
+  appearance:none;font:inherit;font-size:12px;font-weight:600;
+  background:var(--panel);color:var(--ink);
+  border:1px solid var(--border);border-radius:9px;padding:5px 10px;}
+.ctl select{padding-right:26px;cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);
+  background-position:calc(100% - 14px) 50%,calc(100% - 9px) 50%;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat;}
+.ctl input[type=text]{min-width:190px;}
+.ctl input::placeholder{color:var(--inkDim);font-weight:500;}
+.ctl select:focus,.ctl input:focus{outline:2px solid var(--accent);outline-offset:1px;}
+
+.sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:1px;background:var(--hairline);border-bottom:1px solid var(--border);}
+.sum-c{background:var(--panel);padding:13px 18px;}
+.sum-k{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--inkDim);}
+.sum-v{font-size:22px;font-weight:600;color:var(--ink);margin-top:3px;
+  font-variant-numeric:tabular-nums;letter-spacing:-.01em;}
+.sum-s{font-size:11px;color:var(--inkDim);margin-top:2px;}
+
+/* Row emphasis: a negative amount is the signal, so it carries weight + hue. */
+td.amt{font-weight:600;}
+td.amt.neg{color:var(--bad);}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:11.5px;}
+
+/* Empty state — a tab with nothing in it says WHY, and never reads as $0. */
+.empty{padding:40px 18px;text-align:center;}
+.empty-t{font-size:13.5px;font-weight:600;color:var(--ink);}
+.empty-s{font-size:12px;color:var(--inkDim);margin-top:6px;max-width:52ch;
+  margin-left:auto;margin-right:auto;line-height:1.6;}
+
+/* The 90-day wall — Clover's constraint, stated on the surface not in a doc. */
+.wall{margin:0;padding:11px 18px;background:var(--warnWash);
+  border-bottom:1px solid var(--amberEdge);font-size:12px;color:var(--ink);line-height:1.55;}
+.wall b{font-weight:700;}
+
+/* Feasibility table in the notes below the panel */
+.ft{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;}
+.ft th{text-align:left;font-size:10.5px;font-weight:700;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--inkDim);padding:8px 10px;background:var(--panelHi);
+  border-bottom:1px solid var(--border);}
+.ft td{padding:8px 10px;border-bottom:1px solid var(--hairline);color:var(--ink);vertical-align:top;}
+.ft tr:last-child td{border-bottom:0;}
+.ft .y{color:var(--good);font-weight:700;}
+.ft .m{color:var(--warn);font-weight:700;}
+.ft-wrap{overflow-x:auto;background:var(--panel);border:1px solid var(--border);
+  border-radius:14px;overflow:hidden;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="doc-kicker">Bargain Lane · Store detail</div>
+  <h1 class="doc-title">Transactions — a fourth tab beside Item Sales</h1>
+  <p class="doc-sub">
+    A working click-through of a <b>Transactions</b> tab on the store detail page — the
+    screen a manager reaches from their store card's <b>View Details →</b>. It sits fourth
+    in the existing segmented control, right after <b>Item Sales</b>, and mirrors what
+    Clover shows: the five transaction tabs, the payments list, and the payment detail
+    behind a row. <b>Every control below is live</b> — switch tabs, change store or date,
+    search, and click any row to open its detail.
+    <br><br>
+    <b>Yes, this is possible.</b> Clover exposes <code>/v3/merchants/{mId}/payments</code>,
+    and the worker already calls its sibling endpoints for refunds and credits — it has
+    simply never asked for a single payment-level field. The one thing the API will not
+    give back is <b>history older than about 90 days</b>, and that limit is Clover's own.
+    The notes under the panel say exactly which column comes from where.
+  </p>
+  <div class="doc-note">
+    <b>Nothing is wired up, and no app code has been changed.</b> This is a static
+    prototype in <code>docs/</code> — a directory <code>scripts/build.sh</code>
+    deliberately excludes, so it never reaches production. <b>The numbers are synthetic</b>
+    (seeded, so they are stable between reloads) — plausible shapes on real store and staff
+    names, not your sales. Read the layout and the behaviour, not the figures.
+  </div>
+
+  <div class="toolbar">
+    <span class="tb-lbl">Theme</span>
+    <span class="seg">
+      <button id="th-dark"  aria-pressed="true">Dark</button>
+      <button id="th-light" aria-pressed="false">Light</button>
+    </span>
+    <span class="tb-spacer"></span>
+    <span class="tb-lbl">Role</span>
+    <span class="seg">
+      <button id="rl-mgr" aria-pressed="true">Manager</button>
+      <button id="rl-adm" aria-pressed="false">Admin</button>
+    </span>
+  </div>
+
+  <!-- ══ WHERE IT LIVES ═══════════════════════════════════════════════════ -->
+  <div class="ctx">
+    <span class="ctx-nm" id="ctx-name">Coliseum</span>
+    <span class="ctx-code" id="ctx-code">BL1</span>
+    <span class="ctx-crumb">Store card → <b>View Details →</b> → store detail</span>
+  </div>
+  <div class="ptabs" role="presentation">
+    <span>Daily</span><span>Chart</span><span>Item Sales</span>
+    <span class="on new">Transactions</span>
+  </div>
+
+  <!-- ══ THE PROPOSED PANEL (DESIGN.md §4.8) ══════════════════════════════ -->
+  <div class="panel" id="panel">
+
+    <div class="mc-bar">
+      <span class="mc-lbl">Transactions</span>
+      <span class="ctl">
+        <label class="mc-lbl" for="f-store">Store</label>
+        <select id="f-store"></select>
+      </span>
+      <span class="ctl">
+        <label class="mc-lbl" for="f-date">Date</label>
+        <select id="f-date"></select>
+      </span>
+      <span class="mc-spacer"></span>
+      <span class="ctl">
+        <input id="f-q" type="text" placeholder="Search payment ID, employee…"
+               aria-label="Search transactions">
+      </span>
+    </div>
+
+    <div class="tabs" role="tablist" aria-label="Transaction types" id="tx-tabs"></div>
+
+    <div class="sum" id="tx-sum"></div>
+
+    <div class="wall" id="tx-wall" hidden></div>
+
+    <!-- Trap 7: this holds ONLY the status sentence. The table below is its own
+         render target, so refreshing one never destroys the other. -->
+    <div class="mc-status" id="tx-status"></div>
+
+    <div class="mc-scroll" id="tx-scroll">
+      <table class="tx" id="tx-table">
+        <thead id="tx-head"></thead>
+        <tbody id="tx-rows"></tbody>
+      </table>
+    </div>
+    <div id="tx-empty" hidden></div>
+
+    <!-- Payment detail — Clover's "Payment ID: …" screen, inline instead of a
+         separate page so the list stays in view. -->
+    <div class="dt" id="tx-detail" hidden></div>
+
+    <div class="lg" id="tx-legend"></div>
+  </div>
+
+  <!-- ══ FEASIBILITY ══════════════════════════════════════════════════════ -->
+  <div class="h2">Where each column comes from</div>
+  <div class="ft-wrap">
+  <table class="ft">
+    <thead><tr><th>Column on the screen</th><th>Clover source</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>Time</td><td><code>payment.createdTime</code></td><td class="y">Direct</td></tr>
+      <tr><td>Type</td><td>which endpoint it came from, plus <code>result</code> / <code>voided</code></td><td class="y">Derived</td></tr>
+      <tr><td>Amount</td><td><code>payment.amount</code> — <b>never</b> <code>order.total</code>, which Clover silently reduces for a same-day refund</td><td class="y">Direct</td></tr>
+      <tr><td>Tender Type</td><td><code>payment.tender.id</code> — an <b>id</b>, not "Cash". Needs a join against <code>/v3/merchants/{mId}/tenders</code></td><td class="m">1 extra lookup</td></tr>
+      <tr><td>Employee</td><td><code>payment.employee.id</code> — likewise an id. Needs <code>/v3/merchants/{mId}/employees</code></td><td class="m">1 extra lookup</td></tr>
+      <tr><td>Customer</td><td><code>order.customers</code>, via <code>expand=customers</code> on the <b>orders</b> call. It is not on the payments list at all</td><td class="m">Orders path</td></tr>
+      <tr><td>Payment Source</td><td><code>payment.offline</code> + device vs e-com origin</td><td class="y">Derived</td></tr>
+      <tr><td>Payment ID · Order ID · Invoice no.</td><td><code>payment.id</code>, <code>payment.order.id</code> (invoice = its first 12 chars)</td><td class="y">Direct</td></tr>
+      <tr><td>Cash tendered · change</td><td><code>payment.cashTendered</code>, on cash tenders</td><td class="y">Direct</td></tr>
+      <tr><td>Tips · Taxes and Fees</td><td><code>payment.tipAmount</code>, <code>payment.taxAmount</code></td><td class="y">Direct</td></tr>
+      <tr><td>Receipt line items</td><td><code>expand=lineItems.item</code> — the worker already fetches these for Item Sales</td><td class="y">Already fetched</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="h2">The five tabs, and what backs each</div>
+  <div class="qa">
+    <div class="qa-row"><span class="qa-n ok">1</span><span>
+      <span class="qa-q">Payments — a new call, but a well-trodden one</span>
+      <span class="qa-a"><code>GET /v3/merchants/{mId}/payments</code>. The worker has
+      <b>never</b> called it — nor <code>/employees</code>, <code>/tenders</code>,
+      <code>/customers</code>, <code>/authorizations</code> (I grepped: zero hits). It does
+      already page <code>/orders</code> with <code>expand=payments</code>, so those payment
+      objects are <i>already arriving</i> and nothing reads a single field off them.</span>
+    </div>
+    <div class="qa-row"><span class="qa-n ok">2</span><span>
+      <span class="qa-q">Refunds — already implemented</span>
+      <span class="qa-a"><code>fetchRefundElements</code> pages <code>/v3/refunds</code> with
+      <code>expand=payment,orderRef</code> today, for the daily rollup. The Refunds tab is a
+      different <i>rendering</i> of a fetch that already runs.</span>
+    </div>
+    <div class="qa-row"><span class="qa-n ok">3</span><span>
+      <span class="qa-q">Manual Refunds — already implemented, and named confusingly</span>
+      <span class="qa-a">Clover's UI says "Manual Refunds"; the API calls them
+      <b>credits</b>. <code>fetchManualRefunds</code> already pages <code>/v3/credits</code>.
+      (<code>/v3/manual_refunds</code> does not exist — it answers 405 to a GET.)</span>
+    </div>
+    <div class="qa-row"><span class="qa-n ok">4</span><span>
+      <span class="qa-q">Voids — a filter, not a fetch</span>
+      <span class="qa-a">A void is a payment whose <code>result</code> is not
+      <code>SUCCESS</code>, or a credit flagged <code>voided</code>. The worker already
+      <i>discards</i> exactly these when totalling a day; the Voids tab shows the rows it
+      throws away.</span>
+    </div>
+    <div class="qa-row"><span class="qa-n no">5</span><span>
+      <span class="qa-q">Authorizations — real, but almost always empty here</span>
+      <span class="qa-a">Clover has a <code>Get all authorizations</code> endpoint, so the
+      tab is buildable. But an authorization is a <b>pre-auth</b> — a hold placed on a card
+      to be captured later, the thing hotels and car-rental desks use. A register that rings
+      a sale and takes payment in one step does not create them. Expect this tab to read
+      "none" on almost every store-day; it is included so the screen matches Clover rather
+      than because it will carry traffic. <b>Worth cutting</b> if you would rather not have
+      a tab that is permanently empty.</span>
+    </div>
+  </div>
+
+  <div class="h2">The one real limit</div>
+  <div class="qa">
+    <div class="qa-row"><span class="qa-n no">!</span><span>
+      <span class="qa-q">About 90 days of history, and that ceiling is Clover's</span>
+      <span class="qa-a">Clover documents the cap on <i>Get all payments</i> in terms:
+      <b>"the results will not exceed 90 days"</b>, even when the query asks for a wider
+      span. Nothing per-transaction has ever been stored on our side — D1's
+      <code>daily_sales</code> is one row per store-day, and the KV item snapshot is
+      category-grain — so there is no local copy to fall back on. A Transactions tab is
+      therefore a <b>live, read-only window on roughly the last quarter</b>. Older dates are
+      not slow to load; they are gone.
+      <br><br>
+      This is the same retention edge that has cost this repo real data three times, and it
+      is why the panel states the limit on the surface instead of rendering an empty table
+      that a manager would read as "no sales that day".</span>
+    </div>
+    <div class="qa-row"><span class="qa-n ok">→</span><span>
+      <span class="qa-q">If you want it to outlive 90 days, say so now</span>
+      <span class="qa-a">The fix is to <b>persist each day's payments as they are fetched</b>
+      — a new per-payment table written by the nightly job that already runs. Then the tab
+      reads Clover for today and our own copy for everything older, and the archive deepens
+      from the day it ships. That is a materially bigger change than the read-only version,
+      so it is a decision for you rather than something to assume: <b>read-only first</b> is
+      the smaller, safer step, and it does not foreclose the archive.</span>
+    </div>
+  </div>
+
+  <div class="h2">Cost, safety, and what it would touch</div>
+  <div class="qa">
+    <div class="qa-row"><span class="qa-n ok">A</span><span>
+      <span class="qa-q">Read-only. It writes nothing.</span>
+      <span class="qa-a">No KV write, no D1 write, no Clover mutation — the same posture as
+      <code>sales-diag</code>. None of the destructive-operation rules are in play because
+      nothing is overwritten; there is no backup to take and no history to lose.</span>
+    </div>
+    <div class="qa-row"><span class="qa-n ok">B</span><span>
+      <span class="qa-q">About three to five Clover calls per store-day</span>
+      <span class="qa-a">One payments page (Clover's max is <code>limit=1000</code>; a busy
+      store-day is a few hundred), plus refunds and credits, plus the tender and employee
+      maps — and those two are small, change rarely, and cache like the existing 24-hour
+      category map. Comfortably inside the worker's subrequest budget, and inside Clover's
+      rate limit of 16 requests per second per token.</span>
+    </div>
+    <div class="qa-row"><span class="qa-n ok">C</span><span>
+      <span class="qa-q">Four small edits in the app, one new worker action</span>
+      <span class="qa-a">Frontend: a fourth button and panel in the store-detail segmented
+      control, plus two map entries and a lazy-load branch in
+      <code>switchStoreTab</code>. The day-strip picker already takes a handler-name
+      argument, so the date control comes free. Worker: one new
+      <code>?action=transactions</code> — store-scoped via <code>canAccessStore</code>,
+      listed in <code>ACTION_BUSINESS</code> (without that entry the business gate 403s
+      every call), and fetched through the retrying Clover helper so a rate-limit answer is
+      never mistaken for an empty day.</span>
+    </div>
+    <div class="qa-row"><span class="qa-n no">D</span><span>
+      <span class="qa-q">One trap specific to Indy East</span>
+      <span class="qa-a"><b>BL16 and the closed BL12 (Wyoming) share one Clover merchant
+      account.</b> A per-store payments query for BL16 returns Wyoming's rows too unless the
+      existing 2026-06-14 cutover is applied. Every other store maps to its own
+      merchant.</span>
+    </div>
+  </div>
+
+  <div class="h2">Open questions for you</div>
+  <div class="qa" id="qa-open"></div>
+
+</div>
+<script>
+/* ── Seeded synthetic data ─────────────────────────────────────────────────
+   Stable between reloads so the preview reads the same twice. Shapes are
+   plausible for a liquidation retailer (small baskets, cash-heavy); the
+   FIGURES ARE NOT REAL SALES. */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+const STORES=[
+  {key:'BL1', name:'Coliseum',     mid:'K8R2…9QF', staff:['Lorrenda Watkins','Reshma Saeed','Dontae Bishop','Marisol Vega']},
+  {key:'BL2', name:'South Bend',   mid:'P4X7…2LM', staff:['Kayla Brennan','Omar Haddad','Tricia Nolan']},
+  {key:'BL4', name:'Dupont',       mid:'J9M1…7TR', staff:['Devon Pryor','Anita Chaudhry','Rob Vance','Simone Okafor']},
+  {key:'BL14',name:'Battle Creek', mid:'W2Q6…4BN', staff:['Hollis Grant','Pamela Ruiz','Ty Nakamura']},
+  {key:'BL16',name:'Indy East',    mid:'Z5T8…1CD', staff:['Bree Callahan','Marcus Ellery','Nadia Sokolov']},
+];
+const CUSTOMERS=['Penny Egolof','Sarah Gaines','Dale Whitmore','Rosa Delgado','Kenji Ito',
+  'Mary Ann Pratt','Curtis Boyle','Fatima Nsangou','Greg Lindqvist','Tanya Reese'];
+
+// Clover payment-id alphabet — Crockford-ish base32, 13 chars, as on the screens.
+const A32='0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const id=(r,n)=>Array.from({length:n},()=>A32[Math.floor(r()*A32.length)]).join('');
+
+// Basket size: liquidation retail runs small. Log-normal, clamped $1.07–$78.
+function amt(r){
+  const u=Math.max(1e-9,r()), v=Math.max(1e-9,r());
+  const z=Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+  return Math.min(78, Math.max(1.07, Math.round(Math.exp(2.05+0.72*z)*100)/100));
+}
+// Trading day 09:00–20:00, midday-weighted.
+function minuteOfDay(r){
+  const peak=13.4, spread=2.9;
+  let h; do{ const u=Math.max(1e-9,r()),v=Math.max(1e-9,r());
+    h=peak+Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)*spread; }while(h<9||h>=20);
+  return Math.floor(h*60+r()*60)%1440;
+}
+const TENDERS=[['Cash','cash','CASH',.46],['Credit Card','card','VISA',.33],
+  ['Debit Card','card','DEBIT',.15],['Gift Card','gift','GIFT',.06]];
+function tender(r){ let x=r(),c=0; for(const t of TENDERS){ c+=t[3]; if(x<c) return t; } return TENDERS[0]; }
+
+/* One store-day. Returns every row the five tabs need, already classified. */
+function genDay(storeKey, dateISO, nPayments){
+  const seed=[...(storeKey+dateISO)].reduce((a,c)=>a*31+c.charCodeAt(0)|0, 7);
+  const r=mulberry32(seed>>>0);
+  const store=STORES.find(s=>s.key===storeKey)||STORES[0];
+  const rows=[];
+  for(let i=0;i<nPayments;i++){
+    const [tName,tGlyph,tGlyphLabel]=tender(r);
+    const gross=amt(r);
+    const tax=Math.round(gross*0.07*100)/100;            // 7% IN/MI sales tax
+    const isCash=tName==='Cash';
+    rows.push({
+      kind:'payment', pid:id(r,13), oid:id(r,13),
+      min:minuteOfDay(r), amount:gross, tax,
+      tender:tName, glyph:tGlyph, glyphLabel:tGlyphLabel,
+      employee:store.staff[Math.floor(r()*store.staff.length)],
+      // Clover only carries a customer when one was attached at the register.
+      customer: r()<0.22 ? CUSTOMERS[Math.floor(r()*CUSTOMERS.length)] : null,
+      source:'Device',
+      cashTendered: isCash ? Math.ceil(gross/0.25)*0.25 : null,
+      lines: null,
+    });
+  }
+  // Refunds / voids / auths, drawn from the day's own payments so the ids tie up.
+  const pick=()=>rows[Math.floor(r()*rows.length)];
+  const extra=[];
+  const nRef=1+Math.floor(r()*3);
+  for(let i=0;i<nRef;i++){ const p=pick(); if(!p) break;
+    extra.push({...p, kind:'refund', pid:id(r,13), refOf:p.pid,
+      min:Math.min(1439,p.min+15+Math.floor(r()*240)), amount:-p.amount, cashTendered:null,
+      reason:['Customer changed mind','Damaged item','Wrong size','Duplicate charge'][Math.floor(r()*4)]}); }
+  if(r()<0.75){ const p=pick(); if(p) extra.push({...p, kind:'void', pid:id(r,13), voidOf:p.pid,
+    min:Math.min(1439,p.min+1+Math.floor(r()*4)), amount:p.amount, cashTendered:null,
+    reason:['Rung in error','Register timeout','Cashier correction'][Math.floor(r()*3)]}); }
+  if(r()<0.5){ const p=pick(); if(p) extra.push({...p, kind:'auth', pid:id(r,13),
+    min:p.min, amount:p.amount, tender:'Credit Card', glyph:'card', glyphLabel:'VISA',
+    cashTendered:null, result:'Approved'}); }
+  // A manual refund has no parent payment — it is keyed by hand at the register.
+  if(r()<0.4){ extra.push({kind:'manual', pid:id(r,13), oid:null,
+    min:minuteOfDay(r), amount:-amt(r), tax:0, tender:'Cash', glyph:'cash', glyphLabel:'CASH',
+    employee:store.staff[Math.floor(r()*store.staff.length)], customer:null, source:'Device',
+    cashTendered:null, reason:'No receipt — manager approved'}); }
+  return [...rows,...extra].sort((a,b)=>b.min-a.min);
+}
+
+/* ── Formatting — mirrors index.html's helpers so the preview reads like the app ── */
+const fmtDollar = n => (n<0?'-':'')+'$'+Math.abs(Number(n)||0).toLocaleString('en-US',
+  {minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtTime = m => { const h=Math.floor(m/60), mm=String(m%60).padStart(2,'0');
+  const ap=h<12?'AM':'PM'; const h12=h%12===0?12:h%12; return `${h12}:${mm} ${ap}`; };
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const el = id => document.getElementById(id);
+
+/* ── State ──────────────────────────────────────────────────────────────── */
+const TODAY='2026-09-15';
+const DATES=[
+  ['2026-09-15','Today · Tue, Sep 15'],
+  ['2026-09-14','Mon, Sep 14'],
+  ['2026-09-13','Sun, Sep 13'],
+  ['2026-09-06','Sun, Sep 6'],
+  ['2026-08-19','Wed, Aug 19'],
+  ['2026-06-30','Tue, Jun 30'],
+  ['2026-05-01','Fri, May 1 — beyond retention'],
+];
+// Clover's documented ceiling on Get all payments. Stated here, on the surface,
+// rather than left for an empty table to imply.
+const WALL_DAYS=90;
+const daysAgo=iso=>Math.round((Date.parse(TODAY)-Date.parse(iso))/86400000);
+
+const TABS=[
+  ['payment','Payments'],['refund','Refunds'],['manual','Manual Refunds'],
+  ['void','Voids'],['auth','Authorizations'],
+];
+let S={store:'BL1', date:TODAY, tab:'payment', q:'', sel:null, role:'mgr'};
+
+/* Volume varies by store and day so the preview does not read as one shape. */
+function volumeFor(store,date){
+  const r=mulberry32([...(store+date+'v')].reduce((a,c)=>a*31+c.charCodeAt(0)|0,11)>>>0);
+  const base={BL1:29,BL2:24,BL4:33,BL14:19,BL16:27}[store]||25;
+  return Math.max(6, Math.round(base*(0.72+r()*0.62)));
+}
+let CACHE={};
+function dayData(){
+  if(daysAgo(S.date)>WALL_DAYS) return [];
+  const k=S.store+':'+S.date;
+  if(!CACHE[k]) CACHE[k]=genDay(S.store,S.date,volumeFor(S.store,S.date));
+  return CACHE[k];
+}
+const ofTab=(rows,t)=>rows.filter(r=>r.kind===t);
+function filtered(rows){
+  const q=S.q.trim().toLowerCase(); if(!q) return rows;
+  return rows.filter(r=>[r.pid,r.oid,r.employee,r.customer,r.tender]
+    .some(v=>v&&String(v).toLowerCase().includes(q)));
+}
+
+/* ── Column plans — one per tab ─────────────────────────────────────────── */
+const COLS={
+  payment:[['Time','stick'],['Type',''],['Amount','num'],['Tender Type',''],
+           ['Employee',''],['Customer',''],['Payment Source','']],
+  refund: [['Time','stick'],['Type',''],['Amount','num'],['Tender Type',''],
+           ['Employee',''],['Reason',''],['Refund of','']],
+  manual: [['Time','stick'],['Type',''],['Amount','num'],['Tender Type',''],
+           ['Employee',''],['Reason',''],['Order','']],
+  void:   [['Time','stick'],['Type',''],['Amount','num'],['Tender Type',''],
+           ['Employee',''],['Reason',''],['Voided payment','']],
+  auth:   [['Time','stick'],['Type',''],['Amount','num'],['Card',''],
+           ['Employee',''],['Result',''],['Payment Source','']],
+};
+const CHIP={payment:['payment','Payment'],refund:['refund','Refund'],
+  manual:['refund','Manual refund'],void:['void','Void'],auth:['auth','Authorization']};
+const tenderCell=r=>`<span class="tender"><span class="g ${r.glyph}">${esc(r.glyphLabel)}</span>${esc(r.tender)}</span>`;
+const noneCell=t=>`<span class="none">${esc(t)}</span>`;
+
+function cellsFor(r){
+  const [cls,label]=CHIP[r.kind];
+  const chip=`<span class="chip ${cls}">${esc(label)}</span>`;
+  const amt=`<td class="num amt${r.amount<0?' neg':''}">${fmtDollar(r.amount)}</td>`;
+  const common=`<td class="stick">${fmtTime(r.min)}</td><td>${chip}</td>${amt}<td>${tenderCell(r)}</td><td>${esc(r.employee)}</td>`;
+  if(r.kind==='payment') return common
+    +`<td>${r.customer?esc(r.customer):noneCell('none attached')}</td><td>${esc(r.source)}</td>`;
+  if(r.kind==='auth') return common
+    +`<td>${esc(r.result)}</td><td>${esc(r.source)}</td>`;
+  const tail=r.kind==='refund'?`<span class="mono">${esc(r.refOf)}</span>`
+    :r.kind==='void'?`<span class="mono">${esc(r.voidOf)}</span>`
+    :(r.oid?`<span class="mono">${esc(r.oid)}</span>`:noneCell('no order'));
+  return common+`<td>${esc(r.reason||'—')}</td><td>${tail}</td>`;
+}
+
+/* ── Render ─────────────────────────────────────────────────────────────── */
+function renderTabs(rows){
+  // Past retention the count is UNKNOWN, not zero — printing 0 would assert
+  // "there were none" about a day whose detail Clover simply will not return.
+  const unknown=daysAgo(S.date)>WALL_DAYS;
+  el('tx-tabs').innerHTML=TABS.map(([k,label])=>{
+    const n=unknown?'—':ofTab(rows,k).length;
+    return `<button role="tab" data-tab="${k}" aria-selected="${k===S.tab}">${esc(label)}<span class="cnt">${n}</span></button>`;
+  }).join('');
+}
+
+function renderSummary(rows){
+  if(daysAgo(S.date)>WALL_DAYS){
+    const cap='not retrievable';
+    el('tx-sum').innerHTML=['Payments total','Tips','Taxes and fees','Refunded']
+      .map(k=>`<div class="sum-c"><div class="sum-k">${k}</div>
+        <div class="sum-v none" style="font-style:normal">—</div>
+        <div class="sum-s">${cap}</div></div>`).join('');
+    return;
+  }
+  const pay=ofTab(rows,'payment');
+  const gross=pay.reduce((s,r)=>s+r.amount,0);
+  const tax=pay.reduce((s,r)=>s+(r.tax||0),0);
+  const refunded=[...ofTab(rows,'refund'),...ofTab(rows,'manual')]
+    .reduce((s,r)=>s+Math.abs(r.amount),0);
+  el('tx-sum').innerHTML=`
+    <div class="sum-c"><div class="sum-k">Payments total</div>
+      <div class="sum-v">${fmtDollar(gross)}</div>
+      <div class="sum-s">from ${pay.length} payment${pay.length===1?'':'s'}</div></div>
+    <div class="sum-c"><div class="sum-k">Tips</div>
+      <div class="sum-v">${fmtDollar(0)}</div>
+      <div class="sum-s">tipping is off at the register</div></div>
+    <div class="sum-c"><div class="sum-k">Taxes and fees</div>
+      <div class="sum-v">${fmtDollar(tax)}</div>
+      <div class="sum-s">included in the total above</div></div>
+    <div class="sum-c"><div class="sum-k">Refunded</div>
+      <div class="sum-v">${refunded?'−'+fmtDollar(refunded).replace('$','$'):fmtDollar(0)}</div>
+      <div class="sum-s">refunds + manual refunds</div></div>`;
+}
+
+function renderStatus(rows,shown){
+  const total=ofTab(rows,S.tab).length;
+  const label=TABS.find(t=>t[0]===S.tab)[1].toLowerCase();
+  const store=STORES.find(s=>s.key===S.store);
+  let s=`<b>${store.name}</b> · ${S.date}`;
+  if(S.q.trim()) s+=` · <b>${shown}</b> of ${total} ${label} matching “${esc(S.q.trim())}”`;
+  else s+=` · <b>${total}</b> ${label}`;
+  s+=` · read live from Clover, nothing written back.`;
+  el('tx-status').innerHTML=s;
+}
+
+function renderWall(){
+  const age=daysAgo(S.date), w=el('tx-wall');
+  if(age<=WALL_DAYS){ w.hidden=true; w.innerHTML=''; return; }
+  w.hidden=false;
+  w.innerHTML=`<b>Past Clover's retention window.</b> ${S.date} is ${age} days ago, and
+    Clover returns at most ~${WALL_DAYS} days of payment history — so these transactions
+    cannot be retrieved, today or later. <b>This is not a zero-sales day</b>; the day's
+    totals are still in the dashboard, only the per-transaction detail is gone.`;
+}
+
+function renderTable(rows){
+  const mine=filtered(ofTab(rows,S.tab));
+  const head=el('tx-head'), body=el('tx-rows'), empty=el('tx-empty');
+  head.innerHTML=`<tr>${COLS[S.tab].map(([t,c])=>
+    `<th class="${c}">${esc(t)}</th>`).join('')}</tr>`;
+  if(!mine.length){
+    el('tx-scroll').hidden=true; empty.hidden=false;
+    const age=daysAgo(S.date);
+    let t,s;
+    if(age>WALL_DAYS){ t='No data to show for this date';
+      s='Clover no longer returns payment detail this far back. Pick a date inside the last 90 days.'; }
+    else if(S.q.trim()){ t='Nothing matches that search';
+      s=`No ${TABS.find(x=>x[0]===S.tab)[1].toLowerCase()} on this day match “${esc(S.q.trim())}”.`; }
+    else if(S.tab==='auth'){ t='No authorizations — as expected';
+      s='An authorization is a hold placed on a card to be captured later. A register that rings a sale and takes payment in one step does not create them, so this tab is normally empty for these stores.'; }
+    else { t=`No ${TABS.find(x=>x[0]===S.tab)[1].toLowerCase()} on this day`;
+      s='Nothing of this type was recorded. That is a real reading, not a failure to load.'; }
+    empty.innerHTML=`<div class="empty"><div class="empty-t">${t}</div><div class="empty-s">${s}</div></div>`;
+    body.innerHTML=''; return;
+  }
+  el('tx-scroll').hidden=false; empty.hidden=true; empty.innerHTML='';
+  body.innerHTML=mine.map(r=>
+    `<tr data-pid="${esc(r.pid)}" aria-selected="${S.sel===r.pid}" tabindex="0">${cellsFor(r)}</tr>`
+  ).join('');
+  renderStatus(rows,mine.length);
+}
+
+/* Legend — §4.8: every visual state the table uses gets a row, with the
+   measured contrast stated rather than asserted. */
+function renderLegend(){
+  el('tx-legend').innerHTML=`
+    <div class="lg-h">What the states mean</div>
+    <div class="lg-row"><span class="chip payment">Payment</span><span>a completed sale</span></div>
+    <div class="lg-row"><span class="chip refund">Refund</span><span>money returned <b>against a payment</b> — the row names which</span></div>
+    <div class="lg-row"><span class="chip refund">Manual refund</span><span>keyed by hand, <b>no parent payment</b> (Clover calls these credits)</span></div>
+    <div class="lg-row"><span class="chip void">Void</span><span>cancelled before it settled — <b>never counted in the day's total</b></span></div>
+    <div class="lg-row"><span class="chip auth">Authorization</span><span>a hold placed on a card, captured later</span></div>
+    <div class="lg-row"><span class="tender"><span class="g cash">CASH</span></span><span>tender glyph — shape and label, <b>not colour alone</b></span></div>
+    <div class="lg-row"><span style="color:var(--bad);font-weight:600">−$0.00</span><span>a negative amount is money leaving</span></div>
+    <div class="lg-row"><span class="none">none attached</span><span>a value Clover does not hold — <b>named, never shown as $0 or blank</b></span></div>
+    <div class="lg-h" style="margin-top:6px">Contrast, computed against the real panel in both themes (AA needs 4.5:1)</div>
+    <div class="lg-row"><span>Chips <b>5.15–8.06</b> dark · <b>5.78–7.46</b> light · body text <b>14.98</b> / <b>18.85</b> · muted <b>5.21–5.88</b>. Measured on <code>#101826</code> and <code>#ffffff</code>, and again on the hover row (<code>#16203a</code> / <code>#fafaf6</code>), not eyeballed.</span></div>`;
+}
+
+/* ── Payment detail — Clover's "Payment ID: …" screen ───────────────────── */
+const GOODS=['Ladies Tee','Kids Puzzle','Kitchen Tote','Phone Case','Throw Blanket',
+  'Garden Gloves','Storage Bin','Dog Treats','Socks 3pk','Desk Lamp','Picture Frame',
+  'Water Bottle','Notebook','Hand Soap','Bin Item'];
+function linesFor(r){
+  const seed=[...r.pid].reduce((a,c)=>a*31+c.charCodeAt(0)|0,3)>>>0;
+  const rnd=mulberry32(seed);
+  const net=Math.abs(r.amount)-(r.tax||0);
+  const n=1+Math.floor(rnd()*3);
+  const w=Array.from({length:n},()=>0.4+rnd());
+  const sum=w.reduce((a,b)=>a+b,0);
+  const out=w.map((x,i)=>({name:GOODS[Math.floor(rnd()*GOODS.length)],
+    qty:1+Math.floor(rnd()*2),
+    price:Math.round(net*(x/sum)*100)/100}));
+  // Make the parts add to the whole — a receipt that does not foot is worse than none.
+  const drift=Math.round((net-out.reduce((s,l)=>s+l.price,0))*100)/100;
+  out[0].price=Math.round((out[0].price+drift)*100)/100;
+  return out;
+}
+function renderDetail(rows){
+  const d=el('tx-detail');
+  if(!S.sel){ d.hidden=true; d.innerHTML=''; return; }
+  const r=rows.find(x=>x.pid===S.sel);
+  if(!r){ S.sel=null; d.hidden=true; d.innerHTML=''; return; }
+  const [cls,label]=CHIP[r.kind];
+  const lines=linesFor(r);
+  const net=Math.abs(r.amount)-(r.tax||0);
+  const change=r.cashTendered!=null?Math.round((r.cashTendered-Math.abs(r.amount))*100)/100:null;
+  const cell=(k,v,big)=>`<div class="dt-cell"><div class="dt-k">${esc(k)}</div>
+    <div class="dt-v${big?' big':''}">${v}</div></div>`;
+  d.hidden=false;
+  d.innerHTML=`
+    <div class="dt-bar">
+      <span class="chip ${cls}">${esc(label)}</span>
+      <span class="dt-id">Payment ID: ${esc(r.pid)}</span>
+      <span class="dt-sub">${r.oid?`Linked to Order ID: <a href="#" onclick="return false">${esc(r.oid)}</a>`:'No linked order — keyed at the register'}</span>
+      <span class="mc-spacer"></span>
+      <button class="dt-close" id="dt-x">Close</button>
+    </div>
+    <div class="dt-grid">
+      ${cell('Amount',fmtDollar(r.amount),true)}
+      ${cell('Date',new Date(S.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}))}
+      ${cell('Time',fmtTime(r.min))}
+      ${cell('Tender type',tenderCell(r))}
+      ${cell('Employee',esc(r.employee))}
+      ${cell('Customer',r.customer?esc(r.customer):noneCell('none attached'))}
+      ${cell('Source',esc(r.source))}
+      ${cell('Invoice number',`<span class="mono">${r.oid?esc(r.oid.slice(0,12)):'—'}</span>`)}
+      ${r.cashTendered!=null?cell('Cash tendered',fmtDollar(r.cashTendered)):''}
+      ${change!=null?cell('Change given',fmtDollar(change)):''}
+      ${r.reason?cell('Reason',esc(r.reason)):''}
+      ${r.result?cell('Result',esc(r.result)):''}
+    </div>
+    <div class="dt-lines">
+      <div class="dt-lines-h">Receipt</div>
+      <table class="li">
+        ${lines.map(l=>`<tr><td class="q">${l.qty}×</td><td>${esc(l.name)}</td>
+          <td class="num" style="text-align:right">${fmtDollar(l.price)}</td></tr>`).join('')}
+        <tr><td class="q"></td><td>Tax</td><td class="num" style="text-align:right">${fmtDollar(r.tax||0)}</td></tr>
+        <tr class="tot"><td class="q"></td><td>Total</td>
+          <td class="num" style="text-align:right">${fmtDollar(Math.abs(r.amount))}</td></tr>
+      </table>
+    </div>`;
+  el('dt-x').onclick=()=>{ S.sel=null; paint(); };
+}
+
+/* ── One paint, called by every control. Trap 8: the second render must work
+   as well as the first, so nothing here depends on prior DOM state. ─────── */
+function paint(){
+  const rows=dayData();
+  const store=STORES.find(s=>s.key===S.store);
+  el('ctx-name').textContent=store.name;
+  el('ctx-code').textContent=store.key;
+  renderWall();
+  renderTabs(rows);
+  renderSummary(rows);
+  renderTable(rows);
+  renderStatus(rows,filtered(ofTab(rows,S.tab)).length);
+  renderDetail(rows);
+  renderLegend();
+}
+
+/* ── Controls ───────────────────────────────────────────────────────────── */
+function fillStores(){
+  const list=S.role==='mgr'?STORES.filter(s=>s.key==='BL1'):STORES;
+  el('f-store').innerHTML=list.map(s=>
+    `<option value="${s.key}"${s.key===S.store?' selected':''}>${s.key} – ${s.name}</option>`).join('');
+  el('f-store').disabled=(S.role==='mgr');
+  el('f-store').title=S.role==='mgr'
+    ? 'A manager sees only the stores granted to them — the worker scopes this, not the dropdown.'
+    : '';
+}
+el('f-date').innerHTML=DATES.map(([v,l])=>
+  `<option value="${v}"${v===S.date?' selected':''}>${l}</option>`).join('');
+
+el('f-store').addEventListener('change',e=>{ S.store=e.target.value; S.sel=null; paint(); });
+el('f-date') .addEventListener('change',e=>{ S.date =e.target.value; S.sel=null; paint(); });
+el('f-q')    .addEventListener('input', e=>{ S.q    =e.target.value; paint(); });
+el('tx-tabs').addEventListener('click',e=>{
+  const b=e.target.closest('button[data-tab]'); if(!b) return;
+  S.tab=b.dataset.tab; S.sel=null; paint();
+});
+function openRow(tr){ const pid=tr.dataset.pid; S.sel=(S.sel===pid?null:pid); paint(); }
+el('tx-rows').addEventListener('click',e=>{ const tr=e.target.closest('tr[data-pid]'); if(tr) openRow(tr); });
+el('tx-rows').addEventListener('keydown',e=>{
+  if(e.key!=='Enter'&&e.key!==' ') return;
+  const tr=e.target.closest('tr[data-pid]'); if(tr){ e.preventDefault(); openRow(tr); }
+});
+
+/* Theme — both directions explicitly, never inherited. */
+function setTheme(light){
+  document.documentElement.classList.toggle('light',light);
+  el('th-light').setAttribute('aria-pressed',String(light));
+  el('th-dark') .setAttribute('aria-pressed',String(!light));
+}
+el('th-dark') .onclick=()=>setTheme(false);
+el('th-light').onclick=()=>setTheme(true);
+
+function setRole(admin){
+  S.role=admin?'adm':'mgr';
+  el('rl-adm').setAttribute('aria-pressed',String(admin));
+  el('rl-mgr').setAttribute('aria-pressed',String(!admin));
+  if(!admin) S.store='BL1';
+  fillStores(); S.sel=null; paint();
+}
+el('rl-mgr').onclick=()=>setRole(false);
+el('rl-adm').onclick=()=>setRole(true);
+
+/* Open questions — the decisions that are genuinely yours, not mine. */
+el('qa-open').innerHTML=[
+  ['Should it outlive 90 days?','Read-only is the smaller step and ships sooner. Persisting each day\'s payments as they are fetched makes the archive deepen from the day it ships — but it is a new table, a nightly write, and the destructive-operation rules come back into play. <b>My recommendation: ship read-only first</b>, and add the archive as a separate change once you have used the tab for a week and know which columns you actually read.'],
+  ['Keep the Authorizations tab?','It will be empty on essentially every store-day, because these registers do not place card holds. Keeping it matches Clover exactly; cutting it removes a tab that never has anything in it. <b>My recommendation: cut it</b>, and add it the day a store starts taking pre-auths.'],
+  ['Who should see this?','The preview shows a manager scoped to their own store and an admin able to switch. That mirrors how the rest of the app scopes store data, and the worker — not the dropdown — would enforce it. Worth confirming that a manager seeing employee names on every transaction is what you want.'],
+  ['One day, or a range?','Clover\'s filter is time-based, so a range is possible, but a busy week is thousands of rows and the page would need paging. <b>A single day, with the day strip Item Sales already uses</b>, is the closest match to Clover and the cheapest to build.'],
+].map(([q,a],i)=>`<div class="qa-row"><span class="qa-n">${i+1}</span><span>
+  <span class="qa-q">${q}</span><span class="qa-a">${a}</span></span></div>`).join('');
+
+fillStores();
+paint();
+</script>
+</body>
+</html>

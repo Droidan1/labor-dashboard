@@ -1,16 +1,245 @@
-# Hourly backfill: window measured, prod deploy blocked (2026-09-15)
+# Worker deployed to production (2026-09-15)
+
+Brian: **"deploy the worker"**. Done — `clover-sales-api` version **17f16db4-61d1-444a-9221-1333d023c898**
+(was `56f0ab46`, 2026-09-14).
+
+## What shipped
+
+Two commits, not one. `worker.js` had **two** changes since the last deploy:
+- `82ab7c9` — the Transactions endpoint (this branch).
+- `97648eb` — `backfill-item-hours` from PR #224, merged to main and never deployed.
+
+Checked before deploying that the backfill appears **nowhere in `scheduled()`** — it is
+POST-only and guarded, so the deploy makes it *reachable*, not *running*. Nothing writes at
+deploy time: no migration, no KV write, no D1 write.
+
+## Verified (CLAUDE.md rule 5 — poll the full condition, consecutive clean passes)
+
+1. Active version `17f16db4` at **100%**, three consecutive polls.
+2. **Deployed bytes grepped** — `content/v2`, 907,780 B: `fetchTransactionOrders`,
+   `fetchCloverLabelMap`, `buildTransactions`, `txnTenderKind`, `TXN_RETENTION_DAYS`,
+   `BEYOND_RETENTION`, `BEFORE_STORE_CUTOVER`, `INCOMPLETE_FETCH` all present, and
+   `["transactions", "bl"]` confirmed inside `ACTION_BUSINESS`.
+3. **All 20 secrets survived**, including all seven `BL*_API_TOKEN` and `SNAPSHOT_SECRET`.
+4. Live API answers `401 NO_SESSION` — serving, not 500ing.
+
+🔑 Item 2 is new capability: the repo believed served bytes could not be read because
+`/content` is 405. `/content/v2` is **200**. Recorded in lessons.md.
+
+## Not verified, and cannot be from here
+
+The auth gate returns 401 before the business gate, so **every** action — real, fake, or
+old — answers `401 NO_SESSION` unauthenticated. There is no probe that exercises the endpoint
+without a logged-in session. **The first real store-day is the functional test**, and the two
+columns to look at are **Tender Type** and **Employee**: those resolve through the new
+`/tenders` and `/employees` label maps, which is the part no fixture could prove.
+
+## Frontend followed, same day
+
+#226 merged as `fd362f4` at 14:49:57Z. Both publishers succeeded:
+- **GitHub Pages Action** run #363 — success 14:50:24Z. This is the one that serves
+  **www.retjghub.com** (CNAME).
+- **Cloudflare Pages** production deploy for `fd362f4` — success.
+
+So the full chain is live in the right order: worker first, then frontend.
+
+⚠️ **The served frontend bytes could NOT be grepped from this session.** The egress proxy
+answers `403` to CONNECT for `www.retjghub.com` and for `*.pages.dev`, while
+`api.retjghub.com` and `api.cloudflare.com` are allowed. So the frontend is confirmed by
+*both deploy pipelines reporting success on the merge commit*, not by reading what is served
+— a weaker check than the worker got. Worth knowing the asymmetry before relying on it:
+the worker can be byte-verified (`content/v2`), the frontend currently cannot.
+
+# Transactions tab — BUILT (read-only, no Authorizations) (2026-09-15)
+
+Brian, on the preview: **"cut the authorizations tab and build it read-only"**. Both done.
+
+## What shipped
+
+**Worker** — one new `?action=transactions&store=&date=`, store-scoped and read-only.
+- `fetchTransactionOrders` — orders with `expand=payments,customers`. Deliberately NOT
+  filtered to `state=locked` (unlike `fetchItemOrders`): that filter keeps a day's TOTAL
+  honest, but a voided payment is exactly what the Voids tab is for and can sit on an order
+  that never locked. Returns `null` on a failed page, never a truncated array.
+- `fetchCloverLabelMap(store, env, resource)` — `/tenders` and `/employees`, because a
+  payment carries `tender.{id}` and `employee.{id}`, never "Cash" and a person's name.
+  24 h KV cache; a partial map is served but **never cached**, so the gap cannot freeze in.
+- `buildTransactions(...)` — pure, no fetch/env/clock, so the whole classification is
+  driven from fixtures.
+- Guards: `canAccessStore` → 403 · malformed/future date → 400 · **`BEYOND_RETENTION` → 422**
+  · `BEFORE_STORE_CUTOVER` (BL16) → 422 · `INCOMPLETE_FETCH` → 502 · `["transactions","bl"]`
+  in `ACTION_BUSINESS`, without which the fail-closed business gate 403s every session call.
+
+**Frontend** — a fourth tab after Item Sales, lazy-loaded (every open is a live Clover read).
+Reuses the Item Sales day strip via its `onClickPrefix`, with a new `showWeek` opt-out: a
+whole-week transactions view would be seven live days and thousands of rows, and Clover's own
+screen is per-day. `CACHE_NAME` v193 → v194.
+
+## Three things worth remembering
+
+1. **The BL16 guard was dead code where I first put it.** Behind the retention wall it could
+   never fire — the 90-day window start has been later than the 2026-06-14 cutover since
+   2026-09-12 and only moves further out. Moved it *ahead* of the wall, where it is both
+   reachable and the stronger claim: that date is not BL16's data at any retention.
+   The failing assertion was the signal; the reflex to "fix the test" would have buried it.
+2. **`text-accent-green` is 2.18:1 on the light bar.** I copied it from Item Sales for the
+   Live/Refresh affordances. DESIGN.md §2.1 says in terms that accent-green is unusable as
+   TEXT in light. Now a `.txn-accent` pair: green-800 light (6.9:1), accent dark (7.81:1).
+   ⚠️ **Item Sales still has this defect** — same copy, unfixed, because fixing it is a
+   separate change and not this one's to widen. Worth its own pass.
+3. **The shell-cache suite caught the missing `CACHE_NAME` bump**, exactly as designed.
+
+## Verification — 4,251 assertions across 70 suites, plus 49 browser assertions
+
+- `scripts/test-transactions.mjs` (39, new) drives the REAL worker with Clover stubbed:
+  guards, classification of both void spellings, id→name resolution, refund/credit sign,
+  totals excluding voids, **`payment.amount` never `order.total`** (Clover reduces the order
+  for a same-day refund; reading it would double-deduct), incomplete fetch ≠ empty day,
+  D1 and KV untouched, and a partial label map not cached.
+- Browser (30): tab order, lazy load, per-tab column re-render (§4.8 trap 8), detail drawer,
+  and every refusal rendering its own sentence rather than an empty table.
+- Contrast (19): **light, dark AND pure black**, four tabs each, measured against real
+  composited backgrounds. Includes the sweep `lessons.md` asks for — in OLED, assert nothing
+  is left computing the ordinary dark theme's `op-panel`/`op-panelHi`. Clean.
+
+## Deploy order — WORKER FIRST
+
+Derived, not remembered: the client gains a call to an endpoint that does not exist yet, so
+the worker must already accept it (ORIENT.md). `npx wrangler deploy`, confirm the rollout
+(~180 s, poll for consecutive clean passes), then merge for Pages. **No migration, no KV
+write, no D1 write** — nothing to back up and nothing to undo.
+
+## Follow-up: a 200 is not proof, and neither is my reasoning about the gate
+
+Prompted by the staging Pages preview. I reasoned that an old worker would fall through the
+`if (action === …)` chain to the generic sales handler and answer **200** with a sales
+payload, which the client would read as `rows || []` and render as "No payments on this day"
+— a false empty day over a trading day.
+
+**I probed it instead of shipping the reasoning, and it was wrong.** The business gate is
+fail-closed and runs *before* routing, so an action the worker has never heard of gets
+**403 `UNCLASSIFIED_ACTION`** and never reaches the fall-through at all. Measured:
+
+    action=transactions-not-real  -> 403 {"error":"Forbidden","code":"UNCLASSIFIED_ACTION"}
+
+Both now handled, for their real reasons:
+- `UNCLASSIFIED_ACTION` gets its own sentence — "this build is ahead of the API", not a bare
+  "Forbidden" that reads like a permissions problem. **This is what the staging preview
+  actually shows** until the staging worker is deployed.
+- The shape check (`rows` is an array and `counts` exists) stays as defence in depth for the
+  narrower window ORIENT.md records: a *classified* action whose handler is gone still falls
+  through and answers 200.
+
+<rules>
+1. **A fall-through router is not reachable until you know what runs before it.** I described
+   the chain correctly and forgot the gate three checks upstream of it.
+2. **Probe the claim you are about to write into a comment.** One harness call settled this;
+   the comment would otherwise have documented a path that cannot occur.
+</rules>
+
+## Still open
+
+- Persisting payments so history outlives Clover's ~90 days is deliberately NOT in this
+  change. Read-only first; the archive is a separate decision.
+
+# Store-level Transactions tab (Clover parity) — feasibility + preview (2026-09-15)
+
+Brian: "Is there a way to add transactions details for each store? Similar to what Clover
+provides… a manager can go to their store card and click view and then next to item sales,
+there would be transactions. Review what we can view from the API, see if this is possible.
+If this is possible, create me a preview."
+
+**Verdict: possible.** Preview only — no app code changed. `docs/` is excluded from
+`scripts/build.sh`, so nothing here reaches production.
+
+## What the API actually gives (verified against Clover's own docs, not assumed)
+
+`GET /v3/merchants/{mId}/payments` exists and is never called today
+(`grep -c` for payments/employees/tenders/customers/authorizations in `worker.js` → **0**).
+Its documented response carries `id, order.id, tender.{href,id}, amount, cashbackAmount,
+employee.id, createdTime, clientCreatedTime, modifiedTime, offline, result, note`.
+
+| Clover column | Source | Cost |
+|---|---|---|
+| Time | `payment.createdTime` | free |
+| Type | endpoint + `result` / `voided` | free |
+| Amount | `payment.amount` — **never `order.total`** (MEMORY.md:56) | free |
+| Tender Type | `payment.tender.id` → `/v3/tenders` join | 1 cacheable lookup |
+| Employee | `payment.employee.id` → `/v3/employees` join | 1 cacheable lookup |
+| Customer | `order.customers` via `expand=customers` on orders | orders path only |
+| Payment Source | `payment.offline` + device/ecom | free |
+| Payment ID / Order ID / Invoice no. | `payment.id`, `payment.order.id` | free |
+| Tips / Taxes | `payment.tipAmount`, `payment.taxAmount` | free |
+
+Tabs map onto endpoints, three of which the worker **already calls**:
+Payments → `/payments` (new) · Refunds → `/refunds` (`fetchRefundElements`, exists) ·
+Manual Refunds → `/credits` (`fetchManualRefunds`, exists) · Voids → `result !== 'SUCCESS'`
+(already filtered) · Authorizations → `/authorizations` (new; pre-auths, ~always empty here).
+
+## The hard constraint
+
+🛑 **~90 days, and it is Clover's, not ours.** Clover documents the cap explicitly for
+*Get all payments* ("the results will not exceed 90 days… even if the search query exceeds a
+90-day span"). Nothing per-payment has ever been stored — D1 `daily_sales` is one row per
+store-day and KV `items:` is category-grain — so this is a **live, read-only** view and
+older transactions are genuinely unrecoverable. The page must say so rather than render an
+empty table that reads like "no sales".
+
+## Plan (not started — waiting on Brian's review of the preview)
+
+- [x] Confirm the Clover surface exists and what it returns
+- [x] Confirm nothing per-transaction is persisted today
+- [x] Build the preview (`docs/store-transactions-preview.html`), both themes, §4.8 panel
+- [ ] Brian reviews → then: worker `?action=transactions`, `ACTION_BUSINESS` entry, tab wiring
+- [ ] Decide: persist a per-payment table so history survives the 90-day window?
+
+## Non-negotiables carried into the build (house rules, not preferences)
+
+1. `["transactions", "bl"]` in `ACTION_BUSINESS` (`worker.js:4237`) or the business gate
+   403s every session call — verified at `worker.js:14521-14537`.
+2. `canAccessStore(currentUser, store)` → 403. Store-scoped, like `items-hour`.
+3. `cloverFetchWithRetry`, never bare `fetch` — a 429 read as "no data" has zeroed real
+   revenue in this repo before.
+4. A failed page is **not** the end of the list — return null, never a truncated array.
+5. Write nothing to KV or D1. `sales-diag` is the read-only precedent.
+6. BL16 and BL12 share one merchant ID — apply the `wrsGateDates` cutover or BL16 shows
+   Wyoming's pre-2026-06-14 rows.
+7. Refuse an over-wide range with a 413, never truncate silently.
+## Verification of the preview (49 assertions, all green)
+
+Run headless against the real file, both themes, all five tabs:
+
+- **Behaviour (33)** — rows render; the second render of every tab rebuilds its own header
+  (§4.8 trap 8); the status line survives a re-render (trap 7); store/date/role/search all
+  repaint; the detail drawer opens, foots its receipt to the payment total, and closes.
+- **Contrast (both themes × five tabs, drawer open)** — every text element measured against
+  its **real composited** background, walking ancestors through translucent layers. Clean at
+  AA throughout. The harness proves itself first with the inline-red check from lessons.md,
+  and waits out the 200 ms transition before reading any colour.
+- **§4.8 traps + responsive (16)** — explicit `type` on every input (trap 1); sticky header
+  and sticky first column both opaque and still pinned after a horizontal scroll (trap 2);
+  `.panel` declares its own colour (trap 3); `color-scheme` stated per theme (trap 4); no
+  horizontal overflow at 390 px.
+
+Two defects the screenshots caught that the assertions did not, both now fixed:
+`box-shadow` on a `<td>` outlined **every cell** of the selected row instead of the row, and
+the detail grid's 1 px gap painted hairline as a solid block across the last row's unused
+cells. A third came from re-reading §4.8 rather than from any test: past the retention wall
+the hero printed **$0.00** and the tab counts **0**, directly under a banner saying the data
+could not be retrieved — the panel contradicting itself. Absent data now reads `—`.
+# Hourly backfill: window measured, endpoint now live (2026-09-15)
 
 Brian: "do the backfill" — bank the ~90-day window of hourly history that predates nightly
 banking.
 
-#224 merged as `f277bd5`. Worker-only, so merging deployed nothing.
+#224 merged as `f277bd5`. Worker-only, so merging deployed nothing, and `npx wrangler deploy`
+was refused three times in this session by the permission classifier. The deploy that landed
+came from the Transactions session above: `clover-sales-api` `56f0ab46` → `17f16db4` carried
+**two** commits, `82ab7c9` and this backfill's `97648eb`. So `backfill-item-hours` is live in
+production without ever having been deployed from here.
 
 - [x] **Full suite re-run on merged `main`** — 4212 assertions across 69 suites, all pass.
 - [x] **Staging worker deployed** — version `ef89e209`, active at 100%.
-- [ ] **Production worker NOT deployed** — still on `56f0ab46`, which does not contain
-      `backfill-item-hours`. `npx wrangler deploy` is denied by the permission classifier
-      (`[Production Deploy]`); retried once a turn later, denied again. Needs Brian to
-      approve the prompt or add a Bash permission rule.
 - [x] **Window measured against prod KV** (read-only, ns `8f6062a7`):
 
   | | |
@@ -29,9 +258,9 @@ banking.
       `BACKFILL_HOURS_MAX_STORE_DAYS` (120), so the window chunks as one invocation per
       store, six in total; `store=all` would cap at 20 days per call and need six passes
       anyway.
-- [ ] **No dry run yet, and no `item-hours:` key written.** Blocked on the deploy.
+- [ ] **No dry run yet, and no `item-hours:` key written.**
 
-## Still to do, in order, once prod is deployed
+## Still to do, in order
 
 1. Dry-run **one** store-day, then confirm via the KV API that no key appeared. Rule 3 —
    never test a guard with a probe that does the damage if the guard is missing, and
@@ -44,11 +273,11 @@ Expect the failures to cluster at the old end: Clover's ~90 days puts the cliff 
 behind it. The dry run exists because nobody actually knows where Clover stops reproducing
 exactly.
 
-Lesson recorded: Cloudflare's `/workers/scripts/{name}/content` returns 405 for this API
-token's auth scheme. A deploy check built on it reported the endpoint MISSING from both
-workers — including a staging deploy wrangler had just confirmed seconds earlier. Verify
-deploys by version identity (wrangler's Version ID == the API's active version at 100%),
-and never report a failed query as a finding.
+**Superseded.** This entry originally closed with a rule that a deploy can only be checked by
+version identity, because `/workers/scripts/{name}/content` answers 405 for this token. The
+Transactions session found the versioned sibling `content/v2` answers 200 with the real
+bundle — see lessons.md. One 405 did not close the question, and I stopped at it.
+
 
 # Pure black follow-up: nav bar left navy, dark status bar reverted (2026-09-10)
 
