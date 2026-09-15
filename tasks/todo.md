@@ -1,3 +1,44 @@
+# Two runs lost to my own placeholders (2026-09-15)
+
+Attempt 1: `SNAPSHOT_SECRET='...' bash scripts/backfill-transactions.sh` — pasted
+as written, so the secret was three dots. 18 chunks, 18 `NO_SESSION` 401s.
+
+Attempt 2: `SNAPSHOT_SECRET=<the real value> bash scripts/backfill-transactions.sh`
+— pasted as written, and **zsh read `<` as an input redirect**:
+`zsh: no such file or directory: the`. The script never started, so the guard I
+had just added for attempt 1 never got a chance to fire. It would not have helped
+anyway; the failure was a shell parse, one layer above bash.
+
+Nothing was written either time. The `git pull` in the same paste did run.
+
+**The pattern is not "pick a better placeholder".** It is that a usage line
+containing a value the reader must substitute will eventually be copied
+literally, and the shell will interpret whatever I chose — quotes, angle
+brackets, dots — in a way I did not intend.
+
+**Fix: there is nothing to substitute.** Both runners now PROMPT for the secret
+when it is not already in the environment:
+
+    bash scripts/backfill-transactions.sh
+    SNAPSHOT_SECRET (input hidden): ▌
+
+`read -rs`, so it is not echoed — and it never lands in `~/.zsh_history`, which
+the env form could not avoid. The env var still works for unattended runs.
+
+**The failure mode a prompt introduces** is a script that blocks forever when run
+from cron or CI. It only prompts when stdin is a terminal (`[ -t 0 ]`);
+everywhere else it still fails fast with the same named error. Asserted: piped
+stdin with no secret exits 1 in under five seconds.
+
+## Backup taken before any of this
+
+Rule 2, before the `--write` pass: `payment_archive_bak_20260915` (117,402 rows)
+and `payment_archive_days_bak_20260915` (534). Row counts and summed `amount`
+($2,751,160.58) match the live tables exactly.
+
+Baseline to reconcile against afterwards: 117,402 payment rows, 534 day rows
+(533 complete), $2,765,121.53 stored gross, **0 item rows**.
+
 # 18 identical 401s and a summary of zeros (2026-09-15)
 
 The first real run of `scripts/backfill-transactions.sh`. Every one of the 18
