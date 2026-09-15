@@ -1,3 +1,55 @@
+# Hourly backfill: window measured, prod deploy blocked (2026-09-15)
+
+Brian: "do the backfill" — bank the ~90-day window of hourly history that predates nightly
+banking.
+
+#224 merged as `f277bd5`. Worker-only, so merging deployed nothing.
+
+- [x] **Full suite re-run on merged `main`** — 4212 assertions across 69 suites, all pass.
+- [x] **Staging worker deployed** — version `ef89e209`, active at 100%.
+- [ ] **Production worker NOT deployed** — still on `56f0ab46`, which does not contain
+      `backfill-item-hours`. `npx wrangler deploy` is denied by the permission classifier
+      (`[Production Deploy]`); retried once a turn later, denied again. Needs Brian to
+      approve the prompt or add a Bash permission rule.
+- [x] **Window measured against prod KV** (read-only, ns `8f6062a7`):
+
+  | | |
+  |---|---|
+  | `items:` keys | 1663, spanning 2025-04-01 → 2026-09-14 |
+  | `item-hours:` keys | 18 — exactly the nightly bank, 6 stores × Sep 12/13/14 |
+  | candidates (day snapshot exists, no bank, inside the 120d cap) | **734 store-days** |
+
+  Per store: BL1/BL2/BL4/BL8/BL14/BL16 at 117 days each (2026-05-18 → 2026-09-11),
+  BL12 at 32 (2026-05-18 → 2026-06-18).
+
+- [x] **BL12 is unreachable by this endpoint** — the handler resolves `store` against
+      `ALL_STORES`, which excludes it (it lives in `WRS_STORES`). Moot in practice: its
+      candidates stop at 2026-06-18, already behind Clover's ~90-day cliff. Reachable
+      target is **702 store-days** = 6 stores × 117 days. 117 sits just under
+      `BACKFILL_HOURS_MAX_STORE_DAYS` (120), so the window chunks as one invocation per
+      store, six in total; `store=all` would cap at 20 days per call and need six passes
+      anyway.
+- [ ] **No dry run yet, and no `item-hours:` key written.** Blocked on the deploy.
+
+## Still to do, in order, once prod is deployed
+
+1. Dry-run **one** store-day, then confirm via the KV API that no key appeared. Rule 3 —
+   never test a guard with a probe that does the damage if the guard is missing, and
+   `dry=1` is that guard.
+2. Dry-run all 702; report the reconcile rate and the skip list.
+3. **Stop.** Rule 7 — no write without explicit confirmation.
+
+Expect the failures to cluster at the old end: Clover's ~90 days puts the cliff near
+2026-06-17, so roughly 87 of each store's 117 days sit inside nominal retention and ~30
+behind it. The dry run exists because nobody actually knows where Clover stops reproducing
+exactly.
+
+Lesson recorded: Cloudflare's `/workers/scripts/{name}/content` returns 405 for this API
+token's auth scheme. A deploy check built on it reported the endpoint MISSING from both
+workers — including a staging deploy wrangler had just confirmed seconds earlier. Verify
+deploys by version identity (wrangler's Version ID == the API's active version at 100%),
+and never report a failed query as a finding.
+
 # Pure black follow-up: nav bar left navy, dark status bar reverted (2026-09-10)
 
 Brian, after merging: "revert dark back to green and look at the nav bar on mobile that

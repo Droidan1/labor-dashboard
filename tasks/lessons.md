@@ -1,3 +1,38 @@
+## `cat > file` on a tracked file I had never read (2026-09-15)
+
+**Context:** CLAUDE.md says to write the plan to `tasks/todo.md`. I did, with a heredoc:
+`cat > tasks/todo.md <<'EOF'`. `tasks/todo.md` already existed and held **1855 lines** — this
+project's accumulated, reverse-chronological work log, carrying the dated entry and lessons
+of every task before this one. The heredoc replaced all of it with a 38-line plan.
+
+**Root cause:** I read "write plan to `tasks/todo.md`" as *create* and never checked whether
+the file had contents. The instruction names an output path; I treated that as a statement
+that the path was mine to fill.
+
+**What caught it, and what did not.** Not me reading my own work. I ran `git status --short`,
+saw ` M tasks/todo.md`, and read that as confirmation the change was small — it says a file
+changed, not that 1855 lines left it. I then committed, pushed, and opened a PR, three more
+chances to look at a diff I never looked at. It surfaced only when
+`mcp__github__pull_request_read` came back with `"additions":38,"deletions":1855` while I was
+checking something else entirely.
+
+**Restoration was clean** — the content was one `git show f277bd5:tasks/todo.md` away, and
+the fix was to prepend the new entry instead, taking the diff to 52 insertions and 0
+deletions. That is luck about *this* file being committed, not a reason to relax the rule.
+
+<rules>
+1. **Read a file before overwriting it, even when an instruction names it as the output.**
+   "Write the plan to X" does not mean X is empty. One `wc -l` costs nothing.
+2. **`cat > file` is a delete.** For anything tracked in git, prefer `>>`, or read-then-
+   rewrite. Reserve truncating redirects for files created in this session.
+3. **Read the diffstat, not the status line.** Run `git diff --stat` before every commit, and
+   treat any deletion count you cannot account for line-by-line as a bug until proven
+   otherwise.
+4. **An accumulating log is the repo's memory.** `tasks/todo.md` and `tasks/lessons.md` exist
+   so a future session inherits what this one learned. Destroying one costs more than the
+   task that destroyed it was worth.
+</rules>
+
 ## A colour has more than one spelling, and I only searched for one (2026-09-10)
 
 **Context:** Pure black shipped. Brian opened it on his phone and the bottom nav bar was
