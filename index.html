@@ -117,6 +117,106 @@
     html.oled .dark\:hover\:bg-gray-700\/20:hover { background-color: rgba(255,255,255,0.03); }
     html.oled .dark\:focus\:ring-offset-gray-800:focus { --tw-ring-offset-color: #0a0a0a; }
 
+    /* ── Light mode: accent-green is a FILL colour, not a text colour ──
+       `accent-green` #22c55e measures 2.28:1 on opl-panel, 2.18 on
+       opl-panelHi, 2.05 on opl-bg and 1.86 on opl-sidebar. Every one of
+       those fails AA, and DESIGN.md §2.1 already says it in terms:
+       "accent-green #22c55e is 2.28:1 on white — unusable as TEXT in
+       light". It is nonetheless what 164 sites write, because the same
+       class reads correctly in dark (7.81:1 on op-panel).
+
+       So retint the TEXT utility in light only. green-800 measures
+       6.42 / 7.13 / 6.81 / 5.82 on those four grounds, and 5.49-6.55 on
+       an accent tint (`bg-accent-green/10` and `/20`), which is where
+       most of these actually sit.
+
+       🔑 ONE RULE, NOT 164 EDITS. Tailwind emits `.text-accent-green` at
+       (0,1,0); `html:not(.dark) .text-accent-green` is (0,2,1) and wins
+       on specificity alone, so load order is irrelevant and no
+       !important is needed — the same technique as the pure-black block
+       above. Rewriting 164 markup sites would carry typo risk, would
+       miss every site added afterwards, and would have to be redone the
+       next time someone writes the class.
+
+       BACKGROUNDS, BORDERS AND RINGS ARE DELIBERATELY UNTOUCHED
+       (`bg-accent-green` ×127, `border-` ×89, `ring-` ×92). There the
+       accent is the surface, not the ink, and it is doing its job; what
+       sits ON it is already a dark literal. Only `text-` is wrong.
+
+       Checked before writing this: no site puts accent TEXT on a dark
+       fill. The only two class lists holding both `text-accent-green`
+       and `bg-op-bad` are ternaries — `text-op-bad bg-op-bad/10` OR
+       `text-accent-green bg-accent-green/10` — so they never co-apply. */
+    html:not(.dark) .text-accent-green { color: #166534; }
+
+    /* ── The same defect, the same fix: semantic colours used as TEXT ──
+       Found by sweeping the Item Sales surface, not by reading the diff —
+       the accent fix above was one of FOUR contrast failures on that one
+       panel, and the other three are app-wide.
+
+       Measured on each theme's real grounds, against the element's own
+       10% tint (`bg-op-bad/10`, `bg-op-warn/10`), which is where most of
+       these sit, and on the plain panel underneath:
+
+         text-op-bad   light  #ef4444  2.99 / 3.30 / 3.17   FAIL
+                       light  #a5281a  5.72 / 6.32 / 6.05   PASS  (red-800)
+                       dark   #ef4444  4.34 / 3.94 / 4.88   FAIL
+                       dark   #f87171  5.91 / 5.36 / 6.63   PASS  (red-400)
+         text-op-warn  light  #f59e0b  1.81 / 1.99 / 1.91   FAIL
+                       light  #92400e  5.96 / 6.57 / 6.30   PASS  (amber-800)
+                       dark   #f59e0b  7.08 / 6.39 / 8.09   PASS — left alone
+
+       op-bad is the one that fails in BOTH themes, because a saturated
+       red on a red wash is low-contrast whichever way the ground goes.
+
+       Same specificity trick, same reasons (see the accent note above),
+       and again TEXT ONLY: `bg-op-bad` ×29 and `bg-op-warn` ×23 are
+       untouched, as are every border and ring. Checked that no site puts
+       this text on a dark ground in light mode — the only three class
+       lists pairing `text-op-bad` with `bg-op-panel` write it as
+       `bg-opl-panel dark:bg-op-panel`, i.e. white in light. */
+    html:not(.dark) .text-op-bad  { color: #a5281a; }
+    html:not(.dark) .text-op-warn { color: #92400e; }
+    .dark .text-op-bad            { color: #f87171; }
+
+    /* ── inkDimmer is a BORDER colour that 159 sites use as text ───────
+       DESIGN.md §4.8 trap 5 says it outright: "inkDimmer fails AA on
+       opl-bg (2.71:1). Use inkDim (5.29:1) for muted-but-readable text;
+       keep inkDimmer for borders and badges." The text utilities went on
+       being written anyway — `text-opl-inkDimmer` x72 and
+       `dark:text-op-inkDimmer` x87. Those are the ONLY two spellings in
+       the file: no bare `text-op-inkDimmer`, no hover, group-hover or
+       focus variant. Checked, because a missed spelling is exactly how
+       the pure-black nav bar shipped navy.
+
+                        opl-bg  panel  panelHi  sidebar
+         light  today     2.71   3.01     2.87     2.46   FAIL
+                inkDim    5.29   5.88     5.62     4.80   PASS
+         dark   today     3.22   2.99     2.71     3.31   FAIL
+                inkDim    6.18   5.74     5.21     6.35   PASS
+
+       Pure black already passed on its own (it re-points --op-inkDimmer
+       to #8a8a8a, 5.24-6.08). It is brought along anyway: carving it out
+       left three themes behaving differently for one token, and every
+       hand-written site below would have needed its own exclusion.
+       Including it only RAISES its contrast, 5.73 -> 8.33.
+
+       THE DARK VALUE IS A VARIABLE, NOT A LITERAL. Writing #8893a7
+       here would paint dark's blue-grey onto pure black's neutral ground
+       the moment anyone widened that selector — the exact shape of the
+       bug that left a navy nav bar on a black screen.
+       rgb(var(--op-inkDim)) follows whatever the theme re-points it to.
+
+       Specificity: Tailwind emits `.dark\:text-op-inkDimmer:is(.dark *)`
+       at (0,2,0); `html.dark .dark\:text-op-inkDimmer` is (0,3,1).
+
+       NOT TOUCHED, because there inkDimmer is doing its real job: the
+       `.mc-lvl` level badge (DESIGN.md §4.8 prescribes inkDimmer for it,
+       and its border carries the meaning), and the two pace-bar FILLS,
+       which are not text at all. */
+    html:not(.dark) .text-opl-inkDimmer { color: #6b6453; }
+    html.dark .dark\:text-op-inkDimmer { color: rgb(var(--op-inkDim)); }
+
     /* ── Accessibility page — theme picker ────────────────────────────
        Light side uses opl-* token literals (a <style> block cannot reach
        the Tailwind class names — DESIGN.md §4.8). The dark side goes
@@ -567,7 +667,7 @@
     .coach .coach-txt { font-size: 12.5px; line-height: 1.45; color: rgb(var(--op-ink)); font-weight: 500; }
     .coach .coach-txt b { color: #22c55e; font-weight: 700; }
     .coach .coach-row { margin-top: 9px; display: flex; align-items: center; justify-content: space-between; }
-    .coach .coach-step { font-size: 10.5px; color: rgb(var(--op-inkDimmer)); font-weight: 600; }
+    .coach .coach-step { font-size: 10.5px; color: rgb(var(--op-inkDim)); font-weight: 600; }
     .coach .coach-got { cursor: pointer; font-size: 11.5px; font-weight: 700; color: #06210f; background: #22c55e; padding: 4px 11px; border-radius: 8px; border: 0; }
     .coach .coach-caret { position: absolute; width: 13px; height: 13px; background: rgb(var(--op-panelHi)); border: 1px solid rgba(34,197,94,.45); transform: rotate(45deg); }
     .coach.below .coach-caret { top: -7px; border-right: 0; border-bottom: 0; }
@@ -706,7 +806,7 @@
       #print-report th.pr-l, #print-report td.pr-l { text-align: left; }
       #print-report td { text-align: right; padding: 3px 2px; border-bottom: 0.5pt solid #e5e3db; }
       #print-report tr.pr-tot td { border-top: 1pt solid #14110a; border-bottom: none; font-weight: 600; padding-top: 4px; }
-      #print-report .pr-ft { display: flex; justify-content: space-between; font-size: 5.8pt; color: #9c9484; margin-top: 12px; border-top: 0.5pt solid #d6d3ca; padding-top: 5px; }
+      #print-report .pr-ft { display: flex; justify-content: space-between; font-size: 5.8pt; color: #6b6453; margin-top: 12px; border-top: 0.5pt solid #d6d3ca; padding-top: 5px; }
     }
   </style>
   <script>
@@ -1599,14 +1699,6 @@
             .txn-wall{padding:11px 18px;background:rgba(245,158,11,.16);
               border-bottom:1px solid rgba(180,83,9,.45);font-size:12px;line-height:1.55}
             .dark .txn-wall{background:rgba(245,158,11,.14);border-bottom-color:rgba(245,158,11,.45)}
-            /* 🛑 accent-green #22c55e is 2.18:1 on the light bar — DESIGN.md §2.1:
-               "unusable as TEXT in light". Tailwind's text-accent-green is one
-               value for both themes, so an accent that must be READ needs this
-               pair instead: green-800 light (6.9:1), the accent in dark (7.81:1).
-               A dot or a fill can stay accent-green; only text is the problem. */
-            .txn-accent{color:#166534}
-            .dark .txn-accent{color:#22c55e}
-            .txn-accent:hover{text-decoration:underline}
             /* Legend */
             .txn-legend{display:flex;gap:9px 20px;flex-wrap:wrap;padding:12px 18px;font-size:11.5px;
               color:#6b6453;border-top:1px solid rgba(20,16,8,.10)}
@@ -3192,9 +3284,9 @@
         .dark .mf-flag{background:rgba(255,255,255,.08);color:rgb(var(--op-inkDim))}
         /* Quiet until you look for it: destructive, so it should not compete with the
            row itself, but it must be findable without opening the manifest first. */
-        .mf-x{background:none;border:none;color:#9c9484;cursor:pointer;font-size:17px;line-height:1;
+        .mf-x{background:none;border:none;color:#6b6453;cursor:pointer;font-size:17px;line-height:1;
           padding:2px 7px;border-radius:6px}
-        .dark .mf-x{color:rgb(var(--op-inkDimmer))}
+        .dark .mf-x{color:rgb(var(--op-inkDim))}
         .mf-x:hover{color:#b91c1c;background:rgba(239,68,68,.12)}
         .mf-note{padding:12px 18px;font-size:12.5px;color:#6b6453;border-top:1px solid rgba(20,16,8,.10)}
         .dark .mf-note{color:rgb(var(--op-inkDim));border-top-color:rgba(255,255,255,.09)}
@@ -3498,8 +3590,8 @@
         .dark .fn-prices .t{color:rgb(var(--op-inkDim))}
         .ps-steps{display:flex;flex-direction:column;gap:2px;padding:2px 0}
         .ps-step{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13.5px;
-          color:#9c9484;transition:color .25s}
-        .dark .ps-step{color:rgb(var(--op-inkDimmer))}
+          color:#6b6453;transition:color .25s}
+        .dark .ps-step{color:rgb(var(--op-inkDim))}
         .ps-step.on{color:#14110a;font-weight:600}
         .dark .ps-step.on{color:rgb(var(--op-ink))}
         .ps-step.done{color:#6b6453}
@@ -3513,8 +3605,8 @@
         .ps-step.done .ps-dot::after{content:"";width:9px;height:5px;border-left:2px solid #06210f;
           border-bottom:2px solid #06210f;transform:rotate(-45deg) translate(1px,-1px)}
         @keyframes psSpin{to{transform:rotate(360deg)}}
-        .ps-el{margin-left:auto;font-size:11.5px;color:#9c9484;font-variant-numeric:tabular-nums}
-        .dark .ps-el{color:rgb(var(--op-inkDimmer))}
+        .ps-el{margin-left:auto;font-size:11.5px;color:#6b6453;font-variant-numeric:tabular-nums}
+        .dark .ps-el{color:rgb(var(--op-inkDim))}
         @media (prefers-reduced-motion:reduce){ .ps-step.on .ps-dot{animation:none} }
       </style>
       <div id="ps-wrap" class="px-4 space-y-4 pt-[calc(env(safe-area-inset-top)+1.5rem)]"
@@ -3829,9 +3921,9 @@
           vertical-align:1px}
         .dark .mc-lvl{border-color:rgba(255,255,255,.16);color:rgb(var(--op-inkDimmer))}
         #mc-tbl tr.mc-l3 .mc-lvl{color:#22c55e;border-color:rgba(34,197,94,.4)}
-        .mc-rm{background:none;border:none;color:#9c9484;cursor:pointer;font-size:15px;line-height:1;
+        .mc-rm{background:none;border:none;color:#6b6453;cursor:pointer;font-size:15px;line-height:1;
           padding:2px 5px;margin-left:8px;border-radius:5px}
-        .dark .mc-rm{color:rgb(var(--op-inkDimmer))}
+        .dark .mc-rm{color:rgb(var(--op-inkDim))}
         .mc-rm:hover{color:#14110a;background:rgba(20,16,8,.08)}
         .dark .mc-rm:hover{color:rgb(var(--op-ink));background:rgba(255,255,255,.10)}
 
@@ -4325,7 +4417,7 @@
         .eb-sec > summary::-webkit-details-marker{display:none}
         .eb-sec > summary:hover{background:rgba(20,16,8,.02)}
         .dark .eb-sec > summary:hover{background:rgba(255,255,255,.02)}
-        .eb-sec-chev{display:inline-block;color:#9c9484;font-size:10px;margin-right:8px;
+        .eb-sec-chev{display:inline-block;color:#6b6453;font-size:10px;margin-right:8px;
           transition:transform .15s;vertical-align:middle}
         .eb-sec[open] > summary .eb-sec-chev{transform:rotate(90deg)}
         /* A collapsed section should not keep the divider that separated it
@@ -4346,7 +4438,8 @@
         .eb-case > summary::-webkit-details-marker{display:none}
         .eb-case > summary:hover{background:rgba(20,16,8,.02)}
         .dark .eb-case > summary:hover{background:rgba(255,255,255,.02)}
-        .eb-chev{color:#9c9484;font-size:10px;transition:transform .15s}
+        .eb-chev{color:#6b6453;font-size:10px;transition:transform .15s}
+        .dark .eb-sec-chev,.dark .eb-chev{color:rgb(var(--op-inkDim))}
         .eb-case[open] > summary .eb-chev{transform:rotate(90deg)}
         .eb-nm{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         .eb-acct{grid-column:2;font-size:12px;color:#6b6453}
@@ -12403,7 +12496,7 @@
             <div class="flex items-center gap-2 min-w-0">
               <span class="w-2 h-2 rounded-sm flex-shrink-0" style="background:${sw}"></span>
               <span class="text-[14px] font-bold text-opl-ink dark:text-op-ink truncate">${escapeHtml(c.category)}</span>
-              <span class="text-[12px] text-opl-inkDimmer dark:text-op-inkDimmer">›</span>
+              <span class="text-[12px] text-opl-inkDim dark:text-op-inkDim">›</span>
             </div>
             <div class="flex items-center gap-2.5 flex-wrap text-[11px] text-opl-inkDim dark:text-op-inkDim">
               <span><b class="text-opl-ink dark:text-op-ink font-semibold tabular-nums">${(c.qty || 0).toLocaleString()}</b> qty</span>
@@ -12566,15 +12659,23 @@
 
   function _txnErrorHTML(payload) {
     const d = payload.__detail || {};
-    const retry = `<button onclick="refreshTransactions()" class="mt-3 text-[12px] font-bold txn-accent">Try again</button>`;
+    const retry = `<button onclick="refreshTransactions()" class="mt-3 text-[12px] font-bold text-accent-green hover:underline">Try again</button>`;
     switch (payload.__err) {
-      case 'BEYOND_RETENTION':
+      case 'BEYOND_RETENTION': {
+        // The archive changes what this means: before it existed, out-of-window
+        // was simply gone. Now it depends on whether that day was ever banked,
+        // so say which — and where the archive starts, so a manager can tell
+        // "before we kept these" from "this one day is missing".
+        const since = d.archiveStart
+          ? `This store's archive starts <b class="text-opl-ink dark:text-op-ink font-semibold">${escapeHtml(d.archiveStart)}</b>; ${escapeHtml(payload.date)} predates it.`
+          : `Nothing has been archived for this store yet.`;
         return `<div class="p-8 text-center">
           <div class="text-[14px] font-bold text-opl-ink dark:text-op-ink">No transaction detail this far back</div>
           <div class="text-[12.5px] text-opl-inkDim dark:text-op-inkDim mt-2 max-w-[52ch] mx-auto leading-relaxed">
-            ${escapeHtml(payload.date)} is ${d.ageDays} days ago, and Clover returns at most about ${d.retentionDays} days of payment history — so these transactions cannot be retrieved, today or later.
+            ${escapeHtml(payload.date)} is ${d.ageDays} days ago, and Clover returns at most about ${d.retentionDays} days of payment history. ${since}
             <b class="text-opl-ink dark:text-op-ink font-semibold">This is not a zero-sales day</b>; the day's totals are still on the Daily tab, only the per-transaction detail is gone.
           </div></div>`;
+      }
       case 'BEFORE_STORE_CUTOVER':
         return `<div class="p-8 text-center">
           <div class="text-[14px] font-bold text-opl-ink dark:text-op-ink">Before Indy East opened</div>
@@ -12636,9 +12737,9 @@
       `<button type="button" role="tab" aria-selected="${k === txnTab}" onclick="setTxnTab('${k}')">${label}<span class="txn-cnt">${(counts[k] || 0).toLocaleString()}</span></button>`).join('');
 
     const liveTag = isToday
-      ? `<span class="inline-flex items-center gap-1 text-[9.5px] font-bold tracking-[0.06em] uppercase txn-accent"><span class="w-1.5 h-1.5 rounded-full bg-accent-green"></span>Live</span>`
+      ? `<span class="inline-flex items-center gap-1 text-[9.5px] font-bold tracking-[0.06em] uppercase text-accent-green"><span class="w-1.5 h-1.5 rounded-full bg-accent-green"></span>Live</span>`
       : '';
-    const refreshBtn = isToday ? `<button type="button" onclick="refreshTransactions()" class="text-[11.5px] font-bold txn-accent">Refresh</button>` : '';
+    const refreshBtn = isToday ? `<button type="button" onclick="refreshTransactions()" class="text-[11.5px] font-bold text-accent-green hover:underline">Refresh</button>` : '';
 
     const sum = `
       <div class="txn-sum">
@@ -12657,7 +12758,21 @@
       </div>`;
 
     const label = (TXN_TABS.find(x => x[0] === txnTab) || ['', ''])[1].toLowerCase();
-    const status = `<div class="txn-status"><b>${escapeHtml(shortName(storeName))}</b> · ${escapeHtml(dateStr)} · <b>${mine.length.toLocaleString()}</b> ${escapeHtml(label)} · read live from Clover, nothing written back.</div>`;
+    // Where the rows came from is part of the reading, not a detail. Clover only
+    // holds ~90 days; past that this is our own banked copy.
+    const provenance = data.archived
+      ? `from the archive, banked ${data.bankedAt ? escapeHtml(String(data.bankedAt).slice(0, 10)) : 'earlier'} — Clover no longer holds this day.`
+      : 'read live from Clover, nothing written back.';
+    const status = `<div class="txn-status"><b>${escapeHtml(shortName(storeName))}</b> · ${escapeHtml(dateStr)} · <b>${mine.length.toLocaleString()}</b> ${escapeHtml(label)} · ${provenance}</div>`;
+
+    // 🛑 An archived day that never reconciled against the day's stored total
+    // must not read as the whole truth. It cannot be re-banked either — Clover
+    // is past holding it — so this says plainly what is and is not knowable.
+    const archiveWarn = (data.archived && data.archiveComplete === false)
+      ? `<div class="txn-wall"><b>This archived day is incomplete.</b> When it was banked, the transactions retrieved did not
+           reconcile with the day's recorded total, so some are missing and Clover is now past returning them.
+           <b>The day's total on the Daily tab is still correct</b> — it was computed at the time. Only this list is short.</div>`
+      : '';
 
     let table;
     if (!mine.length) {
@@ -12711,7 +12826,7 @@
         ${refreshBtn}
       </div>
       <div class="txn-tabs" role="tablist" aria-label="Transaction types">${tabsHTML}</div>
-      ${sum}${status}${table}${detail}${legend}`;
+      ${sum}${archiveWarn}${status}${table}${detail}${legend}`;
   }
 
   function _txnDetailHTML(r) {
@@ -12733,7 +12848,7 @@
           <span class="txn-dt-id">${escapeHtml(String(r.id || ''))}</span>
           <span class="txn-dt-sub">${r.orderId ? 'Order ' + escapeHtml(r.orderId) : 'No linked order'}</span>
           <span class="txn-spacer"></span>
-          <button type="button" onclick="openTxnDetail(${JSON.stringify(String(r.id)).replace(/"/g, '&quot;')})" class="text-[11.5px] font-bold txn-accent">Close</button>
+          <button type="button" onclick="openTxnDetail(${JSON.stringify(String(r.id)).replace(/"/g, '&quot;')})" class="text-[11.5px] font-bold text-accent-green hover:underline">Close</button>
         </div>
         <div class="txn-dt-grid">
           ${cell('Amount', fmtDollar(r.amount || 0), true)}
@@ -13359,7 +13474,7 @@
             <div class="flex items-center gap-2 min-w-0">
               <span class="w-2 h-2 rounded-sm flex-shrink-0" style="background:${sw}"></span>
               <span class="text-[14px] font-bold text-opl-ink dark:text-op-ink truncate">${escapeHtml(c.category)}</span>
-              <span class="text-[12px] text-opl-inkDimmer dark:text-op-inkDimmer">›</span>
+              <span class="text-[12px] text-opl-inkDim dark:text-op-inkDim">›</span>
             </div>
             <div class="flex items-center gap-2.5 flex-wrap text-[11px] text-opl-inkDim dark:text-op-inkDim">
               <span><b class="text-opl-ink dark:text-op-ink font-semibold tabular-nums">${(c.qty || 0).toLocaleString()}</b> qty</span>

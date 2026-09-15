@@ -1,3 +1,176 @@
+# The payment archive — transaction detail that outlives Clover (2026-09-15)
+
+Brian: **"persist the payments so history outlives the 90 days"**. Built, tested, NOT applied.
+
+## ⏸ NOTHING HAS BEEN RUN. Two things need Brian's explicit go (rule 7)
+
+1. **`migration-063.sql`** — creates two tables. Additive; touches no existing table.
+   ```
+   STAGING  npx wrangler d1 execute b40982c2-4009-4842-bc17-fa0977468b07 --remote -y --file=migration-063.sql
+   PROD     npx wrangler d1 execute 3fa911d7-31d6-438c-985f-7ac08c407d2d --remote -y --file=migration-063.sql
+   ```
+   🔑 Those UUIDs are **not** in the order the file suggests — `3fa911d7` is PROD. Labelled in
+   the migration header for exactly that reason.
+2. **The one-time backfill** that seeds the archive with the ~90 days Clover still holds.
+   Dry run by default; `&dry=0` writes. Suggested: one store at a time.
+
+## The asymmetry the whole design turns on
+
+Once a date leaves Clover's window there is **no re-pull**. So a day banked incompletely and
+recorded as complete is permanent and unfixable, while a complete day recorded as incomplete
+costs one re-bank. Every judgement leans the second way.
+
+| guard | what it prevents |
+|---|---|
+| A failed Clover page banks **nothing** | a permanently truncated day |
+| Completeness is **earned** by reconciling against `daily_sales` (±5%) | the retention-edge failure where Clover returns fewer rows and the count is merely non-zero |
+| A day already `complete=1` is **refused a thinner replacement** | a re-bank quietly losing detail |
+| Dry run is the **default** | an accidental write |
+| Range refused past 400 store-days | a silent truncation |
+
+`payment_archive_days.complete` is a stored fact, not an assumption. A day at `complete=0` is
+visibly partial, is listed under `needsAttention`, and can be re-banked while Clover still has it.
+
+## Two things found by reading the code, not by planning
+
+1. **The nightly bank runs at `todayStr − 3`, not yesterday.** The clientCreatedTime sweep in
+   the same cron re-snapshots today + 2 prior days, so `daily_sales` for anything newer can
+   still move when an offline-rung order syncs late. Reconciling against a total that has not
+   settled would mark good days unreconciled. Three days back it is final — and still 87 days
+   inside Clover's window.
+2. **A range IS allowed here, unlike `repair-run`.** That rule exists because re-pulling a
+   healthy date *overwrites* a good snapshot with one that has lost aged-out refunds. Nothing
+   is overwritten here: the archive starts empty, the row key is Clover's own payment id, and
+   a complete day is refused a thinner replacement.
+
+## Deploy order — and why it does not actually matter
+
+Migration first, then worker. But `readArchivedDay` **tolerates the tables not existing**:
+without that, a worker reaching prod before the hand-run migration would turn every
+out-of-window request into a 500 instead of a clean refusal. Found because
+`test-transactions.mjs` (which does not apply the migration) started throwing — so that suite
+now doubles as the proof of the un-migrated path.
+
+## Verified — 4,286 repo assertions across 71 suites + 88 browser assertions
+
+`scripts/test-payment-archive.mjs` (35, new) drives the real worker with Clover stubbed:
+POST-only and superuser-only; dry-run default writes nothing; a clean day banks and
+reconciles; re-banking does not duplicate; **a failed page banks nothing**; under-reporting
+against `daily_sales` lands at `complete=0` with the drift recorded; an empty fetch against a
+trading day is never complete; a complete day refuses a thinner fetch unless forced; the
+archive serves a date past retention with names resolved **at bank time**; an unbanked
+out-of-window date still refuses by name and says where the archive starts; and a date inside
+the window is still read live.
+
+Frontend: an archived day says so and drops the "read live" wording; an unreconciled one gets
+a banner separating what is wrong (this list) from what is not (the day's total).
+`CACHE_NAME` v196 → v197.
+
+# inkDimmer as text — fixed everywhere it was one (2026-09-15)
+
+Brian: **"fix the inkdimmer text sites too"** — the ~74/89 I had reported and deliberately
+held back on #228 as a design decision. Done, and the sweep found more than the utilities.
+
+## Two populations, not one
+
+| | sites | fixed by |
+|---|---|---|
+| Tailwind utilities `text-opl-inkDimmer` ×74, `dark:text-op-inkDimmer` ×88 | 162 | two CSS rules |
+| Hand-written `<style>` blocks — print footer, coach step, price-scan step/elapsed, manifest & criteria close buttons, eBay chevrons | 13 | edited in place |
+
+The second population is the one a grep for the *class name* never finds. It writes the same
+colour as `#9c9484` or `rgb(var(--op-inkDimmer))` directly.
+
+## What was deliberately NOT changed
+
+- **`.mc-lvl`, the level badge.** DESIGN.md §4.8 prescribes inkDimmer for it by name, and its
+  border carries the meaning. Asserted in the suite that it still reads `#9c9484`.
+- **The two pace-bar fills** (`barColor` / `sBarColor`) — not text at all.
+- **The `--op-inkDimmer` token itself**, asserted still `90 100 120`. Borders and badges keep
+  the level; only *text* moved off it.
+- `--mdd` in `#page-mos` is a **dead variable** — nothing reads it. Left alone.
+
+## Two catches worth keeping
+
+1. **`.eb-chev` / `.eb-sec-chev` had no dark rule at all** — they painted `#9c9484` in *both*
+   themes, which happens to read fine on a dark ground. Swapping the single value to inkDim
+   would have **broken dark mode** (1.9:1). They needed a dark counterpart added, not a swap.
+   A blind find-and-replace would have shipped that.
+2. **I first excluded pure black and then undid it.** OLED already passed (5.24–6.08, because
+   that theme re-points the token to `#8a8a8a`), so `html.dark:not(.oled)` looked like the
+   minimal-impact choice. It was the wrong kind of clever: it left three themes behaving
+   differently for one token, and every hand-written site would have needed its own carve-out.
+   Bringing OLED along only raises its contrast (5.73 → 8.33). One rule, one meaning.
+
+## Verified — 4,251 repo assertions + 83 browser assertions
+
+The decisive one is a sweep for **any element painting an inkDimmer value as text**, by
+computed colour rather than by class — so it catches the hand-written sites too:
+
+    light  0        dark  0        oled  0
+
+Plus: each utility asserted to resolve per theme; `.mc-lvl` and the token asserted unchanged;
+Item Sales 44/44 AA in three themes; Transactions 37 behaviour + 19 contrast still clean.
+`CACHE_NAME` v195 → v196.
+
+# Item Sales contrast — fixed, and it was four defects, not one (2026-09-15)
+
+Brian: **"fix the item sales contrast issue"**. Done — but the surface had **four** failures,
+not the one I had reported. Found by rendering Item Sales with real data and sweeping every
+text element against its real composited background, rather than checking the thing I knew about.
+
+| element | light | dark | fix |
+|---|---|---|---|
+| `text-accent-green` — Live / Refresh / Grand Total | 2.18 | pass | green-800 in light |
+| `text-op-warn` — the `disc` pill | 1.99 | pass | amber-800 in light |
+| `text-op-bad` — the `ref` pill | 3.30 | **4.34** | red-800 light, red-400 dark |
+| `text-*-inkDimmer` — the `›` chevron | 3.01 | 2.99 | inkDim (local) |
+
+`text-op-bad` fails in **both** themes — a saturated red on its own red wash is low-contrast
+whichever way the ground goes.
+
+## Four CSS rules, not 292 markup edits
+
+```
+html:not(.dark) .text-accent-green { color: #166534; }
+html:not(.dark) .text-op-bad       { color: #a5281a; }
+html:not(.dark) .text-op-warn      { color: #92400e; }
+.dark           .text-op-bad       { color: #f87171; }
+```
+
+Same specificity technique as the pure-black block above them: Tailwind emits
+`.text-accent-green` at (0,1,0), `html:not(.dark) .text-accent-green` is (0,2,1) and wins
+without `!important` or load-order luck. A rule cannot typo across 292 sites and cannot miss
+the site someone adds tomorrow.
+
+🔑 **TEXT ONLY.** `bg-accent-green` ×127, `border-` ×89, `ring-` ×92, `bg-op-bad` ×29,
+`bg-op-warn` ×23 are all untouched and asserted untouched — there the colour is the surface,
+not the ink. Checked first that no site puts this text on a dark ground in light mode: the
+only three class lists pairing `text-op-bad` with `bg-op-panel` write it
+`bg-opl-panel dark:bg-op-panel`, i.e. white in light.
+
+Also deleted `.txn-accent`, the local class added with Transactions — the global rule gives
+the identical pair, and two mechanisms for one rule is one too many.
+
+## ⏸ NOT fixed, and it is a decision for Brian
+
+`text-opl-inkDimmer` / `dark:text-op-inkDimmer` used as TEXT runs to **74 / 89 sites** and
+measures 2.71–3.01 light, 2.71–3.33 dark. DESIGN.md §4.8 trap 5 already says inkDimmer is for
+borders and badges and `inkDim` is the muted-but-readable step — so the spec agrees it is
+wrong. But darkening every dim label in the app is a **visible design change**, not just a
+correctness fix, so only the two Item Sales chevrons were changed. The rest is his call.
+
+## Verified — 4,251 repo assertions + 78 browser assertions
+
+- **Item Sales with real data, all three themes**: all 44 text elements ≥ AA. This is the
+  check that found the three extra defects; the app-wide sweep could not reach them, because
+  Item Sales only exists in the DOM once it has data.
+- **App-wide, 28 pages revealed, all three themes**: every rendered `text-accent-green` /
+  `text-op-bad` / `text-op-warn` ≥ AA, each utility asserted to resolve to its intended value
+  per theme, and every fill/border asserted UNCHANGED.
+- **Transactions** (which lost `.txn-accent`): 37 behaviour + 19 contrast, still clean.
+- `CACHE_NAME` v194 → v195.
+
 # Worker deployed to production (2026-09-15)
 
 Brian: **"deploy the worker"**. Done — `clover-sales-api` version **17f16db4-61d1-444a-9221-1333d023c898**

@@ -22,6 +22,12 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL: ' + m)
 
 const worker = await loadWorker(repo);
 const { db, env } = makeEnv(repo);
+// Deliberately does NOT apply migration-063. The archive tables are created by a
+// hand-run migration, so a worker can legitimately reach production before them —
+// and every out-of-window request goes through the archive lookup. This suite
+// therefore doubles as the proof that the endpoint still refuses cleanly, with a
+// 422 and no rows, when those tables do not exist. scripts/test-payment-archive.mjs
+// covers the migrated case.
 // ⚠️ Must match what the handler reads. A wrong name fails identically to a
 // broken stub, and the suite would "pass" on the error branch.
 for (const s of ['BL1', 'BL4', 'BL16']) {

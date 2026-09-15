@@ -1763,6 +1763,10 @@ async function fetchManualRefunds(store, env, sinceTimestamp, untilTimestamp = n
 // list: an empty list reads as "the store took nothing that day", which is a lie
 // about a day it traded.
 const TXN_RETENTION_DAYS = 90;
+// Store-days one bank invocation will attempt. Each costs ~3 Clover subrequests
+// (orders, refunds, credits) against the ~1000 ceiling; the tender and employee
+// maps cache after the first call. 400 leaves generous headroom.
+const BANK_MAX_STORE_DAYS = 400;
 
 // A payment carries its tender and its employee as IDs — `tender.{id}` and
 // `employee.{id}`, never "Cash" and a person's name — so each needs its own
@@ -1966,6 +1970,189 @@ function buildTransactions(orders, refunds, credits, tenderMap, employeeMap, sto
   return {
     store, date: dateStr, rows, counts,
     totals: { payments: r2(payments), count: counts.payment, tax: r2(tax), tip: r2(tip), refunded: r2(refunded) },
+  };
+}
+
+// ═══ THE PAYMENT ARCHIVE ══════════════════════════════════════════════════
+// Clover returns ~90 days of payment history and nothing per-payment was ever
+// stored here, so transaction detail simply expired. These functions bank each
+// store-day into D1 so it outlives that window.
+//
+// 🛑 THE ASYMMETRY THAT SHAPES ALL OF THIS. Once a date leaves Clover's window
+// there is no re-pull: whatever is banked is all that will ever exist. Banking
+// a day INCOMPLETELY and recording it as complete is therefore permanent and
+// unfixable, while recording a complete day as incomplete costs one re-bank.
+// Every judgement below leans the second way.
+
+// How far the archived figures may drift from daily_sales before the day is
+// held back as unreconciled. The two are built by different code paths from the
+// same orders, so they should agree closely; 5% leaves room for the residual
+// (custom-amount sales, service charges, line-item modifications) that reaches
+// payments but not the category accumulator, without letting a truncated fetch
+// through.
+const ARCHIVE_RECONCILE_TOLERANCE = 0.05;
+
+// Is this day safe to record as the whole truth?
+//
+// Deliberately NOT "the write did not throw". Clover degrades at its retention
+// edge by returning FEWER rows rather than erroring — a BL4 backfill once took
+// 153 of a day's 241 orders and overwrote a complete snapshot reporting
+// written:1, errors:0, because the count was merely non-zero. So completeness is
+// judged against what D1 independently already knows the day came to.
+function assessArchiveCompleteness(built, salesRow) {
+  const payments = built.totals.count;
+  const net = Math.round((built.totals.payments - built.totals.tax - built.totals.refunded) * 100) / 100;
+  const expected = (salesRow && typeof salesRow.total === "number") ? salesRow.total : null;
+
+  if (expected === null) {
+    // No daily_sales row to check against. A day with no stored total and no
+    // payments agrees with itself and is genuinely empty; a day that produced
+    // payments with nothing recorded against it cannot be vouched for here.
+    return payments === 0
+      ? { complete: 1, net, expected, note: null }
+      : { complete: 0, net, expected, note: "no daily_sales row to reconcile against" };
+  }
+  if (expected > 0 && payments === 0) {
+    // The loudest possible signal: D1 says the store traded, Clover returned
+    // nothing. This is exactly the shape of the retention-edge failure.
+    return { complete: 0, net, expected, note: `daily_sales has ${expected} but Clover returned no payments` };
+  }
+  if (expected === 0) {
+    return { complete: 1, net, expected, note: null };
+  }
+  const drift = Math.abs(net - expected) / Math.abs(expected);
+  if (drift > ARCHIVE_RECONCILE_TOLERANCE) {
+    return { complete: 0, net, expected, note: `net ${net} vs daily_sales ${expected} (${(drift * 100).toFixed(1)}% drift)` };
+  }
+  return { complete: 1, net, expected, note: null };
+}
+
+// Bank one store-day. Returns a report; writes nothing when `dry`.
+async function bankTransactionsDay(store, env, dateStr, { dry = false, force = false } = {}) {
+  const out = { store, date: dateStr, rows: 0, payments: 0, complete: 0, wrote: false, skipped: null, note: null };
+
+  const start = getStartOfDayET(dateStr);
+  const end = start + 86400000;
+  const [orders, refunds, credits, tenderMap, employeeMap] = await Promise.all([
+    fetchTransactionOrders(store, env, start, end),
+    fetchRefundElements(store, env, start, end),
+    fetchManualRefunds(store, env, start, end),
+    fetchCloverLabelMap(store, env, "tenders"),
+    fetchCloverLabelMap(store, env, "employees"),
+  ]);
+
+  // 🛑 A failed page is not a quiet day. Banking a short array here would write
+  // a permanently truncated record of a day that actually traded.
+  if (orders === null) {
+    out.skipped = "INCOMPLETE_FETCH";
+    out.note = "Clover did not return a complete order list";
+    return out;
+  }
+
+  const built = buildTransactions(orders, refunds, credits, tenderMap, employeeMap, store, dateStr);
+  out.rows = built.rows.length;
+  out.payments = built.totals.count;
+
+  const salesRow = await env.DB.prepare(
+    "SELECT total, order_count FROM daily_sales WHERE store = ? AND date = ?"
+  ).bind(store, dateStr).first();
+  const verdict = assessArchiveCompleteness(built, salesRow);
+  out.complete = verdict.complete;
+  out.note = verdict.note;
+  out.net = verdict.net;
+  out.expectedNet = verdict.expected;
+
+  // 🛑 Never replace a day already banked whole with a thinner one. This is the
+  // magnitude guard, applied to the archive: the older a date gets, the fewer
+  // rows Clover will return for it, so a re-bank is exactly when detail is lost.
+  const existing = await env.DB.prepare(
+    "SELECT rows, complete FROM payment_archive_days WHERE store = ? AND date = ?"
+  ).bind(store, dateStr).first();
+  if (existing && existing.complete === 1 && built.rows.length < existing.rows && !force) {
+    out.skipped = "WOULD_LOSE_ROWS";
+    out.note = `already banked complete with ${existing.rows} rows; this fetch returned ${built.rows.length}`;
+    return out;
+  }
+
+  if (dry) { out.skipped = "DRY_RUN"; return out; }
+
+  const bankedAt = new Date().toISOString();
+  const stmt = env.DB.prepare(
+    `INSERT OR REPLACE INTO payment_archive
+       (id, store, date, kind, order_id, ts, amount, tax, tip, tender, tender_kind,
+        employee, customer, source, cash_tendered, result, reason, refund_of, banked_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  );
+  // D1 caps bound parameters at 100 per QUERY; each statement here binds 19, and
+  // batch() sends them as separate queries. 100 statements a batch keeps the
+  // round-trips down without approaching any cap.
+  for (let i = 0; i < built.rows.length; i += 100) {
+    await env.DB.batch(built.rows.slice(i, i + 100).map(r => stmt.bind(
+      r.id, store, dateStr, r.kind, r.orderId ?? null, r.ts ?? null,
+      r.amount ?? null, r.tax ?? null, r.tip ?? null, r.tender ?? null, r.tenderKind ?? null,
+      r.employee ?? null, r.customer ?? null, r.source ?? null, r.cashTendered ?? null,
+      r.result ?? null, r.reason ?? null, r.refundOf ?? null, bankedAt)));
+  }
+  await env.DB.prepare(
+    `INSERT OR REPLACE INTO payment_archive_days
+       (store, date, rows, payments, gross, net, expected_net, complete, note, banked_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`
+  ).bind(store, dateStr, built.rows.length, built.totals.count, built.totals.payments,
+         verdict.net, verdict.expected, verdict.complete, verdict.note, bankedAt).run();
+
+  out.wrote = true;
+  return out;
+}
+
+// Read a banked store-day back in the shape the endpoint already returns, so the
+// client cannot tell which source it came from.
+async function readArchivedDay(store, env, dateStr) {
+  // 🔑 TOLERATES THE TABLE NOT EXISTING, and that is not defensive padding.
+  // migration-063 creates it, and a migration is applied by hand. If the worker
+  // reaches production first — or the migration is run against staging only, or
+  // it fails halfway — every out-of-window request would otherwise throw and
+  // become a 500, turning a clean "past retention" refusal into an error page.
+  // Answering "nothing archived" makes the two deploys order-independent, which
+  // is worth more than a rule about which to run first.
+  let day;
+  try {
+    day = await env.DB.prepare(
+      "SELECT rows, payments, gross, net, complete, banked_at FROM payment_archive_days WHERE store = ? AND date = ?"
+    ).bind(store, dateStr).first();
+  } catch (e) {
+    console.warn(`payment archive unreadable (migration-063 applied?): ${e.message}`);
+    return null;
+  }
+  if (!day) return null;
+
+  const { results } = await env.DB.prepare(
+    `SELECT id, kind, order_id, ts, amount, tax, tip, tender, tender_kind, employee,
+            customer, source, cash_tendered, result, reason, refund_of
+       FROM payment_archive WHERE store = ? AND date = ? ORDER BY ts DESC`
+  ).bind(store, dateStr).all();
+
+  const rows = (results || []).map(r => ({
+    kind: r.kind, id: r.id, orderId: r.order_id, ts: r.ts,
+    amount: r.amount, tax: r.tax, tip: r.tip,
+    tender: r.tender, tenderKind: r.tender_kind, employee: r.employee,
+    customer: r.customer, source: r.source, cashTendered: r.cash_tendered,
+    result: r.result, reason: r.reason,
+    ...(r.refund_of ? { refundOf: r.refund_of } : {}),
+  }));
+  const counts = { payment: 0, refund: 0, manual: 0, void: 0 };
+  let tax = 0, tip = 0, refunded = 0;
+  for (const r of rows) {
+    counts[r.kind] = (counts[r.kind] || 0) + 1;
+    if (r.kind === "payment") { tax += r.tax || 0; tip += r.tip || 0; }
+    if (r.kind === "refund" || r.kind === "manual") refunded += Math.abs(r.amount || 0);
+  }
+  const r2 = n => Math.round(n * 100) / 100;
+  return {
+    store, date: dateStr, rows, counts,
+    totals: { payments: r2(day.gross), count: counts.payment, tax: r2(tax), tip: r2(tip), refunded: r2(refunded) },
+    // The client shows a banner when a day is served from an archive that could
+    // not be reconciled — an incomplete day must never read as the whole truth.
+    archived: true, archiveComplete: day.complete === 1, bankedAt: day.banked_at,
   };
 }
 
@@ -4600,6 +4787,7 @@ const ACTION_BUSINESS = new Map([
   ["thumbnail-generate", "bl"],
   ["thumbnail-upload", "bl"],
   ["thumbnails", "bl"],
+  ["bank-transactions", "bl"],
   ["transactions", "bl"],
   ["update-clover-item", "bl"],
   ["update-user", "bl"],
@@ -23775,6 +23963,80 @@ export default {
     }
 
     // ── Item sales by L2 category: ?action=items&store=BL1[&date=2026-04-08]
+    // ─── Bank transaction detail into the archive ───────────────────────
+    // POST-only and superuser-only: this WRITES. Seeds the archive with whatever
+    // Clover still holds, so today's ~90-day window becomes permanent history.
+    //
+    // 🔑 A range IS allowed here, unlike repair-run. That rule exists because
+    // re-pulling an already-healthy date OVERWRITES a good snapshot with one
+    // that has lost aged-out refunds. Nothing is overwritten here: the archive
+    // starts empty, the row key is Clover's own payment id, and a day already
+    // banked complete is refused a thinner replacement (see bankTransactionsDay).
+    if (request.method === "POST" && url.searchParams.get("action") === "bank-transactions") {
+      const guard = requireAdminAccess(request, currentUser, isAdminSecret, corsJson, { superuserOnly: true });
+      if (guard) return guard;
+
+      const storeParam = (url.searchParams.get("store") || "").toUpperCase();
+      const stores = storeParam === "ALL" || !storeParam ? ALL_STORES : [storeParam];
+      for (const st of stores) {
+        if (!ALL_STORES.includes(st)) {
+          return new Response(JSON.stringify({ error: `Unknown store ${st}` }), { status: 400, headers: corsJson });
+        }
+      }
+      const start = url.searchParams.get("start");
+      const end = url.searchParams.get("end");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start || "") || !/^\d{4}-\d{2}-\d{2}$/.test(end || "")) {
+        return new Response(JSON.stringify({ error: "start and end are required (YYYY-MM-DD)" }), { status: 400, headers: corsJson });
+      }
+      if (end < start) {
+        return new Response(JSON.stringify({ error: "end precedes start" }), { status: 400, headers: corsJson });
+      }
+      // Default to a DRY RUN. Banking is a write, and the caller has to say so.
+      const dry = url.searchParams.get("dry") !== "0";
+      const force = url.searchParams.get("force") === "1";
+
+      const { dateStr: bankToday } = getETToday();
+      const days = [];
+      for (let d = getStartOfDayET(start); d <= getStartOfDayET(end); d += 86400000) {
+        const iso = new Date(d).toISOString().slice(0, 10);
+        if (iso > bankToday) break;
+        days.push(iso);
+      }
+      // Each store-day costs ~3 Clover subrequests (orders, refunds, credits);
+      // the two label maps cache. Refuse an over-wide request rather than
+      // truncating it silently — the caller can run it in slices.
+      const storeDays = days.length * stores.length;
+      if (storeDays > BANK_MAX_STORE_DAYS) {
+        return new Response(JSON.stringify({
+          error: "Range too wide for one invocation", code: "BUDGET_EXCEEDED",
+          storeDays, limit: BANK_MAX_STORE_DAYS,
+          hint: "Narrow the range, or run one store at a time with &store=BL1",
+        }), { status: 413, headers: corsJson });
+      }
+
+      const report = [];
+      for (const st of stores) {
+        for (const d of days) {
+          try {
+            report.push(await bankTransactionsDay(st, env, d, { dry, force }));
+          } catch (e) {
+            report.push({ store: st, date: d, skipped: "ERROR", note: e.message });
+          }
+        }
+      }
+      const wrote = report.filter(r => r.wrote).length;
+      const incomplete = report.filter(r => r.wrote && !r.complete);
+      const skipped = report.filter(r => r.skipped && r.skipped !== "DRY_RUN");
+      return new Response(JSON.stringify({
+        dry, force, stores, days: days.length, storeDays,
+        wrote, incomplete: incomplete.length, skipped: skipped.length,
+        // Named explicitly: these are the days that must be re-banked while they
+        // are still inside Clover's window, or they are lost in that state.
+        needsAttention: [...incomplete, ...skipped].map(r => ({ store: r.store, date: r.date, skipped: r.skipped, note: r.note })),
+        report,
+      }), { headers: corsJson });
+    }
+
     // ─── Transactions: Clover's per-payment detail for one store-day ────
     // Store-scoped, read-only, live. Writes nothing; serves nothing from KV
     // except the two small label maps, which are a cache, not a record.
@@ -23809,16 +24071,38 @@ export default {
         }), { status: 422, headers: corsJson });
       }
 
-      // 🛑 The retention wall. Clover returns at most ~90 days of payment
-      // history and degrades by returning LESS rather than erroring, so a date
-      // past the wall would come back as a plausible-looking empty day. Refuse
-      // it by name: the client draws "not retrievable", never "$0.00".
+      // 🛑 The retention wall — now with an archive behind it. Clover returns at
+      // most ~90 days and degrades by returning LESS rather than erroring, so a
+      // date past the wall would come back as a plausible-looking empty day.
+      //
+      // Inside the window Clover is still the source of truth and is read live:
+      // refunds keep accruing against old payments, so a banked copy goes stale
+      // while the original can still be asked. Outside it, the archive is the
+      // only thing left — and if the day was never banked, say so by name rather
+      // than drawing an empty table.
       const txnAgeDays = Math.round((getStartOfDayET(txnToday) - getStartOfDayET(dateParam)) / 86400000);
       if (txnAgeDays > TXN_RETENTION_DAYS) {
+        const archived = await readArchivedDay(store, env, dateParam);
+        if (archived) {
+          archived.live = false;
+          archived.retentionDays = TXN_RETENTION_DAYS;
+          return new Response(JSON.stringify(archived), { headers: corsJson });
+        }
+        // Tell the client where the archive actually begins, so "we have nothing
+        // for March" is distinguishable from "nothing was banked for that one day".
+        // Same tolerance as readArchivedDay: a missing table must not turn this
+        // refusal into a 500.
+        let first = null;
+        try {
+          first = await env.DB.prepare(
+            "SELECT MIN(date) AS d FROM payment_archive_days WHERE store = ?"
+          ).bind(store).first();
+        } catch (_) { /* not migrated yet — the refusal stands without a start date */ }
         return new Response(JSON.stringify({
-          error: "Past Clover's retention window",
+          error: "Past Clover's retention window, and not in the archive",
           code: "BEYOND_RETENTION",
           store, date: dateParam, ageDays: txnAgeDays, retentionDays: TXN_RETENTION_DAYS,
+          archiveStart: first?.d || null,
         }), { status: 422, headers: corsJson });
       }
 
@@ -24355,6 +24639,35 @@ export default {
       }
     }
     console.log(`[clienttime-sweep] done: ${SWEEP_LOOKBACK_DAYS + 1} days x ${ALL_STORES.length} stores`);
+
+    // ── Bank transaction detail into the archive ─────────────────────────
+    // Clover keeps ~90 days of payment history; this is the copy that outlives
+    // it. From the day this ships, each store-day is banked once and stays.
+    //
+    // 🔑 IT BANKS todayStr - 3, NOT YESTERDAY, AND THE OFFSET IS LOAD-BEARING.
+    // The clientCreatedTime sweep directly above re-snapshots today and the two
+    // days before it, so daily_sales for anything newer than that can still
+    // move when an offline-rung order syncs late. Completeness here is judged by
+    // reconciling against daily_sales, so banking a day whose total has not
+    // settled would mark good days unreconciled and send someone re-banking
+    // them for no reason. Three days back it is final — and still 87 days
+    // inside Clover's window, so there is no hurry.
+    //
+    // Best-effort per store: one store's failure must not cost the others, and
+    // a day that could not be banked cleanly is left at complete=0 for the
+    // admin backfill to pick up while Clover still has it.
+    const bankDate = sweepAddDays(todayStr, -(SWEEP_LOOKBACK_DAYS + 1));
+    const bankReport = [];
+    for (const store of ALL_STORES) {
+      try {
+        bankReport.push(await bankTransactionsDay(store, env, bankDate));
+      } catch (e) {
+        bankReport.push({ store, date: bankDate, skipped: "ERROR", note: e.message });
+      }
+    }
+    const bankBad = bankReport.filter(r => !r.wrote || !r.complete);
+    console.log(`[txn-archive] ${bankDate}: banked ${bankReport.filter(r => r.wrote).length}/${ALL_STORES.length}` +
+      (bankBad.length ? ` — NEEDS ATTENTION: ${JSON.stringify(bankBad.map(r => ({ s: r.store, skipped: r.skipped, note: r.note })))}` : ""));
 
     // Roll up week-summary KV keys for any week whose 7 days are now in D1.
     // Lets the Weekly Retail T13 endpoint serve from pre-rolled summaries
