@@ -319,3 +319,128 @@ calls it.
       or a repeated BOL is a dead end at the dock.
 - [ ] **The BOL read has still never met a real camera.** Watch the seal number.
 
+
+---
+
+## The truck review email — built 2026-09-16
+
+Brian asked for it, saw a preview, and answered four questions:
+
+| | |
+|---|---|
+| **Who** | Superusers, admins, and the managers of **that store**. `blaccounting@retjg.com` later. |
+| **When** | Automatic, on Truck Down. Not a button. |
+| **What** | **Exceptions in the body.** Every pallet in an attached PDF, and the BOL photo attached. |
+| **Clean trucks** | Yes — one green line instead of the amber block. |
+
+He confirmed the second and third after seeing it render: *"Keep the BOL photo attached,
+exception list looks right, build it."*
+
+### No migration
+
+Nothing new is stored. The email is derived from `trucks` + `truck_pallets` + the R2
+object that is already there, and the audit row goes into the existing `notification_log`
+under `event_type = 'truck-review'`.
+
+### What counts as an exception
+
+Five kinds, all of them signed off before any code was written:
+
+1. **Short or over** against the BOL's `pallet_count`.
+2. **A duplicate barcode a manager approved** — named, with who approved it and the reason
+   they typed. This is the one nobody would otherwise find out about.
+3. **A duplicate Bill of Lading a manager approved** — the same event one level up.
+4. **A tag that did not fully read** — missing barcode, item #, PO or units. Summarised
+   past three, because an email listing thirty of them hides the duplicate above them.
+5. **No pallet count on the BOL at all** — which is common on these handwritten forms, and
+   is NOT the same fact as a balanced truck.
+
+🔑 `sup_ref` and `truck_no` are deliberately **not** checked. Each appears on only one of
+the two tag formats, so their absence is the format, not a failed read.
+
+### 🔑 Why the PDF is hand-written
+
+`wrangler.toml` has no Browser Rendering binding and `worker.js` is one hand-edited file
+with zero imports and no bundler, so `pdf-lib` and headless Chrome are both off the table.
+PDF is a byte format: a table of text in a base-14 font needs no font embedding and no
+compression, and the BOL photo goes in as its own JPEG bytes through `DCTDecode` — no
+decode, no re-encode, which the suite proves by pulling the bytes back out and comparing
+them. A 37-pallet sheet with the photo is **~85 KB** over three pages.
+
+### Three things that were wrong and none of which errored
+
+- **UTF-8 leaking into a WinAnsi string.** `TextEncoder` emits UTF-8, so `·` went in as
+  `0xC2 0xB7` and every middot printed as `Â·` — while `/Length`, itself counted in bytes,
+  still agreed with itself, so the file opened clean. Content streams are Latin-1 now.
+  The test asserts the WinAnsi byte is **present** as well as that no UTF-8 pair is, so it
+  cannot pass vacuously if the separators are ever "simplified" back to hyphens.
+- **A 30pt column overlap.** `UNITS` ended at x=538 and `BUILT BY` started at x=508,
+  mangling both; the `DUP OK` badge had no column at all and drew through the builder's
+  name. The columns are boxes now and `truckSheetColumns()` throws on an overlap.
+- **An off-by-one xref.** `firstImageObj + images.length` declared a phantom final object
+  at offset 0 pointing back at the file header. Lenient readers ignore it; strict ones
+  call the file corrupt.
+
+None of these is visible in a diff and none throws. All three are pinned.
+
+### 🛑 Recipients fail closed
+
+Two gates, both the ones the daily cron already uses, for the same reason: an
+E-Commerce-only admin must not be emailed Bargain Lane's receiving (`canAccessBusiness`),
+and a BL14 manager must not be emailed a BL1 truck (`canAccessStore`). `pin_hash IS NOT
+NULL` excludes associates, whose addresses are synthetic — read as a boolean so the hash
+never enters the process. A role the filter does not recognise is simply not on the list.
+
+### 🛑 Fire-and-forget, deliberately
+
+`ctx.waitUntil`, after the `UPDATE`. A truck that is down is down; a Resend outage must not
+turn "the trailer is empty" into a 500 at the dock. Every outcome still lands in
+`notification_log` through `logEmailAttempt`, and the frontend says *"review email on its
+way"* rather than *"sent"* — the response genuinely cannot know what Resend said.
+
+### Still outstanding
+
+- [ ] **Nobody has an approval code yet**, so the duplicate exception has never fired for
+      real. Unchanged from 2026-09-15.
+- [ ] **The BOL read has still never met a real camera.** Watch the seal number.
+- [ ] `blaccounting@retjg.com` is one line in `truckReviewRecipients`, when Brian wants it.
+
+### A fourth, caught on the last read-through
+
+The body said *"plus the Bill of Lading itself"* whenever the photo merely was not
+oversized — so a truck whose BOL was never photographed promised a page the attachment
+does not have, and somebody would have gone looking for it. `pdfCanEmbed()` is now the one
+predicate the sheet builder and that sentence both use, and the email names which of the
+four states it is in: in the sheet, attached separately, too large, or never taken.
+
+### Deployed — 2026-09-16, the review email
+
+`npx wrangler deploy` (bare = production; staging needs `-e staging`). Version
+`21d84c86-2f08-45c0-bea5-ab6a741f44cb`, 973.92 KiB uploaded / 216.95 KiB gzipped, bindings
+confirmed as production (`labor-dashboard-db`, `bl-marketing-media`). **No migration** —
+this change adds no columns.
+
+Confirmed the way rule 5 asks for, not by trusting the exit code:
+
+- **The stored bundle was read before and after.** Before: `notifyTruckDown`,
+  `truckReviewRecipients`, `buildTruckReviewEmailHtml`, `pdfCanEmbed`, `truckSheetColumns`,
+  `pdfLatin1`, `b64FromBytes`, `DCTDecode`, `truck-review` — **zero occurrences of every
+  one**, at 966,160 bytes. After: all present, at 997,481 bytes.
+- **Six consecutive clean passes at the edge**, 12s apart, on `api.retjghub.com`.
+  🛑 The probe is `?action=truck-down` with **no session**, which dies at authentication
+  and returns `401 NO_SESSION`. It was chosen precisely because it cannot perform the
+  operation if the guard is missing — taking a real truck down would close a real truck
+  and mail real people. It still proves the thing that matters: every new top-level const
+  (the two Helvetica width tables, `TRUCK_SHEET_COLS`, `PDF_COLORSPACE`) evaluates at
+  module scope, so a bad one would 500 *every* request on that edge, not just this action.
+- `RESEND_API_KEY` is present in the production secret list, so sends are real rather than
+  silently recorded as `skipped`.
+
+⚠️ **There is one truck open on the dock: BL1, BOL 7679, 40 claimed, ZERO pallets scanned**,
+opened 13:48 UTC 2026-09-16 by `bhoward@bargainlane.com`, with a BOL photo. It looks like
+the camera test from earlier today. Taking it down now sends a real review email to **9
+people** (1 superuser, 4 admins with a `bl` grant, 4 BL1 managers) saying *40 pallets short
+of the 40 on the Bill of Lading* — correct behaviour, real inboxes. One admin is excluded
+by the business gate, which is the gate doing its job.
+
+`notification_log` has **0** rows at `event_type = 'truck-review'`, so nothing has fired yet.

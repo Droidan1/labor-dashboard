@@ -1,3 +1,80 @@
+# Truck review email — Inventory Receiver
+
+Brian, 2026-09-16, after reviewing the preview: *"Keep the BOL photo attached, exception
+list looks right, build it."*
+
+## The four decisions, as answered
+
+| | |
+|---|---|
+| Who | Superusers + admins + **that store's** managers. `blaccounting@retjg.com` later. |
+| When | Automatic, on Truck Down. Not a button. |
+| What | **Exceptions in the body.** Every pallet in an attached PDF. BOL photo attached too. |
+| Clean trucks | Yes — one green line instead of the amber block. |
+
+## Plan
+
+- [x] Preview approved (artifact, 2026-09-16)
+- [x] `worker.js` — dependency-free PDF writer (base-14 Helvetica, DCTDecode passthrough)
+- [x] `worker.js` — `truckExceptions()` — the five kinds Brian signed off
+- [x] `worker.js` — `truckReviewRecipients()` — role + business + store scoped, deduped
+- [x] `worker.js` — `buildTruckReviewEmailHtml()` — house style, 600px, inline, table layout
+- [x] `worker.js` — `notifyTruckDown()` behind `ctx.waitUntil` in `truck-down`
+- [x] `index.html` — Truck Down confirm says the review email goes out
+- [x] `scripts/test-truck-review-email.mjs` — recipients, exceptions, PDF structure, wiring
+- [x] `npm run build`, full `bash scripts/test.sh`
+- [ ] Deploy the worker (no migration — this adds no columns)
+
+## Decisions that are not obvious from the diff
+
+**No migration.** Nothing new is stored. The email is derived from `trucks` +
+`truck_pallets` + the R2 object that is already there, and the audit row goes into the
+existing `notification_log`.
+
+**The PDF is hand-written, not a library.** `wrangler.toml` has no Browser Rendering
+binding and `worker.js` has zero imports and no bundler, so `pdf-lib` and headless Chrome
+are both off the table. PDF is a byte format and a table of text in a base-14 font needs
+no font embedding and no compression. The BOL photo goes in as its own JPEG bytes via
+DCTDecode — no decode, no re-encode.
+
+**Content streams are Latin-1, not UTF-8.** A WinAnsi font reads one byte per glyph.
+`TextEncoder` emits UTF-8, so `·` went in as `0xC2 0xB7` and printed as `Â·` — while
+`/Length`, counted in bytes, still agreed with itself, so nothing errored.
+
+**Column geometry is asserted, not eyeballed.** `UNITS` was ending 30pt *inside*
+`BUILT BY` and the DUP OK badge had no column at all. Both are now boxes checked at
+build time.
+
+**Recipients fail closed.** An E-Commerce-only admin must not be emailed Bargain Lane's
+receiving, and a BL14 manager must not be emailed BL1's truck. Same two gates the daily
+cron uses (`canAccessBusiness` + `allowedStores`), for the same reason.
+
+**Send is fire-and-forget.** `ctx.waitUntil`, after the UPDATE. A truck that is down is
+down; a mailer outage must not fail Truck Down at the dock with a trailer waiting.
+
+## Review
+
+**Built and green.** 114 new assertions in `scripts/test-truck-review-email.mjs`; the whole
+suite is **4701 assertions across 75 suites, all passing**. `npm run build` clean, `sw.js`
+bumped to `v202` with the shell-cache fixture rerun.
+
+Verified by rendering the PDF the **shipped worker** builds — pulled out of the send it
+would have made, not the prototype — in real Chromium through pdf.js. All three pages are
+correct: the exception block, 37 pallet rows with the approved duplicate flagged in its own
+column, and the BOL photo. The embedded JPEG comes back out byte-identical.
+
+Four defects found and fixed before this was written, none of which throws and none of
+which is visible in a diff: UTF-8 leaking into WinAnsi strings, a 30pt column overlap that
+also ran the DUP OK badge through the builder's name, an off-by-one xref that declared a
+phantom object, and a body that promised "plus the Bill of Lading itself" on a truck whose
+BOL was never photographed. All four are pinned by the suite. Full writeup in
+[inventory-receiver.md](inventory-receiver.md).
+
+**Still to do, and not code:** nobody has an approval code set, so the duplicate exception
+has never fired for real; and the BOL read has still never met a real camera.
+
+---
+
 # The backfill ran: 265,245 receipt lines, nothing lost (2026-09-15)
 
 `bash scripts/backfill-transactions.sh --write`, after a dry run and a targeted

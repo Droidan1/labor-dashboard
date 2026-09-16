@@ -8109,6 +8109,764 @@ async function dispatchIntervalSummary(env) {
   return { ok: true, ...summary };
 }
 
+// ─── Truck review email: the PDF ─────────────────────────────────────────────
+//
+// 🔑 WHY A HAND-WRITTEN PDF. Brian asked for every pallet as an attachment
+// (2026-09-16). wrangler.toml has no Browser Rendering binding, and this worker
+// is one hand-edited file with zero imports and no bundler, so `pdf-lib` and
+// headless Chrome are both off the table. PDF is a byte format; a table of text
+// in a base-14 font needs no font embedding, no compression and no library, and
+// the BOL photo goes in as its own JPEG bytes. The whole attachment is ~85 KB.
+//
+// Deliberately NOT general-purpose: one page size, two fonts, one image. A
+// general PDF library is where this grows into something nobody maintains.
+const PDF_PAGE_W = 612, PDF_PAGE_H = 792, PDF_MARGIN = 42;   // US Letter at 72dpi
+
+// Base-14 Helvetica is WinAnsi, so anything outside Latin-1 has no glyph.
+// Substituting beats emitting a byte the reader draws as garbage — an en-dash in
+// a pallet name is common and must not corrupt the row.
+function pdfEscape(s) {
+  return String(s == null ? "" : s)
+    .replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
+    .replace(/[–—]/g, "-").replace(/…/g, "...")
+    .replace(/[→⟶]/g, "->").replace(/×/g, "x")
+    .replace(/[^\x20-\x7E\xA0-\xFF]/g, "")
+    .replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+}
+
+// Helvetica advance widths (units/1000). Without these every column is placed by
+// guesswork and a long pallet name silently overruns the next one.
+const PDF_W_REG = {" ":278,"!":278,'"':355,"#":556,"$":556,"%":889,"&":667,"'":191,"(":333,")":333,"*":389,"+":584,",":278,"-":333,".":278,"/":278,"0":556,"1":556,"2":556,"3":556,"4":556,"5":556,"6":556,"7":556,"8":556,"9":556,":":278,";":278,"<":584,"=":584,">":584,"?":556,"@":1015,"A":667,"B":667,"C":722,"D":722,"E":667,"F":611,"G":778,"H":722,"I":278,"J":500,"K":667,"L":556,"M":833,"N":722,"O":778,"P":667,"Q":778,"R":722,"S":667,"T":611,"U":722,"V":667,"W":944,"X":667,"Y":667,"Z":611,"[":278,"\\":278,"]":278,"^":469,"_":556,"`":333,"a":556,"b":556,"c":500,"d":556,"e":556,"f":278,"g":556,"h":556,"i":222,"j":222,"k":500,"l":222,"m":833,"n":556,"o":556,"p":556,"q":556,"r":333,"s":500,"t":278,"u":556,"v":500,"w":722,"x":500,"y":500,"z":500,"{":334,"|":260,"}":334,"~":584};
+const PDF_W_BOLD = {" ":278,"!":333,'"':474,"#":556,"$":556,"%":889,"&":722,"'":238,"(":333,")":333,"*":389,"+":584,",":278,"-":333,".":278,"/":278,"0":556,"1":556,"2":556,"3":556,"4":556,"5":556,"6":556,"7":556,"8":556,"9":556,":":333,";":333,"<":584,"=":584,">":584,"?":611,"@":975,"A":722,"B":722,"C":722,"D":722,"E":667,"F":611,"G":778,"H":722,"I":278,"J":556,"K":722,"L":611,"M":833,"N":722,"O":778,"P":667,"Q":778,"R":722,"S":667,"T":611,"U":722,"V":667,"W":944,"X":667,"Y":667,"Z":611,"[":333,"\\":278,"]":333,"^":584,"_":556,"`":333,"a":556,"b":611,"c":556,"d":611,"e":556,"f":333,"g":611,"h":611,"i":278,"j":278,"k":556,"l":278,"m":889,"n":611,"o":611,"p":611,"q":611,"r":389,"s":556,"t":333,"u":611,"v":556,"w":778,"x":556,"y":556,"z":500,"{":389,"|":280,"}":389,"~":584};
+
+function pdfTextWidth(s, size, bold) {
+  const tbl = bold ? PDF_W_BOLD : PDF_W_REG;
+  let w = 0;
+  for (const ch of String(s == null ? "" : s)) w += (tbl[ch] != null ? tbl[ch] : 556);
+  return (w / 1000) * size;
+}
+
+// Cut to fit a column, with an ellipsis. A name that overruns in silence is a
+// table that lies about its own columns.
+function pdfEllipsize(s, size, bold, maxW) {
+  s = String(s == null ? "" : s);
+  if (pdfTextWidth(s, size, bold) <= maxW) return s;
+  let out = s;
+  while (out.length > 1 && pdfTextWidth(out + "...", size, bold) > maxW) out = out.slice(0, -1);
+  return out + "...";
+}
+
+// 🛑 PDF STRINGS ARE BYTES, and a WinAnsi font reads ONE byte per glyph.
+// TextEncoder emits UTF-8, so "·" went in as 0xC2 0xB7 and every middot
+// printed as "Â·" — while /Length, itself counted in bytes, still agreed with
+// itself, so nothing errored and the file opened clean. pdfEscape() has already
+// narrowed every character to <= 0xFF, so a code-unit-to-byte cast IS Latin-1.
+function pdfLatin1(s) {
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xFF;
+  return out;
+}
+
+// A JPEG enters a PDF as its OWN bytes through DCTDecode — no decode, no
+// re-encode, so the photo in the attachment is the photo that was taken. The
+// dimensions and the component count have to be read off the SOF marker, because
+// the PDF needs both and the bytes do not otherwise say.
+//
+// 🛑 `comps` decides the colour space. Hard-coding /DeviceRGB renders a greyscale
+// scan as noise, and a 4-component Adobe CMYK JPEG additionally needs an inverted
+// /Decode array — so that one is refused rather than drawn wrong.
+function jpegInfo(bytes) {
+  if (!bytes || bytes.length < 4 || bytes[0] !== 0xFF || bytes[1] !== 0xD8) return null;
+  let i = 2;
+  while (i < bytes.length - 9) {
+    if (bytes[i] !== 0xFF) { i++; continue; }
+    const marker = bytes[i + 1];
+    // SOF0..SOF15, skipping DHT (C4), JPGA (C8) and DAC (CC) — not frame headers.
+    if (marker >= 0xC0 && marker <= 0xCF && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC) {
+      return {
+        h: (bytes[i + 5] << 8) | bytes[i + 6],
+        w: (bytes[i + 7] << 8) | bytes[i + 8],
+        comps: bytes[i + 9],
+      };
+    }
+    i += 2 + ((bytes[i + 2] << 8) | bytes[i + 3]);
+  }
+  return null;
+}
+const PDF_COLORSPACE = { 1: "/DeviceGray", 3: "/DeviceRGB" };
+
+// 🛑 THE SAME TEST the sheet builder uses, named once. The email says "plus the Bill of
+// Lading itself" about the attachment; if that sentence and the builder ever disagree —
+// a PNG, a CMYK scan, a photo that was never taken — the email is confidently wrong
+// about a document somebody is about to go looking for.
+function pdfCanEmbed(image) {
+  return !!(image && image.info && PDF_COLORSPACE[image.info.comps]);
+}
+
+function pdfPage() {
+  const ops = [];
+  const p = {
+    ops,
+    fill(r, g, b) { ops.push(`${r} ${g} ${b} rg`); return p; },
+    stroke(r, g, b) { ops.push(`${r} ${g} ${b} RG`); return p; },
+    rect(x, y, w, h) { ops.push(`${x} ${y} ${w} ${h} re f`); return p; },
+    line(x1, y1, x2, y2, w) { ops.push(`${w || 0.5} w ${x1} ${y1} m ${x2} ${y2} l S`); return p; },
+    text(x, y, s, size, bold) {
+      ops.push(`BT /${bold ? "F2" : "F1"} ${size} Tf ${x} ${y} Td (${pdfEscape(s)}) Tj ET`);
+      return p;
+    },
+    textRight(xRight, y, s, size, bold) {
+      return p.text(xRight - pdfTextWidth(s, size, bold), y, s, size, bold);
+    },
+    image(name, x, y, w, h) { ops.push(`q ${w} 0 0 ${h} ${x} ${y} cm /${name} Do Q`); return p; },
+  };
+  return p;
+}
+
+// 🛑 The xref table is BYTE OFFSETS. Everything is assembled and measured as
+// bytes — building the body as a string and encoding it at the end would put
+// every offset out by the number of multi-byte characters before it.
+function pdfBuild(pages, images) {
+  const chunks = [];
+  let len = 0;
+  const push = (u8) => { chunks.push(u8); len += u8.length; };
+  const pushStr = (s) => push(pdfLatin1(s));
+
+  const offsets = [];
+  const startObj = (n) => { offsets[n] = len; pushStr(`${n} 0 obj\n`); };
+  const endObj = () => pushStr("endobj\n");
+
+  const nPages = pages.length;
+  const FONT_REG = 1, FONT_BOLD = 2, CATALOG = 3, PAGES = 4;
+  const firstPageObj = 5;
+  const firstContentObj = firstPageObj + nPages;
+  const firstImageObj = firstContentObj + nPages;
+  // 🛑 The LAST object number, not one past it. Written as `firstImageObj +
+  // images.length` the xref declared a phantom final object at offset 0 pointing
+  // back at the file header — which lenient readers ignore and strict ones reject.
+  const total = firstImageObj + images.length - 1;
+
+  pushStr("%PDF-1.4\n");
+  push(new Uint8Array([0x25, 0xE2, 0xE3, 0xCF, 0xD3, 0x0A]));   // marks the file binary
+
+  startObj(FONT_REG);
+  pushStr("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\n");
+  endObj();
+  startObj(FONT_BOLD);
+  pushStr("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\n");
+  endObj();
+  startObj(CATALOG);
+  pushStr(`<< /Type /Catalog /Pages ${PAGES} 0 R >>\n`);
+  endObj();
+  startObj(PAGES);
+  pushStr(`<< /Type /Pages /Count ${nPages} /Kids [${pages.map((_, i) => `${firstPageObj + i} 0 R`).join(" ")}] >>\n`);
+  endObj();
+
+  const xobj = images.length
+    ? ` /XObject << ${images.map((im, i) => `/${im.name} ${firstImageObj + i} 0 R`).join(" ")} >>`
+    : "";
+  pages.forEach((_, i) => {
+    startObj(firstPageObj + i);
+    pushStr(`<< /Type /Page /Parent ${PAGES} 0 R /MediaBox [0 0 ${PDF_PAGE_W} ${PDF_PAGE_H}] `
+      + `/Resources << /Font << /F1 ${FONT_REG} 0 R /F2 ${FONT_BOLD} 0 R >>${xobj} >> `
+      + `/Contents ${firstContentObj + i} 0 R >>\n`);
+    endObj();
+  });
+
+  pages.forEach((p, i) => {
+    const body = pdfLatin1(p.ops.join("\n") + "\n");
+    startObj(firstContentObj + i);
+    pushStr(`<< /Length ${body.length} >>\nstream\n`);
+    push(body);
+    pushStr("endstream\n");
+    endObj();
+  });
+
+  images.forEach((im, i) => {
+    startObj(firstImageObj + i);
+    pushStr(`<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} `
+      + `/ColorSpace ${im.cs} /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.bytes.length} >>\nstream\n`);
+    push(im.bytes);
+    pushStr("\nendstream\n");
+    endObj();
+  });
+
+  const xrefAt = len;
+  pushStr(`xref\n0 ${total + 1}\n0000000000 65535 f \n`);
+  for (let n = 1; n <= total; n++) {
+    pushStr(String(offsets[n] || 0).padStart(10, "0") + " 00000 n \n");
+  }
+  pushStr(`trailer\n<< /Size ${total + 1} /Root ${CATALOG} 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`);
+
+  const out = new Uint8Array(len);
+  let at = 0;
+  for (const c of chunks) { out.set(c, at); at += c.length; }
+  return out;
+}
+
+// The sheet's columns. `x` is the left edge of the box; a `right` column draws
+// flush to x + w.
+//
+// 🛑 These used to be tuned by eye, and UNITS (ending at 538) sat 30pt INSIDE
+// BUILT BY (starting at 508) — mangling both, invisibly, until the page was
+// rasterised. The duplicate badge was worse: drawn at a hard-coded x with no
+// column at all, straight through the builder's name. So FLAG is a real column
+// and truckSheetColumns() refuses to hand back a layout that overlaps.
+const TRUCK_SHEET_COLS = [
+  { k: "barcode", h: "BARCODE",  x: PDF_MARGIN,       w: 76 },
+  { k: "name",    h: "PALLET",   x: PDF_MARGIN + 82,  w: 200 },
+  { k: "item",    h: "ITEM #",   x: PDF_MARGIN + 288, w: 38 },
+  { k: "po",      h: "PO / WO",  x: PDF_MARGIN + 332, w: 42 },
+  { k: "units",   h: "UNITS",    x: PDF_MARGIN + 380, w: 44, right: true },
+  { k: "by",      h: "BUILT BY", x: PDF_MARGIN + 430, w: 52 },
+  { k: "flag",    h: "",         x: PDF_MARGIN + 486, w: 42, right: true },
+];
+function truckSheetColumns() {
+  for (let i = 1; i < TRUCK_SHEET_COLS.length; i++) {
+    const a = TRUCK_SHEET_COLS[i - 1], b = TRUCK_SHEET_COLS[i];
+    if (a.x + a.w > b.x) throw new Error(`truck sheet: '${a.h || a.k}' ends at ${a.x + a.w}, '${b.h || b.k}' starts at ${b.x}`);
+  }
+  const last = TRUCK_SHEET_COLS[TRUCK_SHEET_COLS.length - 1];
+  if (last.x + last.w > PDF_PAGE_W - PDF_MARGIN) throw new Error("truck sheet: last column runs past the right margin");
+  // A header wider than its own box lies about where the column is.
+  for (const c of TRUCK_SHEET_COLS) {
+    if (c.h && pdfTextWidth(c.h, 7, true) > c.w) throw new Error(`truck sheet: header '${c.h}' overflows its ${c.w}pt column`);
+  }
+  return TRUCK_SHEET_COLS;
+}
+
+// Times on the sheet and in the email are the STORE's, not UTC. A truck opened
+// at 6:48 AM on the dock must not read 10:48 to the person who worked it.
+function etClock(iso) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleTimeString("en-US", {
+    hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York",
+  });
+}
+function etDateLong(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toLocaleDateString("en-US", {
+    month: "short", day: "numeric", year: "numeric", timeZone: "America/New_York",
+  });
+}
+// "6h 18m" — how long the trailer sat. Null when the truck is still open or the
+// timestamps are unusable, never a negative or a NaN dressed up as a duration.
+function truckDockTime(openedAt, closedAt) {
+  if (!openedAt || !closedAt) return null;
+  const ms = new Date(closedAt).getTime() - new Date(openedAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const mins = Math.round(ms / 60000);
+  return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
+}
+
+// The three-page review sheet: exceptions and tiles, every pallet, then the BOL.
+function buildTruckSheetPdf({ truck, pallets, exceptions, image }) {
+  const COLS = truckSheetColumns();
+  const T = {                                   // the email's slate, as PDF 0-1 RGB
+    ink: [0.08, 0.09, 0.13], dim: [0.42, 0.45, 0.50], rule: [0.85, 0.86, 0.88],
+    head: [0.12, 0.23, 0.37], warnBg: [1, 0.95, 0.80], warn: [0.55, 0.33, 0.02],
+    okBg: [0.90, 0.97, 0.91], ok: [0.06, 0.40, 0.16], zebra: [0.97, 0.97, 0.98],
+  };
+  const pages = [], images = [];
+  const store = truck.store;
+  const title = `Truck Received - BOL ${truck.bol_no || truck.id}`;
+  const units = pallets.reduce((n, p) => n + (Number(p.units) || 0), 0);
+  const dock = truckDockTime(truck.opened_at, truck.closed_at);
+  const dups = pallets.filter(p => p.dup_approved_by).length + (truck.dup_approved_by ? 1 : 0);
+  const generated = etDateLong(new Date().toISOString());
+
+  let page = null, y = 0, pageNo = 0;
+  const FS = 8.5, ROW = 15;
+
+  const footer = () => {
+    page.fill(...T.dim)
+      .text(PDF_MARGIN, PDF_MARGIN - 14, `RETJG HUB \u00b7 Inventory Receiver \u00b7 generated ${generated}`, 7.5)
+      .textRight(PDF_PAGE_W - PDF_MARGIN, PDF_MARGIN - 14, `Page ${pageNo}`, 7.5, false);
+  };
+
+  const header = (first) => {
+    page = pdfPage(); pages.push(page); pageNo++;
+    if (first) {
+      page.fill(...T.head).rect(0, PDF_PAGE_H - 88, PDF_PAGE_W, 88);
+      page.fill(1, 1, 1).text(PDF_MARGIN, PDF_PAGE_H - 44, title, 19, true);
+      const route = [
+        STORE_LABELS[store] || store,
+        truck.ship_from && truck.ship_to ? `${truck.ship_from} -> ${truck.ship_to}` : truck.ship_from,
+        truck.carrier, truck.trailer_no && `trailer ${truck.trailer_no}`,
+        truck.seal_no && `seal ${truck.seal_no}`,
+      ].filter(Boolean).join("  \u00b7  ");
+      const worked = [
+        truck.opened_by && `Opened ${etClock(truck.opened_at)} by ${truck.opened_by}`,
+        truck.closed_by && `Taken down ${etClock(truck.closed_at)} by ${truck.closed_by}`,
+        dock && `${dock} on the dock`,
+      ].filter(Boolean).join("   \u00b7   ");
+      page.fill(0.72, 0.80, 0.90)
+        .text(PDF_MARGIN, PDF_PAGE_H - 62, pdfEllipsize(route, 9, false, PDF_PAGE_W - PDF_MARGIN * 2), 9)
+        .text(PDF_MARGIN, PDF_PAGE_H - 76, pdfEllipsize(worked, 9, false, PDF_PAGE_W - PDF_MARGIN * 2), 9);
+      y = PDF_PAGE_H - 118;
+
+      // The exception block is the reason the sheet exists, so it sits at the top
+      // where it is read rather than under the table it is about.
+      const lines = exceptions.slice(0, 6).map(e => `${e.lead} ${e.rest}`);
+      if (exceptions.length > 6) lines.push(`...and ${exceptions.length - 6} more, listed in the table below.`);
+      const bh = 17 + lines.length * 11 + 6;
+      if (lines.length) {
+        page.fill(...T.warnBg).rect(PDF_MARGIN, y - bh, PDF_PAGE_W - PDF_MARGIN * 2, bh);
+        page.fill(...T.warn).text(PDF_MARGIN + 10, y - 17, "NEEDS A LOOK", 8.5, true);
+        page.fill(...T.ink);
+        lines.forEach((t, i) => page.text(PDF_MARGIN + 10, y - 30 - i * 11,
+          pdfEllipsize(t, 9.5, false, PDF_PAGE_W - PDF_MARGIN * 2 - 20), 9.5));
+      } else {
+        page.fill(...T.okBg).rect(PDF_MARGIN, y - 30, PDF_PAGE_W - PDF_MARGIN * 2, 30);
+        page.fill(...T.ok).text(PDF_MARGIN + 10, y - 19,
+          `All ${truck.pallet_count} pallets on the Bill of Lading were received. Nothing to look at.`, 9.5, true);
+      }
+      y -= (lines.length ? bh : 30) + 20;
+
+      const tiles = [
+        ["RECEIVED", truck.pallet_count == null ? String(pallets.length) : `${pallets.length} / ${truck.pallet_count}`],
+        ["UNITS", units.toLocaleString("en-US")],
+        ["ON THE DOCK", dock || "-"],
+        ["DUPLICATES", dups ? `${dups} approved` : "none"],
+      ];
+      const tw = (PDF_PAGE_W - PDF_MARGIN * 2 - 18) / 4;
+      tiles.forEach(([cap, val], i) => {
+        const x = PDF_MARGIN + i * (tw + 6);
+        page.fill(...T.zebra).rect(x, y - 38, tw, 38);
+        page.fill(...T.dim).text(x + 9, y - 14, cap, 7, true);
+        page.fill(...T.ink).text(x + 9, y - 30, pdfEllipsize(val, 13, true, tw - 18), 13, true);
+      });
+      y -= 56;
+    } else {
+      y = PDF_PAGE_H - PDF_MARGIN;
+      page.fill(...T.dim).text(PDF_MARGIN, y,
+        pdfEllipsize(`${title} \u00b7 ${STORE_LABELS[store] || store}`, 8.5, true, PDF_PAGE_W - PDF_MARGIN * 2), 8.5, true);
+      y -= 18;
+    }
+    page.fill(...T.dim);
+    for (const c of COLS) {
+      if (!c.h) continue;
+      if (c.right) page.textRight(c.x + c.w, y, c.h, 7, true);
+      else page.text(c.x, y, c.h, 7, true);
+    }
+    page.stroke(...T.rule).line(PDF_MARGIN, y - 5, PDF_PAGE_W - PDF_MARGIN, y - 5, 0.7);
+    y -= 5 + ROW;
+  };
+
+  header(true);
+  if (!pallets.length) {
+    page.fill(...T.dim).text(PDF_MARGIN, y, "No pallets were scanned onto this truck.", 9.5);
+    y -= ROW;
+  }
+  pallets.forEach((p, i) => {
+    if (y < PDF_MARGIN + 46) { footer(); header(false); }
+    if (p.dup_approved_by) page.fill(...T.warnBg).rect(PDF_MARGIN - 4, y - 4, PDF_PAGE_W - PDF_MARGIN * 2 + 8, ROW);
+    else if (i % 2) page.fill(...T.zebra).rect(PDF_MARGIN - 4, y - 4, PDF_PAGE_W - PDF_MARGIN * 2 + 8, ROW);
+    for (const c of COLS) {
+      if (c.k === "flag") continue;
+      // 🔑 An em-dash for a field the tag did not carry. The sheet has to show
+      // "not read" as itself — a blank cell reads as a column that ran out.
+      const raw = c.k === "barcode" ? p.barcode
+        : c.k === "name" ? p.pallet_name
+        : c.k === "item" ? p.item_no
+        : c.k === "po" ? p.po
+        : c.k === "units" ? (p.units == null ? null : Number(p.units).toLocaleString("en-US"))
+        : p.created_by_tag;
+      const bold = c.k === "barcode";
+      page.fill(...(c.k === "name" || c.k === "barcode" ? T.ink : T.dim));
+      const s = pdfEllipsize(raw == null || raw === "" ? "-" : raw, FS, bold, c.w);
+      if (c.right) page.textRight(c.x + c.w, y, s, FS, bold);
+      else page.text(c.x, y, s, FS, bold);
+    }
+    if (p.dup_approved_by) {
+      const flag = COLS[COLS.length - 1];
+      page.fill(...T.warn).textRight(flag.x + flag.w, y, "DUP OK", 6.5, true);
+    }
+    y -= ROW;
+  });
+  footer();
+
+  // The Bill of Lading, as its own final page.
+  if (pdfCanEmbed(image)) {
+    const name = "Im1";
+    images.push({ name, bytes: image.bytes, w: image.info.w, h: image.info.h, cs: PDF_COLORSPACE[image.info.comps] });
+    page = pdfPage(); pages.push(page); pageNo++;
+    page.fill(...T.ink).text(PDF_MARGIN, PDF_PAGE_H - PDF_MARGIN, "Bill of Lading - as photographed", 12, true);
+    const maxW = PDF_PAGE_W - PDF_MARGIN * 2, maxH = PDF_PAGE_H - PDF_MARGIN * 2 - 40;
+    const sc = Math.min(maxW / image.info.w, maxH / image.info.h);
+    const w = image.info.w * sc, h = image.info.h * sc;
+    page.image(name, PDF_MARGIN + (maxW - w) / 2, PDF_PAGE_H - PDF_MARGIN - 30 - h, w, h);
+    footer();
+  }
+
+  return pdfBuild(pages, images);
+}
+
+// ─── Truck review email: what needs a look ───────────────────────────────────
+//
+// The five kinds Brian signed off (2026-09-16). Each entry carries `lead` (the
+// bolded phrase) and `rest` separately so the SAME list renders into HTML and
+// into the PDF without either medium's markup leaking into the other. `n` is how
+// many underlying rows the entry stands for — the summarised ones stand for many.
+//
+// 🔑 A duplicate is the one thing in here nobody would otherwise find out about:
+// somebody typed a manager's approval code at the dock and the block gave way.
+// It is named, with who approved it and the reason they typed.
+function truckExceptions(truck, pallets) {
+  const out = [];
+  const received = pallets.length;
+  const expected = truck.pallet_count == null ? null : Number(truck.pallet_count);
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const approvedTail = (by, why) => {
+    const reason = tagText(why, 200);
+    return `approved by ${by}${reason ? ` \u2014 \u201c${reason}\u201d` : ""}.`;
+  };
+
+  if (expected == null) {
+    // 🛑 NOT silence. A missing count is not a balanced truck, and an email that
+    // says nothing about it reads as one. Handwritten counts are the common case
+    // on these forms, so this fires often and has to say what it means.
+    out.push({ kind: "no_count", n: 1,
+      lead: "No pallet count was read",
+      rest: `from the Bill of Lading, so there is nothing to check the ${plural(received, "scanned pallet", "scanned pallets")} against.` });
+  } else if (received < expected) {
+    out.push({ kind: "short", n: expected - received,
+      lead: plural(expected - received, "pallet short", "pallets short"),
+      rest: `of the ${expected} on the Bill of Lading.` });
+  } else if (received > expected) {
+    out.push({ kind: "over", n: received - expected,
+      lead: plural(received - expected, "pallet more", "pallets more"),
+      rest: `than the ${expected} on the Bill of Lading.` });
+  }
+
+  if (truck.dup_approved_by) {
+    out.push({ kind: "dup_bol", n: 1,
+      lead: `Duplicate Bill of Lading${truck.bol_no ? ` ${truck.bol_no}` : ""}`,
+      rest: approvedTail(truck.dup_approved_by, truck.dup_reason) });
+  }
+  for (const p of pallets) {
+    if (!p.dup_approved_by) continue;
+    out.push({ kind: "dup_pallet", n: 1,
+      lead: `Duplicate barcode ${p.barcode || "(no barcode read)"}`,
+      rest: approvedTail(p.dup_approved_by, p.dup_reason) });
+  }
+
+  // A tag that came back with holes in it. Summarised past three, because the
+  // body is meant to be read at a glance and the attached sheet already dashes
+  // every missing field — an email that lists thirty of these hides the one
+  // duplicate sitting above them.
+  //
+  // 🔑 `sup_ref` and `truck_no` are NOT checked: each appears on only one of the
+  // two tag formats, so their absence is the format, not a failed read.
+  const holes = [];
+  for (const p of pallets) {
+    const miss = [];
+    if (!p.barcode) miss.push("no barcode");
+    if (!p.item_no) miss.push("no item #");
+    if (!p.po) miss.push("no PO");
+    if (p.units == null) miss.push("no unit count");
+    if (miss.length) holes.push({ p, miss });
+  }
+  if (holes.length > 3) {
+    out.push({ kind: "partial", n: holes.length,
+      lead: `${holes.length} tags did not fully read`,
+      rest: "\u2014 every missing field is dashed in the attached sheet." });
+  } else {
+    for (const { p, miss } of holes) {
+      out.push({ kind: "partial", n: 1,
+        lead: "A tag did not fully read",
+        rest: `on ${p.barcode || p.pallet_name || `pallet #${p.id}`} \u2014 ${miss.join(", ")}.` });
+    }
+  }
+  return out;
+}
+
+// Superusers, admins, and the managers of THAT store (Brian, 2026-09-16).
+//
+// 🛑 Two gates, both fail closed, and both are the ones the daily cron already
+// uses for the same reason: an E-Commerce-only admin must not be emailed Bargain
+// Lane's receiving, and a BL14 manager must not be emailed BL1's truck. A role
+// this function does not recognise is not on the list at all.
+//
+// 🔑 superuser is checked by ROLE rather than through canAccessBusiness(), which
+// resolves the flag via `user.allBusinessIds` — populated by getAuthUser on the
+// request path and NOT by a bare SELECT. Routing them through it would drop the
+// superuser from their own email.
+//
+// 🔑 `pin_hash IS NOT NULL` is what makes someone an associate, and an
+// associate's email address is synthetic. It is read as a boolean so the hash
+// itself never enters this process.
+async function truckReviewRecipients(env, store) {
+  if (!env.DB) return [];
+  const { results } = await env.DB.prepare(
+    `SELECT u.id, u.email, u.role, u.stores,
+            CASE WHEN u.pin_hash IS NOT NULL THEN 1 ELSE 0 END AS is_associate,
+            g.business_id, g.role AS grant_role, g.units
+       FROM users u
+       LEFT JOIN user_grants g ON g.user_id = u.id
+      WHERE u.status = 'active' AND u.role IN ('superuser','admin','manager')`
+  ).all();
+
+  const byId = new Map();
+  for (const r of results || []) {
+    if (!byId.has(r.id)) {
+      // 🛑 PARSED, not left as the raw JSON string. `allow.includes(store)` on a
+      // string degrades into a substring test, and '["BL14"]'.includes('BL1') is
+      // true — which would mail a BL14 manager every BL1 truck.
+      let stores = null;
+      try { stores = r.stores ? JSON.parse(r.stores) : null; } catch (_) { stores = null; }
+      byId.set(r.id, { id: r.id, email: r.email, role: r.role, stores, is_associate: r.is_associate, grants: [] });
+    }
+    if (r.business_id) {
+      let units = null;
+      try { units = r.units ? JSON.parse(r.units) : null; } catch (_) { units = null; }
+      byId.get(r.id).grants.push({ business_id: r.business_id, role: r.grant_role, units });
+    }
+  }
+
+  const out = [];
+  for (const u of byId.values()) {
+    if (u.is_associate) continue;
+    if (!u.email || !String(u.email).includes("@")) continue;
+    if (u.role !== "superuser") {
+      if (!canAccessBusiness(u, "bl")) continue;
+      if (!canAccessStore(u, store)) continue;
+    }
+    out.push({ id: u.id, email: u.email, role: u.role });
+  }
+  return out;
+}
+
+function truckReviewSubject(truck, pallets, exceptions) {
+  const where = STORE_LABELS[truck.store] || truck.store;
+  const what = truck.bol_no ? `BOL ${truck.bol_no}` : `Truck ${truck.id}`;
+  const dups = exceptions.filter(e => e.kind === "dup_bol" || e.kind === "dup_pallet").length;
+  const holes = exceptions.filter(e => e.kind === "partial").reduce((n, e) => n + e.n, 0);
+  const parts = [];
+  for (const e of exceptions) {
+    if (e.kind === "short") parts.push(`${e.n} short`);
+    if (e.kind === "over") parts.push(`${e.n} over`);
+    if (e.kind === "no_count") parts.push(`${pallets.length} pallets, no count on the BOL`);
+  }
+  if (dups) parts.push(dups === 1 ? "1 duplicate approved" : `${dups} duplicates approved`);
+  if (holes) parts.push(holes === 1 ? "1 tag incomplete" : `${holes} tags incomplete`);
+  const tail = parts.length ? parts.join(", ") : `${pallets.length} pallets, all accounted for`;
+  return `Truck received — ${what}, ${where} — ${tail}`;
+}
+
+// The body. Exceptions only — every pallet is in the attachment (Brian,
+// 2026-09-16: "Exceptions with a attached PDF with all pallets and the image of
+// BOL attached"). That is also what keeps it clear of Gmail's ~102 KB clip,
+// below which a mail hides its own ending without saying so.
+//
+// 🔑 Layout is TABLES, not flex. The supply-request template uses display:flex,
+// which Outlook ignores outright — the tiles would stack full-width there.
+function buildTruckReviewEmailHtml({ truck, pallets, exceptions, pdfName, bol, sheetFailed, origin }) {
+  const C = { page: "#0f172a", head: "#1e3a5f", body: "#1e293b", line: "#334155",
+              ink: "#e2e8f0", dim: "#94a3b8", dimmer: "#64748b", accent: "#93c5fd", warn: "#d97706" };
+  const where = STORE_LABELS[truck.store] || truck.store;
+  const received = pallets.length;
+  const units = pallets.reduce((n, p) => n + (Number(p.units) || 0), 0);
+  const dock = truckDockTime(truck.opened_at, truck.closed_at);
+  const mono = "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;";
+
+  const tile = (cap, val, sub, color) =>
+    `<td width="33%" valign="top" style="padding:0 6px;">`
+    + `<div style="background:${C.page};border-radius:8px;padding:13px 14px;text-align:center;">`
+    + `<div style="font-size:10px;font-weight:700;color:${C.dimmer};text-transform:uppercase;letter-spacing:.07em;">${cap}</div>`
+    + `<div style="font-size:24px;font-weight:800;color:${color || C.ink};margin-top:5px;line-height:1.1;">${val}</div>`
+    + `<div style="font-size:11px;color:${C.dim};margin-top:3px;">${sub}</div>`
+    + `</div></td>`;
+  const row = (k, v) => v == null || v === ""
+    ? ""
+    : `<tr><td style="padding:3px 0;color:${C.dim};width:38%;">${_esc(k)}</td><td style="padding:3px 0;">${_esc(v)}</td></tr>`;
+
+  // The banner IS the email's reason for existing. A clean truck gets one green
+  // line; anything else gets a coloured block naming the number and who approved
+  // what, at the top, before the tiles.
+  const banner = exceptions.length
+    ? `<div style="background:#422006;border:1px solid ${C.warn};border-radius:8px;padding:14px 16px;margin-bottom:18px;">`
+      + `<div style="font-size:13px;font-weight:700;color:#fbbf24;margin-bottom:7px;">Needs a look</div>`
+      + `<div style="font-size:14px;color:${C.ink};line-height:1.65;">`
+      + exceptions.map(e => `<strong>${_esc(e.lead)}</strong> ${_esc(e.rest)}`).join("<br>")
+      + `</div></div>`
+    : `<div style="background:#052e16;border:1px solid #16a34a;border-radius:8px;padding:14px 16px;margin-bottom:18px;">`
+      + `<div style="font-size:14px;color:${C.ink};line-height:1.6;">All <strong>${truck.pallet_count}</strong> pallets `
+      + `on the Bill of Lading were received. Nothing short, no duplicates approved, every tag read clean.</div></div>`;
+
+  // What the sheet actually carries, in its own words. `bol` is one of:
+  //   in-sheet  the photo is the last page AND attached loose
+  //   loose     attached, but the sheet could not embed it (PNG, WebP, CMYK scan)
+  //   too-big   over the mail ceiling, so it is in neither
+  //   none      no photo was ever taken for this truck
+  const bolNote = bol === "in-sheet" ? ""
+    : bol === "loose" ? `The BOL photo is attached separately &mdash; the sheet could not embed that format. `
+    : bol === "too-big" ? `The BOL photo was too large to attach. `
+    : `No BOL photo was taken for this truck. `;
+  const attachNote = sheetFailed
+    ? `The pallet sheet could not be built for this truck. `
+      + `<a href="${origin}/index.html#inventory-receiver" style="color:${C.accent};">Open the truck in the Hub</a> to see all ${received}.`
+    : `Barcode, pallet, item&nbsp;#, PO, units and who built it${bol === "in-sheet" ? " &mdash; plus the Bill of Lading itself &mdash;" : ""} `
+      + `are in <span style="${mono}font-size:12px;">${_esc(pdfName)}</span>. `
+      + bolNote
+      + `<a href="${origin}/index.html#inventory-receiver" style="color:${C.accent};">Or open the truck in the Hub</a>.`;
+
+  const subhead = [
+    truck.ship_from && truck.ship_to ? `${_esc(truck.ship_from)} &rarr; ${_esc(truck.ship_to)}` : (truck.ship_from ? _esc(truck.ship_from) : null),
+    truck.carrier ? _esc(truck.carrier) : null,
+    truck.trailer_no ? `trailer ${_esc(truck.trailer_no)}` : null,
+  ].filter(Boolean).join(" &middot; ");
+
+  return `<div style="max-width:600px;margin:0 auto;padding:24px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="background:${C.head};border-radius:12px 12px 0 0;padding:24px 28px;">
+    <div style="font-size:13px;font-weight:700;color:${C.dim};letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">Truck Received</div>
+    <div style="font-size:26px;font-weight:800;color:#ffffff;margin-bottom:4px;">${truck.bol_no ? `BOL ${_esc(truck.bol_no)}` : `Truck ${truck.id}`} &middot; ${_esc(where)}</div>
+    ${subhead ? `<div style="font-size:14px;color:${C.accent};">${subhead}</div>` : ""}
+  </div>
+
+  <div style="background:${C.body};padding:22px 28px;">
+    ${banner}
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;margin:0 -6px 20px;">
+      <tr>
+        ${tile("Received",
+            truck.pallet_count == null ? String(received) : `${received}${received < truck.pallet_count ? ` <span style="font-size:15px;color:${C.dim};">/ ${truck.pallet_count}</span>` : ""}`,
+            truck.pallet_count == null ? "pallets scanned" : "pallets",
+            (truck.pallet_count != null && received !== truck.pallet_count) ? "#fbbf24" : C.ink)}
+        ${tile("Units", units.toLocaleString("en-US"), "on those pallets", C.ink)}
+        ${tile("On the dock", dock || "&mdash;",
+            etClock(truck.opened_at) && etClock(truck.closed_at) ? `${_esc(etClock(truck.opened_at))} &rarr; ${_esc(etClock(truck.closed_at))}` : "&nbsp;", C.ink)}
+      </tr>
+    </table>
+
+    <div style="background:${C.page};border-radius:8px;padding:15px 16px;margin-bottom:18px;">
+      <div style="font-size:10px;font-weight:700;color:${C.dimmer};text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px;">All ${received} pallets are attached</div>
+      <div style="font-size:13px;color:${C.ink};line-height:1.6;">${attachNote}</div>
+    </div>
+
+    <div style="background:${C.page};border-radius:8px;padding:14px 16px;">
+      <div style="font-size:10px;font-weight:700;color:${C.dimmer};text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Paperwork</div>
+      <table width="100%" style="border-collapse:collapse;font-size:12.5px;color:${C.ink};">
+        ${row("Bill of Lading", truck.bol_no)}
+        ${row("Ship from", [truck.ship_from, truck.ship_from_addr].filter(Boolean).join(" · "))}
+        ${row("BOL date", truck.bol_date ? (etDateLong(`${truck.bol_date}T12:00:00Z`) || truck.bol_date) : null)}
+        ${row("Trailer / Seal", [truck.trailer_no, truck.seal_no].filter(Boolean).join(" / "))}
+        ${row("PRO", truck.pro_no)}
+        ${row("Opened by", truck.opened_by ? `${truck.opened_by} · ${etClock(truck.opened_at)}` : null)}
+        ${row("Taken down by", truck.closed_by ? `${truck.closed_by} · ${etClock(truck.closed_at)}` : null)}
+        ${row("Note", truck.close_note)}
+      </table>
+    </div>
+  </div>
+
+  <div style="background:${C.page};border-radius:0 0 12px 12px;padding:16px 28px;text-align:center;">
+    <div style="font-size:12px;color:#475569;">RETJG HUB &middot; Inventory Receiver</div>
+  </div>
+</div>`;
+}
+
+// Resend wants base64. A spread into btoa() blows the stack on anything over a
+// few hundred KB, so this is chunked exactly as r2ImageBlock's is.
+function b64FromBytes(bytes) {
+  let bin = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  return btoa(bin);
+}
+
+// 🛑 Over this, the photo is dropped from BOTH the sheet and the attachments and
+// the body says so. `truck-open` accepts a 6.5 MB base64 upload, which is ~4.9 MB
+// of bytes — doubled through the PDF and the loose copy and re-expanded by base64
+// that is a ~13 MB request to Resend. The frontend shrinks to ~1800px/0.88, so
+// this is a backstop, not the normal path.
+const TRUCK_MAIL_IMAGE_MAX = 4_000_000;
+
+// Sent automatically on Truck Down (Brian, 2026-09-16: "Automatic"), from
+// ctx.waitUntil, AFTER the truck is closed.
+//
+// 🛑 Fire-and-forget on purpose. A truck that is down is down; a Resend outage
+// must not fail Truck Down at the dock with a trailer waiting on it. Every
+// outcome still lands in notification_log through logEmailAttempt, so "we tried"
+// cannot drift back into meaning "sent".
+async function notifyTruckDown(env, { truckId }) {
+  if (!env.DB) return { ok: false, error: "no DB" };
+  const truck = await env.DB.prepare("SELECT * FROM trucks WHERE id = ?").bind(truckId).first();
+  if (!truck) return { ok: false, error: "no such truck" };
+
+  // 🔑 ASCENDING, unlike truck-current's newest-first list: the sheet is read as
+  // the order the trailer came off, and a printed page cannot be re-sorted.
+  const { results } = await env.DB.prepare(
+    `SELECT id, barcode, item_no, pallet_name, sup_ref, po, units, created_by_tag, truck_no,
+            logged_by, logged_at, dup_approved_by, dup_reason
+       FROM truck_pallets WHERE truck_id = ? ORDER BY logged_at ASC, id ASC`
+  ).bind(truckId).all();
+  const pallets = results || [];
+
+  const recipients = await truckReviewRecipients(env, truck.store);
+  if (!recipients.length) {
+    console.log(JSON.stringify({ truck_review_email: "no recipients", truck: truckId, store: truck.store }));
+    return { ok: true, sent: 0, of: 0 };
+  }
+  const exceptions = truckExceptions(truck, pallets);
+
+  let image = null, imageTooBig = false;
+  if (truck.r2_key && env.MEDIA) {
+    const obj = await env.MEDIA.get(truck.r2_key).catch(() => null);
+    if (obj) {
+      const bytes = new Uint8Array(await obj.arrayBuffer());
+      if (bytes.length > TRUCK_MAIL_IMAGE_MAX) imageTooBig = true;
+      else image = { bytes, info: jpegInfo(bytes), type: String(truck.content_type || "image/jpeg").toLowerCase() };
+    }
+  }
+
+  // A sheet that will not build must not take the email down with it — the
+  // exceptions in the body are the part that cannot wait.
+  let pdf = null;
+  try { pdf = buildTruckSheetPdf({ truck, pallets, exceptions, image }); }
+  catch (e) { console.error("Truck sheet PDF failed:", String((e && e.message) || e)); }
+
+  const safe = String(truck.bol_no || truck.id).replace(/[^A-Za-z0-9._-]/g, "") || String(truck.id);
+  const pdfName = `Truck-BOL-${safe}-${truck.store}.pdf`;
+  // Resend takes base64 in `content`, and recommends `content_type` alongside the
+  // filename — without it some clients render a PDF as an unnamed blob. Its ceiling is
+  // 40 MB per message AFTER base64, which TRUCK_MAIL_IMAGE_MAX keeps this far below.
+  const attachments = [];
+  if (pdf) attachments.push({ filename: pdfName, content: b64FromBytes(pdf), content_type: "application/pdf" });
+  if (image) {
+    const ext = image.type === "image/png" ? "png" : image.type === "image/webp" ? "webp" : "jpg";
+    attachments.push({
+      filename: `BOL-${safe}.${ext}`,
+      content: b64FromBytes(image.bytes),
+      content_type: ext === "jpg" ? "image/jpeg" : `image/${ext}`,
+    });
+  }
+
+  const html = buildTruckReviewEmailHtml({
+    truck, pallets, exceptions, pdfName, sheetFailed: !pdf, origin: appOrigin(env),
+    bol: pdfCanEmbed(image) ? "in-sheet" : image ? "loose" : imageTooBig ? "too-big" : "none",
+  });
+  const subject = truckReviewSubject(truck, pallets, exceptions);
+
+  let sent = 0;
+  for (const u of recipients) {
+    // A truck comes down once, so keying on truck + recipient makes a repeated
+    // Truck Down idempotent too, not only resendSend's own retry.
+    const r = await resendSend(env, {
+      from: "RETJG HUB <noreply@retjghub.com>",
+      to: u.email,
+      subject,
+      html,
+      ...(attachments.length ? { attachments } : {}),
+    }, `truck-down-${truckId}-${u.id}`);
+    if (r.ok) sent++;
+    else if (!r.skipped) console.error(`Truck review email failed for ${u.email} after ${r.attempts} attempt(s): ${r.error}`);
+    await logEmailAttempt(env, { userId: u.id, eventType: "truck-review", result: r });
+  }
+  return { ok: true, sent, of: recipients.length };
+}
+
 // ─── Supply Request helpers ──────────────────────────────────────────────────
 
 // HTML email sent to superusers when a new supply request is submitted.
@@ -22876,6 +23634,14 @@ export default {
           .bind(actorLabel(currentUser), at, tagText(body?.note, 200), id).run();
         const got = await env.DB.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(units),0) AS u FROM truck_pallets WHERE truck_id = ?")
           .bind(id).first();
+        // The review email, to superusers, admins and this store's managers.
+        //
+        // 🛑 AFTER the UPDATE and in waitUntil, not before and not awaited. Building
+        // the sheet reads every pallet and the BOL photo out of R2; doing that on the
+        // response path would hold a person at the dock, and a Resend outage would
+        // turn "the trailer is empty" into a 500.
+        ctx.waitUntil(notifyTruckDown(env, { truckId: id }).catch(e =>
+          console.error("Truck review email failed:", String((e && e.message) || e))));
         return new Response(JSON.stringify({
           ok: true, id, closed_at: at, received: got?.n ?? 0, units: got?.u ?? 0,
           // What the BOL claimed, so the caller can say "28 short" without a second read.
