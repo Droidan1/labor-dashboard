@@ -543,5 +543,30 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
      '🛑 the [hidden] override is present — a bare class rule beats the attribute otherwise');
 }
 
+// ── 23. The camera attribute adapts to the device ──────────────────────────
+// 🛑 `capture="environment"` means "rear camera, nothing else". On a desktop browser
+// with no camera the picker may never appear, which is how Receive Truck read as a dead
+// button on a Mac (Brian, 2026-09-16). These pin the shape of the fix; the behaviour in
+// both pointer modes is driven in scripts/browser-inventory-receiver.mjs.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  ok(/function syncCameraCapture\(input\)/.test(html), 'syncCameraCapture exists');
+  const fn = html.slice(html.indexOf('function syncCameraCapture(input)'));
+  const body = fn.slice(0, fn.indexOf('\n  }'));
+  ok(/pointer: coarse/.test(body), '...and decides on pointer coarseness, not a UA string');
+  ok(/setAttribute\('capture', 'environment'\)/.test(body), '...keeping the attribute on a touch device');
+  ok(/removeAttribute\('capture'\)/.test(body), '...and dropping it otherwise');
+  // 🔑 The phone is the case that must not regress, so a throwing matchMedia keeps it.
+  ok(/coarse = true; \} catch/.test(body) || /catch \(e\) \{ coarse = true; \}/.test(body),
+     '🛑 defaults to KEEPING capture when matchMedia throws — the phone must not regress');
+  // Both photo inputs go through it. Bin Dump had the identical latent bug.
+  ok(/syncCameraCapture\(el\('ir-photo'\)\)/.test(html) || /syncCameraCapture\(input\);/.test(html),
+     'Inventory Receiver syncs before opening the picker');
+  ok(/syncCameraCapture\(el\('bd-photo'\)\)/.test(html), 'Bin Dump does too');
+  // A picker that never opens must not be silent.
+  ok(/Couldn't open the camera or file picker/.test(html),
+     'a click that throws surfaces a message instead of looking like a dead button');
+}
+
 console.log(`\n${assertions} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
