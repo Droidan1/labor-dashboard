@@ -1,3 +1,75 @@
+# Two authorization holes found while reviewing #249 (2026-09-16)
+
+Neither is from #249. Both were found by the security pass over the code that was ALREADY on
+`main`, and Brian asked for them in their own PR rather than folded into anything else.
+
+Both were **latent, not breached**: production held zero approval PINs when they were found
+(`SELECT ... WHERE approval_pin_hash IS NOT NULL` returned nothing), so neither had ever been
+reachable in production. Both arm the moment an approval PIN is issued — and production has a
+manager scoped to `["BL14"]` and another to `["BL16"]` today.
+
+## 1. The store check degraded to a substring match
+
+`verifyApproval` passed a RAW D1 row to `canAccessStore`. `users.stores` comes out of D1 as the
+string `'["BL14"]'`, the row has no `grants`, so `allowedUnits` fell through to
+`return user.stores || []` and returned the string. `allowed.includes(store)` is then
+`String.prototype.includes`:
+
+    '["BL14"]'.includes('BL1')  ===  true
+    '["BL16"]'.includes('BL1')  ===  true
+
+BL1 is the only store code in `ALL_STORES` that prefixes another, so the fault only ever WIDENED
+access and only ever at BL1. A BL14 manager could approve a duplicate pallet at BL1, and
+`truck-approvers` OFFERED their name there — the picker and the verifier agreed, which is what
+made it reachable rather than merely present.
+
+**Fixed at the helper, not the two callers.** Three call sites parse `stores` first
+(`getAuthUser`, `truckReviewRecipients`, the cron builders); two did not. Three authors
+remembering and two forgetting is a helper bug. `allowedUnits` now normalises, and
+`canAccessStore` refuses a non-array outright as a backstop for the caller not yet written.
+
+## 2. An admin could set a superuser's approval code
+
+`set-approval-pin` lacked "a non-superuser may never edit a superuser" — the guard `update-user`
+and `set-user-grants` both carry. A superuser passes `canSeeFinancials`, so nothing else stopped
+it. An admin could mint a credential that approves at EVERY store under the superuser's name
+(`allowedUnits` returns null for that role), and `notifyTruckDown` mails that attribution out as
+fact. Replacing an existing code would also have silently stopped the superuser's own working.
+
+## Plan
+
+- [x] Verify both independently before trusting the review that raised them
+- [x] Establish whether either is live — production approval-PIN census, read-only
+- [x] Confirm `users.stores` and grant units agree in production, so the legacy fallback is sound
+- [x] `worker.js` — normalise in `allowedUnits`, refuse non-arrays in `canAccessStore`
+- [x] `worker.js` — the superuser guard on `set-approval-pin`
+- [x] `test-inventory-receiver.mjs` — a BL14 manager fixture, refusal AND the positive case
+- [x] Mutation-test both fixes; full suite green
+
+## Review
+
+**4,812 assertions across 75 suites, green.** `test-inventory-receiver.mjs` goes 187 → 205.
+
+Restoring both original faults turns exactly the new assertions red — the BL14 manager's approval
+goes through (200 where 409 is right) and the BL1 picker offers their name. Removing the superuser
+guard writes the hash it should have refused.
+
+### Three things worth keeping
+
+1. **The existing cross-store test passed for months while the fault was live.** It asserts "a
+   manager from another store cannot approve at this one" and its fixture scoped that manager to
+   **BL4** — one of the four store codes that cannot expose a BL1 prefix match. Right assertion,
+   coin-flip fixture, landed tails. The new fixture uses BL14 deliberately.
+2. **The fix's first cut broke five suites, and only the FULL run said so.** A module-scope
+   `unitList()` helper threw `ReferenceError` in `test-authme-scope`, `test-business-gate`,
+   `test-grant-scoping`, `test-privilege-guards` and `test-cron-recipients` — they extract
+   worker.js functions by regex and `new Function` them, naming dependencies by hand. The
+   normaliser is now local to `allowedUnits`, with a comment saying not to hoist it.
+3. **`canAccessStore`'s `Array.isArray` backstop is unreachable and the suite proved it** —
+   deleting it leaves all 205 green, because `allowedUnits` now guarantees an array. It is kept
+   for the future raw-row caller and pinned by a source assertion that says out loud that it is
+   a source check and why.
+
 # Associate codes an admin can read back (2026-09-16)
 
 Brian, 2026-09-16: *"On the user page for Associates, I want admins to be able to view their
