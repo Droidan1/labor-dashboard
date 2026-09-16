@@ -4857,6 +4857,7 @@ const ACTION_BUSINESS = new Map([
   ["ebay-cases", "ecom"],
   ["afternoon-briefing", "bl"],
   ["associate-save", "bl"],
+  ["set-approval-pin", "bl"],
   ["backfill", "bl"],
   ["backfill-category-orders", "bl"],
   ["backfill-items-snapshots", "bl"],
@@ -16543,12 +16544,101 @@ export default {
       const { results } = await env.DB.prepare(
         // 🛑 pin_hash is NEVER selected. `associate` is the derived flag the client
         // splits the two tables on; the hash itself has no business leaving D1.
+        // 🛑 approval_pin_hash is NEVER selected either, for the same reason: the
+        // client needs to know WHETHER a code exists, never what it is.
         `SELECT id, email, role, stores, status, created_at, last_login,
                 name, pages, pin_failures, pin_reset_requested_at,
-                (pin_hash IS NOT NULL) AS associate
+                (pin_hash IS NOT NULL) AS associate,
+                (approval_pin_hash IS NOT NULL) AS has_approval_pin,
+                approval_pin_failures
            FROM users ORDER BY created_at DESC`
       ).all();
       return new Response(JSON.stringify({ ok: true, users: results || [] }), { headers: corsJson });
+    }
+
+    // ── The manager approval code ────────────────────────────────────
+    //    POST ?action=set-approval-pin { id, pin }        set or replace
+    //    POST ?action=set-approval-pin { id, pin: null }  revoke
+    //
+    // Six digits that let a manager approve a duplicate pallet or a repeated BOL on
+    // somebody else's phone, at the dock, without logging in. Set by an admin or a
+    // superuser — canAccessInventory is exactly that pair, so this needs no new role
+    // machinery, and it is the same gate list-users and associate-save already use.
+    //
+    // 🛑 THIS IS NOT A LOGIN CREDENTIAL, and the differences from associate-save's
+    // code are deliberate, not oversights:
+    //
+    //   1. It writes `approval_pin_hash`, NEVER `pin_hash`. `pin_hash IS NOT NULL` is
+    //      the definition of an associate in getAuthUser, so putting a manager's code
+    //      there would reclassify them — 12-hour non-sliding sessions, passkeys
+    //      refused, and their name exposed to the associate-login lookup. That is the
+    //      whole reason migration-066 added a second column.
+    //
+    //   2. It does NOT delete the target's sessions. associate-save does, and must:
+    //      there the code IS the login, so a reset that left the old session working
+    //      would have achieved nothing. Here the code authorises one action and the
+    //      manager's own session is unrelated — signing them out mid-shift because an
+    //      admin set their approval code would be a bug, not a security measure.
+    if (request.method === "POST" && url.searchParams.get("action") === "set-approval-pin") {
+      if (!canAccessInventory(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_ADMIN" }), { status: 403, headers: corsJson });
+      }
+      if (!env.DB) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const id = String((body && body.id) || "").trim();
+        if (!id) return new Response(JSON.stringify({ error: "Which user?" }), { status: 400, headers: corsJson });
+
+        const target = await env.DB.prepare(
+          "SELECT id, name, email, role, status FROM users WHERE id = ?"
+        ).bind(id).first();
+        if (!target) return new Response(JSON.stringify({ error: "No such user" }), { status: 404, headers: corsJson });
+
+        // 🔑 Refused for anyone who could not approve with it. verifyApproval requires
+        // canSeeFinancials AND that they hold the store, so a code on a staff account
+        // is dead weight that reads on the Users page as though it works — the worst
+        // kind of wrong, because it looks configured.
+        if (!canSeeFinancials(target)) {
+          return new Response(JSON.stringify({
+            error: `${target.name || target.email} is ${target.role} — only a manager or above can approve, so a code here would never work`,
+            code: "NOT_AN_APPROVER",
+          }), { status: 400, headers: corsJson });
+        }
+
+        // A null/empty pin REVOKES. Distinguished from "absent" so a malformed body
+        // cannot silently wipe somebody's code.
+        const raw = body ? body.pin : undefined;
+        if (raw === null || raw === "") {
+          await env.DB.prepare(
+            "UPDATE users SET approval_pin_hash = NULL, approval_pin_failures = 0 WHERE id = ?"
+          ).bind(id).run();
+          return new Response(JSON.stringify({ ok: true, id, has_approval_pin: false }), { headers: corsJson });
+        }
+
+        // 🛑 Same validPin as the login code: six digits, and not 123456, 111111 or
+        // any other run this rejects. A code chosen to be memorable at a loading dock
+        // is exactly the code somebody standing at that dock will try.
+        const pin = validPin(raw);
+        if (!pin) {
+          return new Response(JSON.stringify({
+            error: "Use six digits, and not an obvious run like 123456 or 111111",
+            code: "WEAK_PIN",
+          }), { status: 400, headers: corsJson });
+        }
+        // pinHash throws PIN_NOT_CONFIGURED without the pepper — caught below rather
+        // than writing an unpeppered digest, which a database dump reverses in seconds.
+        const hash = await pinHash(env, pin);
+        await env.DB.prepare(
+          "UPDATE users SET approval_pin_hash = ?, approval_pin_failures = 0 WHERE id = ?"
+        ).bind(hash, id).run();
+        return new Response(JSON.stringify({ ok: true, id, has_approval_pin: true }), { headers: corsJson });
+      } catch (e) {
+        if (String(e && e.message) === "PIN_NOT_CONFIGURED") {
+          return new Response(JSON.stringify({ error: "Approval codes are not configured on this environment" }),
+            { status: 500, headers: corsJson });
+        }
+        return new Response(JSON.stringify({ error: String((e && e.message) || e) }), { status: 500, headers: corsJson });
+      }
     }
 
     // ── User management: invite-user ─────────────────────────────────

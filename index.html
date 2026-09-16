@@ -6380,6 +6380,32 @@
                 <option value="suspended">Suspended</option>
               </select>
             </div>
+            <!-- Manager approval code. Shown only for a role that could actually
+                 approve with it — the worker refuses to write one for anyone else,
+                 so offering the field would be offering a dead end. -->
+            <div id="edit-approval" class="hidden border-t border-[rgba(20,16,8,0.08)] dark:border-op-border pt-4">
+              <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-1.5">Approval code</label>
+              <p class="text-xs text-opl-inkDim dark:text-op-inkDim mb-2 leading-relaxed">
+                Six digits that let them approve a duplicate pallet or a repeated BOL on
+                someone else's phone at the dock. <strong class="font-semibold">Not a login</strong> —
+                it does not sign them in and does not change how they sign in.
+              </p>
+              <p id="edit-approval-state" class="text-xs mb-2"></p>
+              <!-- 🛑 The input gets its OWN row. Inline with both buttons it overflowed
+                   the max-w-md modal the moment the label became "Replace code" — which
+                   only happens for a user who already has a code, so the first render
+                   fits and the second does not. Stacking is correct at every width. -->
+              <!-- 🛑 type="text" + inputmode, never type="number": a number input drops
+                   a leading zero, and 012345 is an ordinary code. -->
+              <input id="edit-approval-pin" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+                autocomplete="off" placeholder="000000"
+                class="w-full border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink text-center tracking-widest font-mono focus:outline-none focus:ring-2 focus:ring-accent-green/50">
+              <div class="flex gap-2 mt-2 flex-wrap">
+                <button id="edit-approval-save" onclick="saveApprovalPin()" class="flex-1 min-w-[120px] text-sm px-4 py-2 rounded-[8px] bg-accent-green hover:brightness-110 text-[#04140a] font-semibold transition-all">Set code</button>
+                <button id="edit-approval-clear" onclick="clearApprovalPin()" class="hidden text-sm px-3 py-2 rounded-[8px] border border-[rgba(192,57,43,0.4)] dark:border-[rgba(239,68,68,0.42)] text-[#c0392b] dark:text-[#f87171] hover:bg-[rgba(192,57,43,0.08)] transition-colors whitespace-nowrap">Remove</button>
+              </div>
+              <p id="edit-approval-msg" class="hidden text-xs mt-2"></p>
+            </div>
             <div id="edit-user-status" class="hidden text-sm px-3 py-2 rounded-lg border"></div>
           </div>
           <div class="px-6 pb-5 flex justify-end gap-3">
@@ -31246,6 +31272,7 @@
     el('edit-status').value = u.status;
     el('edit-user-status').classList.add('hidden');
     el('edit-user-submit-btn').disabled = false;
+    renderApprovalPin(u);
     el('edit-grants').innerHTML = `<div class="text-xs text-opl-inkDim dark:text-op-inkDim">Loading access…</div>`;
     el('edit-user-modal').classList.remove('hidden');
     // A superuser's access comes from the flag, not from rows — the server
@@ -31264,6 +31291,87 @@
     renderGrantEditor(existing);
   }
   function closeEditUserModal() { el('edit-user-modal').classList.add('hidden'); }
+
+  // ── Manager approval code ─────────────────────────────────────────────────
+  //
+  // 🔑 Only offered to a role that could approve with it. verifyApproval on the worker
+  // requires canSeeFinancials AND that the approver holds the store, so a code on a
+  // staff account never works — and a field that writes one would read on this page as
+  // though it were configured, which is worse than not offering it.
+  const APPROVER_ROLES = ['superuser', 'admin', 'executive', 'manager'];
+
+  function renderApprovalPin(u) {
+    const box = el('edit-approval');
+    const canApprove = u && APPROVER_ROLES.includes(u.role);
+    box.classList.toggle('hidden', !canApprove);
+    el('edit-approval-msg').classList.add('hidden');
+    el('edit-approval-pin').value = '';
+    if (!canApprove) return;
+    const has = !!u.has_approval_pin;
+    const locked = (u.approval_pin_failures || 0) >= 10;
+    const st = el('edit-approval-state');
+    // Locked is its own state, not a flavour of "set": the code is correct and still
+    // refused, and the only way out is setting a new one — which is this control.
+    st.textContent = locked
+      ? 'Locked — ten wrong codes. Setting a new one unlocks it.'
+      : has ? 'A code is set. Setting a new one replaces it.'
+            : 'No code set — they cannot approve anything yet.';
+    st.className = 'text-xs mb-2 ' + (locked
+      ? 'text-[#c0392b] dark:text-[#f87171]'
+      : has ? 'text-opl-inkDim dark:text-op-inkDim'
+            : 'text-[#b45309] dark:text-[#f59e0b]');
+    el('edit-approval-save').textContent = has ? 'Replace code' : 'Set code';
+    el('edit-approval-clear').classList.toggle('hidden', !has);
+  }
+
+  function approvalMsg(text, kind) {
+    const m = el('edit-approval-msg');
+    m.textContent = text;
+    m.className = 'text-xs mt-2 ' + (kind === 'err'
+      ? 'text-[#c0392b] dark:text-[#f87171]' : 'text-[#166534] dark:text-accent-green');
+    m.classList.remove('hidden');
+  }
+
+  async function postApprovalPin(pin) {
+    const id = el('edit-user-id').value;
+    const btn = el('edit-approval-save');
+    btn.disabled = true;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=set-approval-pin`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', body: JSON.stringify({ id, pin }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || `Failed (${r.status})`);
+      // Keep the row in step so reopening the modal shows the truth without a refetch.
+      const u = usersData.find(x => x.id === id);
+      if (u) { u.has_approval_pin = d.has_approval_pin ? 1 : 0; u.approval_pin_failures = 0; renderApprovalPin(u); }
+      approvalMsg(d.has_approval_pin ? 'Code set. Tell them in person, not in writing.' : 'Code removed.', 'ok');
+    } catch (e) {
+      approvalMsg((e && e.message) || String(e), 'err');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function saveApprovalPin() {
+    const pin = el('edit-approval-pin').value.trim();
+    // Checked here too so an obvious typo costs no round trip. The WORKER is the gate:
+    // validPin runs there as well and this cannot loosen it.
+    if (!/^\d{6}$/.test(pin)) { approvalMsg('Use exactly six digits.', 'err'); return; }
+    await postApprovalPin(pin);
+    el('edit-approval-pin').value = '';
+  }
+  window.saveApprovalPin = saveApprovalPin;
+
+  async function clearApprovalPin() {
+    const go = await uiConfirm(
+      'They will not be able to approve a duplicate pallet or a repeated BOL until a new code is set.',
+      { title: 'Remove this approval code?', okText: 'Remove', danger: true });
+    if (!go) return;
+    await postApprovalPin(null);
+  }
+  window.clearApprovalPin = clearApprovalPin;
 
   async function submitEditUser() {
     const id = el('edit-user-id').value;
