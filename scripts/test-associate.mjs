@@ -469,5 +469,225 @@ console.log('Associates');
   }
 }
 
+// ── 17. Reading a code back (migration-068) ────────────────────────────────
+// Brian, 2026-09-16. `pin_hash` is one-way, so viewing a code means keeping a
+// SECOND, decryptable copy — and every assertion here exists because some way of
+// getting that wrong is worse than not having the feature.
+//
+// 🔑 The two ALTERs in migration-068 already reach `users` via
+// applyMigrationAlters (the harness creates that table itself). `pin_reveals`
+// does not exist until the migration's CREATE runs, and exec'ing the WHOLE file
+// would die on `duplicate column name` from those same ALTERs — so take the file
+// from its first CREATE onward. SLICED FROM THE REAL MIGRATION, never retyped, so
+// a change to the table's shape reaches this suite instead of passing against a
+// copy that has drifted.
+const CIPHER_KEY = 'test-cipher-key-not-the-real-one';
+function envCipher({ key = CIPHER_KEY } = {}) {
+  const { db, env } = env0();
+  const sql = fs.readFileSync(path.join(repo, 'migration-068.sql'), 'utf8');
+  // 🛑 Anchored to the start of a LINE. A bare indexOf('CREATE TABLE') matches the
+  // phrase inside the migration's own comment prose and slices from mid-sentence.
+  db.exec(sql.slice(sql.search(/^CREATE TABLE/m)));
+  if (key) env.PIN_CIPHER_KEY = key;
+  return { db, env };
+}
+const reveal = (env, id, by = 'u-admin') =>
+  call('/?action=associate-reveal-pin', { user: by, method: 'POST', body: { id }, env });
+const cipherOf = (db, id) => db.prepare('SELECT pin_cipher c FROM users WHERE id = ?').get(id).c;
+
+// The round trip: what an admin types is what an admin reads back.
+{
+  const { db, env } = envCipher();
+  const a = await makeAssociate(env, { pin: '481902' });
+  ok(!!cipherOf(db, a.id), 'a code set with the key configured stores a cipher');
+  const j = await json(await reveal(env, a.id));
+  eq(j.recoverable, true, 'and it reveals');
+  eq(j.pin, '481902', '🔑 as exactly the code that was set');
+  eq(j.name, 'Dee Ramirez', 'named, so the modal cannot label it with the wrong person');
+  ok(!!j.set_at, 'and stamped with when it was set');
+  // The hash is still the only thing login checks — the cipher has not replaced it.
+  eq((await signIn(env, 'Dee Ramirez', '481902')).status, 200, 'and the code still signs in');
+}
+
+// 🛑 THE STALE-CIPHER BUG. A code change rewrites the hash; if it does not rewrite
+// the cipher, reveal hands an admin the PREVIOUS code — one that no longer signs
+// anyone in — and they read it down the phone. Worse than showing nothing, because
+// it looks like an answer.
+{
+  const { db, env } = envCipher();
+  const a = await makeAssociate(env, { pin: '481902' });
+  const first = cipherOf(db, a.id);
+  await call('/?action=associate-save', { user: 'u-admin', method: 'POST',
+    body: { id: a.id, name: a.name, pin: '730518', stores: ['BL1'], pages: { 'bin-dump': 'edit' } }, env });
+  const j = await json(await reveal(env, a.id));
+  eq(j.pin, '730518', '🛑 a changed code reveals the NEW code');
+  ok(j.pin !== '481902', '🛑 and never the old one');
+  ok(cipherOf(db, a.id) !== first, 'the stored cipher was rewritten, not left behind');
+  eq((await signIn(env, 'Dee Ramirez', '730518')).status, 200, 'the new code is the one that works');
+}
+
+// 🛑 IV REUSE. AES-GCM leaks the XOR of two plaintexts encrypted under one
+// (key, IV) pair, and across six digits that is the entire secret. The same code
+// stored twice must not produce the same ciphertext.
+// 🛑 THE SAME CODE, THE SAME USER, TWICE. Two DIFFERENT users would not prove
+// this: their ciphertexts differ under a reused IV anyway, because the user id is
+// the AAD and that alone changes the tag. Pinning one user holds the AAD constant
+// so the IV is the only thing left that can vary — which is what makes this
+// assertion, rather than the source grep below it, the one that catches a hoisted
+// or zeroed IV.
+{
+  const { db, env } = envCipher();
+  const a = await makeAssociate(env, { name: 'Ann One', pin: '481902' });
+  const first = cipherOf(db, a.id);
+  await call('/?action=associate-save', { user: 'u-admin', method: 'POST',
+    body: { id: a.id, name: 'Ann One', pin: '481902', stores: ['BL1'], pages: { 'bin-dump': 'edit' } }, env });
+  ok(cipherOf(db, a.id) !== first,
+     '🛑 the same code re-set for the SAME user encrypts differently — a fresh IV every time');
+  eq((await json(await reveal(env, a.id))).pin, '481902', 'and still decrypts to that code');
+  // Two users sharing a code must also not collide, for the ordinary reason.
+  const b = await makeAssociate(env, { name: 'Bo Two', pin: '481902' });
+  ok(cipherOf(db, b.id) !== cipherOf(db, a.id), 'two associates sharing a code store different ciphers');
+  eq((await json(await reveal(env, b.id))).pin, '481902', 'and both reveal the same original code');
+}
+
+// 🔑 AAD BINDING. A ciphertext is bound to its row by the user id, so moving one
+// row's cipher onto another fails to decrypt rather than revealing Ann's code
+// under Bo's name — which is the failure that would actually mislead somebody.
+{
+  const { db, env } = envCipher();
+  const a = await makeAssociate(env, { name: 'Ann One', pin: '481902' });
+  const b = await makeAssociate(env, { name: 'Bo Two', pin: '730518' });
+  db.prepare('UPDATE users SET pin_cipher = ? WHERE id = ?').run(cipherOf(db, a.id), b.id);
+  const j = await json(await reveal(env, b.id));
+  eq(j.recoverable, false, '🔑 a cipher moved between rows does not decrypt');
+  eq(j.code, 'NOT_RECOVERABLE', 'and says so rather than erroring');
+  ok(j.pin === undefined, '🛑 and returns no code at all');
+}
+
+// Every associate who exists when this ships. The column is NULL and the honest
+// answer is "not recoverable" — not an error, and not a guess.
+{
+  const { db, env } = envCipher();
+  const a = await makeAssociate(env, { pin: '481902' });
+  db.prepare('UPDATE users SET pin_cipher = NULL WHERE id = ?').run(a.id);
+  const r = await reveal(env, a.id);
+  const j = await json(r);
+  eq(r.status, 200, 'a code set before migration-068 is an ANSWER, not an error');
+  eq(j.recoverable, false, 'it is not recoverable');
+  eq(j.code, 'NOT_RECOVERABLE', 'with the reason the modal switches on');
+  eq((await signIn(env, 'Dee Ramirez', '481902')).status, 200,
+     '🔑 and their code still signs them in — nothing about login depends on the cipher');
+}
+
+// No key: the feature is off, the code is still SET. This is deliberately unlike
+// pinHash's refusal — an unpeppered hash would keep working while being weaker,
+// where a null cipher visibly turns one row's reveal off.
+{
+  const { db, env } = envCipher({ key: null });
+  const a = await makeAssociate(env, { pin: '481902' });
+  eq(a.status, 200, 'without PIN_CIPHER_KEY the save still succeeds');
+  eq(cipherOf(db, a.id), null, 'storing no cipher');
+  eq((await signIn(env, 'Dee Ramirez', '481902')).status, 200, 'and the associate can sign in');
+  eq((await json(await reveal(env, a.id))).code, 'NOT_RECOVERABLE', 'reveal says not recoverable');
+}
+
+// Key present at save, gone at reveal — a different fact from the above, and the
+// modal says something different, so the endpoint must distinguish them.
+{
+  const { env } = envCipher();
+  const a = await makeAssociate(env, { pin: '481902' });
+  delete env.PIN_CIPHER_KEY;
+  eq((await json(await reveal(env, a.id))).code, 'NOT_CONFIGURED',
+     'a missing key reads as NOT_CONFIGURED, not as an unrecoverable row');
+}
+// A ROTATED key must not silently read as "not configured" either.
+{
+  const { env } = envCipher();
+  const a = await makeAssociate(env, { pin: '481902' });
+  env.PIN_CIPHER_KEY = 'a-different-key-entirely';
+  const j = await json(await reveal(env, a.id));
+  eq(j.code, 'NOT_RECOVERABLE', 'a rotated key makes existing ciphers unreadable');
+  ok(j.pin === undefined, 'and yields no code');
+}
+
+// 🛑 Who may read a live credential. canAccessInventory is admin and superuser,
+// exactly as associate-save and list-users already gate.
+{
+  const { env } = envCipher();
+  const a = await makeAssociate(env, { pin: '481902' });
+  eq((await reveal(env, a.id, 'u-su')).status, 200, 'a superuser may reveal');
+  for (const who of ['u-mgr1', 'u-exec', 'u-staff']) {
+    eq((await reveal(env, a.id, who)).status, 403, `🛑 ${who} may NOT reveal`);
+  }
+  const anon = await worker.fetch(asSession('/?action=associate-reveal-pin', 'nope',
+    { method: 'POST', body: { id: a.id } }), env, ctx);
+  ok(anon.status === 401 || anon.status === 403, '🛑 and neither may a stranger');
+}
+
+// The door says which kind of id it takes. An admin is not an associate.
+{
+  const { env } = envCipher();
+  eq((await reveal(env, 'u-admin')).status, 404, '🛑 a non-associate id is refused');
+  eq((await reveal(env, 'nope-not-a-user')).status, 404, 'as is one that does not exist');
+  eq((await reveal(env, '')).status, 400, 'and a missing id dies at validation');
+}
+
+// 🛑 The audit row is the price of the reveal, and it is paid FIRST.
+{
+  const { db, env } = envCipher();
+  const a = await makeAssociate(env, { pin: '481902' });
+  await reveal(env, a.id, 'u-admin');
+  const rows = db.prepare('SELECT * FROM pin_reveals WHERE user_id = ?').all(a.id);
+  eq(rows.length, 1, 'a reveal writes exactly one audit row');
+  eq(rows[0].revealed_by, 'u-admin', 'naming who looked');
+  eq(rows[0].user_name, 'Dee Ramirez', 'and whose code, denormalised so it outlives the row');
+  ok(!!rows[0].revealed_by_label, 'with a readable label for the actor');
+  ok(!!rows[0].revealed_at, 'and when');
+  await reveal(env, a.id, 'u-su');
+  eq(db.prepare('SELECT COUNT(*) n FROM pin_reveals WHERE user_id = ?').get(a.id).n, 2,
+     'and every subsequent read appends another');
+}
+// If the log cannot be written, the code does not come out.
+{
+  const { db, env } = envCipher();
+  const a = await makeAssociate(env, { pin: '481902' });
+  db.exec('DROP TABLE pin_reveals');
+  const r = await reveal(env, a.id);
+  const j = await json(r);
+  eq(r.status, 500, '🛑 an unauditable reveal FAILS');
+  ok(j.pin === undefined, '🛑 and above all returns no code');
+}
+
+// 🛑 The cipher is reversible, so the rule against shipping it is stronger than
+// for the two hashes: list-users must carry the yes/no and never the value.
+{
+  const { db, env } = envCipher();
+  const a = await makeAssociate(env, { pin: '481902' });
+  const body = await (await call('/?action=list-users', { user: 'u-admin', env })).text();
+  ok(!body.includes(cipherOf(db, a.id)), '🛑 list-users never ships pin_cipher');
+  ok(!/"pin_cipher"/.test(body), '🛑 nor even the column name');
+  ok(!/"pin_hash"/.test(body), 'and still never pin_hash');
+  const me = JSON.parse(body).users.find(u => u.id === a.id);
+  eq(me.pin_recoverable, 1, 'it reports that this one CAN be read back');
+  ok(!!me.pin_set_at, 'and when the code was set');
+  db.prepare('UPDATE users SET pin_cipher = NULL WHERE id = ?').run(a.id);
+  const after = JSON.parse(await (await call('/?action=list-users', { user: 'u-admin', env })).text());
+  eq(after.users.find(u => u.id === a.id).pin_recoverable, 0, 'and that this one cannot');
+}
+
+// The registrations that make the action reachable at all — the completeness test
+// in the gate suite checks the map is exhaustive, this checks we joined it.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  ok(/\["associate-reveal-pin", "bl"\]/.test(src), 'associate-reveal-pin belongs to Bargain Lane');
+  // 🛑 The single most dangerous line in the change. If someone hoists the IV out
+  // of pinEncrypt or derives it from the id, every assertion above still passes
+  // except the one about two ciphers differing — and this one.
+  const enc = src.slice(src.indexOf('async function pinEncrypt'), src.indexOf('async function pinDecrypt'));
+  ok(/crypto\.getRandomValues\(new Uint8Array\(12\)\)/.test(enc),
+     '🛑 pinEncrypt draws a fresh random IV inside the function');
+  ok(/additionalData/.test(enc), 'and binds the ciphertext to the user id');
+}
+
 console.log(failures ? `\n${failures} of ${assertions} FAILED` : `\n${assertions} passed, 0 failed`);
 process.exit(failures ? 1 : 0);

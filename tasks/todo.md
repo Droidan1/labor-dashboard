@@ -1,3 +1,120 @@
+# Associate codes an admin can read back (2026-09-16)
+
+Brian, 2026-09-16: *"On the user page for Associates, I want admins to be able to view their
+pin number in case Associates forget it."* Shown both options as a rendered preview; he
+picked **B — store codes encrypted, add a real reveal**, knowing the two costs below.
+
+## The constraint, stated once
+
+`pin_hash` is `HMAC-SHA256(PIN_PEPPER, code)` — one-way. **No change recovers a code that
+exists today.** So B is not "make codes viewable"; it is "start keeping a second,
+decryptable copy of codes set from now on", and every associate on the list stays
+unrecoverable until their code is replaced once. That is why B ships A's reveal-on-reset
+flow too, as the fallback — it is not scope creep, it is the half of B that serves the
+people who are already on the list.
+
+## What Brian accepted
+
+1. A D1 dump **plus** the cipher key now yields every live code in plaintext. Today the dump
+   alone yields nothing; that is exactly what the pepper buys, and B spends part of it.
+2. It does not reverse cleanly. Once codes are stored decryptable, undoing it means
+   resetting everyone.
+
+## The design
+
+**`pin_cipher` is a CONVENIENCE COPY. `pin_hash` stays the only thing login ever checks.**
+That separation is the load-bearing decision: if the cipher were ever consulted for auth, a
+cipher-key leak would become an auth bypass rather than a disclosure.
+
+- **Its own secret, `PIN_CIPHER_KEY`** — never `PIN_PEPPER`. One secret for both would mean
+  one leak breaks the hash defence and the cipher together, and it would make the reveal
+  capability impossible to revoke on its own. Deleting `PIN_CIPHER_KEY` turns reveal off
+  while every associate keeps signing in.
+- **AES-GCM, fresh 12-byte IV on every single encryption.** A reused (key, IV) pair in GCM
+  leaks the XOR of the two plaintexts — with a six-digit domain that is total. Highest-risk
+  line in the change; a test asserts two encryptions of the same code differ.
+- **AAD = the user id.** Binds a ciphertext to its row, so copying Maria's `pin_cipher` into
+  Dave's row fails to decrypt instead of showing Maria's code under Dave's name.
+- **A code change must rewrite the cipher in the same statement as the hash.** A stale cipher
+  would reveal the OLD code — an admin reading out a code that no longer works is worse than
+  reading out nothing.
+- **A missing key is not a failed save.** Cipher stores NULL and the row reads "not
+  recoverable" in the UI. This is the opposite of the fallback `pinHash` refuses: that one
+  would keep working while being silently weaker; this one visibly turns the feature off.
+- **The audit row is written BEFORE the code is returned**, and a failed audit fails the
+  reveal. An unauditable reveal is worse than a refused one (Destructive Operations rule 2,
+  in spirit: do not spend the record to get the result).
+
+## Plan
+
+- [x] `migration-068.sql` — `pin_cipher`, `pin_set_at`, and a `pin_reveals` audit table
+      (no FK: migration-029's cascade trap, and the log should outlive a deleted user)
+- [x] `worker.js` — `pinCipherKey` / `pinEncrypt` / `pinDecrypt` beside `pinHash`
+- [x] `worker.js` — `associate-save` writes the cipher on BOTH branches, and on a code change
+- [x] `worker.js` — `?action=associate-reveal-pin`, `canAccessInventory`, audit-then-return
+- [x] `worker.js` — `list-users` exposes `pin_recoverable`, NEVER the cipher
+- [x] `index.html` — View code button + the two modal states
+- [x] Tests: round trip, rotation, AAD binding, IV uniqueness, guards, no cipher in list-users
+- [x] Bump `CACHE_NAME` + shell-cache fixture
+- [x] Full suite green; render the modal in both themes and LOOK
+
+## Review
+
+**Green.** `bash scripts/test.sh` — **4,794 assertions across 75 suites**, including 53 new in
+`test-associate.mjs` section 17. Plus 49 browser assertions in headless Chromium (not
+committed — Playwright is not a dependency here, same call as the 2026-09-09 associates work):
+28 rendering the modal in both themes × both states, 21 driving the row button, Copy, Close and
+the handoff into the editor.
+
+### What the mutations found
+
+Nine deliberate breakages, every one red — six in the worker, three in the client:
+
+| Mutation | Caught by |
+|---|---|
+| a code change leaves the old cipher behind | round trip + login (7 failures) |
+| the IV is zeroed / hoisted | same-user re-encrypt + source grep |
+| the AAD is dropped | the row-swap assertion (4) |
+| the audit insert is `.catch()`ed | "an unauditable reveal FAILS" (2) |
+| `list-users` selects `pin_cipher` | the payload scan (2) |
+| the reveal guard weakens to "any session" | manager / executive / staff (2) |
+| `closeAssocReveal` stops clearing the code | the DOM-cleared assertion |
+| the editor handoff loses the id | three assertions at once |
+| the code-set note stops being per-row | the two-notes-differ assertion |
+
+**The IV mutation is the one worth writing down.** It first survived everything except a
+source grep — because my behavioural test compared two DIFFERENT associates, and their
+ciphertexts differ under a reused IV anyway: the user id is the AAD, and that alone changes
+the tag. The test looked like it was about IV uniqueness and was actually about AAD. Pinning
+ONE user, and re-setting the same code twice, holds the AAD constant so the IV is the only
+variable left — and that assertion goes red. A grep was doing the real work until then, which
+is the weakest possible check for the single most dangerous line in the change.
+
+### What looking at it turned up
+
+1. **Three strings in the UI became false the moment this shipped**, and none of them are in
+   the code this change touches: `assoc-m-pin-note` in both its static and its scripted form,
+   and the save confirmation, all said a code could never be read back. A note that outlives
+   the change that falsifies it is worse than no note — an admin who believes it resets
+   somebody's code for nothing. The editor's note is now per-associate, from that row's own
+   `pin_recoverable`, because after migration-068 both states coexist on one list indefinitely.
+2. **The modal named whoever the client thought the row was.** It now re-labels from the
+   worker's own answer: the heading above six digits is the only thing saying whose they are,
+   and if a stale `usersData` and the worker disagree, the side that actually looked it up is
+   right.
+3. **My own test helper sliced the migration from the wrong place** — `indexOf('CREATE TABLE')`
+   matched the phrase inside the migration's comment prose, not the statement. Anchored to
+   start-of-line. The same shape would bite anyone slicing a file by a phrase that the file
+   also discusses.
+
+### Known gaps, deliberate
+
+- **No UI for `pin_reveals`.** The rows are written and indexed; nothing reads them back yet.
+  A reveal is attributable by query, not on screen.
+- **No rate limit on reveal.** A compromised admin session can enumerate every recoverable
+  code. The audit row is the control, not prevention — which is the right trade at two admins,
+  and the wrong one at twenty.
+
 # Bin Dump — the "duplicate pallet" messages that were never duplicates
 
 Brian, 2026-09-16, with a CSV of this week's BL1 pallets: *"users are saying they keep

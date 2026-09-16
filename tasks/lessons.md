@@ -1,3 +1,44 @@
+## The test named after the dangerous thing was testing something else (2026-09-16)
+
+Storing associate codes encrypted so an admin can read them back. The single most dangerous
+line in the whole change is the IV:
+
+```js
+const iv = crypto.getRandomValues(new Uint8Array(12));
+```
+
+AES-GCM reuses its keystream when `(key, IV)` repeats, so two codes encrypted under one IV
+leak their XOR — and across a six-digit domain that is the entire secret. I knew that, and I
+wrote a test for it: create two associates with the SAME code, assert their ciphertexts
+differ.
+
+**It passes with the IV hard-coded to twelve zero bytes.** Because the other defence in the
+same function is the AAD — the user id — and two associates have different ids, so the tag
+differs even when the keystream is identical. The assertion was named for IV uniqueness and
+was actually measuring AAD binding. A second test, for AAD binding, measured the same thing.
+One property had two tests and the other had none, and the tally read 183 green either way.
+
+What caught the mutation was a `grep` for `getRandomValues` in the source — the weakest check
+I had, doing the real work for the most dangerous line in the change.
+
+The fix is one variable: re-set **the same code** on **the same associate** twice. That holds
+the AAD constant, so the IV is the only thing left that can vary, and zeroing it goes red.
+
+<rules>
+1. **Name the variable you are actually holding constant.** A test for property X must vary
+   ONLY X. If a second defence in the same function also changes between your two samples,
+   you are measuring that one, and its name on the assertion is a lie.
+2. **Two defences in one function need two fixtures that differ in one thing each.** Same
+   user + same input isolates the nonce; different users + same input isolates the binding.
+   The pair that varies both proves neither.
+3. **If a grep is the only thing that catches a mutation, the behavioural test is wrong.**
+   Not missing — wrong. It ran, it passed, and it was pointed somewhere else. Treat a
+   source-grep catch as a failure report about the test beside it.
+4. **Mutate the line you are most afraid of, not the ones that are easy to mutate.** The IV
+   was the one line where a silent pass costs everything, and it was the ninth mutation I
+   thought to try rather than the first.
+</rules>
+
 ## 34 assertions passed and it still looked broken (2026-09-15)
 
 The Items-sold receipt. Before Brian ever saw it I had: 4316 unit assertions green, contrast
