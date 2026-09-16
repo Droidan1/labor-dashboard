@@ -412,3 +412,35 @@ oversized — so a truck whose BOL was never photographed promised a page the at
 does not have, and somebody would have gone looking for it. `pdfCanEmbed()` is now the one
 predicate the sheet builder and that sentence both use, and the email names which of the
 four states it is in: in the sheet, attached separately, too large, or never taken.
+
+### Deployed — 2026-09-16, the review email
+
+`npx wrangler deploy` (bare = production; staging needs `-e staging`). Version
+`21d84c86-2f08-45c0-bea5-ab6a741f44cb`, 973.92 KiB uploaded / 216.95 KiB gzipped, bindings
+confirmed as production (`labor-dashboard-db`, `bl-marketing-media`). **No migration** —
+this change adds no columns.
+
+Confirmed the way rule 5 asks for, not by trusting the exit code:
+
+- **The stored bundle was read before and after.** Before: `notifyTruckDown`,
+  `truckReviewRecipients`, `buildTruckReviewEmailHtml`, `pdfCanEmbed`, `truckSheetColumns`,
+  `pdfLatin1`, `b64FromBytes`, `DCTDecode`, `truck-review` — **zero occurrences of every
+  one**, at 966,160 bytes. After: all present, at 997,481 bytes.
+- **Six consecutive clean passes at the edge**, 12s apart, on `api.retjghub.com`.
+  🛑 The probe is `?action=truck-down` with **no session**, which dies at authentication
+  and returns `401 NO_SESSION`. It was chosen precisely because it cannot perform the
+  operation if the guard is missing — taking a real truck down would close a real truck
+  and mail real people. It still proves the thing that matters: every new top-level const
+  (the two Helvetica width tables, `TRUCK_SHEET_COLS`, `PDF_COLORSPACE`) evaluates at
+  module scope, so a bad one would 500 *every* request on that edge, not just this action.
+- `RESEND_API_KEY` is present in the production secret list, so sends are real rather than
+  silently recorded as `skipped`.
+
+⚠️ **There is one truck open on the dock: BL1, BOL 7679, 40 claimed, ZERO pallets scanned**,
+opened 13:48 UTC 2026-09-16 by `bhoward@bargainlane.com`, with a BOL photo. It looks like
+the camera test from earlier today. Taking it down now sends a real review email to **9
+people** (1 superuser, 4 admins with a `bl` grant, 4 BL1 managers) saying *40 pallets short
+of the 40 on the Bill of Lading* — correct behaviour, real inboxes. One admin is excluded
+by the business gate, which is the gate doing its job.
+
+`notification_log` has **0** rows at `event_type = 'truck-review'`, so nothing has fired yet.
