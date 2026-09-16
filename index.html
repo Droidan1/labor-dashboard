@@ -6592,17 +6592,36 @@
   // Weekly Retail Summary runs off its own WRS_STORE_KEYS, which keeps every
   // closed store so the numbers it earned stay readable.
   //
-  // 🔑 THIS LIST DOES NOT DECIDE BUDGET. Chain financials scope to ALL_STORES in
-  // worker.js, and Holland's budget is deliberately still in there — see the note
-  // in STORE_CLOSED_FROM (worker.js): the company plan was never revised for the
-  // closure, so the shortfall is a real miss the chain is meant to carry. Removing
-  // Holland from this list changes what the dashboard DRAWS, not what it COUNTS.
+  // 🔑 THIS LIST IS HALF THE BUDGET SCOPE — BUDGET_ONLY_STORES below is the rest.
+  // The comment here used to claim the opposite: that chain financials scope to
+  // ALL_STORES in worker.js, so this list could not affect budget. That is true of
+  // what the WORKER computes (briefings, emails, notifications, Retail Summary) and
+  // false of what this PAGE draws. Every chain budget figure on the dashboard is
+  // summed right here in the browser out of allStoreData, which is filled per store
+  // in these two lists — so dropping Holland from this one on 2026-09-15 silently
+  // took $34.5k a week of budget off the All Stores card.
+  // Sum chain budget over STORES.concat(BUDGET_ONLY_STORES), never STORES alone.
   const STORES = [
     "BL1/BL6 Coliseum",
     "BL2/BL7 South Bend",
     "BL4/BL5 Dupont",
     "BL14/B15 Battle Creek",
     "BL16/BL17 Indy East",
+  ];
+  // Stores that have stopped trading but whose BUDGET the chain still carries.
+  // Holland closed 2026-07-25 and the company plan was never revised for it, so its
+  // $813,563 shortfall is a real miss the chain is meant to feel — Brian's call of
+  // 2026-08-11, recorded in STORE_CLOSED_FROM (worker.js), which says in terms not to
+  // undo it without asking. STORES + this === ALL_STORES in worker.js, and that is
+  // the invariant scripts/test-closed-stores.mjs pins.
+  //
+  // 🔑 THESE CONTRIBUTE BUDGET AND NOTHING ELSE. They get a D1 read so their budget
+  // rows are in hand, but no dashboard card, no COLORS entry and no live Clover poll
+  // — Holland's merchant returns nothing, and that poll is the expensive half of a
+  // load. They never enter "N of M reporting" either: a closed store has no sales to
+  // report, and counting one would read "6 of 5".
+  const BUDGET_ONLY_STORES = [
+    "BL8/BL9 Holland",
   ];
   // Parallel to STORES by index (metrics map uses COLORS[i]). Holland's amber came
   // out alongside it, so the remaining five keep the accent colors they already had.
@@ -6611,6 +6630,26 @@
   // closure MEANS (reporting status, refusing writes); this only answers "is it
   // closed", for the badge on its Retail Summary tab. One line per future closure.
   const CLOSED_STORES = { BL8: '2026-07-25', BL12: '2026-06-15' };
+  // The budget rows BUDGET_ONLY_STORES carry, for the chain totals that must include
+  // them. `keep` filters rows exactly as the caller filters its own; omit it to take
+  // every row. Returns the ROWS rather than a sum because two callers fold budget
+  // into a per-date map instead of a scalar.
+  //
+  // 🔑 Budget is all that ever leaves here. These stores' sales, auction and Clover
+  // snapshots are deliberately not read: they are $0 by definition, and touching them
+  // would put a closed store back into reporting counts and per-store tables.
+  function budgetOnlyRows(keep) {
+    const out = [];
+    for (const s of BUDGET_ONLY_STORES) {
+      for (const r of (allStoreData[s] || [])) {
+        if (r.bTotal != null && (!keep || keep(r))) out.push(r);
+      }
+    }
+    return out;
+  }
+  function budgetOnlyTotal(keep) {
+    return budgetOnlyRows(keep).reduce((n, r) => n + r.bTotal, 0);
+  }
   // (MAX_TXN_DURATION_MS removed with the client-side aggregation — the
   // transaction-time filter now lives only in the worker.)
   const C = {
@@ -7331,7 +7370,12 @@
     let loaded = 0;
 
     // Start loading data
-    const sheetsPromise = Promise.all(STORES.map(async (s) => {
+    // History loads for the budget-only stores too — their budget rows are exactly
+    // what the chain totals are missing without them. They are deliberately NOT in
+    // the Clover fan-out below: a closed store's merchant returns nothing, and that
+    // poll is the expensive half of a load.
+    const histRoster = STORES.concat(BUDGET_ONLY_STORES);
+    const sheetsPromise = Promise.all(histRoster.map(async (s) => {
       try {
         const { rows, cloverHistory } = await loadStoreFromD1(s);
         results[s] = rows;
@@ -7340,8 +7384,8 @@
       } catch (e) { errors[s] = e.message; results[s] = []; histErrors[s] = e.message || "Couldn't load"; }
       loaded++;
       const _lu = el("last-updated-time");
-      if (_lu) _lu.textContent = `Loading ${loaded}/${STORES.length}`;
-      else el("last-updated").textContent = `Loading stores… (${loaded}/${STORES.length})`;
+      if (_lu) _lu.textContent = `Loading ${loaded}/${histRoster.length}`;
+      else el("last-updated").textContent = `Loading stores… (${loaded}/${histRoster.length})`;
     }));
 
     liveDataLoading = true;
@@ -8170,6 +8214,9 @@
       if (wk.aAuction != null) tA += wk.aAuction;
       if (wk.bTotal != null) tB += wk.bTotal;
     }
+    // The closed stores the chain still budgets for. Budget only: their sales are $0
+    // by definition, so tA is untouched and no phantom store joins the card.
+    tB += budgetOnlyTotal(r => r.week === selectedWeek);
     // Live-boost today only when the shown week IS the current week (mirrors the
     // Monthly block's "today is in the shown month" guard). Subtract the stale
     // stored aTotal so today counts once (D1 today-rows null aTotal → stale 0).
@@ -8241,6 +8288,10 @@
           todayAuction += todayRowAuction;
         }
       }
+      // Closed stores still carry today's budget into the chain figure. Matched on
+      // toDateString(), the same way getTodayRow above picks the trading stores' row.
+      const todayDS = new Date().toDateString();
+      todayTotalBudget += budgetOnlyTotal(r => r.date && r.date.toDateString() === todayDS);
       el("today-total-card").classList.remove("hidden");
     }
     if (showHist) {
@@ -8249,6 +8300,9 @@
       // auction aren't double-counted (the live branch already added them).
       const histRows = (rows) => filterRows(rows).filter(r =>
         !(histSkipToday && r.date && r.date.toISOString().slice(0, 10) === todayStr));
+      // Closed stores the chain still budgets for, filtered exactly as the trading
+      // stores are below. Budget only — no snapshots, so reportingStores cannot move.
+      for (const r of histRows(budgetOnlyRows())) todayTotalBudget += r.bTotal;
       let hasAnyHistData = false;
       for (const s of STORES) {
         // Budget is in the Google Sheets rows — always available regardless of Clover data
@@ -8472,6 +8526,9 @@
             }
           }
         }
+        // Closed stores the chain still budgets for, over the same calendar month.
+        mB += budgetOnlyTotal(r => r.date
+          && r.date.getMonth() === refMonth && r.date.getFullYear() === refYear);
         // Live boost for monthly total: if today (ET) falls in the same
         // month as the selected week, add today's live Clover data.
         // Anchored to ET via todayStr (matches the rest of the dashboard)
@@ -9724,6 +9781,14 @@
           if (isToday && liveTotal != null && liveTotal > 0) dayMap[key].hasLive = true;
         }
       }
+    }
+    // Closed stores the chain still budgets for: their budget lands on each day and
+    // nothing else does. hasSales/hasLive stay as the trading stores left them, so a
+    // dark day is never dressed up as a reporting one.
+    for (const r of budgetOnlyRows(r => r.week === selectedWeek && r.date)) {
+      const key = r.date.toISOString().slice(0, 10);
+      if (!dayMap[key]) dayMap[key] = { dateObj: r.date, budget: 0, sales: 0, hasSales: false, hasLive: false };
+      dayMap[key].budget += r.bTotal;
     }
 
     // Sun-first (ascending) for visual consistency with the day chips.
@@ -13545,6 +13610,21 @@
       const label = SHORT_LABEL[code] || s.replace(/^BL\d+(\/B?L?\d+)?\s*/, '') || s;
       perStore.push({ store: s, code, label, sales: storeSales, budget: storeBudget });
     }
+    // Closed stores the chain still budgets for. They join totalBudget because this
+    // page's hero IS a chain figure — and they join perStore BECAUSE they join the
+    // total: a hero the rows beneath it do not add up to reads as a broken report.
+    // storesReporting deliberately does not move; they have no sales to report.
+    for (const s of BUDGET_ONLY_STORES) {
+      let storeBudget = 0;
+      for (const r of (allStoreData[s] || [])) {
+        if (r.week === selectedWeek && r.bTotal != null) storeBudget += r.bTotal;
+      }
+      if (storeBudget <= 0) continue;
+      totalBudget += storeBudget;
+      const code = s.split('/')[0];
+      const label = SHORT_LABEL[code] || s.replace(/^BL\d+(\/B?L?\d+)?\s*/, '') || s;
+      perStore.push({ store: s, code, label, sales: 0, budget: storeBudget, closed: true });
+    }
     return {
       perStore, totalSales, totalBudget,
       storesReporting, daysReported: dateKeysReported.size,
@@ -13638,7 +13718,7 @@
       rowsHtml += `
         <div ${onClick} class="grid items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3 sm:py-3.5 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border last:border-b-0 hover:bg-[rgba(20,16,8,0.02)] dark:hover:bg-[rgba(255,255,255,0.018)] transition-colors cursor-pointer" style="grid-template-columns:1fr auto">
           <div class="min-w-0 flex flex-col gap-1.5">
-            <div class="flex items-baseline gap-2"><span class="text-[14px] font-bold text-opl-ink dark:text-op-ink truncate">${escapeHtml(s.label)}</span><span class="text-[10px] font-bold uppercase tracking-[0.04em] text-opl-inkDimmer dark:text-op-inkDimmer">${escapeHtml(s.code)}</span></div>
+            <div class="flex items-baseline gap-2"><span class="text-[14px] font-bold text-opl-ink dark:text-op-ink truncate">${escapeHtml(s.label)}</span><span class="text-[10px] font-bold uppercase tracking-[0.04em] text-opl-inkDimmer dark:text-op-inkDimmer">${escapeHtml(s.code)}</span>${s.closed ? `<span class="flex-shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-[0.05em] border border-[rgba(20,16,8,0.12)] dark:border-op-border text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">Closed</span>` : ''}</div>
             <div class="flex items-center justify-between gap-2">
               <span class="text-base sm:text-lg font-bold tabular-nums text-opl-ink dark:text-op-ink tracking-tight">${fmtDollar(s.sales)}</span>
               <span class="text-[11.5px] text-opl-inkDim dark:text-op-inkDim tabular-nums whitespace-nowrap">vs <b class="text-opl-ink dark:text-op-ink font-semibold">${fmtDollar(s.budget)}</b></span>
@@ -13731,6 +13811,12 @@
         const sales = (isCurrentWeek && key === todayStr && liveTotal > 0) ? liveTotal : (r.aTotal || 0);
         dateMap[key].sales += sales;
       }
+    }
+    // Closed stores the chain still budgets for: budget line only, no sales.
+    for (const r of budgetOnlyRows(r => r.week === selectedWeek && r.date)) {
+      const key = r.date.toISOString().slice(0, 10);
+      if (!dateMap[key]) dateMap[key] = { dateObj: r.date, dow: r.date.getDay(), budget: 0, sales: 0 };
+      dateMap[key].budget += r.bTotal;
     }
     const sorted = Object.values(dateMap).sort((a, b) => a.dateObj - b.dateObj);
     if (!sorted.length) return;
@@ -30193,6 +30279,13 @@
         mtdBudget += (r.bTotal || 0);
       }
     }
+    // Closed stores the chain still budgets for: today's budget and the month's, and
+    // nothing else. `reporting` does not move — they have no till to hear from.
+    budget    += budgetOnlyTotal(r => r.date && r.date.toISOString().slice(0, 10) === todayStr);
+    mtdBudget += budgetOnlyTotal(r => {
+      const d = r.date && r.date.toISOString().slice(0, 10);
+      return !!d && d.slice(0, 7) === month && d < todayStr;
+    });
 
     const total = retail + bin + auction;
     return {
@@ -30540,6 +30633,12 @@
       const allowed = user.stores; // e.g. ['BL1'], or [] for none
       STORES.splice(0, STORES.length,
         ...STORES.filter(s => allowed.includes(s.split('/')[0]))
+      );
+      // The budget-only stores narrow with the rest. A manager scoped to one store
+      // must not find a closed store's budget in their totals — the worker does the
+      // same, intersecting ALL_STORES with the grant before it scopes a query.
+      BUDGET_ONLY_STORES.splice(0, BUDGET_ONLY_STORES.length,
+        ...BUDGET_ONLY_STORES.filter(s => allowed.includes(s.split('/')[0]))
       );
       WRS_STORE_KEYS.splice(0, WRS_STORE_KEYS.length,
         // BL12 (Wyoming, frozen history) rides along with BL16 (Indy) — same
