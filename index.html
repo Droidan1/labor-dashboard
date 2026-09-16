@@ -26787,15 +26787,23 @@
     const n = irState.pallets.length;
     const expect = t.pallet_count;
     const short = expect && n < expect ? expect - n : 0;
-    const msg = short
+    const msg = (short
       ? `The BOL says ${expect} pallets. You've received ${n}.\n\nTaking it down now records the truck as ${short} short.`
-      : `${n} pallet${n === 1 ? '' : 's'} received.\n\nTaking it down frees the dock for the next truck.`;
+      : `${n} pallet${n === 1 ? '' : 's'} received.\n\nTaking it down frees the dock for the next truck.`)
+      // 🔑 Said BEFORE the click, not after. The review email goes out automatically
+      // and names anything that needs a look, so somebody who is one pallet from
+      // finished should know that now rather than read about it in their inbox.
+      + `\n\nA review email goes to the managers and admins as soon as it's down.`;
     const go = await uiConfirm(msg, { title: `Take BOL ${t.bol_no || t.id} down?`, okText: 'Truck Down' });
     if (!go) return;
     try {
       const j = await irPost('truck-down', { truck_id: t.id });
       irSetStatus(`Truck down — ${j.received} pallet${j.received === 1 ? '' : 's'}, ${(j.units || 0).toLocaleString()} units.`
-        + (j.expected && j.received < j.expected ? ` ${j.expected - j.received} short of the BOL.` : ''), 'ok');
+        + (j.expected && j.received < j.expected ? ` ${j.expected - j.received} short of the BOL.` : '')
+        // 🛑 "on its way", never "sent". The send is fire-and-forget in waitUntil, so
+        // this response cannot know what Resend said — notification_log is where that
+        // is recorded. Claiming delivery here is the drift resendSend exists to stop.
+        + ' Review email on its way.', 'ok');
       irState.truck = null; irState.pallets = [];
       irRenderCurrent();
       el('ir-open').hidden = true;
