@@ -1,3 +1,89 @@
+# Production stops trusting localhost (2026-09-16)
+
+Brian, after reading the trade: *"yes, do it."*
+
+`resolveCors` handed `Access-Control-Allow-Credentials: true` to **any** `http://localhost:*`
+origin. A page served from the viewer's own machine could therefore read credentialed
+responses from the API with their session cookie attached.
+
+**Pre-existing, and not a bug this repo introduced today** — it already covered `list-users`
+and every other admin action. migration-068 is what raised the price: `associate-reveal-pin`
+returns a live login code, so the same door went from leaking a user list to leaking a
+credential, and a read through it looks like an ordinary admin reveal in `pin_reveals`.
+
+## The change
+
+Three lines. Localhost stays a dev affordance and production stops being dev:
+
+```js
+const isProd = !(env && env.APP_ORIGIN);
+const allowed = ALLOWED_ORIGINS.includes(origin) || (!isProd && LOCALHOST_RE.test(origin));
+```
+
+plus `resolveCors(request, env)` at the one call site.
+
+**🔑 `env.APP_ORIGIN` is not a new flag.** wrangler.toml sets `APP_ORIGIN`/`API_ORIGIN` only
+under `[env.staging.vars]`; production deliberately leaves them unset so `appOrigin()` and
+`apiOrigin()` fall back to the prod literals. Its presence ALREADY means "not production", and
+the comment above those helpers has said so since they were written. Adding a second
+discriminator would have created two things to keep in sync and one day they would disagree.
+
+**The cost, accepted rather than discovered later.** `README.md:46` documents
+`npx wrangler pages dev dist` on `localhost:8788`. After this it works against **staging**
+only. Debugging the live site from a local front end is what this gives up, and that is the
+trade: the thing behind the door is now a credential.
+
+**Deliberately not changed:** `isAllowedWebauthnOrigin` also consults `LOCALHOST_RE`. That path
+validates an assertion rather than handing back a secret, and a passkey is bound to its RP ID
+regardless. Separate decision; folding it in would have conflated two.
+
+## Plan
+
+- [x] `resolveCors` takes `env`; localhost only when not production
+- [x] The one call site passes `env`
+- [x] `scripts/test-cors-origins.mjs` — greenfield, because nothing tested CORS at all
+- [x] Mutation-test in BOTH directions: too loose and too tight
+- [x] Full suite green
+
+## Review
+
+**4,864 assertions across 76 suites, green** — 52 of them the new suite, which is also the
+76th. No frontend change, so no `CACHE_NAME` bump.
+
+### What the new suite is actually for
+
+**Nothing tested `resolveCors` before.** 75 suites and not one sent an `Origin` header, so the
+CORS allowlist was the only security boundary in the worker with no coverage whatsoever. It
+was not a regression — it was never covered, and it took a feature that made the door valuable
+for anyone to look.
+
+Three mutations, all red, and the pair that matters is the second and third:
+
+| Mutation | Caught by |
+|---|---|
+| the old unconditional localhost check | production admits localhost |
+| the call site drops `env` | **staging loses local dev** |
+| refuse localhost everywhere | **staging loses local dev** |
+
+A guard that refuses everybody passes every "must be refused" assertion ever written. Sections
+2 and 3 exist as a pair for that reason: one proves the hole is closed, the other proves the
+front end and the documented dev workflow still work.
+
+### Two traps written into the suite
+
+1. **The harness's default env is PRODUCTION-shaped.** `makeEnv()` sets neither `APP_ORIGIN`
+   nor `API_ORIGIN`, exactly as production leaves them unset. Correct default for this guard,
+   but it means a test that forgets to opt in to the staging shape silently only ever
+   exercises production — so every case states which shape it is in.
+2. **The config is pinned, not just the code.** If someone adds `APP_ORIGIN` to the top-level
+   `[vars]`, production becomes "not production" and localhost is admitted again — with every
+   behavioural assertion still green, because the suite sets `env` by hand. Section 7 asserts
+   against `wrangler.toml` itself: absent from `[vars]`, present under `[env.staging.vars]`.
+
+Section 4 also covers the shapes that would pass a `startsWith`/`includes` version of the
+check — `localhost.evil.com`, `localhost:8788.evil.com`, `127.0.0.1.evil.com`, `[::1]` — in
+both environments, because an attacker can register a domain and staging is not a free pass.
+
 # Deployed: associate code recovery, and the two auth fixes rode along (2026-09-16)
 
 Brian's go, staging first and then production, each explicitly. Both are live.
