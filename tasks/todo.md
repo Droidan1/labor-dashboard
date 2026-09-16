@@ -141,9 +141,50 @@ in the same direction, because the old client reads `j.matches || []`.
   - Pinned by a relationship assertion, not a file check — exactly two migrations act on
     that index and the LAST word is the drop, so a later migration cannot quietly rebuild
     it and still pass.
-- **Needs a `wrangler deploy`** for the worker half — but nothing waits on it. The
-  user-facing fix lands with the Pages build on merge, and the worker half is dead-code
-  removal that changes no behaviour in either deploy order.
+## Shipped — 2026-09-16
+
+Both halves are in production, and the whole thing is closed out.
+
+| half | what | verified by |
+|---|---|---|
+| worker | `clover-sales-api` version `ae9843d0`, **100%** | markers pulled from the live bundle |
+| worker (staging) | `clover-sales-api-staging` version `3eace162`, **100%** | deployment status |
+| frontend | Pages production, commit `ce03029` (the PR #247 merge), deploy **success** | Cloudflare Pages API |
+| D1 | `idx_bin_dumps_po` dropped, staging + production | before/after counts, twice on prod |
+
+**The worker deploy is what actually fixed the floor**, and it did so before the merge had
+propagated: the old cached `index.html` sends `&po=…` and reads `j.matches || []`, so a
+worker that no longer returns `matches` renders no prompt. No cache cycle to wait for.
+
+Verification, in the shape the 2026-09-15 incident taught this repo — that one shipped an
+**unpulled checkout** and rolled production back past the Transactions tab for ~40 minutes,
+caught by pulling the deployed bundle and grepping it:
+
+- 🔑 **Checked for exactly that failure first.** `git diff 327ea00 origin/main -- worker.js`
+  was EMPTY before deploying, so the deployed worker is byte-identical to main's. PR #246
+  had landed in between and touched only `tasks/inventory-receiver.md`.
+- Pulled the live bundle (996,883 bytes) and grepped it: `AND po = ?` → **0**,
+  `BIN_DUMP_DUPLICATE_WINDOW_MS` → **0**, `barcode_matches` and `DUPLICATE_BARCODE` still
+  present. The change is confirmed in the running code, not inferred from a version ID.
+- 🛑 **And grepped for OTHER features, because the incident's signature was "every marker
+  at 0"** — a deploy that lands your change can still roll back somebody else's.
+  `fetchTransactionOrders`, `payment_archive`, `bank-transactions`, `approval_pin_hash`,
+  `truck_pallets`, `shelf-count-save`, `truck_review_email`, `truckExceptions` — all
+  present. (Count differences against local `worker.js` mean nothing: `grep -c` counts
+  LINES and the bundle re-joins them. Presence is the signal.)
+- Polled the live worker 18 times over ~4.5 minutes past the ~180 s gradual-rollout window:
+  **18 clean, 0 anomalies**, well-formed JSON every pass.
+
+⚠️ **Not verifiable from this environment**: `www.retjghub.com` and
+`api-staging.retjghub.com` are blocked by the agent proxy's egress policy, so the frontend
+and staging were confirmed through the Cloudflare API rather than a live request.
+`api.retjghub.com` is reachable, which is what the production worker polling used.
+
+⚠️ **The authenticated path was never exercised from here.** Every probe hit
+`401 NO_SESSION` — enough to prove the worker is alive, routing and emitting correct JSON,
+but the "does a second TJX pallet log without a prompt" question needs a logged-in session.
+The bundle grep answers it structurally; a manager scanning two pallets answers it
+for real.
 
 # Truck review email — Inventory Receiver
 
