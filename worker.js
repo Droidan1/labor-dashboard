@@ -4799,9 +4799,34 @@ function apiOrigin(env)  { return (env && env.API_ORIGIN) || "https://api.retjgh
 // www + staging) or localhost. Replaces the old single-origin equality check.
 function isAllowedWebauthnOrigin(o) { return ALLOWED_ORIGINS.includes(o) || LOCALHOST_RE.test(o); }
 
-function resolveCors(request) {
+// 🛑 LOCALHOST IS A DEV AFFORDANCE, AND PRODUCTION IS NOT DEV.
+// `Access-Control-Allow-Credentials: true` for any `http://localhost:*` origin lets
+// a page served from the VIEWER'S OWN MACHINE read credentialed responses from this
+// API with their session cookie attached. That was already true of list-users and
+// every other admin action; migration-068 raised what it is worth, because
+// associate-reveal-pin returns a live login code. A malicious or compromised local
+// dev server, or anything that can serve on a loopback port, is the threat — and a
+// read through this door looks like an ordinary admin reveal in `pin_reveals`.
+//
+// 🔑 `env.APP_ORIGIN` IS THE ENVIRONMENT TEST, and it is not a new flag to keep in
+// sync: wrangler.toml sets APP_ORIGIN/API_ORIGIN only under [env.staging.vars], and
+// production deliberately leaves them unset so appOrigin()/apiOrigin() fall back to
+// the prod literals above. Its PRESENCE therefore already means "not production".
+//
+// 🛑 The harness's makeEnv() sets neither, so a test env is PRODUCTION-SHAPED by
+// default and must opt in to staging — which is the right default for a guard like
+// this, but it means "the test passed" can mean "the test never exercised staging".
+// scripts/test-cors-origins.mjs asserts both shapes for that reason.
+//
+// Deliberately NOT changed: isAllowedWebauthnOrigin above also consults
+// LOCALHOST_RE. That path validates an assertion rather than handing back a secret,
+// and a passkey is bound to its RP ID regardless, so it is a separate decision and
+// folding it in here would conflate two of them.
+function resolveCors(request, env) {
   const origin = request.headers.get("Origin") || "";
-  const allowed = ALLOWED_ORIGINS.includes(origin) || LOCALHOST_RE.test(origin);
+  const isProd = !(env && env.APP_ORIGIN);
+  const allowed = ALLOWED_ORIGINS.includes(origin)
+    || (!isProd && LOCALHOST_RE.test(origin));
   const headers = {
     "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, X-Snapshot-Secret",
@@ -15406,7 +15431,7 @@ async function importSheetToD1(env, { filterStore = null, fromDate = null, toDat
 export default {
   // ── HTTP request handler ──────────────────────────────────────
   async fetch(request, env, ctx) {
-    const corsHeaders = resolveCors(request);
+    const corsHeaders = resolveCors(request, env);
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders });
     }
