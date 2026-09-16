@@ -6439,10 +6439,12 @@
                   class="flex-1 border border-[rgba(20,16,8,0.12)] dark:border-op-border rounded-[8px] px-3 py-2.5 text-sm text-center tracking-widest font-mono bg-opl-bg dark:bg-[rgba(255,255,255,0.03)] text-opl-ink dark:text-op-ink focus:outline-none focus:ring-2 focus:ring-accent-green/50">
                 <button onclick="assocGenerate()" class="text-sm px-4 rounded-[8px] border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition-colors whitespace-nowrap">Generate</button>
               </div>
-              <!-- 🔑 Written down here or nowhere. Only a hash is stored, so this is
-                   the one moment the code is readable — the recovery path is a NEW
-                   code, never "look up the old one". -->
-              <p id="assoc-m-pin-note" class="text-[11px] text-opl-inkDim dark:text-op-inkDimmer mt-1.5">Tell them this code now — it is stored scrambled and cannot be looked up later.</p>
+              <!-- 🔑 UNTIL migration-068 this said the code could never be looked up,
+                   which was true and is now not. A note that survives the change that
+                   falsifies it is worse than no note: an admin who believes it resets
+                   somebody's code for no reason. Set by openAssociateModal per row,
+                   from that associate's own `pin_recoverable`. -->
+              <p id="assoc-m-pin-note" class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1.5">Tell them this code now, and use View code to read it back later.</p>
             </div>
             <div>
               <label class="block text-[10px] font-semibold uppercase tracking-[0.11em] text-opl-inkDim dark:text-op-inkDim mb-2">Stores</label>
@@ -6470,6 +6472,65 @@
           <div class="px-6 pb-5 pt-4 flex justify-end gap-3 border-t border-[rgba(20,16,8,0.08)] dark:border-op-border">
             <button onclick="closeAssociateModal()" class="text-sm px-4 py-2 rounded-full border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Cancel</button>
             <button id="assoc-m-save" onclick="submitAssociate()" class="text-sm px-4 py-2 rounded-full bg-accent-green hover:brightness-110 text-[#04140a] font-semibold transition-all">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Read an associate's code back (migration-068).
+           🔑 TWO STATES, and the second is not an error screen. Every code set
+           before this shipped is unreadable forever, so "not recoverable" is the
+           ordinary answer for most of the list on day one — it explains itself and
+           offers the thing that does work (a new code) rather than dead-ending.
+           🛑 The code is fetched ON OPEN and dropped on close. It is never held in
+           `usersData`, never rendered into the table, and never part of the
+           list-users payload — one associate at a time, audited, or not at all. -->
+      <div id="assoc-reveal-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-opl-panel dark:bg-op-panel rounded-card border border-[rgba(20,16,8,0.08)] dark:border-op-borderHi shadow-xl w-full max-w-md">
+          <div class="px-6 py-4 border-b border-[rgba(20,16,8,0.08)] dark:border-op-border flex items-center justify-between">
+            <div>
+              <h2 class="text-base font-semibold text-opl-ink dark:text-op-ink">Six-digit code</h2>
+              <p id="assoc-rv-who" class="text-xs text-opl-inkDim dark:text-op-inkDim mt-0.5"></p>
+            </div>
+            <button onclick="closeAssocReveal()" aria-label="Close" class="text-opl-inkDim dark:text-op-inkDimmer hover:text-opl-ink dark:hover:text-op-ink transition-colors">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+          <div class="px-6 py-5">
+            <div id="assoc-rv-loading" class="text-sm text-opl-inkDim dark:text-op-inkDim text-center py-8">Reading…</div>
+
+            <!-- State 1: it can be read. -->
+            <div id="assoc-rv-ok" class="hidden">
+              <!-- 🛑 tabular-nums and tracking, NOT a proportional font: this is read
+                   aloud down a phone, and a 1 that is narrower than a 0 is how a
+                   code gets misheard. -->
+              <div id="assoc-rv-code" class="text-center font-mono font-bold text-[34px] tracking-[0.24em] tabular-nums
+                          rounded-[10px] py-4 px-2 bg-opl-bg dark:bg-[rgba(255,255,255,0.03)]
+                          border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi text-opl-ink dark:text-op-ink"></div>
+              <div class="flex gap-2 mt-3">
+                <button id="assoc-rv-copy" onclick="copyAssocCode()" class="flex-1 text-sm px-4 py-2 rounded-full border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi text-opl-ink dark:text-op-ink hover:border-accent-green/50 transition-colors">Copy</button>
+                <button onclick="closeAssocReveal()" class="flex-1 text-sm px-4 py-2 rounded-full border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi text-opl-inkDim dark:text-op-inkDim hover:text-opl-ink dark:hover:text-op-ink transition-colors">Close</button>
+              </div>
+              <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-3 leading-relaxed">
+                <strong class="font-semibold text-opl-ink dark:text-op-ink">Nothing has changed</strong> — they stay
+                signed in and keep using this code. Who looked is recorded.
+              </p>
+            </div>
+
+            <!-- State 2: it cannot, and why. -->
+            <div id="assoc-rv-no" class="hidden">
+              <div class="rounded-[10px] py-5 px-4 text-center border border-dashed
+                          border-[rgba(192,57,43,0.28)] dark:border-[rgba(248,113,113,0.32)]
+                          bg-[rgba(192,57,43,0.06)] dark:bg-[rgba(248,113,113,0.08)]">
+                <div class="font-mono text-[26px] tracking-[0.2em] text-opl-inkDim dark:text-op-inkDim">••••••</div>
+                <p id="assoc-rv-why" class="text-xs font-semibold mt-2 text-opl-bad dark:text-[#f87171]"></p>
+              </div>
+              <button onclick="revealToNewCode()" class="w-full mt-3 text-sm px-4 py-2 rounded-full bg-accent-green hover:brightness-110 text-[#04140a] font-semibold transition-all">Set a new code instead</button>
+              <p class="text-[11px] text-opl-inkDim dark:text-op-inkDim mt-3 leading-relaxed">
+                A new code replaces the old one and signs them out everywhere.
+              </p>
+            </div>
+
+            <div id="assoc-rv-err" class="hidden text-sm px-3 py-2 rounded-lg border border-[rgba(192,57,43,0.3)] text-opl-bad dark:text-[#f87171]"></div>
           </div>
         </div>
       </div>
@@ -31594,7 +31655,14 @@
         <td class="px-4 py-3 whitespace-nowrap">${badges.join('')}</td>
         <td class="px-4 py-3 text-xs tabular-nums text-opl-inkDim dark:text-op-inkDim whitespace-nowrap">${lastLogin}</td>
         <td class="px-4 py-3 text-right whitespace-nowrap">
-          <button onclick="openAssociateModal('${u.id}')" class="text-opl-inkDim dark:text-op-inkDimmer hover:text-accent-green transition-colors" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <!-- Labelled, not an icon like Edit and Delete beside it. This is the
+               thing an admin reaches for with somebody waiting at a phone, and a
+               key glyph is a guess; the other two are already-known operations. -->
+          <button onclick="openAssocReveal('${u.id}')"
+            class="align-middle text-[11px] font-semibold px-2.5 py-1 rounded-full mr-1
+                   border border-[rgba(20,16,8,0.14)] dark:border-op-borderHi
+                   text-opl-ink dark:text-op-ink hover:border-accent-green/60 transition-colors">View code</button>
+          <button onclick="openAssociateModal('${u.id}')" class="align-middle text-opl-inkDim dark:text-op-inkDimmer hover:text-accent-green transition-colors" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
           ${del}
         </td>
       </tr>`;
@@ -31667,11 +31735,17 @@
     el('assoc-m-status-sel').value = u ? u.status : 'active';
     // Editing keeps the code unless a new one is typed — the admin cannot read the
     // old one back, so "leave blank" is the only way to say "don't change it".
+    // 🔑 The recoverability sentence is per ASSOCIATE, from their own row, not a
+    // blanket claim: after migration-068 the two cases coexist on one list for as
+    // long as anybody keeps a code set before it shipped.
     el('assoc-m-pin-note').textContent = u
       ? ((u.pin_reset_requested_at ? `They asked for a new code ${assocAgo(u.pin_reset_requested_at)}. ` : '')
          + ((u.pin_failures || 0) >= 10 ? 'Their account is locked; a new code unlocks it. ' : '')
-         + 'Leave blank to keep the current code. A new one signs them out everywhere.')
-      : 'Tell them this code now — it is stored scrambled and cannot be looked up later.';
+         + (u.pin_recoverable
+              ? 'Leave blank to keep the current code — View code reads it back. '
+              : 'Their current code cannot be read back; a new one can. ')
+         + 'A new code signs them out everywhere.')
+      : 'Tell them this code now, and use View code to read it back later.';
 
     let pages = {};
     try { pages = u && u.pages ? JSON.parse(u.pages) : {}; } catch (_) { pages = {}; }
@@ -31690,6 +31764,89 @@
     el('assoc-m-name').focus();
   }
   function closeAssociateModal() { el('assoc-modal').classList.add('hidden'); }
+
+  // ── Reading an associate's code back (migration-068) ────────────────────
+  // 🛑 The code lives in ONE variable, only while the modal is open, and
+  // closeAssocReveal clears it. It is deliberately not put on `usersData`, not
+  // written into the row, and not cached: list-users never carries it, so the
+  // only copy in the page is this one and it goes away when the modal does.
+  let assocRevealPin = null, assocRevealId = null;
+
+  async function openAssocReveal(id) {
+    const u = usersData.find(x => x.id === id);
+    assocRevealPin = null;
+    assocRevealId = id;
+    el('assoc-rv-who').textContent = u ? (u.name || '') : '';
+    el('assoc-rv-code').textContent = '';
+    el('assoc-rv-copy').textContent = 'Copy';
+    for (const s of ['ok', 'no', 'err']) el('assoc-rv-' + s).classList.add('hidden');
+    el('assoc-rv-loading').classList.remove('hidden');
+    el('assoc-reveal-modal').classList.remove('hidden');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=associate-reveal-pin`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', body: JSON.stringify({ id }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'Could not read the code');
+      el('assoc-rv-loading').classList.add('hidden');
+      // 🔑 Re-label from the SERVER's answer, not from the row we opened. The
+      // heading above a six-digit code is the only thing saying whose it is, and
+      // if a stale `usersData` and the worker ever disagree about that, the one
+      // that actually looked it up is right.
+      if (d.name) el('assoc-rv-who').textContent = d.name;
+      if (d.recoverable) {
+        assocRevealPin = d.pin;
+        el('assoc-rv-code').textContent = d.pin;
+        el('assoc-rv-ok').classList.remove('hidden');
+      } else {
+        // Three different reasons, three different sentences. "It didn't work" is
+        // what makes an admin retry something that can never succeed.
+        el('assoc-rv-why').textContent = d.code === 'NOT_CONFIGURED'
+          ? 'Reading codes back is not switched on for this environment'
+          : d.set_at
+            ? `Set ${assocRevealDate(d.set_at)}, before codes could be read back`
+            : 'This code was set before codes could be read back';
+        el('assoc-rv-no').classList.remove('hidden');
+      }
+    } catch (e) {
+      el('assoc-rv-loading').classList.add('hidden');
+      el('assoc-rv-err').textContent = e.message;
+      el('assoc-rv-err').classList.remove('hidden');
+    }
+  }
+  function assocRevealDate(iso) {
+    const d = new Date(iso);
+    return isNaN(d) ? 'earlier' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  function closeAssocReveal() {
+    assocRevealPin = null;
+    assocRevealId = null;
+    el('assoc-rv-code').textContent = '';
+    el('assoc-reveal-modal').classList.add('hidden');
+  }
+  function copyAssocCode() {
+    if (!assocRevealPin) return;
+    const btn = el('assoc-rv-copy');
+    // The clipboard API is unavailable on an insecure origin and can be refused
+    // even on a secure one, and this is the button somebody presses in a hurry —
+    // so it reports what actually happened rather than always claiming success.
+    Promise.resolve(navigator.clipboard && navigator.clipboard.writeText(assocRevealPin))
+      .then(() => { btn.textContent = 'Copied'; })
+      .catch(() => { btn.textContent = 'Press and hold to copy'; })
+      .then(() => setTimeout(() => { if (assocRevealPin) btn.textContent = 'Copy'; }, 1600));
+  }
+  // The way out of the unrecoverable state: the code they have cannot be read, so
+  // give them one that can. Hands off to the editor that already does this.
+  function revealToNewCode() {
+    const id = assocRevealId;
+    closeAssocReveal();
+    if (!id) return;
+    openAssociateModal(id);
+    el('assoc-m-pin').value = assocGenPin();
+    assocSummary();
+    el('assoc-m-pin').focus();
+  }
 
   async function submitAssociate() {
     const id = el('assoc-m-id').value;
@@ -31726,7 +31883,7 @@
       if (!d.ok) throw new Error(d.error || 'Failed');
       closeAssociateModal();
       usersSetStatus(pin
-        ? `${name} can sign in with the code ${pin}. It is not stored anywhere you can read it back.`
+        ? `${name} can sign in with the code ${pin}.`
         : `${name} updated.`, 'ok');
       loadUsers();
     } catch (e) {
