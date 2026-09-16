@@ -280,3 +280,42 @@ therefore never been exercised by a real session.
       accounts, so a duplicate barcode or repeated BOL currently has no one who can
       approve it — the block is a dead end until a manager is given a code.
 - [ ] **The BOL read has still never met a real camera.** Watch the seal number.
+
+## Deployed — 2026-09-16, the approval code and the desktop camera fix
+
+Two follow-ups shipped after the first deploy, both from Brian using it.
+
+**The camera fix (#241).** `Receive Truck` did nothing on a desktop.
+`capture="environment"` does not mean *prefer* the camera — it means rear camera and
+nothing else, so a browser with none to satisfy it presents no picker at all and the
+button reads as dead. `syncCameraCapture()` now sets the attribute from
+`(pointer: coarse)` at the moment the picker opens. Bin Dump had the identical latent
+bug and got the same call; on a phone it is a no-op, so the path that works could not
+regress. Frontend only — merging was the whole deploy.
+
+**The approval code (#242).** The override shipped with nobody able to use it.
+`set-approval-pin`, gated on `canAccessInventory` — already exactly superuser-or-admin,
+so no new role machinery. Worker versions: staging `169a04a7`, production `1fce16c4`.
+
+Deploy output carried the `MEDIA` binding, `BL16_MERCHANT_ID` and all six production
+crons. Rollout confirmed by reading the deployed bundle back three times, identical each
+pass — 966,159 bytes, `set-approval-pin` ×2, `approval_pin_hash` ×8, `NOT_AN_APPROVER`
+×1 — and `api.retjghub.com` answers `401 NO_SESSION` on the new action, so it boots and
+refuses before the handler. No migration: `066` was already applied, and the columns
+were re-read on both databases before deploying rather than assumed.
+
+⚠️ **Merging deployed the frontend BEFORE the worker, twice now.** Pages publishes `main`
+on merge and does not wait, so the Users page offered a Set code button against a worker
+with no such action for the minutes in between. Harmless both times — the fail-closed
+action gate refuses cleanly — but the safe order is a thing to arrange, not to be lucky
+about. For a change that adds a worker action, deploying the worker BEFORE merging is
+the correct order, and is possible: a new action is additive and the old frontend never
+calls it.
+
+### Still outstanding
+
+- [ ] **Nobody has an approval code yet.** The door exists now; somebody still has to
+      walk through it. Until at least one manager per store has one, a duplicate barcode
+      or a repeated BOL is a dead end at the dock.
+- [ ] **The BOL read has still never met a real camera.** Watch the seal number.
+
