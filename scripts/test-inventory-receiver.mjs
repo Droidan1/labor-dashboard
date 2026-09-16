@@ -568,5 +568,100 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
      'a click that throws surfaces a message instead of looking like a dead button');
 }
 
+// ── 24. set-approval-pin — the admin door for the override ─────────────────
+{
+  const { db, env } = env0();
+  // Start from nobody having a code, which is production's real state.
+  db.exec("UPDATE users SET approval_pin_hash = NULL, approval_pin_failures = 0");
+  const set = (user, body) => call('/?action=set-approval-pin', { user, method: 'POST', body, env });
+
+  // Who may set one: admin and superuser, and nobody else.
+  eq((await set('u-mgr1', { id: 'u-mgr2', pin: '314159' })).status, 403, 'a manager cannot set an approval code');
+  eq((await set('u-exec', { id: 'u-mgr2', pin: '314159' })).status, 403, 'nor can an executive');
+  eq((await set('u-staff', { id: 'u-mgr2', pin: '314159' })).status, 403, 'nor staff');
+  eq((await set('u-admin', { id: 'u-mgr1', pin: '314159' })).status, 200, '✅ an admin can');
+  eq((await set('u-su', { id: 'u-mgr2', pin: '271828' })).status, 200, '✅ and a superuser can');
+
+  // 🛑 Six digits, and not an obvious run — a code chosen to be memorable at a dock is
+  // the code somebody standing at that dock will try first.
+  for (const [bad, why] of [
+    ['12345', 'five digits'], ['1234567', 'seven digits'], ['abcdef', 'letters'],
+    ['123456', 'a run'], ['111111', 'all one digit'], ['654321', 'a reverse run'],
+  ]) {
+    const r = await set('u-admin', { id: 'u-mgr1', pin: bad });
+    eq(r.status, 400, `refuses ${JSON.stringify(bad)} — ${why}`);
+    eq((await json(r)).code, 'WEAK_PIN', `...as WEAK_PIN (${why})`);
+  }
+
+  // 🔑 Refused for a role that could never approve with it: a code that reads as
+  // configured but never works is worse than no code.
+  const staff = await set('u-admin', { id: 'u-staff', pin: '314159' });
+  eq(staff.status, 400, 'refuses a code for a staff account');
+  eq((await json(staff)).code, 'NOT_AN_APPROVER', '...saying why');
+  eq(db.prepare("SELECT approval_pin_hash AS h FROM users WHERE id='u-staff'").get().h, null,
+     '...and writes nothing');
+
+  // 🛑 It writes approval_pin_hash and NEVER pin_hash. Getting this wrong would
+  // reclassify the manager as an associate — the whole reason for the second column.
+  const row = db.prepare("SELECT pin_hash AS p, approval_pin_hash AS a FROM users WHERE id='u-mgr1'").get();
+  ok(!!row.a, 'the approval hash is written');
+  eq(row.p, null, '🛑 pin_hash is untouched — the manager is NOT turned into an associate');
+  ok(row.a !== '314159', '🛑 the code is hashed, never stored in the clear');
+
+  // 🛑 It does NOT sign the target out. associate-save must, because there the code IS
+  // the login; here it authorises one action and a mid-shift logout would be a bug.
+  db.exec("INSERT INTO sessions (id, user_id, expires_at, created_at) VALUES ('sess-keep','u-mgr1','2099-01-01T00:00:00Z','2026-01-01T00:00:00Z')");
+  await set('u-admin', { id: 'u-mgr1', pin: '867530' });
+  eq(db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE id='sess-keep'").get().n, 1,
+     "🛑 setting a code does NOT end the manager's session");
+
+  // Revoke, and the difference between "revoke" and "malformed".
+  eq((await set('u-admin', { id: 'u-mgr1', pin: null })).status, 200, 'null revokes');
+  eq(db.prepare("SELECT approval_pin_hash AS a FROM users WHERE id='u-mgr1'").get().a, null, '...clearing the hash');
+  await set('u-admin', { id: 'u-mgr1', pin: '867530' });
+  eq((await set('u-admin', { id: 'u-mgr1' })).status, 400, '🛑 an ABSENT pin is a bad request, not a silent wipe');
+  ok(!!db.prepare("SELECT approval_pin_hash AS a FROM users WHERE id='u-mgr1'").get().a,
+     '...and the existing code survives it');
+
+  // Setting a code clears the lockout — it is the only way out of one.
+  db.exec("UPDATE users SET approval_pin_failures = 10 WHERE id = 'u-mgr1'");
+  await set('u-admin', { id: 'u-mgr1', pin: '424242' });
+  eq(db.prepare("SELECT approval_pin_failures AS n FROM users WHERE id='u-mgr1'").get().n, 0,
+     'a new code clears the failure counter');
+
+  // The hash never leaves D1.
+  const listed = await json(await call('/?action=list-users', { user: 'u-admin', env }));
+  const m1 = listed.users.find(u => u.id === 'u-mgr1');
+  eq(m1.has_approval_pin, 1, 'list-users reports THAT a code exists');
+  ok(!('approval_pin_hash' in m1), '🛑 ...and never what it is');
+}
+
+// ── 25. A code set through that door actually works at the dock ────────────
+// 🔑 The two halves were built at different times against the same column, and a
+// mismatch — a different pepper, a trimmed string, a stray case change — would leave
+// both sides passing their own tests while no manager on earth could approve anything.
+{
+  const { db, env } = env0();
+  db.exec("UPDATE users SET approval_pin_hash = NULL WHERE id = 'u-mgr1'");
+  db.exec("UPDATE users SET name = 'Kevin R' WHERE id = 'u-mgr1'");
+  eq((await call('/?action=set-approval-pin',
+    { user: 'u-admin', method: 'POST', body: { id: 'u-mgr1', pin: '505017' }, env })).status, 200,
+    'an admin sets the code');
+
+  const t1 = seedTruck(db, { store: 'BL1' });
+  spy(textReply('{}'));
+  await call('/?action=truck-pallet-log', { user: 'u-mgr1', method: 'POST', body: { truck_id: t1, ...TAG, ...IMG }, env });
+  const dup = () => call('/?action=truck-pallet-log',
+    { user: 'u-mgr1', method: 'POST', body: { truck_id: t1, ...TAG, ...IMG,
+      approval: { name: 'Kevin R', pin: '505017', reason: 'set by admin' } }, env });
+  const r = await dup();
+  eq(r.status, 200, '✅ and that exact code clears a duplicate at the dock');
+  eq((await json(r)).dup_approved_by, 'Kevin R', '...with their name on the row');
+
+  // Revoked means revoked, end to end.
+  await call('/?action=set-approval-pin', { user: 'u-admin', method: 'POST', body: { id: 'u-mgr1', pin: null }, env });
+  eq((await dup()).status, 409, '✅ once revoked, the same code no longer approves');
+}
+
 console.log(`\n${assertions} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
