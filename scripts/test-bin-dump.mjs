@@ -37,6 +37,12 @@ const TAG = {   // A — 2026-09-08 photo
   barcode: 'PRM-10490-30', item_no: '50201', pallet_name: 'PALLET AMAZON IND8',
   sup_ref: null, po: '5036', units: 1, created_by_tag: 'Ranon Price', truck_no: '10490',
 };
+// 🛑 WHAT THE 'PO / WO' FIELD REALLY CARRIES on format B in production. Both TAG fixtures
+// above use a NUMBER, which is what let the PO prompt look sane in tests while firing on
+// every pallet on the floor. Every BL1 row logged through the second tag format carries
+// this string instead — a receiving method, shared forever, never a pallet's identity.
+const REAL_PO_LABEL = 'RM1 - TJX';
+
 const TAG_B = { // B — 2026-08-26 photo: WO not PO, a Sup. Ref, no truck, wrapped name
   barcode: 'P-082626-725979', item_no: '50007',
   pallet_name: 'FG BL CONSUMABLES - FOOD - SNACKS',
@@ -313,16 +319,29 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   eq(row.po, null, 'an empty PO is stored as null, not ""');
 }
 
-// ── 14. The soft duplicate check ───────────────────────────────────────────
+// ── 14. The duplicate pre-flight answers on the BARCODE, and nothing else ──
+// Brian, 2026-09-16: "I only want a tag to be considered a duplicate if the PRM-10490-30
+// or P-090926-729727 matches." A `po=` is IGNORED rather than rejected: an installed PWA
+// serves a cached index.html for one launch and that old client still sends one — ignoring
+// it degrades that tab to "no PO prompt", which is exactly the wanted behaviour.
 {
   const { env } = env0();
   await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST', body: { store: 'BL1', ...TAG }, env });
-  let j = await json(await call('/?action=bin-dump-recent&store=BL1&po=5036', { user: 'u-mgr1', env }));
-  eq(j.matches.length, 1, 'a PO logged minutes ago is found');
-  j = await json(await call('/?action=bin-dump-recent&store=BL1&po=9999', { user: 'u-mgr1', env }));
-  eq(j.matches.length, 0, 'a different PO is not');
+
+  let j = await json(await call(
+    `/?action=bin-dump-recent&store=BL1&barcode=${encodeURIComponent(TAG.barcode)}`, { user: 'u-mgr1', env }));
+  eq(j.barcode_matches.length, 1, 'a barcode logged minutes ago is found');
+  eq(j.matches, undefined,
+     '🛑 there is no `matches` field at all — the PO question is deleted, not merely unread');
+
+  // 5036 is the PO of the row just logged. It must buy the caller nothing.
+  j = await json(await call('/?action=bin-dump-recent&store=BL1&po=5036', { user: 'u-mgr1', env }));
+  eq(j.ok, true, '🔑 a PO-only call is ACCEPTED — a stale cached client sends one for a launch');
+  eq(j.barcode_matches.length, 0, '…and finds nothing: a PO never identified a pallet');
+  eq(j.matches, undefined, '…and still answers no second question');
+
   eq((await call('/?action=bin-dump-recent&store=BL4&po=5036', { user: 'u-mgr1', env })).status, 403,
-     'the duplicate check is store-scoped too');
+     'the pre-flight is store-scoped either way');
 }
 
 // ── 15. Editing ────────────────────────────────────────────────────────────
@@ -684,7 +703,7 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
      '…but 80 days ago still does');
 }
 
-// bin-dump-recent answers both questions in one trip, and keeps them apart.
+// bin-dump-recent asks ONE question, and a PO riding alongside cannot add a second.
 {
   const { env } = env0();
   await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
@@ -693,11 +712,10 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   let j = await json(await call(
     `/?action=bin-dump-recent&store=BL1&po=5036&barcode=${encodeURIComponent(TAG.barcode)}`,
     { user: 'u-mgr1', env }));
-  eq(j.matches.length, 1, 'the PO hint still works');
-  eq(j.barcode_matches.length, 1, 'and the barcode block is reported alongside it');
+  eq(j.barcode_matches.length, 1, 'the barcode block is reported');
+  eq(j.matches, undefined, '🛑 and a PO sent alongside it answers nothing');
 
   j = await json(await call('/?action=bin-dump-recent&store=BL1&barcode=PRM-9-9', { user: 'u-mgr1', env }));
-  eq(j.matches.length, 0, 'no PO asked, no PO answered');
   eq(j.barcode_matches.length, 0, 'an unseen barcode matches nothing');
 
   // 🔑 A barcode-only question must not be swallowed by the "no PO" early return the
@@ -746,11 +764,113 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   ok(guardAt > 0 && putAt > 0 && guardAt < putAt,
      '🛑 in the source, the duplicate refusal precedes the R2 put — the orphan test above pins the behaviour, this pins the ordering');
 
+  // ── migration-067: the PO index goes when its only query does ──────────
+  // Brian, 2026-09-16, after the PO duplicate check was removed: "drop the po index too."
+  const m67 = fs.readFileSync(path.join(repo, 'migration-067.sql'), 'utf8');
+  // 🛑 ASSERT ON THE STATEMENTS, NOT THE PROSE. This file explains itself at length and
+  // names the indexes it is NOT touching, the reversal statement, and a grep to re-verify
+  // the claim — every one of which a naive /idx_bin_dumps_barcode/ test reads as a hit.
+  // Strip `--` lines first, then assert; the comments are checked separately below.
+  const sql67 = m67.replace(/^\s*--.*$/gm, '').trim();
+  eq(sql67, 'DROP INDEX IF EXISTS idx_bin_dumps_po;',
+     '🔑 migration-067 is ONE statement: drop that index, re-runnably, and nothing else');
+
+  // 🛑 The two indexes that are still load-bearing, and the column itself. A DROP
+  // migration is the easiest place in this repo to take one thing too many with it, and
+  // the damage stays invisible until the table is big enough to hurt.
+  ok(!/idx_bin_dumps_barcode/i.test(sql67),
+     '🛑 …so idx_bin_dumps_barcode survives — that one serves the duplicate check itself');
+  ok(!/idx_bin_dumps_store/i.test(sql67), '…and idx_bin_dumps_store, which the log and the CSV walk');
+  ok(!/ALTER TABLE/i.test(sql67) && !/DROP COLUMN/i.test(sql67) && !/DELETE FROM/i.test(sql67),
+     '🔑 …and no column and no row goes with it: bin_dumps.po keeps every value it holds');
+
+  // The reversal lives in the prose on purpose — it must NOT be an executable statement in
+  // a file whose job is to drop the thing.
+  ok(/^\s*--.*CREATE INDEX IF NOT EXISTS idx_bin_dumps_po ON bin_dumps\(store, po, logged_at DESC\);/m.test(m67),
+     '…and the exact statement that puts it back is recorded, commented out, verbatim');
+
+  // 🔑 TEST THE RELATIONSHIP, NOT THE FILE. Asserting only that 067 says DROP leaves a
+  // later migration free to CREATE it again, and both assertions would pass. The net
+  // effect across every migration in order is what actually decides whether it exists.
+  const touching = fs.readdirSync(repo).filter(f => /^migration-\d+\.sql$/.test(f)).sort()
+    .filter(f => /idx_bin_dumps_po/i.test(
+      fs.readFileSync(path.join(repo, f), 'utf8').replace(/^\s*--.*$/gm, '')));
+  eq(touching.join(','), 'migration-058.sql,migration-067.sql',
+     'exactly two migrations act on that index — the one that made it and the one that drops it');
+  ok(/DROP INDEX/i.test(fs.readFileSync(path.join(repo, touching[touching.length - 1]), 'utf8')),
+     '🛑 …and the LAST word on it is the drop, so replaying every migration in order '
+     + 'leaves it gone rather than quietly rebuilt');
+
   const h = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
   ok(/allow_duplicate: true/.test(h), 'the client can send the override');
   ok(/bdPostAllowingDuplicate/.test(h), 'and retries once when the worker refuses on a race it could not pre-flight');
   ok(/class="bd-dup"/.test(h), 'the log badges rows sharing a barcode');
   ok(/if \(!c\) continue;/.test(h), '…and skips blanks when deciding what is shared');
+}
+
+// ── 19b. Only the barcode makes a pallet a duplicate ──────────────────
+// Brian, 2026-09-16: "I only want a tag to be considered a duplicate if the PRM-10490-30
+// or P-090926-729727 matches."
+//
+// 🛑 THE BUG THIS PINS. "PO / WO" is a purchase order on one tag format (`5036` — one
+// truck, a few pallets) and a RECEIVING-METHOD LABEL on the other (`RM1 - TJX`), which
+// every TJX pallet carries for good. While the client prompted on a PO hit, every pallet
+// after the first in an unload was told it had "already been logged", naming a pallet it
+// had nothing to do with. Production, 2026-09-10 and 2026-09-16: 19 of 31 submits
+// prompted, `RM1 - TJX` spanned 20 rows carrying 20 DISTINCT barcodes, and not one firing
+// was a real repeat. Reported by the floor as "we keep getting duplicate pallet messages
+// and they are not duplicates".
+{
+  const { env, db } = env0();
+  const ins = db.prepare(`INSERT INTO bin_dumps (store, barcode, item_no, pallet_name, po, units, logged_by, logged_at)
+                          VALUES ('BL1', ?, '50081', 'FGP ONE - OTHER', ?, 1, 'x@y.z', ?)`);
+  // Three real pallets off one unload: same label, same item, same name, minutes apart.
+  ['P-090926-729894', 'P-090926-729898', 'P-090826-729249'].forEach((b, i) =>
+    ins.run(b, REAL_PO_LABEL, new Date(Date.parse(PINNED) - (i + 1) * 900000).toISOString()));
+
+  const j = await json(await call(
+    `/?action=bin-dump-recent&store=BL1&po=${encodeURIComponent(REAL_PO_LABEL)}&barcode=P-090926-729727`,
+    { user: 'u-mgr1', env }));
+  eq(j.barcode_matches.length, 0,
+     '🔑 a fourth pallet off the same unload is NOT a duplicate — its barcode is its own');
+  eq(j.matches, undefined,
+     '🛑 and the three rows sharing its label are not reported at all: `matches` is gone, '
+     + 'so no client can revive the question by reading a field that is still being filled');
+
+  eq((await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
+      body: { store: 'BL1', barcode: 'P-090926-729727', item_no: '50081', po: REAL_PO_LABEL, units: 1 }, env })).status, 200,
+     '…and it logs with no override — a shared PO was never grounds to refuse a pallet');
+
+  // The one that IS a duplicate, so the deletion above cannot be mistaken for the guard
+  // going soft: same barcode, and the worker still refuses it.
+  const r = await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
+    body: { store: 'BL1', barcode: 'P-090926-729894', item_no: '50081', po: REAL_PO_LABEL, units: 1 }, env });
+  eq(r.status, 409, '🛑 …while a REPEATED BARCODE off that same unload is still refused');
+  eq((await json(r)).code, 'DUPLICATE_BARCODE', '…with the barcode code, the only one left');
+}
+
+// The client's half: nothing but the barcode can raise the question.
+{
+  const h = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const fn = h.slice(h.indexOf('async function bdSubmit'), h.indexOf('window.bdSubmit'));
+
+  ok(/dup\.barcode_matches\.length/.test(fn), 'bdSubmit still asks the barcode question');
+
+  // 🛑 THE ASSERTION THAT KEEPS THE FALSE ALARM DEAD. Scoping the PO prompt to some
+  // narrower case would still leave a path where a shared label interrupts a submit;
+  // there is no such path if bdSubmit cannot see a PO answer at all.
+  ok(!/dup\.matches/.test(fn),
+     '🛑 …and reads NOTHING about the PO — a PO hit cannot interrupt a submit by any route');
+  ok(!/Already logged\?/.test(fn),
+     '…the "Already logged?" prompt is deleted, not merely made unreachable');
+
+  const rec = h.slice(h.indexOf('async function bdRecent'), h.indexOf('function bdDupText'));
+  ok(/barcode=\$\{encodeURIComponent/.test(rec), 'the pre-flight still sends the barcode');
+  ok(!/po=/.test(rec),
+     '🔑 …and does not send a po at all: a parameter nobody reads is how a dead rule '
+     + 'gets wired back up by the next person');
+  ok(!/matches: \[\], barcode_matches/.test(rec) && !/j\.matches/.test(rec),
+     '…nor carries an empty `matches` through its failure paths');
 }
 
 // ── 20. Export ranges: weeks=all, the limit, and saying when it truncates ──

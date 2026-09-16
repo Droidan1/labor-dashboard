@@ -1,3 +1,150 @@
+# Bin Dump — the "duplicate pallet" messages that were never duplicates
+
+Brian, 2026-09-16, with a CSV of this week's BL1 pallets: *"users are saying they keep
+getting messages about duplicate pallet tags but they are not … also happened last week."*
+
+## What was actually firing
+
+Not the barcode check. **The PO check.**
+
+Bin Dump asks two duplicate questions on every submit:
+
+| | Question | Weight |
+|---|---|---|
+| Barcode | same barcode anywhere in 90 days | HARD — worker returns 409 |
+| PO / WO | same PO at this store in 6 hours | SOFT — client prompt only |
+
+Production D1, all 31 `bin_dumps` rows:
+
+- **Zero** rows share a barcode. `GROUP BY barcode HAVING COUNT(*) > 1` returns nothing,
+  so the hard check has never fired on a logged pallet — not once, ever.
+- **19 of 31** submits had a prior row with the same PO at the same store inside 6 hours,
+  which is the client's "Already logged?" prompt, every time.
+- `po = 'RM1 - TJX'` covers **20 rows carrying 20 DISTINCT barcodes**. Every single
+  firing named a different physical pallet.
+- Both reported days line up: 2026-09-10 (16 of 19 prompted, one against 15 prior rows)
+  and 2026-09-16 (3 of 5).
+
+## Root cause
+
+`PO / WO` is one field holding two unrelated things, because the two tag formats disagree:
+
+- Format A (`PRM-10490-30`) prints **`PO:`** — `5036`, one truck, a handful of pallets.
+- Format B (`P-090926-729727`) prints **`WO:`** — `RM1 - TJX`, a **receiving method**
+  that every TJX pallet carries forever.
+
+`WHERE po = ?` therefore matches the entire unload on format B, and the prompt fires on
+every pallet after the first. The PO check predates the barcode check (migration-058 vs
+migration-060, `4622e88 Refuse the same pallet twice, by barcode`); when the barcode check
+arrived it superseded the PO check but was only suppressed in the narrow case where the
+barcode had ALREADY prompted — so a clean barcode still fell through to the weaker
+question. That gap is the bug.
+
+The repo had already written the rule this violates, in the barcode window comment:
+*"a warning that fires on good pallets trains people to click through it — which costs
+more than the check was ever worth."*
+
+## Plan
+
+- [x] Read the log, the pre-flight and both duplicate paths (`bdSubmit`, `bin-dump-recent`)
+- [x] Confirm against production D1 which check fired — read-only `SELECT`s, no mutation
+- [x] Rule out the barcode check (0 barcode collisions in the table)
+- [x] `index.html` — the PO prompt becomes a fallback: `!v.barcode` replaces `!allowDup`
+- [x] `scripts/test-bin-dump.mjs` — reproduce the real unload; EVALUATE the real condition
+- [x] Prove the new test fails against the old condition, then passes
+- [x] Bump `CACHE_NAME` + shell-cache fixture (index.html changed)
+- [x] Full suite green
+
+## Brian's call, 2026-09-16
+
+> *"I only want a tag to be considered a duplicate if the PRM-10490-30 or P-090926-729727
+> matches for example."*
+
+Barcode only. So the PO check is **deleted**, not scoped — including the no-barcode
+fallback the first pass kept. A tag with no barcode now gets no duplicate check at all,
+which is the ask: nothing else on a pallet tag identifies a pallet.
+
+## The change
+
+| | |
+|---|---|
+| `index.html` — `bdSubmit` | the whole "Already logged?" PO prompt, gone |
+| `index.html` — `bdRecent` | drops the `po` argument and the `matches` it returned |
+| `worker.js` — `bin-dump-recent` | drops the PO query and the `matches` field |
+| `worker.js` | `BIN_DUMP_DUPLICATE_WINDOW_MS` removed — the PO query was its only user |
+
+Deleted rather than left computed-and-unread. A response field nobody reads is how a dead
+rule gets wired back up by the next person, and scoping the prompt to some narrower case
+would still leave a path where a shared label interrupts a submit. There is no such path
+if `bdSubmit` cannot see a PO answer at all.
+
+**`po=` is ignored, not rejected.** An installed PWA serves a cached `index.html` for one
+launch after a release, and that old client still sends one. Ignoring it degrades that tab
+to "no PO prompt" — exactly the wanted behaviour. Dropping `matches` from the body is safe
+in the same direction, because the old client reads `j.matches || []`.
+
+**Deploy order is free** (CLAUDE.md rule 6 — neither side stops being backward-compatible):
+
+- Worker first → old client sends `po`, worker ignores it, gets no `matches`, shows no
+  prompt. Wanted behaviour, immediately.
+- Pages first → new client sends no `po` and reads no `matches`; the worker's PO query
+  runs and is thrown away. Harmless.
+
+## Plan
+
+- [x] Read the log, the pre-flight and both duplicate paths
+- [x] Confirm against production D1 which check fired — read-only `SELECT`s, no mutation
+- [x] Rule out the barcode check (0 barcode collisions in the table)
+- [x] First pass: scope the PO prompt to tags with no barcode
+- [x] Brian: barcode only — remove the PO check outright, client and worker
+- [x] Tests: the deletion, the ignored `po=`, and that a repeated BARCODE is still refused
+- [x] Prove both halves fail when the check is put back
+- [x] Bump `CACHE_NAME` + shell-cache fixture
+- [x] Full suite green
+
+## Review
+
+- **Nothing was weakened.** The 409 on a repeated barcode is untouched: exact match, still
+  crosses stores, still 90 days, still re-checked server-side, still ahead of the R2 put.
+  Pinned by a new assertion that logs a *repeated* barcode off the same unload and gets
+  409 back — so the deletion cannot be mistaken for the guard going soft.
+- **No schema change, no migration, no DB write.** Production was read with `SELECT`s only.
+- **Verified against regressions, not just for a pass.** Re-emitting `matches` from the
+  worker turns 4 assertions red; restoring the client prompt turns 2 red.
+- 4,734 assertions across 75 suites pass.
+- **`idx_bin_dumps_po` dropped** — `migration-067.sql`. Brian asked for it the same day
+  ("drop the po index too"), which is the explicit OK the Destructive Operations rules
+  want — given the summary first, then his call: staging, then production, now.
+  **Applied 2026-09-16**, staging (`b40982c2…`) then production (`3fa911d7…`), each
+  verified before and after:
+
+  | | staging | production |
+  |---|---|---|
+  | rows before → after | 0 → 0 | 31 → 31 |
+  | non-null `po` before → after | 0 → 0 | 31 → 31 (6 distinct, unchanged) |
+  | indexes after | `idx_bin_dumps_barcode`, `idx_bin_dumps_store` | same |
+  | `idx_bin_dumps_po` | gone | gone |
+  | `po` column | present | present |
+
+  Production took a second consecutive clean pass, and the planner still reports
+  `SEARCH bin_dumps USING INDEX idx_bin_dumps_barcode (barcode=? AND logged_at>?)` — so
+  the duplicate check's own index is intact and still in use, not merely still listed.
+  - Verified unused by enumeration, not memory. Every surviving `bin_dumps` predicate:
+    `WHERE barcode = ? AND logged_at >= ?` (barcode index), `WHERE store = ? AND
+    logged_at >= ?` (store index), `WHERE id = ?` (primary key). `po` now appears only in
+    the INSERT and UPDATE column lists — written, never searched.
+  - An index only. No row, and **not the `po` column** — every pallet keeps the PO/WO
+    printed on its tag, and the log and CSV still show it.
+  - Reversible verbatim; the `CREATE INDEX` that undoes it is recorded in the migration,
+    commented out. SQLite rebuilds an index from the table, so nothing is lost.
+  - Safe in either deploy order: dropping an index can cost speed, never correctness.
+  - Pinned by a relationship assertion, not a file check — exactly two migrations act on
+    that index and the LAST word is the drop, so a later migration cannot quietly rebuild
+    it and still pass.
+- **Needs a `wrangler deploy`** for the worker half — but nothing waits on it. The
+  user-facing fix lands with the Pages build on merge, and the worker half is dead-code
+  removal that changes no behaviour in either deploy order.
+
 # Truck review email — Inventory Receiver
 
 Brian, 2026-09-16, after reviewing the preview: *"Keep the BOL photo attached, exception

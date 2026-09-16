@@ -26025,30 +26025,30 @@
         bdSetStatus('Changes saved.', 'ok');
       } else {
         const store = bdScanStore();
-        const dup = await bdRecent(store, v.po, v.barcode);
+        const dup = await bdRecent(store, v.barcode);
 
-        // 🛑 The BARCODE check first, and it is a block. One barcode is one physical
-        // pallet, so a repeat means the same pallet twice and its units counted into the
-        // bins twice. Backing out here is the expected answer, not the exceptional one.
+        // 🛑 THE BARCODE IS THE ONLY THING THAT MAKES A PALLET A DUPLICATE. Brian,
+        // 2026-09-16: "I only want a tag to be considered a duplicate if the PRM-10490-30
+        // or P-090926-729727 matches." One barcode is one physical pallet, so a repeat
+        // means the same pallet twice and its units counted into the bins twice. Backing
+        // out here is the expected answer, not the exceptional one.
+        //
+        // 🔑 THERE USED TO BE A SECOND QUESTION BELOW THIS ONE — same PO at this store in
+        // the last six hours — and it was noise wearing a warning's clothes. `PO / WO` is a
+        // purchase order on one tag format (`5036`, one truck) and a RECEIVING-METHOD LABEL
+        // on the other (`RM1 - TJX`), which every TJX pallet carries forever, so it matched
+        // the whole unload. Production fired it on 19 of 31 submits and `RM1 - TJX` alone
+        // spanned 20 rows carrying 20 DISTINCT barcodes — not one firing was a real repeat,
+        // and the floor learned to click through the one dialog that ever matters.
+        //
+        // 🛑 So a tag with NO barcode now gets no duplicate check at all. That is the ask,
+        // not an oversight: there is nothing else on a pallet tag that identifies a pallet.
         let allowDup = false;
         if (dup.barcode_matches.length) {
           if (!await bdConfirmDuplicate(dup.barcode_matches, false)) {
             bdState.busy = false; btn.disabled = false; return;
           }
           allowDup = true;
-        }
-
-        // ⚠️ The PO check second, and it stays a soft warning: one PO covers a whole truck,
-        // so a repeat is normal and blocking on it would be noise. Skipped entirely when
-        // the barcode question was already asked — one pallet, one interruption.
-        if (!allowDup && v.po && dup.matches.length) {
-          const d = dup.matches[0];
-          const goOn = await uiConfirm(
-            `PO ${v.po} was already logged ${bdWhen(d.logged_at)} by ${d.logged_by || 'someone'}`
-            + `${d.pallet_name ? ` — ${d.pallet_name}` : ''}${d.units != null ? `, ${d.units} unit${d.units === 1 ? '' : 's'}` : ''}.`
-            + '\n\nLog this pallet as well?',
-            { title: 'Already logged?', okText: 'Log it anyway' });
-          if (!goOn) { bdState.busy = false; btn.disabled = false; return; }
         }
 
         const res = await bdPostAllowingDuplicate('bin-dump-log', {
@@ -26106,21 +26106,24 @@
     }
   }
 
-  // Asks both duplicate questions in one round trip. The PO answer is a hint; the barcode
-  // answer is a block. Pre-flighting it here is purely to avoid uploading a 250 KB photo
-  // only to have it refused — the WORKER decides, and bdSubmit still handles a 409 for the
-  // case this check could not see (someone else logging the same pallet a second earlier).
-  async function bdRecent(store, po, barcode) {
+  // Has this exact barcode been logged before? Pre-flighting it here is purely to avoid
+  // uploading a 250 KB photo only to have it refused — the WORKER decides, and bdSubmit
+  // still handles a 409 for the case this check cannot see (someone else logging the same
+  // pallet a second earlier).
+  //
+  // 🛑 NO `po=`. A PO is not a pallet's identity — see the note in bdSubmit. Sending one
+  // "just in case" is how the question finds its way back into somebody's face.
+  async function bdRecent(store, barcode) {
     const q = `${WORKER_BASE}?action=bin-dump-recent&store=${encodeURIComponent(store)}`
-      + `&po=${encodeURIComponent(po || '')}&barcode=${encodeURIComponent(barcode || '')}`;
+      + `&barcode=${encodeURIComponent(barcode || '')}`;
     try {
       const r = await fetch(q, { credentials: 'include' });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) return { matches: [], barcode_matches: [] };
-      return { matches: j.matches || [], barcode_matches: j.barcode_matches || [] };
+      if (!r.ok) return { barcode_matches: [] };
+      return { barcode_matches: j.barcode_matches || [] };
     } catch (e) {
-      // A failed hint must never fail a submit. The server still refuses a real duplicate.
-      return { matches: [], barcode_matches: [] };
+      // A failed pre-flight must never fail a submit. The server still refuses a real one.
+      return { barcode_matches: [] };
     }
   }
 

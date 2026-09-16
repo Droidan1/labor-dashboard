@@ -95,8 +95,10 @@ would lose the ability to ask either question.
 ask whether it has already been applied.
 
 `migration-060.sql` adds `idx_bin_dumps_barcode ON bin_dumps(barcode, logged_at DESC)`.
-🔑 **Not store-prefixed**, unlike `idx_bin_dumps_po`: the duplicate lookup deliberately
-crosses stores, so a store-first index would not serve it. Unlike -059 this one **is**
+🔑 **Not store-prefixed**: the duplicate lookup deliberately crosses stores — one pallet
+cannot be in two places — so a store-first index would not serve it. (`idx_bin_dumps_po`
+was store-prefixed and is the contrast this note used to draw; `migration-067.sql` drops
+it, because the one query it served is gone.) Unlike -059 this one **is**
 re-runnable — `CREATE INDEX` takes `IF NOT EXISTS` where `ALTER TABLE ADD COLUMN` does
 not. Verified in use, not merely present: the planner reports
 `SEARCH bin_dumps USING INDEX idx_bin_dumps_barcode (barcode=? AND logged_at>?)` on both
@@ -226,11 +228,16 @@ choice value and the two must never collide.
   🛑 A blank barcode is **not** a duplicate of every other blank, or a torn tag becomes
   unloggable. The early return that guarantees this cannot be caught behaviourally (SQL's
   `= NULL` matches nothing either way), so it is pinned at the source with that reason.
-- ⚠️ Duplicate PO/WO within **six hours** at the same store → **soft warning**, never a
-  block. Six hours is one receiving session: a truck of 30 pallets is unloaded over hours.
-  One PO covers all 30 pallets, so repeating is normal — which is exactly why the barcode
-  check above had to be a separate, harder rule. Skipped when the barcode question was
-  already asked: one pallet, one interruption.
+- 🛑 **There is no PO/WO duplicate rule any more.** Brian, 2026-09-16: *"I only want a
+  tag to be considered a duplicate if the PRM-10490-30 or P-090926-729727 matches for
+  example."* A shared PO/WO used to raise a soft warning within six hours at the same
+  store, and it was noise, not a warning: the field holds a purchase order on tag A
+  (`5036`, one truck) and a **receiving-method label** on tag B (`RM1 - TJX`), which every
+  TJX pallet carries for good. Production fired it on 19 of 31 submits, and `RM1 - TJX`
+  alone spanned 20 rows carrying 20 **distinct** barcodes — not one firing was ever a real
+  repeat. The client prompt, the worker query, its six-hour window and `idx_bin_dumps_po`
+  are all gone (`migration-067.sql`). A tag with **no barcode now gets no duplicate check
+  at all**, which is the ask: nothing else on a pallet tag identifies a pallet.
 - ⚠️ An unreadable photo opens the popup **empty and editable** rather than failing, so a
   torn tag can still be keyed by hand.
 - ⚠️ Editing never touches `logged_at`. A correction is a correction, not a re-receipt —
