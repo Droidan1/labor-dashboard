@@ -2675,3 +2675,87 @@ longer reproduce is a day we decline to bank.
 - [ ] Merge + deploy the worker
 - [ ] Dry-run the whole window, store by store, and read the reconcile rate
 - [ ] Run it for real in chunks, and report how far back the window actually reaches
+
+## Holland's budget vanished from the All Stores Budget (2026-09-16)
+
+Brian: "we removed Holland from the frontend but were supposed to keep the budget
+untouched — its budget came out of the all stores budget." It did. This is the
+investigation; the fix is not written yet.
+
+### Root cause
+
+Yesterday's change (3315888, PR #223) removed `BL8/BL9 Holland` from the frontend
+`STORES` roster (index.html:6600) and left the worker's `ALL_STORES` alone, on the
+stated premise that **"chain financials scope to ALL_STORES in worker.js"**.
+
+That premise is half true, and the wrong half is load-bearing. `ALL_STORES` scopes the
+rollups the WORKER computes — morning/afternoon briefing, the daily and weekly emails,
+hourly notifications, Weekly Retail Summary. **The dashboard's own All Stores Budget
+card never calls any of them.** It sums budget client-side out of `allStoreData`, and
+`allStoreData` is filled by `Promise.all(STORES.map(loadStoreFromD1))`
+(index.html:7334 → 7374). So on the frontend, `STORES` *is* the budget scope for every
+chain figure the page draws. Dropping BL8 from it stopped Holland's D1 read, and a
+store whose rows are never fetched contributes $0 of budget to every total.
+
+The comment added directly above the roster — "🔑 THIS LIST DOES NOT DECIDE BUDGET" —
+is the exact inverse of what the code does.
+
+### Why the tests did not catch it
+
+`scripts/test-closed-stores.mjs` asserts BL8 is still in the worker's `ALL_STORES` and
+out of the frontend `STORES`. Both are true and both still pass. No assertion covers
+which roster the budget sums iterate, so the one relationship that mattered went
+unpinned. The review note went further and cited "the per-store history read and the
+live Clover poll now fan out to exactly five stores with no BL8" as the *proof the
+change worked* — that dropped D1 read is the bug.
+
+### Surfaces affected (all frontend, all `for (const s of STORES)`)
+
+- [ ] index.html:8233, 8255 — hero bar `c-today-budget` (`todayTotalBudget`)
+- [ ] index.html:8171 — All Stores Budget · **Weekly** (`c-budget`, `tB`)
+- [ ] index.html:8471 — All Stores Budget · **Monthly** (`c-month-budget`, `mB`)
+- [ ] index.html:9713 — `buildAllStoresWeeklyTable()`, the per-day chain table
+- [ ] index.html:13539 — `_asWeekTotals()`, weekly report totals
+- [ ] index.html:13729 — `renderAllStoresDailyChart()`, the budget line
+- [ ] index.html:30178, 30185 — `bargainLaneFigures()`, landing hero + MTD
+
+### Measured against prod D1, read-only (2026-09-16)
+
+| Period | Dashboard shows | Should be | Holland |
+|---|---|---|---|
+| Today 09-16 | $22,475 | $26,214 | $3,739 |
+| Week 09-13→09-19 | $198,123 | $232,646 | $34,523 (14.8%) |
+| Sept MTD 09-01→09-16 | $438,674 | $514,534 | $75,860 |
+| September, full month | $848,374 | $993,573 | $145,199 |
+
+**No data was lost.** BL8 still has all 155 budget rows from 07-25 to 12-26 totalling
+$813,563 against $0 actual — matching the figure in `STORE_CLOSED_FROM` to the dollar.
+This is a display-scope bug, not a write.
+
+### The consequence worth naming
+
+The dashboard and the worker now report different chain budgets for the same day. The
+morning briefing counts Holland; the card on screen does not. Brian's 2026-08-11
+decision — the chain carries the shortfall — is still in force everywhere except the
+screen he actually looks at.
+
+### Proposed fix (NOT yet implemented — needs Brian's go-ahead)
+
+Split the two rosters the frontend has been conflating, mirroring the worker:
+
+- [ ] `STORES` keeps its five trading stores — cards, Clover polls, "N of M reporting"
+      are all correct as they are, and Holland should not come back as a card
+- [ ] Add a budget/financial roster equal to the worker's `ALL_STORES`
+      (BL1, BL2, BL4, BL8, BL14, BL16) and load its D1 rows; Holland gets a D1 read
+      again but **no** Clover poll, which is the expensive half and returns nothing
+- [ ] Point the seven sums above at the financial roster, leaving card rendering,
+      reporting counts and colour indexing on `STORES`
+- [ ] Extend `scripts/test-closed-stores.mjs` to pin the relationship that was missing:
+      the budget scope contains BL8, the draw roster does not, and a chain budget
+      total equals the six-store sum — assertions that fail against today's file
+- [ ] Reconcile the dashboard's weekly budget against the worker's own chain endpoint
+      for the same week; they must agree to the dollar
+- [ ] Correct the inverted "THIS LIST DOES NOT DECIDE BUDGET" comment at index.html:6595
+- [ ] Bump `CACHE_NAME` (v193 → v194)
+
+Frontend only — Pages carries it on merge, no worker deploy and no migration.
