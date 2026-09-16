@@ -114,8 +114,21 @@ in the same direction, because the old client reads `j.matches || []`.
 - 4,734 assertions across 75 suites pass.
 - **`idx_bin_dumps_po` dropped** — `migration-067.sql`. Brian asked for it the same day
   ("drop the po index too"), which is the explicit OK the Destructive Operations rules
-  want. Written as a file, **not applied from here**: applying it is a schema mutation on
-  a live database and wants the summary in front of him first.
+  want — given the summary first, then his call: staging, then production, now.
+  **Applied 2026-09-16**, staging (`b40982c2…`) then production (`3fa911d7…`), each
+  verified before and after:
+
+  | | staging | production |
+  |---|---|---|
+  | rows before → after | 0 → 0 | 31 → 31 |
+  | non-null `po` before → after | 0 → 0 | 31 → 31 (6 distinct, unchanged) |
+  | indexes after | `idx_bin_dumps_barcode`, `idx_bin_dumps_store` | same |
+  | `idx_bin_dumps_po` | gone | gone |
+  | `po` column | present | present |
+
+  Production took a second consecutive clean pass, and the planner still reports
+  `SEARCH bin_dumps USING INDEX idx_bin_dumps_barcode (barcode=? AND logged_at>?)` — so
+  the duplicate check's own index is intact and still in use, not merely still listed.
   - Verified unused by enumeration, not memory. Every surviving `bin_dumps` predicate:
     `WHERE barcode = ? AND logged_at >= ?` (barcode index), `WHERE store = ? AND
     logged_at >= ?` (store index), `WHERE id = ?` (primary key). `po` now appears only in
