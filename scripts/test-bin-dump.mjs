@@ -764,6 +764,43 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   ok(guardAt > 0 && putAt > 0 && guardAt < putAt,
      '🛑 in the source, the duplicate refusal precedes the R2 put — the orphan test above pins the behaviour, this pins the ordering');
 
+  // ── migration-067: the PO index goes when its only query does ──────────
+  // Brian, 2026-09-16, after the PO duplicate check was removed: "drop the po index too."
+  const m67 = fs.readFileSync(path.join(repo, 'migration-067.sql'), 'utf8');
+  // 🛑 ASSERT ON THE STATEMENTS, NOT THE PROSE. This file explains itself at length and
+  // names the indexes it is NOT touching, the reversal statement, and a grep to re-verify
+  // the claim — every one of which a naive /idx_bin_dumps_barcode/ test reads as a hit.
+  // Strip `--` lines first, then assert; the comments are checked separately below.
+  const sql67 = m67.replace(/^\s*--.*$/gm, '').trim();
+  eq(sql67, 'DROP INDEX IF EXISTS idx_bin_dumps_po;',
+     '🔑 migration-067 is ONE statement: drop that index, re-runnably, and nothing else');
+
+  // 🛑 The two indexes that are still load-bearing, and the column itself. A DROP
+  // migration is the easiest place in this repo to take one thing too many with it, and
+  // the damage stays invisible until the table is big enough to hurt.
+  ok(!/idx_bin_dumps_barcode/i.test(sql67),
+     '🛑 …so idx_bin_dumps_barcode survives — that one serves the duplicate check itself');
+  ok(!/idx_bin_dumps_store/i.test(sql67), '…and idx_bin_dumps_store, which the log and the CSV walk');
+  ok(!/ALTER TABLE/i.test(sql67) && !/DROP COLUMN/i.test(sql67) && !/DELETE FROM/i.test(sql67),
+     '🔑 …and no column and no row goes with it: bin_dumps.po keeps every value it holds');
+
+  // The reversal lives in the prose on purpose — it must NOT be an executable statement in
+  // a file whose job is to drop the thing.
+  ok(/^\s*--.*CREATE INDEX IF NOT EXISTS idx_bin_dumps_po ON bin_dumps\(store, po, logged_at DESC\);/m.test(m67),
+     '…and the exact statement that puts it back is recorded, commented out, verbatim');
+
+  // 🔑 TEST THE RELATIONSHIP, NOT THE FILE. Asserting only that 067 says DROP leaves a
+  // later migration free to CREATE it again, and both assertions would pass. The net
+  // effect across every migration in order is what actually decides whether it exists.
+  const touching = fs.readdirSync(repo).filter(f => /^migration-\d+\.sql$/.test(f)).sort()
+    .filter(f => /idx_bin_dumps_po/i.test(
+      fs.readFileSync(path.join(repo, f), 'utf8').replace(/^\s*--.*$/gm, '')));
+  eq(touching.join(','), 'migration-058.sql,migration-067.sql',
+     'exactly two migrations act on that index — the one that made it and the one that drops it');
+  ok(/DROP INDEX/i.test(fs.readFileSync(path.join(repo, touching[touching.length - 1]), 'utf8')),
+     '🛑 …and the LAST word on it is the drop, so replaying every migration in order '
+     + 'leaves it gone rather than quietly rebuilt');
+
   const h = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
   ok(/allow_duplicate: true/.test(h), 'the client can send the override');
   ok(/bdPostAllowingDuplicate/.test(h), 'and retries once when the worker refuses on a race it could not pre-flight');

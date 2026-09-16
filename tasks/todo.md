@@ -112,10 +112,22 @@ in the same direction, because the old client reads `j.matches || []`.
 - **Verified against regressions, not just for a pass.** Re-emitting `matches` from the
   worker turns 4 assertions red; restoring the client prompt turns 2 red.
 - 4,734 assertions across 75 suites pass.
-- **Left alone, deliberately**: `idx_bin_dumps_po` (migration-058) is now unused. Dropping
-  it is a schema mutation and needs Brian's explicit OK per the Destructive Operations
-  rules; an unused index costs a little write time and nothing else, so it stays until
-  asked for.
+- **`idx_bin_dumps_po` dropped** — `migration-067.sql`. Brian asked for it the same day
+  ("drop the po index too"), which is the explicit OK the Destructive Operations rules
+  want. Written as a file, **not applied from here**: applying it is a schema mutation on
+  a live database and wants the summary in front of him first.
+  - Verified unused by enumeration, not memory. Every surviving `bin_dumps` predicate:
+    `WHERE barcode = ? AND logged_at >= ?` (barcode index), `WHERE store = ? AND
+    logged_at >= ?` (store index), `WHERE id = ?` (primary key). `po` now appears only in
+    the INSERT and UPDATE column lists — written, never searched.
+  - An index only. No row, and **not the `po` column** — every pallet keeps the PO/WO
+    printed on its tag, and the log and CSV still show it.
+  - Reversible verbatim; the `CREATE INDEX` that undoes it is recorded in the migration,
+    commented out. SQLite rebuilds an index from the table, so nothing is lost.
+  - Safe in either deploy order: dropping an index can cost speed, never correctness.
+  - Pinned by a relationship assertion, not a file check — exactly two migrations act on
+    that index and the LAST word is the drop, so a later migration cannot quietly rebuild
+    it and still pass.
 - **Needs a `wrangler deploy`** for the worker half — but nothing waits on it. The
   user-facing fix lands with the Pages build on merge, and the worker half is dead-code
   removal that changes no behaviour in either deploy order.
