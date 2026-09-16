@@ -55,39 +55,70 @@ more than the check was ever worth."*
 - [x] Bump `CACHE_NAME` + shell-cache fixture (index.html changed)
 - [x] Full suite green
 
-## The fix
+## Brian's call, 2026-09-16
 
-One condition in `bdSubmit`:
+> *"I only want a tag to be considered a duplicate if the PRM-10490-30 or P-090926-729727
+> matches for example."*
 
-```js
--        if (!allowDup && v.po && dup.matches.length) {
-+        if (!v.barcode && v.po && dup.matches.length) {
-```
+Barcode only. So the PO check is **deleted**, not scoped — including the no-barcode
+fallback the first pass kept. A tag with no barcode now gets no duplicate check at all,
+which is the ask: nothing else on a pallet tag identifies a pallet.
 
-Read as: **the barcode is the better question and it has already been asked.** A match
-prompted above; no match is a definitive no, because one barcode is one physical pallet.
-Only a tag with no barcode at all has nothing better to go on, and that is the single case
-left. It mirrors the Inventory Receiver, built later against the same tag reader, which
-checks the barcode and has no PO check at all.
+## The change
 
-Deliberately NOT changed: `bin-dump-recent` still answers both questions honestly. It is a
-data endpoint; which answer is worth interrupting somebody over is the client's call, and
-the existing test pinning "the PO hint still works" stays true.
+| | |
+|---|---|
+| `index.html` — `bdSubmit` | the whole "Already logged?" PO prompt, gone |
+| `index.html` — `bdRecent` | drops the `po` argument and the `matches` it returned |
+| `worker.js` — `bin-dump-recent` | drops the PO query and the `matches` field |
+| `worker.js` | `BIN_DUMP_DUPLICATE_WINDOW_MS` removed — the PO query was its only user |
+
+Deleted rather than left computed-and-unread. A response field nobody reads is how a dead
+rule gets wired back up by the next person, and scoping the prompt to some narrower case
+would still leave a path where a shared label interrupts a submit. There is no such path
+if `bdSubmit` cannot see a PO answer at all.
+
+**`po=` is ignored, not rejected.** An installed PWA serves a cached `index.html` for one
+launch after a release, and that old client still sends one. Ignoring it degrades that tab
+to "no PO prompt" — exactly the wanted behaviour. Dropping `matches` from the body is safe
+in the same direction, because the old client reads `j.matches || []`.
+
+**Deploy order is free** (CLAUDE.md rule 6 — neither side stops being backward-compatible):
+
+- Worker first → old client sends `po`, worker ignores it, gets no `matches`, shows no
+  prompt. Wanted behaviour, immediately.
+- Pages first → new client sends no `po` and reads no `matches`; the worker's PO query
+  runs and is thrown away. Harmless.
+
+## Plan
+
+- [x] Read the log, the pre-flight and both duplicate paths
+- [x] Confirm against production D1 which check fired — read-only `SELECT`s, no mutation
+- [x] Rule out the barcode check (0 barcode collisions in the table)
+- [x] First pass: scope the PO prompt to tags with no barcode
+- [x] Brian: barcode only — remove the PO check outright, client and worker
+- [x] Tests: the deletion, the ignored `po=`, and that a repeated BARCODE is still refused
+- [x] Prove both halves fail when the check is put back
+- [x] Bump `CACHE_NAME` + shell-cache fixture
+- [x] Full suite green
 
 ## Review
 
-- **Blast radius** — one `if` in the Bin Dump submit path. No worker change, no schema
-  change, no migration, no DB write. Nothing else reads `dup.matches`.
-- **Nothing was weakened.** The 409 on a repeated barcode is untouched, still crosses
-  stores, still 90 days, still re-checked server-side, still ahead of the R2 put. The DUP
-  badge in the log is untouched.
-- **Verified against the old code**, not just the new: reverting the condition turns the
-  new assertion red with the exact false alarm the floor reported (`got true, want false`).
-- 4,730 assertions across 75 suites pass.
-- **Residual**: a torn tag with no barcode AND `po = 'RM1 - TJX'` would still prompt. Every
-  one of the 31 production rows carries a barcode, so this is unobserved — and in that case
-  the weak signal is the only signal there is. Left standing rather than deleted: scoping a
-  guard to where it is the last resort is mine to judge, deleting one outright is Brian's.
+- **Nothing was weakened.** The 409 on a repeated barcode is untouched: exact match, still
+  crosses stores, still 90 days, still re-checked server-side, still ahead of the R2 put.
+  Pinned by a new assertion that logs a *repeated* barcode off the same unload and gets
+  409 back — so the deletion cannot be mistaken for the guard going soft.
+- **No schema change, no migration, no DB write.** Production was read with `SELECT`s only.
+- **Verified against regressions, not just for a pass.** Re-emitting `matches` from the
+  worker turns 4 assertions red; restoring the client prompt turns 2 red.
+- 4,734 assertions across 75 suites pass.
+- **Left alone, deliberately**: `idx_bin_dumps_po` (migration-058) is now unused. Dropping
+  it is a schema mutation and needs Brian's explicit OK per the Destructive Operations
+  rules; an unused index costs a little write time and nothing else, so it stays until
+  asked for.
+- **Needs a `wrangler deploy`** for the worker half — but nothing waits on it. The
+  user-facing fix lands with the Pages build on merge, and the worker half is dead-code
+  removal that changes no behaviour in either deploy order.
 
 # Truck review email — Inventory Receiver
 

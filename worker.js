@@ -7466,12 +7466,6 @@ function autoWeekOf(d) {                       // Sunday that starts the retail 
 // The seven fields Brian asked for, in the order they read on the tag.
 const PALLET_TAG_FIELDS = ["barcode", "item_no", "pallet_name", "sup_ref", "po", "units", "created_by_tag", "truck_no"];
 
-// How far back the soft duplicate check looks. One receiving session: a truck of
-// 30 pallets is unloaded over hours, and the duplicate this guards against is the
-// same tag scanned twice during that unload. Longer would start flagging a PO that
-// legitimately came back; shorter would miss the case it exists for.
-const BIN_DUMP_DUPLICATE_WINDOW_MS = 6 * 60 * 60 * 1000;
-
 // The barcode identifies ONE PHYSICAL PALLET — `PRM-10490-30` is truck 10490, pallet 30 —
 // so the same barcode twice is the same pallet logged twice, and its units have been
 // double-counted into the bins. That is a far stronger signal than the PO check above,
@@ -22959,7 +22953,9 @@ export default {
         //
         // 🔑 THIS is the boundary, not the popup. The client asks bin-dump-recent and shows
         // a warning, but a stale tab or a direct POST would sail past that; only an explicit
-        // allow_duplicate from someone who read the warning gets through here.
+        // allow_duplicate from someone who read the warning gets through here. The BARCODE
+        // is the whole rule — a shared PO has never been grounds to refuse a pallet here,
+        // and since 2026-09-16 it is not grounds to ask about one either.
         const dupes = await binDumpBarcodeMatches(env, fields.barcode, currentUser, isAdminSecret, null);
         if (dupes.length && body?.allow_duplicate !== true) {
           return new Response(JSON.stringify({
@@ -22999,34 +22995,35 @@ export default {
       }
     }
 
-    // GET ?action=bin-dump-recent&store=BL1&po=5036 — the soft duplicate check.
+    // GET ?action=bin-dump-recent&store=BL1&barcode=PRM-10490-30 — the duplicate pre-flight.
     // Separate from the log so it can run while the manager is still looking at the
     // popup, and so a slow or failed answer costs a warning, never the submission.
+    //
+    // 🛑 ONE QUESTION, AND THE BARCODE IS IT. Brian, 2026-09-16: "I only want a tag to be
+    // considered a duplicate if the PRM-10490-30 or P-090926-729727 matches." This used to
+    // answer a second one — same PO at this store within six hours — and that question was
+    // wrong to ask at all: `PO / WO` carries a purchase order on one tag format and a
+    // RECEIVING-METHOD LABEL (`RM1 - TJX`) on the other, so `WHERE po = ?` matched an
+    // entire unload and called 19 of 31 real pallets duplicates. `matches`, its six-hour
+    // window and its query are DELETED rather than left computed and unread — a field
+    // nobody reads is how a dead rule gets wired back up by the next person.
+    //
+    // 🔑 A `po=` in the query string is IGNORED, not rejected. An installed PWA serves a
+    // cached index.html for one launch after a release, and that old client still sends
+    // one; ignoring it degrades that tab to "no PO prompt", which is the wanted behaviour.
+    // Dropping `matches` from the body is safe in the same direction — the old client
+    // reads `j.matches || []`.
     if (url.searchParams.get("action") === "bin-dump-recent" && request.method === "GET") {
       const pageDenied = requirePage(currentUser, isAdminSecret, "bin-dump", "edit", corsJson);
       if (pageDenied) return pageDenied;
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       const denied = storeActionGuard(url.searchParams.get("store"), currentUser, isAdminSecret, corsJson);
       if (denied) return denied;
-      const po = String(url.searchParams.get("po") || "").trim();
 
-      // Two different questions, deliberately kept apart because they carry different
-      // weight. Same PO at this store, recently: SOFT — one PO covers a whole truck and
-      // repeating is normal. Same BARCODE anywhere, within 90 days: HARD — one barcode is
-      // one physical pallet, and a repeat means its units are about to be counted twice.
-      let matches = [];
-      if (po) {
-        const since = new Date(Date.now() - BIN_DUMP_DUPLICATE_WINDOW_MS).toISOString();
-        const r = await env.DB.prepare(
-          `SELECT id, pallet_name, units, logged_by, logged_at FROM bin_dumps
-            WHERE store = ? AND po = ? AND logged_at >= ? ORDER BY logged_at DESC LIMIT 5`
-        ).bind(String(url.searchParams.get("store")).toUpperCase(), po, since).all();
-        matches = r.results || [];
-      }
       const barcodeMatches = await binDumpBarcodeMatches(
         env, url.searchParams.get("barcode"), currentUser, isAdminSecret, null);
 
-      return new Response(JSON.stringify({ ok: true, matches, barcode_matches: barcodeMatches }),
+      return new Response(JSON.stringify({ ok: true, barcode_matches: barcodeMatches }),
         { headers: corsJson });
     }
 
