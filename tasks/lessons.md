@@ -1,3 +1,61 @@
+## The cross-store test passed because the fixture picked the wrong store (2026-09-16)
+
+`verifyApproval` handed a RAW D1 row to `canAccessStore`. `users.stores` arrives from D1 as
+the string `'["BL14"]'`, the row carries no `grants`, so `allowedUnits` fell through to
+`return user.stores || []` and returned **the string**. Then:
+
+```js
+allowed.includes(store)      // String.prototype.includes — a SUBSTRING test
+'["BL14"]'.includes('BL1')   // true
+```
+
+A manager scoped only to BL14 passed every BL1 store check, including the one guarding the
+duplicate-pallet override.
+
+**There was already a test for exactly this.** `test-inventory-receiver.mjs` asserts *"a
+manager from another store cannot approve at this one"* — and it passed, for months, while
+the fault was live. Its fixture scoped that manager to **BL4**, and `'["BL4"]'.includes('BL1')`
+is false. BL1 is the only store code in `ALL_STORES` that is a prefix of another (BL14, BL16),
+so BL4 is one of the four stores that cannot expose the bug and BL14/BL16 are the two that can.
+The assertion was right, the fixture was a coin flip, and it landed tails.
+
+**The asymmetry was the finding again.** Five call sites reach `canAccessStore`. Three —
+`getAuthUser`, `truckReviewRecipients`, the cron recipient builders — parse `stores` first, and
+`truckReviewRecipients` even carries a comment naming this exact trap. Two did not. When three
+independent authors remember a defensive step and two forget, it is not three good memories and
+two lapses: **the helper is the bug**. So the fix normalises inside `allowedUnits` rather than
+patching the two callers that happened to be found.
+
+**And the fix broke five suites that the full run caught and the targeted run did not.** I first
+wrote the normaliser as a module-scope `unitList()`. `test-authme-scope`, `test-business-gate`,
+`test-grant-scoping`, `test-privilege-guards` and `test-cron-recipients` do not import worker.js —
+they **extract functions by regex and `new Function` them**, naming each dependency by hand
+(*"allowedStores depends on grantFor — extract both, or it throws at call time"*). A new
+module-scope helper is not in that hand-written list, so all five threw `ReferenceError` the
+moment they called it. Moving the normaliser inside `allowedUnits` fixed all five.
+
+<rules>
+1. **A negative test is only as good as the fixture that exercises it.** "A manager from another
+   store" is not one case — with prefix-shaped identifiers it is two, and only one of them bites.
+   When identifiers can be prefixes of each other, the fixture must use a PREFIX, not just a
+   different value.
+2. **Assert the positive alongside the negative.** The refusal proves the hole is closed; only
+   "the BL14 manager can still approve AT BL14" proves the fix is not just a blanket denial.
+   A guard that refuses everyone passes every negative test ever written.
+3. **Three sites defending and two not is a HELPER bug.** Fix the primitive, not the instances
+   the audit happened to reach — the next caller has not been written yet.
+4. **A backstop nothing can reach needs a source pin and an honest label.** `canAccessStore`'s
+   `Array.isArray` refusal is unreachable once `allowedUnits` normalises: deleting it leaves the
+   suite green. That is a real finding about the test, not a reason to drop the guard — pin the
+   text and say in the assertion why it is a source check.
+5. **Run the FULL suite before believing a change to a shared primitive.** Every permission
+   decision in this app goes through `allowedUnits`. The targeted suite was green while five
+   others were throwing at import.
+6. **Adding a module-scope helper is not free in this repo.** Five suites hand-encode worker.js's
+   dependency graph by regex. Before hoisting anything a permission primitive calls, grep
+   `scripts/test-*` for `new Function` and check whether that primitive is extracted.
+</rules>
+
 ## The test named after the dangerous thing was testing something else (2026-09-16)
 
 Storing associate codes encrypted so an admin can read them back. The single most dangerous

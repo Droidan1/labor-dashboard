@@ -69,6 +69,15 @@ function env0() {
   // A manager at BL1 with an approval code, and one at BL4 without access to BL1.
   db.exec(`UPDATE users SET name = 'Kevin R', approval_pin_hash = '${hashPin('314159')}' WHERE id = 'u-mgr1'`);
   db.exec(`UPDATE users SET name = 'Alyson B', approval_pin_hash = '${hashPin('271828')}', stores = '["BL4"]' WHERE id = 'u-mgr2'`);
+  // 🛑 A manager at BL14 — the store whose CODE CONTAINS 'BL1'. Alyson at BL4 cannot
+  // expose the substring fault, because '["BL4"]'.includes('BL1') is false. That is
+  // precisely why the cross-store assertion in section 11 passed for months while a
+  // BL14 manager could approve at BL1: the fixture had picked the one store that
+  // happens not to be a prefix. BL1 is the only store code that prefixes another
+  // (BL14, BL16), so this account is the whole exposure.
+  db.exec(`INSERT INTO users (id, email, role, stores, status, created_at, name, approval_pin_hash)
+           VALUES ('u-mgr14', 'mgr14@bl.com', 'manager', '["BL14"]', 'active', '2026-01-01',
+                   'Dana Fourteen', '${hashPin('173205')}')`);
   // A staff account with an approval code that should never work: not a manager.
   db.exec(`UPDATE users SET name = 'Lead Person', approval_pin_hash = '${hashPin('141421')}' WHERE id = 'u-staff'`);
   // And an associate who holds the page but is not a manager.
@@ -338,6 +347,12 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
   // 🔑 A manager who does not hold this store cannot wave a pallet through here.
   await refused({ name: 'Alyson B', pin: '271828' }, 'BAD_APPROVAL',
     '🔑 a manager from another store cannot approve at this one');
+  // 🛑 THE SUBSTRING CASE, and the reason the line above was not enough. `users.stores`
+  // arrives from D1 as the STRING '["BL14"]'; until this was fixed it reached
+  // `allowed.includes('BL1')` as String.prototype.includes, which is true — so a BL14
+  // manager approved at BL1. BL4 above could never catch it.
+  await refused({ name: 'Dana Fourteen', pin: '173205' }, 'BAD_APPROVAL',
+    '🛑 a BL14 manager cannot approve at BL1 — the store code is a PREFIX, not a match');
   // 🛑 An unknown name and a wrong code give the SAME verdict, so the dialog cannot be
   // used to discover which managers exist.
   ok(true, 'unknown name and wrong code are indistinguishable — no name oracle');
@@ -661,6 +676,89 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
   // Revoked means revoked, end to end.
   await call('/?action=set-approval-pin', { user: 'u-admin', method: 'POST', body: { id: 'u-mgr1', pin: null }, env });
   eq((await dup()).status, 409, '✅ once revoked, the same code no longer approves');
+}
+
+// ── 25. Store scope is a MATCH, never a prefix ─────────────────────────────
+// Both halves matter. The refusal in section 11 proves the fault is closed; this
+// proves the fix did not simply deny everybody. A guard that also refuses the
+// legitimate approver is not a fix, it is a different outage.
+{
+  const { db, env } = env0();
+
+  // Dana holds BL14, so she approves AT BL14.
+  const t14 = seedTruck(db, { store: 'BL14' });
+  spy(textReply('{}'));
+  await call('/?action=truck-pallet-log',
+    { user: 'u-su', method: 'POST', body: { truck_id: t14, ...TAG, ...IMG }, env });
+  const dup = await call('/?action=truck-pallet-log', { user: 'u-su', method: 'POST',
+    body: { truck_id: t14, ...TAG, ...IMG,
+            approval: { name: 'Dana Fourteen', pin: '173205', reason: 'tag reprinted' } }, env });
+  eq(dup.status, 200,
+     '✅ the BL14 manager CAN still approve at BL14 — a prefix is refused, the store itself is not');
+
+  // 🔑 The picker and the verifier must agree. They are what made the fault REACHABLE
+  // rather than merely present: truck-approvers OFFERED her name at BL1, so the dialog
+  // invited exactly the approval the verifier then accepted.
+  const namesAt = async (store, user) =>
+    ((await json(await call(`/?action=truck-approvers&store=${store}`, { user, env }))).names) || [];
+  const atBL1 = await namesAt('BL1', 'u-mgr1');
+  ok(!atBL1.includes('Dana Fourteen'), '🛑 the BL1 approver list does NOT offer the BL14 manager');
+  ok(atBL1.includes('Kevin R'), '...while still offering the manager who does hold BL1');
+  const atBL14 = await namesAt('BL14', 'u-su');
+  ok(atBL14.includes('Dana Fourteen'), '✅ and the BL14 list does offer her');
+  ok(!atBL14.includes('Kevin R'), '...and not the BL1 manager');
+
+  // 🛑 A SOURCE CHECK, AND IT SAYS SO — because the thing it guards is deliberately
+  // UNREACHABLE. allowedUnits now normalises, so `allowed` is always an array or null
+  // and canAccessStore's Array.isArray refusal can never fire through any endpoint:
+  // deleting it leaves this whole suite green (verified by mutation). It exists for the
+  // caller who has not been written yet, so the only honest way to keep it from being
+  // quietly removed as dead code is to pin the text and explain why.
+  // 🛑 Sliced to the function's OWN closing brace, never a fixed character count.
+  // test-privilege-guards sliced update-user as a flat 3,000 characters and a guard
+  // added at the top silently pushed the region past what it was asserting on; a long
+  // comment inside allowedUnits does the same thing to a 900-char window.
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const body = (name) => {
+    const at = src.indexOf(`function ${name}(`);
+    ok(at > 0, `${name} is still called that`);
+    const end = src.indexOf('\n}', at);
+    return src.slice(at, end);
+  };
+  ok(/if \(!Array\.isArray\(allowed\)\) return false;/.test(body('canAccessStore')),
+     '🛑 canAccessStore refuses a non-array outright — the backstop against a future raw-row caller');
+  ok(/return unitList\(user\.stores\);/.test(body('allowedUnits')),
+     '🔑 and allowedUnits normalises the legacy users.stores column rather than returning it raw');
+}
+
+// ── 26. An admin may not touch a superuser's approval code ─────────────────
+{
+  const { db, env } = env0();
+  db.exec("UPDATE users SET approval_pin_hash = NULL, approval_pin_failures = 0");
+  const set = (user, body) => call('/?action=set-approval-pin', { user, method: 'POST', body, env });
+
+  // 🛑 A superuser passes canSeeFinancials, so nothing else in this handler stopped an
+  // admin minting a credential that approves at EVERY store under the superuser's name —
+  // and notifyTruckDown mails that attribution to every manager as fact.
+  eq((await set('u-admin', { id: 'u-su', pin: '314159' })).status, 403,
+     '🛑 an admin cannot set a superuser approval code');
+  eq(db.prepare("SELECT approval_pin_hash AS h FROM users WHERE id='u-su'").get().h, null,
+     '...and writes nothing');
+
+  // The refusal is about the TARGET, not the door.
+  eq((await set('u-su', { id: 'u-su', pin: '314159' })).status, 200, '✅ a superuser can');
+  const before = db.prepare("SELECT approval_pin_hash AS h FROM users WHERE id='u-su'").get().h;
+  ok(!!before, '...and it is written');
+
+  // 🛑 The silent REPLACE is the worse half: it stops the superuser's own code working,
+  // indistinguishably from them having forgotten it.
+  eq((await set('u-admin', { id: 'u-su', pin: '867530' })).status, 403, '🛑 nor replace an existing one');
+  eq(db.prepare("SELECT approval_pin_hash AS h FROM users WHERE id='u-su'").get().h, before,
+     "...and the superuser's own code still works");
+
+  // The admin's ordinary power is untouched.
+  eq((await set('u-admin', { id: 'u-mgr1', pin: '314159' })).status, 200,
+     '✅ an admin can still set a manager code — only the superuser target is refused');
 }
 
 console.log(`\n${assertions} passed, ${failures} failed`);

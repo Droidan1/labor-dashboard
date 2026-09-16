@@ -14111,7 +14111,42 @@ function canAccessBusiness(user, businessId) {
 // keeps a real manager working instead of locking them out of their own store.
 // It cannot escalate: it yields exactly the scope they have today. Remove it
 // once `grant_fallback` has not been logged for a good while.
+// 🛑 `users.stores` AND `user_grants.units` ARE JSON STRINGS IN D1, NOT ARRAYS.
+// getAuthUser parses `stores`, and so do truckReviewRecipients and both cron
+// recipient builders — but a caller that hands a RAW D1 ROW to canAccessStore
+// cannot have, and two of them did exactly that. An unparsed string reaches
+// `allowed.includes(store)`, where `includes` is String.prototype.includes — a
+// SUBSTRING test:
+//
+//     '["BL14"]'.includes('BL1')  ===  true
+//     '["BL16"]'.includes('BL1')  ===  true
+//
+// so a manager scoped only to BL14 passed every BL1 store check, including the
+// one guarding the duplicate-pallet override. BL1 is the only store code that
+// prefixes another, so the fault only ever WIDENS access and only ever at BL1 —
+// which is why a cross-store test scoped to BL4 passed for years.
+//
+// 🔑 THREE CALL SITES REMEMBERED TO PARSE AND TWO FORGOT, so this is the
+// HELPER's bug rather than theirs. Normalising here closes the class instead of
+// the two instances that happened to be found. Fails CLOSED: anything that is
+// not an array and does not parse to one becomes [], never "everything".
+//
+// 🛑 `unitList` IS LOCAL TO THIS FUNCTION ON PURPOSE — do not hoist it to module
+// scope. Five suites (test-authme-scope, test-business-gate, test-grant-scoping,
+// test-privilege-guards, test-cron-recipients) extract this function by regex and
+// `new Function` it alongside grantFor, naming their dependencies by hand. A
+// module-scope helper is not in that list, so hoisting it throws
+// `ReferenceError: unitList is not defined` at call time in all five — which is
+// exactly what happened on the first cut of this fix.
 function allowedUnits(user, businessId) {
+  const unitList = (v) => {
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'string') {
+      try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; }
+      catch (_) { return []; }
+    }
+    return [];
+  };
   if (!user) return null;
   // Role-based, not business-based, and deliberately unchanged: WHETHER you
   // reach a business is now the business gate's job (BUSINESS_AGNOSTIC_ACTIONS /
@@ -14131,8 +14166,10 @@ function allowedUnits(user, businessId) {
     // so the legacy reading stays where the legacy data is and nowhere else.
     // Widening bl is a decision about who gets emailed chain-wide revenue; it is
     // not something to change as a side effect of scoping another business.
-    if (businessId === 'bl') return g.units || [];
-    return g.units == null ? null : g.units;
+    if (businessId === 'bl') return unitList(g.units);
+    // NULL stays NULL here — for a non-bl business that genuinely means every unit,
+    // and must not be flattened to the empty list.
+    return g.units == null ? null : unitList(g.units);
   }
 
   // 🔑 The users.stores fallback is BARGAIN LANE ONLY — it is a legacy column
@@ -14143,7 +14180,7 @@ function allowedUnits(user, businessId) {
   if (user.grants && user.grants.length === 0 && user.id) {
     console.log(JSON.stringify({ grant_fallback: 'no-bl-grant', user: user.id, role: user.role }));
   }
-  return user.stores || [];
+  return unitList(user.stores);
 }
 
 // Bargain Lane's units are stores. Kept as a named wrapper so the 21 existing
@@ -14156,6 +14193,11 @@ function allowedStores(user) {
 function canAccessStore(user, store) {
   const allowed = allowedStores(user);
   if (allowed === null) return true;
+  // 🛑 THE STRUCTURAL BACKSTOP. Only an array may answer this question. allowedUnits
+  // now normalises, so this should be unreachable — it exists so that a future
+  // caller reaching `includes` with a string gets a REFUSAL rather than a silent
+  // substring match, which is the failure that made a BL14 manager a BL1 approver.
+  if (!Array.isArray(allowed)) return false;
   return allowed.includes(store);
 }
 
@@ -17429,6 +17471,21 @@ export default {
           "SELECT id, name, email, role, status FROM users WHERE id = ?"
         ).bind(id).first();
         if (!target) return new Response(JSON.stringify({ error: "No such user" }), { status: 404, headers: corsJson });
+
+        // 🛑 A NON-SUPERUSER MAY NEVER EDIT A SUPERUSER. The same guard update-user and
+        // set-user-grants both carry; this endpoint shipped without it, and a superuser
+        // passes canSeeFinancials, so nothing else here stopped an admin.
+        //
+        // What that bought an admin: set — or silently REPLACE — the superuser's approval
+        // code, and then approve a duplicate pallet at ANY store under the superuser's
+        // name (allowedUnits returns null for that role, so they hold every store). That
+        // attribution is what `dup_approved_by` records and what notifyTruckDown mails to
+        // every manager as fact — migration-065 calls it "the row someone reads in a month
+        // when a unit count looks doubled". Replacing an existing code would also have
+        // stopped the superuser's own code working, indistinguishably from forgetting it.
+        if (currentUser.role !== 'superuser' && target.role === 'superuser') {
+          return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsJson });
+        }
 
         // 🔑 Refused for anyone who could not approve with it. verifyApproval requires
         // canSeeFinancials AND that they hold the store, so a code on a staff account
