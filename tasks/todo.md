@@ -1,3 +1,80 @@
+# Deployed: associate code recovery, and the two auth fixes rode along (2026-09-16)
+
+Brian's go, staging first and then production, each explicitly. Both are live.
+
+## What went where
+
+| | staging | production |
+|---|---|---|
+| `PIN_CIPHER_KEY` | set | set, a **different** value |
+| `migration-068` | applied | applied |
+| worker | `0597c901` | `48c7cfdf` |
+
+**🔑 PRODUCTION CARRIES #250 AS WELL AS #249, and that is not an accident to be puzzled
+over later.** #250 (the prefix/substring store match and the superuser approval-code guard)
+merged into `main` between the staging and production deploys, so the production worker was
+built from `bb0676c` and contains both. The two authorization fixes are LIVE in production
+and were never separately deployed — there is no pending #250 deploy. Staging's worker
+(`0597c901`) predates that merge and carries #249 only; it is the older of the two.
+
+**The secrets differ between environments on purpose.** One value for both would mean a
+staging compromise reads production codes. Neither value exists anywhere outside Cloudflare —
+they were generated into a pipe, never printed, never written to disk. Rotating either makes
+that environment's stored ciphers unreadable and nothing else; logins are unaffected.
+
+## Verified, not assumed
+
+Production D1, before → after:
+
+| | before | after |
+|---|---|---|
+| `pin_cipher` / `pin_set_at` | absent | both present |
+| `pin_reveals` + its index | absent | both created |
+| tables | 59 | 60 |
+| users | 19 | **19** |
+| associates | 5 | **5** |
+| sessions | 429 | **429** |
+| rows with a NULL email/role/status | — | **0** |
+| rows with a non-NULL new column | — | **0** |
+
+Additive, as the migration claims: nothing read, rewritten or deleted, and every associate
+kept their code and their session.
+
+`num_tables: 58` in wrangler's own output is NOT a contradiction of the 59→60 above — it is
+D1's internal count, which excludes SQLite's bookkeeping tables. The 59 and the 60 come from
+one query (`SELECT COUNT(*) FROM sqlite_master WHERE type='table'`) run before and after, so
+they are the comparable pair.
+
+Deploy confirmed under rule 5 by **three consecutive clean passes**, each requiring all three
+of: the ACTIVE deployment equals the version wrangler uploaded (`48c7cfdf`), that bundle
+carries both `associate-reveal-pin` and `unitList`, and `api.retjghub.com` answers. Any one
+alone can lie — a bundle can be uploaded without being active, and an API that answers can be
+answering from the old version mid-rollout.
+
+## What Brian sees on the Associates page now
+
+All five associates read **"not recoverable"**, and that is correct rather than a failure:
+every one of their codes was set before migration-068, and `pin_hash` is one-way. Each row
+offers *Set a new code instead*. The first code set from here on is readable by **View code**
+from then on.
+
+Their state at deploy time: all 5 active, 0 locked out, 0 with a pending reset request, 4 of 5
+having logged in at least once. Nothing was disturbed.
+
+## Order, and the one thing that went out of order
+
+Secret → migration → worker, derived from which side stops being backward-compatible: the new
+worker SELECTs the new columns. That held for both environments.
+
+**The frontend beat the worker to production, for the third time in this repo.** Merging #249
+rebuilt Pages immediately, so `View code` was live on www.retjghub.com while the deployed
+worker still answered `UNCLASSIFIED_ACTION` — confirmed by running the then-deployed worker,
+not by guessing. It failed CLOSED (the business gate refuses actions it does not know) and the
+window was about twenty minutes, so the cost was a button that said "Forbidden" rather than
+anything lost. It is still the same shape as `9bc07fc` and the one before it: **merging is
+deploying, for the frontend only.** The gap is structural and will recur until the worker
+deploy stops being a separate manual step.
+
 # Two authorization holes found while reviewing #249 (2026-09-16)
 
 Neither is from #249. Both were found by the security pass over the code that was ALREADY on
