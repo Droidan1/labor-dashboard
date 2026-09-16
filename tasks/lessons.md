@@ -1,3 +1,47 @@
+## A request that never arrived is not a request that was refused (2026-09-16)
+
+Confirming that production had stopped granting CORS to `localhost`. The probe was a one-liner:
+send an `OPTIONS` with an `Origin` header, `grep` the response for the two
+`Access-Control-Allow-*` headers, and treat their absence as "refused".
+
+Against production it was right. Against staging it reported that localhost was **refused** —
+which would have been the over-tightening bug the whole test suite exists to prevent, and I
+came within one command of reporting a broken deploy.
+
+Staging had refused nothing. The agent proxy blocks `*.workers.dev` and
+`api-staging.retjghub.com`, so the request never left the container. `grep` on the output of a
+failed connection prints nothing, and **nothing is exactly what a successful refusal prints
+too.** One empty string, two opposite meanings, no way to tell them apart downstream.
+
+The second bug in the same probe was quieter and more instructive. `sed 's/.*: *//'` is greedy,
+so pulling the value out of
+
+    Access-Control-Allow-Origin: https://www.retjghub.com
+
+strips to the last `: ` — the one inside `https://` — and yields `//www.retjghub.com`. The
+positive assertion compared that against the full URL and failed, for ten consecutive passes,
+while every underlying fact in the same line was correct. **That failure was the system
+working**: the check refused to confirm a deploy rather than pass on a value it had misread.
+
+<rules>
+1. **Assert that the probe REACHED the thing before interpreting what it said.** A status line,
+   a byte count, any positive evidence of contact. Absence-of-X is only meaningful once
+   presence-of-response is established, and network failures are absence-shaped.
+2. **`grep` as a parser erases the difference between "no match" and "no input".** When the
+   two mean opposite things, capture the whole response and branch on it explicitly.
+3. **A URL in a header value contains your delimiter.** `.*:` is greedy and `://` is a colon.
+   Anchor to the first separator (`^[^:]*: *`) whenever the value may contain one.
+4. **Prefer a probe that can tell old from new WITHOUT auth.** Most of this worker's surface
+   answers `401 NO_SESSION` to real, new and nonsense actions alike, so no unauthenticated
+   request distinguishes a deployed version — which is why earlier deploys could only be
+   confirmed from the control plane. A CORS preflight runs before the auth gate and does
+   discriminate. When designing a change, notice whether anything about it will be observable
+   after shipping.
+5. **A verification that fails closed on its own bug is not a nuisance.** Ten RESET lines that
+   turned out to be a bad `sed` are cheaper than one confirmation built on a misparse. Read
+   them before assuming the deploy is wrong — and before assuming the check is.
+</rules>
+
 ## The cross-store test passed because the fixture picked the wrong store (2026-09-16)
 
 `verifyApproval` handed a RAW D1 row to `canAccessStore`. `users.stores` arrives from D1 as
