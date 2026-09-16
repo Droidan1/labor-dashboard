@@ -73,5 +73,83 @@ ok(psList === 'BL1,BL2,BL4,BL8,BL14,BL16',
 ok(/BL8/.test((html.match(/const SR_ALL\s*=\s*\[([^\]]+)\]/) || [])[1] || ''),
   'SR_ALL keeps BL8 — it drives the supply-request table columns, and dropping it would hide historical requests');
 
+// ── Drawn vs COUNTED, the half that went unpinned and broke. ────────────────
+//
+// The original version of this file asserted BL8 in ALL_STORES and BL8 out of STORES,
+// and passed all the way through the bug: on 2026-09-15 Holland's budget vanished from
+// the All Stores Budget card while every assertion above stayed green. What was never
+// pinned is that ALL_STORES is not the frontend's budget scope at all. Chain budget is
+// summed IN THE BROWSER out of allStoreData, which is filled per store in the frontend
+// rosters — so STORES alone decided budget, and the comment above it said the opposite.
+//
+// These assertions pin the relationship itself, not the two lists in isolation.
+console.log('\n── Chain budget scope ──');
+
+const budgetOnly = (html.match(/const BUDGET_ONLY_STORES = \[([\s\S]*?)\];/) || [])[1] || '';
+ok(budgetOnly.length > 0, 'the frontend has a budget-only roster at all');
+ok(/BL8/.test(budgetOnly), '🔑 BL8 is in it — the dashboard COUNTS Holland even though it does not DRAW it');
+ok(!/BL12/.test(budgetOnly),
+  'BL12 is NOT — its budget duplicates BL16 (shared merchant), so counting it double-counts Indy East');
+
+const codes = (s) => [...s.matchAll(/"(BL\d+)\//g)].map(m => m[1]);
+const finScope = [...codes(roster), ...codes(budgetOnly)].sort();
+const workerScope = (allStores.match(/BL\d+/g) || []).sort();
+ok(finScope.length > 0 && JSON.stringify(finScope) === JSON.stringify(workerScope),
+  `🔑 STORES + BUDGET_ONLY_STORES === the worker's ALL_STORES `
+  + `(frontend ${finScope.join(',')} vs worker ${workerScope.join(',')}) — `
+  + `the dashboard and the morning briefing must budget for the same stores`);
+ok(codes(roster).length === 5 && codes(budgetOnly).length === 1,
+  'five drawn, one counted-only');
+
+// ── Every chain budget figure folds them in. ────────────────────────────────
+// One fold per surface that sums budget across stores. Each of these was $34.5k a week
+// light; a new one that forgets is what this section exists to catch.
+const fnBody = (name) => {
+  const i = html.indexOf(`function ${name}(`);
+  if (i < 0) return '';
+  const j = html.indexOf('\n  function ', i + 1);
+  return html.slice(i, j < 0 ? html.length : j);
+};
+const folds = (name) => (fnBody(name).match(/budgetOnly(Total|Rows)\(/g) || []).length;
+
+ok(fnBody('renderDashboard').length > 2000, 'found renderDashboard to inspect');
+ok(folds('renderDashboard') >= 4,
+  `renderDashboard folds the budget-only stores into all four of its chain figures `
+  + `— hero today, Weekly, Monthly and the historical branch (${folds('renderDashboard')})`);
+ok(folds('buildAllStoresWeeklyTable') >= 1, 'the per-day chain table folds them in');
+ok(folds('_asWeekTotals') >= 0 && /BUDGET_ONLY_STORES/.test(fnBody('_asWeekTotals')),
+  'the All Stores page totals fold them in');
+ok(folds('renderAllStoresDailyChart') >= 1, "the daily chart's budget line folds them in");
+ok(folds('bargainLaneFigures') >= 2,
+  'the landing hero folds them into both today and month-to-date');
+
+// The All Stores page shows a per-store breakdown UNDER its chain total, so a store
+// that joins the total must join the breakdown — otherwise the rows visibly fail to
+// add up to the hero above them.
+ok(/perStore\.push\(\{ store: s, code, label, sales: 0, budget: storeBudget, closed: true \}\)/.test(html),
+  'a counted-only store gets a row in the All Stores breakdown, marked closed');
+ok(/\$\{s\.closed \?/.test(html), 'and the row renders a Closed badge');
+
+// ── Loaded, but never polled. ──────────────────────────────────────────────
+ok(/const histRoster = STORES\.concat\(BUDGET_ONLY_STORES\);/.test(html),
+  'history loads for the budget-only stores — without the D1 read there are no budget rows to sum');
+ok(/Promise\.all\(histRoster\.map/.test(html), 'and the history fan-out uses that roster');
+ok(/\$\{loaded\}\/\$\{histRoster\.length\}/.test(html),
+  'the progress counter counts against the same roster, so it cannot read "6/5"');
+ok(/const cloverPromise = Promise\.all\(STORES\.map/.test(html),
+  '🔑 the LIVE CLOVER fan-out still uses STORES alone — a closed merchant returns nothing '
+  + 'and that poll is the expensive half of a load');
+
+// ── A closed store's budget is still somebody's budget. ────────────────────
+ok(/BUDGET_ONLY_STORES\.splice\(0, BUDGET_ONLY_STORES\.length,/.test(html),
+  'the budget-only roster narrows to the user grant alongside STORES — a store-scoped '
+  + 'manager must not find a closed store in their totals');
+
+// ── The comment that said the opposite is gone. ────────────────────────────
+ok(!/THIS LIST DOES NOT DECIDE BUDGET/.test(html),
+  'the inverted comment above STORES is gone — it claimed the list could not affect budget');
+ok(/THIS LIST IS HALF THE BUDGET SCOPE/.test(html),
+  'and says what is actually true, naming the other half');
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'} — ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
