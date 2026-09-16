@@ -1882,3 +1882,55 @@ my own arrangement of the same parts.
    pickers ship in this file. Both avoid this failure, one of them by construction. CLAUDE.md
    already says extend what is there; the cost of not looking was a shipped-broken control.
 </rules>
+
+## The comment said it could not affect budget, and it was the only thing that did (2026-09-16)
+
+Brian: "we removed Holland from the frontend but were supposed to keep the budget untouched
+— its budget came out of the all stores budget." It had, from all seven chain figures, the
+day it shipped.
+
+The change that did it (3315888) was careful in exactly the wrong place. It left the
+worker's `ALL_STORES` alone, wrote a paragraph in the commit message explaining why that
+mattered, added a 17-assertion test pinning BL8 **in** `ALL_STORES` and **out** of the
+frontend `STORES`, and put a 🔑 comment above the roster reading "THIS LIST DOES NOT DECIDE
+BUDGET. Chain financials scope to ALL_STORES in worker.js."
+
+Every one of those statements is true. None of them is load-bearing. `ALL_STORES` scopes
+what the **worker** computes — briefings, emails, notifications, Retail Summary. The
+dashboard's All Stores Budget card calls none of it: it sums budget **in the browser** out
+of `allStoreData`, which is filled by `STORES.map(loadStoreFromD1)`. `STORES` was the budget
+scope, the comment said it wasn't, and the test only ever compared the two lists to
+themselves.
+
+The tell was in the previous session's own review note, offered as proof of success:
+
+> "the per-store history read and the live Clover poll are driven straight off `STORES`, and
+> both now fan out to exactly five stores with no BL8."
+
+That dropped D1 read *is* the bug. The evidence that the change worked and the evidence
+that it broke something were the same sentence, and the difference between them is a
+question nobody asked: the budget has to come from somewhere — where does it come from?
+
+<rules>
+14. **A comment asserting a non-relationship is a claim, and claims get tested.** "This list
+   does not decide X" is a testable statement. If it is worth writing a 🔑 on, it is worth
+   one assertion. Unpinned, it does not merely fail to help — it actively stops the next
+   person looking, which is worse than silence.
+15. **Test the relationship, not the two things.** `BL8 ∈ ALL_STORES` and `BL8 ∉ STORES` both
+   passed straight through the bug. The assertion that catches it is
+   `STORES + BUDGET_ONLY_STORES === ALL_STORES` — one that names both sides and fails when
+   they drift. Two independent assertions about two lists say nothing about the gap between.
+16. **Before removing a store/user/tenant from a roster, grep what SUMS over it.** Not what
+   renders it — what sums it. `for (const s of ROSTER)` that touches a money field is a
+   scope decision wearing a loop's clothes. Ask where every figure on the screen is computed
+   — worker or browser — before trusting a claim about which one owns it.
+17. **"The fan-out got smaller" is evidence of a smaller fan-out and nothing else.** It is
+   the proof that a roster changed; it is never the proof the change was harmless. Each
+   dropped call was fetching something. Say what, out loud, before calling it a cleanup.
+18. **Restore a figure to a total, and check what is displayed UNDER that total.** A chain
+   number with a per-store breakdown beneath it must gain a row when it gains a store, or
+   the report visibly fails to add up and you have traded one bug for a more embarrassing one.
+19. **An exact 2× in a test is a selector bug until proven otherwise.** The All Stores rows
+   summed to double their own footer; the page was right and `> div` was matching the header
+   and the total row. Check what the selector matched before you go looking at the code.
+</rules>
