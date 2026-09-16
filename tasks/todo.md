@@ -61,10 +61,12 @@ cipher-key leak would become an auth bypass rather than a disclosure.
 ## Review
 
 **Green.** `bash scripts/test.sh` — **4,794 assertions across 75 suites**, including 53 new in
-`test-associate.mjs` section 17. Plus 49 browser assertions in headless Chromium (not
-committed — Playwright is not a dependency here, same call as the 2026-09-09 associates work):
-28 rendering the modal in both themes × both states, 21 driving the row button, Copy, Close and
-the handoff into the editor.
+`test-associate.mjs` section 17. Plus **42 browser assertions** in headless Chromium, in
+`scripts/browser-associate-reveal.mjs` — both themes × both modal states, contrast measured
+against the real composited background, and the row button, Copy, Close and the editor handoff
+driven end to end. Committed, following `browser-approval-pin.mjs`: `playwright-core` stays out
+of `devDependencies` (Pages runs `npm install` on every deploy) and the name is outside
+`test.sh`'s `test-*` glob, so no machine without Chromium fails the suite.
 
 ### What the mutations found
 
