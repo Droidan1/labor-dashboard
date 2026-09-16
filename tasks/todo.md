@@ -1,3 +1,65 @@
+# Deployed: production stops trusting localhost (2026-09-16)
+
+Brian's go for both environments. Worker only — no migration, no secret, no frontend, so no
+`CACHE_NAME` bump was involved.
+
+| | version |
+|---|---|
+| staging `clover-sales-api-staging` | `5e795a79` |
+| production `clover-sales-api` | `d518a773` |
+
+Deployed from `main` at `b6c5645`, and `scripts/test-cors-origins.mjs` was run green against
+that exact tree before either deploy rather than against whatever was last checked out.
+
+## 🔑 The first deploy in this run that could be verified BEHAVIOURALLY
+
+Every earlier confirmation in this sequence leaned on the control plane — active version plus
+a grep of the deployed bundle — because every new surface was behind the auth gate, which
+answers `401 NO_SESSION` to real actions, new actions and nonsense alike. Nothing an
+unauthenticated prober could send told the old worker from the new one.
+
+**A CORS preflight is different.** `resolveCors` runs before any auth, so an `OPTIONS` with an
+`Origin` header discriminates directly, and the confirmation could assert what the change is
+actually FOR, in both directions:
+
+    localhost:8788      -> 200, no Access-Control-Allow-Origin     (refused — the fix)
+    www.retjghub.com    -> 200, Allow-Origin echoed                (still works — the app)
+
+Three consecutive clean passes required all four of: both active versions matching what
+wrangler uploaded, both bundles carrying `resolveCors(request, env)`, and those two probes.
+
+## 🛑 Two bugs in the PROBE, either of which would have produced a false report
+
+1. **An unreachable host looked exactly like a refusal.** The first probe piped the response
+   through `grep` for the CORS headers, so a connection that never arrived produced the same
+   empty output as a request the worker answered without them. It made staging appear to be
+   REFUSING localhost — the over-tightening failure the whole suite exists to catch — when in
+   truth the agent proxy blocks `*.workers.dev` and `api-staging.retjghub.com` and the request
+   had never left the container. Every probe now asserts an HTTP status FIRST; only then does
+   a missing header mean anything.
+2. **A greedy `sed 's/.*: *//'` mangled the header value.** It strips to the LAST `: ` on the
+   line, which inside `Access-Control-Allow-Origin: https://www.retjghub.com` is the one in
+   `https://` — so the value read `//www.retjghub.com` and the positive assertion failed
+   against the full URL. `sed 's/^[^:]*: *//'` takes only the first colon.
+
+The second one is the more reassuring failure: the check **refused to confirm** for ten
+straight passes rather than passing on a value it had misread. A deploy check that fails
+closed on its own bug is doing its job; the ten RESET lines are the evidence, not noise.
+
+## What is verified, and what is not
+
+- **Production: end to end.** `api.retjghub.com` is reachable from the container, so the
+  refusal and the allow were both observed against the live worker.
+- **Staging: control plane only.** Active version and bundle contents. The proxy blocks
+  `api-staging.retjghub.com` and `*.workers.dev`, so no request from here can reach it. Said
+  plainly rather than rounded up to "verified".
+
+## Live consequence
+
+A local front end pointed at `api.retjghub.com` no longer works — `npx wrangler pages dev dist`
+(README.md:46) must point at `api-staging.retjghub.com`. Accepted before the change was
+written, not discovered after.
+
 # Production stops trusting localhost (2026-09-16)
 
 Brian, after reading the trade: *"yes, do it."*
