@@ -26038,10 +26038,22 @@
           allowDup = true;
         }
 
-        // ⚠️ The PO check second, and it stays a soft warning: one PO covers a whole truck,
-        // so a repeat is normal and blocking on it would be noise. Skipped entirely when
-        // the barcode question was already asked — one pallet, one interruption.
-        if (!allowDup && v.po && dup.matches.length) {
+        // ⚠️ The PO check is a FALLBACK FOR A TAG WITH NO BARCODE, and nothing more.
+        //
+        // 🛑 IT USED TO RUN WHENEVER THE BARCODE CHECK CAME BACK CLEAN, and that made it
+        // noise rather than a warning. "PO / WO" is a purchase order on one tag format
+        // (`5036` — one truck, a handful of pallets) and a RECEIVING-METHOD LABEL on the
+        // other (`RM1 - TJX`), which every TJX pallet carries forever. `WHERE po = ?` then
+        // matches the whole unload, so the second and every later pallet of a session was
+        // told it had "already been logged" — naming a pallet it had nothing to do with.
+        // Production, 2026-09-10 and 2026-09-16: 19 of 31 submits prompted, and `RM1 - TJX`
+        // spanned 20 rows carrying 20 DISTINCT barcodes. Not one firing was a real repeat.
+        //
+        // 🔑 The barcode is the better question and it has ALREADY BEEN ASKED by the time
+        // we get here: a match prompted above, and no match is a definitive no — one
+        // barcode is one physical pallet. Only a tag with no barcode has nothing better to
+        // go on, and that lone case is what is left here.
+        if (!v.barcode && v.po && dup.matches.length) {
           const d = dup.matches[0];
           const goOn = await uiConfirm(
             `PO ${v.po} was already logged ${bdWhen(d.logged_at)} by ${d.logged_by || 'someone'}`

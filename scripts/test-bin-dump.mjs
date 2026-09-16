@@ -37,6 +37,12 @@ const TAG = {   // A — 2026-09-08 photo
   barcode: 'PRM-10490-30', item_no: '50201', pallet_name: 'PALLET AMAZON IND8',
   sup_ref: null, po: '5036', units: 1, created_by_tag: 'Ranon Price', truck_no: '10490',
 };
+// 🛑 WHAT THE 'PO / WO' FIELD REALLY CARRIES on format B in production. Both TAG fixtures
+// above use a NUMBER, which is what let the PO prompt look sane in tests while firing on
+// every pallet on the floor. Every BL1 row logged through the second tag format carries
+// this string instead — a receiving method, shared forever, never a pallet's identity.
+const REAL_PO_LABEL = 'RM1 - TJX';
+
 const TAG_B = { // B — 2026-08-26 photo: WO not PO, a Sup. Ref, no truck, wrapped name
   barcode: 'P-082626-725979', item_no: '50007',
   pallet_name: 'FG BL CONSUMABLES - FOOD - SNACKS',
@@ -751,6 +757,65 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   ok(/bdPostAllowingDuplicate/.test(h), 'and retries once when the worker refuses on a race it could not pre-flight');
   ok(/class="bd-dup"/.test(h), 'the log badges rows sharing a barcode');
   ok(/if \(!c\) continue;/.test(h), '…and skips blanks when deciding what is shared');
+}
+
+// ── 19b. The PO prompt is a FALLBACK, not a second opinion ────────────
+// 🛑 THE BUG THIS PINS. "PO / WO" is a purchase order on one tag format (`5036` — one
+// truck, a few pallets) and a RECEIVING-METHOD LABEL on the other (`RM1 - TJX`), which
+// every TJX pallet carries for good. While the client prompted on a PO hit whenever the
+// BARCODE check came back clean, every pallet after the first in an unload was told it
+// had "already been logged", naming a pallet it had nothing to do with. Production,
+// 2026-09-10 and 2026-09-16: 19 of 31 submits prompted, `RM1 - TJX` spanned 20 rows
+// carrying 20 DISTINCT barcodes, and not one firing was a real repeat. Reported by the
+// floor as "we keep getting duplicate pallet messages and they are not duplicates".
+{
+  const { env, db } = env0();
+  const REAL_PO = REAL_PO_LABEL;   // 🔑 a LABEL, not an identifier — that is the whole bug
+  const ins = db.prepare(`INSERT INTO bin_dumps (store, barcode, item_no, pallet_name, po, units, logged_by, logged_at)
+                          VALUES ('BL1', ?, '50081', 'FGP ONE - OTHER', ?, 1, 'x@y.z', ?)`);
+  // Three real pallets off one unload: same label, same item, same name, minutes apart.
+  ['P-090926-729894', 'P-090926-729898', 'P-090826-729249'].forEach((b, i) =>
+    ins.run(b, REAL_PO, new Date(Date.parse(PINNED) - (i + 1) * 900000).toISOString()));
+
+  const j = await json(await call(
+    `/?action=bin-dump-recent&store=BL1&po=${encodeURIComponent(REAL_PO)}&barcode=P-090926-729727`,
+    { user: 'u-mgr1', env }));
+  // The ENDPOINT stays honest and answers both questions; the client decides which of
+  // the two is worth interrupting somebody over.
+  eq(j.matches.length, 3, 'the PO hint still finds every pallet sharing the label');
+  eq(j.barcode_matches.length, 0,
+     '🔑 …while the barcode — the only field that identifies a PALLET — says no duplicate');
+
+  eq((await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
+      body: { store: 'BL1', barcode: 'P-090926-729727', item_no: '50081', po: REAL_PO, units: 1 }, env })).status, 200,
+     'a fourth pallet on the same label logs with no override — the worker never blocked on PO');
+}
+
+// The client's half: WHICH of those two answers is allowed to stop somebody.
+{
+  const h = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const fn = h.slice(h.indexOf('async function bdSubmit'), h.indexOf('window.bdSubmit'));
+
+  // 🔑 EVALUATE THE REAL CONDITION rather than matching its spelling. A regex over the
+  // source pins how it is written; this pins what it DOES, and still fails the moment
+  // somebody restores the `!allowDup` that caused the false alarms.
+  const m = /if \(([^\n]*?)\) \{\n\s*const d = dup\.matches\[0\];/.exec(fn);
+  ok(!!m, 'the PO prompt’s condition is still locatable inside bdSubmit');
+  const poPrompts = new Function('v', 'dup', 'allowDup', `return !!(${m ? m[1] : 'false'});`);
+  const hint = { matches: [{ logged_at: PINNED, logged_by: 'Paul Howard' }], barcode_matches: [] };
+
+  // 🛑 The exact firing the floor reported. Under the old `!allowDup` spelling this was
+  // true, and it fired on all but the first pallet of every unload.
+  eq(poPrompts({ barcode: 'P-090926-729727', po: REAL_PO_LABEL }, hint, false), false,
+     '🛑 a tag WITH a barcode never raises the PO prompt — the barcode already answered, '
+     + 'and a clean barcode is a definitive no, not a reason to ask a weaker question');
+  eq(poPrompts({ barcode: null, po: REAL_PO_LABEL }, hint, false), true,
+     '🔑 …but a torn tag with NO barcode still gets it: nothing better is left to go on');
+  eq(poPrompts({ barcode: '', po: '5036' }, hint, false), true,
+     'an unread barcode counts as no barcode, whichever falsy the form hands over');
+  eq(poPrompts({ barcode: null, po: null }, hint, false), false, 'no PO, no PO question');
+  eq(poPrompts({ barcode: null, po: REAL_PO_LABEL }, { matches: [], barcode_matches: [] }, false), false,
+     '…and no hint, no question');
 }
 
 // ── 20. Export ranges: weeks=all, the limit, and saying when it truncates ──

@@ -1934,3 +1934,45 @@ question nobody asked: the budget has to come from somewhere — where does it c
    summed to double their own footer; the page was right and `> div` was matching the header
    and the total row. Check what the selector matched before you go looking at the code.
 </rules>
+
+
+## The test fixture said `5036`; the warehouse said `RM1 - TJX` (2026-09-16)
+
+Bin Dump warned on a repeated PO. The floor read that as "duplicate pallet" and it was
+wrong 19 times out of 19 — `po = 'RM1 - TJX'` spanned 20 rows carrying 20 distinct
+barcodes. The check had been shipped, tested and reviewed, and `test-bin-dump.mjs` covered
+it: log a pallet, ask again, assert the PO is found. That test passed the whole time the
+feature was useless, because **both tag fixtures gave `po` a number** — `5036` and `14373`.
+On format A `PO:` really is a purchase order. On format B the same field is printed `WO:`
+and carries a receiving method that every TJX pallet has carried for good. The fixture
+encoded the assumption the feature was built on instead of testing it.
+
+The second half: the barcode check arrived LATER (migration-060) and made the PO check
+redundant wherever a barcode exists — which is everywhere. It was suppressed only when the
+barcode had already prompted, so a CLEAN barcode still fell through to the weaker question.
+Nobody re-asked what the old check was still for once a better one sat above it.
+
+I also nearly believed the wrong cause. The dialog says "Duplicate pallet", the report said
+"duplicate", and the barcode guard is the thing that says that — so the barcode guard is
+where I started. One `GROUP BY barcode HAVING COUNT(*) > 1` against production returned
+zero rows and killed that theory in one query, before I had read a line of it closely.
+
+<rules>
+20. **A fixture that only ever holds the well-behaved value tests the assumption, not the
+   code.** `po: '5036'` is the case the feature was designed around; `po: 'RM1 - TJX'` is
+   the case it meets all day. When a field is free text off a printed form, put the real
+   ugly string in the fixture — pulled from production, not invented — or the suite will
+   stay green through a 0%-precision guard.
+21. **One field, two tag formats, two meanings — check what the OTHER format puts there.**
+   `PO:` and `WO:` were folded into one column on purpose and that was right for storage.
+   It is not automatically right for a WHERE clause: a field that identifies a truck on one
+   format and names a category on the other cannot carry an identity query for both.
+22. **When you add a stronger check, say out loud what the weaker one is still for.** The
+   barcode check superseded the PO check and nobody wrote down that it had. What survived
+   was a guard with no remaining job, firing on every good pallet — and this repo's own
+   comment already says what that costs: it "trains people to click through it".
+23. **Ask the database which guard fired before reading the guard.** The user's word
+   ("duplicate") pointed at the barcode check; the data pointed at the PO check. A
+   one-line aggregate over the real table separated them before any code reading, and would
+   have saved the reading that went the wrong way first.
+</rules>

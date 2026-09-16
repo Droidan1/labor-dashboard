@@ -1,3 +1,94 @@
+# Bin Dump — the "duplicate pallet" messages that were never duplicates
+
+Brian, 2026-09-16, with a CSV of this week's BL1 pallets: *"users are saying they keep
+getting messages about duplicate pallet tags but they are not … also happened last week."*
+
+## What was actually firing
+
+Not the barcode check. **The PO check.**
+
+Bin Dump asks two duplicate questions on every submit:
+
+| | Question | Weight |
+|---|---|---|
+| Barcode | same barcode anywhere in 90 days | HARD — worker returns 409 |
+| PO / WO | same PO at this store in 6 hours | SOFT — client prompt only |
+
+Production D1, all 31 `bin_dumps` rows:
+
+- **Zero** rows share a barcode. `GROUP BY barcode HAVING COUNT(*) > 1` returns nothing,
+  so the hard check has never fired on a logged pallet — not once, ever.
+- **19 of 31** submits had a prior row with the same PO at the same store inside 6 hours,
+  which is the client's "Already logged?" prompt, every time.
+- `po = 'RM1 - TJX'` covers **20 rows carrying 20 DISTINCT barcodes**. Every single
+  firing named a different physical pallet.
+- Both reported days line up: 2026-09-10 (16 of 19 prompted, one against 15 prior rows)
+  and 2026-09-16 (3 of 5).
+
+## Root cause
+
+`PO / WO` is one field holding two unrelated things, because the two tag formats disagree:
+
+- Format A (`PRM-10490-30`) prints **`PO:`** — `5036`, one truck, a handful of pallets.
+- Format B (`P-090926-729727`) prints **`WO:`** — `RM1 - TJX`, a **receiving method**
+  that every TJX pallet carries forever.
+
+`WHERE po = ?` therefore matches the entire unload on format B, and the prompt fires on
+every pallet after the first. The PO check predates the barcode check (migration-058 vs
+migration-060, `4622e88 Refuse the same pallet twice, by barcode`); when the barcode check
+arrived it superseded the PO check but was only suppressed in the narrow case where the
+barcode had ALREADY prompted — so a clean barcode still fell through to the weaker
+question. That gap is the bug.
+
+The repo had already written the rule this violates, in the barcode window comment:
+*"a warning that fires on good pallets trains people to click through it — which costs
+more than the check was ever worth."*
+
+## Plan
+
+- [x] Read the log, the pre-flight and both duplicate paths (`bdSubmit`, `bin-dump-recent`)
+- [x] Confirm against production D1 which check fired — read-only `SELECT`s, no mutation
+- [x] Rule out the barcode check (0 barcode collisions in the table)
+- [x] `index.html` — the PO prompt becomes a fallback: `!v.barcode` replaces `!allowDup`
+- [x] `scripts/test-bin-dump.mjs` — reproduce the real unload; EVALUATE the real condition
+- [x] Prove the new test fails against the old condition, then passes
+- [x] Bump `CACHE_NAME` + shell-cache fixture (index.html changed)
+- [x] Full suite green
+
+## The fix
+
+One condition in `bdSubmit`:
+
+```js
+-        if (!allowDup && v.po && dup.matches.length) {
++        if (!v.barcode && v.po && dup.matches.length) {
+```
+
+Read as: **the barcode is the better question and it has already been asked.** A match
+prompted above; no match is a definitive no, because one barcode is one physical pallet.
+Only a tag with no barcode at all has nothing better to go on, and that is the single case
+left. It mirrors the Inventory Receiver, built later against the same tag reader, which
+checks the barcode and has no PO check at all.
+
+Deliberately NOT changed: `bin-dump-recent` still answers both questions honestly. It is a
+data endpoint; which answer is worth interrupting somebody over is the client's call, and
+the existing test pinning "the PO hint still works" stays true.
+
+## Review
+
+- **Blast radius** — one `if` in the Bin Dump submit path. No worker change, no schema
+  change, no migration, no DB write. Nothing else reads `dup.matches`.
+- **Nothing was weakened.** The 409 on a repeated barcode is untouched, still crosses
+  stores, still 90 days, still re-checked server-side, still ahead of the R2 put. The DUP
+  badge in the log is untouched.
+- **Verified against the old code**, not just the new: reverting the condition turns the
+  new assertion red with the exact false alarm the floor reported (`got true, want false`).
+- 4,730 assertions across 75 suites pass.
+- **Residual**: a torn tag with no barcode AND `po = 'RM1 - TJX'` would still prompt. Every
+  one of the 31 production rows carries a barcode, so this is unobserved — and in that case
+  the weak signal is the only signal there is. Left standing rather than deleted: scoping a
+  guard to where it is the last resort is mine to judge, deleting one outright is Brian's.
+
 # Truck review email — Inventory Receiver
 
 Brian, 2026-09-16, after reviewing the preview: *"Keep the BOL photo attached, exception
