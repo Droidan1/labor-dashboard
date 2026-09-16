@@ -164,6 +164,51 @@ for (const scheme of ['dark', 'light']) {
   check(own.length === 0, `[${t}] no page errors of our own` + (own.length ? ': ' + own.slice(0,3).join(' ~ ') : ''));
   await ctx.close();
 }
+// ── The camera attribute, driven in both pointer modes ─────────────────────
+// 🛑 This is the regression that shipped: `capture="environment"` hardcoded on the
+// input meant a desktop browser with no camera presented NO picker at all, so Receive
+// Truck looked like a dead button. The phone path must stay byte-for-byte identical.
+for (const [label, opts, wantCapture] of [
+  ['desktop', { viewport: { width: 1400, height: 900 }, hasTouch: false, isMobile: false }, null],
+  ['phone',   { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, 'environment'],
+]) {
+  const ctx = await b.newContext(opts);
+  const page = await ctx.newPage();
+  let chooser = false;
+  page.on('filechooser', () => { chooser = true; });
+  await page.addInitScript(({ TRUCK }) => {
+    const real = window.fetch;
+    window.fetch = async (u, o) => {
+      const s = String(u);
+      const J = (x) => new Response(JSON.stringify(x), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (s.includes('auth-me')) return J({ authenticated: true, email: 'b@b.com', name: 'Brian', role: 'superuser', stores: null, pages: {}, businesses: ['bl'] });
+      if (s.includes('truck-current')) return J({ ok: true, truck: null, pallets: [] });
+      if (s.includes('truck-list')) return J({ ok: true, rows: [], truncated: false });
+      return real(u, o);
+    };
+  }, { TRUCK: null });
+  await page.goto('http://127.0.0.1:8099/', { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1200);
+  await page.evaluate(() => {
+    const l = document.getElementById('login-page'); if (l) l.style.display = 'none';
+    const a = document.getElementById('app'); if (a) a.style.display = 'flex';
+  });
+  await page.evaluate(() => window.navigateToPage('inventory-receiver'));
+  await page.waitForTimeout(600);
+  await page.evaluate(() => window.irBeginBol());
+  await page.waitForTimeout(800);
+  const cap = await page.evaluate(() => document.getElementById('ir-photo').getAttribute('capture'));
+  const bd = await page.evaluate(() => {
+    window.navigateToPage('bin-dump');
+    try { window.bdBegin(); } catch (e) {}
+    return document.getElementById('bd-photo').getAttribute('capture');
+  });
+  check(cap === wantCapture, `[${label}] Inventory Receiver capture is ${JSON.stringify(wantCapture)} (got ${JSON.stringify(cap)})`);
+  check(bd === wantCapture, `[${label}] Bin Dump capture is ${JSON.stringify(wantCapture)} — same rule, no phone regression`);
+  check(chooser, `[${label}] a picker actually opened`);
+  await ctx.close();
+}
+
 await b.close();
 srv.close();
 

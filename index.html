@@ -24858,6 +24858,27 @@
   // A modern phone camera produces 3-6 MB, which is slow to upload on warehouse wifi and
   // far more detail than reading a label needs. Downscaled to 1280px on the longest edge
   // before it ever leaves the device.
+  // 🛑 `capture="environment"` MEANS "REAR CAMERA, AND NOTHING ELSE". On a phone that is
+  // exactly right, and it is what survives inside the installed PWA — which is why both
+  // photo inputs hardcoded it. On a DESKTOP browser there is often no camera to satisfy
+  // it with, and the browser can answer by presenting NO picker at all: the button looks
+  // dead. That is how "Receive Truck" did nothing on a Mac (Brian, 2026-09-16).
+  //
+  // 🔑 Keep the attribute where there is a camera, drop it where a file picker is the
+  // only sensible answer. `accept="image/*"` alone still offers Camera / Photo Library on
+  // iOS and Android, so the phone path is unchanged either way — and on a coarse pointer
+  // the attribute stays, so it is byte-for-byte today's behaviour there.
+  //
+  // Defaults to KEEPING the attribute if matchMedia throws: the phone is the case that
+  // must not regress.
+  function syncCameraCapture(input) {
+    if (!input) return;
+    let coarse = true;
+    try { coarse = window.matchMedia('(pointer: coarse)').matches; } catch (e) { coarse = true; }
+    if (coarse) input.setAttribute('capture', 'environment');
+    else input.removeAttribute('capture');
+  }
+
   // 🔑 `max` and `quality` are PARAMETERS, defaulting to the values every existing
   // caller was hardcoded to. 1280px / q0.82 was tuned for a printed pallet tag and a
   // product shot; a Bill of Lading is a dense form whose trailer and seal numbers are
@@ -25556,7 +25577,7 @@
     return s.length ? s[0] : '';
   }
 
-  function bdBegin() { bdCloseModal(); el('bd-photo').click(); }
+  function bdBegin() { bdCloseModal(); (syncCameraCapture(el('bd-photo')), el('bd-photo').click()); }
   window.bdBegin = bdBegin;
 
   async function bdPhoto(input) {
@@ -26378,9 +26399,22 @@
   // ── Camera ────────────────────────────────────────────────────────────────
   // 🔑 The native camera via <input capture>, not getUserMedia — it is what survives
   // inside an installed PWA, which is where this page lives.
-  function irBeginBol() { irState.mode = 'bol'; irCloseModal(); irSetStatus(null); el('ir-photo').click(); }
-  function irBeginPallet() { irState.mode = 'pallet'; irCloseModal(); irSetStatus(null); el('ir-photo').click(); }
-  function irRetake() { if (irState.mode) { irCloseModal(); el('ir-photo').click(); } }
+  // 🔑 syncCameraCapture runs on EVERY open, not once at init: a tablet can gain or lose
+  // a mouse, and the attribute is cheap to re-assert.
+  function irPick() {
+    const input = el('ir-photo');
+    syncCameraCapture(input);
+    try {
+      input.click();
+    } catch (e) {
+      // A picker that never appears is indistinguishable from a dead button, so say so
+      // rather than leaving the person tapping it.
+      irSetStatus(`Couldn't open the camera or file picker — ${(e && e.message) || e}`, 'err');
+    }
+  }
+  function irBeginBol() { irState.mode = 'bol'; irCloseModal(); irSetStatus(null); irPick(); }
+  function irBeginPallet() { irState.mode = 'pallet'; irCloseModal(); irSetStatus(null); irPick(); }
+  function irRetake() { if (irState.mode) { irCloseModal(); irPick(); } }
   window.irBeginBol = irBeginBol; window.irBeginPallet = irBeginPallet; window.irRetake = irRetake;
 
   async function irPhoto(input) {
