@@ -1976,3 +1976,47 @@ zero rows and killed that theory in one query, before I had read a line of it cl
    one-line aggregate over the real table separated them before any code reading, and would
    have saved the reading that went the wrong way first.
 </rules>
+
+
+## Verifying a deploy means grepping for the code you did NOT write (2026-09-16)
+
+The Bin Dump worker deploy. This repo already knows to pull the deployed bundle from the
+Cloudflare API and grep it — that is how the 2026-09-15 rollback was caught, after an
+unpulled checkout put production 40 minutes behind main. So I did that, found `AND po = ?`
+at 0 and `barcode_matches` present, and could have stopped there feeling thorough.
+
+That check only proves MY change shipped. The incident it descends from was never about
+the change that was being deployed — it was about `fetchTransactionOrders`,
+`payment_archive` and `bank-transactions` vanishing, features the deployer was not
+touching and therefore not looking at. A bundle built from a stale checkout contains your
+new work and is missing somebody else's; grepping only your own markers returns all-green
+on exactly the deploy that caused the incident.
+
+Two smaller things fell out of the same pass. One marker came back 0 and I nearly reported
+it as a regression — `truck-review-email` was a name I had invented; the code says
+`truck_review_email`. A zero means "this string is absent", which is one of "the feature is
+gone" or "you guessed the identifier wrong", and only the source can say which. And I
+briefly read live-vs-local count differences (4 vs 3, 9 vs 11) as signal when `grep -c`
+counts LINES and a bundler re-joins them, so the two numbers were never comparable.
+
+<rules>
+24. **Before `wrangler deploy`, diff the file you are deploying against the branch you
+   think you are on.** `git diff <deploying> origin/main -- worker.js` coming back empty
+   is the one check that would have prevented the 40-minute rollback, and it costs a
+   second. Deploying from a feature branch is fine; deploying from one that is BEHIND is
+   the incident.
+25. **Grep the deployed bundle for features you did not touch.** Your own markers being
+   present proves your change shipped and says nothing about what left with it. Pick three
+   or four of the most recent unrelated features and confirm they are still in there.
+26. **A marker at 0 is not a finding until you have grepped the source for the same
+   string.** "Absent from production" and "I guessed the identifier" are indistinguishable
+   from the bundle alone, and shipping the first as a conclusion is a false alarm about a
+   rollback — the most expensive kind.
+27. **`grep -c` counts lines, not occurrences.** Comparing a count from multi-line source
+   against one from a bundled single-line artifact compares formatting. For bundle
+   verification the only meaningful question is presence vs absence.
+28. **Say which probes you could NOT run.** Every probe in this deploy hit `401
+   NO_SESSION`, which proves routing and JSON and nothing about the authenticated path.
+   That is worth stating out loud rather than letting "18 clean passes" imply the
+   behaviour was exercised end to end.
+</rules>
