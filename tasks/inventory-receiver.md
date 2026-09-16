@@ -444,3 +444,56 @@ of the 40 on the Bill of Lading* — correct behaviour, real inboxes. One admin 
 by the business gate, which is the gate doing its job.
 
 `notification_log` has **0** rows at `event_type = 'truck-review'`, so nothing has fired yet.
+
+---
+
+## The BL1 test truck, deleted 2026-09-16 — and its backup
+
+Brian opened one truck during the camera test and asked for it removed rather than taken
+down, because Truck Down on it would have mailed nine people to say it came up 40 short.
+
+🛑 **BACKED UP BEFORE THE DELETE, and this IS the backup.** One row, no pallets, and the
+photo left in place — so the statement below restores it exactly, still pointing at a live
+R2 object. There is no `truck-delete` action in the worker (by design, the same reason
+`truck-pallet-delete` is absent from `ACTION_PAGE`), so this was raw SQL against D1.
+
+**State read immediately before the delete** — matching what Brian confirmed against:
+
+| | |
+|---|---|
+| `trucks` | 1 row total, and this was it |
+| `truck_pallets` | **0 rows**, so the `ON DELETE CASCADE` had nothing to take |
+| `notification_log` at `truck-review` | **0** — no email had ever fired |
+| R2 | `bol/BL1/2026-09/93cebecc-d155-4cd0-9eea-5c0d7d1a0ed2.jpg`, 424,785 bytes |
+
+```sql
+-- Restores the deleted truck exactly. The r2_key below was NOT deleted, so this
+-- statement brings back a row whose photo is still there.
+INSERT INTO trucks (id, store, bol_no, ship_from, ship_from_addr, ship_to, bol_date,
+  carrier, trailer_no, seal_no, pro_no, pallet_count, r2_key, content_type,
+  opened_by, opened_at, closed_by, closed_at, close_note,
+  dup_approved_by, dup_approved_at, dup_reason, edited_by, edited_at)
+VALUES (1, 'BL1', '7679', 'RM1', '1450 Atlantic Ave, Rocky Mount NC 27801', 'FW2',
+  '2026-09-11', 'Arrive Logistics', '19353', NULL, NULL, 40,
+  'bol/BL1/2026-09/93cebecc-d155-4cd0-9eea-5c0d7d1a0ed2.jpg', 'image/jpeg',
+  'bhoward@bargainlane.com', '2026-09-16T13:48:50.012Z', NULL, NULL, NULL,
+  NULL, NULL, NULL, NULL, NULL);
+```
+
+⚠️ **The photo is deliberately still in R2.** Deleting it is a second irreversible act
+nobody asked for, and it is the only real-camera BOL read this project has — see below.
+
+### 🔑 What the first real camera read actually did
+
+This row is the answer to the question that has been open since 2026-09-15. Eight of the
+ten fields read correctly off a real photograph: `bol_no` 7679, `ship_from` RM1 and its
+full address, `ship_to` FW2, `bol_date` parsed to `2026-09-11`, `carrier` Arrive Logistics,
+`trailer_no` 19353, `pallet_count` 40 — **including the handwritten "40 pallets"**.
+
+**`seal_no` came back NULL.** That is the field flagged as the hardest read, and it is the
+one that missed — the prompt's instruction to return null for the whole field rather than a
+half-read seal number did exactly what it was written to do. It did not invent `494994` or
+`4949941`; it declined. `pro_no` is genuinely blank on the form, so that NULL is correct.
+
+So the read is good and the refusal is honest. The seal number is the one field a person
+still has to type.
