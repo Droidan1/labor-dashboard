@@ -172,8 +172,10 @@ for (const scheme of ['dark', 'light']) {
         `[${t}] the pill is recomputed from the rows on screen (2 of 3)`);
   check((await page.$$('#ir-det-pallets tbody tr')).length === 2, `[${t}] the pallets that came off it are drawn`);
   check((await page.$$('#ir-det-pallets tr.dup')).length === 1, `[${t}] the approved duplicate is still tinted`);
-  check(!(await page.textContent('#ir-det-pallets') || '').includes('Edit'),
-        `[${t}] 🛑 read-only — no Edit on a truck whose review email has gone out`);
+  // 🔑 Brian reversed the read-only call the same day: a manager corrects a truck that is
+  // down. The mocked account is a manager, so the button is offered.
+  check((await page.$$('#ir-det-pallets .ir-row-btn')).length === 2,
+        `[${t}] a manager gets Edit on every row of a truck that is down`);
   check((await page.textContent('#ir-det-facts') || '').includes('19353'), `[${t}] the facts carry the trailer number`);
   check((await page.textContent('#ir-det-facts') || '').includes('August 2026'), `[${t}] ...and the month it is filed under`);
   check((await page.textContent('#ir-det-sub') || '').includes('363 units'), `[${t}] the sub-line sums the pallets shown`);
@@ -188,9 +190,38 @@ for (const scheme of ['dark', 'light']) {
     const r = ratio(v, det.panel);
     check(r >= 4.5, `[${t}] ${k} is ${r.toFixed(2)}:1 on the read-back panel — needs ≥ 4.5:1`);
   }
+  // 🛑 THE STACKING BUG THIS FEATURE WOULD HAVE SHIPPED. The verify form and the read-back
+  // both sat at z-50, and this div is declared after it, so source order put the form BEHIND
+  // the truck that raised it. Measured, not eyeballed: the form must be the element actually
+  // hit at the centre of the screen.
+  await page.click('#ir-det-pallets .ir-row-btn');
+  await page.waitForTimeout(400);
+  check(await page.isVisible('#ir-modal'), `[${t}] correcting a pallet opens the verify form`);
+  const onTop = await page.evaluate(() => {
+    const e = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+    return !!(e && e.closest('#ir-modal'));
+  });
+  check(onTop, `[${t}] 🛑 ...IN FRONT of the read-back that raised it, not behind it`);
+  check((await page.inputValue('#ir-f-barcode')) === PALLETS[0].barcode,
+        `[${t}] ...loaded from the read-back's own pallet list, not the dock's`);
+  check(await page.isVisible('#ir-m-delete'), `[${t}] and a manager is offered Delete`);
+  // 🛑 The header names the truck the pallet is REALLY on. Read from irState.truck alone it
+  // would caption a read-back correction with whatever is on the dock.
+  check((await page.textContent('#ir-m-title') || '').includes('7644'),
+        `[${t}] 🛑 the form names the truck being corrected, not the one on the dock`);
+  check((await page.textContent('#ir-m-submit') || '').trim() === 'Save Pallet',
+        `[${t}] ...and the button says Save, not "Add to Truck" for a pallet already on it`);
+  // 🛑 Escape must stop at the form, not close the truck out from under it.
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
-  check(!(await page.isVisible('#ir-det')), `[${t}] Escape closes it`);
+  check(await page.isVisible('#ir-det'),
+        `[${t}] 🛑 Escape with the form open does NOT close the truck underneath`);
+  await page.evaluate(() => window.irCloseModal());
+  await page.waitForTimeout(250);
+
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  check(!(await page.isVisible('#ir-det')), `[${t}] Escape closes it once nothing is above it`);
   check(await page.isVisible('#ir-pane-trucks'), `[${t}] ...and leaves the tab it was raised from`);
   // Reopened on purpose: a tab switch has to take it with it, or it is still sitting
   // over the Receive pane on the way back.

@@ -1,3 +1,163 @@
+# Deployed: the closed-truck manager gate (2026-09-18)
+
+Brian's go, staging then production, and — for the first time on this feature — **before the PR
+was opened**, which is the lesson from this morning's entry actually applied rather than
+restated. Worker only, no migration.
+
+| | version |
+|---|---|
+| staging `clover-sales-api-staging` | `64077365` |
+| production `clover-sales-api` | `59009a3a` |
+
+Deployed from the BRANCH at `e9c4b85`, not from `main` — that is the point of going first. The
+suite was green on that exact tree (4922 assertions, 76 suites) immediately before each deploy.
+
+## 🔑 Why worker-first mattered more here than last time
+
+Yesterday's `truck-detail` was an ADDITION: shipping the frontend first meant a dead button.
+This change is a RESTRICTION — both mutations already worked on a closed truck, and the diff
+adds the manager gate. Frontend-first would have meant the Edit and Delete buttons live on the
+read-back while the gate did not yet exist, so an associate holding the page's `edit` grant
+could correct a truck that was already down. A dead button is a nuisance; that is a permission
+gap. The gate is inert against the currently-live page, which has no such buttons, so there was
+no cost to going early and a real cost to going late.
+
+⚠️ **Production is therefore running a tightening that is not on `main` yet.** That is the
+intended state until the PR merges, and it is safe in the direction that matters: the worker
+refuses MORE than the live page ever asks of it.
+
+## Verified from the control plane
+
+Before production: the gate string ×0 while `truck-detail` read ×3 — so the read reached the
+right script and the zero meant something, rather than being the absence-shaped nothing a
+failed request also prints. Staging after its own deploy: gate ×1, the `JOIN trucks` ×2, the
+refusal message ×1. Production after: the same three, to three consecutive clean passes with
+the active deployment serving `59009a3a` at 100 %.
+
+Deploy output checked for the three things a past deploy silently dropped:
+
+| | staging | production |
+|---|---|---|
+| `MEDIA` | `bl-marketing-media-staging` ✅ | `bl-marketing-media` ✅ |
+| `BL16_MERCHANT_ID` | present ✅ | present ✅ |
+| crons | 2 ✅ | **6** ✅ |
+
+The poller used `jq` rather than a hand-rolled pattern, per this morning's other lesson.
+
+---
+
+# Inventory Receiver — managers can correct a truck that has come down (2026-09-18)
+
+**Brian, 2026-09-18:** *"add edit/delete on closed trucks for managers"* — reversing the
+read-only decision I shipped in #254 three hours earlier. His call, and the need is real: a
+miscount found a day later currently has nowhere to go.
+
+## What the two halves already do
+
+| | today | wanted |
+|---|---|---|
+| `truck-pallet-delete` | manager-only at every state, **already works on a closed truck** | unchanged |
+| `truck-pallet-update` | any holder of the page's `edit` grant, **already works on a closed truck** | manager-only once the truck is DOWN |
+| the read-back modal | offers neither | offers both, to managers |
+
+So the worker is most of the way there; what is missing is the *restriction*, not the ability.
+`FINANCIAL_ROLES` is `superuser/admin/executive/manager` and the client's `irCanDelete()`
+checks that same four — the two gates already agree, so nothing new has to be invented.
+
+## Plan
+
+- [x] **Worker — a correction to a truck that is DOWN needs manager standing.**
+  - [x] `truck-pallet-update` joins `trucks` to read `closed_at` in the lookup it already
+        does, and refuses `NEED_MANAGER` when the truck is closed and the caller is not one.
+  - [x] An OPEN truck is untouched: an associate with the page grant still corrects on the
+        dock, which is the whole point of that grant.
+  - [x] `truck-pallet-delete` needs no change.
+- [x] **Frontend — the read-back modal gains Edit and Delete.**
+  - [x] Shown when the truck is closed AND `irCanDelete()`; on an open truck it matches
+        whatever the dock offers, so the modal never offers more than the Receive tab.
+  - [x] 🛑 The edit flow is currently hardwired to the dock: `irEditPallet` reads
+        `irState.pallets`, and `irAfterSend`/`irDeletePallet` both call `irLoadCurrent()`.
+        Editing from the modal must refresh the MODAL. `irState.editFrom` says which list the
+        row came from; `irState.detail` comes back (it now has a reader).
+  - [x] `#ir-det-status` — its own line. `#ir-status` lives on the Receive pane and is
+        invisible from the Trucks tab, so reusing it would swallow every outcome.
+  - [x] The delete confirmation on a closed truck says what is different about it: the
+        truck's counts move after its review email has already gone out.
+- [x] **Tests.** A manager corrects and deletes on a closed truck; an associate with `edit`
+      is refused on a closed one and still allowed on an open one (both halves); delete stays
+      manager-only at both states; the client's role list and `FINANCIAL_ROLES` pinned together.
+- [x] `sw.js` CACHE_NAME + fixture; full suite; browser check in both themes.
+
+## 🛑 Deploy the worker BEFORE opening the PR
+
+My own lesson from this morning, and this time it is not just tidiness. Old worker + new
+frontend = the buttons are live while the closed-truck manager gate does not exist yet, so an
+associate holding `edit` could correct a truck that is down. Worker first closes that window
+entirely; the gate is inert against the old page, so there is no cost to going early.
+
+## Deliberately NOT in scope, and flagged rather than assumed
+
+- **Editing the BOL header** (number, carrier, seal) of a closed truck. There is no
+  `truck-update` action at all, and "edit" in Brian's sentence answers my offer, which was
+  about correcting a pallet.
+- **Adding a pallet to a closed truck.** `truck-pallet-log` refuses `TRUCK_CLOSED` and stays
+  that way — a pallet that was missed is a different act from correcting one that was recorded.
+- **Deleting a whole truck.** No such action exists, and inventing one for a table this repo
+  has already lost data from is its own conversation.
+
+## Review
+
+**Shipped.** `truck-pallet-update` now requires manager standing once the truck is DOWN, and the
+read-back modal offers Edit per row plus Delete, on that same rule. `truck-pallet-delete` needed
+no change — it has always been manager-only and has always worked on a closed truck.
+
+**The ask was smaller than it looked, and the risk was in the opposite place.** Both mutations
+already worked on a closed truck; what was missing was the *restriction*. So the worker diff
+ADDS a refusal rather than removing one, which is why the deploy order matters more than last
+time: old worker + new frontend means the buttons are live while the closed-truck gate does not
+yet exist, and an associate holding `edit` could correct a truck that is down.
+
+**Three bugs found by building it, none by a failing test.**
+
+1. 🛑 **The verify form would have opened BEHIND the truck that raised it.** Both sat at
+   `z-50` and `#ir-det` is declared after `#ir-modal`, so source order won. Read-back moved to
+   `z-40`; the browser check now asserts `elementFromPoint` at the centre of the screen resolves
+   inside `#ir-modal`, because "it looks fine" is what a screenshot of a z-index bug also says.
+2. 🛑 **Escape closed the truck out from under the open form.** The handler walked
+   lightbox → read-back with nothing in between. It now stops at whatever is on top.
+3. 🛑 **The form captioned the correction with the wrong BOL.** The title read
+   `irState.truck` — correct while the only editable pallets were the dock's, and wrong the
+   moment a manager corrects a pallet from a read-back of a different truck with one on the
+   dock. It now names the truck the pallet is actually on. The button also said "Add to Truck"
+   for a pallet already on it; it says "Save Pallet".
+
+**One assertion was deleted on purpose.** §30 pinned the read-only behaviour — 
+`irPalletTableHtml(pallets, { withDate: true })` with no Edit — and that is precisely what this
+change reverses. It was replaced rather than removed: what still holds is that both screens
+share ONE table, not that the read-back offers nothing.
+
+**The two gates were already the same four roles** — `FINANCIAL_ROLES` in the worker and
+`irCanDelete()` in the client both name superuser/admin/executive/manager — so nothing new was
+invented. §33 pins them against each other, because drift there shows up as a manager seeing a
+button that 403s, which no behavioural test catches.
+
+**Verified.** `4922 assertions across 76 suites` green (was 4894). §31 asserts both halves on
+the SAME account and the SAME pallet — the associate corrects it on the dock, is refused one
+Truck Down later, and the refusal writes nothing — because a gate that refused the associate
+everywhere would pass the refusal and quietly break the dock. `browser-inventory-receiver.mjs`
+**100** (was 86), both themes.
+
+## Not in scope, flagged rather than assumed
+
+- **The BOL header of a closed truck** (number, carrier, seal) stays uneditable. There is no
+  `truck-update` action at all, and "edit" in Brian's sentence answered an offer about pallets.
+- **Adding a pallet to a closed truck.** `truck-pallet-log` still refuses `TRUCK_CLOSED`. A
+  pallet that was never scanned is a different act from one recorded wrong, and it is the more
+  likely real need if "came up short" turns out to mean "we missed one".
+- **Deleting a whole truck.** No such action exists.
+
+---
+
 # Deployed: Inventory Receiver read-back (2026-09-18)
 
 Brian's go for staging then production, after he merged #254 at 16:27:51Z. Worker only — no
