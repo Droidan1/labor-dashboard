@@ -2858,6 +2858,21 @@
         .dark .ir-shot img{border-color:rgba(255,255,255,.16)}
         .ir-empty{padding:34px 20px;text-align:center;color:#6b6453;font-size:13px}
         .dark .ir-empty{color:rgb(var(--op-inkDim))}
+
+        /* Reading a truck back. The facts that identify a load a month after it came
+           down — every one of them shown even when blank, because "the seal number was
+           never captured" is itself the answer someone is looking for.
+           🛑 Both themes stated here, on the panel, like everything else on this page:
+           the value inherits .ir-panel's ink deliberately, the label does not inherit
+           anything. Measured by browser-inventory-receiver.mjs against what is really
+           painted — label 5.88:1 light / 5.74:1 dark, value 18.85:1 / 14.98:1. */
+        .ir-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));
+          gap:11px 14px;padding:12px 15px;border-top:1px solid rgba(20,16,8,.10)}
+        .dark .ir-facts{border-top-color:rgba(255,255,255,.09)}
+        .ir-fact-l{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+          color:#6b6453}
+        .dark .ir-fact-l{color:rgb(var(--op-inkDim))}
+        .ir-fact-v{font-size:13px;font-weight:600;margin-top:2px;overflow-wrap:anywhere}
       </style>
 
       <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
@@ -3005,6 +3020,40 @@
               <button type="button" class="ir-btn ir-ghost ir-sm" onclick="irCloseModal()">Cancel</button>
               <button type="button" class="ir-btn ir-primary ir-sm" id="ir-m-submit" onclick="irSubmit()">Submit</button>
             </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- One truck, read back — open or long since taken down.
+           🔑 This is the screen the Trucks tab never had. Its rows have always been a
+           summary and nothing else, because the only action that ever returned a pallet
+           list, `truck-current`, is scoped to `closed_at IS NULL` — so the pallets on a
+           truck that had come down were unreachable from the app. `truck-detail` fetches
+           by id and does not care about the state.
+           z-50, the same layer as the verify modal: the two are never open together, and
+           the photo viewer (70) and uiConfirm (80) still land on top of this.
+           Inline display, not hidden+flex — `.hidden` and `.items-center` have equal
+           specificity and only source order decides, which is why #ir-modal does the same. -->
+      <div id="ir-det" class="fixed inset-0 z-50 items-center justify-center bg-black/60 p-4" style="display:none">
+        <div class="ir-panel w-full max-w-5xl" style="max-height:92vh;overflow:auto" role="dialog" aria-modal="true" aria-labelledby="ir-det-title">
+          <div class="ir-bar" style="position:sticky;top:0;z-index:3">
+            <span class="ir-lbl" id="ir-det-title" style="font-size:12px">Truck</span>
+            <span id="ir-det-pill"></span>
+            <span class="ir-bar-right">
+              <button type="button" class="ir-btn ir-ghost ir-sm" onclick="irCloseDetail()" aria-label="Close">&times;</button>
+            </span>
+          </div>
+          <!-- 🛑 Five separate targets, not one div rendered wholesale. A status line
+               living inside the container its own render overwrites is the fault Coverage
+               shipped and the pallets panel above already carries the note about. -->
+          <div class="ir-truck" id="ir-det-head"></div>
+          <div id="ir-det-prog"></div>
+          <div class="ir-facts" id="ir-det-facts"></div>
+          <div class="ir-sub" id="ir-det-sub">Loading…</div>
+          <div id="ir-det-pallets" class="mt-2"></div>
+          <div class="ir-legend">
+            <span><span class="ir-sw ir-sw-plain"></span>Received clean</span>
+            <span><span class="ir-sw ir-sw-dup"></span>Duplicate barcode, added by a manager</span>
           </div>
         </div>
       </div>
@@ -26462,6 +26511,7 @@
   const irState = {
     store: null, mode: null, busy: false, seeded: false,
     truck: null, pallets: [], trucks: [],
+    detailId: null,                // which truck the read-back modal is showing
     photo: null, mediaType: null, fields: {}, editId: null,
     pending: null,                 // the submit waiting on a manager approval
   };
@@ -26507,6 +26557,9 @@
 
   function irSetTab(which) {
     const r = which === 'receive';
+    // The read-back belongs to the Trucks tab. Leaving it open across a switch means it
+    // is still there on the way back, over a pane it has nothing to do with.
+    irCloseDetail();
     el('ir-pane-receive').hidden = !r;
     el('ir-pane-trucks').hidden = r;
     el('ir-tab-receive').setAttribute('aria-selected', String(r));
@@ -26882,25 +26935,49 @@
     return h ? `on the dock ${h}h ${m}m` : `on the dock ${m}m`;
   }
 
-  function irRenderPallets() {
-    const box = el('ir-pallets');
-    if (!irState.pallets.length) { box.innerHTML = ''; return; }
-    box.innerHTML = `<div class="ir-scroll"><table class="ir-tbl"><thead><tr>
+  // 'Sep 17 · 8:40 AM', or just the time. One formatter for every timestamp on this
+  // page, so the trucks table and the two pallet tables cannot disagree about what a
+  // moment looks like.
+  function irWhen(iso, withDate) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return withDate ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' + t : t;
+  }
+
+  // 🔑 ONE pallet table, two callers — the truck on the dock, and a truck read back
+  // from the Trucks tab. Two copies of "what a pallet row looks like" drift, which is the
+  // lesson this page already wrote down when the shared tag helpers were RENAMED for a
+  // second caller rather than forked.
+  //   `edit`      the row offers Edit. A truck that has come down does not — the review
+  //               email naming what it found has already gone out.
+  //   `withDate`  the Received column carries a day. On the dock the time alone is enough,
+  //               because it is today; a truck read back a month later needs the date.
+  function irPalletTableHtml(pallets, opts) {
+    const edit = !!(opts && opts.edit), withDate = !!(opts && opts.withDate);
+    return `<div class="ir-scroll"><table class="ir-tbl"><thead><tr>
         <th class="stick">Barcode</th><th>Pallet</th><th>Item #</th><th>PO / WO</th>
-        <th>Sup. Ref</th><th class="num">Units</th><th>Built by</th><th>Received</th><th></th>
-      </tr></thead><tbody>${irState.pallets.map(p => `
+        <th>Sup. Ref</th><th class="num">Units</th><th>Built by</th><th>Received</th>${edit ? '<th></th>' : ''}
+      </tr></thead><tbody>${pallets.map(p => `
         <tr class="${p.dup_approved_by ? 'dup' : ''}">
           <td class="stick" style="font-weight:600">${irEsc(p.barcode || '—')}${
-            p.dup_approved_by ? ` <span class="ir-badge" title="Approved by ${irEsc(p.dup_approved_by)}">dup ok</span>` : ''}</td>
+            p.dup_approved_by ? ` <span class="ir-badge" title="Approved by ${irEsc(p.dup_approved_by)}${
+              p.dup_reason ? ' — ' + irEsc(p.dup_reason) : ''}">dup ok</span>` : ''}</td>
           <td>${irEsc(p.pallet_name || '—')}</td>
           <td class="dim">${irEsc(p.item_no || '—')}</td>
           <td class="dim">${irEsc(p.po || '—')}</td>
           <td class="dim">${irEsc(p.sup_ref || '—')}</td>
           <td class="num">${p.units == null ? '—' : p.units.toLocaleString()}</td>
           <td class="dim">${irEsc(p.created_by_tag || '—')}</td>
-          <td class="dim">${new Date(p.logged_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</td>
-          <td><button type="button" class="ir-row-btn" onclick="irEditPallet(${p.id})">Edit</button></td>
+          <td class="dim">${irWhen(p.logged_at, withDate)}</td>
+          ${edit ? `<td><button type="button" class="ir-row-btn" onclick="irEditPallet(${p.id})">Edit</button></td>` : ''}
         </tr>`).join('')}</tbody></table></div>`;
+  }
+
+  function irRenderPallets() {
+    el('ir-pallets').innerHTML = irState.pallets.length
+      ? irPalletTableHtml(irState.pallets, { edit: true })
+      : '';
   }
 
   function irEditPallet(id) {
@@ -27011,22 +27088,25 @@
         </button>
         <div class="ir-mo-body"><div><div class="ir-scroll"><table class="ir-tbl"><thead><tr>
           <th class="stick">BOL #</th><th>Ship from</th><th>Carrier</th><th>Trailer</th>
-          <th class="num">Pallets</th><th class="num">Units</th><th>Opened</th><th>Down</th><th>Status</th>
+          <th class="num">Pallets</th><th class="num">Units</th><th>Opened</th><th>Down</th><th>Status</th><th></th>
         </tr></thead><tbody>${rows.map(t => irTruckRow(t)).join('')}</tbody></table></div></div></div>
       </div>`;
     }).join('');
   }
 
+  // The one place a truck's state becomes a pill. The table and the detail modal both
+  // call it, so the two cannot end up disagreeing about whether a load came up short.
+  function irTruckStatusHtml(t) {
+    const short = t.pallet_count && t.received < t.pallet_count ? t.pallet_count - t.received : 0;
+    if (!t.closed_at) return '<span class="ir-pill"><span class="ir-dot"></span>OPEN</span>';
+    if (short) return `<span class="ir-badge">${short} short</span>`;
+    if (t.dup_approved) return `<span class="ir-badge">${t.dup_approved} dup approved</span>`;
+    return '<span class="ir-pill down">DOWN</span>';
+  }
+
   function irTruckRow(t) {
     const short = t.pallet_count && t.received < t.pallet_count ? t.pallet_count - t.received : 0;
     const flagged = short || t.dup_approved;
-    const status = !t.closed_at
-      ? '<span class="ir-pill"><span class="ir-dot"></span>OPEN</span>'
-      : short ? `<span class="ir-badge">${short} short</span>`
-      : t.dup_approved ? `<span class="ir-badge">${t.dup_approved} dup approved</span>`
-      : '<span class="ir-pill down">DOWN</span>';
-    const fmt = iso => iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-      + ' · ' + new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
     return `<tr class="${flagged && t.closed_at ? 'dup' : ''}">
       <td class="stick" style="font-weight:700">${irEsc(t.bol_no || t.id)}</td>
       <td>${irEsc(t.ship_from || '—')}</td>
@@ -27034,14 +27114,127 @@
       <td class="dim">${irEsc(t.trailer_no || '—')}</td>
       <td class="num">${t.received}${t.pallet_count ? `<span class="dim"> / ${t.pallet_count}</span>` : ''}</td>
       <td class="num">${(t.units || 0).toLocaleString()}</td>
-      <td class="dim">${fmt(t.opened_at)}</td>
-      <td class="dim">${fmt(t.closed_at)}</td>
-      <td>${status}</td>
+      <td class="dim">${irWhen(t.opened_at, true)}</td>
+      <td class="dim">${irWhen(t.closed_at, true)}</td>
+      <td>${irTruckStatusHtml(t)}</td>
+      <td><button type="button" class="ir-row-btn" onclick="irOpenTruck(${t.id})">View</button></td>
     </tr>`;
   }
 
   function irToggleMonth(btn) { btn.parentNode.classList.toggle('open'); }
   window.irToggleMonth = irToggleMonth;
+
+  // ── One truck, read back ──────────────────────────────────────────
+  // 🔑 Until this, a row in the Trucks tab was a dead end. `truck-current` is the only
+  // action that has ever returned a pallet list and it is scoped to `closed_at IS NULL`,
+  // so the moment a truck came down, what came off it stopped being visible anywhere in
+  // the app — including to the person reading the review email it had just triggered.
+  // `truck-detail` fetches one truck by id whatever state it is in; this draws it.
+  async function irOpenTruck(id) {
+    // 🛑 Opened FIRST, then filled. Over a dock's wifi the fetch is a second or two of
+    // nothing, and a tap that shows nothing reads as a dead button — the same failure the
+    // camera picker's error path exists for.
+    el('ir-det-title').textContent = 'Truck';
+    el('ir-det-pill').innerHTML = '';
+    el('ir-det-head').innerHTML = '';
+    el('ir-det-prog').innerHTML = '';
+    el('ir-det-facts').innerHTML = '';
+    el('ir-det-pallets').innerHTML = '';
+    el('ir-det-sub').textContent = 'Loading…';
+    el('ir-det').style.display = 'flex';
+    irState.detailId = id;
+    try {
+      const j = await irGet('truck-detail', { id });
+      // 🛑 Two Views in quick succession race, and the slower answer lands last. Without
+      // this the modal can end up captioned with one truck and filled with another — the
+      // one failure mode worse than the missing screen it replaces.
+      if (irState.detailId !== id) return;
+      if (!j.truck) throw new Error('That truck is no longer there.');
+      irRenderDetail(j.truck, j.pallets || []);
+    } catch (e) {
+      if (irState.detailId !== id) return;
+      el('ir-det-sub').textContent = (e && e.message) || String(e);
+    }
+  }
+  window.irOpenTruck = irOpenTruck;
+
+  function irCloseDetail() { el('ir-det').style.display = 'none'; }
+  window.irCloseDetail = irCloseDetail;
+
+  function irRenderDetail(t, pallets) {
+    const n = pallets.length;
+    const units = pallets.reduce((a, p) => a + (p.units || 0), 0);
+    const dup = pallets.filter(p => p.dup_approved_by).length;
+    const expect = t.pallet_count;
+    const short = expect && n < expect ? expect - n : 0;
+
+    el('ir-det-title').textContent = `BOL ${t.bol_no || t.id} · ${IR_LABELS[t.store] || t.store}`;
+    // 🔑 received and dup_approved are recomputed from the rows ON SCREEN rather than
+    // carried over from the list that produced the id, so the pill cannot claim a
+    // shortfall the table underneath it does not show.
+    el('ir-det-pill').innerHTML = irTruckStatusHtml({ ...t, received: n, dup_approved: dup });
+
+    el('ir-det-head').innerHTML =
+      `<div><div class="ir-bol-cap">Bill of Lading</div><div class="ir-bol">${irEsc(t.bol_no || '—')}</div></div>
+       <div style="flex:1;min-width:190px">
+         <div class="ir-route"><b>${irEsc(t.ship_from || '?')}</b><span class="ir-arrow">&rarr;</span><b>${irEsc(t.ship_to || t.store)}</b>
+         ${t.ship_from_addr ? `<br>${irEsc(t.ship_from_addr)}` : ''}</div>
+       </div>
+       ${t.has_photo ? `<span class="ir-shot" style="margin:0"><img
+           src="${WORKER_BASE}?action=truck-photo&id=${t.id}&kind=bol"
+           alt="Bill of Lading — activate to enlarge" role="button" tabindex="0"
+           onclick="irLbOpen(this.src)"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();irLbOpen(this.src)}"></span>` : ''}
+       <div style="text-align:right;min-width:128px">
+         <div class="ir-bol-cap">Opened</div>
+         <div style="font-size:13px;font-weight:600;margin-top:2px">${irWhen(t.opened_at, true)}</div>
+         <div class="ir-bol-cap" style="margin-top:7px">${t.closed_at ? 'Taken down' : 'Status'}</div>
+         <div style="font-size:13px;font-weight:600;margin-top:2px">${
+           t.closed_at ? irWhen(t.closed_at, true) : 'Still on the dock'}</div>
+       </div>`;
+
+    // Only drawn when the BOL actually claimed a count — the same call the dock's own bar
+    // makes, for the same reason: "12 of —" is noise, so there is no bar rather than an
+    // empty one.
+    el('ir-det-prog').innerHTML = expect ? `<div class="ir-prog-wrap">
+        <div class="ir-prog-top">
+          <span class="ir-prog-n">${n}</span>
+          <span class="ir-prog-s">of ${expect} pallets on the BOL</span>
+          <span class="ir-prog-r">${short ? `${short} short` : 'all accounted for'}</span>
+        </div>
+        <div class="ir-track"><div class="ir-fill" style="width:${Math.min(100, (n / expect) * 100)}%"></div></div>
+      </div>` : '';
+
+    const facts = [
+      ['Store', IR_LABELS[t.store] || t.store],
+      ['Filed under', t.month ? irMonthLabel(t.month) : null],
+      ['BOL date', t.bol_date],
+      ['Carrier', t.carrier],
+      ['Trailer #', t.trailer_no],
+      ['Seal #', t.seal_no],
+      ['Pro #', t.pro_no],
+      ['Pallets on BOL', expect],
+      ['Opened by', t.opened_by],
+      ['Taken down by', t.closed_by],
+      ['Note', t.close_note],
+    ];
+    if (t.edited_by) facts.push(['Corrected by', `${t.edited_by} · ${irWhen(t.edited_at, true)}`]);
+    // 🔑 A field the paperwork never carried is SHOWN blank, not dropped. "The seal
+    // number was never captured" is itself the answer somebody reading a truck back a
+    // month later is looking for, and a row that is not there cannot say it.
+    el('ir-det-facts').innerHTML = facts.map(([l, v]) =>
+      `<div><div class="ir-fact-l">${irEsc(l)}</div><div class="ir-fact-v">${
+        v === null || v === undefined || v === '' ? '—' : irEsc(v)}</div></div>`).join('');
+
+    el('ir-det-sub').textContent = n
+      ? `${n} pallet${n === 1 ? '' : 's'} · ${units.toLocaleString()} units · newest first`
+      : 'No pallets were scanned onto this truck.';
+    // 🛑 Read-only, deliberately: no Edit, and no Delete. The review email naming what
+    // this truck came up short of has already gone out, and a row quietly changed
+    // afterwards makes that email wrong with nothing on either side saying so. Correcting
+    // a pallet stays where it already is — on the dock, before Truck Down.
+    el('ir-det-pallets').innerHTML = n ? irPalletTableHtml(pallets, { withDate: true }) : '';
+  }
 
   // ── Export ────────────────────────────────────────────────────────────────
   // 🔑 FETCHES rather than building from what is on screen: a file called
@@ -27094,16 +27287,23 @@
   window.irExportCsv = irExportCsv;
 
   // ── Photo viewer ──────────────────────────────────────────────────────────
-  function irLbOpen() {
-    const src = el('ir-m-photo').src;
-    if (!src) return;
-    el('ir-lb-img').src = src;
+  // `src` optional: the verify modal has exactly one photo and passes nothing, while the
+  // truck read-back passes the BOL image it just drew. Defaulting keeps the existing
+  // `onclick="irLbOpen()"` in the markup working unchanged.
+  function irLbOpen(src) {
+    const s = src || (el('ir-m-photo') && el('ir-m-photo').src);
+    if (!s) return;
+    el('ir-lb-img').src = s;
     el('ir-lb').hidden = false;
   }
   function irLbClose() { el('ir-lb').hidden = true; el('ir-lb-img').src = ''; }
   window.irLbOpen = irLbOpen; window.irLbClose = irLbClose;
+  // Top layer down: the viewer sits ABOVE the truck read-back that raised it, so one
+  // Escape closes the photo and leaves the truck on screen rather than both at once.
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && el('ir-lb') && !el('ir-lb').hidden) { e.preventDefault(); irLbClose(); }
+    if (e.key !== 'Escape') return;
+    if (el('ir-lb') && !el('ir-lb').hidden) { e.preventDefault(); irLbClose(); return; }
+    if (el('ir-det') && el('ir-det').style.display !== 'none') { e.preventDefault(); irCloseDetail(); }
   });
 
   // ═══════════════════════════════════════════════════════════════

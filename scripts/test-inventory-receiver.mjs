@@ -761,5 +761,121 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
      '✅ an admin can still set a manager code — only the superuser target is refused');
 }
 
+// ── 27. A truck can be read back after it has come down ──────────────────
+// 🔑 THE GAP THIS CLOSES, and why the assertions come in pairs. `truck-current` is the
+// only action that has ever returned a pallet list, and its WHERE clause is
+// `closed_at IS NULL` — so the one truck it can never answer with is a truck that has
+// come down, which is every truck in the Trucks tab. Asserting that truck-detail returns
+// pallets proves nothing on its own; asserting it returns them on the same database where
+// truck-current has just gone empty is the actual claim.
+{
+  const { db, env } = env0();
+  const t1 = seedTruck(db, { store: 'BL1', count: 3 });
+  spy(textReply('{}'));
+  await call('/?action=truck-pallet-log', { user: 'u-mgr1', method: 'POST', body: { truck_id: t1, ...TAG, ...IMG }, env });
+  await call('/?action=truck-pallet-log', { user: 'u-mgr1', method: 'POST', body: { truck_id: t1, ...TAG_B, ...IMG }, env });
+
+  // On the dock, the two agree.
+  const openCur = await json(await call('/?action=truck-current&store=BL1', { user: 'u-mgr1', env }));
+  const openDet = await json(await call(`/?action=truck-detail&id=${t1}`, { user: 'u-mgr1', env }));
+  eq(openCur.pallets.length, 2, 'truck-current sees the truck on the dock');
+  eq(openDet.pallets.length, 2, '...and truck-detail sees the same one by id');
+  eq(JSON.stringify(Object.keys(openDet.pallets[0]).sort()),
+     JSON.stringify(Object.keys(openCur.pallets[0]).sort()),
+     '🔑 the two pallet shapes are column-for-column identical — ONE client function draws both');
+  eq(openDet.truck.month, '2026-09', 'the month is derived here too, never left to the client');
+
+  await call('/?action=truck-down', { user: 'u-mgr1', method: 'POST', body: { truck_id: t1 }, env });
+
+  const downCur = await json(await call('/?action=truck-current&store=BL1', { user: 'u-mgr1', env }));
+  eq(downCur.truck, null, '🛑 once it is down truck-current cannot return it — this is the bug');
+  eq(downCur.pallets.length, 0, '...and what came off the trailer goes with it');
+
+  const r = await call(`/?action=truck-detail&id=${t1}`, { user: 'u-mgr1', env });
+  const downDet = await json(r);
+  eq(r.status, 200, '✅ truck-detail still answers for a truck that has come down');
+  eq(downDet.truck.id, t1, '...with the truck that was asked for');
+  eq(downDet.pallets.length, 2, '🔑 ...AND the pallets that came off it');
+  ok(!!downDet.truck.closed_at, '...saying it is closed rather than hiding it');
+  eq(downDet.truck.pallet_count, 3, 'the BOL claim rides along, so "1 short" can be drawn from it');
+  ok(downDet.pallets.every(p => !('r2_key' in p) || p.r2_key === undefined),
+     'the R2 key is stripped, like every other read on this page');
+}
+
+// ── 28. The store comes from the ROW, and an id is checked, not coerced ─────
+// 🔑 WHY THIS NEEDS ITS OWN TEST rather than leaning on section 25. Every other read on
+// this page names a store on the wire, so a missing guard shows up as a store code in a
+// body that should not carry it. A by-id read has no store parameter at all — nothing
+// about the request looks wrong, and the only thing standing between a caller and a truck
+// at somebody else's dock is that the handler looks the store up on the ROW and hands it
+// to storeActionGuard. What is asserted here is that it does, in both directions; the
+// primitive that guard calls is pinned at its source in section 25.
+{
+  const { db, env } = env0();
+  const mine = seedTruck(db, { store: 'BL1', bol: '7679', closed: PINNED });
+  const theirs = seedTruck(db, { store: 'BL14', bol: '7688', closed: PINNED });
+
+  const cross = await call(`/?action=truck-detail&id=${theirs}`, { user: 'u-mgr1', env });
+  eq(cross.status, 403, '🛑 a BL1 manager cannot read a BL14 truck, and never named a store to be caught on');
+  eq((await json(cross)).code, 'NO_STORE_ACCESS', '...and says which refusal it is');
+  ok(!/7688|BL14/.test(await (await call(`/?action=truck-detail&id=${theirs}`, { user: 'u-mgr1', env })).text()),
+     '🛑 ...and the refusal carries nothing off the row it refused');
+  // The positive half. A guard that refused everybody would pass all three lines above.
+  eq((await call(`/?action=truck-detail&id=${mine}`, { user: 'u-mgr1', env })).status, 200,
+     '✅ ...while his own store\'s truck still reads back');
+
+  eq((await call('/?action=truck-detail&id=99999', { user: 'u-mgr1', env })).status, 404,
+     'an id that is not a truck is 404');
+  // 🛑 Number.isInteger, not `parseInt(…) || 1`, which would answer a caller who named
+  // no truck at all with truck 1.
+  eq((await call('/?action=truck-detail', { user: 'u-mgr1', env })).status, 400,
+     '🛑 no id at all is 400, never a default truck');
+  eq((await call('/?action=truck-detail&id=abc', { user: 'u-mgr1', env })).status, 400,
+     '...and so is an id that is not a number');
+}
+
+// ── 29. Reading a truck back is a VIEW grant, registered on both sides ─────
+{
+  const { db, env } = env0();
+  const t1 = seedTruck(db, { store: 'BL1', closed: PINNED });
+  // Narrowed from edit to view: reading a truck back is the same tier as the list that
+  // produced its id, not the tier that writes pallets onto a trailer.
+  db.exec(`UPDATE users SET pages = '{"inventory-receiver":"view"}' WHERE id = 'u-staff'`);
+  eq((await call(`/?action=truck-detail&id=${t1}`, { user: 'u-staff', env })).status, 200,
+     '✅ a view grant reaches it, exactly like truck-list');
+
+  const { db: db2, env: env2 } = env0();
+  const t2 = seedTruck(db2, { store: 'BL1', closed: PINNED });
+  db2.exec("UPDATE users SET pages = NULL WHERE id = 'u-staff'");
+  eq((await call(`/?action=truck-detail&id=${t2}`, { user: 'u-staff', env: env2 })).status, 403,
+     '...and nothing reaches it without one');
+
+  // Comments stripped first, for the reason section 18 spells out.
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const map = src.slice(src.indexOf('const ACTION_PAGE'), src.indexOf('const GRANTABLE_PAGES'))
+    .split('\n').filter(l => !l.trim().startsWith('//')).join('\n');
+  ok(/\["truck-detail",\s*\["inventory-receiver", "view"\]\]/.test(map),
+     '🛑 truck-detail is in ACTION_PAGE at view — absent, no page grant would reach it');
+}
+
+// ── 30. The Trucks tab has a way in, and reuses the pallet table ────────
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  ok(/onclick="irOpenTruck\(\$\{t\.id\}\)"/.test(html),
+     '🛑 every truck row carries a View button — a row nothing opens IS the bug');
+  ok(/id="ir-det"/.test(html) && /id="ir-det-pallets"/.test(html),
+     'the read-back modal and its own pallet target exist');
+  ok(/irGet\('truck-detail'/.test(html), '...and it asks the worker for one truck by id');
+  ok(/id="ir-det-sub"/.test(html),
+     '🛑 the status line is its own target, not inside the div the pallet render overwrites');
+  // 🔑 One table, two screens. A second copy of "what a pallet row looks like" is the
+  // thing that drifts — the same reason the tag helpers were renamed rather than forked.
+  ok(/function irPalletTableHtml\(/.test(html), 'the pallet table is a function, defined once');
+  ok(/irPalletTableHtml\(irState\.pallets, \{ edit: true \}\)/.test(html),
+     '...the dock draws it WITH Edit');
+  ok(/irPalletTableHtml\(pallets, \{ withDate: true \}\)/.test(html),
+     '🛑 ...and the read-back draws it WITHOUT: the review email naming this truck has gone out');
+}
+
 console.log(`\n${assertions} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

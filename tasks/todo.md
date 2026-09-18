@@ -1,3 +1,108 @@
+# Inventory Receiver — a truck can be opened after it comes down (2026-09-18)
+
+**Brian, 2026-09-18:** *"on the inventory receiver there is no way to view the truck after
+it's done, can you change that"*
+
+## The gap, precisely
+
+The Trucks tab renders one summary ROW per truck — BOL, ship from, carrier, trailer, pallets,
+units, opened, down, status — and stops there. Nothing opens it. The only screen that has ever
+shown a pallet list is `#ir-open`, and it is fed by `truck-current`, whose WHERE clause is
+
+    SELECT * FROM trucks WHERE store = ? AND closed_at IS NULL
+
+so **the one truck it can never return is a truck that has come down.** Every truck in the
+Trucks tab is in exactly that state. Once `truck-down` stamps `closed_at`, the pallets that
+came off that trailer are unreachable from the app: no action fetches them, and no screen
+draws them. The CSV export is truck-level only (`bol_no … close_note`), so it cannot answer
+"what was on it" either. That is the whole bug — not a missing click handler.
+
+## Plan
+
+- [x] **Worker — `truck-detail`.** `GET ?action=truck-detail&id=<id>` → one truck in ANY
+      state plus its pallets. Response shape mirrors `truck-current` exactly so the client
+      renders both with one function.
+  - [x] `["truck-detail", "bl"]` in `ACTION_BUSINESS` — unregistered is a hard 403.
+  - [x] `["truck-detail", ["inventory-receiver", "view"]]` in `ACTION_PAGE` — a view action,
+        so a `view` grant reaches it (same tier as `truck-list`, which produced the id).
+  - [x] 🔑 The store is read from the ROW, then guarded. The client supplies only an id, so
+        naming a store cannot be used to reach a truck at a store the caller does not hold.
+  - [x] `allowClosed: true` — reading back history at a store that has since closed.
+- [x] **Frontend — a View button per row and a detail modal.**
+  - [x] `irTruckRow` gains a trailing `View` cell using `.ir-row-btn`, the affordance the
+        pallet table on the same page already uses.
+  - [x] `#ir-det` — an `.ir-panel` modal: identity bar, the BOL's ten fields, who opened and
+        took it down, received-vs-claimed, the BOL photo, the pallet table, the legend.
+  - [x] Extract `irPalletTableHtml(pallets, opts)` from `irRenderPallets` so the open truck
+        and a closed one draw the SAME table. Two copies drift — this repo's own lesson.
+  - [x] `irLbOpen(src)` takes an optional src so the BOL photo reuses the existing viewer.
+  - [x] Escape closes the detail modal (after the lightbox, which sits above it).
+- [x] **Read-only, deliberately.** Edit/Delete are NOT offered on a closed truck: the review
+      email has already gone out naming what it found, and changing the row afterwards makes
+      that email a lie. Recorded as a decision, not an omission.
+- [x] **Tests.** `scripts/test-inventory-receiver.mjs`: the closed-truck case `truck-current`
+      structurally cannot serve, cross-store refusal from the row, a bad/missing id, grant
+      tier. `scripts/browser-inventory-receiver.mjs`: the button exists, the modal opens with
+      the pallets in it, in both themes.
+- [x] **`sw.js` CACHE_NAME** bump + the `test-shell-cache.mjs` fixture, same commit.
+- [x] Full `bash scripts/test.sh` green before the push.
+
+## Review
+
+**Shipped.** `truck-detail` in the worker (both gate tables + the handler), a `View` button on
+every truck row, and `#ir-det` — the BOL and its route, the photo, received against the claim,
+a facts grid, and the pallet table. Read-only.
+
+**What made the fix structural rather than cosmetic.** The first instinct is "the row needs a
+click handler". It does not: there was nothing for the handler to call. `truck-current` is the
+only action that has ever returned pallets, and `closed_at IS NULL` is in its WHERE clause, so
+a finished truck was not merely undisplayed — it was unfetchable. `truck-list` carries counts;
+the CSV is truck-level. That is why this is a worker change first.
+
+**Two things the diff would not tell you.**
+
+1. `truck-detail` is a NEW action rather than `truck-current` gaining an optional `id`.
+   Widening truck-current costs it the property the partial unique index buys — at most one
+   row, with no id needed, because only one truck per store is open.
+2. Every other read on this page names a store on the wire, so a missing guard shows up as a
+   store code in a body that should not carry it. A by-id read has **no store parameter at
+   all**. Section 28 of the suite exists for that: nothing about the request looks wrong, and
+   the only thing between a caller and somebody else's dock is the handler reading the store
+   off the row. Pinned in both directions — a BL1 manager refused a BL14 truck, and still
+   served his own, because a guard that refuses everyone passes the negative half alone.
+
+**A wrong fixture caught on the way.** The first cross-store assertion used `u-mgr2` — whom
+`env0()` narrows to BL4 via `users.stores`. It returned **200**. The harness also seeds
+`user_grants` with `'["BL1","BL4"]'`, and `allowedUnits` prefers grants over the legacy column,
+so that account still holds BL1 and is not a cross-store fixture at all. Had the guard been
+missing, that assertion would have passed anyway. Rewritten onto `u-mgr1`, which is scoped by
+the same grant path production uses. (`u-mgr14` cannot be called AS — no session row, and no
+`user_grants` row to pass the business gate — which is why section 25 verifies her by PIN in a
+body rather than by cookie.)
+
+**Three fixes from reviewing my own diff, not from a failing test.**
+- `irState.detail` was written and never read — removed.
+- A modal left open across a tab switch came back sitting over the Receive pane.
+- Two `View` taps in flight could caption the modal with one truck and fill it with another.
+
+**Deliberately NOT done: Edit and Delete on a closed truck.** `truck-pallet-update` would
+permit it. The review email naming what the truck came up short of has already gone out, and a
+row changed afterwards makes that email wrong with nothing on either side saying so. A product
+decision; recorded in `tasks/inventory-receiver.md` so it is not read as an oversight.
+
+**Verified.** `4894 assertions across 76 suites` green, full run, on this exact tree.
+`browser-inventory-receiver.mjs` **86** (was 50) — the row is CLICKED, not called, in both
+themes, and contrast is computed from what the browser really paints: new text 5.74–18.85:1,
+inside the range DESIGN.md records for this page. `CACHE_NAME` → `v207` with its fixture.
+
+🛑 **Deploy order: worker BEFORE the frontend.** No migration — `truck-detail` only reads
+tables migration-065 already made — but merging to `main` deploys the frontend on its own via
+Pages, and the new page would call an action the old worker classifies as
+`UNCLASSIFIED_ACTION` → *"That action is not available on this deployment."* Every View button
+would be dead until `wrangler deploy` ran. Nothing here is deployed yet.
+
+---
+
 # Deployed: production stops trusting localhost (2026-09-16)
 
 Brian's go for both environments. Worker only — no migration, no secret, no frontend, so no
