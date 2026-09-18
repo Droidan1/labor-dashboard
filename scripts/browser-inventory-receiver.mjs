@@ -84,6 +84,12 @@ for (const scheme of ['dark', 'light']) {
       if (s.includes('truck-current')) return J({ ok: true, truck: TRUCK, pallets: PALLETS });
       if (s.includes('truck-list')) return J({ ok: true, rows: [{ ...TRUCK, received: 2, units: 363, dup_approved: 1 },
         { ...TRUCK, id: 2, bol_no: '7644', closed_at: '2026-08-11T17:22:00Z', opened_at: '2026-08-11T10:48:00Z', month: '2026-08', received: 40, units: 11207, dup_approved: 0 }], truncated: false });
+      // The truck that has COME DOWN. truck-current is scoped to `closed_at IS NULL`, so
+      // this one is exactly what no other action can answer with.
+      if (s.includes('truck-detail')) return J({ ok: true, pallets: PALLETS,
+        truck: { ...TRUCK, id: 2, bol_no: '7644', opened_at: '2026-08-11T10:48:00Z',
+                 closed_at: '2026-08-11T17:22:00Z', month: '2026-08', closed_by: 'Kevin R',
+                 opened_by: 'Oo Aung', pallet_count: 3, close_note: null } });
       if (s.includes('truck-approvers')) return J({ ok: true, names: ['Kevin R', 'Wendy P'] });
       return real(u, o);
     };
@@ -147,8 +153,53 @@ for (const scheme of ['dark', 'light']) {
   check(months.includes('September 2026') && months.includes('August 2026'), `[${t}] trucks group by month`);
   check(months.includes('1 OPEN'), `[${t}] ...and the open one is flagged in its month`);
   check((await page.textContent('#ir-trucks-status') || '').includes('2 trucks'), `[${t}] the status line is its own target and survives`);
+
+  // ── Reading a truck back ─────────────────────────────────────────
+  // 🛑 CLICKED THROUGH THE ROW, not called as irOpenTruck(2). The reported bug was that
+  // a finished truck has no way in; a direct call would prove the modal renders and
+  // nothing at all about the thing that was missing.
+  // August is the SECOND accordion and ships collapsed — only the newest month opens —
+  // so it has to be expanded first, which is also the state a real reader is in.
+  await page.click('#ir-months > div:nth-child(2) .ir-mo-head');
+  await page.waitForTimeout(450);
+  check(await page.isVisible('#ir-months > div:nth-child(2) .ir-row-btn'),
+        `[${t}] 🛑 a truck that has come down carries a way in`);
+  await page.click('#ir-months > div:nth-child(2) .ir-row-btn');
+  await page.waitForTimeout(500);
+  check(await page.isVisible('#ir-det'), `[${t}] 🛑 ...and it OPENS — this is the whole bug`);
+  check((await page.textContent('#ir-det-title') || '').includes('7644'), `[${t}] titled with the BOL that was opened`);
+  check((await page.textContent('#ir-det-pill') || '').includes('1 short'),
+        `[${t}] the pill is recomputed from the rows on screen (2 of 3)`);
+  check((await page.$$('#ir-det-pallets tbody tr')).length === 2, `[${t}] the pallets that came off it are drawn`);
+  check((await page.$$('#ir-det-pallets tr.dup')).length === 1, `[${t}] the approved duplicate is still tinted`);
+  check(!(await page.textContent('#ir-det-pallets') || '').includes('Edit'),
+        `[${t}] 🛑 read-only — no Edit on a truck whose review email has gone out`);
+  check((await page.textContent('#ir-det-facts') || '').includes('19353'), `[${t}] the facts carry the trailer number`);
+  check((await page.textContent('#ir-det-facts') || '').includes('August 2026'), `[${t}] ...and the month it is filed under`);
+  check((await page.textContent('#ir-det-sub') || '').includes('363 units'), `[${t}] the sub-line sums the pallets shown`);
+  // 🔑 Contrast on the NEW surface, computed against what the browser really paints.
+  // The facts grid is the only text on this page whose label colour had not been measured.
+  const det = await page.evaluate(() => {
+    const g = (sel, prop) => { const e = document.querySelector(sel); return e ? getComputedStyle(e)[prop] : null; };
+    return { panel: g('#ir-det .ir-panel', 'backgroundColor'),
+             lbl: g('#ir-det .ir-fact-l', 'color'), val: g('#ir-det .ir-fact-v', 'color') };
+  });
+  for (const [k, v] of [['fact label', det.lbl], ['fact value', det.val]]) {
+    const r = ratio(v, det.panel);
+    check(r >= 4.5, `[${t}] ${k} is ${r.toFixed(2)}:1 on the read-back panel — needs ≥ 4.5:1`);
+  }
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  check(!(await page.isVisible('#ir-det')), `[${t}] Escape closes it`);
+  check(await page.isVisible('#ir-pane-trucks'), `[${t}] ...and leaves the tab it was raised from`);
+  // Reopened on purpose: a tab switch has to take it with it, or it is still sitting
+  // over the Receive pane on the way back.
+  await page.click('#ir-months > div:nth-child(2) .ir-row-btn');
+  await page.waitForTimeout(400);
+
   await page.evaluate(() => window.irSetTab('receive'));
   await page.waitForTimeout(400);
+  check(!(await page.isVisible('#ir-det')), `[${t}] a tab switch closes the read-back too`);
   check(await page.isVisible('#ir-pane-receive'), `[${t}] and back again`);
   check((await page.textContent('#ir-tile-pallets')) === '2', `[${t}] 🛑 the SECOND render still holds`);
 

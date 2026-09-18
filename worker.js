@@ -4901,6 +4901,7 @@ const ACTION_BUSINESS = new Map([
   ["truck-bol-scan", "bl"],
   ["truck-open", "bl"],
   ["truck-current", "bl"],
+  ["truck-detail", "bl"],
   ["truck-pallet-scan", "bl"],
   ["truck-pallet-recent", "bl"],
   ["truck-pallet-log", "bl"],
@@ -14311,6 +14312,7 @@ const ACTION_PAGE = new Map([
   // action. Absent here means no page grant reaches it at any level.
   ["truck-list",          ["inventory-receiver", "view"]],
   ["truck-current",       ["inventory-receiver", "view"]],
+  ["truck-detail",        ["inventory-receiver", "view"]],
   ["truck-photo",         ["inventory-receiver", "view"]],
   ["truck-approvers",     ["inventory-receiver", "edit"]],
   ["truck-bol-scan",      ["inventory-receiver", "edit"]],
@@ -23705,6 +23707,48 @@ export default {
                 r2_key, logged_by, logged_at, dup_approved_by, dup_reason, edited_by, edited_at
            FROM truck_pallets WHERE truck_id = ? ORDER BY logged_at DESC`
       ).bind(truck.id).all();
+      return new Response(JSON.stringify({
+        ok: true,
+        truck: { ...truck, r2_key: undefined, has_photo: !!truck.r2_key, month: truckMonthOf(truck.opened_at) },
+        pallets: (results || []).map(r => ({ ...r, r2_key: undefined, has_photo: !!r.r2_key })),
+      }), { headers: corsJson });
+    }
+
+    // GET ?action=truck-detail&id=7 — ONE truck and its pallets, open or down.
+    //
+    // 🔑 WHY THIS IS NOT truck-current WITH AN id. `truck-current` answers "what is on the
+    // dock", and its WHERE clause is `closed_at IS NULL` — so the one truck it can never
+    // return is a truck that has come down. Every row in the Trucks tab is in exactly that
+    // state, which is why a received truck had a summary line and no way to see what came
+    // off it. Widening truck-current instead would have cost it the property the partial
+    // unique index gives it: it returns at most one row, without an id, because only one
+    // truck per store is open.
+    //
+    // 🔑 THE STORE COMES FROM THE ROW, then is guarded — the same rule every write-back on
+    // this page follows. An id is the only thing the caller supplies, so there is no store
+    // parameter to point at one they hold in order to read a truck at one they do not.
+    if (url.searchParams.get("action") === "truck-detail" && request.method === "GET") {
+      const pageDenied = requirePage(currentUser, isAdminSecret, "inventory-receiver", "view", corsJson);
+      if (pageDenied) return pageDenied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "Storage not configured" }), { status: 500, headers: corsJson });
+      // 🛑 Checked for integer-ness, not coerced. `parseInt("") || 1` would answer with
+      // truck 1 to a caller who named no truck at all.
+      const id = parseInt(url.searchParams.get("id") || "", 10);
+      if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
+      const truck = await env.DB.prepare("SELECT * FROM trucks WHERE id = ?").bind(id).first();
+      // Lookup → guard → answer, the same order every other by-id handler on this page
+      // uses (truck-pallet-update, truck-pallet-delete): the guard needs the row's store,
+      // so it cannot run first. A truck at a store the caller does not hold therefore
+      // answers 403 rather than 404 — the id is not the secret, what is behind it is.
+      if (!truck) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
+      const denied = storeActionGuard(truck.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
+      if (denied) return denied;
+      // Column-for-column what truck-current selects, so one client function draws both.
+      const { results } = await env.DB.prepare(
+        `SELECT id, barcode, item_no, pallet_name, sup_ref, po, units, created_by_tag, truck_no,
+                r2_key, logged_by, logged_at, dup_approved_by, dup_reason, edited_by, edited_at
+           FROM truck_pallets WHERE truck_id = ? ORDER BY logged_at DESC`
+      ).bind(id).all();
       return new Response(JSON.stringify({
         ok: true,
         truck: { ...truck, r2_key: undefined, has_photo: !!truck.r2_key, month: truckMonthOf(truck.opened_at) },

@@ -497,3 +497,69 @@ half-read seal number did exactly what it was written to do. It did not invent `
 
 So the read is good and the refusal is honest. The seal number is the one field a person
 still has to type.
+
+## A truck can be opened after it comes down — `truck-detail` (2026-09-18)
+
+**Brian:** *"on the inventory receiver there is no way to view the truck after it's done, can
+you change that"*
+
+### The gap was structural, not a missing click handler
+
+The Trucks tab rendered one summary ROW per truck and stopped. Nothing opened it, and nothing
+could have: **`truck-current` is the only action that has ever returned a pallet list, and its
+WHERE clause is `closed_at IS NULL`** — so the one truck it can never answer with is a truck
+that has come down, which is every truck on that tab. `truck-list` carries counts and no
+pallets; the CSV export is truck-level (`bol_no … close_note`). The moment `truck-down`
+stamped `closed_at`, what came off that trailer left the app — including for the person
+reading the review email it had just triggered.
+
+### `truck-detail`
+
+`GET ?action=truck-detail&id=<id>` → one truck in **any** state plus its pallets.
+
+- **Not `truck-current` with an optional id.** Widening it would cost it the property the
+  partial unique index buys: it returns at most one row, *without* an id, because only one
+  truck per store is open. Two questions, two actions.
+- **The store is read from the ROW, then guarded** — `storeActionGuard(truck.store, …,
+  { allowClosed: true })`. An id is the only thing the caller supplies, so unlike every other
+  read on this page there is no store parameter on the wire that could look wrong; §28 of the
+  suite exists because that is exactly the shape a missing guard hides in.
+- Lookup → guard → answer, the order `truck-pallet-update` and `-delete` already use.
+- `ACTION_BUSINESS` `"bl"` + `ACTION_PAGE` `["inventory-receiver", "view"]` — the same tier as
+  the list that produced the id.
+- The pallet SELECT is **column-for-column what `truck-current` selects**, so one client
+  function draws both screens.
+
+### Frontend
+
+A `View` button per truck row, and `#ir-det`: the BOL and its route, the photo, received
+against what the BOL claimed, a facts grid (store, month, BOL date, carrier, trailer, seal,
+pro, who opened it, who took it down, the note), and the pallet table.
+
+- `irPalletTableHtml(pallets, opts)` extracted from `irRenderPallets`; the dock passes
+  `{ edit: true }`, the read-back `{ withDate: true }`. Two copies of a pallet row drift —
+  the same reason the tag helpers were renamed for a second caller rather than forked.
+- `irTruckStatusHtml` likewise, so the table and the modal cannot disagree about "2 short".
+  The modal recomputes `received` from the rows on screen, never from the list row.
+- 🛑 **Read-only, deliberately. No Edit, no Delete.** The review email naming what this truck
+  came up short of has already gone out; a row quietly changed afterwards makes that email
+  wrong with nothing on either side saying so. Correcting a pallet stays on the dock, before
+  Truck Down. `truck-pallet-update` would permit it — this is a product decision, not a limit.
+- Escape closes the photo viewer first and the modal second; a tab switch closes the modal.
+- A second `View` while the first is still in flight cannot paint truck A into a modal
+  captioned truck B (`irState.detailId`).
+
+### Verified
+
+`4894 assertions across 76 suites` green (was 4864; §27–30 add 30, including the pair that
+proves `truck-current` goes empty on the same database where `truck-detail` still answers).
+`browser-inventory-receiver.mjs` **86** (was 50): the row is *clicked*, not called, in both
+themes; contrast computed against what the browser really paints — new text runs 5.74–18.85:1.
+
+### Not done, and not code
+
+- [ ] Nothing is deployed. The worker needs `wrangler deploy` (prod) / `-e staging`; no
+      migration is involved — `truck-detail` only reads tables migration-065 already made.
+      Merging to `main` ships the frontend on its own via Pages, and the page will call an
+      action the old worker does not know, which fails closed as `UNCLASSIFIED_ACTION` →
+      *"That action is not available on this deployment."* **So deploy the worker first.**
