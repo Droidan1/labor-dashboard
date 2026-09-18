@@ -1,3 +1,60 @@
+## A deploy-order dependency cannot be enforced by a note (2026-09-18)
+
+The Inventory Receiver read-back needed the worker out before the frontend. I put that in the
+PR body, in bold, with the failure mode spelled out and the exact refusal code it would
+produce. The PR merged, Pages rebuilt `main` on its own, and for about four minutes
+production carried a View button that the live worker answered with `UNCLASSIFIED_ACTION`.
+
+**This is the second time this exact feature shipped its frontend first.** 2026-09-15 (#239)
+was the first, and `tasks/inventory-receiver.md` already recorded the finding in so many
+words: *"merging IS deploying, for the frontend, and it does not wait."* I read that file
+before writing the change, quoted its conclusion into the PR, and still designed a plan whose
+only safeguard was that somebody would read the note before clicking a green button.
+
+A note is not a mechanism. Once the same trap catches twice, the write-up is not the fix.
+
+<rules>
+1. **When a frontend change needs a worker change, deploy the worker FIRST — before opening
+   the PR, not before merging it.** The worker is backward compatible with the old page (a new
+   action nothing calls yet is inert), so there is no window where deploying early hurts. The
+   order that needs a human to hold it is the wrong order.
+2. **"Merging is deploying" for anything Pages serves.** Treat a merge as shipping to users,
+   not as an integration step, and design the change so a merge at any moment is safe.
+3. **If the worker genuinely cannot go first, the CLIENT must tolerate the old one** — feature
+   detection, or a refusal path that says something useful — rather than a PR body asking for
+   a particular click order. Design for it, do not document around it.
+4. **Escalate a repeat.** The second occurrence of a documented trap is evidence the
+   documentation is not load-bearing. Change the plan, not the wording.
+</rules>
+
+## The API pretty-prints, and my grep did not (2026-09-18)
+
+The post-deploy poller asserted the active version by
+`grep -o '"version_id":"[a-f0-9-]*"'`. Cloudflare returns pretty-printed JSON —
+`"version_id": "7716e7ac-…"`, with a space after the colon — so the capture came back empty
+and every pass reported NOT CLEAN across a deploy that was already serving at 100 %.
+
+**It failed safe for exactly the reason lessons.md already gives.** Each pass asserted
+`http_code == 200` on its own, separately from the marker, so "reached the API and could not
+parse it" was distinguishable at a glance from "never reached it". Had the poller only
+grepped, it would have reported a failed production deploy and the next move would have been
+to redeploy something that was already correct.
+
+This is the CORS-probe `sed` lesson wearing a different hat: same shape, same file, two days
+apart. Writing down "anchor carefully" was not enough; the durable version is not to
+hand-roll the parse at all.
+
+<rules>
+1. **Parse JSON with a JSON parser.** `jq`, or `node -e`. A regex over an API response is
+   guessing at whitespace the server never promised to keep.
+2. **If it must be a regex, tolerate whitespace around every delimiter** — `"key"[[:space:]]*:`
+   — and never assume the compact form because that is how you would have written it.
+3. **Keep contact and content as SEPARATE assertions in every probe.** This is now the second
+   time that separation is what stopped a false report; it is the cheapest line in the script.
+4. **A verification that fails closed on its own bug is working.** Read the failure before
+   believing the thing it is checking is broken — and before re-running a production action.
+</rules>
+
 ## A request that never arrived is not a request that was refused (2026-09-16)
 
 Confirming that production had stopped granting CORS to `localhost`. The probe was a one-liner:
