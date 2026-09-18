@@ -3030,11 +3030,14 @@
            list, `truck-current`, is scoped to `closed_at IS NULL` — so the pallets on a
            truck that had come down were unreachable from the app. `truck-detail` fetches
            by id and does not care about the state.
-           z-50, the same layer as the verify modal: the two are never open together, and
-           the photo viewer (70) and uiConfirm (80) still land on top of this.
+           🛑 z-40, BELOW the verify modal's 50 — and it must stay below. Since managers can
+           correct a pallet from here, the verify form opens ON TOP of this one; at the equal
+           z-50 both started on, source order decided, and this div is declared after the
+           verify modal, so the form would have opened behind the truck that raised it.
+           The stack is now: read-back 40, verify 50, approval 60, photo 70, uiConfirm 80.
            Inline display, not hidden+flex — `.hidden` and `.items-center` have equal
            specificity and only source order decides, which is why #ir-modal does the same. -->
-      <div id="ir-det" class="fixed inset-0 z-50 items-center justify-center bg-black/60 p-4" style="display:none">
+      <div id="ir-det" class="fixed inset-0 z-40 items-center justify-center bg-black/60 p-4" style="display:none">
         <div class="ir-panel w-full max-w-5xl" style="max-height:92vh;overflow:auto" role="dialog" aria-modal="true" aria-labelledby="ir-det-title">
           <div class="ir-bar" style="position:sticky;top:0;z-index:3">
             <span class="ir-lbl" id="ir-det-title" style="font-size:12px">Truck</span>
@@ -3050,6 +3053,9 @@
           <div id="ir-det-prog"></div>
           <div class="ir-facts" id="ir-det-facts"></div>
           <div class="ir-sub" id="ir-det-sub">Loading…</div>
+          <!-- 🛑 Its own line. #ir-status is on the Receive pane, so a correction made from
+               here would report into a pane nobody is looking at. -->
+          <div id="ir-det-status" class="ir-status ok" style="margin:10px 15px 0" hidden></div>
           <div id="ir-det-pallets" class="mt-2"></div>
           <div class="ir-legend">
             <span><span class="ir-sw ir-sw-plain"></span>Received clean</span>
@@ -26511,7 +26517,11 @@
   const irState = {
     store: null, mode: null, busy: false, seeded: false,
     truck: null, pallets: [], trucks: [],
-    detailId: null,                // which truck the read-back modal is showing
+    detailId: null, detail: null,   // the truck the read-back modal is showing, and its payload
+    // 🛑 Which LIST the pallet under edit came from, so the right screen refreshes after.
+    // Not inferred from "is the read-back open": the verify modal opens ON TOP of it, so that
+    // test is true for a dock edit made while a read-back happens to be open behind it.
+    editFrom: null,                 // 'dock' | 'detail'
     photo: null, mediaType: null, fields: {}, editId: null,
     pending: null,                 // the submit waiting on a manager approval
   };
@@ -26548,6 +26558,17 @@
 
   function irSetStatus(msg, kind) {
     const e = el('ir-status');
+    if (!e) return;
+    if (!msg) { e.hidden = true; return; }
+    e.className = 'ir-status ' + (kind || 'ok');
+    e.textContent = msg;
+    e.hidden = false;
+  }
+
+  // The read-back's own status line. Same shape as irSetStatus, different target: that one
+  // writes into the Receive pane, which is not on screen when a truck is being read back.
+  function irSetDetStatus(msg, kind) {
+    const e = el('ir-det-status');
     if (!e) return;
     if (!msg) { e.hidden = true; return; }
     e.className = 'ir-status ' + (kind || 'ok');
@@ -26692,9 +26713,17 @@
     const isBol = irState.mode === 'bol';
     const list = isBol ? IR_BOL_FIELDS : IR_TAG_FIELDS;
     irState.fields = (j && j.fields) || {};
+    // 🛑 The BOL in the title comes from the truck this pallet is actually ON. Reading it
+    // from irState.truck alone was right while the only editable pallets were the dock's;
+    // now a manager can correct a pallet from a read-back of a DIFFERENT truck, and with one
+    // open on the dock the header would have captioned the correction with the wrong BOL.
+    const onTruck = irState.editFrom === 'detail'
+      ? (irState.detail && irState.detail.truck)
+      : irState.truck;
     el('ir-m-title').textContent = isBol
       ? 'Verify Bill of Lading'
-      : `Verify pallet tag${irState.truck && irState.truck.bol_no ? ' · BOL ' + irState.truck.bol_no : ''}`;
+      : `${irState.editId ? 'Correct pallet' : 'Verify pallet tag'}${
+          onTruck && onTruck.bol_no ? ' · BOL ' + onTruck.bol_no : ''}`;
     const halves = list.filter(f => f.half), fulls = list.filter(f => !f.half);
     const leading = fulls.filter(f => f.key), trailing = fulls.filter(f => !f.key);
     el('ir-m-fields').innerHTML =
@@ -26714,7 +26743,7 @@
     const w = el('ir-m-warn');
     const hint = (j && j.truck_hint) || null;
     if (warn || hint) { w.textContent = warn || hint; w.hidden = false; } else { w.hidden = true; }
-    el('ir-m-submit').textContent = isBol ? 'Open Truck' : 'Add to Truck';
+    el('ir-m-submit').textContent = isBol ? 'Open Truck' : irState.editId ? 'Save Pallet' : 'Add to Truck';
     el('ir-m-delete').hidden = !(irState.editId && irCanDelete());
     el('ir-m-retake').hidden = !!irState.editId;
     el('ir-modal').style.display = 'flex';
@@ -26766,7 +26795,7 @@
   async function irSend(action, payload) {
     try {
       const j = await irPost(action, payload);
-      irAfterSend(action, j);
+      await irAfterSend(action, j);
     } catch (e) {
       if (e && (e.code === 'DUPLICATE_BARCODE' || e.code === 'DUPLICATE_BOL')) {
         irApprOpen(e, action, payload);
@@ -26776,9 +26805,20 @@
     }
   }
 
-  function irAfterSend(action, j) {
+  async function irAfterSend(action, j) {
+    const fromDetail = irState.editFrom === 'detail';
     irCloseModal();
-    irState.photo = null; irState.editId = null;
+    irState.photo = null; irState.editId = null; irState.editFrom = null;
+    // A correction made in the read-back refreshes the READ-BACK. Falling through to
+    // irLoadCurrent() would reload the dock instead and leave the modal showing the row as
+    // it was before the edit — the change applied, and invisible.
+    if (fromDetail) {
+      await irOpenTruck(irState.detailId);
+      irSetDetStatus(j && j.dup_approved_by
+        ? `Corrected — duplicate approved by ${j.dup_approved_by}.`
+        : 'Pallet corrected.', j && j.dup_approved_by ? 'warn' : 'ok');
+      return;
+    }
     if (action === 'truck-open') {
       irSetStatus(`Truck open — BOL ${j.id ? (el('ir-f-bol_no') && el('ir-f-bol_no').value) || j.id : ''}`.trim(), 'ok');
     } else if (j && j.dup_approved_by) {
@@ -26859,7 +26899,7 @@
         approval: { name, pin, reason: el('ir-appr-reason').value.trim() || null },
       });
       irApprCancel();
-      irAfterSend(action, j);
+      await irAfterSend(action, j);
     } catch (e) {
       // A wrong code comes back as the same 409 with a fresh approval verdict inside.
       const a = e && e.approval;
@@ -26949,12 +26989,15 @@
   // from the Trucks tab. Two copies of "what a pallet row looks like" drift, which is the
   // lesson this page already wrote down when the shared tag helpers were RENAMED for a
   // second caller rather than forked.
-  //   `edit`      the row offers Edit. A truck that has come down does not — the review
-  //               email naming what it found has already gone out.
+  //   `edit`      the row offers Edit. On a truck that has come down this is a MANAGER's
+  //               button (Brian, 2026-09-18) and the worker enforces that independently —
+  //               hiding it is courtesy, refusing it is the guard.
+  //   `from`      which screen the Edit button reports back to, 'dock' or 'detail'.
   //   `withDate`  the Received column carries a day. On the dock the time alone is enough,
   //               because it is today; a truck read back a month later needs the date.
   function irPalletTableHtml(pallets, opts) {
     const edit = !!(opts && opts.edit), withDate = !!(opts && opts.withDate);
+    const from = (opts && opts.from) === 'detail' ? 'detail' : 'dock';
     return `<div class="ir-scroll"><table class="ir-tbl"><thead><tr>
         <th class="stick">Barcode</th><th>Pallet</th><th>Item #</th><th>PO / WO</th>
         <th>Sup. Ref</th><th class="num">Units</th><th>Built by</th><th>Received</th>${edit ? '<th></th>' : ''}
@@ -26970,7 +27013,7 @@
           <td class="num">${p.units == null ? '—' : p.units.toLocaleString()}</td>
           <td class="dim">${irEsc(p.created_by_tag || '—')}</td>
           <td class="dim">${irWhen(p.logged_at, withDate)}</td>
-          ${edit ? `<td><button type="button" class="ir-row-btn" onclick="irEditPallet(${p.id})">Edit</button></td>` : ''}
+          ${edit ? `<td><button type="button" class="ir-row-btn" onclick="irEditPallet(${p.id}, '${from}')">Edit</button></td>` : ''}
         </tr>`).join('')}</tbody></table></div>`;
   }
 
@@ -26980,11 +27023,17 @@
       : '';
   }
 
-  function irEditPallet(id) {
-    const p = irState.pallets.find(x => x.id === id);
+  // `from` is 'dock' or 'detail' — the dock's own table passes nothing and gets 'dock'.
+  // The row is looked up in THAT list: the two hold different pallets, and a read-back of an
+  // old truck must not resolve an id against whatever is on the dock right now.
+  function irEditPallet(id, from) {
+    const detail = from === 'detail';
+    const list = (detail ? (irState.detail && irState.detail.pallets) : irState.pallets) || [];
+    const p = list.find(x => x.id === id);
     if (!p) return;
     irState.mode = 'pallet';
     irState.editId = id;
+    irState.editFrom = detail ? 'detail' : 'dock';
     irState.photo = null;
     irOpenVerify({ fields: p, read: IR_TAG_FIELDS.filter(f => p[f.k] != null).length, of: IR_TAG_FIELDS.length }, null);
   }
@@ -26992,15 +27041,30 @@
 
   async function irDeletePallet() {
     if (!irState.editId) return;
-    const go = await uiConfirm('This removes the pallet from the truck for good.',
+    const fromDetail = irState.editFrom === 'detail';
+    // 🔑 A truck that is DOWN says so, and says what else moves. Its pallet count and unit
+    // total are what the review email already reported, so removing a row now changes a
+    // number somebody has been told — which is the thing worth a second of thought, not the
+    // deletion itself.
+    const go = await uiConfirm(
+      fromDetail && irState.detail && irState.detail.truck && irState.detail.truck.closed_at
+        ? 'This truck is already down. Removing the pallet changes what it received, after the '
+          + 'review email naming this truck has gone out.\n\nThere is no undo.'
+        : 'This removes the pallet from the truck for good.',
       { title: 'Remove this pallet?', okText: 'Remove', danger: true });
     if (!go) return;
     try {
-      await irPost('truck-pallet-delete', { id: irState.editId });
+      const id = irState.editId;
+      await irPost('truck-pallet-delete', { id });
       irCloseModal();
-      irState.editId = null;
-      irSetStatus('Pallet removed.', 'ok');
-      irLoadCurrent();
+      irState.editId = null; irState.editFrom = null;
+      if (fromDetail) {
+        await irOpenTruck(irState.detailId);
+        irSetDetStatus('Pallet removed.', 'ok');
+      } else {
+        irSetStatus('Pallet removed.', 'ok');
+        irLoadCurrent();
+      }
     } catch (e) {
       await uiAlert((e && e.message) || String(e), { title: "Couldn't remove it" });
     }
@@ -27141,6 +27205,7 @@
     el('ir-det-facts').innerHTML = '';
     el('ir-det-pallets').innerHTML = '';
     el('ir-det-sub').textContent = 'Loading…';
+    irSetDetStatus(null);
     el('ir-det').style.display = 'flex';
     irState.detailId = id;
     try {
@@ -27150,6 +27215,7 @@
       // one failure mode worse than the missing screen it replaces.
       if (irState.detailId !== id) return;
       if (!j.truck) throw new Error('That truck is no longer there.');
+      irState.detail = j;
       irRenderDetail(j.truck, j.pallets || []);
     } catch (e) {
       if (irState.detailId !== id) return;
@@ -27229,11 +27295,18 @@
     el('ir-det-sub').textContent = n
       ? `${n} pallet${n === 1 ? '' : 's'} · ${units.toLocaleString()} units · newest first`
       : 'No pallets were scanned onto this truck.';
-    // 🛑 Read-only, deliberately: no Edit, and no Delete. The review email naming what
-    // this truck came up short of has already gone out, and a row quietly changed
-    // afterwards makes that email wrong with nothing on either side saying so. Correcting
-    // a pallet stays where it already is — on the dock, before Truck Down.
-    el('ir-det-pallets').innerHTML = n ? irPalletTableHtml(pallets, { withDate: true }) : '';
+    // 🔑 WHO GETS Edit HERE (Brian, 2026-09-18, reversing the read-only call in #254).
+    // A truck that is DOWN is a manager's to correct: the review email naming what it came
+    // up short of has already gone out, so a change here moves a number somebody has been
+    // told. On the dock it stays an associate's, which is what the page grant is for — so
+    // an open truck read back here offers exactly what the Receive tab does, never more.
+    // 🛑 This only draws the button. `truck-pallet-update` re-derives the truck's state from
+    // the ROW and refuses a non-manager on a closed one, so hiding it is courtesy and the
+    // worker is the guard — a hidden button is not a permission.
+    const mayEdit = t.closed_at ? irCanDelete() : true;
+    el('ir-det-pallets').innerHTML = n
+      ? irPalletTableHtml(pallets, { withDate: true, edit: mayEdit, from: 'detail' })
+      : '';
   }
 
   // ── Export ────────────────────────────────────────────────────────────────
@@ -27300,10 +27373,15 @@
   window.irLbOpen = irLbOpen; window.irLbClose = irLbClose;
   // Top layer down: the viewer sits ABOVE the truck read-back that raised it, so one
   // Escape closes the photo and leaves the truck on screen rather than both at once.
+  const irShowing = (id) => { const e = el(id); return !!e && e.style.display !== 'none'; };
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
     if (el('ir-lb') && !el('ir-lb').hidden) { e.preventDefault(); irLbClose(); return; }
-    if (el('ir-det') && el('ir-det').style.display !== 'none') { e.preventDefault(); irCloseDetail(); }
+    // 🛑 Anything open ABOVE the read-back swallows the key rather than letting it close
+    // the truck underneath. Correcting a pallet opens the verify form over this modal, and
+    // an Escape that closed the thing behind the form would leave it orphaned over nothing.
+    if (irShowing('ir-appr') || irShowing('ir-modal')) return;
+    if (irShowing('ir-det')) { e.preventDefault(); irCloseDetail(); }
   });
 
   // ═══════════════════════════════════════════════════════════════

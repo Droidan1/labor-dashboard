@@ -873,8 +873,129 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
   ok(/function irPalletTableHtml\(/.test(html), 'the pallet table is a function, defined once');
   ok(/irPalletTableHtml\(irState\.pallets, \{ edit: true \}\)/.test(html),
      '...the dock draws it WITH Edit');
-  ok(/irPalletTableHtml\(pallets, \{ withDate: true \}\)/.test(html),
-     '🛑 ...and the read-back draws it WITHOUT: the review email naming this truck has gone out');
+  // 🔑 The read-back shipped read-only in #254 and Brian reversed that the same day: a
+  // manager corrects a truck that is down. Section 34 pins the new rule; what stays true
+  // here is that the two screens still share ONE table rather than growing a second copy.
+  ok(/irPalletTableHtml\(pallets, \{ withDate: true, edit: mayEdit, from: 'detail' \}\)/.test(html),
+     '...and the read-back draws the same table, with its own Edit rule');
+}
+
+// ── 31. Correcting a truck that is DOWN is a manager's ───────────────────
+// Brian, 2026-09-18, reversing the read-only call shipped three hours earlier. The rule is
+// about the TRUCK'S STATE, not the page grant: on the dock a correction stays an associate's
+// job — fixing a tag you just mis-scanned is what the grant is for — and after Truck Down it
+// becomes a manager's, because the review email naming what that truck came up short of has
+// already gone out.
+//
+// 🛑 BOTH HALVES, on the same account. A gate that refused the associate everywhere would
+// pass the refusal below and quietly break the dock, which is the page's whole job.
+{
+  const { db, env } = env0();
+  const open = seedTruck(db, { store: 'BL1', bol: '7679', count: 5 });
+  spy(textReply('{}'));
+  const onDock = await json(await call('/?action=truck-pallet-log',
+    { user: 'u-staff', method: 'POST', body: { truck_id: open, ...TAG, ...IMG }, env }));
+
+  // u-staff is an associate holding inventory-receiver at EDIT — the highest page grant.
+  eq((await call('/?action=truck-pallet-update',
+    { user: 'u-staff', method: 'POST', body: { id: onDock.id, ...TAG, units: 2 }, env })).status, 200,
+     '✅ an associate corrects a pallet on the truck at the dock — unchanged, and the point of the grant');
+
+  await call('/?action=truck-down', { user: 'u-mgr1', method: 'POST', body: { truck_id: open }, env });
+
+  // The SAME pallet, the SAME account, one Truck Down later.
+  const after = await call('/?action=truck-pallet-update',
+    { user: 'u-staff', method: 'POST', body: { id: onDock.id, ...TAG, units: 3 }, env });
+  eq(after.status, 403, '🛑 ...and is refused on the very same pallet once the truck is down');
+  eq((await json(after)).code, 'NEED_MANAGER', '...naming the standing it wants');
+  eq(db.prepare('SELECT units AS u FROM truck_pallets WHERE id = ?').get(onDock.id).u, 2,
+     '🛑 ...and the refusal WROTE NOTHING — a 403 that still updated would be the worst of both');
+
+  // A manager at that store can.
+  eq((await call('/?action=truck-pallet-update',
+    { user: 'u-mgr1', method: 'POST', body: { id: onDock.id, ...TAG, units: 4 }, env })).status, 200,
+     '✅ a manager corrects it after the truck is down — the whole ask');
+  eq(db.prepare('SELECT units AS u FROM truck_pallets WHERE id = ?').get(onDock.id).u, 4,
+     '...and the correction lands');
+
+  // 🔑 The state is read from the TRUCK's row, so a client claiming otherwise changes nothing.
+  const lying = await call('/?action=truck-pallet-update',
+    { user: 'u-staff', method: 'POST', body: { id: onDock.id, ...TAG, units: 9, closed_at: null }, env });
+  eq(lying.status, 403, '🛑 a client sending closed_at: null does not reopen the truck');
+  eq(db.prepare('SELECT units AS u FROM truck_pallets WHERE id = ?').get(onDock.id).u, 4, '...and writes nothing');
+}
+
+// ── 32. Delete was already a manager's, at BOTH states ─────────────────
+// Section 18 pins it on an open truck. The read-back now offers the same button on a closed
+// one, so the closed case is pinned here rather than assumed to follow.
+{
+  const { db, env } = env0();
+  const t = seedTruck(db, { store: 'BL1', count: 2 });
+  spy(textReply('{}'));
+  const p = await json(await call('/?action=truck-pallet-log',
+    { user: 'u-mgr1', method: 'POST', body: { truck_id: t, ...TAG, ...IMG }, env }));
+  await call('/?action=truck-down', { user: 'u-mgr1', method: 'POST', body: { truck_id: t }, env });
+
+  const staff = await call('/?action=truck-pallet-delete', { user: 'u-staff', method: 'POST', body: { id: p.id }, env });
+  eq(staff.status, 403, 'an associate cannot delete off a closed truck either');
+  eq(db.prepare('SELECT COUNT(*) AS n FROM truck_pallets WHERE id = ?').get(p.id).n, 1, '...and the row survives');
+  eq(env.MEDIA._store.size, 1, '...and so does its photo');
+
+  eq((await call('/?action=truck-pallet-delete', { user: 'u-mgr1', method: 'POST', body: { id: p.id }, env })).status, 200,
+     '✅ a manager can, on a truck that is down');
+  eq(db.prepare('SELECT COUNT(*) AS n FROM truck_pallets WHERE id = ?').get(p.id).n, 0, '...the row goes');
+  eq(env.MEDIA._store.size, 0, '...and the photo goes with it');
+
+  // 🔑 What the deletion is FOR: the truck's counts move, because received has always been
+  // COUNT(*) rather than a stored number. If it were stored this would silently disagree.
+  const j = await json(await call('/?action=truck-detail&id=' + t, { user: 'u-mgr1', env }));
+  eq(j.pallets.length, 0, 'the read-back shows it gone');
+  const list = await json(await call('/?action=truck-list&store=BL1', { user: 'u-mgr1', env }));
+  eq(list.rows[0].received, 0, '🔑 ...and the truck now reads 0 received, recounted not restated');
+  eq(list.rows[0].pallet_count, 2, '...against a BOL claim that does NOT move');
+}
+
+// ── 33. The two gates are the same four roles, on both sides ────────────
+// The client hides Edit on a closed truck with irCanDelete(); the worker refuses it with
+// canSeeFinancials(). If those lists drift, a manager sees a button that 403s or an associate
+// sees one that works. Neither is caught by any behavioural test, so they are pinned together.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const roles = (/const FINANCIAL_ROLES = new Set\(\[([^\]]*)\]\)/.exec(src) || [])[1] || '';
+  const client = (/function irCanDelete\(\)[\s\S]*?\[([^\]]*)\]/.exec(html) || [])[1] || '';
+  const norm = (x) => x.split(',').map(t => t.trim().replace(/['"]/g, '')).filter(Boolean).sort().join(',');
+  ok(!!roles && !!client, 'both role lists are still findable');
+  eq(norm(client), norm(roles),
+     '🛑 irCanDelete and FINANCIAL_ROLES name the same roles — drift shows up as a button that 403s');
+
+  // The worker checks the TRUCK, not the pallet, and reads it in the same statement.
+  const h = src.slice(src.indexOf('=== "truck-pallet-update"'));
+  const body = h.slice(0, h.indexOf('=== "truck-pallet-delete"'));
+  ok(/JOIN trucks t ON t\.id = p\.truck_id/.test(body),
+     'the update reads the truck state in the lookup it already does');
+  ok(/row\.closed_at && !isAdminSecret && !canSeeFinancials\(currentUser\)/.test(body),
+     '🛑 ...and gates on the ROW\'s closed_at, never on anything the client sent');
+}
+
+// ── 34. The read-back's Edit reports back to the read-back ───────────
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  ok(/irEditPallet\(\$\{p\.id\}, '\$\{from\}'\)/.test(html),
+     'the pallet table tells Edit which screen raised it');
+  ok(/irPalletTableHtml\(pallets, \{ withDate: true, edit: mayEdit, from: 'detail' \}\)/.test(html),
+     'the read-back draws it as a detail-sourced table');
+  ok(/const mayEdit = t\.closed_at \? irCanDelete\(\) : true;/.test(html),
+     '🔑 ...offered on a closed truck only to a manager, and on an open one exactly as the dock does');
+  ok(/id="ir-det-status"/.test(html) && /function irSetDetStatus/.test(html),
+     '🛑 the read-back has its OWN status line — #ir-status is on a pane that is not on screen');
+  ok(/await irOpenTruck\(irState\.detailId\)/.test(html),
+     '🛑 a correction refreshes the READ-BACK, not the dock behind it');
+  // 🛑 The stacking that made this work at all.
+  ok(/id="ir-det" class="fixed inset-0 z-40/.test(html),
+     '🛑 the read-back is z-40, BELOW the verify form that now opens on top of it');
+  ok(/irShowing\('ir-appr'\) \|\| irShowing\('ir-modal'\)\) return;/.test(html),
+     '🛑 ...and Escape stops at the top layer instead of closing the truck underneath it');
 }
 
 console.log(`\n${assertions} passed, ${failures} failed`);

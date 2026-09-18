@@ -24013,10 +24013,27 @@ export default {
         const body = await request.json();
         const id = parseInt(body?.id, 10);
         if (!Number.isInteger(id)) return new Response(JSON.stringify({ error: "Invalid id" }), { status: 400, headers: corsJson });
-        const row = await env.DB.prepare("SELECT id, store FROM truck_pallets WHERE id = ?").bind(id).first();
+        const row = await env.DB.prepare(
+          `SELECT p.id, p.store, t.closed_at
+             FROM truck_pallets p JOIN trucks t ON t.id = p.truck_id
+            WHERE p.id = ?`
+        ).bind(id).first();
         if (!row) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: corsJson });
         const denied = storeActionGuard(row.store, currentUser, isAdminSecret, corsJson, { allowClosed: true });
         if (denied) return denied;
+        // 🔑 ONCE THE TRUCK IS DOWN, a correction is a manager's (Brian, 2026-09-18).
+        // On the dock it stays an associate's job — fixing a tag you just mis-scanned is the
+        // whole point of the page grant. After Truck Down it is a different act: the review
+        // email naming what that truck came up short of has already gone out, so changing a
+        // row moves a number somebody has already been told. That is the same standing
+        // truck-pallet-delete has always required, and it is checked against the TRUCK's
+        // state read above, never against anything the client said.
+        if (row.closed_at && !isAdminSecret && !canSeeFinancials(currentUser)) {
+          return new Response(JSON.stringify({
+            error: "This truck is already down — only a manager can correct a pallet on it",
+            code: "NEED_MANAGER",
+          }), { status: 403, headers: corsJson });
+        }
 
         const fields = palletTagFields(body);
         if (!fields.item_no && !fields.pallet_name && !fields.po && !fields.barcode) {
