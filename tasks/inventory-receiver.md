@@ -556,10 +556,18 @@ proves `truck-current` goes empty on the same database where `truck-detail` stil
 `browser-inventory-receiver.mjs` **86** (was 50): the row is *clicked*, not called, in both
 themes; contrast computed against what the browser really paints — new text runs 5.74–18.85:1.
 
-### Not done, and not code
+### Deployed — 2026-09-18
 
-- [ ] Nothing is deployed. The worker needs `wrangler deploy` (prod) / `-e staging`; no
-      migration is involved — `truck-detail` only reads tables migration-065 already made.
-      Merging to `main` ships the frontend on its own via Pages, and the page will call an
-      action the old worker does not know, which fails closed as `UNCLASSIFIED_ACTION` →
-      *"That action is not available on this deployment."* **So deploy the worker first.**
+- [x] Worker only, no migration: staging `053c39a1`, production `7716e7ac`, both from `main`
+      at `2ebefb4` with the suite green on that exact tree. `MEDIA`, `BL16_MERCHANT_ID` and
+      all six production crons confirmed in the deploy output; rollout confirmed by reading
+      the deployed bundle back to three consecutive clean passes. Full write-up at the top of
+      `tasks/todo.md`.
+- 🛑 **The frontend shipped FIRST again**, for the second time on this feature (the first
+      was #239 on 2026-09-15). The PR body led with the deploy order and it merged anyway;
+      Pages rebuilds `main` unprompted, so www.retjghub.com carried a dead View button for
+      about four minutes. Harmless — a read-only GET, refused cleanly as
+      `UNCLASSIFIED_ACTION` — but the lesson is in `tasks/lessons.md` and it is not "say it
+      louder next time": **deploy the worker before opening the PR**, since a new action
+      nothing calls yet is inert against the old page, so there is no window where going
+      early costs anything.

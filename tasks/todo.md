@@ -1,3 +1,76 @@
+# Deployed: Inventory Receiver read-back (2026-09-18)
+
+Brian's go for staging then production, after he merged #254 at 16:27:51Z. Worker only — no
+migration (`truck-detail` only reads tables migration-065 already made), no secret, and the
+frontend had already shipped itself.
+
+| | version |
+|---|---|
+| staging `clover-sales-api-staging` | `053c39a1` |
+| production `clover-sales-api` | `7716e7ac` |
+
+Deployed from `main` at `2ebefb4`, and `bash scripts/test.sh` was run green **on that exact
+tree** (4894 assertions, 76 suites) before either deploy — not against the branch that had
+been checked out.
+
+## 🛑 The frontend shipped BEFORE the worker, and the PR said not to
+
+The PR body led with the deploy order and the reason. It merged anyway, and merging IS
+deploying for the frontend: Pages rebuilt `main` on its own, so for roughly four minutes
+www.retjghub.com carried a View button on every truck row that the live worker answered
+with `UNCLASSIFIED_ACTION` → *"That action is not available on this deployment."*
+
+Harmless — the action is a read-only GET, nothing could be written, and the client already
+maps that code to a sentence — but it is the SECOND time this feature has shipped its
+frontend first (2026-09-15, #239, same cause). Recorded because the lesson is not "say it
+louder in the PR body": **on this repo, a frontend change that needs a worker cannot be
+gated by a note.** Either the worker goes out before the merge, or the client has to
+tolerate the old worker by design.
+
+## Verified from the CONTROL PLANE, not inferred from a command not erroring
+
+Before: the deployed production bundle carried **zero** occurrences of `truck-detail`
+(`truck-current` ×3, `truck-pallet-update` ×3 — so the read reached the right script and
+the zero meant something). After: `truck-detail` ×3, plus the two markers that matter
+individually — the route guard `action") === "truck-detail"` and the gate entry
+`"truck-detail", ["inventory-receiver", "view"]`.
+
+Deploy output checked for the three things a past deploy silently dropped:
+
+| | staging | production |
+|---|---|---|
+| `MEDIA` binding | `bl-marketing-media-staging` ✅ | `bl-marketing-media` ✅ |
+| `BL16_MERCHANT_ID` | present ✅ | present ✅ |
+| crons | 2 ✅ | **6** ✅ (`55 3 * * *`, `* * * * *`, `0 12 * * *`, `0 11 * * 1`, `0 * * * *`, `30 10 * * *`) |
+
+Rollout confirmed by polling the FULL condition: **four clean passes**, the first inside the
+~180 s window and the rest after it, each requiring ALL of — script and deployments endpoints
+HTTP 200, `truck-detail` ×3, the route guard `action") === "truck-detail"`, the gate entry
+`"truck-detail", ["inventory-receiver", "view"]`, and the active deployment `02365444`
+serving version `7716e7ac` at **100 %** (superseding `d518a773`, the 2026-09-16
+localhost-CORS deploy). Three came from the background poller and the fourth from a separate
+`jq`-based check written after the parse bug below, so the confirmation does not rest on one
+script's idea of how to read the response.
+
+## 🛑 A parse bug in the VERIFICATION, caught by the check failing closed
+
+The first poller anchored on `"version_id":"` and the Cloudflare API pretty-prints
+`"version_id": "` — with a space. `ACTIVE` came back empty and every pass reported NOT
+CLEAN over a deploy that was already at 100 %.
+
+This is the same failure lessons.md already records from the CORS probe, in a new costume,
+and it went the right way for the same reason: **the pass asserted HTTP 200 separately from
+the marker**, so "reached the API and could not parse it" was distinguishable from "never
+reached it" at a glance. A poller that had only grepped would have reported a failed deploy.
+
+⚠️ **What was NOT verified, and could not be.** No unauthenticated request distinguishes the
+old worker from the new one — auth runs before the action gate, so `api.retjghub.com` answers
+`401 NO_SESSION` to `truck-detail`, `truck-current` and nonsense alike. The bundle read proves
+the deployed VERSION carries the code; it is not a sample of what a logged-in phone gets from
+a given edge. The end-to-end path still wants one real tap on a real truck.
+
+---
+
 # Inventory Receiver — a truck can be opened after it comes down (2026-09-18)
 
 **Brian, 2026-09-18:** *"on the inventory receiver there is no way to view the truck after
