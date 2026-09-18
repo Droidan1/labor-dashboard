@@ -1,3 +1,51 @@
+# Deployed: the closed-truck manager gate (2026-09-18)
+
+Brian's go, staging then production, and — for the first time on this feature — **before the PR
+was opened**, which is the lesson from this morning's entry actually applied rather than
+restated. Worker only, no migration.
+
+| | version |
+|---|---|
+| staging `clover-sales-api-staging` | `64077365` |
+| production `clover-sales-api` | `59009a3a` |
+
+Deployed from the BRANCH at `e9c4b85`, not from `main` — that is the point of going first. The
+suite was green on that exact tree (4922 assertions, 76 suites) immediately before each deploy.
+
+## 🔑 Why worker-first mattered more here than last time
+
+Yesterday's `truck-detail` was an ADDITION: shipping the frontend first meant a dead button.
+This change is a RESTRICTION — both mutations already worked on a closed truck, and the diff
+adds the manager gate. Frontend-first would have meant the Edit and Delete buttons live on the
+read-back while the gate did not yet exist, so an associate holding the page's `edit` grant
+could correct a truck that was already down. A dead button is a nuisance; that is a permission
+gap. The gate is inert against the currently-live page, which has no such buttons, so there was
+no cost to going early and a real cost to going late.
+
+⚠️ **Production is therefore running a tightening that is not on `main` yet.** That is the
+intended state until the PR merges, and it is safe in the direction that matters: the worker
+refuses MORE than the live page ever asks of it.
+
+## Verified from the control plane
+
+Before production: the gate string ×0 while `truck-detail` read ×3 — so the read reached the
+right script and the zero meant something, rather than being the absence-shaped nothing a
+failed request also prints. Staging after its own deploy: gate ×1, the `JOIN trucks` ×2, the
+refusal message ×1. Production after: the same three, to three consecutive clean passes with
+the active deployment serving `59009a3a` at 100 %.
+
+Deploy output checked for the three things a past deploy silently dropped:
+
+| | staging | production |
+|---|---|---|
+| `MEDIA` | `bl-marketing-media-staging` ✅ | `bl-marketing-media` ✅ |
+| `BL16_MERCHANT_ID` | present ✅ | present ✅ |
+| crons | 2 ✅ | **6** ✅ |
+
+The poller used `jq` rather than a hand-rolled pattern, per this morning's other lesson.
+
+---
+
 # Inventory Receiver — managers can correct a truck that has come down (2026-09-18)
 
 **Brian, 2026-09-18:** *"add edit/delete on closed trucks for managers"* — reversing the
