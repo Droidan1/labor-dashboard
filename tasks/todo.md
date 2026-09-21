@@ -1,3 +1,106 @@
+# Opportunity buys — Phase 1, the buy exists (2026-09-21)
+
+**Brian:** *"Let's do phase 1"* — of `docs/feature-opportunity-buys.md`. Three questions asked
+before starting, and two of the answers moved the spec:
+
+| question | answer | effect |
+|---|---|---|
+| are receiving POs the same numbers? | **no, type it fresh** | the `truck_pallets.po` picker the spec recommended is **dropped** |
+| who opens/closes a buy? | **admin/superuser only** | needs an explicit role check — see the trap below |
+| where does the buy view live? | **its own page in the nav** | bigger than the spec's "a tab on Price Scan" |
+
+## 🛑 The trap that the page-grant system hides
+
+`canUsePage` (`worker.js:14397`) returns true for `isAdminSecret || canSeeFinancials(user)`,
+and `FINANCIAL_ROLES` already contains `manager`. **A manager passes every page check at
+every level.** So "managers view, admins open/close" cannot be expressed as a page level at
+all — `requirePage(..., "edit")` would admit every manager silently. Open and close need an
+explicit `currentUser.role` check inside the handler, on the pattern at `worker.js:22966`,
+plus the client `adminOnly` list. Getting this wrong is not a 403 someone reports; it is a
+manager quietly closing a buy.
+
+## Deploy order, derived not remembered (CLAUDE.md rule 6)
+
+**Migration → worker → frontend.** The worker will INSERT and SELECT `sticker_prints.po`, so
+against a database without the column every `sticker-printed` call throws — that is the
+incompatible direction, so the database cannot go second. A column the live worker never
+names is invisible to it, so the migration is safe to apply while the current worker runs.
+
+🔑 **And the worker deploys when it is written, not "before merging".** That phrasing is what
+failed three times today (lessons.md, top entry). The worker half is additive and inert until
+the frontend calls it, so there is no window in which deploying early costs anything.
+
+## The plan
+
+- [x] `migration-070.sql` — `ob_buys` table, `sticker_prints.po` column, index on `(po, printed_at DESC)`
+- [x] Worker: `ob-buy-list`, `ob-buy-detail` (view) · `ob-buy-open`, `ob-buy-close` (admin/superuser)
+- [x] Worker: `sticker-printed` accepts and stores `po`
+- [x] Worker: `ACTION_PAGE` rows for page `opportunity-buys`, and `ACTION_BUSINESS` rows (`bl`) — an
+      unclassified action 403s in production and fails `test-business-gate`
+- [x] Client: `GRANTABLE_PAGES` entry — without it no admin can tick the page and `test-associate` fails
+- [x] Client: nav item + `NAV_BUSINESS` + More-sheet button + gate + `morePages`
+- [x] Client: the `page-opportunity-buys` section, built to DESIGN.md §4.8 (panel + bar + legend)
+- [x] Client: `navigateToPage` guard + init hook
+- [x] Client: an OB **context** on Price Scan — not a third mode. Pick a buy, then scan or price
+      by hand exactly as today; `psRecordPrint` carries the PO. One choke point, both flows.
+- [x] A reprint inherits the PO of the row being reprinted, never the active one — the item
+      belongs to the buy it came in on
+- [x] `scripts/test-opportunity-buys.mjs`, plus the suites this will break
+- [x] `sw.js` CACHE_NAME **and** `scripts/fixtures/shell-cache.json` — a pair, always
+
+## What Phase 1 deliberately does not do
+
+OB items get **ordinary two-segment codes**. Nothing about the code grammar changes, so an OB
+item is indistinguishable from any other item at the same category and price *inside Clover*.
+The PO link lives only in `sticker_prints`. That is the honest boundary of Phase 1 and the
+reason Phases 2 and 3 exist — sell-through stays impossible until the code carries the PO and
+the archive carries the code.
+
+## Review — what shipped, and what the build turned up
+
+**5,262 assertions across 77 suites pass**, up from 5,165. `test-opportunity-buys.mjs` is
+new and carries 94 of them. `sw.js` → v220 with its fixture.
+
+### The PO reaches the printed label in Phase 1, not Phase 2
+
+The spec said the `number_po` sticker option stays inert until Phase 2. **That was wrong,
+and the code says so**: `psZpl` reads `extras.po` as a value in its own right, separate from
+the code — so passing the active buy's PO makes the label print `50008-99999` today. What
+Phase 2 actually adds is the PO *inside the scannable code*, which is what the register
+needs to tell two buys apart. The distinction the spec blurred: a person can read the PO off
+the sticker now; a till cannot.
+
+The QR is untouched either way, so an OB sticker scans at the register and in MOS exactly
+like any other. `docs/feature-opportunity-buys.md` has been corrected.
+
+### Four things the tests caught that review would not have
+
+1. **A buy with no prints reported one label it never printed.** `COALESCE(p.qty, 1)` fires
+   on the all-NULL row a LEFT JOIN produces for a buy with no prints, so migration-069's
+   "NULL means one" rule was being applied to the absence of a row. Now a CASE asks whether
+   a print exists at all first.
+2. **A SQL comment inside a JS template literal, written with backticks**, silently ended
+   the string and turned the next 40 lines into code. It parsed as far as the next `(`.
+3. **Two comments placed inside `JSON.stringify({...})` argument lists** broke three
+   assertions in `test-price-scan` that pin WHICH arguments the print path passes. The
+   assertions were right and the comments were badly placed; the comments moved.
+4. **The psOb block landed inside a region `test-price-scan` slices**, whose own comment
+   says it assumes nothing sits between the probe and `psPrint`. `buildOrStub` stubbed the
+   API and eight assertions failed describing a printer path that was fine. Moved after
+   `window.psPrint`.
+
+### The permission split held
+
+The trap at the top of this entry was real and is now pinned by test: a manager reaches
+`ob-buy-open`, passes every page check there is, and is refused by `obRequireEdit` — and the
+refusal writes nothing. The page renders its Open/Close controls off the worker's `can_edit`
+and never reads `currentUser.role`, so the browser cannot form a second opinion.
+
+### Deploy order — migration, worker, frontend
+
+Unchanged from the plan and derived, not remembered. The worker half is additive and inert
+until the frontend calls it, so it goes out **when it is written**, not "before merging".
+
 # Opportunity buys — the PO spec, written (2026-09-21)
 
 **Brian:** *"Write up the OB/PO spec"* — following the design conversation that ran from

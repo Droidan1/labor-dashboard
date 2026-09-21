@@ -68,7 +68,9 @@ Two conclusions follow, and the whole design hangs off them:
    already knows store, L2, L3, price, retail, user and quantity, and can already create
    a Clover item at all six stores (`sticker-create-price-point`, `worker.js:23356`).
 5. **The sticker can already print a PO.** `number_po` shipped 2026-09-21 and renders
-   `50008-99999` (`psZpl`, `index.html:24162`). It is inert until something supplies a PO.
+   `50008-99999` (`psZpl`, `index.html:24162`). It is inert until something supplies a PO —
+   which Phase 1 does, so this works as soon as Phase 1 ships. The QR is untouched, so an OB
+   sticker still scans at the register and in MOS exactly like any other.
 6. **Per-PO cost is not expressible and is out of scope anyway.** `l3UnitCost`
    (`worker.js:11079`) takes a category name and no item identity at all.
 
@@ -189,7 +191,12 @@ Approach A's price.
   hazard from 2026-09-21 on its own.
 - Update `scripts/test-mos.mjs:73-117, 465-470` and
   `scripts/test-price-scan.mjs:1867-1930, 2165-2198, 3819-3850`.
-- The sticker's `number_po` option stops being inert at this point.
+- ~~The sticker's `number_po` option stops being inert at this point.~~ **Corrected
+  2026-09-21 while building Phase 1:** it stops being inert in **Phase 1**. `psZpl` reads
+  `extras.po` as a value in its own right, separate from the code, so passing the active
+  buy's PO prints `50008-99999` on the label today. What Phase 2 adds is the PO *inside the
+  scannable code* — which is what a till needs to tell two buys apart. A person can read the
+  PO off the sticker after Phase 1; a register cannot.
 
 ### Phase 3 — sell-through (~3 days, and it starts from zero)
 

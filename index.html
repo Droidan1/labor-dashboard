@@ -1068,6 +1068,10 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 7h12v9H1z"/><path d="M13 10h4.5l3.5 3.5V16H13z"/><circle cx="5.5" cy="18.5" r="1.9"/><circle cx="17" cy="18.5" r="1.9"/></svg></span>
           <span class="nav-label">Inventory Receiver</span>
         </div>
+        <div id="nav-opportunity-buys" class="hidden nav-item" data-page="opportunity-buys" onclick="navigateToPage('opportunity-buys')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.6z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg></span>
+          <span class="nav-label">Opportunity Buys</span>
+        </div>
         <div id="nav-mos" class="hidden nav-item" data-page="mos" onclick="navigateToPage('mos')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 7.3 12 3 3.5 7.3v9.4L12 21l8.5-4.3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg></span>
           <span class="nav-label">Mark Out of Stock</span>
@@ -1206,6 +1210,10 @@
         </button>
         <button id="more-bin-dump" onclick="navigateToPage('bin-dump');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4l-1.5-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>Bin Dump
+        </button>
+        <button id="more-opportunity-buys" onclick="navigateToPage('opportunity-buys');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
+          <svg class="w-[18px] h-[18px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.6z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>
+          Opportunity Buys
         </button>
         <button id="more-inventory-receiver" onclick="navigateToPage('inventory-receiver');closeMoreSheet()" class="hidden w-full flex items-center gap-3.5 px-5 py-3.5 text-[15px] font-medium text-opl-ink dark:text-op-ink active:bg-opl-panelHi dark:active:bg-op-panelHi">
           <svg class="w-5 h-5 stroke-opl-inkDim dark:stroke-op-inkDim" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 7h12v9H1z"/><path d="M13 10h4.5l3.5 3.5V16H13z"/><circle cx="5.5" cy="18.5" r="1.9"/><circle cx="17" cy="18.5" r="1.9"/></svg>Inventory Receiver
@@ -3154,6 +3162,141 @@
          would mean a Bin Dump restyle silently restyling this page too. §4.8's
          rule is followed instead: token literals are duplicated here, in BOTH
          themes, stated on the panel. -->
+    <!-- ── Opportunity Buys ────────────────────────────────────────────────────
+         Phase 1 of docs/feature-opportunity-buys.md: a purchase order you can name,
+         and every label printed against it.
+
+         🛑 THIS PAGE CANNOT SHOW SELL-THROUGH AND MUST NOT IMPLY IT. payment_archive_items
+         keeps only a category-shared name, so nothing about a SALE can be traced to a PO.
+         Every number here counts labels PRINTED, which is what the column headers say.
+         "Labels" is not "sold" and the legend says so in as many words — a page that let
+         someone read one as the other would be worse than no page.
+
+         Built to DESIGN.md §4.8: one panel owns bar + table + legend; page actions live in
+         the page header; rows 42px; numbers right-aligned tabular-nums. -->
+    <div id="page-opportunity-buys" class="hidden">
+      <style>
+        /* Token literals duplicated from DESIGN.md §4.8 because a <style> block cannot use
+           the Tailwind token classes. Dark values come through the --op-* variables the
+           rest of the app already defines. Trap 3: colour is set on the PANEL, never
+           inherited — the hero numbers here would otherwise take body's black on the dark
+           ground at 1.18:1, which is exactly how Coverage shipped broken twice. */
+        #page-opportunity-buys [hidden]{display:none !important}
+        #ob-panel{background:#ffffff;border:1px solid rgba(20,16,8,.10);border-radius:14px;overflow:hidden;color:#14110a}
+        .dark #ob-panel{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.09);color:rgb(var(--op-ink))}
+        #ob-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 18px;
+          background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #ob-bar{background:rgb(var(--op-panelHi));border-bottom-color:rgba(255,255,255,.09)}
+        #ob-bar .ob-barlbl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b6453}
+        .dark #ob-bar .ob-barlbl{color:rgb(var(--op-inkDim))}
+        /* 5.62:1 light, 5.21:1 dark — computed against the BAR, not the panel. */
+        #ob-status{padding:10px 18px;font-size:12.5px;color:#6b6453;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #ob-status{color:rgb(var(--op-inkDim));border-bottom-color:rgba(255,255,255,.09)}
+        #ob-scroll{overflow-x:auto}
+        #page-opportunity-buys table{width:100%;border-collapse:collapse;font-size:13px}
+        #page-opportunity-buys thead th{height:34px;font-size:10.5px;font-weight:700;letter-spacing:.05em;
+          text-transform:uppercase;color:#6b6453;text-align:left;padding:0 14px;white-space:nowrap;
+          background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #page-opportunity-buys thead th{color:rgb(var(--op-inkDim));background:rgb(var(--op-panelHi));
+          border-bottom-color:rgba(255,255,255,.09)}
+        #page-opportunity-buys tbody td{height:42px;padding:0 14px;border-bottom:1px solid rgba(20,16,8,.10);
+          white-space:nowrap}
+        .dark #page-opportunity-buys tbody td{border-bottom-color:rgba(255,255,255,.09)}
+        #page-opportunity-buys .ob-num{text-align:right;font-variant-numeric:tabular-nums}
+        #page-opportunity-buys .ob-po{font-weight:700;font-variant-numeric:tabular-nums}
+        #page-opportunity-buys .ob-dim{color:#6b6453}
+        .dark #page-opportunity-buys .ob-dim{color:rgb(var(--op-inkDim))}
+        #page-opportunity-buys tr.ob-row{cursor:pointer}
+        #page-opportunity-buys tr.ob-row:hover td{background:#fafaf6}
+        .dark #page-opportunity-buys tr.ob-row:hover td{background:rgb(var(--op-panelHi))}
+        /* The two buy states. 5.41:1 light / 10.21:1 dark for OPEN; closed uses inkDim,
+           5.88:1 and 5.74:1. inkDimmer is BORDERS ONLY here — it is 3.01:1 as text and
+           DESIGN.md trap 5 says so. */
+        #page-opportunity-buys .ob-badge{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.05em;
+          text-transform:uppercase;padding:2px 7px;border-radius:999px;border:1px solid rgba(20,16,8,.18)}
+        .dark #page-opportunity-buys .ob-badge{border-color:rgba(255,255,255,.16)}
+        #page-opportunity-buys .ob-open{color:#1c7a33}
+        .dark #page-opportunity-buys .ob-open{color:#4ade80}
+        #page-opportunity-buys .ob-closed{color:#6b6453}
+        .dark #page-opportunity-buys .ob-closed{color:rgb(var(--op-inkDim))}
+        /* Nothing printed yet. Amber, the repo's draft/dirty colour: 6.80:1 / 10.65:1. */
+        #page-opportunity-buys .ob-none{color:#8a4b00}
+        .dark #page-opportunity-buys .ob-none{color:#fbbf24}
+        #ob-legend{display:flex;flex-wrap:wrap;gap:16px;padding:11px 18px;font-size:11.5px;color:#6b6453;
+          border-top:1px solid rgba(20,16,8,.10)}
+        .dark #ob-legend{color:rgb(var(--op-inkDim));border-top-color:rgba(255,255,255,.09)}
+        #page-opportunity-buys .ob-btn{background:#ffffff;border:1px solid rgba(20,16,8,.18);border-radius:9px;
+          padding:7px 12px;font-size:13px;color:#14110a;cursor:pointer}
+        .dark #page-opportunity-buys .ob-btn{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);
+          color:rgb(var(--op-ink))}
+        #page-opportunity-buys .ob-btn-primary{background:#22c55e;color:#06210f;border:none;border-radius:9px;
+          padding:8px 15px;font-size:13px;font-weight:700;cursor:pointer}
+        #page-opportunity-buys .ob-btn-primary:disabled{opacity:.42;cursor:not-allowed}
+        #page-opportunity-buys .ob-in{background:#ffffff;border:1px solid rgba(20,16,8,.18);border-radius:9px;
+          padding:7px 11px;font-size:13px;color:#14110a}
+        .dark #page-opportunity-buys .ob-in{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);
+          color:rgb(var(--op-ink))}
+        #ob-new-form{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:14px 18px;
+          border-bottom:1px solid rgba(20,16,8,.10)}
+        .dark #ob-new-form{border-bottom-color:rgba(255,255,255,.09)}
+        #ob-new-form label{display:flex;flex-direction:column;gap:4px;font-size:11px;font-weight:700;
+          letter-spacing:.05em;text-transform:uppercase;color:#6b6453}
+        .dark #ob-new-form label{color:rgb(var(--op-inkDim))}
+        #page-opportunity-buys .ob-empty{padding:26px 18px;font-size:13px;color:#6b6453}
+        .dark #page-opportunity-buys .ob-empty{color:rgb(var(--op-inkDim))}
+      </style>
+
+      <div class="flex items-start justify-between gap-4 mb-4 flex-wrap">
+        <div>
+          <h1 class="text-2xl font-extrabold text-opl-ink dark:text-op-ink">Opportunity Buys</h1>
+          <!-- Says what the page counts, in the place someone reads before the numbers. -->
+          <p class="text-[13px] text-opl-inkDim dark:text-op-inkDim mt-1">
+            A purchase order, and every label printed against it. Counts are labels printed — not units sold.
+          </p>
+        </div>
+        <!-- §4.8: page actions live in the page header, not in the table bar. Hidden until
+             the worker says this account may edit, so the button and the API agree. -->
+        <button id="ob-new" class="ob-btn-primary" hidden onclick="obToggleNew()">Open a buy</button>
+      </div>
+
+      <div id="ob-panel">
+        <div id="ob-bar">
+          <span class="ob-barlbl" id="ob-barlbl">Buys</span>
+          <select id="ob-filter" class="ob-in" onchange="obLoad()">
+            <option value="all">All</option>
+            <option value="open" selected>Open</option>
+            <option value="closed">Closed</option>
+          </select>
+          <span style="flex:1"></span>
+          <button id="ob-back" class="ob-btn" hidden onclick="obShowList()">← All buys</button>
+        </div>
+
+        <!-- The new-buy form. Outside #ob-body on purpose: trap 7 — a container a render
+             replaces wholesale must hold ONLY what that render owns. -->
+        <div id="ob-new-form" hidden>
+          <label>PO<input id="ob-f-po" type="text" class="ob-in" placeholder="99999" maxlength="32" style="width:150px"></label>
+          <label>Name<input id="ob-f-label" type="text" class="ob-in" placeholder="November toys" maxlength="120" style="width:190px"></label>
+          <label>Vendor<input id="ob-f-vendor" type="text" class="ob-in" maxlength="120" style="width:160px"></label>
+          <label>Received<input id="ob-f-date" type="date" class="ob-in" style="width:160px"></label>
+          <label>Units bought<input id="ob-f-units" type="number" min="0" step="1" class="ob-in" style="width:130px"></label>
+          <button id="ob-f-go" class="ob-btn-primary" onclick="obCreate()">Open it</button>
+          <button class="ob-btn" onclick="obToggleNew(false)">Cancel</button>
+          <span id="ob-f-note" class="ob-dim" style="font-size:12px"></span>
+        </div>
+
+        <!-- One sentence reading the numbers back. Outside #ob-body, same reason. -->
+        <div id="ob-status">Loading…</div>
+        <div id="ob-scroll"><div id="ob-body"></div></div>
+        <div id="ob-legend">
+          <span><span class="ob-badge ob-open">Open</span> taking labels</span>
+          <span><span class="ob-badge ob-closed">Closed</span> no longer priced into</span>
+          <span><span class="ob-none">none yet</span> opened, nothing printed</span>
+          <span><span class="ob-dim">—</span> nobody declared a unit count</span>
+          <span><strong>Labels</strong> printed, never sold — sales cannot be traced to a PO yet</span>
+        </div>
+      </div>
+    </div>
+
     <div id="page-mos" class="hidden">
       <style>
         /* Token literals — DESIGN.md "Token literals for <style> blocks". */
@@ -4077,6 +4220,16 @@
            #6b6453 is the dim already in this file (.ps-lbl) and computes 5.88:1. */
         .ps-recent-sub{font-size:11.5px;color:#6b6453;margin-top:1px}
         .dark .ps-recent-sub{color:#7c899e}
+        /* The buy strip. #1c7a33 on the light panel is 5.41:1 and #4ade80 on the dark
+           panel is 10.21:1 — computed, per DESIGN.md trap 6, not eyeballed. The tint is a
+           background wash plus a ring, the same treatment Coverage's heatmap cells use, so
+           the text colour stays the measured one rather than being lightened to suit it. */
+        .ps-ob-strip{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;
+          font-size:12.5px;background:rgba(28,122,51,.08);border:1px solid rgba(28,122,51,.28);color:#1c7a33}
+        .dark .ps-ob-strip{background:rgba(74,222,128,.10);border-color:rgba(74,222,128,.30);color:#4ade80}
+        .ps-ob-strip .ps-link{color:inherit}
+        .ps-ob-dot{width:8px;height:8px;border-radius:999px;background:#1c7a33;flex:none}
+        .dark .ps-ob-dot{background:#4ade80}
         .ps-stat{font-size:12px;line-height:1.4;color:#6b6453}
         .dark .ps-stat{color:rgb(var(--op-inkDim))}
         .ps-stat.no{color:#9a3412}
@@ -4249,8 +4402,16 @@
                  first thing on the screen, and the first thing should be the work. -->
             <button id="ps-manual" class="ps-link" onclick="pmOpen()" type="button">Manual</button>
             <button id="ps-furniture" class="ps-link" onclick="fnOpen()" type="button">Furniture</button>
+            <!-- A buy is a CONTEXT, not a mode: it applies to scanning and to manual pricing
+                 alike, so it does not go through psChrome and does not take the body over. -->
+            <button id="ps-ob" class="ps-link" onclick="psObToggle()" type="button" style="display:none">Buy</button>
           </div>
           <div id="ps-body">
+            <!-- 🔑 OUTSIDE #ps-barcode-mode ON PURPOSE. psChrome hides that div whole when a
+                 mode opens; a buy has to stay visible while you price by hand, which is
+                 exactly when an opportunity buy is most likely to be what you are doing. -->
+            <div id="ps-ob-bar" style="display:none"></div>
+            <div id="ps-ob-pick" style="display:none"></div>
             <!-- 🛑 ONE PLAIN DIV DOES THE HIDING. Toggling `hidden` on .ps-row does
                  nothing: both are single class selectors and this style block comes after
                  tailwind.css, so display:flex wins on source order and the barcode
@@ -11150,6 +11311,13 @@
       const allowed = ['superuser', 'admin', 'executive', 'district_manager', 'manager'];
       if (!allowed.includes(role) && pageLevel('mos') < 1) return;
     }
+    // Opportunity Buys: same shape again. Seeing the page is the grant; opening and
+    // closing a buy is checked by the worker on every call, never here.
+    if (page === 'opportunity-buys') {
+      const role = currentUser && currentUser.role;
+      const allowed = ['superuser', 'admin', 'executive', 'district_manager', 'manager'];
+      if (!allowed.includes(role) && pageLevel('opportunity-buys') < 1) return;
+    }
     // eBay Cases belongs to E-Commerce, so the guard is the business you hold,
     // not your role — mirroring the worker's fail-closed business gate, which is
     // the real boundary. Without this a stale deep link or history entry would
@@ -11279,6 +11447,9 @@
     }
     if (page === 'mos') {
       if (typeof initMos === 'function') initMos();
+    }
+    if (page === 'opportunity-buys') {
+      if (typeof initOppBuys === 'function') initOppBuys();
     }
     // Leaving the page must kill the camera — a torch left on in a pocket is the
     // failure people notice, and the stream holds the lens against Price Scan.
@@ -24893,6 +25064,7 @@
       + (saw.others ? ` (${saw.others} non-printer device(s) seen)` : '')
       + '. Check the printer is powered on, awake, and on USB.';
 
+
   async function psPrint() {
     const a = psSticker;
     if (!a?.printable || !psLast) return;
@@ -24940,8 +25112,10 @@
           // simple request, no preflight) worked perfectly. text/plain is safelisted, so no
           // preflight is sent. The agent parses the body as JSON regardless of this header.
           method: 'POST', headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify({ device: dev,
-            data: psZpl(a.code, psLast.price, { retail: psLast.retail, categoryCode: a.category_code }, psTpl, qty) }),
+          // The PO is drawn only when the template's Show is "Number + PO"; psZpl falls back
+          // to the number alone otherwise, so selecting a buy never changes a label nobody
+          // asked to change. It never touches the QR, which still carries the code.
+          body: JSON.stringify({ device: dev, data: psZpl(a.code, psLast.price, { retail: psLast.retail, categoryCode: a.category_code, po: psObActive() }, psTpl, qty) }),
           signal: AbortSignal.timeout(5000),
         });
       } catch (e) {
@@ -24960,12 +25134,93 @@
       // rather than a jam.
       if (note) note.innerHTML = `Sent <span class="ps-code">${psEsc(a.code)}</span>`
         + `${qty > 1 ? ` &times;${qty}` : ''} to ${psEsc(dev.name || 'the printer')}.`;
-      psRecordPrint(a, psLast, qty);
+      psRecordPrint(a, psLast, qty, psObActive());
     } finally {
       if (btn) btn.disabled = false;
     }
   }
   window.psPrint = psPrint;
+  // ── Pricing into an opportunity buy ─────────────────────────────────────────
+  //
+  // 🔑 A BUY IS A CONTEXT, NOT A MODE. Brian's flow is "pick the PO, then price" — and
+  // pricing means scanning OR typing the numbers by hand, which are already two modes. A
+  // third mode would have to duplicate both. So this sets one value, psChrome never hears
+  // about it, and every print that goes through psPrint carries it.
+  //
+  // 🛑 THE PO IS NOT PART OF THE CODE IN PHASE 1. The QR still encodes BL-<cat>-<price>, so
+  // an OB sticker scans at the register and in MOS exactly like any other. Only the printed
+  // TEXT can carry the PO, and only when the template's Show is set to "Number + PO".
+  // docs/feature-opportunity-buys.md Phase 2 is what puts a PO inside the code itself.
+  let psOb = { po: null, label: '' };
+
+  function psObActive() { return psOb.po; }
+
+  function psObPaint() {
+    const bar = el('ps-ob-bar');
+    if (!bar) return;
+    if (!psOb.po) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+    bar.style.display = '';
+    // Verified pairs: #1c7a33 on the light panel is 5.41:1, #4ade80 on the dark panel
+    // 10.21:1. Both measured, per DESIGN.md trap 6.
+    bar.innerHTML = `<div class="ps-ob-strip">
+      <span class="ps-ob-dot"></span>
+      <span>Pricing into <strong>PO ${psEsc(psOb.po)}</strong>${psOb.label ? ' · ' + psEsc(psOb.label) : ''}</span>
+      <button class="ps-link" type="button" onclick="psObClear()" style="margin-left:auto">Stop</button>
+    </div>`;
+  }
+
+  function psObClear() {
+    psOb = { po: null, label: '' };
+    psObPaint();
+    const pick = el('ps-ob-pick');
+    if (pick) { pick.style.display = 'none'; pick.innerHTML = ''; }
+  }
+  window.psObClear = psObClear;
+
+  async function psObToggle() {
+    const pick = el('ps-ob-pick');
+    if (!pick) return;
+    if (pick.style.display !== 'none') { pick.style.display = 'none'; pick.innerHTML = ''; return; }
+    pick.style.display = '';
+    pick.innerHTML = '<div class="ps-ob-strip"><span>Loading open buys…</span></div>';
+    let j = null, status = 0;
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=ob-buy-list&status=open`, { credentials: 'include' });
+      status = r.status;
+      j = await r.json().catch(() => null);
+    } catch (e) {
+      pick.innerHTML = `<div class="ps-ob-strip"><span>Could not reach the buys list: ${psEsc(e.message)}</span></div>`;
+      return;
+    }
+    if (status !== 200 || !j || !j.ok) {
+      pick.innerHTML = `<div class="ps-ob-strip"><span>${psEsc((j && j.error) || `Could not load buys (${status}).`)}</span></div>`;
+      return;
+    }
+    const buys = j.buys || [];
+    if (!buys.length) {
+      // 🔑 SAYS WHO CAN FIX IT. A manager cannot open a buy — that is an admin job — so an
+      // empty list is a dead end unless the sentence names the way out.
+      pick.innerHTML = '<div class="ps-ob-strip"><span>No buys are open. An admin opens one on '
+        + 'the Opportunity Buys page.</span></div>';
+      return;
+    }
+    pick.innerHTML = `<div class="ps-ob-strip" style="flex-wrap:wrap">
+      <span class="ps-lbl">Price into</span>
+      ${buys.map(b => `<button class="ps-link" type="button"
+          onclick="psObPick('${psEsc(b.po)}', '${psEsc((b.label || '').replace(/'/g, ''))}')">
+          PO ${psEsc(b.po)}${b.label ? ' · ' + psEsc(b.label) : ''}</button>`).join('')}
+    </div>`;
+  }
+  window.psObToggle = psObToggle;
+
+  function psObPick(po, label) {
+    psOb = { po, label: label || '' };
+    const pick = el('ps-ob-pick');
+    if (pick) { pick.style.display = 'none'; pick.innerHTML = ''; }
+    psObPaint();
+  }
+  window.psObPick = psObPick;
+
 
   // ── What was printed, and printing it again ──────────────────────────────────
   //
@@ -24981,9 +25236,9 @@
   // Recording is best-effort and deliberately silent. The label is already out of the
   // printer; telling someone their print "failed" because a history row did not save
   // would be false, and would send them to reprint something they are holding.
-  async function psRecordPrint(a, j, qty) {
+  async function psRecordPrint(a, j, qty, po) {
     try {
-      await fetch(`${WORKER_BASE}?action=sticker-printed`, {
+      const rec = await fetch(`${WORKER_BASE}?action=sticker-printed`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ store: a.store, l3: j.l3, price: j.price, code: a.code,
@@ -24994,8 +25249,25 @@
                                qty: qty === undefined ? undefined : qty,
                                // Without this the reprint draws a label missing a field the
                                // original had -- two different stickers for one shelf.
-                               retail: j.retail }),
+                               retail: j.retail,
+                               // Absent for ordinary pricing, and the column stays NULL.
+                               po: po || undefined }),
       });
+      // 🛑 ONE FAILURE BREAKS THIS FUNCTION'S SILENCE, AND ONLY ONE. The rule above is
+      // right for a history row: the label is already out of the printer, so "failed" would
+      // be false. But a REFUSED BUY is different in kind — the label is on a shelf and is
+      // counted against nothing, and the buy's total is now short by however many were
+      // pressed. Nobody can notice that later; the number simply reads low forever. So this
+      // one case is said out loud, at the moment it can still be acted on.
+      if (rec && rec.status === 409 && po) {
+        const a409 = await rec.json().catch(() => ({}));
+        const note = el('ps-print-note');
+        if (note) {
+          note.className = 'ps-stat no';
+          note.textContent = `Printed — but NOT recorded against PO ${po}: `
+            + `${a409.error || 'that buy is not open'}. The label is on the shelf and the buy will not count it.`;
+        }
+      }
     } catch (_) { /* the sticker printed; the record is not worth an alarm */ }
     psRecentLoad();
   }
@@ -25053,6 +25325,11 @@
     // tab you can click reads as broken; a tab that is not there asks no questions.
     const reBtn = el('ps-tab-reprint');
     if (reBtn) reBtn.style.display = psCanPrint() ? '' : 'none';
+    // The buy picker follows the same right as Print, for the same reason: pricing into a
+    // buy is putting a label on a shelf. Opening a buy is a separate, stricter right the
+    // worker owns; this button never offers that.
+    const obBtn = el('ps-ob');
+    if (obBtn) obBtn.style.display = psCanPrint() ? '' : 'none';
     const n = el('ps-tab-reprint-n');
     if (n) n.textContent = psRecent.length ? String(psRecent.length) : '';
     if (!psRecent.length) {
@@ -25134,8 +25411,10 @@
       const dev = probe.dev;
       const w = await fetch('http://127.0.0.1:9100/write', {
         method: 'POST', headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ device: dev,
-          data: psZpl(a.code, p.price, { retail: p.retail, categoryCode: a.category_code }, psTpl, qty) }),
+        // 🔑 p.po, NOT psObActive(). The item belongs to the buy it came in on; a torn label
+        // replaced while a different buy is selected must not be relabelled into that buy.
+        // sticker-history carries the PO for exactly this.
+        body: JSON.stringify({ device: dev, data: psZpl(a.code, p.price, { retail: p.retail, categoryCode: a.category_code, po: p.po }, psTpl, qty) }),
         signal: AbortSignal.timeout(5000),
       });
       if (!w.ok) { say(`Browser Print refused the label (${w.status}).`); return; }
@@ -28332,6 +28611,226 @@
   }
   window.initMos = initMos;
 
+  // ── Opportunity Buys ────────────────────────────────────────────────────────
+  //
+  // Phase 1 of docs/feature-opportunity-buys.md. The page answers "what is in this buy,
+  // where did it go, how many labels went out" and deliberately cannot answer sell-through:
+  // payment_archive_items keeps only a category-shared name, so no sale can be traced to a
+  // PO until an OB item's code carries one. Every number here is labels PRINTED.
+  //
+  // 🔑 WHETHER THE OPEN/CLOSE CONTROLS EXIST IS THE WORKER'S ANSWER, NOT A ROLE CHECK HERE.
+  // The server sends `can_edit` on every read, and the page renders off that. A role test in
+  // the browser would be a second opinion that can disagree with the real gate — and on this
+  // feature it would disagree in the dangerous direction, because canUsePage admits every
+  // manager and only obRequireEdit does not.
+  let obCanEdit = false;
+  let obView = { mode: 'list', po: null };
+
+  function obSay(msg) { const n = el('ob-status'); if (n) n.textContent = msg; }
+  function obMoney(v) { return '$' + Number(v || 0).toFixed(2); }
+  function obDay(iso) { return iso ? String(iso).slice(0, 10) : '—'; }
+
+  async function obApi(url, opts) {
+    const r = await fetch(WORKER_BASE + url, Object.assign({ credentials: 'include' }, opts || {}));
+    let j = null;
+    try { j = await r.json(); } catch (_) {}
+    return { status: r.status, j };
+  }
+
+  function initOppBuys() { obShowList(); }
+  window.initOppBuys = initOppBuys;
+
+  function obShowList() {
+    obView = { mode: 'list', po: null };
+    const back = el('ob-back'); if (back) back.hidden = true;
+    const lbl = el('ob-barlbl'); if (lbl) lbl.textContent = 'Buys';
+    const filt = el('ob-filter'); if (filt) filt.hidden = false;
+    obLoad();
+  }
+  window.obShowList = obShowList;
+
+  async function obLoad() {
+    const want = (el('ob-filter') || {}).value || 'open';
+    obSay('Loading…');
+    const { status, j } = await obApi(`?action=ob-buy-list&status=${encodeURIComponent(want)}`);
+    if (status !== 200 || !j || !j.ok) {
+      obSay((j && j.error) || `Could not load buys (${status}).`);
+      el('ob-body').innerHTML = '';
+      return;
+    }
+    obCanEdit = !!j.can_edit;
+    const newBtn = el('ob-new'); if (newBtn) newBtn.hidden = !obCanEdit;
+    obRenderList(j.buys || [], want);
+  }
+  window.obLoad = obLoad;
+
+  function obRenderList(buys, want) {
+    const body = el('ob-body');
+    if (!buys.length) {
+      body.innerHTML = `<div class="ob-empty">No ${want === 'all' ? '' : want + ' '}buys yet.`
+        + `${obCanEdit ? ' Open one to start tracking a purchase order.' : ''}</div>`;
+      obSay(obCanEdit ? 'Nothing here yet.' : 'Nothing here yet. An admin opens a buy.');
+      return;
+    }
+    const totalLabels = buys.reduce((s, b) => s + (b.labels || 0), 0);
+    const openN = buys.filter(b => b.status === 'open').length;
+    obSay(`${buys.length} buy${buys.length === 1 ? '' : 's'}`
+      + `${want === 'all' ? ` · ${openN} open` : ''}`
+      + ` · ${totalLabels} label${totalLabels === 1 ? '' : 's'} printed.`);
+
+    const rows = buys.map(b => {
+      const badge = b.status === 'open'
+        ? '<span class="ob-badge ob-open">Open</span>'
+        : '<span class="ob-badge ob-closed">Closed</span>';
+      // 🛑 ZERO LABELS IS A REAL READING AND IS NOT THE SAME AS "—". A buy opened this
+      // morning with nothing priced into it says "none yet"; a buy where nobody declared a
+      // unit count says "—" in the Units column. Printing 0 for the second would claim a
+      // buy of nothing, which is DESIGN.md's "no count" rule in another costume.
+      const labels = b.labels > 0
+        ? `<span>${b.labels}</span>`
+        : '<span class="ob-none">none yet</span>';
+      const units = b.units === null || b.units === undefined
+        ? '<span class="ob-dim">—</span>' : String(b.units);
+      return `<tr class="ob-row" onclick="obOpenDetail('${escapeHtml(b.po)}')">
+        <td class="ob-po">${escapeHtml(b.po)}</td>
+        <td>${escapeHtml(b.label || '')}</td>
+        <td class="ob-dim">${escapeHtml(b.vendor || '')}</td>
+        <td>${badge}</td>
+        <td class="ob-num">${units}</td>
+        <td class="ob-num">${labels}</td>
+        <td class="ob-num">${b.items || 0}</td>
+        <td class="ob-num">${b.stores || 0}</td>
+        <td class="ob-dim">${escapeHtml(obDay(b.received_on || b.opened_at))}</td>
+      </tr>`;
+    }).join('');
+
+    body.innerHTML = `<table>
+      <thead><tr>
+        <th>PO</th><th>Name</th><th>Vendor</th><th>Status</th>
+        <th class="ob-num">Units</th><th class="ob-num">Labels</th>
+        <th class="ob-num">Items</th><th class="ob-num">Stores</th><th>Received</th>
+      </tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  }
+
+  async function obOpenDetail(po) {
+    obView = { mode: 'detail', po };
+    const back = el('ob-back'); if (back) back.hidden = false;
+    const filt = el('ob-filter'); if (filt) filt.hidden = true;
+    obToggleNew(false);
+    obSay('Loading…');
+    const { status, j } = await obApi(`?action=ob-buy-detail&po=${encodeURIComponent(po)}`);
+    if (status !== 200 || !j || !j.ok) {
+      obSay((j && j.error) || `Could not load PO ${po} (${status}).`);
+      el('ob-body').innerHTML = '';
+      return;
+    }
+    obCanEdit = !!j.can_edit;
+    const lbl = el('ob-barlbl');
+    if (lbl) lbl.textContent = `PO ${j.buy.po}`;
+    obRenderDetail(j.buy, j.lines || []);
+  }
+  window.obOpenDetail = obOpenDetail;
+
+  function obRenderDetail(buy, lines) {
+    const units = buy.units === null || buy.units === undefined ? null : buy.units;
+    obSay(`${buy.label ? buy.label + ' · ' : ''}${buy.labels} label${buy.labels === 1 ? '' : 's'}`
+      + ` across ${buy.items} item${buy.items === 1 ? '' : 's'} and ${buy.stores} store${buy.stores === 1 ? '' : 's'}`
+      + `${units === null ? ', against an undeclared buy size' : `, against ${units} declared`}`
+      + `. Opened by ${buy.opened_by} on ${obDay(buy.opened_at)}`
+      + `${buy.status === 'closed' ? `, closed by ${buy.closed_by} on ${obDay(buy.closed_at)}` : ''}.`);
+
+    const act = obCanEdit
+      ? `<div style="padding:14px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+           <button class="ob-btn" onclick="obSetClosed('${escapeHtml(buy.po)}', ${buy.status === 'open'})">
+             ${buy.status === 'open' ? 'Close this buy' : 'Reopen this buy'}
+           </button>
+           <span class="ob-dim" style="font-size:12px">
+             ${buy.status === 'open'
+               ? 'Closing stops new labels naming this PO. Nothing already printed is affected.'
+               : 'Reopening lets it take labels again.'}
+           </span>
+         </div>`
+      : '';
+
+    if (!lines.length) {
+      el('ob-body').innerHTML = act
+        + `<div class="ob-empty">Nothing has been priced into this buy yet.
+             Pick PO ${escapeHtml(buy.po)} on Price Scan and every label you print will land here.</div>`;
+      return;
+    }
+    const rows = lines.map(l => `<tr>
+      <td>${escapeHtml(l.store)}</td>
+      <td>${escapeHtml(l.title || l.l3)}</td>
+      <td class="ob-dim">${escapeHtml(l.l3)}</td>
+      <td class="ob-po">${escapeHtml(l.code)}</td>
+      <td class="ob-num">${obMoney(l.price)}</td>
+      <td class="ob-num">${l.retail === null || l.retail === undefined
+          ? '<span class="ob-dim">—</span>' : obMoney(l.retail)}</td>
+      <td class="ob-num">${l.labels}</td>
+      <td class="ob-num ob-dim">${l.presses}</td>
+      <td class="ob-dim">${escapeHtml(obDay(l.last_print))}</td>
+    </tr>`).join('');
+
+    el('ob-body').innerHTML = act + `<table>
+      <thead><tr>
+        <th>Store</th><th>Item</th><th>Category</th><th>Code</th>
+        <th class="ob-num">Our price</th><th class="ob-num">Street</th>
+        <th class="ob-num">Labels</th><th class="ob-num">Presses</th><th>Last print</th>
+      </tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  }
+
+  function obToggleNew(force) {
+    const f = el('ob-new-form');
+    if (!f) return;
+    const show = force === undefined ? f.hidden : !!force;
+    f.hidden = !show;
+    if (show) { el('ob-f-note').textContent = ''; el('ob-f-po').focus(); }
+  }
+  window.obToggleNew = obToggleNew;
+
+  async function obCreate() {
+    const note = el('ob-f-note'), go = el('ob-f-go');
+    const po = (el('ob-f-po').value || '').trim();
+    if (!po) { note.textContent = 'A purchase order is required.'; return; }
+    go.disabled = true; note.textContent = 'Opening…';
+    const unitsRaw = (el('ob-f-units').value || '').trim();
+    const { status, j } = await obApi('?action=ob-buy-open', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        po,
+        label: (el('ob-f-label').value || '').trim(),
+        vendor: (el('ob-f-vendor').value || '').trim(),
+        received_on: (el('ob-f-date').value || '').trim(),
+        units: unitsRaw === '' ? undefined : unitsRaw,
+      }),
+    });
+    go.disabled = false;
+    if (status !== 200 || !j || !j.ok) {
+      // The worker's sentence, not a generic one — it distinguishes a malformed PO from one
+      // that is already a buy, and those need different things from the person reading it.
+      note.textContent = (j && j.error) || `Could not open the buy (${status}).`;
+      return;
+    }
+    ['ob-f-po', 'ob-f-label', 'ob-f-vendor', 'ob-f-date', 'ob-f-units'].forEach(id => { el(id).value = ''; });
+    obToggleNew(false);
+    // Show it immediately rather than making someone hunt for it in the list.
+    obOpenDetail(j.po);
+  }
+  window.obCreate = obCreate;
+
+  async function obSetClosed(po, close) {
+    const { status, j } = await obApi('?action=ob-buy-close', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ po, reopen: !close }),
+    });
+    if (status !== 200 || !j || !j.ok) { obSay((j && j.error) || `That did not work (${status}).`); return; }
+    obOpenDetail(po);
+  }
+  window.obSetClosed = obSetClosed;
+
+
   function mosStoreChange() { mosReset(); mosState.open.clear(); mosLoad(); }
   window.mosStoreChange = mosStoreChange;
 
@@ -30505,6 +31004,7 @@
     { id: 'bin-dump', label: 'Bin Dump', nav: 'nav-bin-dump' },
     { id: 'inventory-receiver', label: 'Inventory Receiver', nav: 'nav-inventory-receiver' },
     { id: 'mos', label: 'Mark Out of Stock', nav: 'nav-mos' },
+    { id: 'opportunity-buys', label: 'Opportunity Buys', nav: 'nav-opportunity-buys' },
   ];
   // Mirrors PAGE_LEVELS in worker.js. The worker is the real gate; this only
   // stops the UI offering what the API would refuse.
@@ -31276,6 +31776,7 @@
     'nav-inventory': 'bl',
     'nav-bin-dump': 'bl',
     'nav-inventory-receiver': 'bl',
+    'nav-opportunity-buys': 'bl',
     'nav-mos': 'bl',
     'nav-labor': 'bl',
     'nav-supply-request': 'bl',
@@ -31759,6 +32260,13 @@
     // who unload trucks are not necessarily the people who dump bins.
     el('nav-inventory-receiver').classList.toggle('hidden',
       !binDumpRoles.includes(user.role) && pageLevel('inventory-receiver', user) < 1);
+    // Opportunity Buys: visible to the same floor audience, because a manager pricing
+    // into a buy needs to see it. Managers CANNOT open or close one — that is an explicit
+    // role check in the worker (obRequireEdit), not a page level, because canUsePage admits
+    // every manager at every level. The page renders its own buttons off `can_edit`, which
+    // the worker tells it, so the two can never disagree.
+    el('nav-opportunity-buys').classList.toggle('hidden',
+      !binDumpRoles.includes(user.role) && pageLevel('opportunity-buys', user) < 1);
     // Mark Out of Stock: same audience as Bin Dump — the people on the floor —
     // plus any associate granted the page.
     el('nav-mos').classList.toggle('hidden',
@@ -33724,6 +34232,7 @@
       gate('more-inventory', vis('nav-inventory'));                    // admin-only
       gate('more-bin-dump', vis('nav-bin-dump') && !binDumpInBar);      // managers too; an associate has the bar tab
       gate('more-inventory-receiver', vis('nav-inventory-receiver'));   // the dock lives under More
+      gate('more-opportunity-buys', vis('nav-opportunity-buys'));
       // Same rule as Bin Dump above: a page an associate holds while holding no
       // dashboard is their whole app, so it belongs in the bar, not under More.
       var mosInBar = roleReady && vis('nav-mos') && !seesDash;
@@ -33738,7 +34247,7 @@
       // active tab
       // 'ebay-cases' has no bar tab of its own, so without it here every tab
       // sits dim while you are standing on the page.
-      var morePages = { 'marketing': 1, 'accessibility': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1, 'bin-dump': 1, 'mos': 1, 'inventory-receiver': 1 };
+      var morePages = { 'marketing': 1, 'accessibility': 1, 'users': 1, 'admin-settings': 1, 'settings': 1, 'ebay-cases': 1, 'comments': 1, 'bin-dump': 1, 'mos': 1, 'inventory-receiver': 1, 'opportunity-buys': 1 };
       // ...unless it has its own tab, in which case that tab is what should light
       // up while you are standing on the page.
       if (binDumpInBar) delete morePages['bin-dump'];

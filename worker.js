@@ -4925,6 +4925,10 @@ const ACTION_BUSINESS = new Map([
   ["truck-approvers", "bl"],
   ["truck-bol-scan", "bl"],
   ["truck-open", "bl"],
+  ["ob-buy-list", "bl"],
+  ["ob-buy-detail", "bl"],
+  ["ob-buy-open", "bl"],
+  ["ob-buy-close", "bl"],
   ["truck-current", "bl"],
   ["truck-detail", "bl"],
   ["truck-pallet-scan", "bl"],
@@ -12951,6 +12955,73 @@ const stickerCode = (categoryCode, price) => {
 // anything anyone wanted.
 const STICKER_QTY_MAX = 50;
 
+// ─── Opportunity buys: the purchase order as a value ─────────────────────────
+//
+// Phase 1 of docs/feature-opportunity-buys.md. A PO is typed by hand — the numbers on
+// receiving pallet tags are a different series, confirmed with Brian 2026-09-21 — so this
+// is the only place that decides what counts as one.
+//
+// 🔑 UPPERCASED, AND THAT IS THE POINT. `po` is the PRIMARY KEY of ob_buys, so "ob-2026-11"
+// and "OB-2026-11" would otherwise be two different buys holding half the stock each, and
+// nobody would notice until a total came out short. A PO on paperwork is not a case-sensitive
+// identifier in any real system; folding it here is what makes the key mean one buy.
+//
+// 🛑 TEXT, NEVER A NUMBER. "00412" is a PO and 412 is not the same PO. Parsing it as an
+// integer eats the leading zeros and silently merges two buys, which is the same failure
+// as the case one and is harder to see.
+const OB_PO_MAX = 32;
+const OB_PO_RE = /^[A-Z0-9][A-Z0-9._/-]*$/;
+function obPo(raw) {
+  const v = String(raw == null ? "" : raw).trim().toUpperCase();
+  if (!v || v.length > OB_PO_MAX || !OB_PO_RE.test(v)) return null;
+  return v;
+}
+
+// 🛑 THE PAGE GRANT CANNOT EXPRESS THIS, WHICH IS WHY IT IS A SEPARATE FUNCTION.
+// canUsePage returns true for anyone canSeeFinancials admits, and FINANCIAL_ROLES contains
+// "manager" — so requirePage(..., "edit") admits every manager while LOOKING like the
+// stricter check. Brian asked for admin/superuser only on opening and closing a buy
+// (2026-09-21), so that test lives here, explicitly, and the page grant is left to do the
+// only job it can do: decide who may SEE the page.
+function obMayEdit(user, isAdminSecret) {
+  return !!isAdminSecret || canAccessInventory(user);
+}
+function obRequireEdit(user, isAdminSecret, corsJson) {
+  if (obMayEdit(user, isAdminSecret)) return null;
+  return new Response(JSON.stringify({
+    error: "Opening and closing a buy is an admin job",
+    code: "NEED_INVENTORY",
+  }), { status: 403, headers: corsJson });
+}
+
+// One shape for a buy, so the list and the detail cannot describe the same row differently.
+// Every count is forced through Number(): D1 returns SQL aggregates as numbers, but a
+// COUNT over an empty LEFT JOIN and a NULL SUM are exactly the cases where "0" and null
+// are easy to confuse downstream, and the client renders these straight.
+function obBuyRow(r) {
+  return {
+    po: r.po,
+    label: r.label || "",
+    vendor: r.vendor || "",
+    received_on: r.received_on || null,
+    // Declared units. NULL means nobody said, which the page shows as "—" rather than 0:
+    // a buy of unknown size is not a buy of nothing.
+    units: r.units === null || r.units === undefined ? null : Number(r.units),
+    note: r.note || "",
+    status: r.status || "open",
+    opened_by: r.opened_by || "",
+    opened_at: r.opened_at || null,
+    closed_by: r.closed_by || null,
+    closed_at: r.closed_at || null,
+    labels: Number(r.labels) || 0,
+    items: Number(r.items) || 0,
+    stores: Number(r.stores) || 0,
+    print_rows: Number(r.print_rows) || 0,
+    first_print: r.first_print || null,
+    last_print: r.last_print || null,
+  };
+}
+
 // ─── Mark Out of Stock: reading a sticker code back ──────────────────────────
 //
 // The inverse of the two functions above, kept beside them so the encoding and the
@@ -14344,6 +14415,11 @@ const PAGE_LEVELS = { view: 1, edit: 2 };
 // be taken out. Absent here means the gate never lets an associate through, at
 // any level, however the grant is written.
 const ACTION_PAGE = new Map([
+  // Viewing a buy is a page grant like any other. Opening and closing one is NOT — see
+  // obRequireEdit; a manager passes every page check, so "edit" here would not mean what
+  // it says. These two are the only ob actions an associate can ever be granted.
+  ["ob-buy-list",   ["opportunity-buys", "view"]],
+  ["ob-buy-detail", ["opportunity-buys", "view"]],
   ["bin-dump-list",   ["bin-dump", "view"]],
   ["bin-dump-photo",  ["bin-dump", "view"]],
   ["bin-dump-scan",   ["bin-dump", "edit"]],
@@ -23184,17 +23260,252 @@ export default {
           return new Response(JSON.stringify({ error: `A print count must be between 1 and ${STICKER_QTY_MAX}` }),
             { status: 400, headers: corsJson });
         }
+        // ── Which buy, if any ────────────────────────────────────────────────
+        //
+        // 🔑 ABSENT IS THE NORMAL CASE AND STAYS NULL. Ordinary pricing sends no PO and
+        // migration-070 says why NULL must never be backfilled: there is no buy those
+        // labels belong to.
+        //
+        // 🛑 A PO THAT NAMES NO OPEN BUY IS REFUSED, NOT STORED. A typo'd PO written into
+        // sticker_prints is invisible — no buy page lists it, because every buy page starts
+        // from ob_buys — so the labels would be on a shelf, counted against nothing, and
+        // the total for the real buy would quietly be short. Refusing is the only outcome
+        // anyone can act on, and the client surfaces THIS failure specifically rather than
+        // swallowing it the way it swallows an ordinary history-save error.
+        let po = null;
+        if (body?.po !== undefined && body?.po !== null && String(body.po).trim() !== "") {
+          po = obPo(body.po);
+          if (!po) {
+            return new Response(JSON.stringify({ error: "That is not a purchase order", code: "BAD_PO" }),
+              { status: 400, headers: corsJson });
+          }
+          const buy = await env.DB.prepare(`SELECT po, status FROM ob_buys WHERE po = ?`).bind(po).first();
+          if (!buy || buy.status !== "open") {
+            return new Response(JSON.stringify({
+              error: buy ? `PO ${po} is closed, so it cannot take new labels` : `PO ${po} is not a buy`,
+              code: "OB_NOT_OPEN", po,
+            }), { status: 409, headers: corsJson });
+          }
+        }
         await env.DB.prepare(
-          `INSERT INTO sticker_prints (store, l3, price_cents, code, title, retail_cents, qty, printed_by, printed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).bind(store, l3, cents, code, String(body?.title || "").slice(0, 200) || null, retailCents, qtyNum,
+          `INSERT INTO sticker_prints (store, l3, price_cents, code, title, retail_cents, qty, po, printed_by, printed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(store, l3, cents, code, String(body?.title || "").slice(0, 200) || null, retailCents, qtyNum, po,
                (currentUser && currentUser.email) || "unknown", new Date().toISOString()).run();
-        return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
+        return new Response(JSON.stringify({ ok: true, po }), { headers: corsJson });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
       }
     }
 
+
+
+    // ── Opportunity buys ──────────────────────────────────────────────────────
+    //    GET  ?action=ob-buy-list[&status=open|closed|all]
+    //    GET  ?action=ob-buy-detail&po=99999
+    //    POST ?action=ob-buy-open    { po, label?, vendor?, received_on?, units?, note? }
+    //    POST ?action=ob-buy-close   { po, reopen? }
+    //
+    // Phase 1 of docs/feature-opportunity-buys.md: the buy exists, and a print can name it.
+    // Sell-through is NOT here and cannot be — payment_archive_items keeps only a
+    // category-shared name, so nothing about a sale can be traced to a PO until an OB item's
+    // code carries one AND the archive carries the code. The design note says so at length;
+    // this endpoint set deliberately stops at "what went out with this buy's name on it".
+    //
+    // 🛑 VIEWING IS A PAGE GRANT; OPENING AND CLOSING ARE NOT. canUsePage returns true for
+    // anyone canSeeFinancials admits, and FINANCIAL_ROLES already contains "manager" — so
+    // requirePage(..., "edit") would let EVERY manager open and close buys while looking
+    // exactly like a permission check. Brian asked for admin/superuser only (2026-09-21),
+    // so open and close carry their own explicit role test below, on the same pattern
+    // sticker-template-set uses. The page grant is what lets an associate SEE the page.
+    if (url.searchParams.get("action") === "ob-buy-list" && request.method === "GET") {
+      const denied = requirePage(currentUser, isAdminSecret, "opportunity-buys", "view", corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const want = String(url.searchParams.get("status") || "all").toLowerCase();
+        const filter = want === "open" || want === "closed" ? want : null;
+        // 🔑 ONE QUERY, NOT ONE PER BUY. The totals come from a LEFT JOIN so a buy with no
+        // prints yet still appears — a buy someone opened this morning and has not priced
+        // into is exactly the row they are looking for, and an INNER JOIN would hide it.
+        //
+        // COALESCE(qty, 1) is migration-069's rule applied here: NULL means "printed before
+        // we counted", which is one label, and summing it as 0 would under-report every
+        // historical row.
+        const rows = await env.DB.prepare(
+          `SELECT b.po, b.label, b.vendor, b.received_on, b.units, b.note, b.status,
+                  b.opened_by, b.opened_at, b.closed_by, b.closed_at,
+                  COUNT(p.id)                       AS print_rows,
+                  -- THE EMPTY LEFT JOIN ROW IS NOT A LABEL. COALESCE(p.qty, 1) alone
+                  -- fires on the all-NULL row that a buy with no prints produces, so an
+                  -- untouched buy reported ONE label it never printed. The CASE asks
+                  -- whether a print row exists at all before applying migration-069's
+                  -- NULL-means-one rule, which only ever applies to a row that IS a print.
+                  SUM(CASE WHEN p.id IS NULL THEN 0 ELSE COALESCE(p.qty, 1) END) AS labels,
+                  COUNT(DISTINCT p.code)            AS items,
+                  COUNT(DISTINCT p.store)           AS stores,
+                  MIN(p.printed_at)                 AS first_print,
+                  MAX(p.printed_at)                 AS last_print
+             FROM ob_buys b
+             LEFT JOIN sticker_prints p ON p.po = b.po
+            ${filter ? "WHERE b.status = ?" : ""}
+            GROUP BY b.po
+            ORDER BY (b.status = 'open') DESC, b.opened_at DESC`
+        ).bind(...(filter ? [filter] : [])).all();
+        return new Response(JSON.stringify({
+          ok: true,
+          // Whether THIS caller may open or close one. The client uses it to decide what to
+          // render rather than guessing from the role, so the two cannot disagree.
+          can_edit: obMayEdit(currentUser, isAdminSecret),
+          buys: (rows?.results || []).map(obBuyRow),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    if (url.searchParams.get("action") === "ob-buy-detail" && request.method === "GET") {
+      const denied = requirePage(currentUser, isAdminSecret, "opportunity-buys", "view", corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      const po = obPo(url.searchParams.get("po"));
+      if (!po) return new Response(JSON.stringify({ error: "That is not a purchase order", code: "BAD_PO" }),
+        { status: 400, headers: corsJson });
+      try {
+        const buy = await env.DB.prepare(
+          `SELECT b.po, b.label, b.vendor, b.received_on, b.units, b.note, b.status,
+                  b.opened_by, b.opened_at, b.closed_by, b.closed_at,
+                  COUNT(p.id)                       AS print_rows,
+                  -- THE EMPTY LEFT JOIN ROW IS NOT A LABEL. COALESCE(p.qty, 1) alone
+                  -- fires on the all-NULL row that a buy with no prints produces, so an
+                  -- untouched buy reported ONE label it never printed. The CASE asks
+                  -- whether a print row exists at all before applying migration-069's
+                  -- NULL-means-one rule, which only ever applies to a row that IS a print.
+                  SUM(CASE WHEN p.id IS NULL THEN 0 ELSE COALESCE(p.qty, 1) END) AS labels,
+                  COUNT(DISTINCT p.code)            AS items,
+                  COUNT(DISTINCT p.store)           AS stores,
+                  MIN(p.printed_at)                 AS first_print,
+                  MAX(p.printed_at)                 AS last_print
+             FROM ob_buys b LEFT JOIN sticker_prints p ON p.po = b.po
+            WHERE b.po = ? GROUP BY b.po`
+        ).bind(po).first();
+        if (!buy) return new Response(JSON.stringify({ error: "No such buy", code: "NO_BUY" }),
+          { status: 404, headers: corsJson });
+        // One row per distinct thing printed, per store — which is the grain a person means
+        // by "what is in this buy". Two presses of Print on one item at one store is one
+        // line reading ×8, not two lines reading ×4.
+        const lines = await env.DB.prepare(
+          `SELECT store, l3, code, price_cents, retail_cents,
+                  MAX(title)                        AS title,
+                  COALESCE(SUM(COALESCE(qty, 1)), 0) AS labels,
+                  COUNT(*)                          AS presses,
+                  MIN(printed_at)                   AS first_print,
+                  MAX(printed_at)                   AS last_print
+             FROM sticker_prints WHERE po = ?
+            GROUP BY store, code, price_cents
+            ORDER BY l3, price_cents, store`
+        ).bind(po).all();
+        return new Response(JSON.stringify({
+          ok: true,
+          can_edit: obMayEdit(currentUser, isAdminSecret),
+          buy: obBuyRow(buy),
+          lines: (lines?.results || []).map(r => ({
+            store: r.store, l3: r.l3, code: r.code, title: r.title || "",
+            price: (Number(r.price_cents) || 0) / 100,
+            // Same rule as sticker-history: NULL stays NULL. An item with no street price
+            // must not become 0.00 here any more than it may on the label.
+            retail: r.retail_cents === null || r.retail_cents === undefined
+              ? null : Number(r.retail_cents) / 100,
+            labels: Number(r.labels) || 0,
+            presses: Number(r.presses) || 0,
+            first_print: r.first_print, last_print: r.last_print,
+          })),
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    if (url.searchParams.get("action") === "ob-buy-open" && request.method === "POST") {
+      const denied = obRequireEdit(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const po = obPo(body?.po);
+        if (!po) return new Response(JSON.stringify({
+          error: `A purchase order is letters, digits and . _ - / only, up to ${OB_PO_MAX} characters`,
+          code: "BAD_PO",
+        }), { status: 400, headers: corsJson });
+        const received = String(body?.received_on || "").trim();
+        if (received && !/^\d{4}-\d{2}-\d{2}$/.test(received)) {
+          return new Response(JSON.stringify({ error: "A received date reads YYYY-MM-DD", code: "BAD_DATE" }),
+            { status: 400, headers: corsJson });
+        }
+        // Declared units. Absent stays NULL — "nobody said" and "zero units" are different
+        // answers and the buy page shows them differently.
+        const unitsRaw = body?.units;
+        const units = unitsRaw === undefined || unitsRaw === null || unitsRaw === ""
+          ? null : Math.floor(Number(unitsRaw));
+        if (units !== null && (!Number.isFinite(units) || units < 0)) {
+          return new Response(JSON.stringify({ error: "Units bought must be a whole number", code: "BAD_UNITS" }),
+            { status: 400, headers: corsJson });
+        }
+        // 🛑 INSERT, NOT INSERT OR REPLACE. The PO is the primary key precisely so a second
+        // buy under one number is refused; REPLACE would silently overwrite the first buy's
+        // label, vendor and opened_by while leaving its prints pointing at the new one.
+        // The duplicate is caught below and reported as what it is.
+        const existing = await env.DB.prepare(`SELECT po, status FROM ob_buys WHERE po = ?`).bind(po).first();
+        if (existing) return new Response(JSON.stringify({
+          error: `PO ${po} is already a buy (${existing.status})`, code: "PO_EXISTS", po,
+        }), { status: 409, headers: corsJson });
+        const now = new Date().toISOString();
+        await env.DB.prepare(
+          `INSERT INTO ob_buys (po, label, vendor, received_on, units, note, status, opened_by, opened_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)`
+        ).bind(po,
+               String(body?.label || "").slice(0, 120) || null,
+               String(body?.vendor || "").slice(0, 120) || null,
+               received || null, units,
+               String(body?.note || "").slice(0, 500) || null,
+               (currentUser && currentUser.email) || "unknown", now).run();
+        return new Response(JSON.stringify({ ok: true, po }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
+
+    if (url.searchParams.get("action") === "ob-buy-close" && request.method === "POST") {
+      const denied = obRequireEdit(currentUser, isAdminSecret, corsJson);
+      if (denied) return denied;
+      if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
+      try {
+        const body = await request.json();
+        const po = obPo(body?.po);
+        if (!po) return new Response(JSON.stringify({ error: "That is not a purchase order", code: "BAD_PO" }),
+          { status: 400, headers: corsJson });
+        const row = await env.DB.prepare(`SELECT po, status FROM ob_buys WHERE po = ?`).bind(po).first();
+        if (!row) return new Response(JSON.stringify({ error: "No such buy", code: "NO_BUY" }),
+          { status: 404, headers: corsJson });
+        const reopen = body?.reopen === true;
+        // 🔑 CLOSING IS REVERSIBLE AND LEAVES EVERY PRINT ALONE. A closed buy is a buy you
+        // have stopped pricing into, not a deleted one: its rows stay, its totals stay, and
+        // reopening is one call. Nothing here touches sticker_prints.
+        const now = new Date().toISOString();
+        if (reopen) {
+          await env.DB.prepare(
+            `UPDATE ob_buys SET status = 'open', closed_by = NULL, closed_at = NULL WHERE po = ?`
+          ).bind(po).run();
+        } else {
+          await env.DB.prepare(
+            `UPDATE ob_buys SET status = 'closed', closed_by = ?, closed_at = ? WHERE po = ?`
+          ).bind((currentUser && currentUser.email) || "unknown", now, po).run();
+        }
+        return new Response(JSON.stringify({ ok: true, po, status: reopen ? "open" : "closed" }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
 
     // ── The category tree, with nothing attached to it ────────────────────────
     //    GET ?action=merch-categories → { categories: [{ key, label, children }] }
@@ -24886,7 +25197,7 @@ export default {
         // prints are not a thing this screen can act on, and showing them invites a manager
         // to reprint a label for a shelf they are not standing at.
         const rows = await env.DB.prepare(
-          `SELECT id, store, l3, price_cents, code, title, retail_cents, qty, printed_at
+          `SELECT id, store, l3, price_cents, code, title, retail_cents, qty, po, printed_at
              FROM sticker_prints WHERE printed_by = ?
             ORDER BY printed_at DESC LIMIT ?`
         ).bind((currentUser && currentUser.email) || "unknown", limit).all();
@@ -24895,6 +25206,11 @@ export default {
           prints: (rows?.results || []).map(r => ({
             id: r.id, store: r.store, l3: r.l3, code: r.code,
             title: r.title || "", printed_at: r.printed_at,
+            // 🔑 SO A REPRINT CAN INHERIT IT. The physical item belongs to the buy it came
+            // in on, not to whichever buy happens to be selected when someone reprints a
+            // torn label. Without this the reprint would either land in the wrong buy or
+            // in none, and either way the counts stop matching the shelf.
+            po: r.po || null,
             price: (Number(r.price_cents) || 0) / 100,
             // Null stays null. A row printed before this column existed, or an item with no
             // street price, must not become 0.00 -- that would print "Compare at $0.00".
