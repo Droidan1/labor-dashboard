@@ -1,3 +1,167 @@
+# Opportunity buys — a CSV manifest per PO (2026-09-21)
+
+**Brian:** *"in the Open a buy card add a feature for admin to upload a CSV manifest with
+product barcode (upc), description, quantity, our price, and street price (MSRP). And use
+this manifest for users when they scan a product from this PO — this is where data will
+come from."*
+
+Six decisions taken before building:
+
+| question | answer |
+|---|---|
+| UPC not on the manifest | **allow it, but say so** — priced the ordinary way, and visibly not from the manifest |
+| manifest price | **wins outright** — the criteria/margin/ASP ladder is skipped for a manifest item |
+| quantity | **how many of that UPC were bought** — per line, so the buy page can read "18 of 24 priced" |
+| re-upload | **replaces, and the replacement is recorded** |
+| "our price" | **what we SELL it for**, not what we paid. Street price is the compare-at figure |
+| show in the Manifest Scorer | **no** — a buy's manifest is a record of what was bought, not something to score |
+
+## Almost none of this is new, and that is the point
+
+`manifest_lines` already carries every field Brian named — `identifier` + `identifier_type`
+(`"upc"` is one), `description`, `qty`, `cost`, `msrp`. The CSV stack is complete and lives
+in the worker: an RFC-4180 parser, a header-row *finder* that scores the first fifteen rows,
+a hint-regex table per canonical field, per-vendor `vendor_templates` column maps with a
+guess fallback, and a 4 MB / 5000-row cap.
+
+And `manifests.load_id` is declared with the comment `-- → buy tracker, later` and referenced
+by no code anywhere. This is the buy tracker. It gets wired.
+
+## 🛑 The gap that would have made this silently not match
+
+**A manifest UPC is stored raw; a scanned UPC is canonicalised.** `worker.js:10615` says so
+outright — *"Only the SCAN path is held to this. A manifest legitimately carries vendor SKUs
+of any length"*. So a scan of `0012345678905` canonicalises to `012345678905` and would miss
+a manifest row holding the 13-digit form. Every UPC would look absent, the feature would
+appear to do nothing, and nothing would error.
+
+So OB manifest rows store a **canonical** UPC of their own alongside the raw one, and the
+scan compares canonical to canonical.
+
+> **Corrected while building.** The plan above said the scan would match on `merchIdForms()`,
+> the multi-form read the `item_cache` lookup uses two lines further down. It does not, and
+> should not. That helper exists to tolerate cache rows written *before* canonicalisation
+> existed; `ob_upc` has no such rows, because every value in it is written by the new code.
+> Both sides therefore come out of the same function and an exact match is both simpler and
+> stricter. `scripts/test-migration-073.mjs` asserts all three spellings of one barcode
+> resolve to the one stored form.
+
+## Two new columns, deliberately separate from the scorer's
+
+`ob_price` and `ob_upc`, both NULL for every scorer manifest. The scorer's `cost` means *what
+we would pay* and its `suggested_price` is its own output; writing a shelf price into either
+would corrupt what those columns mean for the page that owns them. Separate columns cost one
+migration and remove a whole class of confusion.
+
+## The plan
+
+- [x] `migration-073.sql` — `manifest_lines.ob_price`, `manifest_lines.ob_upc`, an index on
+      `manifests(load_id)` and one on `manifest_lines(ob_upc)` — **plus** `manifests.superseded_at`
+      and a partial UNIQUE index, which the plan had not foreseen (see the review)
+- [x] `manifest-upload` accepts `load_id` (the PO), gated to admin like opening a buy, and
+      refuses a PO that is not an open buy
+- [x] Column hints learn "our price" / "street price" so a plain CSV maps without a template
+- [x] `manifestWriteLines` fills `ob_price` and the canonical `ob_upc` on an OB upload
+- [x] The Manifest Scorer's lists filter `load_id IS NULL`, so the two never mix
+- [x] `merch-scan` takes a `po`, matches the manifest FIRST on the canonical UPC, and returns
+      the manifest's description, our price and street price with the ladder skipped
+- [x] …and says plainly when a scanned UPC is **not** on that manifest
+- [x] `ob-buy-detail` reports the manifest: lines, expected units, and how many are priced
+- [x] The Open-a-buy card takes a CSV; a failed manifest never loses the buy
+- [x] Re-upload from the buy page, with the previous manifest kept as a record
+- [x] Tests, including the canonicalisation match that is the whole risk here
+- [x] `sw.js` + `scripts/fixtures/shell-cache.json`
+
+## Deploy order
+
+Migration → worker → frontend, as before: the new worker writes columns the current database
+does not have.
+
+## Review — built, tested, not yet deployed
+
+**Shipped:** `migration-073.sql`, ~490 lines of `worker.js`, ~260 of `index.html`,
+`scripts/test-migration-073.mjs` (29), `scripts/test-ob-manifest.mjs` (128), 56 new browser
+assertions in `scripts/browser-opportunity-buys.mjs`, `sw.js` v223 → v224.
+**5,504 source assertions across 79 suites pass; 118 browser assertions pass at 390px and
+1180px in both themes.** Nothing is deployed — the migration needs Brian's go-ahead.
+
+### Three things the plan did not foresee
+
+**1. One live manifest per PO had to become a database fact.** The plan said "re-upload
+replaces". Two live manifests on one PO is invisible — both rows look fine alone — and it
+hands a user a price off a sheet that was replaced last week, with total confidence. So
+`manifests.superseded_at` (NULL = live) plus a partial `UNIQUE` index on `load_id` makes it
+unrepresentable rather than merely unlikely in the handler. Ordinary scorer manifests keep
+`load_id` NULL and sit outside the index entirely.
+
+**2. A failed upload could have cost a buy its working sheet.** Once one-live-per-PO is
+enforced, a new row that wins that slot and then fails to fill has retired the old one and
+answers nothing. So an OB manifest is **born superseded** — attached to the PO, excluded from
+every read — its lines are written into that inert row, and only then does one batch retire
+the old sheet and clear the new one's stamp, in that order, because SQLite checks a unique
+index per statement. Anything that fails before that batch leaves the previous sheet live and
+untouched. A sheet missing a required column is refused **before anything is written at all**,
+rather than following the Scorer's "insert the manifest, skip the lines, ask the human"
+behaviour, which here would install an empty live sheet on the buy.
+
+**3. "Our price" cannot go in the shared hint table.** On a vendor's manifest the price
+column is what *they* charge; on a buy sheet it is what *we* ring it up at. Measured against
+the live table: a bare `Price` maps to `cost` today, and `manifestGuessMap` claims a header
+once — so an `ob_price` hint in the shared table would take it first and leave every vendor
+sheet whose only money column is "Price" with no cost at all, refused at upload for a column
+it plainly has. `MANIFEST_OB_HINTS` is therefore consulted **only** when the upload carries a
+PO. (An earlier draft of that comment claimed `MANIFEST_HINTS.cost` already claims "Our
+Price". It does not — that header matches nothing today. Corrected in the source.)
+
+### The gap that was the whole risk, closed
+
+A manifest UPC is stored as the vendor spelled it; every scan is canonicalised at the door.
+`0085239098745` on a sheet and `085239098745` off a scanner are one can of beans that does not
+compare equal — and the miss does not error, it reports "not on this manifest", which is the
+wrong answer wearing the right words. `ob_upc` holds `merchCanonicalUpc(identifier)`, written
+once at import, so the match is plain equality between two values the same function produced.
+Asserted end to end: all three spellings of one barcode return $1.00, and a raw-identifier
+match is shown missing the very row it is looking at.
+
+### Four outcomes that must not look alike
+
+A scan naming a PO always returns a `manifest` block, including when it matched nothing,
+because "there is no manifest", "the sheet does not carry this barcode", "the line's price
+cell is blank" and "you typed a description, and the sheet is indexed by barcode" are four
+problems with four different fixes. `psManifestStrip` is lifted out of `index.html` and
+**executed** in the suite; all five renderings are asserted distinct.
+
+### Deliberately not done
+
+- **The street price never becomes our retail.** It is reported beside our price and never
+  reaches `retail` or `item_cache` — migration-043 is explicit that a manifest MSRP
+  "identifies the item; NOT trusted as retail", and one upload must not rewrite the observed
+  street price every other surface reads.
+- **The sheet's description never overwrites a resolved title.** It names an item nothing else
+  can name, and is in the `manifest` block either way, but it is kept out of the `item_cache`
+  write: caching it would satisfy the `if (identifier && !title)` guard on the identity
+  lookup, so that item would never again be resolved for brand, size or street price.
+- **The identity lookup is untouched.** An OB scan of an item no source can name still costs
+  the search it always did, and still caches nothing — the cache write is guarded on having
+  learned *something*, and a lookup that found nothing has not. Asserted as a **comparison**:
+  a PO changes the spend by exactly zero. Worth raising with Brian separately, because
+  closeout goods are disproportionately unnameable and a buy is nothing but closeout goods.
+
+### Deploy order — migration, then worker, then frontend
+
+Derived from which side stops being backward-compatible (CLAUDE.md rule 6), not from last
+time. The new worker `INSERT`s `ob_price`/`ob_upc` and `SELECT`s on `superseded_at`, so
+against a database without them every OB upload and every scan carrying a PO throws. Columns
+the live worker never names are invisible to it, so the migration is safe to apply while the
+current worker runs.
+
+🛑 **The migration is not run.** Database mutations need Brian's explicit go-ahead. It is
+additive only — three nullable columns and three indexes, no existing row read, rewritten or
+deleted — and `scripts/test-migration-073.mjs` proves that against a scratch SQLite built
+from migration-043's own `CREATE TABLE`s plus every `ALTER` since, diffing each pre-existing
+row field by field.
+
+
 # Opportunity Buys — the page on a phone (2026-09-21)
 
 **Brian:** *"Can you fix the UI elements also on Mobile"*, with a desktop screenshot that

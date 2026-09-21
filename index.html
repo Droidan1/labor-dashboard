@@ -3245,6 +3245,33 @@
         #page-opportunity-buys .ob-empty{padding:26px 18px;font-size:13px;color:#6b6453}
         .dark #page-opportunity-buys .ob-empty{color:rgb(var(--op-inkDim))}
 
+        /* ── The buy's manifest ───────────────────────────────────────────────
+           Same ground as #ob-bar (panelHi), so nothing here is a new colour pair — only
+           the same ones recomputed against the ground they now sit on, per DESIGN.md
+           trap 6. Measured: ink 18.01:1 light / 13.59:1 dark, inkDim 5.62:1 / 5.21:1,
+           amber 6.50:1 / 9.66:1. DESIGN.md trap 3 — stated for BOTH themes, on the block
+           that owns the background, never inherited. */
+        #page-opportunity-buys .ob-man{display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;
+          padding:13px 18px;background:#fafaf6;border-bottom:1px solid rgba(20,16,8,.10);
+          font-size:12.5px;color:#14110a}
+        .dark #page-opportunity-buys .ob-man{background:rgb(var(--op-panelHi));color:rgb(var(--op-ink));
+          border-bottom-color:rgba(255,255,255,.09)}
+        #page-opportunity-buys .ob-man-k{font-size:9.5px;font-weight:700;letter-spacing:.07em;
+          text-transform:uppercase;color:#6b6453;display:block}
+        .dark #page-opportunity-buys .ob-man-k{color:rgb(var(--op-inkDim))}
+        #page-opportunity-buys .ob-man-v{font-weight:700;font-variant-numeric:tabular-nums}
+        #page-opportunity-buys .ob-man-r{margin-left:auto;display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+        /* 🛑 A FILE INPUT IS UA-DRAWN AND IGNORES `background`. Its button follows
+           color-scheme, which this app never sets, so on the dark panel it renders as a
+           white slab. Scoped here rather than at the root — DESIGN.md trap 4, which the
+           checkbox hit first. */
+        #page-opportunity-buys input[type=file]{font:inherit;font-size:12px;max-width:100%}
+        .dark #page-opportunity-buys input[type=file]{color-scheme:dark}
+        #page-opportunity-buys .ob-note{font-size:11.5px;color:#6b6453;flex-basis:100%}
+        .dark #page-opportunity-buys .ob-note{color:rgb(var(--op-inkDim))}
+        #page-opportunity-buys .ob-note.warn{color:#8a4b00}
+        .dark #page-opportunity-buys .ob-note.warn{color:#fbbf24}
+
         /* ── Phone ────────────────────────────────────────────────────────────
            🛑 THE TABLE RAN OFF THE RIGHT EDGE WITH NOTHING SAYING SO. #ob-scroll has
            overflow-x:auto, which is §4.8's pattern and is correct — but on a phone the
@@ -3356,9 +3383,16 @@
           <label>Vendor<input id="ob-f-vendor" type="text" class="ob-in" maxlength="120" style="width:160px"></label>
           <label>Received<input id="ob-f-date" type="date" class="ob-in" style="width:160px"></label>
           <label>Units bought<input id="ob-f-units" type="number" min="0" step="1" class="ob-in" style="width:130px"></label>
+          <!-- 🔑 OPTIONAL, AND SECOND. The buy must exist before a manifest can name it —
+               the worker refuses a PO that is not an open buy — so this is uploaded right
+               after the buy is opened, never instead of it. A sheet that will not load
+               therefore costs the manifest and never the buy. -->
+          <label>Manifest (CSV)<input id="ob-f-csv" type="file" accept=".csv,text/csv" class="ob-in" style="width:230px"></label>
           <button id="ob-f-go" class="ob-btn-primary" onclick="obCreate()">Open it</button>
           <button class="ob-btn" onclick="obToggleNew(false)">Cancel</button>
           <span id="ob-f-note" class="ob-dim" style="font-size:12px"></span>
+          <span class="ob-note">Columns: UPC, description, quantity, our price, street price.
+            Our price is what it rings up at — that is what a scan on this PO will show.</span>
         </div>
 
         <!-- One sentence reading the numbers back. Outside #ob-body, same reason. -->
@@ -4306,6 +4340,13 @@
         .ps-ob-strip{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;
           font-size:12.5px;background:rgba(28,122,51,.08);border:1px solid rgba(28,122,51,.28);color:#1c7a33}
         .dark .ps-ob-strip{background:rgba(74,222,128,.10);border-color:rgba(74,222,128,.30);color:#4ade80}
+        /* The same strip when the sheet could NOT answer. Amber, this repo's draft/dirty
+           colour, composited over the real ground and measured per DESIGN.md trap 6:
+           #8a4b00 on the light wash is 6.20:1, #fbbf24 on the dark wash is 9.15:1. */
+        .ps-ob-strip.warn{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.34);color:#8a4b00}
+        .dark .ps-ob-strip.warn{background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.30);color:#fbbf24}
+        .ps-ob-strip.warn .ps-ob-dot{background:#8a4b00}
+        .dark .ps-ob-strip.warn .ps-ob-dot{background:#fbbf24}
         .ps-ob-strip .ps-link{color:inherit}
         .ps-ob-dot{width:8px;height:8px;border-radius:999px;background:#1c7a33;flex:none}
         .dark .ps-ob-dot{background:#4ade80}
@@ -23099,7 +23140,12 @@
       el('ps-input').select();
       return;
     }
+    // 🔑 THE BUY TRAVELS WITH THE SCAN. Without it the worker has no way to know which
+    // sheet to read, and would price off the ladder while the strip overhead still said
+    // "Pricing into PO …" — the screen claiming a context the answer never had.
     const payload = isCode ? { identifier: digits } : { description: raw };
+    const scanPo = psObActive();
+    if (scanPo) payload.po = scanPo;
 
     psBusy = true;
     el('ps-go').disabled = true;
@@ -24090,6 +24136,59 @@
   }
   window.prSave = prSave;
 
+  // ── What the buy's sheet said about this item ───────────────────────────────
+  //
+  // 🛑 FOUR OUTCOMES THAT LOOK ALIKE AND ARE FIXED IN FOUR DIFFERENT PLACES:
+  //
+  //   the sheet priced it            → nothing to do
+  //   the buy has no manifest        → an admin uploads one, on the buy page
+  //   the barcode is not on the sheet→ it was not in this load, or the sheet is wrong
+  //   the line's price cell is blank → fix the spreadsheet and upload it again
+  //
+  // Collapsing any of them into "no price" sends someone to the wrong place. The worker
+  // already separates them; this only refuses to throw that away.
+  //
+  // 🔑 Rendered whenever a PO was named, INCLUDING when everything worked — a scan that
+  // silently succeeded and a scan that silently ignored the buy look identical otherwise,
+  // and this screen's whole job is that a price is never unexplained.
+  function psManifestStrip(j) {
+    const m = j.manifest;
+    if (!m) return '';
+    const strip = (warn, html) =>
+      `<div class="ps-ob-strip${warn ? ' warn' : ''}"><span class="ps-ob-dot"></span><span>${html}</span></div>`;
+    const po = psEsc(m.po);
+
+    if (!m.has_manifest) {
+      return strip(true, `PO ${po} has no manifest, so this was priced the usual way. `
+        + 'An admin can upload one on Opportunity Buys.');
+    }
+    // 🛑 A TYPED DESCRIPTION IS NOT A BARCODE THAT MISSED. The sheet is indexed by UPC, so
+    // there was never anything to match — saying "this barcode is not on the manifest"
+    // about a scan that had no barcode sends someone to check a sheet that is fine.
+    if (!j.identifier) {
+      return strip(true, `PO ${po}'s manifest is indexed by barcode, so a typed description `
+        + 'cannot be matched against it. Scan the barcode to price off the sheet.');
+    }
+    if (!m.matched) {
+      return strip(true, `This barcode is not on PO ${po}'s manifest `
+        + `(${m.lines} line${m.lines === 1 ? '' : 's'}), so this was priced the usual way.`);
+    }
+    if (m.price === null || m.price === undefined) {
+      return strip(true, `On PO ${po}'s manifest${m.description ? ' as ' + psEsc(m.description) : ''}, `
+        + 'but that line has no price on the sheet — priced the usual way instead.');
+    }
+    // 🔑 The sheet's own spelling of the barcode is shown only when it DIFFERS from what
+    // was scanned. That difference is the one thing nobody can see, and it is exactly what
+    // used to make a perfectly good sheet answer nothing.
+    const spelled = m.sheet_identifier && m.sheet_identifier !== j.identifier
+      ? ` · sheet reads ${psEsc(m.sheet_identifier)}` : '';
+    return strip(false,
+      `From PO ${po}'s manifest${m.description ? ' · ' + psEsc(m.description) : ''}`
+      + `${m.qty ? ' · ' + m.qty + ' bought' : ''}`
+      + `${m.street_price ? ' · street ' + psMoney(m.street_price) : ''}${spelled}`
+      + `${m.duplicates ? ` &middot; <strong>listed ${m.duplicates} times on the sheet; row ${m.row_no} answered</strong>` : ''}`);
+  }
+
   function psRender(j) {
     const prev = psLast;
     psLast = j;
@@ -24126,6 +24225,12 @@
       why = missFlag
         ? MISS_WHY[missFlag] + ' Set the retail price by hand and every future scan of this item is instant.'
         : 'Nothing to price from — no street retail found, and no sales history for this category.';
+    } else if (j.price_basis === "the buy's manifest") {
+      // 🔑 Brian's sheet, not a derivation. Said plainly, because a price nobody can
+      // explain is a price the floor second-guesses.
+      why = `Off PO ${psEsc(j.manifest.po)}'s manifest`
+          + `${j.manifest.street_price ? `, against ${psMoney(j.manifest.street_price)} on the street` : ''}`
+          + '. The pricing rule was not used — the buy already decided this one.';
     } else if (j.price_overridden) {
       why = 'Set by hand, so the rule was not applied.';
     } else if (bad) {
@@ -24163,6 +24268,7 @@
           <div class="ps-up">${[j.size, j.identifier].filter(Boolean).map(psEsc).join(' &middot; ') || ''}</div>
         </div>
 
+        ${psManifestStrip(j)}
         <div class="ps-hero ${bad ? 'bad' : ''}">${priceTxt}</div>
         <div class="ps-chips">
           ${j.gp_pct !== null && j.gp_pct !== undefined
@@ -28844,8 +28950,10 @@
     obTracked = j.tracked_from || null;
     const lbl = el('ob-barlbl');
     if (lbl) lbl.textContent = `PO ${j.buy.po}`;
-    obRenderDetail(Object.assign({}, j.buy, { sold: j.sold, refunded_units: j.refunded_units }),
-                   j.lines || []);
+    obRenderDetail(Object.assign({}, j.buy, {
+      sold: j.sold, refunded_units: j.refunded_units,
+      manifest: j.manifest || null, manifest_history: j.manifest_history || 0,
+    }), j.lines || []);
   }
   window.obOpenDetail = obOpenDetail;
 
@@ -28872,6 +28980,8 @@
       + `. Opened by ${buy.opened_by} on ${obDay(buy.opened_at)}`
       + `${buy.status === 'closed' ? `, closed by ${buy.closed_by} on ${obDay(buy.closed_at)}` : ''}.`);
 
+    const man = obManifestCard(buy);
+
     const act = obCanEdit
       ? `<div style="padding:14px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
            <button class="ob-btn" onclick="obSetClosed('${escapeHtml(buy.po)}', ${buy.status === 'open'})">
@@ -28886,7 +28996,7 @@
       : '';
 
     if (!lines.length) {
-      el('ob-body').innerHTML = act
+      el('ob-body').innerHTML = man + act
         + `<div class="ob-empty">Nothing has been priced into this buy yet.
              Pick PO ${escapeHtml(buy.po)} on Price Scan and every label you print will land here.</div>`;
       obFade();
@@ -28910,7 +29020,7 @@
       <td class="ob-dim ob-sec">${escapeHtml(obDay(l.last_print))}</td>
     </tr>`).join('');
 
-    el('ob-body').innerHTML = act + `<table>
+    el('ob-body').innerHTML = man + act + `<table>
       <thead><tr>
         <th>Store</th><th>Item</th><th class="ob-sec">Category</th><th class="ob-sec">Code</th>
         <th class="ob-num ob-sec">Our price</th><th class="ob-num ob-sec">Street</th>
@@ -28921,12 +29031,132 @@
     obFade();
   }
 
+  // ── The buy's manifest ──────────────────────────────────────────────────────
+  //
+  // 🔑 ONE PATH FOR BOTH. Opening a buy with a sheet and replacing an existing one are the
+  // same call: the worker takes the PO, refuses one that is not an open buy, retires the
+  // previous sheet and keeps it as a record. Writing it twice is how the two would drift.
+  //
+  // 🛑 THE 4 MB CAP IS CHECKED HERE AS WELL AS THERE. Not because the worker's check is
+  // unreliable, but because uploading four megabytes over warehouse wifi to be told it was
+  // too big is a minute of somebody's life for an answer we already had.
+  async function obUploadCsv(po, file) {
+    if (!file) return { skipped: true };
+    if (file.size > 4000000) {
+      return { error: `${(file.size / 1e6).toFixed(1)} MB is over the 4 MB limit. Split the sheet, or drop columns it does not need.` };
+    }
+    let csv;
+    try { csv = await file.text(); }
+    catch (e) { return { error: `That file could not be read: ${e.message}` }; }
+    const { status, j } = await obApi('?action=manifest-upload', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ load_id: po, csv, filename: file.name }),
+    });
+    // The worker's own sentence, every time. It distinguishes a closed buy from a missing
+    // one from a sheet with no price column, and those need three different things done.
+    if (status !== 200 || !j || !j.ok) return { error: (j && j.error) || `The manifest did not load (${status}).` };
+    return { ok: j };
+  }
+
+  // What an upload actually achieved, in the words that matter on the floor.
+  function obManifestSay(j) {
+    const reach = j.ob_matchable === j.rows
+      ? `all ${j.rows} line${j.rows === 1 ? '' : 's'} can be found by a scan`
+      : `${j.ob_matchable} of ${j.rows} lines can be found by a scan`;
+    return `Manifest loaded: ${reach}, ${j.ob_units} unit${j.ob_units === 1 ? '' : 's'} accounted for`
+      + `${j.replaced ? `, replacing the sheet uploaded ${obDay(j.replaced.uploaded_at)} (kept)` : ''}.`
+      + `${j.note ? ' ' + j.note : ''}`;
+  }
+
+  async function obReplaceManifest(po) {
+    const input = el('ob-m-csv'), note = el('ob-m-note'), btn = el('ob-m-go');
+    if (!input || !note) return;
+    const file = (input.files || [])[0];
+    if (!file) { note.textContent = 'Choose a CSV first.'; note.className = 'ob-note warn'; return; }
+    if (btn) btn.disabled = true;
+    note.className = 'ob-note'; note.textContent = 'Loading…';
+    const r = await obUploadCsv(po, file);
+    if (btn) btn.disabled = false;
+    if (r.error) {
+      // 🛑 THE SHEET IT ALREADY HAD IS STILL THERE. The worker writes nothing at all when a
+      // sheet cannot be used, and saying so is the difference between "try again" and
+      // "find out what we just lost".
+      note.className = 'ob-note warn';
+      note.textContent = r.error;
+      return;
+    }
+    // The re-render writes its own status line, so the upload's result goes on AFTER it —
+    // otherwise the one sentence describing what just changed is the one that is lost.
+    await obOpenDetail(po);
+    obSay(obManifestSay(r.ok));
+  }
+  window.obReplaceManifest = obReplaceManifest;
+
+  // The buy's sheet, read back by what it can DO.
+  //
+  // 🛑 "240 LINES" IS THE NUMBER THAT MISLEADS. A line with no barcode, or with a blank
+  // price cell, is on the sheet and invisible to every scan — so the headline figure here
+  // is how many lines a scan can actually reach, and the shortfall is spelled out rather
+  // than left to be worked out from two numbers that look the same.
+  //
+  // 🔑 A buy with NO sheet says so; it never renders as a sheet of zero lines, the same
+  // rule as Coverage's "no count" and this page's own "not tracked".
+  function obManifestCard(buy) {
+    const m = buy.manifest;
+    const hist = buy.manifest_history || 0;
+    const canReplace = obCanEdit && buy.status === 'open';
+    // A closed buy will not take a sheet — the worker refuses it — so the control is not
+    // offered rather than offered and then refused.
+    const control = canReplace
+      ? `<div class="ob-man-r">
+           <input id="ob-m-csv" type="file" accept=".csv,text/csv">
+           <button id="ob-m-go" class="ob-btn" onclick="obReplaceManifest('${escapeHtml(buy.po)}')">
+             ${m ? 'Replace manifest' : 'Upload manifest'}
+           </button>
+         </div>`
+      : '';
+
+    if (!m) {
+      return `<div class="ob-man">
+        <span><span class="ob-man-k">Manifest</span><span class="ob-none">none yet</span></span>
+        ${hist ? `<span><span class="ob-man-k">Replaced</span><span class="ob-man-v">${hist}</span></span>` : ''}
+        ${control}
+        <span class="ob-note">${canReplace
+          ? 'With a manifest on this PO, a scan reads the price straight off it: UPC, description, quantity, our price, street price.'
+          : buy.status === 'open'
+            ? 'An admin uploads one, and scans on this PO price themselves off it.'
+            : 'This buy is closed, so it will not take a manifest.'}</span>
+      </div>`;
+    }
+
+    const unreachable = (m.lines || 0) - (m.matchable || 0);
+    return `<div class="ob-man">
+      <span><span class="ob-man-k">Manifest</span><span class="ob-man-v">${m.lines}</span> line${m.lines === 1 ? '' : 's'}</span>
+      <span><span class="ob-man-k">Scannable</span><span class="ob-man-v">${m.matchable}</span></span>
+      <span><span class="ob-man-k">Priced</span><span class="ob-man-v">${m.priced}</span></span>
+      <span><span class="ob-man-k">Units on the sheet</span><span class="ob-man-v">${m.units}</span></span>
+      <span><span class="ob-man-k">Uploaded</span>${escapeHtml(obDay(m.uploaded_at))}${m.filename ? ' · ' + escapeHtml(m.filename) : ''}</span>
+      ${hist ? `<span><span class="ob-man-k">Replaced</span><span class="ob-man-v">${hist}</span></span>` : ''}
+      ${control}
+      ${unreachable > 0
+        ? `<span class="ob-note warn">${unreachable} line${unreachable === 1 ? '' : 's'} cannot be found by a scan — no barcode, or no price. Fix those columns and upload the sheet again; the current one is kept either way.</span>`
+        : ''}
+      ${m.units && buy.units && m.units !== buy.units
+        ? `<span class="ob-note">The sheet accounts for ${m.units} units; this buy was opened saying ${buy.units}. Neither figure is corrected into the other.</span>`
+        : ''}
+    </div>`;
+  }
+
   function obToggleNew(force) {
     const f = el('ob-new-form');
     if (!f) return;
     const show = force === undefined ? f.hidden : !!force;
     f.hidden = !show;
-    if (show) { el('ob-f-note').textContent = ''; el('ob-f-po').focus(); }
+    if (show) {
+      el('ob-f-note').textContent = '';
+      el('ob-f-note').className = 'ob-dim';
+      el('ob-f-po').focus();
+    }
   }
   window.obToggleNew = obToggleNew;
 
@@ -28946,17 +29176,33 @@
         units: unitsRaw === '' ? undefined : unitsRaw,
       }),
     });
-    go.disabled = false;
     if (status !== 200 || !j || !j.ok) {
+      go.disabled = false;
       // The worker's sentence, not a generic one — it distinguishes a malformed PO from one
       // that is already a buy, and those need different things from the person reading it.
+      note.className = 'ob-dim';
       note.textContent = (j && j.error) || `Could not open the buy (${status}).`;
       return;
     }
-    ['ob-f-po', 'ob-f-label', 'ob-f-vendor', 'ob-f-date', 'ob-f-units'].forEach(id => { el(id).value = ''; });
+
+    // 🛑 THE BUY IS OPEN FROM HERE ON, WHATEVER THE SHEET DOES. It exists, it takes labels,
+    // and a manifest that will not load is a manifest problem — so the failure is reported
+    // against the buy's own page rather than rolled back into "could not open the buy",
+    // which would send someone looking for a buy that is sitting right there.
+    const file = ((el('ob-f-csv') || {}).files || [])[0];
+    let manifestErr = null;
+    if (file) {
+      note.textContent = 'Opened. Loading the manifest…';
+      const up = await obUploadCsv(j.po, file);
+      if (up.error) manifestErr = up.error;
+    }
+    go.disabled = false;
+    ['ob-f-po', 'ob-f-label', 'ob-f-vendor', 'ob-f-date', 'ob-f-units', 'ob-f-csv']
+      .forEach(id => { const n = el(id); if (n) n.value = ''; });
     obToggleNew(false);
     // Show it immediately rather than making someone hunt for it in the list.
-    obOpenDetail(j.po);
+    await obOpenDetail(j.po);
+    if (manifestErr) obSay(`PO ${j.po} is open. The manifest did not load: ${manifestErr}`);
   }
   window.obCreate = obCreate;
 
