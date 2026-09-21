@@ -2508,6 +2508,12 @@
             <div class="bd-cap-t">Scan a pallet tag</div>
             <div class="bd-cap-d">Get the whole tag in frame, flat and well lit. You'll check every field before anything is logged.</div>
             <button type="button" class="bd-btn bd-primary bd-big" onclick="bdBegin()">Begin</button>
+            <!-- A tag too torn, faded or wrapped to photograph still has to be loggable.
+                 Same escape hatch the Inventory Receiver's read-back carries. -->
+            <div style="margin-top:13px">
+              <button type="button" class="bd-btn bd-ghost bd-sm" id="bd-manual"
+                      onclick="bdManual()">Enter Manually</button>
+            </div>
           </div>
           <div id="bd-reading" class="bd-reading" hidden>
             <div class="bd-spin"></div>
@@ -2577,6 +2583,10 @@
                 <span class="bd-note" id="bd-m-readsub" style="display:block;margin-top:4px"></span>
               </span>
             </div>
+            <!-- 🛑 Its own target, ABOVE the fields. The read line and its hint live inside
+                 #bd-m-shot, which is hidden when there is no photo, so a typed entry would
+                 otherwise open with no instructions at all. -->
+            <div class="bd-note" id="bd-m-manual" style="margin:0 0 12px" hidden></div>
             <div id="bd-m-fields"></div>
             <div id="bd-m-warn" class="bd-status err" style="margin:0 0 11px" hidden></div>
           </div>
@@ -25701,7 +25711,11 @@
     { k: 'truck_no',       label: 'Truck #' },
   ];
   const bdState = { rows: [], openWeeks: new Set(), seeded: false, photo: null,
-                    photoType: 'image/jpeg', editingId: null, busy: false, tab: 'scan' };
+                    photoType: 'image/jpeg', editingId: null, busy: false, tab: 'scan',
+                    // Typed by hand: no camera, no scan, no photo. Explicit rather than
+                    // inferred from `photo`, because a FAILED read also lands on an empty
+                    // form and leaves the last photo behind it.
+                    manual: false };
 
   // Mirrors canSeeFinancials on the worker, which admits the same roles as every
   // other bin-dump action. A manager mis-scans a pallet and should not need an admin
@@ -25817,8 +25831,23 @@
     return s.length ? s[0] : '';
   }
 
-  function bdBegin() { bdCloseModal(); (syncCameraCapture(el('bd-photo')), el('bd-photo').click()); }
+  function bdBegin() {
+    bdState.manual = false;
+    bdCloseModal(); (syncCameraCapture(el('bd-photo')), el('bd-photo').click());
+  }
   window.bdBegin = bdBegin;
+
+  // 🔑 No camera, no bin-dump-scan call — the form opens empty and the person types what
+  // the tag says. A tag too torn, faded or shrink-wrapped to photograph is still a pallet
+  // that went into the bins, and until now the only way in started with a picture of it.
+  function bdManual() {
+    bdState.manual = true;
+    bdState.photo = null;
+    bdState.editingId = null;
+    bdSetStatus('');
+    bdOpenVerify({ fields: {}, read: 0, of: BD_FIELDS.length });
+  }
+  window.bdManual = bdManual;
 
   async function bdPhoto(input) {
     const f = input.files && input.files[0];
@@ -25869,10 +25898,16 @@
 
   function bdOpenVerify(j, problem) {
     bdState.editingId = null;
+    const manual = !!bdState.manual;
     const fields = j.fields || {};
-    el('bd-m-title').textContent = 'Verify pallet tag';
-    el('bd-m-shot').hidden = false;
+    el('bd-m-title').textContent = manual ? 'Log pallet by hand' : 'Verify pallet tag';
+    // 🛑 There is no photo to show on a typed entry, and an unhidden .bd-shot renders an
+    // empty image box where the tag should be.
+    el('bd-m-shot').hidden = manual;
     el('bd-m-retake').hidden = false;
+    // "Retake" describes an action that never happened when nothing was photographed — and
+    // as "Take Photo" the button doubles as an escalation if the tag turns out to be legible.
+    el('bd-m-retake').textContent = manual ? 'Take Photo' : 'Retake';
     el('bd-m-delete').hidden = true;   // nothing is logged yet — Cancel is the way out
     el('bd-m-submit').textContent = 'Submit';
     el('bd-m-photo').src = bdState.photo ? `data:${bdState.photoType};base64,${bdState.photo}` : '';
@@ -25881,8 +25916,17 @@
       ? 'Nothing was logged. Type what you can see, or retake the photo.'
       : (j.read === j.of ? 'Everything came through. Give it a glance and submit.'
                          : 'Anything marked NOT FOUND needs you before this can be logged.');
+    // 🔑 The rule bdSubmit already enforces, said BEFORE the submit rather than discovered
+    // as a refusal after it.
+    el('bd-m-manual').hidden = !manual;
+    el('bd-m-manual').textContent = manual
+      ? 'Typed by hand — no tag photo. Fill in what you know: barcode, item #, pallet name or PO / WO — at least one of those four.'
+      : '';
+    // 🛑 'miss' paints the input red AND badges it NOT FOUND, which is what a field the
+    // READER could not get looks like. Nothing was read here, so a blank is not a finding —
+    // without this the typed form opens as seven of them.
     el('bd-m-fields').innerHTML = BD_FIELDS
-      .map(f => bdFieldRow(f, fields[f.k], fields[f.k] == null ? 'miss' : '')).join('');
+      .map(f => bdFieldRow(f, fields[f.k], (!manual && fields[f.k] == null) ? 'miss' : '')).join('');
     const warn = el('bd-m-warn');
     const msg = problem || j.truck_hint || '';
     warn.textContent = msg;
@@ -25894,6 +25938,8 @@
     const row = bdState.rows.find(r => r.id === id);
     if (!row) return;
     bdState.editingId = id;
+    bdState.manual = false;
+    el('bd-m-manual').hidden = true;
     // Read-only for a view-only account: they open a row to check what was logged
     // and to look at the tag, which is exactly what "view" is for.
     const ro = !bdCanEdit();
@@ -26190,6 +26236,7 @@
           + (Number.isInteger(n) ? ` · ${n} unit${n === 1 ? '' : 's'}` : '') + '.', 'ok');
       }
       bdState.photo = null;
+      bdState.manual = false;
       bdCloseModal();
       await bdLoad();
     } catch (e) {

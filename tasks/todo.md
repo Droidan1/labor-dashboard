@@ -1,3 +1,85 @@
+# Bin Dump — log a pallet by hand (2026-09-21)
+
+**Brian:** *"Lets add the same manual entry option to the bin bump page"* — the Inventory
+Receiver's Enter Manually (#258), mirrored onto Bin Dump.
+
+## \U0001f511 Mirrored, not shared
+
+CLAUDE.md is explicit that these are different operations sharing only the tag reader, and
+`.bd-*` are global classes declared inside `#page-bin-dump`. So this repeats the PATTERN in
+`bd*` rather than reaching across for `irManualPallet` — the same call the page made when it
+kept its own classes.
+
+## \U0001f511 Frontend only again
+
+`bin-dump-log` already treats the photo as optional (`if (b64) { … put … }`) and `bdSubmit`
+already omits `image_b64` when there is none. It also ALREADY validates the four-field rule
+client-side before posting. So the plumbing is there; what is missing is a way in that does
+not start with the camera.
+
+## The same three traps this page has too
+
+- \U0001f6d1 `bdOpenVerify` sets `el('bd-m-shot').hidden = false` unconditionally — a typed entry
+  would show an empty `<img>` box.
+- \U0001f6d1 `#bd-m-read` and `#bd-m-readsub` live INSIDE `#bd-m-shot`, so hiding the photo hides
+  every word of guidance, exactly as it did on the receiver.
+- \U0001f6d1 Every empty field is passed `'miss'`, which paints `.bd-in` red AND adds a **NOT
+  FOUND** badge. A blank typed form would open as seven findings.
+
+## Plan
+
+- [x] `bdState.manual`, set by `bdManual()` and cleared by `bdBegin()` and `bdOpenEdit()`.
+- [x] `bdManual()` — no camera, no `bin-dump-scan` call; opens the verify form empty.
+- [x] `bdOpenVerify` honours it: photo block hidden, fields not marked `miss`, title says it
+      was typed, Retake reads **Take Photo**, and a `#bd-m-manual` note carries the rule.
+- [x] An **Enter Manually** button beside **Begin** in `#bd-begin`.
+- [x] Tests: `bin-dump-log` accepts a photoless pallet and stores no R2 object (unasserted
+      today, same as the receiver's was); the button and the non-error styling pinned.
+- [x] `sw.js` CACHE_NAME + fixture; full suite; browser check if one covers Bin Dump.
+
+## Not in scope
+
+The gate is unchanged: a view-only account has no Scan tab at all (`bdSetTab` forces `log`),
+so the new button inherits exactly the audience Begin already has.
+
+## Review
+
+**Shipped.** **Enter Manually** under Begin on Bin Dump's Scan pane, opening the verify form
+empty — no camera, no `bin-dump-scan` call. Frontend only: `bin-dump-log` already treats the
+photo as optional and `bdSubmit` already omits `image_b64` when there is none.
+
+**Mirrored, not shared.** CLAUDE.md is explicit that Bin Dump and the Inventory Receiver are
+different operations sharing only the tag reader, and `.bd-*` are global classes declared
+inside `#page-bin-dump`. Reaching across for `irManualPallet` would have coupled two pages that
+were deliberately kept apart, so the pattern is repeated in `bd*`.
+
+**All three traps were here too**, which is the strongest argument that the pattern was worth
+repeating deliberately rather than improvising:
+
+1. `bdOpenVerify` set `el('bd-m-shot').hidden = false` unconditionally — a typed entry would
+   have rendered an empty image box where the tag goes.
+2. `#bd-m-read` and `#bd-m-readsub` live INSIDE `#bd-m-shot`, so hiding the photo hides every
+   word of guidance, exactly as on the receiver.
+3. Every blank was passed `'miss'`, which paints `.bd-in` red AND badges it **NOT FOUND**. A
+   typed form would have opened as seven findings.
+
+**🛑 The one failure in this change was in the TEST, not the code.** The browser check asserts
+Enter Manually opens no camera, and it failed twice — because a Playwright `filechooser` event
+is async and the chooser from the `bdBegin()` click just above had not landed before the flag
+was reset. The button was innocent; the probe was reading the previous click. Fixed by letting
+it settle first, which is the same family as asserting a probe REACHED something before reading
+meaning into what it said.
+
+**§21 pins the invariant** the typed path rests on and which nothing asserted: a photoless
+pallet is logged, stores a null `r2_key`, writes nothing to R2 — and a body with neither a
+photo nor an identifying field is still refused 400.
+
+**Verified.** `4991 assertions across 76 suites` green (was 4975); `test-bin-dump.mjs` **279**.
+`browser-inventory-receiver.mjs` **154** (was 138) — it already drove Bin Dump for the camera
+attribute, so the new checks ride the context that was watching the file chooser anyway.
+
+---
+
 # Inventory Receiver — Add Pallet becomes Scan Tag (2026-09-21)
 
 **Brian:** *"rename Add Pallet to Scan Tag"* — taking the option offered in #258's "considered,

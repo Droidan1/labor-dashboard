@@ -985,6 +985,58 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
      'Enter picks nothing when there are choices; with three options there is no default');
 }
 
+// ── 21. A pallet can be logged with NO photo at all ─────────────────
+// 🔑 THE INVARIANT THE TYPED ENTRY RESTS ON, and nothing asserted it until now. A tag too
+// torn, faded or shrink-wrapped to photograph is still a pallet that went into the bins, and
+// Enter Manually posts exactly this: the fields, no image. Easy to tighten by accident too —
+// bin-dump-scan a few dozen lines up DOES refuse a body with no image.
+{
+  const { env, db } = env0();
+  const r = await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
+    body: { store: 'BL1', ...TAG }, env });
+  eq(r.status, 200, '✅ a pallet with no photo is logged');
+  const j = await json(r);
+  eq(env.MEDIA._store.size, 0, '🔑 ...and nothing is written to R2, rather than an empty object');
+  const row = db.prepare('SELECT * FROM bin_dumps WHERE id = ?').get(j.id);
+  eq(row.r2_key, null, '...the row carries a null r2_key');
+  eq(row.item_no, TAG.item_no, '...and the fields that were typed');
+  eq(row.units, 1, '...including the units it puts into the bins');
+
+  // 🛑 Validation moves to the FIELDS when there is no image to lean on — a body with
+  // neither is the one case that must still be refused, or a mis-tap logs a blank row.
+  const empty = await call('/?action=bin-dump-log', { user: 'u-mgr1', method: 'POST',
+    body: { store: 'BL1' }, env });
+  eq(empty.status, 400, '🛑 ...but no photo AND no identifying field is refused');
+  eq(db.prepare('SELECT COUNT(*) AS n FROM bin_dumps').get().n, 1, '...and writes nothing');
+}
+
+// ── 22. The typed path exists, and does not open as seven findings ─────
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  ok(/id="bd-manual"[\s\S]{0,120}onclick="bdManual\(\)"/.test(html),
+     'Bin Dump offers Enter Manually beside Begin');
+  ok(/function bdManual\(\)[\s\S]{0,400}bdOpenVerify\(\{ fields: \{\}/.test(html),
+     '🔑 ...and it opens the form directly — no camera, no bin-dump-scan call');
+  ok(/manual: false/.test(html) && /bdState\.manual = true;/.test(html),
+     'manual is an explicit flag, not inferred from the absence of a photo');
+  // 🛑 'miss' paints the input red AND badges it NOT FOUND. Nothing was read on a typed
+  // entry, so a blank is not a finding.
+  ok(/\(!manual && fields\[f\.k\] == null\) \? 'miss' : ''/.test(html),
+     '🛑 a blank typed field is not marked NOT FOUND — there was no read to fail');
+  ok(/el\('bd-m-shot'\)\.hidden = manual;/.test(html),
+     '🛑 ...and the photo block is hidden, rather than showing an empty image box');
+  ok(/id="bd-m-manual"/.test(html) && /at least one of those four/.test(html),
+     '🛑 the typed form carries its own note — #bd-m-read lives inside the hidden photo block');
+  ok(/el\('bd-m-retake'\)\.textContent = manual \? 'Take Photo' : 'Retake';/.test(html),
+     '"Retake" becomes "Take Photo" on a form that never had one');
+  // Every entry point states which it is, so the flag cannot be left over.
+  for (const fn of ['bdBegin', 'bdOpenEdit']) {
+    const at = html.indexOf(`function ${fn}(`);
+    ok(at > 0 && /bdState\.manual = false/.test(html.slice(at, at + 400)),
+       `${fn} clears manual, so a typed entry cannot leak into the next operation`);
+  }
+}
+
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
