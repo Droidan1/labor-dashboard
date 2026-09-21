@@ -3047,10 +3047,12 @@
             <span class="ir-lbl" id="ir-det-title" style="font-size:12px">Truck</span>
             <span id="ir-det-pill"></span>
             <span class="ir-bar-right">
-              <!-- A pallet that was missed. Shown on the same rule as the rows' Edit, and
-                   refused independently by the worker — a hidden button is not a permission. -->
-              <button type="button" class="ir-btn ir-ghost ir-sm" id="ir-det-add"
-                      onclick="irBeginPallet('detail')" hidden>Add Pallet</button>
+              <!-- A pallet that was missed, two ways. Both shown on the same rule as the rows'
+                   Edit, and refused independently by the worker — a hidden button is not a
+                   permission. The labels are both VERBS describing how, because "Add Pallet"
+                   beside "Enter Manually" read as two different kinds of thing. -->
+              <button type="button" class="ir-btn ir-ghost ir-sm" id="ir-det-scan"
+                      onclick="irBeginPallet('detail')" hidden>Scan Tag</button>
               <button type="button" class="ir-btn ir-ghost ir-sm" id="ir-det-manual"
                       onclick="irManualPallet('detail')" hidden>Enter Manually</button>
               <button type="button" class="ir-btn ir-ghost ir-sm" onclick="irCloseDetail()" aria-label="Close">&times;</button>
@@ -27378,7 +27380,7 @@
     const mayEdit = t.closed_at ? irCanDelete() : true;
     // 🔑 Adding a missed pallet is the same standing as correcting one (Brian, 2026-09-21),
     // so it rides the same flag rather than growing a second rule that could disagree.
-    el('ir-det-add').hidden = !mayEdit;
+    el('ir-det-scan').hidden = !mayEdit;
     el('ir-det-manual').hidden = !mayEdit;
     el('ir-det-pallets').innerHTML = n
       ? irPalletTableHtml(pallets, { withDate: true, edit: mayEdit, from: 'detail' })

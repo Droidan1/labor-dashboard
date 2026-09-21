@@ -1083,10 +1083,16 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
 // ── 37. The read-back offers the add, and files it against the right truck ──
 {
   const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
-  ok(/id="ir-det-add"[\s\S]{0,120}irBeginPallet\('detail'\)/.test(html),
-     'the read-back has an Add Pallet button that names its source');
-  ok(/el\('ir-det-add'\)\.hidden = !mayEdit;/.test(html),
+  ok(/id="ir-det-scan"[\s\S]{0,120}irBeginPallet\('detail'\)/.test(html),
+     'the read-back has a Scan Tag button that names its source');
+  ok(/el\('ir-det-scan'\)\.hidden = !mayEdit;/.test(html),
      '🔑 ...shown on the same rule as the rows\' Edit, not a second one that could disagree');
+  // 🔑 The two ways in are labelled as two VERBS, because "Add Pallet" beside "Enter
+  // Manually" read as two different kinds of thing rather than a choice of how (Brian,
+  // 2026-09-21). Pinned as a pair: renaming one without the other loses the point.
+  ok(/id="ir-det-scan"[\s\S]{0,160}>Scan Tag</.test(html), 'the camera path is labelled Scan Tag');
+  ok(/id="ir-det-manual"[\s\S]{0,160}>Enter Manually</.test(html), '...and the typed one Enter Manually');
+  ok(!/>Add Pallet</.test(html), '...with no "Add Pallet" left to disagree with either');
   ok(/const onTruck = irState\.opFrom === 'detail'[\s\S]{0,120}irState\.truck;[\s\S]{0,400}truck_id: onTruck && onTruck\.id/.test(html),
      '🛑 a new pallet is filed against the truck whose screen raised it, not the dock\'s');
   ok(/if \(detail\) irSetDetStatus\('Reading tag…', 'ok'\);/.test(html),
@@ -1145,7 +1151,7 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
   ok(/id="ir-det-manual"[\s\S]{0,120}irManualPallet\('detail'\)/.test(html),
      'the read-back offers Enter Manually');
   ok(/el\('ir-det-manual'\)\.hidden = !mayEdit;/.test(html),
-     '...on the same gate as Add Pallet and the rows\' Edit');
+     '...on the same gate as Scan Tag and the rows\' Edit');
   ok(/function irManualPallet\(from\)[\s\S]{0,400}irOpenVerify\(\{ fields: \{\}/.test(html),
      '🔑 ...and it opens the form directly — no camera, no scan call');
   ok(/irState\.manual = true;/.test(html) && /manual: false,/.test(html),

@@ -1,3 +1,26 @@
+# Inventory Receiver — Add Pallet becomes Scan Tag (2026-09-21)
+
+**Brian:** *"rename Add Pallet to Scan Tag"* — taking the option offered in #258's "considered,
+not done". The entry below it still records the opposite call; that is the history, not a
+mistake to edit out.
+
+**Why it reads better.** "Add Pallet" beside "Enter Manually" is a choice between two different
+KINDS of thing — one names the outcome, the other names the method. **Scan Tag / Enter
+Manually** is one choice about how, and both are verbs. The dock's own button has always said
+"Scan Pallet Tag", so the vocabulary was already there.
+
+**The id followed the label.** `ir-det-add` naming a button that says Scan Tag is the same
+small lie `editFrom` was telling when it started governing adds, so it is `ir-det-scan` now and
+pairs with `ir-det-manual`.
+
+**Pinned as a PAIR.** §37 asserts both labels and that no "Add Pallet" survives anywhere,
+because renaming one of the two without the other is exactly what loses the point.
+
+**Verified.** `4975 assertions across 76 suites` green (was 4972); browser check **138**, both
+themes. `CACHE_NAME` → `v211`. Frontend only — merging is the whole rollout.
+
+---
+
 # Inventory Receiver — Add Pallet without a camera (2026-09-21)
 
 **Brian:** *"For the add pallet option add a manual entry option"*

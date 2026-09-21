@@ -231,7 +231,7 @@ for (const scheme of ['dark', 'light']) {
   // then reports the read. The mocked account is a manager and truck 2 is down.
   await page.click('#ir-months > div:nth-child(2) .ir-row-btn');
   await page.waitForTimeout(500);
-  check(await page.isVisible('#ir-det-add'), `[${t}] a manager is offered Add Pallet on a truck that is down`);
+  check(await page.isVisible('#ir-det-scan'), `[${t}] a manager is offered Scan Tag on a truck that is down`);
   // The scan is driven directly rather than through the OS file chooser, which Playwright
   // cannot fill with a real photo here; what matters is where the result is reported and
   // which truck it is filed against.
@@ -262,7 +262,7 @@ for (const scheme of ['dark', 'light']) {
   // ── The typed path ──────────────────────────────────────────────
   // A pallet recorded days late has no cardboard to photograph. Clicked, not called — the
   // point is that the button is reachable without touching the camera.
-  check(await page.isVisible('#ir-det-manual'), `[${t}] Enter Manually is offered beside Add Pallet`);
+  check(await page.isVisible('#ir-det-manual'), `[${t}] Enter Manually is offered beside Scan Tag`);
   let chooserOpened = false;
   const onChooser = () => { chooserOpened = true; };
   page.on('filechooser', onChooser);
