@@ -1037,6 +1037,27 @@ const IMG = { image_b64: 'aGVsbG8=', media_type: 'image/jpeg' };
   }
 }
 
+// ── 23. The row button says what it will DO for this account ───────────
+// 🔑 bdOpenEdit already opens READ-ONLY without edit rights — title "Logged pallet", inputs
+// readOnly, no Delete. The button said EDIT regardless, promising something the modal then
+// refused, and a view-only account is the one least able to tell a withheld permission from a
+// broken page. Pinned against the gate rather than as a bare string, so the label and the
+// behaviour cannot drift apart.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  ok(/canEdit \? 'EDIT' : 'VIEW'/.test(html),
+     'the log row button reads EDIT or VIEW by what the account may do');
+  const at = html.indexOf('function bdRenderLog(');
+  ok(at > 0 && /const canEdit = bdCanEdit\(\);/.test(html.slice(at, at + 1600)),
+     '🔑 ...decided by bdCanEdit, the same gate bdOpenEdit uses for read-only');
+  // The modal half of the same rule, which was already true and must stay so.
+  const edit = html.slice(html.indexOf('function bdOpenEdit('));
+  ok(/const ro = !bdCanEdit\(\);/.test(edit.slice(0, 600)),
+     '...and the modal still derives read-only from that same gate');
+  ok(/el\('bd-m-delete'\)\.hidden = ro \|\| !bdCanDelete\(\);/.test(edit.slice(0, 1200)),
+     '...with Delete withheld from anyone read-only, whatever the button said');
+}
+
 // Tally in the shape scripts/test.sh counts: "<n> passed, <m> failed".
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

@@ -26381,6 +26381,11 @@
     if (!bdState.seeded && keys.length) { bdState.openWeeks.add(keys[0]); bdState.seeded = true; }
 
     const now = bdThisWeek();
+    // 🔑 What the row button will actually DO for this account. bdOpenEdit opens read-only
+    // without edit rights — title "Logged pallet", inputs readOnly, no Delete — so a button
+    // labelled EDIT promised something it then refused, and a view-only account is the one
+    // least able to tell a withheld permission from a broken page.
+    const canEdit = bdCanEdit();
     const cur = groups.get(now) || [];
     el('bd-wk-pallets').textContent = cur.length;
     el('bd-wk-units').textContent = cur.reduce((s, r) => s + (Number(r.units) || 0), 0).toLocaleString();
@@ -26436,7 +26441,8 @@
               <td class="dim">${escapeHtml(r.po || '—')}</td>
               <td class="dim">${escapeHtml(r.truck_no || '—')}</td>
               <td class="dim">${escapeHtml(r.created_by_tag || '—')}</td>
-              <td><button type="button" class="bd-row-btn" onclick="bdOpenEdit(${r.id})">EDIT</button></td>
+              <td><button type="button" class="bd-row-btn" onclick="bdOpenEdit(${r.id})">${
+                canEdit ? 'EDIT' : 'VIEW'}</button></td>
             </tr>`).join('')}</tbody>
         </table></div></div></div>
       </section>`;
