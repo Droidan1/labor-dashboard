@@ -3043,6 +3043,10 @@
             <span class="ir-lbl" id="ir-det-title" style="font-size:12px">Truck</span>
             <span id="ir-det-pill"></span>
             <span class="ir-bar-right">
+              <!-- A pallet that was missed. Shown on the same rule as the rows' Edit, and
+                   refused independently by the worker — a hidden button is not a permission. -->
+              <button type="button" class="ir-btn ir-ghost ir-sm" id="ir-det-add"
+                      onclick="irBeginPallet('detail')" hidden>Add Pallet</button>
               <button type="button" class="ir-btn ir-ghost ir-sm" onclick="irCloseDetail()" aria-label="Close">&times;</button>
             </span>
           </div>
@@ -26518,10 +26522,11 @@
     store: null, mode: null, busy: false, seeded: false,
     truck: null, pallets: [], trucks: [],
     detailId: null, detail: null,   // the truck the read-back modal is showing, and its payload
-    // 🛑 Which LIST the pallet under edit came from, so the right screen refreshes after.
+    // 🛑 Which SCREEN the pallet operation in flight belongs to — an add, a correction or
+    // a delete — so the right one refreshes after and the right truck is written to.
     // Not inferred from "is the read-back open": the verify modal opens ON TOP of it, so that
-    // test is true for a dock edit made while a read-back happens to be open behind it.
-    editFrom: null,                 // 'dock' | 'detail'
+    // test is true for a dock operation started while a read-back happens to be open behind.
+    opFrom: null,                   // 'dock' | 'detail'
     photo: null, mediaType: null, fields: {}, editId: null,
     pending: null,                 // the submit waiting on a manager approval
   };
@@ -26662,8 +26667,19 @@
       irSetStatus(`Couldn't open the camera or file picker — ${(e && e.message) || e}`, 'err');
     }
   }
-  function irBeginBol() { irState.mode = 'bol'; irCloseModal(); irSetStatus(null); irPick(); }
-  function irBeginPallet() { irState.mode = 'pallet'; irCloseModal(); irSetStatus(null); irPick(); }
+  function irBeginBol() {
+    irState.mode = 'bol'; irState.editId = null; irState.opFrom = 'dock';
+    irCloseModal(); irSetStatus(null); irPick();
+  }
+  // `from` is 'dock' or 'detail'. editId is cleared because this is an ADD: leaving a stale
+  // one behind would turn the next scan into a correction of whatever was last edited.
+  function irBeginPallet(from) {
+    irState.mode = 'pallet'; irState.editId = null;
+    irState.opFrom = from === 'detail' ? 'detail' : 'dock';
+    irCloseModal();
+    if (irState.opFrom === 'detail') irSetDetStatus(null); else irSetStatus(null);
+    irPick();
+  }
   function irRetake() { if (irState.mode) { irCloseModal(); irPick(); } }
   window.irBeginBol = irBeginBol; window.irBeginPallet = irBeginPallet; window.irRetake = irRetake;
 
@@ -26672,8 +26688,14 @@
     input.value = '';
     if (!f) return;
     const isBol = irState.mode === 'bol';
+    // 🛑 #ir-reading lives on the RECEIVE pane. A manager adding a pallet to a truck they
+    // are reading back is on the Trucks tab, so that spinner is off screen: they would
+    // photograph a tag and watch nothing happen for the seconds the read takes, which is the
+    // dead-button failure irPick's own error path exists for. Say it where they are looking.
+    const detail = irState.opFrom === 'detail';
+    if (detail) irSetDetStatus('Reading tag…', 'ok');
     el('ir-begin').hidden = true;
-    el('ir-reading').hidden = false;
+    el('ir-reading').hidden = detail;
     el('ir-reading-t').textContent = isBol ? 'Reading Bill of Lading…' : 'Reading tag…';
     try {
       const b64 = isBol ? await psShrink(f, IR_BOL_MAX_PX, IR_BOL_QUALITY) : await psShrink(f);
@@ -26717,7 +26739,7 @@
     // from irState.truck alone was right while the only editable pallets were the dock's;
     // now a manager can correct a pallet from a read-back of a DIFFERENT truck, and with one
     // open on the dock the header would have captioned the correction with the wrong BOL.
-    const onTruck = irState.editFrom === 'detail'
+    const onTruck = irState.opFrom === 'detail'
       ? (irState.detail && irState.detail.truck)
       : irState.truck;
     el('ir-m-title').textContent = isBol
@@ -26771,11 +26793,18 @@
     try {
       const v = irReadFields();
       const isBol = irState.mode === 'bol';
+      // 🔑 The truck a NEW pallet goes onto is the one whose screen raised the scan — the
+      // read-back's truck when a manager is adding a missed pallet to one that is down, the
+      // dock's otherwise. Always reading irState.truck would have filed it against whatever
+      // happens to be on the dock, which is a different truck and a silent one.
+      const onTruck = irState.opFrom === 'detail'
+        ? (irState.detail && irState.detail.truck)
+        : irState.truck;
       const payload = isBol
         ? { ...v, store: irScanStore(), image_b64: irState.photo, media_type: irState.mediaType }
         : irState.editId
           ? { ...v, id: irState.editId }
-          : { ...v, truck_id: irState.truck && irState.truck.id, image_b64: irState.photo, media_type: irState.mediaType };
+          : { ...v, truck_id: onTruck && onTruck.id, image_b64: irState.photo, media_type: irState.mediaType };
       const action = isBol ? 'truck-open' : irState.editId ? 'truck-pallet-update' : 'truck-pallet-log';
       await irSend(action, payload);
     } catch (e) {
@@ -26806,17 +26835,23 @@
   }
 
   async function irAfterSend(action, j) {
-    const fromDetail = irState.editFrom === 'detail';
+    const fromDetail = irState.opFrom === 'detail';
     irCloseModal();
-    irState.photo = null; irState.editId = null; irState.editFrom = null;
+    irState.photo = null; irState.editId = null; irState.opFrom = null;
     // A correction made in the read-back refreshes the READ-BACK. Falling through to
     // irLoadCurrent() would reload the dock instead and leave the modal showing the row as
     // it was before the edit — the change applied, and invisible.
     if (fromDetail) {
+      const dockTruckId = irState.truck && irState.truck.id;
       await irOpenTruck(irState.detailId);
+      const added = action === 'truck-pallet-log';
       irSetDetStatus(j && j.dup_approved_by
-        ? `Corrected — duplicate approved by ${j.dup_approved_by}.`
-        : 'Pallet corrected.', j && j.dup_approved_by ? 'warn' : 'ok');
+        ? `${added ? 'Added' : 'Corrected'} — duplicate approved by ${j.dup_approved_by}.`
+        : added ? 'Pallet added to this truck.' : 'Pallet corrected.',
+        j && j.dup_approved_by ? 'warn' : 'ok');
+      // The read-back can be showing the truck that is ALSO on the dock. Refreshing only
+      // this modal would leave the Receive tab quoting counts that are one pallet stale.
+      if (dockTruckId && dockTruckId === irState.detailId) irLoadCurrent();
       return;
     }
     if (action === 'truck-open') {
@@ -27033,7 +27068,7 @@
     if (!p) return;
     irState.mode = 'pallet';
     irState.editId = id;
-    irState.editFrom = detail ? 'detail' : 'dock';
+    irState.opFrom = detail ? 'detail' : 'dock';
     irState.photo = null;
     irOpenVerify({ fields: p, read: IR_TAG_FIELDS.filter(f => p[f.k] != null).length, of: IR_TAG_FIELDS.length }, null);
   }
@@ -27041,7 +27076,7 @@
 
   async function irDeletePallet() {
     if (!irState.editId) return;
-    const fromDetail = irState.editFrom === 'detail';
+    const fromDetail = irState.opFrom === 'detail';
     // 🔑 A truck that is DOWN says so, and says what else moves. Its pallet count and unit
     // total are what the review email already reported, so removing a row now changes a
     // number somebody has been told — which is the thing worth a second of thought, not the
@@ -27057,10 +27092,12 @@
       const id = irState.editId;
       await irPost('truck-pallet-delete', { id });
       irCloseModal();
-      irState.editId = null; irState.editFrom = null;
+      irState.editId = null; irState.opFrom = null;
       if (fromDetail) {
+        const dockTruckId = irState.truck && irState.truck.id;
         await irOpenTruck(irState.detailId);
         irSetDetStatus('Pallet removed.', 'ok');
+        if (dockTruckId && dockTruckId === irState.detailId) irLoadCurrent();
       } else {
         irSetStatus('Pallet removed.', 'ok');
         irLoadCurrent();
@@ -27304,6 +27341,9 @@
     // the ROW and refuses a non-manager on a closed one, so hiding it is courtesy and the
     // worker is the guard — a hidden button is not a permission.
     const mayEdit = t.closed_at ? irCanDelete() : true;
+    // 🔑 Adding a missed pallet is the same standing as correcting one (Brian, 2026-09-21),
+    // so it rides the same flag rather than growing a second rule that could disagree.
+    el('ir-det-add').hidden = !mayEdit;
     el('ir-det-pallets').innerHTML = n
       ? irPalletTableHtml(pallets, { withDate: true, edit: mayEdit, from: 'detail' })
       : '';

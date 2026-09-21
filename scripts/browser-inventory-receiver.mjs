@@ -91,6 +91,9 @@ for (const scheme of ['dark', 'light']) {
                  closed_at: '2026-08-11T17:22:00Z', month: '2026-08', closed_by: 'Kevin R',
                  opened_by: 'Oo Aung', pallet_count: 3, close_note: null } });
       if (s.includes('truck-approvers')) return J({ ok: true, names: ['Kevin R', 'Wendy P'] });
+      if (s.includes('truck-pallet-scan')) return J({ ok: true, read: 6, of: 8,
+        fields: { barcode: 'PRM-99999-1', pallet_name: 'PALLET MISSED', item_no: '50999',
+                  po: '7001', sup_ref: null, units: 41, created_by_tag: 'Dana F', truck_no: '99999' } });
       return real(u, o);
     };
   }, { TRUCK, PALLETS });
@@ -222,6 +225,41 @@ for (const scheme of ['dark', 'light']) {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
   check(!(await page.isVisible('#ir-det')), `[${t}] Escape closes it once nothing is above it`);
+
+  // ── Adding a pallet that was missed ───────────────────────────────
+  // 🛑 Driven through the real camera path: the button opens a file chooser, and irPhoto
+  // then reports the read. The mocked account is a manager and truck 2 is down.
+  await page.click('#ir-months > div:nth-child(2) .ir-row-btn');
+  await page.waitForTimeout(500);
+  check(await page.isVisible('#ir-det-add'), `[${t}] a manager is offered Add Pallet on a truck that is down`);
+  // The scan is driven directly rather than through the OS file chooser, which Playwright
+  // cannot fill with a real photo here; what matters is where the result is reported and
+  // which truck it is filed against.
+  await page.evaluate(() => { window.irBeginPallet('detail'); });
+  await page.waitForTimeout(200);
+  const filed = await page.evaluate(async () => {
+    const seen = {};
+    const real = window.fetch;
+    window.fetch = async (u, o) => {
+      const str = String(u);
+      if (str.includes('truck-pallet-log')) {
+        seen.body = JSON.parse(o.body);
+        return new Response(JSON.stringify({ ok: true, id: 77 }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return real(u, o);
+    };
+    window.irOpenVerify({ fields: { barcode: 'PRM-99999-1', units: 41, pallet_name: 'PALLET MISSED' }, read: 6, of: 8 }, null);
+    await window.irSubmit();
+    window.fetch = real;
+    return seen.body || null;
+  });
+  check(!!filed && filed.truck_id === 2,
+        `[${t}] 🛑 the missed pallet is filed against the truck being read back (got ${filed && filed.truck_id})`);
+  check(!!filed && filed.barcode === 'PRM-99999-1', `[${t}] ...carrying the tag that was read`);
+  check((await page.textContent('#ir-det-status') || '').includes('added'),
+        `[${t}] ...and the outcome is reported on the Trucks tab, not the Receive pane`);
+  await page.evaluate(() => window.irCloseDetail());
+  await page.waitForTimeout(200);
   check(await page.isVisible('#ir-pane-trucks'), `[${t}] ...and leaves the tab it was raised from`);
   // Reopened on purpose: a tab switch has to take it with it, or it is still sitting
   // over the Receive pane on the way back.
