@@ -1,3 +1,50 @@
+## `head -40` showed one entry, so I replaced forty-five (2026-09-21)
+
+Writing the Price Scan plan, I ran `head -40 tasks/todo.md`, saw one complete task write-up
+with a title, a narrative and a review table, and concluded the file held the current task and
+got replaced each time. It does not. It is a **rolling log, newest first — 45 entries, 4,205
+lines** — and `cat > tasks/todo.md <<'EOF'` deleted 44 of them.
+
+CLAUDE.md says so in the instruction I was following at the time: *"Document Results: **Add**
+review section to tasks/todo.md."* Add. I read a sentence describing an accumulating file as
+a sentence describing a file to overwrite.
+
+Nothing in my own process caught it. What caught it was the GitHub API answering a routine
+state check on my own PR:
+
+    "additions": 91, "deletions": 4201, "changed_files": 1
+
+I had already committed it, already pushed it, and already told Brian the plan was on the
+branch. Had I not happened to read that field, the loss would have reached his review as a
+green, clean, two-check PR.
+
+Recovered in full — `git show HEAD~1:tasks/todo.md`, restored byte-identical, verified with a
+`diff` of the 4,205-line tail rather than by eyeballing a line count. It cost nothing because
+git had it. That is luck about the medium, not care in the method: the same command against an
+untracked file, a KV key or a D1 table is one of the three incidents MEMORY.md already opens
+with.
+
+<rules>
+1. **`head` tells you how a file starts. It never tells you how long it is or what else is in
+   it.** Before overwriting any tracked file, `wc -l` it and count its section headings. A
+   45-entry log and a single-task file are byte-identical for their first 40 lines — that
+   indistinguishability IS the trap, not a detail of this one file.
+2. **`cat > f <<'EOF'` on a file you did not create this session is a delete, wearing a
+   write's clothes.** Default to prepend or append for anything already tracked. If a full
+   replace really is intended, say out loud what is being discarded and how many lines of it
+   there are, first.
+3. **Read the diffstat of your own commit before calling it done.** `+91 −4201` on a commit
+   whose message says "wrote a plan" is the whole finding, available instantly, and it sat
+   unread in `git commit`'s own output. `git diff --stat HEAD~1` costs one second and answers
+   "did I change only what I meant to".
+4. **An instruction that describes a file's SHAPE is load-bearing — read it as a spec, not as
+   prose.** "Add a review section" and "write the plan to" describe the same file accumulating
+   in both directions. The verb was the spec and I skimmed past it.
+5. **Recovery by git is not evidence of a safe method.** The command was equally happy to run
+   against something with no undo. Judge the method by what it would have done to the least
+   recoverable target it could have been pointed at, not by how this instance landed.
+</rules>
+
 ## A deploy-order dependency cannot be enforced by a note (2026-09-18)
 
 The Inventory Receiver read-back needed the worker out before the frontend. I put that in the

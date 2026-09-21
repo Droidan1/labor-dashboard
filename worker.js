@@ -1401,10 +1401,34 @@ async function cloverFetch(url, options) {
 // arrived at more honestly. The caller must refuse to create on null.
 const CLOVER_CODE_SCAN_PAGES = 20;
 
-async function cloverCodeInUse(env, store, code, headers) {
+// 🔑 `opts.siblingRe` IS A FREE RIDE ON A PASS ALREADY BEING MADE. Creating a sticker
+// price point needs two facts about the same catalogue: whether this exact code is taken,
+// and what an item already in this category looks like, so the new one can copy its tax
+// and visibility rather than guess them. Asking separately would page ~1,100 items twice
+// per store. When it is absent NOTHING changes — same loop, same returns, same shape —
+// which is what lets the duplicate guard's tests keep describing this function unaltered.
+//
+// 🛑 A SIBLING IS NEVER A REASON TO STOP EARLY. The scan still ends on the duplicate or
+// on the end of the catalogue; the sibling is whatever was seen on the way. Returning as
+// soon as one turned up would skip the remaining pages and turn "absent" back into an
+// assumption — the very thing the short-page check exists to avoid.
+async function cloverCodeInUse(env, store, code, headers, opts = {}) {
   const mId = env[`${String(store).toUpperCase()}_MERCHANT_ID`];
   if (!mId) return { inUse: null, why: `${store} has no merchant id configured` };
   const want = String(code);
+  const siblingRe = opts.siblingRe || null;
+  let sibling = null;
+  const noteSibling = (rows) => {
+    if (!siblingRe || sibling) return;
+    const s = rows.find(it => it && it.id &&
+      (siblingRe.test(String(it.code || "")) || siblingRe.test(String(it.sku || ""))));
+    if (s) {
+      sibling = { id: s.id, name: String(s.name || ""),
+                  taxable: !!s.defaultTaxRates, hidden: !!s.hidden,
+                  cost: Number.isFinite(Number(s.cost)) ? Number(s.cost) : null,
+                  code: String(s.code || s.sku || "") };
+    }
+  };
   try {
     for (let page = 0; page < CLOVER_CODE_SCAN_PAGES; page++) {
       const r = await cloverFetch(
@@ -1414,11 +1438,12 @@ async function cloverCodeInUse(env, store, code, headers) {
         return { inUse: null, why: `Clover answered ${r?.status}${txt ? ` — ${txt.slice(0, 160)}` : ""}` };
       }
       const rows = (await r.json())?.elements || [];
+      noteSibling(rows);
       const hit = rows.find(it => String(it?.code || "") === want || String(it?.sku || "") === want);
-      if (hit) return { inUse: true, existingId: hit.id, existingName: String(hit?.name || "") };
+      if (hit) return { inUse: true, existingId: hit.id, existingName: String(hit?.name || ""), sibling };
       // A short page is the end of the catalogue, which makes "absent" a fact rather than
       // an assumption. Only here may this return false.
-      if (rows.length < 1000) return { inUse: false };
+      if (rows.length < 1000) return { inUse: false, sibling };
     }
   } catch (e) {
     // cloverFetch awaits fetch() directly, so an unreachable Clover throws rather than
@@ -4952,7 +4977,10 @@ const ACTION_BUSINESS = new Map([
   ["merch-product-save", "bl"],
   ["merch-scan", "bl"],
   ["merch-scan-save", "bl"],
+  ["merch-categories", "bl"],
+  ["merch-manual-price", "bl"],
   ["sticker-check", "bl"],
+  ["sticker-create-price-point", "bl"],
   ["sticker-printed", "bl"],
   ["sticker-history", "bl"],
   ["sticker-template", "bl"],
@@ -12909,6 +12937,20 @@ const stickerCode = (categoryCode, price) => {
   return (!p || !/^\d+$/.test(c)) ? null : `BL-${c}-${p}`;
 };
 
+// How many labels one press of Print may produce.
+//
+// 🔑 THE NUMBER IS DUPLICATED IN index.html's psZpl ON PURPOSE, AND THE TEST PINS THE
+// TWO TOGETHER. psZpl is deliberately self-contained — the test slices it out of the file
+// and evals it in isolation, so it cannot read a module-scope constant, and a shared helper
+// is exactly what that function's own comment refuses. So the literal lives in both places
+// and `test-price-scan` asserts they are equal, the same trade PS_STORES already makes
+// against ALL_STORES. Two copies that are checked beat one copy that breaks the isolation.
+//
+// 50 because a label run is a shelf's worth, not a pallet's: the largest real request seen
+// is a case of 24, and a mistyped 500 is a jammed printer and a wasted roll rather than
+// anything anyone wanted.
+const STICKER_QTY_MAX = 50;
+
 // ─── Mark Out of Stock: reading a sticker code back ──────────────────────────
 //
 // The inverse of the two functions above, kept beside them so the encoding and the
@@ -13164,18 +13206,22 @@ async function stickerCategoryCodes(env, store, opts = {}) {
   return { map, field, codes };
 }
 
-// Does this exact code exist in Clover? Reuses the same `filter=code=` lookup that
-// create-clover-item already uses as its duplicate check.
+// Does this exact code exist in Clover? Answered from the set of codes the category sweep
+// already collected — no Clover call of its own.
 // Returns { exists } when we know, or { exists: null, why } when we could not find out.
 //
 // 🛑 CLOVER CANNOT FILTER ON `code` AT ALL. This used to ask
 // `items?filter=code=BL-50002-1_5`, which every single time answered
 //   400 {"message":"'code' is not a supported field for this filter."}
 // so the check could never succeed — and because it discarded the body, all it ever said
-// was "Clover did not answer". The same broken filter is create-clover-item's duplicate
-// guard, where the failure is worse than useless: that handler only inspects the response
-// `if (dupResp.ok)`, so the 400 falls through and it creates the duplicate it was there
-// to prevent.
+// was "Clover did not answer". create-clover-item's duplicate guard asked the same
+// unanswerable question and read the reply only inside `if (dupResp.ok)`, so the 400 fell
+// through and it created the duplicate the check existed to prevent.
+//
+// ✅ BOTH ARE FIXED, BY DIFFERENT ROUTES, AND THIS NOTE IS NOT A LIVE WARNING. That
+// handler now calls cloverCodeInUse, which pages the catalogue and fails CLOSED on null;
+// this one stopped asking altogether, as below. The history stays because it is why
+// neither path may go back to a `filter=code=` lookup — not because either is still broken.
 //
 // 🔑 SO STOP ASKING. The category sweep already reads every item and already extracts
 // every BL- string to build the map; the set of existing codes falls out of a pass we
@@ -22788,9 +22834,25 @@ export default {
     // them, so a correction can always be compared with what the machine actually found.
     // Passing null clears an override and hands the item back to the lookup.
     if (url.searchParams.get("action") === "merch-scan-save" && request.method === "POST") {
-      const unauth = requireAdminAccess(request, currentUser, isAdminSecret, corsJson,
-        { allowAdminMutation: true });
-      if (unauth) return unauth;
+      // 🛑 WIDENED FROM requireAdminAccess TO canSeeFinancials, AND THIS IS THE ONE REAL
+      // PRIVILEGE CHANGE IN THE MANUAL-PRICING WORK. Brian, 2026-09-21, asked in so many
+      // words for managers to get both the Clover price point and the Products override,
+      // having been shown that this endpoint is the second of the two and what it does.
+      //
+      // Be clear about what it now grants: a manager can set what an item is worth for
+      // EVERY STORE, PERMANENTLY. The comment this replaces drew the line the other way --
+      // "a manager prices items all day, but only an admin may permanently change what an
+      // item is worth for every store" -- and that line is now moved deliberately rather
+      // than eroded. The gate is still canSeeFinancials, which is narrower than business
+      // access and never admits staff, and it is the same gate merch-scan itself requires,
+      // so nobody can override a price on a screen they could not have reached.
+      //
+      // 🔑 psCanOverride IN index.html MIRRORS THIS AND MUST MOVE WITH IT. A screen that
+      // hides a control the worker would accept is merely coy; one that SHOWS a control the
+      // worker refuses teaches people the app is broken. test-price-scan pins them together.
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
       if (!env.DB) return new Response(JSON.stringify({ error: "DB not configured" }), { status: 500, headers: corsJson });
       try {
         const body = await request.json();
@@ -23099,10 +23161,25 @@ export default {
         // Null is a normal value here: "No street price found" is a real outcome of a scan.
         const retailNum = Number(body?.retail);
         const retailCents = Number.isFinite(retailNum) && retailNum > 0 ? Math.round(retailNum * 100) : null;
+        // 🛑 CLAMPED HERE TOO, NOT ONLY IN THE BROWSER. The screen caps the box at
+        // STICKER_QTY_MAX, but the screen is not the boundary — this endpoint is, and a
+        // recorded count of 900 would describe a run the printer never made. A count that
+        // cannot be believed is worse than none, because the history is what a reprint and
+        // any future shrink question are read from.
+        //
+        // 🔑 AND AN ABSENT qty STAYS NULL, never 1. migration-069 says why: a row
+        // printed before the count existed must stay distinguishable from one measured at
+        // one. Only a number actually sent is stored.
+        const qtyRaw = body?.qty;
+        const qtyNum = qtyRaw === undefined || qtyRaw === null || qtyRaw === "" ? null : Math.floor(Number(qtyRaw));
+        if (qtyNum !== null && (!Number.isFinite(qtyNum) || qtyNum < 1 || qtyNum > STICKER_QTY_MAX)) {
+          return new Response(JSON.stringify({ error: `A print count must be between 1 and ${STICKER_QTY_MAX}` }),
+            { status: 400, headers: corsJson });
+        }
         await env.DB.prepare(
-          `INSERT INTO sticker_prints (store, l3, price_cents, code, title, retail_cents, printed_by, printed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        ).bind(store, l3, cents, code, String(body?.title || "").slice(0, 200) || null, retailCents,
+          `INSERT INTO sticker_prints (store, l3, price_cents, code, title, retail_cents, qty, printed_by, printed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(store, l3, cents, code, String(body?.title || "").slice(0, 200) || null, retailCents, qtyNum,
                (currentUser && currentUser.email) || "unknown", new Date().toISOString()).run();
         return new Response(JSON.stringify({ ok: true }), { headers: corsJson });
       } catch (e) {
@@ -23110,6 +23187,349 @@ export default {
       }
     }
 
+
+    // ── The category tree, with nothing attached to it ────────────────────────
+    //    GET ?action=merch-categories → { categories: [{ key, label, children }] }
+    //
+    // 🔑 THE TREE ALREADY RIDES ALONG WITH merch-scan AND merch-products, AND THAT IS
+    // EXACTLY WHY THIS EXISTS. Both attach it to an answer about a particular item, which
+    // works because both START from an item. Manual pricing starts from the CATEGORY —
+    // Brian's rule is that L2 and L3 are chosen before a price is typed — so the list has
+    // to arrive before anything has been looked up. Reaching for merch-scan to get it would
+    // mean performing a product lookup in order to obtain a list that never varies.
+    if (url.searchParams.get("action") === "merch-categories" && request.method === "GET") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      return new Response(JSON.stringify({
+        ok: true,
+        categories: Object.entries(merchTree()).map(([l2, l3s]) => ({
+          key: l2, label: merchLabel(l2),
+          children: l3s.map(k => ({ key: k, label: merchLabel(k) })),
+        })),
+      }), { headers: corsJson });
+    }
+
+    // ── Pricing something by hand, with no lookup at all ──────────────────────
+    //    POST ?action=merch-manual-price { l3, retail?, price }
+    //
+    // Brian, 2026-09-21: "add a manual option that skips the look up. So user can manual
+    // enter the street price and our price. Before they do this user must at the L2 and L3
+    // category for this product." Sometimes the street price is already known; sometimes
+    // cost and the agreed margin dictate the price outright and there is nothing to look up.
+    //
+    // 🔑 THIS COMPUTES NOTHING ABOUT THE PRICE AND EVERYTHING AROUND IT. The price is the
+    // caller's; the ladder is not consulted. What the worker still owes is the CONTEXT that
+    // makes a hand-typed number checkable — the category's unit cost, its ASP, and the GP
+    // that falls out of the two. Those live here, behind KV reads and the criteria
+    // resolver, and merch-scan's own comment already says why the ladder never moved to the
+    // browser. A manual price with no GP beside it is a number nobody can argue with.
+    //
+    // 🛑 NOT A SECOND COPY OF merch-scan's TAIL, AND IT MUST NOT BECOME ONE. Everything
+    // below is the same sidecar, the same critAt and the same GP arithmetic that handler
+    // uses, deliberately reading from the same four sources — so a criteria change lands on
+    // both screens at once. test-price-scan pins the two against each other; if they drift,
+    // the manual card starts quoting a cost the scan card disagrees with, for the same
+    // category, on the same shelf.
+    if (url.searchParams.get("action") === "merch-manual-price" && request.method === "POST") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const body = await request.json();
+        const l3 = String(body?.l3 || "").trim();
+        // 🛑 THE CATEGORY IS THE ONE THING THAT CANNOT BE SKIPPED. It is what the sticker
+        // code is derived from and what the cost is looked up by, so a manual price without
+        // it is unprintable AND unverifiable. Refused here rather than rendered as a card
+        // with two em dashes where the numbers belong.
+        if (!l3 || !merchIsL3(l3)) {
+          return new Response(JSON.stringify({ error: "Pick a category before pricing by hand" }),
+            { status: 400, headers: corsJson });
+        }
+        const money = (v, what) => {
+          if (v === null || v === undefined || v === "") return null;
+          const n = Number(v);
+          if (!Number.isFinite(n) || n <= 0 || n >= 100000) throw new Error(`${what} must be a number above zero`);
+          return roundCents(n);
+        };
+        const price = money(body?.price, "A price");
+        const retail = money(body?.retail, "A street price");
+        if (price === null) {
+          return new Response(JSON.stringify({ error: "A manual price needs our price" }),
+            { status: 400, headers: corsJson });
+        }
+
+        const l2 = L3_TO_L2[l3] || merchParentOf(l3) || null;
+        const [av, catBlob, imBlob, [live, resolved]] = await Promise.all([
+          manifestAspVelocity(env),
+          env.SALES_SNAPSHOTS.get(CATEGORY_COSTS_KEY, "json"),
+          env.SALES_SNAPSHOTS.get(ITEM_COSTS_KEY, "json"),
+          merchVersions(env).then(v => v.live ? merchResolve(env, v.live.version).then(r => [v.live, r]) : [null, null]),
+        ]);
+        const asp = l3 && av[l3] ? (av[l3].asp ?? null) : null;
+        const cost = l3UnitCost(l3, (imBlob || {}).items || {}, (catBlob || {}).costs || {});
+        const critAt = (field) => {
+          if (!resolved) return null;
+          const kids = resolved.categories.flatMap(c => [c, ...(c.children || [])]);
+          return (l3 && kids.find(c => c.key === l3)?.fields?.[field]?.value)
+            ?? (l2 && resolved.categories.find(c => c.key === l2)?.fields?.[field]?.value)
+            ?? resolved.defaults?.[field]?.value ?? null;
+        };
+        const asNum = (v) => {
+          if (v === null || v === undefined || v === "") return null;
+          const n = Number(v); return Number.isFinite(n) ? n : null;
+        };
+        const gpFloorPct = asNum(critAt("min_gross_margin_pct"));
+        const gpPct = price && cost !== null && price > 0
+          ? +(((price - cost) / price) * 100).toFixed(1) : null;
+
+        return new Response(JSON.stringify({
+          ok: true,
+          // No identifier unless the caller supplied one. The barcode is optional in this
+          // mode and an absent one is a normal answer, not a blank to fill with "".
+          identifier: String(body?.identifier || "").trim() || null,
+          identifier_type: null,
+          title: String(body?.title || "").trim() || null,
+          brand: null, size: null,
+          l2, l3, l3_label: merchLabel(l3), l2_label: l2 ? merchLabel(l2) : null,
+          l3_source: "manual",
+          retail,
+          // 🔑 "set by hand" IS THE SAME STRING merch-scan USES for an override, because
+          // the screen renders both through one code path and a second spelling would read
+          // as a second kind of thing. It is not a source; it is the absence of one.
+          retail_source: retail === null ? null : "set by hand",
+          retail_confidence: retail === null ? null : "high",
+          retail_overridden: retail !== null,
+          asp, cost,
+          price, price_basis: "set by hand", price_overridden: true,
+          gp_pct: gpPct,
+          below_gp_floor: gpFloorPct !== null && gpPct !== null && gpPct < gpFloorPct,
+          gp_floor_pct: gpFloorPct,
+          ceiling_bound: false, floor_lifted: false, thin_deal: false,
+          rounding: critAt("rounding"),
+          criteria_version: live?.version ?? null,
+          categories: Object.entries(merchTree()).map(([k2, l3s]) => ({
+            key: k2, label: merchLabel(k2),
+            children: l3s.map(k => ({ key: k, label: merchLabel(k) })),
+          })),
+          from_cache: false, looked_up: false, from_photo: false,
+          // 🔑 THE ONE FLAG THAT MATTERS HERE. The screen reads `flags` to explain a missing
+          // retail, and "priced by hand" is a different reason from every lookup failure in
+          // that list — nothing was attempted, so nothing failed.
+          flags: ["priced by hand"],
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 400, headers: corsJson });
+      }
+    }
+
+    // ── Creating the price point a hand-typed price needs ─────────────────────
+    //    POST ?action=sticker-create-price-point { l3, price, store, confirm }
+    //
+    // Brian, 2026-09-21, on what should happen when a typed price has no Clover item behind
+    // it: "Free entry and if not in Clover add it to inventory for all stores."
+    //
+    // 🛑 DELIBERATELY NOT create-clover-item, AND THIS IS THE LOAD-BEARING DECISION. That
+    // endpoint takes an arbitrary name, code, category, price and cost, and is
+    // requireInventoryAccess — superuser and admin. Handing it to managers to satisfy this
+    // request would grant the power to create ANY item, chain-wide, named anything. This
+    // one accepts a category and a price and derives everything else: the code from
+    // stickerCode, the name from the L3 key, the tax and visibility from an item already in
+    // that category. The widest thing a manager can do with it is add a price point to a
+    // category that already exists, which is additive and inert until a label is printed.
+    //
+    // 🔑 TWO CALLS, AND THE FIRST ONE CANNOT WRITE. Without `confirm: true` this answers a
+    // PREVIEW — the code, the name, the stores, and any warnings — and creates nothing.
+    // MEMORY.md rule 7 wants a mutation confirmed with a summary of exactly what it will
+    // affect; putting that summary in a dialog the client draws would make the guarantee a
+    // UI convention. Here the server computes the summary and a second, explicit call is
+    // the only thing that writes, so the confirmation cannot be skipped by a client that
+    // forgets to ask.
+    if (url.searchParams.get("action") === "sticker-create-price-point" && request.method === "POST") {
+      if (!isAdminSecret && !canSeeFinancials(currentUser)) {
+        return new Response(JSON.stringify({ error: "Forbidden", code: "NEED_MANAGER" }), { status: 403, headers: corsJson });
+      }
+      try {
+        const body = await request.json();
+        const l3 = String(body?.l3 || "").trim();
+        if (!l3 || !merchIsL3(l3)) {
+          return new Response(JSON.stringify({ error: `Not a category we use: ${l3 || "(none)"}` }),
+            { status: 400, headers: corsJson });
+        }
+        const price = Number(body?.price);
+        const priceCode = stickerPriceCode(price);
+        if (!priceCode) {
+          return new Response(JSON.stringify({ error: "A price point needs a price above zero" }),
+            { status: 400, headers: corsJson });
+        }
+        const store = stickerStore(body?.store);
+        if (!store) {
+          return new Response(JSON.stringify({ error: "A price point needs the store you are printing for" }),
+            { status: 400, headers: corsJson });
+        }
+        const codeMap = await stickerCategoryCodes(env, store);
+        if (!codeMap) {
+          return new Response(JSON.stringify({ ok: true, created: false, reason: "clover unreachable",
+            detail: "Clover did not answer when we asked which sticker number this category uses. Try again." }),
+            { headers: corsJson });
+        }
+        const catCode = codeMap.map[l3] || codeMap.map[merchLabel(l3)] || null;
+        // 🛑 A CATEGORY WITH NO NUMBER CANNOT BE GIVEN ONE HERE. The number is LEARNED from
+        // the BL- codes Clover already carries; inventing one would put this category's
+        // items under a number nothing else agrees with, and the sticker would scan to the
+        // wrong thing rather than fail. That is a job for create-clover-item, by an admin,
+        // once — not a side effect of pricing something on the floor.
+        if (!catCode) {
+          return new Response(JSON.stringify({ ok: true, created: false, reason: "no category code",
+            detail: `No Clover item in ${merchLabel(l3)} carries a BL- code, so this category has no sticker `
+                  + `number yet. An admin has to create the first item in it before prices can be added.` }),
+            { headers: corsJson });
+        }
+        const code = stickerCode(catCode, price);
+        if (!code) {
+          return new Response(JSON.stringify({ error: "That price cannot be written as a sticker code" }),
+            { status: 400, headers: corsJson });
+        }
+
+        // ── What a typo would look like, said before anything is written ──────
+        //
+        // Brian picked "warn when it's off the rung or out of range", still allowing the
+        // create. Both warnings are computed from what Clover already holds rather than
+        // from a rule invented here.
+        const warnings = [];
+        // Local on purpose: this worker has no shared money formatter, and adding a global
+        // one for two sentences would be a bigger change than the feature.
+        const usd = (n) => `$${Number(n).toFixed(2)}`;
+        const siblingPrices = (codeMap.codes || [])
+          .filter(c => String(c).startsWith(`BL-${catCode}-`))
+          // 🔑 mosParseCode, NOT a split on the dashes. The price segment has three shapes
+          // and the round-dollar one carries no separator at all; this repo already learned
+          // that the hard way and wrote the inverse of stickerCode to stop it recurring.
+          .map(c => mosParseCode(c))
+          .filter(x => x && x.priceCents !== null)
+          .map(x => x.priceCents / 100)
+          .sort((a, b) => a - b);
+        if (siblingPrices.length >= 3) {
+          const lo = siblingPrices[0], hi = siblingPrices[siblingPrices.length - 1];
+          if (price < lo || price > hi) {
+            warnings.push(`${merchLabel(l3)} prices run ${usd(lo)} to ${usd(hi)}. ${usd(price)} is outside that.`);
+          }
+        }
+        const [, resolvedCrit] = await merchVersions(env)
+          .then(v => v.live ? merchResolve(env, v.live.version).then(r => [v.live, r]) : [null, null]);
+        const l2 = L3_TO_L2[l3] || merchParentOf(l3) || null;
+        const rounding = resolvedCrit
+          ? (resolvedCrit.categories.flatMap(c => [c, ...(c.children || [])]).find(c => c.key === l3)?.fields?.rounding?.value
+             ?? resolvedCrit.categories.find(c => c.key === l2)?.fields?.rounding?.value
+             ?? resolvedCrit.defaults?.rounding?.value ?? null)
+          : null;
+        // 🔑 ASKED BY ROUNDING THE PRICE AND SEEING IF IT MOVES, rather than by a regex on
+        // the cents. manifestRound already encodes every rung this business uses, including
+        // the down-rounding ones, and a second implementation of "is this on the rung" would
+        // be a second thing to keep in step with the criteria.
+        const rungs = MANIFEST_RUNGS[String(rounding || "").trim()] || (rounding ? [rounding] : []);
+        if (rungs.length && !rungs.some(r => manifestRound(price, r) === roundCents(price))) {
+          warnings.push(`${merchLabel(l3)} prices round to ${rungs[0]}. ${usd(price)} does not land on it.`);
+        }
+
+        const name = l3;   // the L3 key verbatim — what every existing item in it is called
+        const targets = ALL_STORES.slice();
+        if (body?.confirm !== true) {
+          return new Response(JSON.stringify({
+            ok: true, preview: true, created: false,
+            code, name, category_code: catCode, price: roundCents(price),
+            stores: targets, warnings,
+            existing_prices: siblingPrices,
+          }), { headers: corsJson });
+        }
+
+        // ── The write ─────────────────────────────────────────────────────────
+        //
+        // 🛑 EVERY STORE IS CHECKED BEFORE IT IS WRITTEN, AND AN UNANSWERABLE CHECK REFUSES.
+        // Same contract as create-clover-item: cloverCodeInUse answers null when it could
+        // not look, and null is not permission. Here it also brings back a sibling from the
+        // same pass, which is where the new item's tax and visibility come from.
+        const results = await Promise.all(targets.map(async (s) => {
+          try {
+            const mId = env[`${s}_MERCHANT_ID`], tok = env[`${s}_API_TOKEN`];
+            if (!mId || !tok) return { store: s, ok: false, error: "Store not configured", stage: "config" };
+            const headers = { "Authorization": `Bearer ${tok}`, "Content-Type": "application/json" };
+            const dup = await cloverCodeInUse(env, s, code, headers,
+              { siblingRe: new RegExp(`^BL-${catCode}-`) });
+            if (dup.inUse === null) {
+              return { store: s, ok: false, stage: "duplicate-check",
+                error: `Could not check whether ${code} is already in use — ${dup.why}. Nothing was created.` };
+            }
+            // Already there is not a failure for this feature: the label prints either way,
+            // and a manager who pressed create twice wants the second press to be harmless.
+            if (dup.inUse) return { store: s, ok: true, existed: true, itemId: dup.existingId };
+
+            // 🔑 NO SIBLING MEANS NO GUESS. Brian chose "copy a sibling in the same
+            // category" precisely so the tax flag is not invented, and a wrong one charges
+            // a customer wrongly at the register. If this category turned out to have no
+            // BL- item to copy, the category code above would not have resolved either —
+            // so this is belt and braces, and it refuses rather than defaulting.
+            if (!dup.sibling) {
+              return { store: s, ok: false, stage: "sibling",
+                error: `No existing item in ${merchLabel(l3)} at ${s} to copy tax and visibility from. `
+                     + `Nothing was created.` };
+            }
+            const itemBody = {
+              name, code, sku: code, price: Math.round(price * 100),
+              hidden: !!dup.sibling.hidden, defaultTaxRates: !!dup.sibling.taxable,
+              priceType: "FIXED",
+            };
+            // 🛑 COST IS COPIED ONLY IF THE SIBLING HAS ONE, and it is NOT written to the
+            // item-costs KV. create-clover-item does write that blob, keyed by the item
+            // code — which is right for a real 4-5 digit SKU and wrong for a BL- string,
+            // because the costing ladder looks costs up by CATEGORY for these. Writing one
+            // here would put a per-price-point entry into a map that nothing reads and
+            // everything sums.
+            if (dup.sibling.cost !== null) itemBody.cost = dup.sibling.cost;
+
+            const itemResp = await cloverFetch(`https://api.clover.com/v3/merchants/${mId}/items`, {
+              method: "POST", headers, body: JSON.stringify(itemBody),
+            });
+            if (!itemResp.ok) {
+              return { store: s, ok: false, stage: "item", error: (await itemResp.text()).slice(0, 200) };
+            }
+            const itemId = (await itemResp.json())?.id;
+            // 🔑 resolveCloverCategory, not a create: the category demonstrably exists,
+            // because catCode was learned from an item already sitting in it.
+            const { categoryId } = await resolveCloverCategory(s, l3, env);
+            const assoc = await cloverFetch(`https://api.clover.com/v3/merchants/${mId}/category_items`, {
+              method: "POST", headers,
+              body: JSON.stringify({ elements: [{ category: { id: categoryId }, item: { id: itemId } }] }),
+            });
+            if (!assoc.ok) {
+              return { store: s, ok: false, stage: "associate", itemId,
+                error: (await assoc.text()).slice(0, 200) };
+            }
+            return { store: s, ok: true, itemId };
+          } catch (err) {
+            return { store: s, ok: false, stage: "exception", error: err.message };
+          }
+        }));
+
+        // 🛑 THE CACHED CODE LIST IS NOW STALE AND MUST BE DROPPED. sticker-check answers
+        // from this KV entry, so leaving it would have the very next check say the code it
+        // just created does not exist — and the manager would create it again. Forcing a
+        // re-read for the caller's store is what makes the print that follows work.
+        const mine = results.find(r => r.store === store);
+        if (mine?.ok) await stickerCategoryCodes(env, store, { force: true });
+
+        return new Response(JSON.stringify({
+          ok: true, created: true, code, name, category_code: catCode,
+          price: roundCents(price), warnings, results,
+          // Brian: print if YOUR store got it, report the rest. The sticker only has to
+          // resolve at the register the person is standing at, and that is the store
+          // sticker-check validates against.
+          store_ready: !!mine?.ok,
+        }), { headers: corsJson });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsJson });
+      }
+    }
 
     // ── Bin Dump: pallet tag → log ──────────────────────────────────────
     // A manager photographs a pallet tag, Claude reads seven fields off it, the
@@ -24435,7 +24855,7 @@ export default {
         // prints are not a thing this screen can act on, and showing them invites a manager
         // to reprint a label for a shelf they are not standing at.
         const rows = await env.DB.prepare(
-          `SELECT id, store, l3, price_cents, code, title, retail_cents, printed_at
+          `SELECT id, store, l3, price_cents, code, title, retail_cents, qty, printed_at
              FROM sticker_prints WHERE printed_by = ?
             ORDER BY printed_at DESC LIMIT ?`
         ).bind((currentUser && currentUser.email) || "unknown", limit).all();
@@ -24449,6 +24869,10 @@ export default {
             // street price, must not become 0.00 -- that would print "Compare at $0.00".
             retail: r.retail_cents === null || r.retail_cents === undefined
               ? null : Number(r.retail_cents) / 100,
+            // Same rule as retail above, for the same reason: NULL is "printed before we
+            // counted", not "printed once". The screen decides how to say that; this only
+            // refuses to invent a number here.
+            qty: r.qty === null || r.qty === undefined ? null : Number(r.qty),
           })),
         }), { headers: corsJson });
       } catch (e) {
