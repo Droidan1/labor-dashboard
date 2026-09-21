@@ -23055,16 +23055,79 @@
   // with code BL-50008-7_5. Create it first, then this will print." has been the end of the
   // road on this screen for every price that has no item behind it — true, unhelpful, and
   // identical whether you got there by scanning or by typing. The refusal is where the fix
-  // belongs, so the button lives with it rather than only inside manual mode.
+  // belongs, so the control lives with it rather than only inside manual mode.
   //
   // 🛑 TWO CALLS, AND THE FIRST ONE CANNOT WRITE. The worker answers a preview — the code,
-  // the name, the stores and any warnings — and only a second call carrying confirm:true
-  // creates anything. MEMORY.md rule 7 wants a mutation confirmed with a summary of exactly
-  // what it affects; the summary is computed server-side precisely so this dialog cannot
-  // drift from what the write will actually do.
+  // the name, the stores and any warnings — and only a call carrying confirm:true creates
+  // anything. MEMORY.md rule 7 wants a mutation confirmed with a summary of exactly what it
+  // affects; the summary is computed server-side precisely so this dialog cannot drift from
+  // what the write will actually do.
+  //
+  // 🔑 A MODAL, AND ONE REQUEST PER STORE. Brian, 2026-09-21: "make this a pop up and not a
+  // small button. And in the pop up when user clicks to add it show it uploading to all
+  // stores and the status." uiConfirm renders one block of text and resolves once, which
+  // cannot show six things happening. So this owns its own overlay, and the create is
+  // fanned out per store rather than sent as one six-store request — otherwise every row
+  // would sit still and then flip together, which is a progress list that never shows
+  // progress. Each row now moves when ITS store answers.
+  const PS_PP_STATE = { open: false };
+
+  // Themed like every other dialog in this file rather than with the .ps-* classes: this
+  // overlay is appended to <body>, and _uiDialog's tokens are what the rest of the app's
+  // popups already use in all three themes, OLED included.
+  function psPpChrome() {
+    const t = (typeof window.themeColors === 'function') ? window.themeColors() : null;
+    // 🛑 THE STATUS COLOURS MUST FLIP WITH THE THEME, and the first cut did not — it used
+    // one green, one red and one amber for all three themes, which computed 2.66:1, 2.74:1
+    // and 1.83:1 on the LIGHT dialog. Every one of them is 12.5px status text saying whether
+    // a store got the item, which is the whole point of the panel, and all three were under
+    // the 4.5 floor in the theme where a warehouse iPad in daylight actually sits.
+    //
+    // 🔑 These are not new colours. They are the pairs this page already uses and has
+    // already had checked — .ps-chip, .ps-stat.no and .ps-chip.warn — so the dialog agrees
+    // with the card behind it instead of inventing a second palette.
+    //    light: 5.41 / 7.31 / 6.11 (amber over its own translucent panel)
+    //    dark : 6.77 / 6.58 / 7.01    oled: 7.44 / 7.23 / 7.93
+    const light = !document.documentElement.classList.contains('dark');
+    return {
+      bg: t ? t.dialogBg : '#0f1722', fg: t ? t.dialogFg : '#e6edf3',
+      dim: t ? t.dialogDim : '#9fb0c0', border: t ? t.dialogBorder : '#1f2d3d',
+      ok:   light ? '#1c7a33' : '#5fd170',
+      bad:  light ? '#9a3412' : '#fca5a5',
+      warn: light ? '#8a4b00' : '#f0a742',
+    };
+  }
+
+  // One row per store. `state` drives the mark and the colour; nothing else writes here.
+  //
+  // 🛑 A ROW NEVER GOES BACKWARDS INTO "WAITING". Once a store has answered, a later render
+  // of the list must not reset it — a retry only re-arms the rows it is actually retrying.
+  function psPpRow(store, mine) {
+    const c = psPpChrome();
+    return `<div class="ps-pp-row" data-store="${psEsc(store)}"
+                 style="display:flex;align-items:center;gap:10px;padding:9px 2px;
+                        border-top:1px solid ${c.border}">
+      <span style="font-weight:700;font-size:13px;min-width:46px">${psEsc(store)}</span>
+      ${mine ? `<span style="font-size:10px;font-weight:700;letter-spacing:.06em;
+                             text-transform:uppercase;color:${c.ok}">yours</span>` : ''}
+      <span class="ps-pp-mark" style="margin-left:auto;font-size:12.5px;color:${c.dim}">waiting</span>
+    </div>`;
+  }
+
+  function psPpSet(overlay, store, state, text) {
+    const row = overlay.querySelector(`.ps-pp-row[data-store="${store}"] .ps-pp-mark`);
+    if (!row) return;
+    const c = psPpChrome();
+    const colour = state === 'ok' ? c.ok : state === 'bad' ? c.bad : c.dim;
+    row.style.color = colour;
+    row.textContent = text;
+  }
+
   async function psCreatePricePoint() {
     const j = psLast;
     if (!j || !j.l3 || j.price === null || j.price === undefined) return;
+    if (PS_PP_STATE.open) return;            // one at a time; six writes are enough
+
     const note = el('ps-print-note');
     const say = (msg, bad) => {
       if (!note) return;
@@ -23077,6 +23140,7 @@
       body: JSON.stringify({ l3: j.l3, price: j.price, store: psStickerStore(), ...extra }),
     });
 
+    // ── 1. Ask what this would create. This call cannot write. ────────────────
     say('Checking what this would create…');
     let pv;
     try {
@@ -23085,54 +23149,165 @@
       if (!r.ok) { say(pv.error || psStickerFault(r.status, pv), true); return; }
       if (pv.detail) { say(pv.detail, true); return; }
     } catch (e) { say(`Could not check what this would create: ${e.message}`, true); return; }
+    say('');
 
+    // ── 2. The pop-up ─────────────────────────────────────────────────────────
+    const c = psPpChrome();
+    const mine = psStickerStore();
+    const stores = pv.stores || [];
     const warn = pv.warnings || [];
-    const msg = [
-      `Add ${pv.code} to all ${(pv.stores || []).length} stores?`,
-      '',
-      `${psMoney(pv.price)} in ${j.l3_label || j.l3}.`,
-      `It will be named "${pv.name}" — the same name every other price in this category has.`,
-      ...(warn.length ? [''] : []),
-      ...warn.map(w => `⚠ ${w}`),
-    ].join('\n');
-    const go = await uiConfirm(msg, {
-      title: 'Add a price point',
-      okText: warn.length ? 'Create it anyway' : 'Create it',
-      cancelText: 'Go back',
-      // The amber treatment when something looks wrong, and only then. A confirm that
-      // always looks alarming stops being read.
-      danger: warn.length > 0,
-    });
-    if (!go) { say('Nothing was created.'); return; }
 
-    say('Creating…');
-    let res;
-    try {
-      const r = await ask({ confirm: true });
-      res = await r.json().catch(() => ({}));
-      if (!r.ok) { say(res.error || psStickerFault(r.status, res), true); return; }
-    } catch (e) { say(`Could not create it: ${e.message}`, true); return; }
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Add a price point');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;'
+      + 'justify-content:center;padding:20px;background:rgba(0,0,0,.55)';
+    overlay.innerHTML = `
+      <div style="max-width:420px;width:100%;max-height:88vh;overflow:auto;background:${c.bg};
+                  color:${c.fg};border:1px solid ${c.border};border-radius:16px;
+                  padding:20px 20px 16px;box-shadow:0 20px 60px rgba(0,0,0,.45);
+                  font-family:inherit">
+        <div style="font-size:17px;font-weight:700">Add a price point</div>
+        <div style="font-size:13.5px;line-height:1.5;color:${c.dim};margin-top:7px">
+          This creates one item in Clover at every store. It does not exist yet, which is
+          why the sticker cannot print.
+        </div>
 
-    const rows = res.results || [];
-    const bad = rows.filter(x => !x.ok);
-    if (!res.store_ready) {
-      // 🛑 THE CALLER'S OWN STORE IS THE ONE THAT MATTERS. sticker-check validates against
-      // the store being printed for, so a create that succeeded everywhere EXCEPT here
-      // leaves the Print button exactly as refused as it was. Say which store and why.
-      const mine = rows.find(x => x.store === psStickerStore());
-      say(`Could not add it at ${psStickerStore()}: ${(mine && mine.error) || 'no answer'}`, true);
-      return;
-    }
-    // Re-ask the question the button was refused on. The worker has already dropped its
-    // cached code list for this store, so this comes back printable.
-    await psStickerCheck(j);
-    if (bad.length) {
-      const extra = el('ps-print-note');
-      if (extra) {
-        extra.innerHTML = extra.innerHTML
-          + ` <span class="ps-stat no">Not yet at ${psEsc(bad.map(x => x.store).join(', '))}.</span>`;
+        <div style="margin-top:14px;padding:12px;border-radius:11px;border:1px solid ${c.border}">
+          <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700;
+                      font-size:15px;letter-spacing:.02em">${psEsc(pv.code)}</div>
+          <div style="font-size:13px;color:${c.dim};margin-top:5px">
+            ${psEsc(psMoney(pv.price))} in ${psEsc(j.l3_label || j.l3)}
+          </div>
+          <div style="font-size:12px;color:${c.dim};margin-top:4px;overflow-wrap:anywhere">
+            Named <strong style="color:${c.fg}">${psEsc(pv.name)}</strong> — the same name
+            every other price in this category has.
+          </div>
+        </div>
+
+        ${warn.length ? `<div style="margin-top:12px;padding:11px 12px;border-radius:11px;
+             background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.42);
+             color:${c.warn};font-size:12.5px;line-height:1.5">
+             ${warn.map(w => `<div>&#9888; ${psEsc(w)}</div>`).join('')}
+           </div>` : ''}
+
+        <div id="ps-pp-list" style="margin-top:14px">
+          <div style="font-size:10.5px;font-weight:700;letter-spacing:.09em;
+                      text-transform:uppercase;color:${c.dim};padding-bottom:2px">Stores</div>
+          ${stores.map(s => psPpRow(s, s === mine)).join('')}
+        </div>
+
+        <div id="ps-pp-foot" style="font-size:12.5px;line-height:1.5;color:${c.dim};
+                                    margin-top:13px;min-height:1.5em"></div>
+
+        <div style="display:flex;gap:9px;margin-top:6px">
+          <button id="ps-pp-cancel" type="button"
+                  style="flex:1;padding:12px;border-radius:11px;font-weight:700;font-size:14px;
+                         cursor:pointer;font-family:inherit;background:transparent;color:${c.dim};
+                         border:1px solid ${c.border}">Cancel</button>
+          <button id="ps-pp-go" type="button"
+                  style="flex:2;padding:12px;border-radius:11px;font-weight:700;font-size:14px;
+                         cursor:pointer;font-family:inherit;border:none;
+                         background:${warn.length ? '#c0392b' : '#3BB54A'};
+                         color:${warn.length ? '#ffffff' : '#06210f'}">${
+            warn.length ? 'Add it anyway' : 'Add it at every store'}</button>
+        </div>
+      </div>`;
+
+    PS_PP_STATE.open = true;
+    document.body.appendChild(overlay);
+    const goBtn = overlay.querySelector('#ps-pp-go');
+    const cancelBtn = overlay.querySelector('#ps-pp-cancel');
+    const foot = overlay.querySelector('#ps-pp-foot');
+    goBtn.focus();
+
+    const close = () => {
+      PS_PP_STATE.open = false;
+      document.removeEventListener('keydown', onKey);
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    };
+    // 🛑 ESCAPE AND THE BACKDROP CLOSE ONLY WHILE NOTHING IS IN FLIGHT. Tearing the list
+    // down mid-run would leave six writes running with nothing reporting where they got to.
+    let running = false;
+    const onKey = (e) => { if (e.key === 'Escape' && !running) close(); };
+    document.addEventListener('keydown', onKey);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay && !running) close(); });
+    cancelBtn.onclick = () => { if (!running) { close(); say('Nothing was created.'); } };
+
+    // ── 3. The write, one request per store, rows moving as they land ────────
+    const done = {};                     // store → true when it has succeeded
+
+    async function runStores(list) {
+      running = true;
+      goBtn.disabled = true;
+      goBtn.style.opacity = '.55';
+      goBtn.style.cursor = 'default';
+      cancelBtn.disabled = true;
+      cancelBtn.style.opacity = '.55';
+      foot.textContent = `Adding at ${list.length} store${list.length === 1 ? '' : 's'}…`;
+      list.forEach(s => psPpSet(overlay, s, 'busy', 'adding…'));
+
+      await Promise.all(list.map(async (s) => {
+        try {
+          const r = await ask({ confirm: true, stores: [s] });
+          const body = await r.json().catch(() => ({}));
+          if (!r.ok) { psPpSet(overlay, s, 'bad', (body.error || `HTTP ${r.status}`).slice(0, 60)); return; }
+          // Narrowed to one store, so there is exactly one result to read.
+          const res = (body.results || [])[0];
+          if (res && res.ok) {
+            done[s] = true;
+            psPpSet(overlay, s, 'ok', res.existed ? 'already there' : 'added');
+          } else {
+            psPpSet(overlay, s, 'bad', ((res && res.error) || 'no answer').slice(0, 60));
+          }
+        } catch (e) {
+          psPpSet(overlay, s, 'bad', (e.message || 'failed').slice(0, 60));
+        }
+      }));
+
+      running = false;
+      cancelBtn.disabled = false;
+      cancelBtn.style.opacity = '';
+      const failed = stores.filter(s => !done[s]);
+      const mineOk = !mine || done[mine];
+
+      // 🔑 THE CALLER'S OWN STORE IS WHAT DECIDES WHETHER THE LABEL CAN PRINT, because that
+      // is the store sticker-check validates against. Brian: print if yours got it, report
+      // the rest.
+      if (mineOk) await psStickerCheck(j);
+
+      if (!failed.length) {
+        foot.innerHTML = `<span style="color:${c.ok};font-weight:600">Added at every store.</span>`
+          + ` You can print now.`;
+      } else if (mineOk) {
+        foot.innerHTML = `<span style="color:${c.ok};font-weight:600">Added at ${psEsc(mine)}, so you can print.</span>`
+          + ` Still missing at ${psEsc(failed.join(', '))}.`;
+      } else {
+        foot.innerHTML = `<span style="color:${c.bad};font-weight:600">Not added at ${psEsc(mine)},`
+          + ` so the sticker still will not print.</span> Missing at ${psEsc(failed.join(', '))}.`;
+      }
+
+      cancelBtn.textContent = 'Close';
+      if (failed.length) {
+        goBtn.disabled = false;
+        goBtn.style.opacity = '';
+        goBtn.style.cursor = 'pointer';
+        goBtn.textContent = `Retry ${failed.length} store${failed.length === 1 ? '' : 's'}`;
+        // 🔑 RETRY ONLY THE ONES THAT FAILED. A store that already has the item answers
+        // `existed` and is harmless to re-ask, but re-running the whole six would redo five
+        // catalogue scans to fix one store.
+        goBtn.onclick = () => runStores(failed);
+      } else {
+        goBtn.textContent = 'Done';
+        goBtn.disabled = false;
+        goBtn.style.opacity = '';
+        goBtn.style.cursor = 'pointer';
+        goBtn.onclick = close;
       }
     }
+
+    goBtn.onclick = () => runStores(stores);
   }
   window.psCreatePricePoint = psCreatePricePoint;
 
@@ -23878,9 +24053,14 @@
       // mode that lacks it.
       note.innerHTML = a.printable
         ? `Prints <span class="ps-code">${psEsc(a.code)}</span>`
+        // 🛑 A FULL-WIDTH BUTTON, NOT A TEXT LINK. Brian, looking at the shipped version:
+        // "make this a pop up and not a small buttton." The .ps-link it used to be sat
+        // inline under a red sentence and read as a footnote — the one actionable control
+        // on a dead-end message, styled like the least important thing on the card.
         : a.reason === 'no clover item' && psCanPrint()
-          ? `${psEsc(a.detail)} <button class="ps-link" type="button"
-               onclick="psCreatePricePoint()">Add it at every store</button>`
+          ? `${psEsc(a.detail)}
+             <button class="ps-btn ghost" type="button" style="margin-top:9px"
+                     onclick="psCreatePricePoint()">Add it to inventory at every store</button>`
           : psEsc(a.detail);
     } catch (_) {
       const note = el('ps-print-note');

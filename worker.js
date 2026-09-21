@@ -23433,12 +23433,35 @@ export default {
         }
 
         const name = l3;   // the L3 key verbatim — what every existing item in it is called
-        const targets = ALL_STORES.slice();
+
+        // 🔑 THE CALLER MAY NARROW THIS, AND THE SCREEN DOES. Creating all six inside one
+        // request means all six answers arrive together, so a progress list built on it
+        // would sit still and then flip at once — a status display that shows no status.
+        // The modal calls this once per store instead, so each row resolves on its own
+        // answer, in whatever order Clover gives them.
+        //
+        // 🛑 THE DEFAULT IS STILL EVERY STORE. An older client sends no `stores` and must
+        // keep meaning "all of them", and the preview below reports ALL_STORES whatever was
+        // asked for, so the modal can list the six rows before it starts.
+        //
+        // Each entry is validated through stickerStore — the same function that refuses a
+        // store name the worker does not know — so a narrowed list can never widen scope
+        // or reach a store this account had no business writing to.
+        const asked = Array.isArray(body?.stores) ? body.stores : null;
+        const targets = asked
+          ? [...new Set(asked.map(x => stickerStore(x)).filter(Boolean))]
+          : ALL_STORES.slice();
+        if (!targets.length) {
+          return new Response(JSON.stringify({ error: "No store to create at" }),
+            { status: 400, headers: corsJson });
+        }
         if (body?.confirm !== true) {
           return new Response(JSON.stringify({
             ok: true, preview: true, created: false,
             code, name, category_code: catCode, price: roundCents(price),
-            stores: targets, warnings,
+            // ALL_STORES, never `targets`: the preview describes the whole job the modal is
+            // about to show rows for, even when the create that follows is split per store.
+            stores: ALL_STORES.slice(), warnings,
             existing_prices: siblingPrices,
           }), { headers: corsJson });
         }
