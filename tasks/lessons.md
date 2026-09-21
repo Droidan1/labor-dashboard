@@ -1,3 +1,79 @@
+## Five copies in one store: I wrote the note the lesson says does not work (2026-09-21)
+
+Same day as the entry below about misreading which host serves production. This one cost
+production data.
+
+#265 added a pop-up showing each store's progress as a price point is created. To make the
+rows move independently the worker gained an optional `stores` list and the browser fanned
+out **six concurrent requests**, one per store. I wrote in the PR body, in bold, that the
+worker had to deploy first. It merged without that, the frontend went live against the old
+worker, and Brian clicked the button.
+
+The old worker ignores `stores` and creates at every store on every request. Its duplicate
+guard is a read-then-write with no lock, so six simultaneous callers each read Clover, each
+saw nothing, and each wrote. **Five copies of one item in one store.**
+
+### What I had already been told, in this file, three days earlier
+
+> 1. **When a frontend change needs a worker change, deploy the worker FIRST — before
+>    opening the PR, not before merging it.** … The order that needs a human to hold it is
+>    the wrong order.
+> 3. **If the worker genuinely cannot go first, the CLIENT must tolerate the old one** …
+>    rather than a PR body asking for a particular click order. Design for it, do not
+>    document around it.
+>
+> *A note is not a mechanism.*
+
+I violated 1 and 3 and then wrote the note anyway. The 2026-09-18 entry exists because that
+trap had already caught twice; this is the third, and the first to reach production data.
+
+### The part I did not see at all
+
+I called the risk "not destructive" in the PR body and again in chat, reasoning that the
+duplicate guard would no-op the repeats. It would have — **against callers arriving one at a
+time**. I introduced concurrency to a guard built for sequence and never asked whether it was
+safe under it. The guard did not fail; it was never designed for the thing I pointed at it.
+
+A latent race is not a bug until something makes it reachable. My fan-out was that something,
+and it was the newest, least-examined part of the change.
+
+### Why no test caught it
+
+Every assertion about this feature was about SOURCE TEXT — that `confirm: true` sat after the
+confirm call, that the fan-out passed `stores: [s]`. All true, all passing, all blind. The
+defect was behaviour against a server that answers differently, which only running it finds.
+The suite is now able to: it builds the real function with a scripted worker and presses the
+button. Against the shipped code the new block fails ten assertions, the first reading
+`got 6, want 1`.
+
+<rules>
+1. **Concurrency is a change to every guard the call path touches.** Before turning one
+   request into N parallel ones, name the checks downstream and ask of each: does this still
+   hold if two callers are inside it at once? A read-then-write duplicate check does not.
+   This is not a code-review question, it is a design question, and it belongs before the
+   fan-out is written.
+2. **"The guard makes it harmless" is a claim about the guard's design, not about your
+   change.** Go read the guard. Mine was correct and irrelevant — built for sequential
+   callers, pointed at six simultaneous ones.
+3. **A client that needs a newer server must detect the older one, not be documented around
+   it.** The detection has to be possible: here it required sending ONE request and reading
+   the shape of the answer before sending more. A parallel fan-out has already written by the
+   time its first reply lands, so it destroys its own ability to notice. Sequencing was not a
+   safety tax, it was the only thing that made the check exist.
+4. **Handle the old server, do not merely refuse it.** An answer carrying six results means
+   that one call already did the whole job correctly. Consuming those results and stopping is
+   a right outcome and an honest display; aborting would have been neither.
+5. **Source-text assertions cannot see version skew.** "Passes `stores: [s]`" is true of the
+   code that caused the incident. Any behaviour that depends on what a SERVER returns needs a
+   test that runs the code against both answers. If a feature's failure mode is "the other
+   side is older", a regex over your own file will never find it.
+6. **Grepping a deployed bundle for ONE marker proves nothing when your change spans two
+   deploys.** `siblingRe` was present because it shipped with the previous PR, and would have
+   read as "deployed" on its own. The string literal `"No store to create at"` was the honest
+   marker: minifiers rewrite identifiers, never string contents. Pick a marker unique to THIS
+   change, and prefer a literal.
+</rules>
+
 ## The repo had an ORIENT.md. I never opened it, and reported a live deploy as stalled (2026-09-21)
 
 Price Scan shipped. Brian merged #262, and asked why he could not see it on staging. I

@@ -23118,6 +23118,8 @@
     const row = overlay.querySelector(`.ps-pp-row[data-store="${store}"] .ps-pp-mark`);
     if (!row) return;
     const c = psPpChrome();
+    // 'busy', 'wait' and anything unrecognised read as dim — a row that has not answered
+    // yet must never borrow the colour of one that has.
     const colour = state === 'ok' ? c.ok : state === 'bad' ? c.bad : c.dim;
     row.style.color = colour;
     row.textContent = text;
@@ -23237,34 +23239,81 @@
 
     // ── 3. The write, one request per store, rows moving as they land ────────
     const done = {};                     // store → true when it has succeeded
+    let legacy = false;                  // the worker ignored the narrowing
 
+    // One request, one row updated from whatever came back.
+    async function psPpSend(s) {
+      psPpSet(overlay, s, 'busy', 'adding…');
+      try {
+        const r = await ask({ confirm: true, stores: [s] });
+        const b = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          psPpSet(overlay, s, 'bad', (b.error || `HTTP ${r.status}`).slice(0, 60));
+          return null;
+        }
+        return b.results || [];
+      } catch (e) {
+        psPpSet(overlay, s, 'bad', (e.message || 'failed').slice(0, 60));
+        return null;
+      }
+    }
+
+    const psPpMark = (res) => {
+      if (!res || !res.store) return;
+      if (res.ok) done[res.store] = true;
+      psPpSet(overlay, res.store, res.ok ? 'ok' : 'bad',
+        res.ok ? (res.existed ? 'already there' : 'added')
+               : String(res.error || 'no answer').slice(0, 60));
+    };
+
+    // 🛑 THE FIRST STORE GOES ALONE, AND THAT SEQUENCING IS THE ENTIRE GUARD.
+    //
+    // This shipped as a six-way Promise.all and put FIVE COPIES of one item into one store.
+    // An older worker ignores `stores` and creates at every store on every request; the
+    // duplicate check it relies on is a read-then-write with no lock, so six of those in
+    // flight at once each read Clover, each see nothing, and each write. The guard only
+    // ever worked against callers that arrived one at a time, and the fan-out stopped being
+    // one of them.
+    //
+    // 🔑 A VERSION CHECK IS ONLY POSSIBLE BECAUSE NOTHING ELSE IS IN FLIGHT. By the time a
+    // parallel fan-out's first reply lands, the other five are already written — there is
+    // no moment left in which to notice. Sending one and reading the SHAPE of the answer
+    // before sending any more is what makes the mismatch detectable at all.
+    //
+    // 🔑 AND AN OLD WORKER IS HANDLED, NOT JUST DETECTED. lessons.md rule 3: when the worker
+    // cannot go first, the CLIENT must tolerate the old one — a note in a PR body is not a
+    // mechanism, which this repo has now learned twice. An answer carrying more than one
+    // result means that single call already did every store correctly, exactly once each.
+    // So its results fill in every row and nothing further is sent: the right outcome, an
+    // honest display, and no second writer.
     async function runStores(list) {
       running = true;
+      legacy = false;
       goBtn.disabled = true;
       goBtn.style.opacity = '.55';
       goBtn.style.cursor = 'default';
       cancelBtn.disabled = true;
       cancelBtn.style.opacity = '.55';
       foot.textContent = `Adding at ${list.length} store${list.length === 1 ? '' : 's'}…`;
-      list.forEach(s => psPpSet(overlay, s, 'busy', 'adding…'));
+      list.forEach(s => psPpSet(overlay, s, 'wait', 'queued'));
 
-      await Promise.all(list.map(async (s) => {
-        try {
-          const r = await ask({ confirm: true, stores: [s] });
-          const body = await r.json().catch(() => ({}));
-          if (!r.ok) { psPpSet(overlay, s, 'bad', (body.error || `HTTP ${r.status}`).slice(0, 60)); return; }
-          // Narrowed to one store, so there is exactly one result to read.
-          const res = (body.results || [])[0];
-          if (res && res.ok) {
-            done[s] = true;
-            psPpSet(overlay, s, 'ok', res.existed ? 'already there' : 'added');
-          } else {
-            psPpSet(overlay, s, 'bad', ((res && res.error) || 'no answer').slice(0, 60));
-          }
-        } catch (e) {
-          psPpSet(overlay, s, 'bad', (e.message || 'failed').slice(0, 60));
+      const [first, ...rest] = list;
+      const firstResults = await psPpSend(first);
+
+      if (firstResults && firstResults.length > 1) {
+        legacy = true;
+        firstResults.forEach(psPpMark);
+      } else {
+        if (firstResults) psPpMark(firstResults[0]);
+        // 🔑 Proven to honour the narrowing, so the rest may go together: each request now
+        // owns one store and no two can collide on the same catalogue.
+        if (rest.length) {
+          await Promise.all(rest.map(async (s) => {
+            const out = await psPpSend(s);
+            if (out) psPpMark(out[0]);
+          }));
         }
-      }));
+      }
 
       running = false;
       cancelBtn.disabled = false;
@@ -23286,6 +23335,15 @@
       } else {
         foot.innerHTML = `<span style="color:${c.bad};font-weight:600">Not added at ${psEsc(mine)},`
           + ` so the sticker still will not print.</span> Missing at ${psEsc(failed.join(', '))}.`;
+      }
+      // 🔑 SAY THAT THE VIEW WAS DEGRADED, RATHER THAN QUIETLY LOOKING NORMAL. The items are
+      // right either way, so this is not an error — but the rows came from one call that did
+      // all six rather than from six that each did one, and a status panel that hides the
+      // difference is the same class of lie the per-store view exists to prevent.
+      if (legacy) {
+        foot.innerHTML += `<div style="color:${c.warn};margin-top:7px">The worker is behind,`
+          + ` so one call did every store instead of one each. Nothing is duplicated —`
+          + ` deploy the worker to get the per-store view back.</div>`;
       }
 
       cancelBtn.textContent = 'Close';
