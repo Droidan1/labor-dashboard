@@ -13355,7 +13355,15 @@ function sanitizeStickerTemplate(body) {
     // what a person can read must never shorten what a scanner gets. Nothing is lost at
     // "number" either: the price is on the label in large type, so 50008 + $2.50
     // reconstructs the key by hand if a scanner ever fails.
-    if (def.show !== undefined) out.show = ["full", "number"].includes(String(src.show)) ? String(src.show) : def.show;
+    //
+    // 🔑 "number_po" IS FOR OPPORTUNITY BUYS, AND IT DEGRADES TO "number". Brian,
+    // 2026-09-21, designing the OB sticker: an OB item's code carries its purchase order as
+    // a fourth segment, and the human line should be able to show "50008-99999" so a person
+    // holding the item can tell which buy it came from without a scanner. Nothing in the
+    // system carries a PO yet, so until that ships this prints exactly what "number" prints
+    // -- deliberately, because the alternative is an empty field or the string "undefined"
+    // on a shelf. The same fallback psZpl already applies when no category number is passed.
+    if (def.show !== undefined) out.show = ["full", "number", "number_po"].includes(String(src.show)) ? String(src.show) : def.show;
     return out;
   };
 

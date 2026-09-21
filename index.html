@@ -24215,8 +24215,25 @@
     // all (10) -- so the tail is not reliably one field, and sticker-check already returns
     // the number as its own value. Parsing a string we were handed the parts of is how the
     // third shape gets discovered on a shelf.
+    //
+    // 🔑 'number_po' IS THE SAME TRADE ONE STEP FURTHER: the category number plus the
+    // purchase order an opportunity buy came in on, so a person holding the item can tell
+    // which buy it was without a scanner. It falls back the same way, and in two steps --
+    // no PO leaves the category number, no category number leaves the whole code -- because
+    // every rung of that ladder is still a code a human can act on, and "undefined" is not.
+    //
+    // 🛑 THE FULL CODE STILL WILL NOT FIT ON A 1" LABEL AT THE DEFAULT WIDTH. The label is
+    // ^PW203 and this field is ^A0N,20,20 from x=10, so roughly ten characters fit.
+    // "BL-50008-2_5" is already twelve; adding a PO segment takes it past sixteen. That is
+    // the whole reason this option exists: "50008-99999" is eleven and readable, where the
+    // full OB code is neither. The QR is untouched by any of it, as it always has been.
     const catNo = extras && extras.categoryCode;
-    if (cd.on) out.push(line(cd, cd.show === 'number' && catNo ? String(catNo) : code));
+    const poNo = extras && extras.po;
+    const human = cd.show === 'number_po' && catNo
+      ? (poNo ? `${catNo}-${poNo}` : String(catNo))
+      : cd.show === 'number' && catNo ? String(catNo)
+      : code;
+    if (cd.on) out.push(line(cd, human));
     if (pr.on) out.push(line(pr, money));
     // 🔑 NO STREET PRICE IS A NORMAL ANSWER, not a gap to paper over. "No street price found"
     // is a real outcome of a scan, and a row printed before the column existed has none. The
@@ -24537,9 +24554,12 @@
       // rather than leaving someone to wonder whether they just shortened the scan.
       const show = row.k !== 'code' ? '' : `<label class="block col-span-2"><span class="block text-[11px] font-medium text-opl-inkDim dark:text-op-inkDim mb-1">Show</span>
           <select onchange="stSet('code','show',this.value)" class="w-full ${ST_INPUT} font-semibold">
-            <option value="full" ${f.show !== 'number' ? 'selected' : ''}>Full code — BL-50008-2_5</option>
+            <option value="full" ${!['number', 'number_po'].includes(f.show) ? 'selected' : ''}>Full code — BL-50008-2_5</option>
             <option value="number" ${f.show === 'number' ? 'selected' : ''}>Number only — 50008</option>
-          </select></label>`;
+            <option value="number_po" ${f.show === 'number_po' ? 'selected' : ''}>Number + PO — 50008-99999</option>
+          </select>${f.show === 'number_po' ? `<span class="block text-[11px] text-opl-inkDim dark:text-op-inkDim mt-1">
+            Nothing carries a purchase order yet, so this prints the number alone until
+            opportunity buys ship. The preview shows what a shelf would get today.</span>` : ''}</label>`;
       const body = `<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
           ${stNum(row.k, 'x', 'X', 0, 202)}${stNum(row.k, 'y', 'Y', 0, 202)}
           ${isQr ? stNum(row.k, 'mag', 'Size (3–8)', 3, 8)
@@ -24592,7 +24612,11 @@
   function stPreview() {
     const host = el('st-preview');
     if (!host || !stTpl) return;
-    const sample = { code: 'BL-50008-2_5', number: '50008', price: '$2.50', retail: '$29.99' };
+    // 🛑 NO `po` ON THE SAMPLE, ON PURPOSE. Nothing in the system carries a purchase order
+    // yet, so a preview that drew "50008-99999" would be showing a label this app cannot
+    // currently print. The preview shows the FALLBACK, which is what a shelf would actually
+    // get today, and the note under the select explains why it looks like "Number only".
+    const sample = { code: 'BL-50008-2_5', number: '50008', price: '$2.50', retail: '$29.99', po: null };
     const over = [];
     let stale = '';
     let g = '';
@@ -24662,7 +24686,12 @@
     // of the option is that the field takes less room, and a preview still showing the long
     // form would keep warning about an overflow that is no longer going to happen.
     const cd = stField('code');
-    if (cd.on) g += box(cd, cd.show === 'number' ? sample.number : sample.code, 'Sticker code');
+    if (cd.on) {
+      const shown = cd.show === 'number_po'
+        ? (sample.po ? `${sample.number}-${sample.po}` : sample.number)
+        : cd.show === 'number' ? sample.number : sample.code;
+      g += box(cd, shown, 'Sticker code');
+    }
     const pr = stField('price'); if (pr.on) g += box(pr, sample.price, 'Our price');
     const rt = stField('retail'); if (rt.on) g += box(rt, (rt.prefix || '') + sample.retail, 'Street price');
 
