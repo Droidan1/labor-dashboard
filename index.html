@@ -3244,21 +3244,98 @@
         .dark #ob-new-form label{color:rgb(var(--op-inkDim))}
         #page-opportunity-buys .ob-empty{padding:26px 18px;font-size:13px;color:#6b6453}
         .dark #page-opportunity-buys .ob-empty{color:rgb(var(--op-inkDim))}
+
+        /* ── Phone ────────────────────────────────────────────────────────────
+           🛑 THE TABLE RAN OFF THE RIGHT EDGE WITH NOTHING SAYING SO. #ob-scroll has
+           overflow-x:auto, which is §4.8's pattern and is correct — but on a phone the
+           last visible column was a truncated "IT…" and nothing indicated more existed.
+           A person reads that as a broken table, not a scrollable one.
+
+           Two fixes, both needed. The columns that carry the least on a phone are hidden
+           outright, so what remains fits; and the scroll container gets a fade on its right
+           edge whenever content overflows, so when it still does scroll you can see that it
+           does. Hiding is by ROLE (.ob-sec = secondary), never by position, so a column
+           added later does not silently become the one that disappears. */
+        /* 🛑 THE CODE IS THE ONLY THING TELLING TWO ROWS APART, AND IT WAS THE PART THAT
+           GOT CLIPPED. BL-50002-1_5 and BL-50002-1_5-P99999 share a store, an item, a
+           category and a price — that pair is exactly what Phase 2 produces. Truncated at
+           the right edge they read as the same row twice. So on a phone the code stops
+           being a column you have to scroll to and rides under the item name, where it is
+           always on screen. The column still exists at desktop width, where it fits. */
+        #page-opportunity-buys .ob-code-sub { display: none; }
+        @media (max-width: 640px) {
+          #page-opportunity-buys .ob-sec { display: none; }
+          #page-opportunity-buys .ob-code-sub {
+            display: block; margin-top: 1px; font-size: 11px; font-weight: 700;
+            font-variant-numeric: tabular-nums; color: #6b6453; white-space: nowrap;
+          }
+          .dark #page-opportunity-buys .ob-code-sub { color: rgb(var(--op-inkDim)); }
+          /* Two lines need room the fixed 42px row does not have. */
+          #page-opportunity-buys tbody td { height: auto; padding-top: 8px; padding-bottom: 8px; }
+          /* 🔑 THE TITLE YIELDS BEFORE THE NUMBERS DO. "LIFEWTR Enhanced Water" took 181px
+             and pushed Sold off the edge, so every row read "not tr…" — which is the one
+             value that must not be misread, since it means "we cannot tell" and not zero.
+             The title is the most compressible thing here: it ellipsises, the code under it
+             does not, and the numbers stay on screen. Capped by CLASS so a column added
+             before it cannot silently become the one that truncates. */
+          #page-opportunity-buys .ob-item { max-width: 148px; }
+          #page-opportunity-buys .ob-title {
+            display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+          }
+          #page-opportunity-buys thead th { padding: 0 10px; font-size: 10px; }
+          #page-opportunity-buys tbody td { padding: 0 10px; font-size: 12.5px; }
+          /* The legend stacked into a tall block that pushed the table off screen. One
+             column, tighter, and it reads as a key rather than a paragraph. */
+          #ob-legend { gap: 7px 14px; padding: 10px 14px; font-size: 11px; }
+          #ob-bar { padding: 11px 14px; gap: 10px; }
+          #ob-status { padding: 9px 14px; font-size: 12px; }
+          /* Fixed input widths overflowed a 390px screen. Let them fill the row instead. */
+          #ob-new-form { padding: 12px 14px; gap: 9px; }
+          #ob-new-form label { flex: 1 1 140px; }
+          #ob-new-form .ob-in { width: 100% !important; }
+          #page-opportunity-buys .ob-empty { padding: 20px 14px; }
+        }
+        /* The overflow hint itself: a gradient pinned to the panel's right edge. Sits above
+           the table but must not eat taps, hence pointer-events:none. */
+        #ob-scroll { position: relative; }
+        #ob-scroll.ob-more::after {
+          content: ''; position: absolute; top: 0; right: 0; bottom: 0; width: 34px;
+          pointer-events: none; background: linear-gradient(to right, rgba(255,255,255,0), #ffffff);
+        }
+        .dark #ob-scroll.ob-more::after {
+          background: linear-gradient(to right, rgba(16,24,38,0), rgb(var(--op-panel)));
+        }
       </style>
 
-      <div class="flex items-start justify-between gap-4 mb-4 flex-wrap">
-        <div>
-          <h1 class="text-2xl font-extrabold text-opl-ink dark:text-op-ink">Opportunity Buys</h1>
-          <!-- Says what the page counts, in the place someone reads before the numbers. -->
-          <p class="text-[13px] text-opl-inkDim dark:text-op-inkDim mt-1">
-            A purchase order, and every label printed against it. Counts are labels printed — not units sold.
-          </p>
+      <!-- 🛑 A STICKY APP BAR, NOT A PLAIN DIV. DESIGN.md §3.3: every page begins with one,
+           and §3.2 requires the safe-area top padding so the bar's own background covers the
+           notch strip. Built without it, this heading scrolled under the iOS status bar with
+           nothing opaque behind it and read as a greyed-out ghost — which is exactly how it
+           shipped and what the mobile screenshot showed. The heading style is §3.3's too:
+           font-brand, uppercase, accent green, not the ad-hoc text-2xl font-extrabold I used. -->
+      <div class="bg-opl-panel dark:bg-op-panel border-b border-[rgba(20,16,8,0.08)] dark:border-op-border px-4 sm:px-6 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sticky top-0 z-10 transition-colors">
+        <div class="flex items-center justify-between gap-3 max-w-7xl mx-auto">
+          <div class="min-w-0">
+            <h1 class="text-xl sm:text-2xl font-brand text-accent-green uppercase tracking-wide truncate">Opportunity Buys</h1>
+            <!-- Says what the page counts, in the place someone reads before the numbers.
+                 Shortened below sm: the full sentence wrapped to three lines on a phone and
+                 pushed the table below the fold before anyone had read a number. -->
+            <p class="text-xs sm:text-sm text-opl-inkDim dark:text-op-inkDim mt-0.5">
+              <span class="hidden sm:inline">A purchase order, and every label printed against it. Counts are labels printed — not units sold.</span>
+              <span class="sm:hidden">Labels printed, not units sold.</span>
+            </p>
+          </div>
+          <!-- §4.8: page actions live in the page header, not in the table bar. Hidden until
+               the worker says this account may edit, so the button and the API agree. It sits
+               in the bar's right slot rather than wrapping onto its own line, which is what
+               `flex-wrap` did to it on a phone. -->
+          <button id="ob-new" class="ob-btn-primary flex-shrink-0 whitespace-nowrap" hidden onclick="obToggleNew()">
+            <span class="hidden sm:inline">Open a buy</span><span class="sm:hidden">Open</span>
+          </button>
         </div>
-        <!-- §4.8: page actions live in the page header, not in the table bar. Hidden until
-             the worker says this account may edit, so the button and the API agree. -->
-        <button id="ob-new" class="ob-btn-primary" hidden onclick="obToggleNew()">Open a buy</button>
       </div>
 
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-6">
       <div id="ob-panel">
         <div id="ob-bar">
           <span class="ob-barlbl" id="ob-barlbl">Buys</span>
@@ -3295,6 +3372,7 @@
           <span><span class="ob-none">not tracked</span> before item codes were recorded</span>
           <span><strong>Labels</strong> printed · <strong>Sold</strong> units rung up, refunds counted apart</span>
         </div>
+      </div>
       </div>
     </div>
 
@@ -28636,6 +28714,21 @@
   let obView = { mode: 'list', po: null };
 
   function obSay(msg) { const n = el('ob-status'); if (n) n.textContent = msg; }
+
+  // 🔑 SAY THAT IT SCROLLS, OR IT READS AS BROKEN. Hiding the secondary columns makes the
+  // table fit a phone in the common case, but a long item name or a fourth store can still
+  // push it over — and a table whose last visible column is a truncated word looks like a
+  // rendering fault, not an invitation to swipe. The fade appears only when there is
+  // genuinely more to see, so it never lies about content that is not there.
+  function obFade() {
+    const box = el('ob-scroll');
+    if (!box) return;
+    // 1px of slack: sub-pixel layout rounding otherwise leaves the hint permanently on.
+    box.classList.toggle('ob-more', box.scrollWidth - box.clientWidth > 1);
+  }
+  // Re-measured on scroll and on resize, because both change the answer and neither goes
+  // through a render.
+  window.addEventListener('resize', obFade);
   function obMoney(v) { return '$' + Number(v || 0).toFixed(2); }
   function obDay(iso) { return iso ? String(iso).slice(0, 10) : '—'; }
 
@@ -28646,7 +28739,13 @@
     return { status: r.status, j };
   }
 
-  function initOppBuys() { obShowList(); }
+  function initOppBuys() {
+    // Bound here rather than at parse time: #ob-scroll exists in the markup, but binding on
+    // load would attach before the page is ever shown and re-attach on every visit.
+    const box = el('ob-scroll');
+    if (box && !box.dataset.obBound) { box.dataset.obBound = '1'; box.addEventListener('scroll', obFade); }
+    obShowList();
+  }
   window.initOppBuys = initOppBuys;
 
   function obShowList() {
@@ -28679,6 +28778,7 @@
       body.innerHTML = `<div class="ob-empty">No ${want === 'all' ? '' : want + ' '}buys yet.`
         + `${obCanEdit ? ' Open one to start tracking a purchase order.' : ''}</div>`;
       obSay(obCanEdit ? 'Nothing here yet.' : 'Nothing here yet. An admin opens a buy.');
+      obFade();
       return;
     }
     const totalLabels = buys.reduce((s, b) => s + (b.labels || 0), 0);
@@ -28700,26 +28800,31 @@
         : '<span class="ob-none">none yet</span>';
       const units = b.units === null || b.units === undefined
         ? '<span class="ob-dim">—</span>' : String(b.units);
+      // 🔑 .ob-sec MARKS A COLUMN BY ROLE, NOT BY POSITION. Below 640px these are hidden so
+      // what remains fits a phone. Tying it to the role means a column added later does not
+      // silently inherit "the one that disappears" from wherever it landed in the row.
       return `<tr class="ob-row" onclick="obOpenDetail('${escapeHtml(b.po)}')">
         <td class="ob-po">${escapeHtml(b.po)}</td>
         <td>${escapeHtml(b.label || '')}</td>
-        <td class="ob-dim">${escapeHtml(b.vendor || '')}</td>
+        <td class="ob-dim ob-sec">${escapeHtml(b.vendor || '')}</td>
         <td>${badge}</td>
         <td class="ob-num">${units}</td>
         <td class="ob-num">${labels}</td>
-        <td class="ob-num">${b.items || 0}</td>
-        <td class="ob-num">${b.stores || 0}</td>
-        <td class="ob-dim">${escapeHtml(obDay(b.received_on || b.opened_at))}</td>
+        <td class="ob-num ob-sec">${b.items || 0}</td>
+        <td class="ob-num ob-sec">${b.stores || 0}</td>
+        <td class="ob-dim ob-sec">${escapeHtml(obDay(b.received_on || b.opened_at))}</td>
       </tr>`;
     }).join('');
 
     body.innerHTML = `<table>
       <thead><tr>
-        <th>PO</th><th>Name</th><th>Vendor</th><th>Status</th>
+        <th>PO</th><th>Name</th><th class="ob-sec">Vendor</th><th>Status</th>
         <th class="ob-num">Units</th><th class="ob-num">Labels</th>
-        <th class="ob-num">Items</th><th class="ob-num">Stores</th><th>Received</th>
+        <th class="ob-num ob-sec">Items</th><th class="ob-num ob-sec">Stores</th>
+        <th class="ob-sec">Received</th>
       </tr></thead>
       <tbody>${rows}</tbody></table>`;
+    obFade();
   }
 
   async function obOpenDetail(po) {
@@ -28784,30 +28889,36 @@
       el('ob-body').innerHTML = act
         + `<div class="ob-empty">Nothing has been priced into this buy yet.
              Pick PO ${escapeHtml(buy.po)} on Price Scan and every label you print will land here.</div>`;
+      obFade();
       return;
     }
+    // 🛑 THE CODE COLUMN IS NEVER SECONDARY. Two lines can share a store, an item, a
+    // category and a price and differ only in the code — BL-50002-1_5 against
+    // BL-50002-1_5-P99999 is precisely that, and it is the whole point of Phase 2. Hiding
+    // the code on a phone would render those two rows identical and unexplainable.
     const rows = lines.map(l => `<tr>
       <td>${escapeHtml(l.store)}</td>
-      <td>${escapeHtml(l.title || l.l3)}</td>
-      <td class="ob-dim">${escapeHtml(l.l3)}</td>
-      <td class="ob-po">${escapeHtml(l.code)}</td>
-      <td class="ob-num">${obMoney(l.price)}</td>
-      <td class="ob-num">${l.retail === null || l.retail === undefined
+      <td class="ob-item"><span class="ob-title">${escapeHtml(l.title || l.l3)}</span><span class="ob-code-sub">${escapeHtml(l.code)}</span></td>
+      <td class="ob-dim ob-sec">${escapeHtml(l.l3)}</td>
+      <td class="ob-po ob-sec">${escapeHtml(l.code)}</td>
+      <td class="ob-num ob-sec">${obMoney(l.price)}</td>
+      <td class="ob-num ob-sec">${l.retail === null || l.retail === undefined
           ? '<span class="ob-dim">—</span>' : obMoney(l.retail)}</td>
       <td class="ob-num">${l.labels}</td>
       <td class="ob-num">${obSoldCell(l.sold)}</td>
-      <td class="ob-num ob-dim">${l.presses}</td>
-      <td class="ob-dim">${escapeHtml(obDay(l.last_print))}</td>
+      <td class="ob-num ob-dim ob-sec">${l.presses}</td>
+      <td class="ob-dim ob-sec">${escapeHtml(obDay(l.last_print))}</td>
     </tr>`).join('');
 
     el('ob-body').innerHTML = act + `<table>
       <thead><tr>
-        <th>Store</th><th>Item</th><th>Category</th><th>Code</th>
-        <th class="ob-num">Our price</th><th class="ob-num">Street</th>
+        <th>Store</th><th>Item</th><th class="ob-sec">Category</th><th class="ob-sec">Code</th>
+        <th class="ob-num ob-sec">Our price</th><th class="ob-num ob-sec">Street</th>
         <th class="ob-num">Labels</th><th class="ob-num">Sold</th>
-        <th class="ob-num">Presses</th><th>Last print</th>
+        <th class="ob-num ob-sec">Presses</th><th class="ob-sec">Last print</th>
       </tr></thead>
       <tbody>${rows}</tbody></table>`;
+    obFade();
   }
 
   function obToggleNew(force) {

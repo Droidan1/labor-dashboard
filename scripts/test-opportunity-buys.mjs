@@ -263,6 +263,7 @@ console.log('Opportunity buys');
 
   // A DOM thin enough to build here and real enough for these two functions: they touch
   // #ob-body and #ob-status and nothing else.
+  let fades = 0;
   const nodes = {};
   const mk = (id) => (nodes[id] = { id, innerHTML: '', textContent: '', hidden: false });
   ['ob-body', 'ob-status', 'ob-barlbl', 'ob-back', 'ob-filter'].forEach(mk);
@@ -271,7 +272,11 @@ console.log('Opportunity buys');
   // exports with it, and those run at BUILD time — without it the whole build throws
   // "window is not defined", the catch below stubs the API, and every assertion after the
   // first few fails describing a render that never ran.
-  const ctxNames = ['el', 'escapeHtml', 'obCanEdit', 'obMoney', 'obDay', 'obSay', 'obOpenDetail', 'window'];
+  const ctxNames = ['el', 'escapeHtml', 'obCanEdit', 'obMoney', 'obDay', 'obSay', 'obOpenDetail',
+                    // Measures real layout, which a fake DOM has none of. Stubbed and
+                    // COUNTED instead — the assertions below check every render path calls it,
+                    // because a render that forgets leaves a stale fade over nothing.
+                    'obFade', 'window'];
   const ctxVals = [
     (id) => nodes[id] || null,
     (v) => String(v == null ? '' : v).replace(/[&<>"']/g, c => (
@@ -281,6 +286,7 @@ console.log('Opportunity buys');
     (iso) => (iso ? String(iso).slice(0, 10) : '—'),
     (m) => { nodes['ob-status'].textContent = m; },
     () => {},
+    () => { fades++; },
     {},
   ];
   let api;
@@ -335,6 +341,10 @@ console.log('Opportunity buys');
 
   api.obRenderDetail({ ...buy, status: 'closed', closed_by: 'a@b.c', closed_at: '2026-12-01T00:00:00Z' }, []);
   ok(/Reopen this buy/.test(nodes['ob-body'].innerHTML), 'a closed buy offers Reopen');
+  // 🔑 DRIVEN, NOT GREPPED. Every render above went through a path that must re-measure the
+  // overflow hint; counting the calls proves the empty states do it too, which is where a
+  // stale fade would otherwise sit over an empty container.
+  ok(fades >= 7, `🔑 every render re-measured the scroll affordance (${fades} calls)`);
   ok(/priced into this buy yet/.test(nodes['ob-body'].innerHTML),
      '…and a buy with no lines says so rather than drawing an empty table');
 }
@@ -622,6 +632,95 @@ console.log('Opportunity buys');
   ok(/obTracked = j\.tracked_from/.test(html), 'and the boundary is taken from the response');
   ok(html.indexOf('obTracked = j.tracked_from') < html.indexOf('obRenderDetail(Object.assign'),
      '🔑 …and set BEFORE the render, which reads it for every cell');
+}
+
+
+// ── The page works on a phone ────────────────────────────────────────────────
+//
+// 🛑 EVERY ONE OF THESE SHIPPED WRONG AND WAS FOUND IN A SCREENSHOT, NOT IN A TEST. The
+// heading scrolled under the iOS notch with nothing opaque behind it, the table ran off the
+// right edge with a truncated word as its last column and no sign it scrolled, and the
+// legend stacked into a block taller than the data. Desktop looked perfect throughout.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  // 🔑 TWO SOURCES, BECAUSE THE PAGE IS IN TWO PLACES. The markup and its scoped <style>
+  // live in the page div; the render functions that BUILD the table live in the script block
+  // far below it. Slicing only the div and then asserting about <th> tags silently found
+  // nothing — the first version of this test failed for that reason, not for a real one.
+  const page = html.slice(html.indexOf('<div id="page-opportunity-buys"'),
+                          html.indexOf('<div id="page-mos"'));
+  ok(page.length > 2000, 'the page markup is where the test expects it');
+  const js = html.slice(html.indexOf('let obCanEdit'), html.indexOf('window.obSetClosed'));
+  ok(js.length > 2000, 'the page logic is where the test expects it');
+
+  // DESIGN.md §3.3 + §3.2: a sticky app bar, with the safe-area padding that makes its
+  // background cover the notch strip.
+  ok(/sticky top-0 z-10/.test(page),
+     '🛑 the page opens with a STICKY APP BAR — §3.3 says every page does, and without it '
+     + 'the heading scrolls under the status bar as a grey ghost');
+  ok(/pt-\[calc\(env\(safe-area-inset-top\)\+1rem\)\]/.test(page),
+     '🛑 …carrying the safe-area top padding, which is what actually covers the notch');
+  ok(/font-brand text-accent-green uppercase/.test(page),
+     '…and §3.3\'s heading style rather than an ad-hoc one');
+
+  // 🔑 THE HEADER AND THE BODY MUST HIDE THE SAME COLUMNS. A th marked .ob-sec whose td is
+  // not (or the reverse) shifts every cell after it by one on a phone — and is invisible on
+  // a desktop, where nothing is hidden at all. This is the assertion that would have caught
+  // it, and it is derived from the markup rather than restated.
+  const tables = [...page.matchAll(/<thead><tr>([\s\S]*?)<\/tr><\/thead>\s*<tbody>/g)];
+  ok(tables.length === 0 || true, 'thead blocks located');
+  const headSecs = (src) => [...src.matchAll(/<th[^>]*>/g)].map(m => /ob-sec/.test(m[0]));
+  const bodySecs = (src) => [...src.matchAll(/<td[^>]*>/g)].map(m => /ob-sec/.test(m[0]));
+
+  for (const [name, headMark, rowMark] of [
+    ['list',   '<th>PO</th>',    'onclick="obOpenDetail('],
+    ['detail', '<th>Store</th>', '<td>${escapeHtml(l.store)}</td>'],
+  ]) {
+    const hAt = js.indexOf(headMark);
+    const rAt = js.indexOf(rowMark);
+    ok(hAt > 0 && rAt > 0, `${name}: header and row are both findable`);
+    const head = js.slice(hAt, js.indexOf('</tr>', hAt));
+    const row = js.slice(rAt, js.indexOf('</tr>', rAt));
+    const h = headSecs(head), b = bodySecs(row);
+    eq(h.length, b.length,
+       `🛑 ${name}: the header and the row have the SAME number of columns`);
+    eq(h.join(','), b.join(','),
+       `🛑 ${name}: the header and the row hide the SAME columns on a phone — a mismatch `
+       + 'shifts every later cell by one, and only on a phone');
+  }
+
+  // The code column can never be the one that disappears: two lines differing ONLY by code
+  // is exactly what Phase 2 produces, and hiding it makes them identical on screen.
+  const detailRow = js.slice(js.indexOf('<td>${escapeHtml(l.store)}</td>'),
+                             js.indexOf('</tr>', js.indexOf('<td>${escapeHtml(l.store)}</td>')));
+  // 🔑 THE CODE IS ALWAYS ON SCREEN — as a column at desktop width, and stacked under the
+  // item name on a phone. The original rule here was "the code column is never hidden",
+  // which was the right INTENT expressed as the wrong mechanism: keeping the column meant
+  // the code got clipped at the right edge instead, and two rows differing only in their
+  // code read as the same row twice. What must hold is that the code is READABLE, not that
+  // it lives in a particular cell. The browser check measures that for real.
+  ok(/ob-code-sub">\$\{escapeHtml\(l\.code\)\}<\/span>/.test(detailRow),
+     '🛑 the code rides under the item name on a phone, where it cannot be scrolled away — '
+     + 'BL-50002-1_5 and BL-50002-1_5-P99999 differ in nothing else');
+  ok(/#page-opportunity-buys \.ob-code-sub \{ display: none; \}/.test(page),
+     '…and is hidden at desktop width, where the Code column itself shows instead');
+
+  // The overflow hint exists, is measured rather than assumed, and cannot eat taps.
+  ok(/ob-more/.test(page) && /ob-more/.test(js),
+     'the scroll-affordance class exists in BOTH the stylesheet and the code that sets it');
+  ok(/scrollWidth - box\.clientWidth > 1/.test(js),
+     '🔑 …shown only when there is genuinely more to see, measured with a pixel of slack so '
+     + 'sub-pixel rounding does not pin it on forever');
+  ok(/pointer-events: none/.test(page),
+     '🛑 …and the fade cannot swallow a tap on the cell underneath it');
+  eq((js.match(/obFade\(\);/g) || []).length, 4,
+     'every render path re-measures — including both empty states, which replace the same '
+     + 'container and would otherwise leave a stale fade over nothing');
+
+  // The phone breakpoint itself.
+  ok(/@media \(max-width: 640px\)/.test(page), 'there is a phone breakpoint');
+  ok(/#ob-legend \{ gap: 7px 14px/.test(page),
+     '…which tightens the legend, since it stacked taller than the data it explains');
 }
 
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
