@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dashboard-cache-v222';
+const CACHE_NAME = 'dashboard-cache-v223';
 
 // Pre-fetched and cached on install
 const PRECACHE_ASSETS = [

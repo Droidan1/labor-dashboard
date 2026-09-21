@@ -1,3 +1,61 @@
+# Opportunity Buys — the page on a phone (2026-09-21)
+
+**Brian:** *"Can you fix the UI elements also on Mobile"*, with a desktop screenshot that
+looked right and a phone screenshot that did not.
+
+## What was wrong, and why nothing caught it
+
+Four defects, all invisible to 5,326 source assertions because every one of them is about
+**layout**, and the suite reads text:
+
+| symptom | cause |
+|---|---|
+| the heading rendered as a grey ghost | no sticky app bar — the page opened with a plain `div`, so the title scrolled under the iOS status bar with nothing opaque behind it |
+| the table ran off the right edge, last column a truncated `IT…` | ten columns at 390px, with `overflow-x:auto` and nothing saying it scrolled |
+| the legend stacked taller than the data it explained | a flex row wrapping into six lines |
+| **Open a buy** floated alone below the title | `flex-wrap` on the header, so the action wrapped to its own line |
+
+DESIGN.md §3.3 says it plainly — *"Every page begins with a sticky app bar"* — and §3.2 says
+that bar needs `pt-[calc(env(safe-area-inset-top)+1rem)]` so its own background covers the
+notch. I read §4.8 for the table and never read §3.2 or §3.3 for the page around it.
+
+## What changed
+
+- The standard sticky app bar, with §3.3's heading style (`font-brand`, uppercase, accent
+  green) and the safe-area padding. The action sits in the bar's right slot.
+- The subtitle shortens below `sm` — the full sentence wrapped to three lines and pushed the
+  table under the fold before anyone had read a number.
+- Secondary columns hide below 640px, marked **by role** (`.ob-sec`) rather than by position,
+  so a column added later cannot silently become the one that disappears.
+- **The code rides under the item name on a phone.** This is the one that mattered:
+  `BL-50002-1_5` and `BL-50002-1_5-P99999` share a store, an item, a category and a price —
+  that pair is exactly what Phase 2 produces — and truncated at the right edge they read as
+  the same row twice.
+- The title ellipsises so Labels and Sold stay on screen. `not tracked` must never be misread
+  as clipped-to-nothing, because it means "we cannot tell", not zero.
+- A fade on the scroll container, shown only when there is genuinely more to see.
+
+## A browser check, because the suite structurally cannot see this
+
+`scripts/browser-opportunity-buys.mjs`, following `browser-inventory-receiver`'s precedent:
+not in `test.sh` (needs playwright-core and a Chromium, neither a repo dependency), run by
+hand. It renders the real page at 390px and 1180px in both themes and measures **62**
+assertions against the painted result — page overflow, bar opacity, computed contrast,
+whether the header and body hide the *same* columns, and whether both codes are fully
+inside the panel rather than merely present in the DOM.
+
+## 🛑 The trap the check itself fell into
+
+The run serves `dist/`, and `dist/` was built two edits earlier. A column that had just been
+hidden came back "still visible" — a real-looking failure in code that was already correct,
+and I started debugging the CSS. The script now **refuses to run** when `dist/index.html` is
+older than `index.html`, naming the gap in seconds. A warning would have been scrolled past.
+
+Second trap, same family: a build without `dist/tailwind.css` renders every Tailwind class as
+nothing, so the screenshot is a column of unstyled text and every measurement is meaningless.
+Also refused rather than warned.
+
+
 # Opportunity buys — Phase 3, sell-through (2026-09-21)
 
 **Brian:** *"start phase 3"* — after asking what it contained and confirming that without it
