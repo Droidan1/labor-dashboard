@@ -28,6 +28,12 @@ const near = (a, b, m) => ok(a !== null && Math.abs(a - b) < 0.05, `${m} (got ${
 // throws — killing the process and taking every later suite with it, so the very thing
 // under test is reported as a stack trace rather than a named failure. That has happened
 // three times while writing this file. These two are the one answer to it.
+// Strip line comments before any NEGATIVE assertion. A `!/x/` test over a region that
+// contains English is testing the English: the comment explaining that a gate was widened
+// away from requireAdminAccess contains the words "requireAdminAccess", and satisfied an
+// assertion that the old gate was gone by describing that it was gone.
+const decomment = (t) => String(t == null ? '' : t).replace(/^\s*\/\/.*$/gm, '');
+
 const sliceOrNull = (src, from, to) => {
   const a = src.indexOf(from);
   if (a < 0) return null;
@@ -47,7 +53,11 @@ const buildOrStub = (what, body, argNames, argVals, ret) => {
 
 const worker = await loadWorker(repo);
 const { db, env } = makeEnv(repo);
-for (const m of ['migration-041.sql', 'migration-042.sql', 'migration-043.sql'])
+// 🔑 056 CREATES sticker_prints, AND applyMigrationAlters CANNOT. That helper only replays
+// `ALTER TABLE ... ADD COLUMN`, so the columns later migrations add to this table — its
+// street price, and migration-069's qty — were being applied to a table that did not exist
+// and silently swallowed. Every print-history assertion below needs the table itself first.
+for (const m of ['migration-041.sql', 'migration-042.sql', 'migration-043.sql', 'migration-056.sql'])
   db.exec(fs.readFileSync(path.join(repo, m), 'utf8'));
 applyMigrationAlters(db, repo);
 
@@ -237,12 +247,47 @@ console.log('Price Scan');
   eq((await post('merch-scan', { identifier: '024100113163' }, 'u-staff')).status, 403, 'staff may not, yet');
   eq((await post('merch-scan-save', { identifier: '111', retail_price: 5 }, 'u-staff')).status, 403,
      '…and certainly may not override a price');
-  // 🔑 Scanning and OVERRIDING are different rights. A manager prices items all day; only
-  // an admin may permanently change what an item is worth for every store, forever.
-  eq((await post('merch-scan-save', { identifier: '111', retail_price: 5 }, 'u-mgr1')).status, 403,
-     '🔑 a manager may scan but may NOT set a permanent override');
+  // 🛑 THIS ASSERTION USED TO READ 403 FOR A MANAGER, AND THE POLICY MOVED UNDER IT.
+  // Brian, 2026-09-21, asked for managers to get both the Clover price point and the
+  // Products override, having been shown that this endpoint is the second of those and
+  // exactly what it grants: setting what an item is worth for every store, permanently.
+  // The line is moved deliberately. What did NOT move is the one above it — staff are still
+  // refused, and that is the assertion doing the real work now.
+  eq((await post('merch-scan-save', { identifier: '024100113163', retail_price: 5 }, 'u-mgr1')).status, 200,
+     '🔑 a manager may now set an override — canSeeFinancials, not admin');
   eq((await post('merch-scan-save', { identifier: '024100113163', retail_price: 5 }, 'u-admin')).status, 200,
-     '…an admin may');
+     '…an admin still may');
+}
+
+// ── The gate and the control that shows it cannot drift ─────────────────────
+//
+// 🔑 TESTING THE RELATIONSHIP, NOT THE TWO THINGS. Asserting "the worker admits managers"
+// and, separately, "psCanOverride returns true for managers" would both pass while the two
+// described different roles — which is the failure lessons.md rule 15 was written for. A
+// screen hiding a control the worker would accept is merely coy; one SHOWING a control the
+// worker refuses teaches people the app is broken. So the assertion names both sides.
+{
+  const wsrc = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const gateAt = wsrc.indexOf('action") === "merch-scan-save"');
+  // 🛑 COMMENTS STRIPPED BEFORE ANY NEGATIVE ASSERTION, and this caught itself on the
+  // first run: the comment explaining the widening NAMES requireAdminAccess, so "the old
+  // gate is gone" matched the sentence saying it was gone and failed a correct change.
+  // lessons.md already records the mirror of this — an assertion satisfied by prose near
+  // the code rather than by the code. A `!/x/` test over a region that contains English
+  // is testing the English.
+  const gate = decomment(wsrc.slice(gateAt, gateAt + 2600));
+  ok(/canSeeFinancials\(currentUser\)/.test(gate),
+     '🔑 the worker gates merch-scan-save on canSeeFinancials');
+  ok(!/requireAdminAccess/.test(gate),
+     '…and no longer on requireAdminAccess');
+
+  const fn = decomment(html.slice(html.indexOf('function psCanOverride('),
+                        html.indexOf('}', html.indexOf('function psCanOverride(')) + 1));
+  ok(/canSeeFinancials\(currentUser\)/.test(fn),
+     '🛑 …and the browser asks the SAME question, so the control matches what will be accepted');
+  ok(!/superuser/.test(fn),
+     '…rather than the role list it used to hardcode');
 }
 
 // ── A PHOTO, because iPhones cannot read barcodes in the browser ────────────
@@ -2005,8 +2050,15 @@ console.log('Price Scan');
   ok(/id="ps-print"[^>]*disabled/.test(row), '🔑 Print starts DISABLED — enabled only once Clover confirms the code');
   const chk = html.slice(html.indexOf('async function psStickerCheck('), html.indexOf('function psZpl('));
   ok(/btn\.disabled = !a\.printable/.test(chk), '…and follows printable, never the mere presence of a price');
-  ok(/!== psStickerFor\) return/.test(chk),
+  ok(/if \(seq !== psStickerSeq\) return/.test(chk),
      '🔑 a late answer for a PREVIOUS item is dropped, so the button never describes the wrong scan');
+  // 🛑 AND IT IS KEYED ON A COUNTER, NOT ON WHAT THE ITEM IS CALLED. The old guard
+  // compared `identifier || title`, which manual pricing can leave BOTH of empty — two such
+  // items in a row both keyed as null, and null !== null is false, so the stale answer got
+  // through. Pinned as a non-relationship because that is exactly the kind of claim that
+  // rots silently (lessons.md rule 14).
+  ok(!/psStickerFor/.test(chk),
+     '…and no longer on the item\'s name, which manual pricing may not have');
 }
 
 // ── A fault is not a refusal ───────────────────────────────────────────────────
@@ -2198,24 +2250,38 @@ console.log('Price Scan');
   ok(/if \(!psCanPrint\(\)\) return ''/.test(row || ''),
      'the Print button is offered on the print right');
 
-  // \🛑 The two rights must stay SEPARATE. Collapsing them the other way would hand the
-  // price-override control to every manager, which is the actual dangerous direction.
-  // 🛑 EXISTING IS NOT ENOUGH -- a mutation that redefined psCanOverride as
-  // canSeeFinancials passed this suite. That is the DANGEROUS direction: it would hand the
-  // price-override control to every manager. Pin the role list, and prove a manager is
-  // refused, rather than checking the function is still spelled the same.
+  // 🛑 THIS BLOCK USED TO PIN THE OPPOSITE POLICY, AND SAID SO IN CAPITALS: the two
+  // rights had to stay separate, and collapsing psCanOverride into canSeeFinancials was
+  // named "the DANGEROUS direction". Brian moved that line himself on 2026-09-21, asked for
+  // managers to get both the Clover price point and the Products override, having been
+  // shown in the same breath that it means a manager can set what an item is worth for
+  // every store, permanently. So the assertion is rewritten rather than deleted, and it now
+  // pins the new policy just as firmly.
+  //
+  // 🔑 WHAT DID NOT MOVE IS WHAT THIS BLOCK IS FOR NOW. The gate was WIDENED, never
+  // removed: staff are still refused, and a build of the real function against the real
+  // canSeeFinancials is what proves it, rather than a regex agreeing with itself.
   const ovr = sliceOrNull(html, '  function psCanOverride() {', '\n  }');
-  ok(/\['superuser', 'admin'\]\.includes/.test(ovr || ''),
-     'psCanOverride is still superuser+admin -- overriding a price did NOT move');
+  ok(/canSeeFinancials\(currentUser\)/.test(decomment(ovr)),
+     'psCanOverride asks canSeeFinancials -- the same question the worker asks');
+  ok(!/\['superuser', 'admin'\]\.includes/.test(decomment(ovr)),
+     '…rather than the role list it used to hardcode beside it');
   // A body that reaches for something it was not given throws at CALL time, not build
   // time, so catch it here: a probe that dies is a failed assertion, not a dead suite.
-  let managerMayOverride;
-  try {
-    managerMayOverride = !!buildOrStub('psCanOverride', ovr + '\n  }',
-      ['currentUser'], [{ role: 'manager' }], 'psCanOverride')();
-  } catch (e) { managerMayOverride = `threw: ${e.message}`; }
-  eq(managerMayOverride, false,
-     '🛑 …and a manager who can now PRINT still cannot OVERRIDE a price');
+  // `canSee` below is the REAL canSeeFinancials, lifted out of worker.js above -- so this
+  // exercises the actual composition rather than a stand-in that could agree while
+  // production disagrees.
+  const overrideFor = (role) => {
+    try {
+      return !!buildOrStub('psCanOverride', ovr + '\n  }',
+        ['currentUser', 'canSeeFinancials'], [U(role), canSee], 'psCanOverride')();
+    } catch (e) { return `threw: ${e.message}`; }
+  };
+  eq(overrideFor('manager'), true,
+     '🔑 a manager may now override a price -- the line Brian moved');
+  eq(overrideFor('staff'), false,
+     '🛑 …and staff still may NOT. This widened the gate, it did not remove it');
+  eq(overrideFor('admin'), true, '…and everyone who already could, still can');
   ok(/\$\{psCanOverride\(\) \? '<button class="ps-link" onclick="psOverride\(\)"/.test(html),
      '\🔑 …and still guards the price override, which did NOT move');
   ok(/case 'NEED_MANAGER':/.test(html),
@@ -2247,21 +2313,45 @@ console.log('Price Scan');
   const box = { innerHTML: '', style: {} };
   const reBtn = { style: {} }, n = { textContent: '' };
   const els = { 'ps-recent': box, 'ps-tab-reprint': reBtn, 'ps-tab-reprint-n': n };
+  // 🔑 ALL THREE COUNT STATES, because a fixture that only holds the well-behaved value
+  // tests the assumption rather than the code (lessons.md, 2026-09-16). `qty: null` is every
+  // row printed before migration-069 and is the common case for months; `qty: 1` is a run
+  // genuinely measured at one; `qty: 3` is a real run. The first two must render
+  // identically — no "×1" — and only the third may say anything.
   const rows = [
     { code: 'BL-50002-1_5', title: 'LIFEWTR Purified Water 1L', l3: 'FG BL CONSUMABLES - FOOD - BEVERAGES',
-      price: 1.5, printed_at: '2026-09-02T15:00:00Z' },
+      price: 1.5, printed_at: '2026-09-02T15:00:00Z', qty: null },
     { code: 'BL-50002-3', title: '', l3: 'FG BL CONSUMABLES - FOOD - BEVERAGES',
-      price: 3, printed_at: '2026-09-02T15:00:00Z' },
+      price: 3, printed_at: '2026-09-02T15:00:00Z', qty: 1 },
+    { code: 'BL-50008-2_5', title: 'Duracell AA 4pk', l3: 'FG BL CONSUMABLES - FOOD - PANTRY',
+      price: 2.5, printed_at: '2026-09-02T15:00:00Z', qty: 3 },
   ];
+  // Lifted from index.html rather than restated: a harness that reimplements the number it
+  // is testing will agree with itself while production disagrees.
+  const qtyMax = Number((html.match(/const PS_QTY_MAX = (\d+);/) || [])[1]);
+  ok(qtyMax > 0, 'PS_QTY_MAX is readable from index.html');
   const render = buildOrStub('psRecentRender', src,
-    ['el', 'psEsc', 'psL3Tail', 'psMoney', 'psRecentWhen', 'psCanPrint', 'psRecent'],
+    ['el', 'psEsc', 'psL3Tail', 'psMoney', 'psRecentWhen', 'psCanPrint', 'psRecent', 'PS_QTY_MAX'],
     [(id) => els[id] || null,
      (v) => String(v == null ? '' : v),
      (l3) => String(l3 || '').split(' - ').pop(),
      (v) => (v === null || v === undefined || v === '') ? '—' : `$${Number(v).toFixed(2)}`,
-     () => '5m ago', () => true, rows],
+     () => '5m ago', () => true, rows, qtyMax],
     'psRecentRender');
   render();
+
+  // ── The count, only where there is one ──────────────────────────────────
+  {
+    const perRow = box.innerHTML.split('class="ps-recent-row"');
+    eq(perRow.length - 1, 3, 'every print row is drawn');
+    ok(!/&times;/.test(perRow[1]), '🛑 a row with NO count says nothing — never "×1"');
+    ok(!/&times;/.test(perRow[2]), '…and neither does one genuinely printed once');
+    ok(/&times;3/.test(perRow[3]), '🔑 …while a run of three says so');
+    eq((box.innerHTML.match(/id="ps-rq-\d+"/g) || []).length, 3,
+       'each row gets its OWN qty box, so a number typed on one cannot reprint another');
+    ok(new RegExp(`max="${qtyMax}"`).test(box.innerHTML),
+       '…capped at the same PS_QTY_MAX the print path clamps to');
+  }
 
   ok(/LIFEWTR Purified Water 1L/.test(box.innerHTML),
      '\🔑 the product name is on the row -- the thing you check against the shelf');
@@ -2272,7 +2362,7 @@ console.log('Price Scan');
   ok(/5m ago/.test(box.innerHTML), '…with when it went out');
   ok(/BEVERAGES/.test(box.innerHTML),
      'a row with no stored name falls back to its category tail, not to the code again');
-  eq(n.textContent, '2', 'the tab carries the count');
+  eq(n.textContent, '3', 'the tab carries the count');
 
   // The price must never be the bare number: 1.5 on a shelf label row reads as $1.05 at a
   // glance, and this page already has one formatter for exactly that reason.
@@ -2309,9 +2399,11 @@ console.log('Price Scan');
     return map;
   };
 
-  const build = (map, fnState, spy) => buildOrStub('psTab', src,
-    ['el', 'fn', 'psStopScan', 'psRecentLoad', 'window'],
-    [(id) => map[id] || null, fnState, () => { spy.stopped++; }, () => { spy.loaded++; }, {}],
+  // Two full-body modes now, so the sandbox carries both. A default of closed keeps every
+  // existing case below reading as it did.
+  const build = (map, fnState, spy, pmState = { open: false }) => buildOrStub('psTab', src,
+    ['el', 'fn', 'pm', 'psStopScan', 'psRecentLoad', 'window'],
+    [(id) => map[id] || null, fnState, pmState, () => { spy.stopped++; }, () => { spy.loaded++; }, {}],
     '{ psApplyTab, psTab }');
 
   {
@@ -2344,6 +2436,19 @@ console.log('Price Scan');
     eq(map['ps-barcode-mode'].style.display, undefined,
        '\🔑 while furniture is open the tab writes NOTHING to the body');
     eq(map['ps-tab-scan'].className, 'ps-tab on', '…though the bar still reflects the selection');
+  }
+
+  {
+    // 🛑 AND SO DOES MANUAL. This check read `fn.open` alone while furniture was the
+    // only full-body mode; a second one with the same claim would have had psApplyTab
+    // quietly restoring the barcode controls underneath it. The assertion names the RULE
+    // (any mode owning the body) rather than the one mode that happened to exist first.
+    const map = mkEl(), spy = { stopped: 0, loaded: 0 };
+    const m = build(map, { open: false }, spy, { open: true });
+    m.psApplyTab();
+    eq(map['ps-barcode-mode'].style.display, undefined,
+       '🛑 while MANUAL is open the tab writes nothing to the body either');
+    eq(map['ps-tab-scan'].className, 'ps-tab on', '…and the bar still reflects the selection');
   }
 }
 
@@ -2941,8 +3046,15 @@ console.log('Price Scan');
   // arguments are passed, which is the thing worth pinning, and stops the formatter from
   // being able to fail the build.
   const flat = (t) => String(t || '').replace(/\s+/g, ' ');
-  ok(/psZpl\(a\.code, psLast\.price, \{ retail: psLast\.retail, categoryCode: a\.category_code \}, psTpl\)/.test(flat(html)),
-     'the print path passes the street price, the category number and the template');
+  ok(/psZpl\(a\.code, psLast\.price, \{ retail: psLast\.retail, categoryCode: a\.category_code \}, psTpl, qty\)/.test(flat(html)),
+     'the print path passes the street price, the category number, the template and the count');
+  // 🛑 THE COUNT IS READ BEFORE THE PROBE, NOT AFTER IT. psZebraDevice is a round trip and
+  // the qty box stays editable across it, so reading it late would print whatever the box
+  // said when Browser Print answered rather than what was pressed. Pinned by ORDER, because
+  // both spellings pass an argument called qty and only one of them is right.
+  const printFn = sliceOrNull(html, '  async function psPrint() {', '\n  }\n');
+  ok(printFn && printFn.indexOf('const qty = psQty()') < printFn.indexOf('psZebraDevice('),
+     '…and it reads the box before the first await, not after');
   ok(/let psTpl = null;/.test(html),
      '🔑 the template starts null, so a failed fetch prints the stock label rather than nothing');
 }
@@ -3303,9 +3415,14 @@ console.log('Price Scan');
      '…from the stored INPUTS, so a renumbered category reprints under its new number');
   ok(/!a\.printable/.test(rp || ''),
      '🛑 …and prints only what comes back printable');
-  ok(/psZpl\(a\.code, p\.price, \{ retail: p\.retail, categoryCode: a\.category_code \}, psTpl\)/.test(String(rp || '').replace(/\s+/g, ' ')),
+  ok(/psZpl\(a\.code, p\.price, \{ retail: p\.retail, categoryCode: a\.category_code \}, psTpl, qty\)/.test(String(rp || '').replace(/\s+/g, ' ')),
      '🛑 the label carries the code the check JUST returned, never the stored one -- and the '
      + 'STORED street price, so a reprint is the same label the shelf already has');
+  // 🔑 THE ROW'S OWN BOX, NOT A SHARED ONE. `psQty('ps-rq-' + i)` is what stops a number
+  // typed against the item in your hand from applying to whichever row you tap next — the
+  // bug a single #ps-qty read would have shipped, silently and only sometimes.
+  ok(/psQty\(`ps-rq-\$\{i\}`\)/.test(rp || ''),
+     '…and the count comes from THIS row\'s box');
   ok(/'Content-Type': 'text\/plain'/.test(rp || ''),
      '…and posts text/plain, so it does not trip the CORS preflight the main path already hit');
   ok(/if \(!w\.ok\)/.test(rp || ''), '…and a refused write is not reported as reprinted');
@@ -3466,8 +3583,18 @@ console.log('Price Scan');
   const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
   const editorSrc = sliceOrNull(html, '  const ST_ROWS = [', '  window.stTest = stTest;');
   ok(editorSrc, 'the editor block is extractable');
-  const pa = html.indexOf('  function psZpl(code, price, extras, tpl) {');
-  const psZplSrc = html.slice(pa, html.indexOf('\n  }\n', pa) + 4);
+  // 🛑 MATCH THE NAME, NEVER THE ARGUMENT LIST. This read
+  // `indexOf('  function psZpl(code, price, extras, tpl) {')` and adding a fifth parameter
+  // made it −¹: the slice became `html.slice(-1, …)`, psZpl was undefined inside the
+  // sandbox, and stTest failed with "the test label reaches Browser Print (got 0, want 1)"
+  // — which reads as a broken printer path and is really a broken slice. Three assertions
+  // pointed at the wrong thing. The file's own preamble says a test must NAME a regression
+  // rather than die on it; this one was still slicing by hand, so it does now.
+  // sliceOrNull stops BEFORE its terminator, so the closing brace is put back by hand --
+  // the hand-rolled slice this replaces used `+ 4` to swallow it.
+  const psZplBody = sliceOrNull(html, '  function psZpl(', '\n  }\n');
+  const psZplSrc = psZplBody === null ? null : psZplBody + '\n  }';
+  ok(psZplSrc, 'psZpl is extractable for the editor sandbox');
 
   const DEF = { v: 1, fields: {
     qr:     { on: true,  x: 104, y: 10,  mag: 4 },
@@ -3720,6 +3847,276 @@ console.log('Price Scan');
   const offered = [...editor.matchAll(/stSet\('code','show'[\s\S]{0,400}?<\/select>/g)]
     .flatMap(m => [...m[0].matchAll(/<option value="(\w+)"/g)].map(o => o[1]));
   eq(offered.sort().join(','), 'full,number', '🛑 the editor offers exactly the values the worker accepts');
+}
+
+// ── How many labels, and the three copies of the cap ─────────────────────────
+//
+// 🔑 ^PQ IS THE WHOLE MECHANISM. One press of Print sends ONE job and the printer draws the
+// repeat, so the thing to pin is that the command appears exactly when a repeat was asked
+// for and never otherwise — a stray ^PQ1 would be a new byte on every label ever printed,
+// to say what the printer already defaults to.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const wsrc = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const body = sliceOrNull(html, '  function psZpl(', '\n  }\n');
+  const psZpl = buildOrStub('psZpl', (body || '') + '\n  }', [], [], 'psZpl');
+
+  const one = psZpl('BL-50008-2_5', 2.5);
+  ok(!/\^PQ/.test(one), '🛑 a single label carries NO ^PQ — the printer already defaults to one');
+  eq(psZpl('BL-50008-2_5', 2.5, {}, null, 1), one,
+     '…and an explicit qty of 1 is byte-identical to no qty at all');
+  eq(psZpl('BL-50008-2_5', 2.5, {}, null, 0), one, '…as is 0, which means one label, never none');
+  eq(psZpl('BL-50008-2_5', 2.5, {}, null, NaN), one, '…and NaN, from a half-deleted input box');
+  eq(psZpl('BL-50008-2_5', 2.5, {}, null, ''), one, '…and an empty string');
+
+  const three = psZpl('BL-50008-2_5', 2.5, {}, null, 3);
+  ok(/\^PQ3/.test(three), '🔑 three labels ask the printer for three');
+  ok(/\^PQ3\n\^XZ$/.test(three.trim()), '…immediately before the frame closes, where ZPL expects it');
+  eq(three.replace('^PQ3\n', ''), one, '🛑 …and changes NOTHING else about the label');
+
+  // 🔑 THREE COPIES OF ONE NUMBER, PINNED TO EACH OTHER. psZpl is sliced out of this file
+  // and evaluated in isolation, so it cannot read a shared constant and carries a literal.
+  // The worker validates against its own. Asserting each exists would pass while all three
+  // disagreed — the failure lessons.md rule 15 names. So assert the RELATIONSHIP.
+  const uiMax = Number((html.match(/const PS_QTY_MAX = (\d+);/) || [])[1]);
+  const workerMax = Number((wsrc.match(/const STICKER_QTY_MAX = (\d+);/) || [])[1]);
+  const zplMax = Number((String(body).match(/Math\.min\(n, (\d+)\)/) || [])[1]);
+  ok(uiMax > 1, 'index.html declares PS_QTY_MAX');
+  eq(workerMax, uiMax, '🔑 the worker caps at the same number the screen offers');
+  eq(zplMax, uiMax, '🛑 …and so does the literal inside psZpl, which cannot read either');
+
+  ok(new RegExp(`\\^PQ${uiMax}(\\n|$)`).test(psZpl('BL-1-1', 1, {}, null, uiMax + 500)),
+     '…and a wild number is clamped to it rather than sent to the printer');
+}
+
+// ── The count survives the round trip, and an uncounted row stays uncounted ───
+{
+  const ST = { store: 'BL1', l3: SNACKS, price: 2.5, code: 'BL-50007-2_5', title: 'Pringles' };
+  eq((await post('sticker-printed', { ...ST, qty: 3 })).status, 200, 'a counted print records');
+  eq((await post('sticker-printed', { ...ST, code: 'BL-50007-3', price: 3 })).status, 200,
+     '…and one sent without a count still records');
+
+  const h = await get('sticker-history&limit=5');
+  eq(h.status, 200, 'the history reads back');
+  const counted = (h.body.prints || []).find(p => p.code === 'BL-50007-2_5');
+  const bare = (h.body.prints || []).find(p => p.code === 'BL-50007-3');
+  eq(counted?.qty, 3, '🔑 the count comes back as it went in');
+  eq(bare?.qty, null,
+     '🛑 …and an absent count stays NULL, never 1 — migration-069 keeps "printed before we '
+     + 'counted" distinguishable from "printed once"');
+
+  // 🛑 THE SCREEN IS NOT THE BOUNDARY. The qty box is capped in the browser, but a recorded
+  // count of 900 would describe a run the printer never made, and the history is what a
+  // reprint and any later shrink question are read from.
+  eq((await post('sticker-printed', { ...ST, qty: 900 })).status, 400,
+     'a count past the cap is refused at the worker, not just in the input');
+  eq((await post('sticker-printed', { ...ST, qty: 0 })).status, 400, '…and so is zero');
+}
+
+// ── The category tree arrives without a lookup ───────────────────────────────
+{
+  const r = await get('merch-categories', 'u-mgr1');
+  eq(r.status, 200, '🔑 a manager can read the tree — manual pricing starts from it');
+  ok(Array.isArray(r.body.categories) && r.body.categories.length > 0, '…and it carries categories');
+  const withKids = r.body.categories.find(c => (c.children || []).length);
+  ok(withKids, '…each L2 carrying its L3s, which is what the second select is built from');
+  ok(withKids.children.some(k => k.key.includes(' - ')),
+     '…keyed by the full Clover string, because that is what the sticker code resolves against');
+  eq((await get('merch-categories', 'u-staff')).status, 403, '🛑 …and staff still may not');
+}
+
+// ── Pricing by hand: the category is not optional ────────────────────────────
+{
+  eq((await post('merch-manual-price', { price: 5 }, 'u-mgr1')).status, 400,
+     '🛑 a hand-typed price with NO category is refused — Brian\'s rule, enforced at the worker');
+  eq((await post('merch-manual-price', { l3: 'Not A Category', price: 5 }, 'u-mgr1')).status, 400,
+     '…and an invented one is refused too');
+  eq((await post('merch-manual-price', { l3: SNACKS }, 'u-mgr1')).status, 400,
+     '…and a category with no price is not a price');
+  eq((await post('merch-manual-price', { l3: SNACKS, price: -3 }, 'u-mgr1')).status, 400,
+     '…and a negative price is not one either');
+  eq((await post('merch-manual-price', { l3: SNACKS, price: 5 }, 'u-staff')).status, 403,
+     '🛑 …and staff may not price by hand at all');
+
+  const r = await post('merch-manual-price', { l3: SNACKS, retail: 12.99, price: 5 }, 'u-mgr1');
+  eq(r.status, 200, '🔑 a manager may price by hand');
+  eq(r.body.price, 5, '…at exactly the number typed, with no ladder applied');
+  eq(r.body.retail, 12.99, '…keeping the street price they gave');
+  eq(r.body.price_basis, 'set by hand', '…and saying so, in the words the scan card already uses');
+  eq(r.body.price_overridden, true, '…so the screen draws the "set by hand" chip');
+  eq(r.body.l3, SNACKS, '…filed under the category that was picked');
+  ok(r.body.categories?.length, '…and the tree rides along, as it does on a scan');
+
+  // 🔑 THE RELATIONSHIP, NOT THE TWO NUMBERS. The manual card and the scan card must quote
+  // the SAME cost for the same category — they read the same KV blobs through the same
+  // helper. Two separate assertions that each returned "0.81" would both pass while the
+  // two handlers drifted onto different sources.
+  const scan = await post('merch-scan', { identifier: '038000138416' });
+  eq(r.body.cost, scan.body.cost,
+     '🔑 the hand-priced card quotes the SAME unit cost a scan of this category does');
+  eq(r.body.gp_floor_pct, scan.body.gp_floor_pct, '…and the same margin floor');
+
+  // GP is computed, not taken on trust — it is the only check on a number nobody looked up.
+  const expect = +(((5 - r.body.cost) / 5) * 100).toFixed(1);
+  eq(r.body.gp_pct, expect, '🔑 …and GP falls out of the typed price against that cost');
+
+  const thin = await post('merch-manual-price', { l3: SNACKS, price: 1 }, 'u-mgr1');
+  eq(thin.body.below_gp_floor, true,
+     '🛑 a hand-typed price under the floor is FLAGGED — the whole reason the card is shown');
+}
+
+// ── Adding a price point: the preview cannot write ───────────────────────────
+//
+// 🛑 MEMORY.md RULE 7 AS A MECHANISM, NOT A CONVENTION. A dialog the client draws can be
+// skipped by a client that forgets to draw it. Here the first call computes the summary and
+// creates nothing; only a second call carrying confirm:true writes. This suite is the proof,
+// and it counts Clover's item-creation POSTs rather than trusting the response.
+{
+  const STORES6 = ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'];
+  for (const s of STORES6) { env[`${s}_MERCHANT_ID`] = `M-${s}`; env[`${s}_API_TOKEN`] = `t-${s}`; }
+  // A fresh cached map, so the category number resolves without a Clover sweep. The codes
+  // list is what the typo guard reads its range from.
+  await env.SALES_SNAPSHOTS.put('sticker:category-codes:BL1', JSON.stringify({
+    map: { [SNACKS]: '50007' }, field: 'code', at: new Date().toISOString(),
+    codes: ['BL-50007-1', 'BL-50007-1_5', 'BL-50007-2', 'BL-50007-2_5', 'BL-50007-3'],
+  }));
+
+  let created = [], listed = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (/api\.clover\.com.*\/items\?/.test(url)) {
+      listed++;
+      // One short page: the end of the catalogue, which is what lets "absent" be a fact.
+      // The sibling is a real item in the category, carrying the tax and visibility the new
+      // price point must copy rather than guess.
+      return new Response(JSON.stringify({ elements: [
+        { id: 'i1', name: SNACKS, code: 'BL-50007-2_5', sku: 'BL-50007-2_5',
+          price: 250, cost: 81, hidden: false, defaultTaxRates: true },
+      ] }), { status: 200 });
+    }
+    if (/api\.clover\.com.*\/categories/.test(url)) {
+      return new Response(JSON.stringify({ elements: [{ id: 'c1', name: SNACKS }] }), { status: 200 });
+    }
+    if (/api\.clover\.com.*\/items$/.test(url) && init?.method === 'POST') {
+      created.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ id: 'new-' + created.length }), { status: 200 });
+    }
+    if (/category_items/.test(url)) return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    return realFetch(u, init);
+  };
+
+  // 1. THE PREVIEW WRITES NOTHING.
+  const pv = await post('sticker-create-price-point', { l3: SNACKS, price: 2, store: 'BL1' }, 'u-mgr1');
+  eq(pv.status, 200, 'a manager may ask what a price point would look like');
+  eq(pv.body.preview, true, '…and gets a preview');
+  eq(pv.body.created, false, '🛑 …which created nothing');
+  eq(created.length, 0, '🛑 …and posted NOTHING to Clover. The confirmation is structural');
+  eq(pv.body.code, 'BL-50007-2', '🔑 the code is derived, never typed');
+  eq(pv.body.name, SNACKS,
+     '🔑 …and the name is the L3 key verbatim, like every existing item in the category');
+  eq((pv.body.stores || []).length, 6, '…across all six stores, as asked');
+  eq((pv.body.warnings || []).length, 0, '…with nothing to warn about at a normal price');
+
+  // 2. THE TYPO GUARD SPEAKS BEFORE THE WRITE.
+  const wild = await post('sticker-create-price-point', { l3: SNACKS, price: 75, store: 'BL1' }, 'u-mgr1');
+  ok((wild.body.warnings || []).some(w => /outside/i.test(w)),
+     '🔑 $75 in a category running $1–$3 is called out — the fat-finger case');
+  eq(wild.body.created, false, '…and still creates nothing on its own');
+  const offRung = await post('sticker-create-price-point', { l3: SNACKS, price: 2.37, store: 'BL1' }, 'u-mgr1');
+  ok((offRung.body.warnings || []).some(w => /round/i.test(w)),
+     '🔑 …and a price that does not land on the category\'s rung is called out too');
+
+  // 3. CONFIRM WRITES, EVERYWHERE, COPYING THE SIBLING.
+  created = [];
+  const made = await post('sticker-create-price-point',
+    { l3: SNACKS, price: 2, store: 'BL1', confirm: true }, 'u-mgr1');
+  eq(made.status, 200, 'the confirmed call answers');
+  eq(made.body.created, true, '…and says it created');
+  eq(created.length, 6, '🔑 one item per store, which is what "all stores" means');
+  eq(created[0].code, 'BL-50007-2', '…under the derived code');
+  eq(created[0].sku, 'BL-50007-2', '…written to sku as well, because a duplicate in either is a duplicate');
+  eq(created[0].name, SNACKS, '…named after the category');
+  eq(created[0].price, 200, '…priced in CENTS, which is what Clover stores');
+  eq(created[0].defaultTaxRates, true,
+     '🛑 …and TAXABLE copied from a sibling, never guessed. A wrong tax flag charges a customer wrongly');
+  eq(created[0].hidden, false, '…with visibility copied the same way');
+  eq(made.body.store_ready, true, '🔑 the caller\'s own store is ready, so the label can print');
+
+  // 4. STAFF MAY NOT, AT ALL.
+  created = [];
+  eq((await post('sticker-create-price-point',
+       { l3: SNACKS, price: 4, store: 'BL1', confirm: true }, 'u-staff')).status, 403,
+     '🛑 staff cannot create inventory, confirmed or not');
+  eq(created.length, 0, '…and nothing reached Clover on their behalf');
+
+  // 5. AN UNANSWERABLE DUPLICATE CHECK REFUSES TO CREATE.
+  created = [];
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (/api\.clover\.com.*\/items\?/.test(url)) throw new TypeError('network error');
+    if (/api\.clover\.com.*\/items$/.test(url) && init?.method === 'POST') {
+      created.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ id: 'x' }), { status: 200 });
+    }
+    return realFetch(u, init);
+  };
+  const blind = await post('sticker-create-price-point',
+    { l3: SNACKS, price: 2.5, store: 'BL1', confirm: true }, 'u-mgr1');
+  eq(created.length, 0,
+     '🛑 an unanswerable duplicate check creates NOTHING — the same fail-closed contract '
+     + 'create-clover-item has, because "I could not look" is not permission');
+  eq(blind.body.store_ready, false, '…and the caller is told their own store is not ready');
+  ok((blind.body.results || []).every(x => x.stage === 'duplicate-check'),
+     '…naming the stage that stopped it, rather than a bare failure');
+
+  globalThis.fetch = realFetch;
+  for (const s of STORES6) { delete env[`${s}_MERCHANT_ID`]; delete env[`${s}_API_TOKEN`]; }
+}
+
+// ── Manual mode on screen: the gate, and the way out of a refusal ────────────
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const draw = sliceOrNull(html, '  function pmDraw() {', '\n  async function pmPrice()');
+  ok(draw, 'pmDraw is where the test expects it');
+
+  // 🛑 THE GATE IS THE FEATURE. Brian: "Before they do this user must at the L2 and L3
+  // category for this product." Everything downstream hangs off L3 — the cost is looked up
+  // by it and the sticker code is built from its Clover number — so a price typed first is
+  // a number with nothing behind it.
+  ok(/const ready = !!pm\.l3;/.test(draw), 'the form asks whether a category has been chosen');
+  ok(/const dis = ready \? '' : ' disabled';/.test(draw), '…and locks the fields when it has not');
+  for (const f of ['pm-retail', 'pm-price', 'pm-upc', 'pm-title', 'pm-go']) {
+    ok(new RegExp(`id="${f}"[^>]*\\$\\{dis\\}|id="${f}"[\\s\\S]{0,200}?\\$\\{dis\\}`).test(draw),
+       `🔑 ${f} is locked until the category is picked`);
+  }
+  ok(/the category is what sets our cost and what the sticker code is built from/.test(draw),
+     '🔑 …and the screen says WHY, rather than refusing later with no reason');
+
+  // The L3 select cannot be used before an L2, or it would list nothing and look broken.
+  ok(/id="pm-l3"[\s\S]{0,120}\$\{pm\.l2 \? '' : ' disabled'\}/.test(draw),
+     'the sub-category waits for its parent');
+
+  // 🔑 A REDRAW MUST NOT EAT WHAT WAS TYPED. Picking an L3 re-renders the whole panel.
+  ok(/const keep = pmVals\(\);/.test(draw), 'the typed values are read before the redraw');
+  ok(/value="\$\{psEsc\(keep\.retail\)\}"/.test(draw), '…and written back into the new markup');
+  ok(/value="\$\{psEsc\(keep\.price\)\}"/.test(draw), '…including our price');
+
+  // The refusal is where the fix belongs.
+  const chk = sliceOrNull(html, '  async function psStickerCheck(', '  // Name the fault');
+  ok(/a\.reason === 'no clover item'/.test(chk || ''),
+     '🔑 the one refusal that has a fix offers it, rather than being a dead end');
+  ok(/psCreatePricePoint\(\)/.test(chk || ''), '…as a button, on the note that refused');
+
+  const cr = sliceOrNull(html, '  async function psCreatePricePoint() {', '\n  window.psCreatePricePoint');
+  ok(/await uiConfirm\(/.test(cr || ''), '🛑 nothing is created without an explicit confirm');
+  const confirmAt = String(cr).indexOf('uiConfirm(');
+  const writeAt = String(cr).indexOf('confirm: true');
+  ok(confirmAt > 0 && writeAt > confirmAt,
+     '🛑 …and the confirm comes BEFORE the call that writes — the ordering IS the guard');
+  ok(/if \(!go\)/.test(cr || ''), '…with "no" meaning nothing happens');
+  ok(/store_ready/.test(cr || ''),
+     '🔑 …and printing follows only when the caller\'s OWN store got the item');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

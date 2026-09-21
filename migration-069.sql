@@ -1,0 +1,52 @@
+-- migration-069: how many labels went out, not just that some did.
+--
+-- Brian, 2026-09-21: "adding a qty option for printing stickers. This will allow users to
+-- print a quantity number of stickers after product is looked up." Asked whether the count
+-- should be recorded; he picked the option that records it.
+--
+-- One press of Print now sends ONE ZPL job carrying `^PQ n`, so the printer draws the
+-- repeat itself. Without this column the history would say a label was printed and lose
+-- the only number distinguishing one from fifty.
+--
+-- ── Why NULL is a real value here, not a gap to backfill ────────────────────────────────
+--
+-- 🔑 EVERY EXISTING ROW IS A SINGLE PRINT, AND NULL IS HOW IT SAYS SO. It would be easy to
+-- `UPDATE sticker_prints SET qty = 1` and have a tidy non-null column. Do not. That writes
+-- a number nobody measured onto 100% of the table and makes "printed once" indistinguishable
+-- from "printed before we counted". The reader treats NULL as 1 for display and the column
+-- keeps meaning what it says: a count exists from this migration forward.
+--
+-- The UI follows the same rule — the Reprint row shows a bare title for NULL or 1 and an
+-- explicit `×3` above that, so no row claims a count it does not have.
+--
+-- ── Apply ───────────────────────────────────────────────────────────────────────────────
+-- Address databases by UUID; the staging one lives under [env.staging] and a bare name does
+-- not resolve. STAGING FIRST:
+--   staging:     npx wrangler d1 execute b40982c2-4009-4842-bc17-fa0977468b07 --remote -y --file=migration-069.sql
+--   production:  npx wrangler d1 execute 3fa911d7-31d6-438c-985f-7ac08c407d2d --remote -y --file=migration-069.sql
+--
+-- Confirm it landed (expects one row, `qty`):
+--   npx wrangler d1 execute <uuid> --remote -y --json \
+--     --command="SELECT name FROM pragma_table_info('sticker_prints') WHERE name = 'qty'"
+--
+-- 🛑 NOT RE-RUNNABLE. `ALTER TABLE ADD COLUMN` takes no IF NOT EXISTS, as migration-059
+-- proved on production: a second run errors with `duplicate column name: qty`. That error
+-- is harmless and means the column is already there — check with the pragma above rather
+-- than re-running.
+--
+-- 🔑 DEPLOY ORDER: THIS FIRST, THEN THE WORKER, THEN THE FRONTEND. Derived from which side
+-- stops being backward-compatible (CLAUDE.md rule 6), not from last time. The new worker
+-- INSERTs `qty` and SELECTs it back, so against a database without the column every
+-- sticker-printed and sticker-history call throws — that is the incompatible direction.
+-- A column the current worker never names is invisible to it, so this is safe to apply
+-- while the live worker runs, and it must be, because the worker cannot go first.
+--
+-- 🔑 ADDITIVE ONLY. No row is read, rewritten or deleted. Every existing column keeps its
+-- value and the new one arrives NULL everywhere, which is exactly the "printed before we
+-- counted" state described above. Rollback is to leave it: SQLite's DROP COLUMN is
+-- unavailable on D1's version for a column added by this old-style ALTER, and an unread
+-- NULL column costs nothing. Reverting the worker alone fully undoes the behaviour.
+
+-- How many labels this one press produced. NULL on every row printed before this shipped,
+-- and read as 1 — never backfilled, so the column cannot claim a count nobody took.
+ALTER TABLE sticker_prints ADD COLUMN qty INTEGER;

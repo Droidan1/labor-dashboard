@@ -32,58 +32,58 @@ Answers captured up front, because three of them change who can write to product
 
 ## 1 · Print quantity
 
-- [ ] `psZpl(code, price, extras, tpl, qty)` appends `^PQ<qty>` before `^XZ` — **only when
+- [x] `psZpl(code, price, extras, tpl, qty)` appends `^PQ<qty>` before `^XZ` — **only when
       qty > 1**. `test-price-scan.mjs:2759` compares psZpl byte-for-byte against a legacy
       generator; qty 1 must stay identical to today, to the dot.
-- [ ] Qty input beside Print on the scan result (`psStickerRow`) and on each Reprint row.
+- [x] Qty input beside Print on the scan result (`psStickerRow`) and on each Reprint row.
       Default 1, capped at 50, validated client AND worker side.
-- [ ] `migration-069.sql`: `ALTER TABLE sticker_prints ADD COLUMN qty INTEGER` (nullable —
+- [x] `migration-069.sql`: `ALTER TABLE sticker_prints ADD COLUMN qty INTEGER` (nullable —
       every existing row is a single print and must stay readable).
-- [ ] `sticker-printed` accepts and stores `qty`; Reprint rows show `×3`.
-- [ ] ⚠️ `^PQ` on continuous media (`^MNN`) is **unverified on the real ZD410**. psZpl's own
+- [x] `sticker-printed` accepts and stores `qty`; Reprint rows show `×3`.
+- [x] ⚠️ `^PQ` on continuous media (`^MNN`) is **unverified on the real ZD410**. psZpl's own
       comment records that a stale UNVERIFIED warning is worse than none — so this ships
       flagged, and Brian test-prints qty 3 before it is called done.
 
 ## 2 · Manual mode
 
-- [ ] New `?action=merch-categories` (GET, `canSeeFinancials`) returning the same
+- [x] New `?action=merch-categories` (GET, `canSeeFinancials`) returning the same
       `{categories:[{key,label,children}]}` shape the scan already rides along with. Manual
       needs the tree with no scan to hang it on.
-- [ ] Mode link in `#ps-bar` beside Furniture; body take-over via the same `fnChrome`-style
+- [x] Mode link in `#ps-bar` beside Furniture; body take-over via the same `fnChrome`-style
       one-authority switch. **Not** a tab — Scan/Reprint are tabs, whole-body modes are links.
-- [ ] Form order enforces Brian's rule: **L2 → L3 first**, prices disabled until both are set.
+- [x] Form order enforces Brian's rule: **L2 → L3 first**, prices disabled until both are set.
       Then optional barcode, optional description, Street price, Our price.
-- [ ] New `?action=merch-manual-price` {l3, retail, price} → the merch-scan response shape.
+- [x] New `?action=merch-manual-price` {l3, retail, price} → the merch-scan response shape.
       Refactor the shared pricing tail out of merch-scan so the two cannot drift; the ladder
       stays on the worker for the reason already written there.
-- [ ] `psRender` reused unchanged — same hero, same strip, same GP chip, `price_basis:
+- [x] `psRender` reused unchanged — same hero, same strip, same GP chip, `price_basis:
       "set by hand"`.
-- [ ] Barcode present → save to Products via `merch-scan-save`.
+- [x] Barcode present → save to Products via `merch-scan-save`.
 
 ## 3 · Creating a missing price point
 
-- [ ] New **narrow** `?action=sticker-create-price-point` {l3, price} — gated
+- [x] New **narrow** `?action=sticker-create-price-point` {l3, price} — gated
       `canSeeFinancials`. Derives name and code itself, copies taxable/hidden/cost from a
       sibling, creates at `ALL_STORES`.
       🔑 **Deliberately NOT relaxing `create-clover-item`.** That endpoint takes an arbitrary
       name, code and category; handing it to managers is a far wider grant than Brian asked
       for. This one can only ever add a price to a category that already exists.
-- [ ] `merch-scan-save` gate moves `requireAdminAccess` → `canSeeFinancials`. This is the
+- [x] `merch-scan-save` gate moves `requireAdminAccess` → `canSeeFinancials`. This is the
       one real privilege widening and it is deliberate: a manager can now set what an item
       is worth for every store, permanently.
-- [ ] Confirm dialog before any create — MEMORY.md rule 7. Names the price, the category,
+- [x] Confirm dialog before any create — MEMORY.md rule 7. Names the price, the category,
       the stores, and the two warnings (off-rung, out-of-range) when they apply.
-- [ ] Per-store results; print proceeds if the caller's store succeeded.
+- [x] Per-store results; print proceeds if the caller's store succeeded.
 
 ## 4 · Verification
 
-- [ ] `scripts/test-price-scan.mjs`: `^PQ` absent at qty 1 (legacy byte equality holds),
+- [x] `scripts/test-price-scan.mjs`: `^PQ` absent at qty 1 (legacy byte equality holds),
       present and correct above it; the qty cap; manual-mode markup; the new actions' gates;
       typo-guard range maths against a fixture holding a real ugly code list.
-- [ ] Full `bash scripts/test.sh`. Note: this suite is **unseeded-random flaky** (recorded in
+- [x] Full `bash scripts/test.sh`. Note: this suite is **unseeded-random flaky** (recorded in
       the previous todo entry, lines 375-508) — a single red run gets re-run and read, never
       re-run away.
-- [ ] Contrast checked in both themes by computation, not screenshot, per CLAUDE.md.
+- [x] Contrast checked in both themes by computation, not screenshot, per CLAUDE.md.
 
 ## Deploy order — derived from which side stops being backward-compatible
 
@@ -100,6 +100,72 @@ calls yet are inert — so there is no window where deploying it early costs any
 order that needs a human to hold it is the wrong order.
 
 Brian runs 1 and 2. Auto-merge does not work on this repo; the PR needs his click.
+
+## Review — what shipped, and what the work turned up
+
+All of it is in. **5,100 assertions across 76 suites pass**, up from 5,046; `test-price-scan`
+alone went 798 → 904.
+
+### Six things found on the way that were not in the plan
+
+1. **`test-price-scan` hardcoded psZpl's whole signature as a slice marker.** Adding a fifth
+   parameter made `indexOf` return −1, so the slice became `html.slice(-1, …)`, psZpl was
+   undefined inside the editor sandbox, and three assertions failed reading *"the test label
+   reaches Browser Print (got 0, want 1)"* — which describes a broken printer path and was
+   really a broken slice. Now matches on the NAME via `sliceOrNull`, so a sixth parameter
+   cannot do it again.
+2. **My own comment satisfied a negative assertion.** `ok(!/requireAdminAccess/…)` matched the
+   sentence explaining that the gate had been widened *away* from requireAdminAccess. A `!/x/`
+   test over a region containing English is testing the English. `decomment()` is now module
+   scope and every negative assertion runs through it.
+3. **`sticker_prints` never existed in the test harness.** `applyMigrationAlters` replays only
+   `ALTER TABLE … ADD COLUMN`, and the table is created by migration-056's `CREATE TABLE` —
+   so every column later migrations added to it had been applied to a table that was not
+   there and silently swallowed. No test had ever exercised a successful print record.
+   migration-056 is now in the harness list.
+4. **The stale-answer guard could not tell two manual items apart.** It keyed on
+   `identifier || title`, and manual pricing makes BOTH optional — two untitled items in a
+   row both key as `null`, and `null !== null` is false, so a late reply about the previous
+   item rewrote the note for the one on screen. On the one screen whose whole job is not
+   mislabelling a shelf. Now a monotonic `psStickerSeq`, which cannot collide with itself.
+5. **`psApplyTab` knew only about furniture.** It stood down on `fn.open`; a second full-body
+   mode would have had it quietly restoring the barcode controls underneath Manual — the
+   exact bug the file's own "ONE AUTHORITY" comment was written after. `fnChrome(on)` became
+   `psChrome(mode)` rather than growing a second writer beside it.
+6. **Entering a mode left the camera streaming.** psTab stops the scanner on leaving Scan and
+   calls it "battery and privacy, not cosmetics"; opening Furniture never did. Fixed once in
+   psChrome, which fixes it for Furniture too.
+
+### Contrast, computed against the real tokens rather than eyeballed
+
+| what | light | dark |
+|---|---|---|
+| `.pm-gate` locked | 5.88:1 | 5.74:1 |
+| `.pm-gate.on` | 5.41:1 | 9.18:1 |
+| `.ps-qtylbl` | 5.88:1 | 5.74:1 |
+| `.ps-qty` text | 18.85:1 | 14.98:1 |
+| `.ps-recent-qty` | 5.88:1 | 5.02:1 |
+
+No new colour was invented — every value is one already used on this screen.
+
+### Two things worth knowing
+
+**`^PQ` is still unverified on the real ZD410.** The tests prove the bytes: absent at one,
+`^PQ3` immediately before `^XZ` at three, clamped at the cap, and the label otherwise
+byte-identical. They cannot prove the printer feeds continuous stock correctly across a run.
+Brian test-prints a qty of 3 before quantity is called done.
+
+**The "Add it at every store" button appears on scans too, not only in Manual.** Brian asked
+for this while describing hand-typed prices, but the refusal it attaches to is identical
+however you reached it, and a fix that shows up in one mode and not the other reads as a bug
+in the mode that lacks it.
+
+### Also fixed, as asked
+
+The stale comment at `worker.js:13175` claimed in the present tense that
+`create-clover-item`'s duplicate guard was broken and created duplicates. It has used
+`cloverCodeInUse` and failed closed for some time. The history is kept — it is why neither
+path may go back to a `filter=code=` lookup — but it now reads as history.
 
 
 # Bin Dump — the row button says VIEW when that is all it does (2026-09-21)

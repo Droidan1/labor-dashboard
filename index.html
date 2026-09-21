@@ -4030,6 +4030,27 @@
         .ps-btn:disabled{opacity:.5;cursor:default}
         .ps-row{display:flex;gap:9px}
         #ps-sticker{display:flex;flex-direction:column;gap:7px}
+        .ps-qtyrow{display:flex;align-items:center;gap:9px}
+        /* 🛑 .ps-btn IS width:100% -- the same trap already documented on .ps-recent-row
+           below. Dropped into a flex row it demands the whole line, which squeezed the qty
+           box to nothing. A button in a row sizes to its label; this one grows to fill
+           whatever the box leaves. */
+        .ps-qtyrow .ps-btn{width:auto;flex:1}
+        .ps-qtylbl{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+          color:#6b6453;flex:none}
+        .dark .ps-qtylbl{color:rgb(var(--op-inkDim))}
+        /* 16px, like every other input on this screen: anything smaller and iOS Safari zooms
+           the page on focus, which on a handset at a receiving bench is a scroll to undo on
+           every single label. */
+        .ps-qty{width:66px;flex:none;border:1px solid rgba(20,16,8,.18);border-radius:10px;
+          padding:12px 6px;font-size:16px;text-align:center;background:#fff;color:#14110a;
+          font-variant-numeric:tabular-nums;font-family:inherit}
+        .dark .ps-qty{background:rgb(var(--op-panel));border-color:rgba(255,255,255,.16);color:rgb(var(--op-ink))}
+        .ps-qty:focus{outline:2px solid #22c55e;outline-offset:1px}
+        /* The reprint row is tighter -- it already carries a title, a code and a price. */
+        .ps-recent-row .ps-qty{width:52px;padding:8px 4px;font-size:15px}
+        .ps-recent-qty{font-size:11.5px;font-weight:700;color:#6b6453;font-variant-numeric:tabular-nums}
+        .dark .ps-recent-qty{color:#7c899e}
         #ps-recent{margin-top:0}
         .ps-recent-empty{font-size:13px;color:#6b6453;padding:10px 0 2px}
         .dark .ps-recent-empty{color:#7c899e}
@@ -4127,6 +4148,22 @@
         #ps-edit.hidden{display:none}
         #fn-panel{display:flex;flex-direction:column;gap:13px}
         #fn-panel.hidden{display:none}
+        /* 🛑 SAME SOURCE-ORDER TRAP AS #ps-edit AND .pr-editor. `.hidden` and `#pm-panel`
+           are not equal weight — an ID beats a class — so the panel would stay laid out
+           with its gap intact while "hidden", leaving a stack of empty rows under the bar.
+           Spelled out per panel because that is how the other two are written here. */
+        #pm-panel{display:flex;flex-direction:column;gap:13px}
+        #pm-panel.hidden{display:none}
+        /* The rule under the category pair, before the prices it unlocks. */
+        .pm-gate{font-size:12.5px;line-height:1.45;color:#6b6453;padding:2px 0}
+        .dark .pm-gate{color:rgb(var(--op-inkDim))}
+        .pm-gate.on{color:#1c7a33;font-weight:600}
+        .dark .pm-gate.on{color:#5fd170}
+        /* 🔑 A DISABLED FIELD MUST LOOK DISABLED IN BOTH THEMES. .ps-fld input sets its own
+           background, so the browser's default greying never lands and the locked price
+           boxes looked identical to the live ones — an invitation to type into a field that
+           silently drops what you type. */
+        .ps-fld input:disabled,.ps-fld select:disabled{opacity:.5;cursor:not-allowed}
         .fn-shot{border-radius:12px;display:grid;place-items:center;min-height:132px;gap:6px;
           font-size:12.5px;text-align:center;color:#6b6453;background:rgba(20,16,8,.06);
           border:1px dashed rgba(20,16,8,.18);cursor:pointer;overflow:hidden}
@@ -4210,6 +4247,7 @@
             <span id="ps-count" class="ps-lbl" style="margin-left:auto"></span>
             <!-- The mode switch belongs up here, not in the body. In the body it was the
                  first thing on the screen, and the first thing should be the work. -->
+            <button id="ps-manual" class="ps-link" onclick="pmOpen()" type="button">Manual</button>
             <button id="ps-furniture" class="ps-link" onclick="fnOpen()" type="button">Furniture</button>
           </div>
           <div id="ps-body">
@@ -4271,6 +4309,7 @@
                  item is already on the shelf. -->
             <div id="ps-recent" style="display:none"></div>
             <div id="fn-panel" class="hidden"></div>
+            <div id="pm-panel" class="hidden"></div>
           </div>
         </div>
       </div>
@@ -22841,6 +22880,262 @@
   }
   window.psScan = psScan;
 
+  // ─── Manual: pricing something with no lookup at all ──────────────────────
+  //
+  // Brian, 2026-09-21: "add a manual option that skips the look up. So user can manual
+  // enter the street price and our price. Before they do this user must at the L2 and L3
+  // category for this product." Sometimes the street price is already known; sometimes cost
+  // and the agreed margin dictate the price outright and there is nothing to look up.
+  //
+  // 🔑 THE CATEGORY GATE IS THE FEATURE, NOT A VALIDATION. Everything downstream hangs off
+  // L3: our cost is looked up by it, and the sticker code is BUILT from its Clover number.
+  // A price typed before a category is a number with nothing behind it — unpriceable
+  // against cost and unprintable. So the price boxes stay locked until both are chosen, and
+  // the line between them says why rather than just refusing later.
+  let pm = { open:false, cats:[], l2:null, l3:null, busy:false, loading:false };
+
+  function pmClose() {
+    pm.open = false;
+    const host = el('pm-panel');
+    if (host) { host.classList.add('hidden'); host.innerHTML = ''; }
+  }
+
+  async function pmOpen() {
+    if (pm.open) { pmClose(); psChrome(null); psStatus(''); return; }
+    if (fn.open) { fn.open = false; el('fn-panel').classList.add('hidden'); }
+    pm.open = true;
+    el('ps-result').innerHTML = '';
+    psLast = null;                 // no "priced just before this" from a different mode
+    el('pm-panel').classList.remove('hidden');
+    psChrome('manual');
+    pmDraw();
+    if (!pm.cats.length && !pm.loading) {
+      pm.loading = true;
+      try {
+        const r = await fetch(`${WORKER_BASE}?action=merch-categories`, { credentials: 'include' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        pm.cats = j.categories || [];
+      } catch (e) {
+        // Named, not swallowed: an empty picker with no explanation is the shape of a
+        // deploy where the worker half is missing, and psStickerFault already says that
+        // sentence better than a bare "could not load" does.
+        psStatus(`Could not load the categories: ${e.message}`);
+      } finally { pm.loading = false; }
+      pmDraw();
+    }
+  }
+  window.pmOpen = pmOpen;
+
+  window.pmPick2 = (v) => { pm.l2 = v || null; pm.l3 = null; pmDraw(); };
+  window.pmPick3 = (v) => { pm.l3 = v || null; pmDraw(); };
+
+  // 🛑 REDRAWN WHOLE ON EVERY PICK, WHICH MEANS THE TYPED VALUES MUST BE CARRIED. Choosing
+  // an L3 re-renders this panel, and the first cut threw away a street price someone had
+  // already typed. The four free-text fields are read out before the redraw and written
+  // back into the new markup as values.
+  function pmVals() {
+    const v = (id) => { const n = el(id); return n ? n.value : ''; };
+    return { retail: v('pm-retail'), price: v('pm-price'), upc: v('pm-upc'), title: v('pm-title') };
+  }
+
+  function pmDraw() {
+    const host = el('pm-panel');
+    if (!host || !pm.open) return;
+    if (!pm.cats.length) {
+      host.innerHTML = `<div class="ps-up" style="text-align:center">${
+        pm.loading ? 'Loading categories…' : 'No categories loaded.'}</div>`;
+      return;
+    }
+    const keep = pmVals();
+    const opt = (k, label, sel) => `<option value="${psEsc(k)}"${k === sel ? ' selected' : ''}>${psEsc(label)}</option>`;
+    const l2opts = ['<option value="">— pick one —</option>']
+      .concat(pm.cats.map(c => opt(c.key, c.label, pm.l2))).join('');
+    const kids = (pm.cats.find(c => c.key === pm.l2) || {}).children || [];
+    const l3opts = ['<option value="">— pick one —</option>']
+      .concat(kids.map(k => opt(k.key, k.label, pm.l3))).join('');
+    const ready = !!pm.l3;
+    const dis = ready ? '' : ' disabled';
+
+    host.innerHTML = `
+      <div class="ps-fld"><label>Category</label>
+        <select id="pm-l2" onchange="pmPick2(this.value)">${l2opts}</select></div>
+      <div class="ps-fld"><label>Sub-category</label>
+        <select id="pm-l3" onchange="pmPick3(this.value)"${pm.l2 ? '' : ' disabled'}>${l3opts}</select></div>
+      <div class="pm-gate${ready ? ' on' : ''}">${ready
+        ? 'Our cost comes from this category, and so does the sticker number.'
+        : 'Pick both before pricing — the category is what sets our cost and what the sticker code is built from.'}</div>
+      <div class="ps-two">
+        <div class="ps-fld"><label>Street price</label>
+          <input id="pm-retail" inputmode="decimal" placeholder="if you know it"
+                 value="${psEsc(keep.retail)}"${dis}></div>
+        <div class="ps-fld"><label>Our price</label>
+          <input id="pm-price" inputmode="decimal" placeholder="goes on the sticker"
+                 value="${psEsc(keep.price)}"${dis}></div>
+      </div>
+      <div class="ps-fld"><label>Barcode</label>
+        <input id="pm-upc" inputmode="numeric" placeholder="optional — saves it for next time"
+               value="${psEsc(keep.upc)}"${dis}></div>
+      <div class="ps-fld"><label>What is it</label>
+        <input id="pm-title" placeholder="optional — shows on the reprint list"
+               value="${psEsc(keep.title)}"${dis}></div>
+      <button class="ps-btn" id="pm-go" type="button" onclick="pmPrice()"${dis}>Price it</button>`;
+  }
+
+  async function pmPrice() {
+    if (!pm.l3 || pm.busy) return;
+    const v = pmVals();
+    if (!v.price.trim()) {
+      psStatus('Type our price — that is the number that goes on the sticker.');
+      const box = el('pm-price'); if (box) box.focus();
+      return;
+    }
+    // 🔑 A BARCODE IS CHECKED HERE, NOT AFTER THE PRICING. psScan already refuses a code
+    // that is not 8, 12, 13 or 14 digits with a passing checksum, and it refuses it BEFORE
+    // spending a round trip. The same barcode saved from this screen would otherwise be
+    // filed under a number that cannot exist — the exact failure that comment records.
+    const upc = v.upc.replace(/[\s-]/g, '');
+    if (upc && (![8, 12, 13, 14].includes(upc.length) || !gtinCheckOk(upc))) {
+      psStatus([8, 12, 13, 14].includes(upc.length)
+        ? 'That barcode does not check out — one digit is misread or mistyped. Fix it, or clear the box.'
+        : `That is ${upc.length} digits — a barcode is 12, or 13 with the country digit. Fix it, or clear the box.`);
+      const box = el('pm-upc'); if (box) { box.focus(); box.select(); }
+      return;
+    }
+
+    pm.busy = true;
+    const go = el('pm-go'); if (go) go.disabled = true;
+    psStatus('Pricing…');
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=merch-manual-price`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ l3: pm.l3, retail: v.retail.trim() || null, price: v.price.trim(),
+                               identifier: upc || null, title: v.title.trim() || null }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      psCount++;
+      psRender(j);
+      psStatus('');
+      // 🔑 SAVED ONLY WHEN THERE IS SOMEWHERE TO SAVE IT. item_cache is keyed by barcode, so
+      // a manual item without one has no row to be — and that is a normal outcome here, not
+      // a gap. With a barcode, the numbers stick and the next scan of it is instant.
+      //
+      // 🛑 AND A FAILED SAVE NEVER FAILS THE PRICING. The card on screen is correct either
+      // way; telling someone their price "failed" because a cache row did not write would
+      // send them to re-type numbers that are already right in front of them.
+      if (upc && psCanOverride()) pmRemember(upc, v, j);
+    } catch (e) {
+      psStatus(`Could not price that: ${e.message}`);
+    } finally {
+      pm.busy = false;
+      const b = el('pm-go'); if (b) b.disabled = false;
+    }
+  }
+  window.pmPrice = pmPrice;
+
+  async function pmRemember(upc, v, j) {
+    try {
+      const r = await fetch(`${WORKER_BASE}?action=merch-scan-save`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: upc, l3: pm.l3,
+                               retail_price: v.retail.trim() || null,
+                               suggested_price: v.price.trim() }),
+      });
+      if (!r.ok) return;                       // silent: the price on screen is still right
+      psStatus(`Saved to Products, so the next scan of ${upc} is instant.`);
+    } catch (_) { /* the card stands on its own */ }
+  }
+
+  // ─── Adding the price point a hand-typed price needs ──────────────────────
+  //
+  // 🔑 THIS TURNS A DEAD END INTO A DOOR, AND IT IS OFFERED ON SCANS TOO. "No Clover item
+  // with code BL-50008-7_5. Create it first, then this will print." has been the end of the
+  // road on this screen for every price that has no item behind it — true, unhelpful, and
+  // identical whether you got there by scanning or by typing. The refusal is where the fix
+  // belongs, so the button lives with it rather than only inside manual mode.
+  //
+  // 🛑 TWO CALLS, AND THE FIRST ONE CANNOT WRITE. The worker answers a preview — the code,
+  // the name, the stores and any warnings — and only a second call carrying confirm:true
+  // creates anything. MEMORY.md rule 7 wants a mutation confirmed with a summary of exactly
+  // what it affects; the summary is computed server-side precisely so this dialog cannot
+  // drift from what the write will actually do.
+  async function psCreatePricePoint() {
+    const j = psLast;
+    if (!j || !j.l3 || j.price === null || j.price === undefined) return;
+    const note = el('ps-print-note');
+    const say = (msg, bad) => {
+      if (!note) return;
+      note.className = 'ps-stat' + (bad ? ' no' : '');
+      note.textContent = msg;
+    };
+    const ask = (extra) => fetch(`${WORKER_BASE}?action=sticker-create-price-point`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ l3: j.l3, price: j.price, store: psStickerStore(), ...extra }),
+    });
+
+    say('Checking what this would create…');
+    let pv;
+    try {
+      const r = await ask({});
+      pv = await r.json().catch(() => ({}));
+      if (!r.ok) { say(pv.error || psStickerFault(r.status, pv), true); return; }
+      if (pv.detail) { say(pv.detail, true); return; }
+    } catch (e) { say(`Could not check what this would create: ${e.message}`, true); return; }
+
+    const warn = pv.warnings || [];
+    const msg = [
+      `Add ${pv.code} to all ${(pv.stores || []).length} stores?`,
+      '',
+      `${psMoney(pv.price)} in ${j.l3_label || j.l3}.`,
+      `It will be named "${pv.name}" — the same name every other price in this category has.`,
+      ...(warn.length ? [''] : []),
+      ...warn.map(w => `⚠ ${w}`),
+    ].join('\n');
+    const go = await uiConfirm(msg, {
+      title: 'Add a price point',
+      okText: warn.length ? 'Create it anyway' : 'Create it',
+      cancelText: 'Go back',
+      // The amber treatment when something looks wrong, and only then. A confirm that
+      // always looks alarming stops being read.
+      danger: warn.length > 0,
+    });
+    if (!go) { say('Nothing was created.'); return; }
+
+    say('Creating…');
+    let res;
+    try {
+      const r = await ask({ confirm: true });
+      res = await r.json().catch(() => ({}));
+      if (!r.ok) { say(res.error || psStickerFault(r.status, res), true); return; }
+    } catch (e) { say(`Could not create it: ${e.message}`, true); return; }
+
+    const rows = res.results || [];
+    const bad = rows.filter(x => !x.ok);
+    if (!res.store_ready) {
+      // 🛑 THE CALLER'S OWN STORE IS THE ONE THAT MATTERS. sticker-check validates against
+      // the store being printed for, so a create that succeeded everywhere EXCEPT here
+      // leaves the Print button exactly as refused as it was. Say which store and why.
+      const mine = rows.find(x => x.store === psStickerStore());
+      say(`Could not add it at ${psStickerStore()}: ${(mine && mine.error) || 'no answer'}`, true);
+      return;
+    }
+    // Re-ask the question the button was refused on. The worker has already dropped its
+    // cached code list for this store, so this comes back printable.
+    await psStickerCheck(j);
+    if (bad.length) {
+      const extra = el('ps-print-note');
+      if (extra) {
+        extra.innerHTML = extra.innerHTML
+          + ` <span class="ps-stat no">Not yet at ${psEsc(bad.map(x => x.store).join(', '))}.</span>`;
+      }
+    }
+  }
+  window.psCreatePricePoint = psCreatePricePoint;
+
   // ─── Furniture ────────────────────────────────────────────────────────────
   //
   // No barcode, so the picture is the key. Photograph it, let the worker say what it is
@@ -22857,16 +23152,44 @@
   // The barcode controls are not just irrelevant in furniture mode, they are misleading —
   // "Look it up" on an empty box does nothing, and Scan opens a camera for a code that
   // does not exist. One mode at a time.
-  function fnChrome(on) {
+  //
+  // 🛑 THIS TOOK A MODE NAME WHEN MANUAL ARRIVED, AND THE ALTERNATIVE WAS THE BUG THIS FILE
+  // ALREADY SHIPPED ONCE. It was fnChrome(on) — a boolean, owned by furniture. Adding a
+  // second full-body mode by giving it its own pmChrome(on) would have put TWO writers on
+  // ps-barcode-mode, ps-tabs and ps-sub, which is exactly how the barcode controls once
+  // stayed on screen in furniture mode. psApplyTab's own comment names the rule: ONE
+  // AUTHORITY FOR WHAT THE BODY SHOWS. So there is one function, it takes which mode is on,
+  // and every mode is off when it is null.
+  const PS_MODES = {
+    furniture: { btn: 'ps-furniture', label: 'Furniture', off: 'Furniture', on: 'Barcodes',
+      sub: 'Photograph the piece. If we have priced one before, it holds that price.' },
+    manual: { btn: 'ps-manual', label: 'Manual', off: 'Manual', on: 'Barcodes',
+      sub: 'Pick the category, then type the prices. No lookup — the numbers are yours.' },
+  };
+  const PS_SUB_SCAN = 'Scan a barcode or type what it is. Prices from our criteria, our cost and our ASP.';
+
+  function psChrome(mode) {
+    const on = !!mode;
+    // 🔑 A CAMERA LEFT RUNNING BEHIND A HIDDEN PANEL IS A BATTERY AND A PRIVACY PROBLEM,
+    // not a cosmetic one — psTab's own comment says so, and stops the scanner for exactly
+    // this reason when you leave the Scan tab. Opening a full-body mode hides the scanner
+    // just as completely, and used to leave it streaming. Fixed here rather than in each
+    // mode, because this function is the one authority for what the body is showing.
+    if (on && typeof psStopScan === 'function') psStopScan();
     const m = el('ps-barcode-mode');
     if (m) m.style.display = on ? 'none' : 'flex';
-    const b = el('ps-furniture');
-    if (b) b.textContent = on ? 'Barcodes' : 'Furniture';
+    // 🔑 EVERY mode button is reset, not just the active one. Toggling straight from
+    // Furniture to Manual otherwise left "Barcodes" written on the button you did not
+    // press, which then read as the way back out of a mode you were no longer in.
+    for (const [key, cfg] of Object.entries(PS_MODES)) {
+      const b = el(cfg.btn);
+      if (b) b.textContent = key === mode ? cfg.on : cfg.off;
+    }
     const t = el('ps-mode-lbl');
-    if (t) { t.textContent = 'Furniture'; t.style.display = on ? '' : 'none'; }
+    if (t) { t.textContent = on ? PS_MODES[mode].label : 'Scan'; t.style.display = on ? '' : 'none'; }
     const tabs = el('ps-tabs');
     if (tabs) tabs.style.display = on ? 'none' : 'flex';
-    // Opening furniture hides the reprint list; closing it hands the body back to whichever
+    // Opening a mode hides the reprint list; closing one hands the body back to whichever
     // tab was selected, rather than assuming Scan.
     const box = el('ps-recent');
     if (on && box) box.style.display = 'none';
@@ -22874,18 +23197,19 @@
     // The blurb under the title describes barcodes, which is wrong the moment there is
     // no barcode to read.
     const sub = el('ps-sub');
-    if (sub) sub.textContent = on
-      ? 'Photograph the piece. If we have priced one before, it holds that price.'
-      : 'Scan a barcode or type what it is. Prices from our criteria, our cost and our ASP.';
+    if (sub) sub.textContent = on ? PS_MODES[mode].sub : PS_SUB_SCAN;
     if (on) el('ps-count').textContent = '';
   }
 
   async function fnOpen() {
-    if (fn.open) { fn.open = false; el('fn-panel').classList.add('hidden'); fnChrome(false); psStatus(''); return; }
+    if (fn.open) { fn.open = false; el('fn-panel').classList.add('hidden'); psChrome(null); psStatus(''); return; }
+    // Two full-body modes cannot both own the body. Opening one closes the other rather
+    // than stacking two panels under the same bar.
+    if (pm.open) pmClose();
     fn.open = true;
     el('ps-result').innerHTML = '';
     el('fn-panel').classList.remove('hidden');
-    fnChrome(true);
+    psChrome('furniture');
     fnDraw();
     if (!fn.cats.length) {
       try {
@@ -23397,7 +23721,17 @@
   // refusal says which part is missing. A label that does not scan is worse than no
   // label: it fails in front of a customer, and the associate has no way to tell why.
   let psSticker = null;      // { printable, code, detail } for the item on screen
-  let psStickerFor = null;   // which identifier that answer belongs to
+  // 🛑 A COUNTER, NOT AN IDENTITY. This was `psStickerFor = j.identifier || j.title`, which
+  // works only while every item on this screen has one of the two. Manual pricing makes
+  // BOTH optional — a barcodeless item with no description typed is a normal, expected
+  // answer there — so two of them in a row both keyed as `null`, and `null !== null` is
+  // false: a late reply about the PREVIOUS item passed the guard and rewrote the note for
+  // the one now on screen. On a screen whose whole job is not putting a wrong label on a
+  // shelf, that is the failure this guard exists to stop, reachable again by a new door.
+  //
+  // 🔑 A sequence number cannot collide with itself. Every check takes the next one, and
+  // only the newest may speak — whatever the item is or is not called.
+  let psStickerSeq = 0;
 
   // 🛑 PINNED TO THE WORKER'S ALL_STORES BY TEST. SC_ALL_STORES a few hundred lines up is
   // missing BL8, and the note by the Inventory modal records that index.html has drifted
@@ -23406,6 +23740,23 @@
   // worker will reject. test-price-scan asserts these agree, so they cannot drift silently.
   const PS_STORES = ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'];
   const PS_STORE_KEY = 'ps-sticker-store';
+
+  // 🔑 PINNED TO THE WORKER'S STICKER_QTY_MAX BY TEST, for the same reason PS_STORES is
+  // pinned to ALL_STORES right above. psZpl cannot read this — it is sliced out of the file
+  // and evaluated in isolation by the suite, so it carries the number as a literal — and the
+  // worker validates against its own copy. Three copies of one number is two too many to
+  // trust by eye, so the test asserts all three agree rather than asserting each exists.
+  const PS_QTY_MAX = 50;
+
+  // 🛑 A BLANK, A ZERO AND A TYPO ALL MEAN ONE, NEVER NONE. This reads a live input on a
+  // phone: a half-deleted box is empty for as long as it takes to type the next digit, and a
+  // Print pressed in that moment must produce the one label the button promises rather than
+  // NaN labels or a silent no-op. Clamped at both ends, here and again at the worker.
+  function psQty(id) {
+    const box = el(id || 'ps-qty');
+    const n = Math.floor(Number(box && box.value));
+    return Number.isFinite(n) && n >= 1 ? Math.min(n, PS_QTY_MAX) : 1;
+  }
 
   // Which stores THIS account may print for. `currentUser.stores` is the effective scope:
   // null means every store, an array is a restriction.
@@ -23453,7 +23804,12 @@
     if (!psCanPrint()) return '';
     if (j.price === null || j.price === undefined) return '';
     return `<div id="ps-sticker">
-      <button class="ps-btn ghost" id="ps-print" type="button" disabled onclick="psPrint()">Print sticker</button>
+      <div class="ps-qtyrow">
+        <label class="ps-qtylbl" for="ps-qty">Qty</label>
+        <input id="ps-qty" class="ps-qty" type="number" inputmode="numeric" step="1"
+               min="1" max="${PS_QTY_MAX}" value="1" aria-label="How many stickers to print">
+        <button class="ps-btn ghost" id="ps-print" type="button" disabled onclick="psPrint()">Print sticker</button>
+      </div>
       <div class="ps-stat" id="ps-print-note">Checking the sticker code…</div>
     </div>`;
   }
@@ -23462,7 +23818,8 @@
   // price behind it would make every scan feel slower for a button most scans never use.
   async function psStickerCheck(j) {
     if (!el('ps-print')) return;
-    psSticker = null; psStickerFor = j.identifier || j.title || null;
+    psSticker = null;
+    const seq = ++psStickerSeq;
     // The worker refuses without a store anyway; asking first would spend a round trip to
     // be told what the picker on screen already says.
     if (!psStickerStore()) {
@@ -23478,7 +23835,7 @@
       });
       const a = await r.json().catch(() => ({}));
       // The screen moved on while we were asking — say nothing about the old item.
-      if ((j.identifier || j.title || null) !== psStickerFor) return;
+      if (seq !== psStickerSeq) return;
       const btn = el('ps-print'), note = el('ps-print-note');
       if (!btn || !note) return;
       // 🛑 A SERVER ERROR IS NOT A REFUSAL. Every 403 on this worker answers
@@ -23497,9 +23854,22 @@
       psSticker = a;
       btn.disabled = !a.printable;
       note.className = 'ps-stat' + (a.printable ? '' : ' no');
+      // 🔑 ONE REFUSAL OUT OF THE FIVE HAS A FIX, SO IT GETS A BUTTON. "No Clover item with
+      // code BL-50008-7_5. Create it first, then this will print." has been the end of the
+      // road on this screen — true, and useless to the person holding the item. The other
+      // refusals need a deploy, an admin, a sign-in or Clover to come back, and none of
+      // those is anything this button could do, which is why only this one grows one.
+      //
+      // 🛑 OFFERED ON SCANS TOO, NOT ONLY IN MANUAL MODE. Brian asked for this while
+      // describing hand-typed prices, but the refusal is identical however you arrived at
+      // it, and a fix that appears in one mode and not the other reads as a bug in the
+      // mode that lacks it.
       note.innerHTML = a.printable
         ? `Prints <span class="ps-code">${psEsc(a.code)}</span>`
-        : psEsc(a.detail);
+        : a.reason === 'no clover item' && psCanPrint()
+          ? `${psEsc(a.detail)} <button class="ps-link" type="button"
+               onclick="psCreatePricePoint()">Add it at every store</button>`
+          : psEsc(a.detail);
     } catch (_) {
       const note = el('ps-print-note');
       if (note) { note.className = 'ps-stat no'; note.textContent = 'Could not check the sticker code.'; }
@@ -23539,7 +23909,7 @@
   // register. The comment here said UNVERIFIED for long enough that it outlived the test
   // print that settled it — a stale warning is worse than none, because the next person
   // re-runs the check it asks for.
-  function psZpl(code, price, extras, tpl) {
+  function psZpl(code, price, extras, tpl, qty) {
     // 🛑 SELF-CONTAINED ON PURPOSE. The label is a pure function of its arguments -- no
     // module-scope defaults, no shared helper. The test slices this function out of the file
     // and evals it in isolation, and more importantly, the thing that draws a shelf label
@@ -23603,6 +23973,20 @@
     // field vanishes rather than printing "Compare at $0.00" or a bare dash.
     const st = Number(extras && extras.retail);
     if (rt.on && Number.isFinite(st) && st > 0) out.push(line(rt, `${rt.prefix}$${st.toFixed(2)}`));
+    // 🔑 ^PQ ONLY ABOVE ONE, AND THAT IS NOT A STYLE CHOICE. A test compares this
+    // function's output byte-for-byte against the hardcoded label it replaced, so a single
+    // sticker must emit exactly the bytes it emitted before quantity existed. `^PQ1` is
+    // already the printer's default, so emitting it would add a byte to every label ever
+    // printed in order to say nothing new.
+    //
+    // 🛑 THE CAP IS A LITERAL, because this function is self-contained on purpose --
+    // the test slices it out of the file and evals it in isolation, where a module-scope
+    // constant would throw. STICKER_QTY_MAX in worker.js carries the same number and
+    // test-price-scan asserts the two agree, the same trade PS_STORES makes against the
+    // worker's store list. Clamped rather than refused: a caller that has already decided
+    // to print should not be handed an exception by the label builder.
+    const n = Math.floor(Number(qty));
+    if (Number.isFinite(n) && n > 1) out.push(`^PQ${Math.min(n, 50)}`);
     out.push('^XZ');
     return out.join('\n');
   }
@@ -24233,6 +24617,10 @@
   async function psPrint() {
     const a = psSticker;
     if (!a?.printable || !psLast) return;
+    // 🛑 READ BEFORE THE AWAITS, NOT AFTER THEM. The probe below is a round trip, and the
+    // box stays editable throughout it — reading afterwards would print whatever the number
+    // happened to be when Browser Print answered, which is not what was pressed.
+    const qty = psQty();
     const btn = el('ps-print'), note = el('ps-print-note');
     if (btn) btn.disabled = true;
     if (note) { note.className = 'ps-stat'; note.textContent = 'Printing…'; }
@@ -24274,7 +24662,7 @@
           // preflight is sent. The agent parses the body as JSON regardless of this header.
           method: 'POST', headers: { 'Content-Type': 'text/plain' },
           body: JSON.stringify({ device: dev,
-            data: psZpl(a.code, psLast.price, { retail: psLast.retail, categoryCode: a.category_code }, psTpl) }),
+            data: psZpl(a.code, psLast.price, { retail: psLast.retail, categoryCode: a.category_code }, psTpl, qty) }),
           signal: AbortSignal.timeout(5000),
         });
       } catch (e) {
@@ -24287,8 +24675,13 @@
         const txt = await r.text().catch(() => '');
         return fail(`Browser Print refused the label (${r.status})${txt ? ': ' + txt.slice(0, 120) : '.'}`);
       }
-      if (note) note.innerHTML = `Sent <span class="ps-code">${psEsc(a.code)}</span> to ${psEsc(dev.name || 'the printer')}.`;
-      psRecordPrint(a, psLast);
+      // 🔑 SAY THE COUNT WHEN THERE IS ONE TO SAY. `^PQ` means the browser gets its 200 back
+      // long before the last label is out of the printer, so "Sent" on a run of twenty is
+      // true and misleading at once. Naming the number is what makes the wait expected
+      // rather than a jam.
+      if (note) note.innerHTML = `Sent <span class="ps-code">${psEsc(a.code)}</span>`
+        + `${qty > 1 ? ` &times;${qty}` : ''} to ${psEsc(dev.name || 'the printer')}.`;
+      psRecordPrint(a, psLast, qty);
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -24309,13 +24702,17 @@
   // Recording is best-effort and deliberately silent. The label is already out of the
   // printer; telling someone their print "failed" because a history row did not save
   // would be false, and would send them to reprint something they are holding.
-  async function psRecordPrint(a, j) {
+  async function psRecordPrint(a, j, qty) {
     try {
       await fetch(`${WORKER_BASE}?action=sticker-printed`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ store: a.store, l3: j.l3, price: j.price, code: a.code,
                                title: j.title || j.identifier || '',
+                               // Sent only when it was counted. The column is nullable and
+                               // migration-069 says why: a row with no count must stay
+                               // distinguishable from one measured at exactly one.
+                               qty: qty === undefined ? undefined : qty,
                                // Without this the reprint draws a label missing a field the
                                // original had -- two different stickers for one shelf.
                                retail: j.retail }),
@@ -24348,7 +24745,11 @@
     const scanBtn = el('ps-tab-scan'), reBtn = el('ps-tab-reprint');
     if (scanBtn) scanBtn.className = 'ps-tab' + (on ? '' : ' on');
     if (reBtn) reBtn.className = 'ps-tab' + (on ? ' on' : '');
-    if (fn.open) return;                      // furniture mode owns the body while it is open
+    // 🛑 EITHER full-body mode owns the body, not just furniture. This read `fn.open` when
+    // furniture was the only one; a second mode with the same claim would have had this
+    // function quietly putting the barcode controls back underneath it — the exact bug the
+    // one-authority rule above was written after.
+    if (fn.open || pm.open) return;
     const m = el('ps-barcode-mode'); if (m) m.style.display = on ? 'none' : 'flex';
     const res = el('ps-result'); if (res) res.style.display = on ? 'none' : '';
     const box = el('ps-recent'); if (box) box.style.display = on ? '' : 'none';
@@ -24386,9 +24787,16 @@
       <div class="ps-recent-row">
         <div class="ps-recent-main">
           <div class="ps-recent-title">${psEsc(p.title || psL3Tail(p.l3) || 'Unnamed item')}</div>
-          <div class="ps-recent-sub"><span class="ps-code">${psEsc(p.code)}</span> · ${psEsc(psRecentWhen(p.printed_at))}</div>
+          <div class="ps-recent-sub"><span class="ps-code">${psEsc(p.code)}</span> · ${psEsc(psRecentWhen(p.printed_at))}${
+            // 🛑 ONLY ABOVE ONE, AND NEVER FOR A NULL. `qty` is null on every row printed
+            // before the count existed, and `null > 1` is false — so those rows read exactly
+            // as they always did instead of claiming "×1", a count nobody took. Saying ×1 on
+            // a run of one would also be noise on every row of a list that is mostly ones.
+            p.qty > 1 ? ` · <span class="ps-recent-qty">&times;${p.qty}</span>` : ''}</div>
         </div>
         <div class="ps-recent-price">${psEsc(psMoney(p.price))}</div>
+        <input id="ps-rq-${i}" class="ps-qty" type="number" inputmode="numeric" step="1"
+               min="1" max="${PS_QTY_MAX}" value="1" aria-label="How many to reprint">
         <button class="ps-btn ghost" type="button" onclick="psReprint(${i})">Reprint</button>
       </div>`).join('');
   }
@@ -24419,6 +24827,12 @@
   async function psReprint(i) {
     const p = psRecent[i];
     if (!p) return;
+    // Read before the two round trips below, for the same reason psPrint does: the box
+    // stays editable while the check and the probe are in flight.
+    //
+    // 🔑 EACH ROW OWNS ITS OWN BOX. One shared qty would mean a number typed against the
+    // item you are holding silently applying to whichever row you tapped next.
+    const qty = psQty(`ps-rq-${i}`);
     const box = el('ps-recent');
     const btns = box ? box.querySelectorAll('button') : [];
     btns.forEach(b => { b.disabled = true; });
@@ -24442,11 +24856,11 @@
       const w = await fetch('http://127.0.0.1:9100/write', {
         method: 'POST', headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ device: dev,
-          data: psZpl(a.code, p.price, { retail: p.retail, categoryCode: a.category_code }, psTpl) }),
+          data: psZpl(a.code, p.price, { retail: p.retail, categoryCode: a.category_code }, psTpl, qty) }),
         signal: AbortSignal.timeout(5000),
       });
       if (!w.ok) { say(`Browser Print refused the label (${w.status}).`); return; }
-      say(`Reprinted ${a.code}.`);
+      say(`Reprinted ${a.code}${qty > 1 ? ` \u00d7${qty}` : ''}.`);
     } catch (e) {
       say(`Could not reprint: ${e.message}`);
     } finally {
@@ -24466,8 +24880,19 @@
   // reach this screen at all -- so the sticker matches the scan that produced it.
   function psCanPrint() { return canSeeFinancials(currentUser); }
 
+  // 🛑 THIS MOVED WITH THE WORKER, NOT AHEAD OF IT. merch-scan-save was widened from
+  // requireAdminAccess to canSeeFinancials on Brian's instruction (2026-09-21: managers get
+  // both the Clover price point and the Products override), and this is the browser half of
+  // that one change. The two must ask the SAME question: a screen that hides a control the
+  // worker would accept is merely coy, but one that SHOWS a control the worker refuses
+  // teaches people the app is broken. test-price-scan pins them against each other rather
+  // than asserting each separately, because two independent assertions about two gates say
+  // nothing about the gap between them.
+  //
+  // What this grants, said plainly: a manager can now change what an item is worth for
+  // every store, permanently. Staff still cannot — canSeeFinancials never admits them.
   function psCanOverride() {
-    return ['superuser', 'admin'].includes(currentUser && currentUser.role);
+    return canSeeFinancials(currentUser);
   }
 
   // 🔑 ONE FORM, OPENED STRAIGHT. This used to be a uiPrompt asking for the STREET
