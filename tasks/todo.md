@@ -1,3 +1,84 @@
+# Inventory Receiver — Add Pallet without a camera (2026-09-21)
+
+**Brian:** *"For the add pallet option add a manual entry option"*
+
+A manager adding a pallet that was missed is often days late and does not have the pallet, let
+alone a readable tag. The camera path assumes the cardboard is in your hand; this one does not.
+
+## \U0001f511 Frontend only — nothing to deploy
+
+`truck-pallet-log` already treats the photo as OPTIONAL (`if (b64) { … put … }`), stores
+`r2_key = null` without one, and validates on the FIELDS instead: at least one of barcode,
+item number, pallet name or PO. The `"No photo"` 400 belongs to `truck-pallet-scan` and
+`truck-bol-scan`, which are the two actions whose entire job is reading an image.
+
+So no worker change, no deploy, and merging is the whole rollout. That invariant is what the
+feature rests on, though, and nothing asserts it today — so a test now pins it.
+
+## Plan
+
+- [x] **`irManualPallet(from)`** — opens the verify form empty, no camera, no scan call.
+- [x] **`irState.manual`**, an explicit flag rather than inferring "no photo". A FAILED read
+      also lands on an empty form, and `irState.photo` can be stale from an earlier add, so
+      `!irState.photo` is not the same question.
+- [x] \U0001f6d1 **The form opens with NO guidance as it stands.** `#ir-m-read` and `#ir-m-readsub`
+      live INSIDE `#ir-m-shot`, which is hidden when there is no photo — so every word telling
+      someone what to type disappears exactly when they are typing it. A dedicated
+      `#ir-m-manual` note carries it, and says the one rule the worker enforces: barcode, item
+      number, pallet name or PO — at least one.
+- [x] **Retake → "Take Photo"** when there is no photo. "Retake" on a form that never had one
+      describes an action that did not happen.
+- [x] **"Enter Manually"** in the read-back bar beside Add Pallet, on the same `mayEdit` gate.
+- [x] **Tests.** The worker accepts a photoless pallet and stores no R2 object; it still
+      refuses one with no identifying field; the button and the note are pinned; the browser
+      check drives the manual path and asserts what goes over the wire carries no `image_b64`.
+- [x] `sw.js` CACHE_NAME + fixture; full suite; browser check.
+
+## Considered and not done
+
+Renaming **Add Pallet** to **Scan Tag** would make the pair read better as two ways to do one
+thing. Left alone: it is the button Brian just learned, and "Add Pallet" / "Enter Manually"
+is still unambiguous.
+
+## Review
+
+**Shipped.** An **Enter Manually** button beside Add Pallet in the read-back, on the same
+`mayEdit` gate. It opens the tag form directly — no camera, no scan call — and the browser
+check asserts no file chooser appears, because "does not open the camera" is the feature.
+
+**No worker change, no deploy.** `truck-pallet-log` already treats the photo as optional and
+validates on the fields instead. §38 now pins that: a photoless pallet is accepted, writes
+`r2_key = null`, puts nothing in R2, and a body with neither a photo NOR an identifying field
+is still refused 400. That invariant is easy to break by accident — `truck-pallet-scan` and
+`truck-bol-scan` both DO refuse a bodyless image, a few hundred lines away in the same file.
+
+**🛑 The first build looked broken, and the screenshot is why I caught it.** The form opened
+with every one of its eight fields amber-red and captioned *"Not read — left empty rather than
+guessed"*. That styling is right for a failed SCAN and nonsense for a typed entry: nothing was
+read, so nothing failed to read. A blank form presented as eight errors also buries the single
+line that says what is actually required. `irFieldRow` now takes `manual` and only treats a
+blank as a failure when there was a read to fail.
+
+**Two smaller things in the same family.** The header said *"Verify pallet tag"* when there is
+no tag to verify — now *"Add pallet by hand"*. And *"Retake"* described an action that never
+happened — now *"Take Photo"*, which also makes it a useful escalation: start typing, then
+photograph the tag if you find it.
+
+**🛑 The instructions needed their own element.** `#ir-m-read` and `#ir-m-readsub` live INSIDE
+`#ir-m-shot`, which hides when there is no photo — so every word of guidance disappeared
+exactly when someone was typing rather than checking. `#ir-m-manual` carries it and names the
+one rule the worker enforces, before the submit rather than as a 400 after it.
+
+**`manual` is an explicit flag, not `!irState.photo`.** A failed read lands on an empty form
+too, and `irState.photo` can be stale from an earlier add. Every entry point sets it and §39
+asserts each one does, so a typed entry cannot leak into the next operation.
+
+**Verified.** `4972 assertions across 76 suites` green (was 4951).
+`browser-inventory-receiver.mjs` **138** (was 108), both themes — including that the fields
+carry no `.miss` class and the payload carries no `image_b64`.
+
+---
+
 # Deployed: a missed pallet can go on after Truck Down (2026-09-21)
 
 Brian's go, staging then production, **before the PR opened** — the third time in a row, and now

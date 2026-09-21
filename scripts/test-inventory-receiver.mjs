@@ -1098,5 +1098,77 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
      'the source flag is opFrom — it decides an add as well as an edit');
 }
 
+// ── 38. A pallet can be recorded with NO photo at all ─────────────────
+// 🔑 THE INVARIANT MANUAL ENTRY RESTS ON, and nothing asserted it until now. A manager
+// recording a pallet that was missed is usually days late, with no cardboard to photograph,
+// so the whole feature is a 400 away from impossible if this ever tightens. It is easy to
+// tighten by accident too: truck-pallet-scan and truck-bol-scan both DO refuse a body with
+// no image, and they sit a few hundred lines away in the same file.
+{
+  const { db, env } = env0();
+  const t = seedTruck(db, { store: 'BL1', count: 2 });
+  spy(textReply('{}'));
+  await call('/?action=truck-down', { user: 'u-mgr1', method: 'POST', body: { truck_id: t }, env });
+
+  // No image_b64, no media_type — exactly what the typed form posts.
+  const r = await call('/?action=truck-pallet-log',
+    { user: 'u-mgr1', method: 'POST', body: { truck_id: t, ...TAG_B }, env });
+  eq(r.status, 200, '✅ a pallet with no photo is accepted');
+  const j = await json(r);
+  eq(env.MEDIA._store.size, 0, '🔑 ...and nothing is written to R2, rather than an empty object');
+  const row = db.prepare('SELECT r2_key AS k, barcode AS b, truck_id AS t FROM truck_pallets WHERE id = ?').get(j.id);
+  eq(row.k, null, '...the row carries a null r2_key');
+  eq(row.b, TAG_B.barcode, '...and the fields that were typed');
+  eq(row.t, t, '...on the truck that was named');
+
+  const det = await json(await call('/?action=truck-detail&id=' + t, { user: 'u-mgr1', env }));
+  eq(det.pallets[0].has_photo, false, 'the read-back reports it has no photo');
+
+  // 🛑 The validation moves to the FIELDS when there is no image to lean on. A body with
+  // neither a photo nor anything identifying is the one case that must still be refused —
+  // otherwise a mis-tap files a blank row against a real truck.
+  const empty = await call('/?action=truck-pallet-log',
+    { user: 'u-mgr1', method: 'POST', body: { truck_id: t }, env });
+  eq(empty.status, 400, '🛑 ...but a pallet with no photo AND no identifying field is refused');
+  eq(db.prepare('SELECT COUNT(*) AS n FROM truck_pallets WHERE truck_id = ?').get(t).n, 1,
+     '...and writes nothing');
+
+  // The gate from #257 still applies: photoless or not, a closed truck is a manager's.
+  eq((await call('/?action=truck-pallet-log',
+    { user: 'u-staff', method: 'POST', body: { truck_id: t, ...TAG }, env })).status, 403,
+     'an associate still cannot add one, with or without a photo');
+}
+
+// ── 39. The typed path exists, and opens with instructions ────────────
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  ok(/id="ir-det-manual"[\s\S]{0,120}irManualPallet\('detail'\)/.test(html),
+     'the read-back offers Enter Manually');
+  ok(/el\('ir-det-manual'\)\.hidden = !mayEdit;/.test(html),
+     '...on the same gate as Add Pallet and the rows\' Edit');
+  ok(/function irManualPallet\(from\)[\s\S]{0,400}irOpenVerify\(\{ fields: \{\}/.test(html),
+     '🔑 ...and it opens the form directly — no camera, no scan call');
+  ok(/irState\.manual = true;/.test(html) && /manual: false,/.test(html),
+     'manual is an explicit flag, not inferred from the absence of a photo');
+  // 🛑 The reason the note exists at all.
+  ok(/id="ir-m-manual"/.test(html), 'the typed form has its own note target');
+  ok(/el\('ir-m-manual'\)\.textContent = manual[\s\S]{0,200}at least one of those four/.test(html),
+     '🛑 ...naming the rule the worker enforces, BEFORE the submit rather than as a 400 after');
+  ok(/el\('ir-m-retake'\)\.textContent = irState\.photo \? 'Retake' : 'Take Photo';/.test(html),
+     '"Retake" becomes "Take Photo" on a form that never had one');
+  // \U0001f6d1 A blank is only a failed READ when there was a read. irFieldRow takes `manual` so a
+  // typed form does not open as eight amber-red errors captioned "not read".
+  ok(/const missing = empty && !manual;/.test(html),
+     '\U0001f6d1 irFieldRow does not treat an empty typed field as a failed read');
+  ok(/irFieldRow\(f, irState\.fields\[f\.k\], manual\)/.test(html),
+     '...and irOpenVerify passes it through to every row');
+  // 🛑 Every entry point sets the flag, so it cannot be left over from the last operation.
+  for (const fn of ['irBeginBol', 'irBeginPallet', 'irEditPallet']) {
+    const at = html.indexOf(`function ${fn}(`);
+    ok(at > 0 && /irState\.manual = false/.test(html.slice(at, at + 500)),
+       `${fn} clears manual, so a typed entry cannot leak into the next operation`);
+  }
+}
+
 console.log(`\n${assertions} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

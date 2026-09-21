@@ -3010,6 +3010,10 @@
                 <span class="ir-note" id="ir-m-readsub" style="display:block;margin-top:4px"></span>
               </span>
             </div>
+            <!-- 🛑 Its own target, ABOVE the fields. The read line and its hint live inside
+                 #ir-m-shot, which is hidden when there is no photo, so a typed entry would
+                 otherwise open with no instructions at all. -->
+            <div class="ir-note" id="ir-m-manual" style="margin:0 0 12px" hidden></div>
             <div id="ir-m-fields"></div>
             <div id="ir-m-warn" class="ir-status err" style="margin:0 0 11px" hidden></div>
           </div>
@@ -3047,6 +3051,8 @@
                    refused independently by the worker — a hidden button is not a permission. -->
               <button type="button" class="ir-btn ir-ghost ir-sm" id="ir-det-add"
                       onclick="irBeginPallet('detail')" hidden>Add Pallet</button>
+              <button type="button" class="ir-btn ir-ghost ir-sm" id="ir-det-manual"
+                      onclick="irManualPallet('detail')" hidden>Enter Manually</button>
               <button type="button" class="ir-btn ir-ghost ir-sm" onclick="irCloseDetail()" aria-label="Close">&times;</button>
             </span>
           </div>
@@ -26527,6 +26533,7 @@
     // Not inferred from "is the read-back open": the verify modal opens ON TOP of it, so that
     // test is true for a dock operation started while a read-back happens to be open behind.
     opFrom: null,                   // 'dock' | 'detail'
+    manual: false,                  // typed by hand: no camera, no scan, no photo
     photo: null, mediaType: null, fields: {}, editId: null,
     pending: null,                 // the submit waiting on a manager approval
   };
@@ -26668,19 +26675,33 @@
     }
   }
   function irBeginBol() {
-    irState.mode = 'bol'; irState.editId = null; irState.opFrom = 'dock';
+    irState.mode = 'bol'; irState.editId = null; irState.opFrom = 'dock'; irState.manual = false;
     irCloseModal(); irSetStatus(null); irPick();
   }
   // `from` is 'dock' or 'detail'. editId is cleared because this is an ADD: leaving a stale
   // one behind would turn the next scan into a correction of whatever was last edited.
   function irBeginPallet(from) {
-    irState.mode = 'pallet'; irState.editId = null;
+    irState.mode = 'pallet'; irState.editId = null; irState.manual = false;
     irState.opFrom = from === 'detail' ? 'detail' : 'dock';
     irCloseModal();
     if (irState.opFrom === 'detail') irSetDetStatus(null); else irSetStatus(null);
     irPick();
   }
-  function irRetake() { if (irState.mode) { irCloseModal(); irPick(); } }
+  // 🔑 No camera, no scan call — the form opens empty and the person types what they know.
+  // A pallet that was missed is usually recorded days later, when the cardboard is long gone,
+  // so this is the likelier path for a truck that is already down rather than a fallback.
+  function irManualPallet(from) {
+    irState.mode = 'pallet'; irState.editId = null; irState.manual = true;
+    irState.opFrom = from === 'detail' ? 'detail' : 'dock';
+    irState.photo = null; irState.mediaType = null;
+    irCloseModal();
+    if (irState.opFrom === 'detail') irSetDetStatus(null); else irSetStatus(null);
+    irOpenVerify({ fields: {}, read: 0, of: IR_TAG_FIELDS.length }, null);
+  }
+  window.irManualPallet = irManualPallet;
+
+  // Reaching for the camera from a typed entry stops it being one.
+  function irRetake() { if (irState.mode) { irState.manual = false; irCloseModal(); irPick(); } }
   window.irBeginBol = irBeginBol; window.irBeginPallet = irBeginPallet; window.irRetake = irRetake;
 
   async function irPhoto(input) {
@@ -26718,21 +26739,27 @@
   window.irPhoto = irPhoto;
 
   // ── Verify popup ──────────────────────────────────────────────────────────
-  function irFieldRow(f, v) {
-    const missing = v === null || v === undefined || v === '';
+  // 🛑 `manual` decides whether a BLANK means anything. An empty field is a failure only
+  // when there WAS a read to fail — on a typed entry nothing was read, so painting the same
+  // blank amber-red and captioning it "not read" opens a form somebody is about to fill in as
+  // eight errors, and buries the one line that says what is actually required.
+  function irFieldRow(f, v, manual) {
+    const empty = v === null || v === undefined || v === '';
+    const missing = empty && !manual;
     const cls = 'ir-in' + (f.key ? ' key' : '') + (missing ? ' miss' : '');
     const hint = missing
       ? `<span class="ir-f-hint miss">Not read — left empty rather than guessed</span>`
       : (f.hint ? `<span class="ir-f-hint">${irEsc(f.hint)}</span>` : '');
     return `<div class="ir-f">
       <label class="ir-f-l" for="ir-f-${f.k}">${irEsc(f.l)}</label>
-      <input class="${cls}" type="text" id="ir-f-${f.k}" value="${irEsc(missing ? '' : v)}"
+      <input class="${cls}" type="text" id="ir-f-${f.k}" value="${irEsc(empty ? '' : v)}"
              placeholder="${missing ? 'not on the paperwork' : ''}">
       ${hint}</div>`;
   }
 
   function irOpenVerify(j, warn) {
     const isBol = irState.mode === 'bol';
+    const manual = !!irState.manual;
     const list = isBol ? IR_BOL_FIELDS : IR_TAG_FIELDS;
     irState.fields = (j && j.fields) || {};
     // 🛑 The BOL in the title comes from the truck this pallet is actually ON. Reading it
@@ -26744,18 +26771,24 @@
       : irState.truck;
     el('ir-m-title').textContent = isBol
       ? 'Verify Bill of Lading'
-      : `${irState.editId ? 'Correct pallet' : 'Verify pallet tag'}${
+      : `${irState.editId ? 'Correct pallet' : manual ? 'Add pallet by hand' : 'Verify pallet tag'}${
           onTruck && onTruck.bol_no ? ' · BOL ' + onTruck.bol_no : ''}`;
     const halves = list.filter(f => f.half), fulls = list.filter(f => !f.half);
     const leading = fulls.filter(f => f.key), trailing = fulls.filter(f => !f.key);
     el('ir-m-fields').innerHTML =
-      leading.map(f => irFieldRow(f, irState.fields[f.k])).join('')
-      + (halves.length ? `<div class="ir-grid2">${halves.map(f => irFieldRow(f, irState.fields[f.k])).join('')}</div>` : '')
-      + trailing.map(f => irFieldRow(f, irState.fields[f.k])).join('');
+      leading.map(f => irFieldRow(f, irState.fields[f.k], manual)).join('')
+      + (halves.length ? `<div class="ir-grid2">${halves.map(f => irFieldRow(f, irState.fields[f.k], manual)).join('')}</div>` : '')
+      + trailing.map(f => irFieldRow(f, irState.fields[f.k], manual)).join('');
     el('ir-m-read').textContent = `Read ${(j && j.read) || 0} of ${(j && j.of) || list.length} fields`;
     el('ir-m-readsub').textContent = isBol
       ? 'Check the BOL number and who it shipped from — those two identify the truck.'
       : 'Anything blank was not readable. Type it in if you can see it.';
+    // 🔑 The one rule the WORKER enforces, said before the submit rather than discovered as
+    // a 400 after it: a pallet needs at least one of those four to be identifiable at all.
+    el('ir-m-manual').hidden = !manual;
+    el('ir-m-manual').textContent = manual
+      ? 'Typed by hand — no tag photo. Fill in what you know: barcode, item #, pallet name or PO / WO — at least one of those four.'
+      : '';
     if (irState.photo) {
       el('ir-m-photo').src = 'data:image/jpeg;base64,' + irState.photo;
       el('ir-m-shot').hidden = false;
@@ -26768,6 +26801,8 @@
     el('ir-m-submit').textContent = isBol ? 'Open Truck' : irState.editId ? 'Save Pallet' : 'Add to Truck';
     el('ir-m-delete').hidden = !(irState.editId && irCanDelete());
     el('ir-m-retake').hidden = !!irState.editId;
+    // "Retake" describes an action that never happened on a form that never had a photo.
+    el('ir-m-retake').textContent = irState.photo ? 'Retake' : 'Take Photo';
     el('ir-modal').style.display = 'flex';
   }
 
@@ -26837,7 +26872,7 @@
   async function irAfterSend(action, j) {
     const fromDetail = irState.opFrom === 'detail';
     irCloseModal();
-    irState.photo = null; irState.editId = null; irState.opFrom = null;
+    irState.photo = null; irState.editId = null; irState.opFrom = null; irState.manual = false;
     // A correction made in the read-back refreshes the READ-BACK. Falling through to
     // irLoadCurrent() would reload the dock instead and leave the modal showing the row as
     // it was before the edit — the change applied, and invisible.
@@ -27069,7 +27104,7 @@
     irState.mode = 'pallet';
     irState.editId = id;
     irState.opFrom = detail ? 'detail' : 'dock';
-    irState.photo = null;
+    irState.photo = null; irState.manual = false;
     irOpenVerify({ fields: p, read: IR_TAG_FIELDS.filter(f => p[f.k] != null).length, of: IR_TAG_FIELDS.length }, null);
   }
   window.irEditPallet = irEditPallet;
@@ -27344,6 +27379,7 @@
     // 🔑 Adding a missed pallet is the same standing as correcting one (Brian, 2026-09-21),
     // so it rides the same flag rather than growing a second rule that could disagree.
     el('ir-det-add').hidden = !mayEdit;
+    el('ir-det-manual').hidden = !mayEdit;
     el('ir-det-pallets').innerHTML = n
       ? irPalletTableHtml(pallets, { withDate: true, edit: mayEdit, from: 'detail' })
       : '';
