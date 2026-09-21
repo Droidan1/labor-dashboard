@@ -3292,7 +3292,8 @@
           <span><span class="ob-badge ob-closed">Closed</span> no longer priced into</span>
           <span><span class="ob-none">none yet</span> opened, nothing printed</span>
           <span><span class="ob-dim">—</span> nobody declared a unit count</span>
-          <span><strong>Labels</strong> printed, never sold — sales cannot be traced to a PO yet</span>
+          <span><span class="ob-none">not tracked</span> before item codes were recorded</span>
+          <span><strong>Labels</strong> printed · <strong>Sold</strong> units rung up, refunds counted apart</span>
         </div>
       </div>
     </div>
@@ -28734,17 +28735,35 @@
       return;
     }
     obCanEdit = !!j.can_edit;
+    // Set BEFORE the render, which reads it for every Sold cell.
+    obTracked = j.tracked_from || null;
     const lbl = el('ob-barlbl');
     if (lbl) lbl.textContent = `PO ${j.buy.po}`;
-    obRenderDetail(j.buy, j.lines || []);
+    obRenderDetail(Object.assign({}, j.buy, { sold: j.sold, refunded_units: j.refunded_units }),
+                   j.lines || []);
   }
   window.obOpenDetail = obOpenDetail;
+
+  // 🛑 obTracked IS NOT A STYLE CHOICE. It is the earliest archived date carrying any item
+  // code — before that day the sales archive is category-grain and CANNOT say whether a
+  // particular item sold, so a 0 in that period would be a confident lie. migration-072
+  // explains why it can never be backfilled. Null means nothing is attributable yet at all.
+  let obTracked = null;
+  function obSoldCell(n) {
+    if (!obTracked) return '<span class="ob-none">not tracked</span>';
+    return n > 0 ? String(n) : '<span class="ob-dim">0</span>';
+  }
 
   function obRenderDetail(buy, lines) {
     const units = buy.units === null || buy.units === undefined ? null : buy.units;
     obSay(`${buy.label ? buy.label + ' · ' : ''}${buy.labels} label${buy.labels === 1 ? '' : 's'}`
       + ` across ${buy.items} item${buy.items === 1 ? '' : 's'} and ${buy.stores} store${buy.stores === 1 ? '' : 's'}`
       + `${units === null ? ', against an undeclared buy size' : `, against ${units} declared`}`
+      + `${obTracked
+            ? `. ${buy.sold || 0} sold${buy.refunded_units ? ` and ${buy.refunded_units} returned` : ''}`
+              + ` (sales attributable from ${obDay(obTracked)})`
+            : '. Sales cannot be attributed to a buy yet — nothing has been banked since '
+              + 'item codes started being recorded'}`
       + `. Opened by ${buy.opened_by} on ${obDay(buy.opened_at)}`
       + `${buy.status === 'closed' ? `, closed by ${buy.closed_by} on ${obDay(buy.closed_at)}` : ''}.`);
 
@@ -28776,6 +28795,7 @@
       <td class="ob-num">${l.retail === null || l.retail === undefined
           ? '<span class="ob-dim">—</span>' : obMoney(l.retail)}</td>
       <td class="ob-num">${l.labels}</td>
+      <td class="ob-num">${obSoldCell(l.sold)}</td>
       <td class="ob-num ob-dim">${l.presses}</td>
       <td class="ob-dim">${escapeHtml(obDay(l.last_print))}</td>
     </tr>`).join('');
@@ -28784,7 +28804,8 @@
       <thead><tr>
         <th>Store</th><th>Item</th><th>Category</th><th>Code</th>
         <th class="ob-num">Our price</th><th class="ob-num">Street</th>
-        <th class="ob-num">Labels</th><th class="ob-num">Presses</th><th>Last print</th>
+        <th class="ob-num">Labels</th><th class="ob-num">Sold</th>
+        <th class="ob-num">Presses</th><th>Last print</th>
       </tr></thead>
       <tbody>${rows}</tbody></table>`;
   }

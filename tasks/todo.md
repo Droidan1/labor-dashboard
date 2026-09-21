@@ -1,3 +1,110 @@
+# Opportunity buys — Phase 3, sell-through (2026-09-21)
+
+**Brian:** *"start phase 3"* — after asking what it contained and confirming that without it
+there is no way to tell whether a product sold under a PO. Flagged before starting: this is
+the phase that touches the **banking path**, which is where this repo's three production data
+losses happened. Phases 1 and 2 were additive and inert; this one changes how every sale, for
+every store, every day, is read and stored.
+
+## The three changes, and nothing else
+
+1. `migration-072.sql` — `payment_archive_items.code`, nullable, plus a partial index.
+2. **Expand `lineItems.item` on the banking fetch** (`worker.js:1890`). Today it asks for
+   `payments,customers,lineItems,lineItems.discounts` — the item is not in the payload at
+   all, so there is nothing to store even once the column exists.
+3. **Put the code in the line merge key** (`worker.js:1962`). It is
+   `JSON.stringify([li.name ?? null, unitCents, refunded])`, and two OB items from different
+   buys share a name and can share a price — so without this they collapse into ONE archive
+   row and the PO split is lost at the very last step.
+
+Then the chain closes: sale → `code` → the buy's codes → `ob_buys`.
+
+## 🔑 "Zero sold" and "not tracked" are different answers
+
+Every archived row before this deploys has `code = NULL` and always will — no backfill is
+possible, and not only because of CLAUDE.md rule 1. The archive **merged** lines on
+`(name, price, refunded)` before storing them, so two lines that became one row cannot be
+split apart afterwards. The information was discarded at write time, not merely unfetched.
+
+So the buy page must never print `0 sold` for a period it cannot see. The boundary is
+derivable from the data itself — the earliest archived date carrying a non-null code — and
+anything before that reads **not tracked**, exactly as `units` reads `—` when nobody declared
+one. This is the same rule as every other NULL in this feature, for the third time.
+
+## What this still will not fix
+
+Refunds. Clover's `/refunds` returns no line references even with expansion — *"empirically
+confirmed against the live API"* (`worker.js:4287`) — so they stay apportioned by gross
+share, and cross-day refunds fall to a generic bucket. Sell-through will be exact on sales
+and approximate on returns, permanently.
+
+## The plan
+
+- [x] `migration-072.sql` — the column and a partial index on `code IS NOT NULL`
+- [x] Banking fetch expands `lineItems.item`; watch payload size and Clover rate limits
+- [x] `buildOrderItems` carries the code through, and the merge key includes it
+- [x] The archive INSERT and the read-back both carry `code`
+- [x] `ob-buy-detail` reports units sold per line, and the tracked-from boundary
+- [x] The buy page shows Sold, and says **not tracked** rather than 0 where it cannot see
+- [x] Tests: the merge-key split, the NULL boundary, and that an ordinary day is unchanged
+- [x] `sw.js` + `scripts/fixtures/shell-cache.json`
+
+## Deploy order
+
+Migration → worker → frontend, same as both previous phases and for the same reason: the
+new worker writes a column the current database does not have.
+
+## Review — what shipped
+
+**5,326 assertions across 77 suites pass**, up from 5,303. `sw.js` → v222. The three
+opportunity-buy phases are now complete.
+
+### The banking path came through clean
+
+This was the phase to be careful about — it is where this repo's three production data losses
+happened, and it runs daily for every store. Three things made it safe rather than lucky:
+
+1. **The existing banking suites were already green and stayed green.** `test-transactions`
+   and the backfill runners exercise this path and none of them moved.
+2. **An absent code merges exactly as before.** A line Clover returns no item for has
+   `code: null`, so two such lines share a key precisely as they did before Phase 3. Every
+   ordinary receipt banks byte-identically — asserted, not assumed.
+3. **The INSERT's arity was counted, not eyeballed.** 10 columns, 10 placeholders, 10 bound
+   values. A mismatch there is not a bug in a feature, it is every store failing to bank.
+
+### The merge key was the whole ballgame
+
+The PO is carried correctly through the sticker code, the Clover item and the fetch — and
+then `buildOrderItems` merged lines on `(name, price, refunded)` before storing them. Two OB
+items from different buys share a name (the L3 key) and can share a price, so they collapsed
+into one row at the very last step, after everything upstream had worked. Nothing downstream
+could have told, and no re-fetch could have repaired it.
+
+That single test — two buys, one category, one price, must stay two lines — is the one worth
+keeping if every other assertion in the suite were deleted.
+
+### "Not tracked" is not "zero sold", for the third time
+
+Every archived row before this deploys has `code = NULL` and always will. The boundary is
+**derived from the data** — `MIN(date) WHERE code IS NOT NULL` — rather than hardcoded to a
+deploy date, so it stays true if the migration is applied on different days in different
+environments. The page prints *not tracked* before it and a real number after. Same rule as
+`qty` in migration-069, `po` in 070 and 071; fourth time in this feature.
+
+### One thing removed rather than added
+
+The archive read-back gained `code` in the SELECT and its consumer builds rows explicitly
+without it — a column fetched and discarded on the receipt path. Reverted. The reporting
+query is separate and does its own read.
+
+### What is still not fixed, permanently
+
+Refunds. Clover's `/refunds` carries no line references even with expansion, so they stay
+apportioned by gross share and cross-day ones fall to a generic bucket. Sell-through is exact
+on sales and approximate on returns. The page counts returned units **separately** rather
+than netting them, because a buy where half the units came back is a different story from one
+that sold half as many.
+
 # Opportunity buys — Phase 2, the PO goes inside the code (2026-09-21)
 
 **Brian:** *"let's do phase 2"* — of `docs/feature-opportunity-buys.md`, straight after Phase 1

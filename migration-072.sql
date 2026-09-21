@@ -1,0 +1,69 @@
+-- migration-072: a sold line remembers which item it was.
+--
+-- Brian, 2026-09-21: "start phase 3", after asking whether a product's sale could be traced
+-- to a purchase order without it. It cannot. This is the column that makes it possible, and
+-- it is the last of the three phases in docs/feature-opportunity-buys.md.
+--
+-- ── What this fixes, and it is bigger than opportunity buys ────────────────────────────
+--
+-- 🔑 payment_archive_items HAS NEVER CARRIED ANY ITEM IDENTITY. Its columns are
+-- `name, qty, price, refunded` — and `name` is the L3 category key VERBATIM, shared by every
+-- price point in the category (worker.js, `const name = l3`). So the archive has never been
+-- able to answer "did THIS item sell", only "did something in this category sell". The
+-- banking fetch does not even expand lineItems.item, so the identity was not merely dropped
+-- on write — it was never requested.
+--
+-- Opportunity buys are what forced the issue, because two buys' items share a category and
+-- can share a price, so nothing short of the code can separate them. But the column is not
+-- OB-specific: every line gets its code, and the archive stops being category-grain.
+--
+-- ── 🛑 THIS CANNOT BE BACKFILLED, AND NOT ONLY FOR THE USUAL REASON ────────────────────
+--
+-- The usual reason applies: Clover keeps ~90 days, and CLAUDE.md rule 1 forbids re-pulling a
+-- healthy date because a re-pull silently drops refunds that have aged out.
+--
+-- But there is a second reason, and it is the one that closes the door for good. Before
+-- storing, buildOrderItems MERGES lines on (name, unitCents, refunded). Two different items
+-- in one category at one price became ONE archive row. That row cannot be split apart later
+-- by any amount of re-fetching, because the thing that distinguished them was discarded at
+-- write time rather than left unfetched. Every row written before this migration is
+-- permanently category-grain.
+--
+-- 🔑 SO NULL MEANS "FROM BEFORE WE KNEW", NOT "NO ITEM". Never backfill it, and never let a
+-- reader print 0 for a period where the column is null — "zero sold" and "not tracked" are
+-- different answers and only one of them is true. The boundary is derivable: the earliest
+-- date carrying a non-null code is the day attribution begins.
+--
+-- ── Apply ──────────────────────────────────────────────────────────────────────────────
+-- Address databases by UUID; the staging one lives under [env.staging] and a bare name does
+-- not resolve. STAGING FIRST:
+--   staging:     npx wrangler d1 execute b40982c2-4009-4842-bc17-fa0977468b07 --remote -y --file=migration-072.sql
+--   production:  npx wrangler d1 execute 3fa911d7-31d6-438c-985f-7ac08c407d2d --remote -y --file=migration-072.sql
+--
+-- Confirm it landed (expects one row, `code`):
+--   npx wrangler d1 execute <uuid> --remote -y --json \
+--     --command="SELECT name FROM pragma_table_info('payment_archive_items') WHERE name = 'code'"
+--
+-- 🛑 NOT RE-RUNNABLE. `ALTER TABLE ADD COLUMN` takes no IF NOT EXISTS; a second run errors
+-- `duplicate column name: code`. Harmless, and means it is already there — check with the
+-- pragma rather than re-running.
+--
+-- 🔑 DEPLOY ORDER: THIS FIRST, THEN THE WORKER, THEN THE FRONTEND. The new worker INSERTs
+-- `code`, so against a database without the column EVERY BANKING RUN FOR EVERY STORE throws.
+-- That is the incompatible direction and it is the whole day's sales, not one endpoint —
+-- the most important reason yet to keep this order. A column the live worker never names is
+-- invisible to it, so applying this while the current worker runs is safe.
+--
+-- 🔑 ADDITIVE ONLY. No existing row is read, rewritten or deleted. This table is the
+-- system of record for sales history; nothing here touches a single stored figure.
+
+-- The Clover item code (our BL- sticker code) for this line, as it was at the time of sale.
+-- NULL on every row banked before this shipped, permanently and by design.
+ALTER TABLE payment_archive_items ADD COLUMN code TEXT;
+
+-- 🔑 PARTIAL, because it stays permanently small relative to the table. Every row banked
+-- before this migration is NULL and will never be anything else, so indexing them would cost
+-- size for entries no query can ever use. The reporting question is always "the rows that
+-- have a code", which is exactly the partial index's population.
+CREATE INDEX IF NOT EXISTS idx_payment_archive_items_code
+  ON payment_archive_items(code) WHERE code IS NOT NULL;
