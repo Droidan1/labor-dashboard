@@ -1,3 +1,76 @@
+## The third one today: my escalation lost a seven-second race (2026-09-21)
+
+Same trap as the entry below, and as 2026-09-18's. This time I did everything that entry
+says to do short of the one thing that would have worked.
+
+#267 needed the worker to carry `number_po` before the frontend offering it could work.
+Knowing the note in the PR body had failed twice, I escalated: I read the **deployed**
+bundle, confirmed `number_po` appeared zero times, and posted that as a fact on the PR
+rather than as a reminder — quoting the live whitelist line.
+
+The timestamps:
+
+| 18:53:45 | Brian marks #267 ready for review |
+| ~18:53:5x | I post the verified-fact comment |
+| **18:53:52** | **merged** |
+| 18:54:19 | Pages production deploy succeeds — www.retjghub.com now offers the option |
+| 18:56 | I re-read the worker: still `["full", "number"]` |
+
+Seven seconds between ready and merged. No comment could have been read in that window.
+The escalation was not too weak — evidence beats a reminder, and the comment was correct.
+It was the **wrong class of fix**: I answered a sequencing problem with better
+communication for the third time in two weeks.
+
+Damage was small — a sticker-template option that silently reverts when saved, no data at
+risk — but only because this change happened to be cosmetic. The identical mistake on
+#265 that morning created five duplicate Clover items.
+
+### What was actually available
+
+The worker change was **purely additive and backward compatible**: one more accepted enum
+value, inert until a frontend offers it. It had no reason to wait for the PR at all. I
+could have asked Brian to deploy it the moment the branch was pushed — an hour before the
+merge — and the ordering problem would not have existed to communicate about.
+
+I did not, because I had bound "deploy the worker" to "before merging" instead of to "as
+soon as the worker change is written". The note said *before merging*, so I scheduled my
+own attention around the merge, which is the one moment I do not control.
+
+<rules>
+1. **A sequencing dependency has to be fixed by sequencing.** Three attempts — a bold note,
+   a bold note with a 🛑, a verified fact posted at merge time — all failed the same way.
+   Escalating the *wording* of a dependency is not a mechanism, however true the wording is.
+   If the next idea is "say it more convincingly", it is the same mistake again.
+2. **A backward-compatible change should ship the moment it is written, not when its caller
+   merges.** Ask for the deploy at push time. An additive worker change is inert until a
+   frontend uses it, so early deploy has no downside and deletes the ordering question
+   entirely. "Deploy before merging" invites waiting for the merge; "deploy now, it is
+   inert" does not.
+3. **Never plan around a moment you do not control.** The merge click is Brian's and can
+   land seven seconds after he opens the page. Any safety that has to arrive between his
+   two clicks is not safety. Put the action before his first click or make the code safe
+   without it.
+4. **Verify before assuming the bad case, then say which it is.** Reading the live worker
+   twice — and comparing bodies after stripping Cloudflare's randomized multipart boundary,
+   since the raw checksums differ every fetch — turned "this is probably broken" into "this
+   is broken, here is the line." That part worked and is worth keeping; it is what made the
+   deploy decision a ten-second one instead of a discussion.
+5. **When a frontend can outrun its backend, consider making the skew visible in the UI.**
+   Not done here and not obviously worth it for one enum value, but the general fix for
+   "the worker silently stores a default" is for the client to read back what was saved and
+   say so. Silence on the write path is what turns an ordering slip into a mystery.
+6. **I then wrote a health check that could not fail, in the act of verifying this.** The
+   confirmation poller probed the `workers.dev` hostname, which this environment's proxy
+   refuses; curl printed `000` and the `|| echo 000` fallback appended another, so the
+   status read `000000` — not equal to `"000"`, not starting with `"5"`, so both guards
+   passed on a request that never left the machine. Two "clean passes" were recorded
+   against a probe that had failed twice. Worse, it was the wrong host entirely: the
+   frontend calls `api.retjghub.com`, which answers 401. **A check that goes green when
+   the probe fails is worse than no check, and a check pointed at a host nobody uses is
+   this morning's Pages mistake wearing a different hat.** Assert the shape of a success
+   (`^[1-4][0-9][0-9]$`), never the absence of one known failure string.
+</rules>
+
 ## Five copies in one store: I wrote the note the lesson says does not work (2026-09-21)
 
 Same day as the entry below about misreading which host serves production. This one cost
