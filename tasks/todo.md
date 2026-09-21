@@ -1,3 +1,52 @@
+# Opportunity buys — the PO spec, written (2026-09-21)
+
+**Brian:** *"Write up the OB/PO spec"* — following the design conversation that ran from
+*"we want to add a new L4, this will be our PO"* to *"what if we add the PO on the end of
+the BL number, so BL-5008-2-99999?"*, with cost explicitly withdrawn: *"My biggest
+problem is tracking those items."*
+
+The spec lives in **`docs/feature-opportunity-buys.md`** (matching the house shape of
+`docs/feature-forecasting.md`). Not duplicated here. What it concluded:
+
+- **Brian's instinct is right, for a reason he did not give.** `payment_archive_items`
+  (migration-064.sql:44) stores `name, qty, price, refunded` and no item identity at all,
+  and the banking fetch does not even expand `lineItems.item` (worker.js:1872). The only
+  surviving identity is the L3 key, which every price point in the category shares. So a
+  PO-distinct **code** is the only channel that can reach the register. Tags, labels and
+  attributes cannot help — the archive carries no item identity for a tag to hang off.
+- **And sell-through can never be backfilled.** 90-day Clover retention plus
+  worker.js:2131 — *"there is no re-pull"* — plus CLAUDE.md rule 1. It starts from the
+  day the archive column deploys, and not one day earlier.
+- **The PO is already in the building.** `truck_pallets.po` (migration-065.sql:117) and
+  `bin_dumps.po` (migration-058.sql:40) are typed in at receiving today; nothing joins on
+  them. `manifests.load_id` (migration-043.sql:39) is commented `-- → buy tracker, later`
+  and appears in no code at all.
+- **Three phases**, each independently useful: the buy exists (no code-grammar change at
+  all) → OB items become distinct in Clover → sell-through. Phase 1 answers most of
+  "tracking those items" with zero blast radius; only phases 2 and 3 pay the price.
+- **A `P` marker** — `BL-50008-2_5-P99999` — so a PO can never sit in the price slot.
+  Verified by running both regexes over nine codes: every existing shape parses
+  identically, and `BL-50008-P99999` reads as category + PO rather than $99,999.
+
+## The trap that would repeat this morning's incident
+
+worker.js:23412 filters `startsWith('BL-' + cat + '-')` and then drops whatever
+`mosParseCode` refuses. Ship 4-segment codes without fixing that line and `existing_prices`
+goes quietly incomplete — which is precisely the mechanism that put five copies of one item
+in one store today. It is called out in the spec's ⚠️ section as a same-commit requirement,
+not a follow-up.
+
+## Verification
+
+Every file:line in the spec was checked against `main` at `82254d4` rather than taken from
+research notes. Four citations were wrong and were corrected (the two `po` columns, the
+banking `expand`, the two `BAD_CODE` sites, `psZpl`, and `load_id`) — in each case the
+note had cited the `CREATE TABLE` or enclosing line rather than the line that carries the
+claim. The proposed regex was **executed**, not reasoned about.
+
+No code changed. Nothing to deploy.
+
+
 # Sticker template — a third Show option, number plus PO (2026-09-21)
 
 **Brian:** *"on the sticker under the admin tools there is a option to show full code or
