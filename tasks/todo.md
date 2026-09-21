@@ -1,3 +1,47 @@
+# Deployed: a missed pallet can go on after Truck Down (2026-09-21)
+
+Brian's go, staging then production, **before the PR opened** — the third time in a row, and now
+the default rather than a thing to remember.
+
+| | version |
+|---|---|
+| staging `clover-sales-api-staging` | `b575a9ea` |
+| production `clover-sales-api` | `36da9093` |
+
+From the branch at `028ae58`, suite green on that exact tree (4951 assertions, 76 suites).
+Worker only, no migration.
+
+## 🔑 The verification that was specific to THIS change
+
+Every deploy on this feature has checked that the new code is in the bundle. This one also had
+to check **where** it is. The manager gate replaces a refusal that stood before the R2 put, and
+a gate that ends up after the put orphans an object on every rejection — which nothing would
+report, because the request still 4xx's correctly.
+
+So the poller parsed the DEPLOYED bundle and compared offsets inside the `truck-pallet-log`
+handler, rather than only grepping for the gate's text:
+
+```
+production  log handler 4570 bytes   gate@1087   dupcheck@1755   R2put@3158
+```
+
+Both orderings hold, on three consecutive clean passes, alongside the usual: both endpoints
+HTTP 200, the add gate and the #256 correct gate each present, and deployment serving
+`36da9093` at 100 %.
+
+Deploy output carried `MEDIA`, `BL16_MERCHANT_ID` and all six production crons on production,
+two on staging.
+
+## ⚠️ One reading that needed a second look rather than a fix
+
+`TRUCK_CLOSED` still appears ×1 in the deployed bundle, which looks at first like the blanket
+refusal surviving the change. It is `truck-down`'s own "that truck is already down" — the
+refusal that stops a truck being taken down twice, which is correct and still pinned by §15.
+Inside the `truck-pallet-log` handler the count is 0, which is what the change actually claims.
+Worth recording because the whole-file grep and the scoped one disagree here for a good reason.
+
+---
+
 # Inventory Receiver — a missed pallet can go on after Truck Down (2026-09-21)
 
 **Brian:** *"add pallets to closed trucks too"* — closing the gap flagged when #256 shipped: if
