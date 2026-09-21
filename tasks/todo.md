@@ -1,3 +1,104 @@
+# Sticker template — a third Show option, number plus PO (2026-09-21)
+
+**Brian:** *"on the sticker under the admin tools there is a option to show full code or
+numbers only, add another option with numbers with PO number."*
+
+Shipped as #267. The Show select now offers **Full code**, **Number only**, **Number + PO**.
+Worker whitelist `["full", "number", "number_po"]`; `psZpl` renders `<categoryNumber>-<po>`.
+
+## Why it is the readable middle, not a third preference
+
+The label is `^PW203` — one inch at 203dpi — and the code field is `^A0N,20,20` from `x=10`,
+so roughly **ten characters fit**.
+
+| | chars | fits? |
+|---|---|---|
+| `BL-50008-2_5` | 12 | already over |
+| `BL-50008-2_5-99999` (an OB code) | 18 | nowhere close |
+| `50008` (Number only) | 5 | yes, but drops the PO |
+| `50008-99999` (**this**) | 11 | yes |
+
+An OB code carrying a purchase order cannot be printed as text at all. That is the whole
+reason the option exists. The QR is untouched in every case — shortening what a person reads
+must never shorten what a scanner gets, and every new assertion pins that.
+
+## It does nothing yet, and says so
+
+Nothing in this system carries a purchase order, so **today this prints exactly what "Number
+only" prints.** That is a control that looks broken, and this repo has removed one before for
+exactly that reason — *"surfacing a detail that cannot be acted on, in a way that looks like a
+fault, is worse than not surfacing it."* Flagged to Brian before building, not after.
+
+So the fallback is deliberate and visible:
+
+- Selecting it shows a line explaining nothing carries a PO yet.
+- The **preview draws the fallback**, not a label this app cannot currently print. A preview
+  showing `50008-99999` would be lying about what a shelf would get. The sample carries
+  `po: null` on purpose.
+- The ladder is two steps — no PO leaves the category number, no category number leaves the
+  whole code — because every rung is still a code a person can act on, and `undefined` is not.
+
+## The test that failed was right to
+
+```
+FAIL: 🛑 the editor offers exactly the values the worker accepts (got "", want "full,number")
+```
+
+Two real problems, neither of them the feature:
+
+1. It asserted against the **literal** `'full,number'`, so a third value meant editing the
+   test to say the new answer. A test that has to be told the truth cannot catch a lie.
+2. It sliced a **fixed 400 characters** after the onchange, which the new `<option>` overran —
+   so it failed by matching *nothing* and reported `got ""`, which reads as "the select
+   vanished" rather than "my slice is too short". Same family as the psZpl slice-marker bug
+   logged in the entry below.
+
+Both sides are now derived — the accepted list out of `worker.js`, the offered list out of the
+editor, bounded by `</select>` rather than a character count. The relationship holds however
+either side grows.
+
+## Verification
+
+Every rendering path: PO present, PO absent, PO empty string, no category number, and that
+`number`/`full` ignore a PO entirely. Plus that **a default template stays byte-identical**
+when a PO is passed — a new branch in the code line is exactly the kind of change that quietly
+moves a dot on every shelf.
+
+**5,165 assertions across 76 suites pass.** `sw.js` → v219 (with `shell-cache.json`).
+
+## 🛑 Deploy the worker before merging
+
+The whitelist changes. An older worker **rejects `number_po` and silently stores the field's
+default instead** — so the option would appear to save and then not. `npx wrangler deploy`.
+
+This is the same ordering trap that cost production data the same day (see lessons.md, rule 1):
+merging *is* deploying for anything Pages serves, and a note in a PR body is not a mechanism.
+The worker is backward compatible with the current page — an extra accepted enum value is
+inert until someone picks it — so deploying it early costs nothing.
+
+## Folded in: the pop-up chain that shipped without an entry here (#265, #266)
+
+Logged late, because it belongs in the record.
+
+- **#265** turned "add this price point to inventory" from a small button into a modal with a
+  live per-store status list, and gave the worker an optional `stores` narrowing so rows could
+  move independently.
+- **It caused a production incident.** The modal fanned out six concurrent confirms through
+  `Promise.all`; it merged before the worker deployed; the old worker ignores `stores` and
+  creates at every store on every request; and its duplicate check is a read-then-write with
+  no lock. Six simultaneous callers each read Clover, each saw nothing, each wrote — **five
+  duplicate items in one store.** The full account and the rule it produced are in lessons.md.
+- **#266** sends the first store **alone** and inspects the answer: more than one result means
+  the narrowing was ignored, so the client stops dead rather than sending five more racing
+  writers. The remaining five go in parallel only once that is ruled out.
+- The test for it builds the real `psCreatePricePoint` and drives it against **both** worker
+  versions. Nothing in the suite could have caught the original, because every assertion was
+  about source text and the defect was in behaviour against a server that answers differently.
+
+**Brian still has to delete the five duplicates** — Admin → Inventory, keep one per store,
+and check all six stores.
+
+
 # Price Scan — print quantity, and a manual (no-lookup) mode (2026-09-21)
 
 **Brian:** *"adding a qty option for printing stickers... then add a manual option that skips
