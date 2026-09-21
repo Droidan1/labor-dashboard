@@ -23310,7 +23310,11 @@
     const ask = (extra) => fetch(`${WORKER_BASE}?action=sticker-create-price-point`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ l3: j.l3, price: j.price, store: psStickerStore(), ...extra }),
+      // 🔑 THE SAME BUY THE CHECK USED. If this created an ordinary item while the label
+      // carried an OB code, the sticker would scan to nothing at the register — the failure
+      // the existence check exists to prevent, arriving by the other door.
+      body: JSON.stringify({ l3: j.l3, price: j.price, store: psStickerStore(),
+                             po: psObActive() || undefined, ...extra }),
     });
 
     // ── 1. Ask what this would create. This call cannot write. ────────────────
@@ -24247,7 +24251,9 @@
       const r = await fetch(`${WORKER_BASE}?action=sticker-check`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ l3: j.l3, price: j.price, store: psStickerStore() }),
+        // The buy travels with the check, so the code that comes back is the one the
+        // label will carry and the one whose existence was actually verified.
+        body: JSON.stringify({ l3: j.l3, price: j.price, store: psStickerStore(), po: psObActive() || undefined }),
       });
       const a = await r.json().catch(() => ({}));
       // The screen moved on while we were asking — say nothing about the old item.
@@ -25115,7 +25121,7 @@
           // The PO is drawn only when the template's Show is "Number + PO"; psZpl falls back
           // to the number alone otherwise, so selecting a buy never changes a label nobody
           // asked to change. It never touches the QR, which still carries the code.
-          body: JSON.stringify({ device: dev, data: psZpl(a.code, psLast.price, { retail: psLast.retail, categoryCode: a.category_code, po: psObActive() }, psTpl, qty) }),
+          body: JSON.stringify({ device: dev, data: psZpl(a.code, psLast.price, { retail: psLast.retail, categoryCode: a.category_code, po: a.po }, psTpl, qty) }),
           signal: AbortSignal.timeout(5000),
         });
       } catch (e) {
@@ -25402,7 +25408,9 @@
       const r = await fetch(`${WORKER_BASE}?action=sticker-check`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ l3: p.l3, price: p.price, store: p.store }),
+        // p.po, not psObActive(): a reprint re-asks the question for the buy the item came
+        // in on, so a torn label replaced during a different buy comes back identical.
+        body: JSON.stringify({ l3: p.l3, price: p.price, store: p.store, po: p.po || undefined }),
       });
       const a = await r.json().catch(() => ({}));
       if (!r.ok || !a.printable) { say(a.detail || psStickerFault(r.status, a)); return; }
@@ -25414,7 +25422,7 @@
         // 🔑 p.po, NOT psObActive(). The item belongs to the buy it came in on; a torn label
         // replaced while a different buy is selected must not be relabelled into that buy.
         // sticker-history carries the PO for exactly this.
-        body: JSON.stringify({ device: dev, data: psZpl(a.code, p.price, { retail: p.retail, categoryCode: a.category_code, po: p.po }, psTpl, qty) }),
+        body: JSON.stringify({ device: dev, data: psZpl(a.code, p.price, { retail: p.retail, categoryCode: a.category_code, po: a.po }, psTpl, qty) }),
         signal: AbortSignal.timeout(5000),
       });
       if (!w.ok) { say(`Browser Print refused the label (${w.status}).`); return; }
@@ -28965,7 +28973,13 @@
   // look like BL-<digits>-<price> or it is ignored and scanning continues.
   // The price segment is optional: `BL-10380` is a whole sticker. Mirrors
   // mosNormalizeCode in worker.js, which is the real parser.
-  const MOS_CODE_RE = /^BL-\d{1,10}(?:-\d+(?:[._]\d{1,2})?)?$/i;
+  // 🛑 THE MARKED PO SEGMENT BELONGS HERE TOO, AND THIS IS THE ONE THAT FAILS QUIETLY.
+  // mosLooksLikeSticker gates the camera: a decode that does not match is skipped without a
+  // word and the scanner keeps looking. So an opportunity-buy sticker shipped before this
+  // regex widened would not read as "bad code" — it would read as a scanner that does not
+  // work, which is what someone would report. Kept in the same shape as the worker's
+  // mosNormalizeCode; test-mos pins the two together.
+  const MOS_CODE_RE = /^BL-\d{1,10}(?:-\d+(?:[._]\d{1,2})?)?(?:-P[A-Z0-9][A-Z0-9._\/-]{0,31})?$/i;
   const mosLooksLikeSticker = (s) => MOS_CODE_RE.test(String(s || '').trim().replace(/\s+/g, ''));
 
   let mosStream = null, mosScanning = false, mosTorchOn = false;

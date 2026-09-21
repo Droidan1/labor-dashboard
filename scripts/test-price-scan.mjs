@@ -1895,8 +1895,8 @@ console.log('Price Scan');
 // The category half is per CATEGORY and numeric; anything else is not a code.
 {
   const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
-  ok(/const stickerCode = \(categoryCode, price\)/.test(src),
-     'stickerCode joins the category code and the price');
+  ok(/const stickerCode = \(categoryCode, price, po\)/.test(src),
+     'stickerCode joins the category code, the price and an optional purchase order');
   ok(/\/\^\\d\+\$\/\.test\(c\)/.test(src),
      '🔑 …and refuses a category code that is not digits, so a name never lands in a QR');
 }
@@ -1954,8 +1954,20 @@ console.log('Price Scan');
     // This one is a ternary, not a literal `reason:` — the code exists, the item does not.
     ['no clover item',   /"no clover item"/],
   ]) ok(re.test(h), `refusal is named: ${why}`);
-  eq((h.match(/printable: false/g) || []).length, 6,
-     '🔑 every refusal says printable:false — six sites across the five named reasons');
+  // 🔑 DERIVED, NOT COUNTED. This pinned the literal 6, so adding a refusal meant editing
+  // the number — and a test you edit to match the code cannot catch the thing it is for,
+  // which is a refusal that forgets to say printable:false. Phase 2 added three refusals
+  // (bad po, buy not open, no code) and the old form failed with "got 9, want 6", which
+  // says nothing about whether any of them is correct. So: split the handler into its
+  // returns, and require every one that names a reason to also say printable:false.
+  const returns = h.split('return new Response').slice(1);
+  const reasoned = returns.filter(r => /reason:/.test(r.slice(0, 400)));
+  ok(reasoned.length >= 6, `the handler has refusal returns to check (${reasoned.length})`);
+  const silent = reasoned.filter(r => !/printable: false/.test(r.slice(0, 400))
+                                   && !/printable: exists/.test(r.slice(0, 400)));
+  eq(silent.length, 0,
+     '🛑 EVERY refusal says printable:false — a refusal that omits it reads as permission '
+     + 'to print a code nobody verified');
   ok(/reason: "no store"/.test(h),
      '…the newest being a store that was not named, which used to silently mean BL1');
   // 🔑 "clover unreachable" is TWO sites because there are two Clover round trips: the
@@ -1989,7 +2001,13 @@ console.log('Price Scan');
   // BEFORE this commit existed, and it must not be papered over with a placeholder.
   ok(/stage: "category map",\n\s*detail:/.test(h),
      '🔑 the map-read refusal reports NO code, because at that point there is none');
-  ok(!/nearest|snap|round/i.test(h),
+  // 🔑 decomment FIRST, for the third time this word has caused trouble. The comment above
+  // records `Math.round` being swept in from a neighbouring handler; this time an ENGLISH
+  // comment inside the handler ("a network round trip") matched, and the assertion failed
+  // describing a price-snapping bug that does not exist. A `!/x/` test over a region
+  // containing prose is testing the prose — lessons.md, 2026-09-21. The rule is already
+  // written down and the helper already exists; this is the site that had not adopted it.
+  ok(!/nearest|snap|round/i.test(decomment(h)),
      '🛑 …and nothing anywhere near this snaps the price to make a label scan');
 }
 
@@ -3085,16 +3103,26 @@ console.log('Price Scan');
   // arguments are passed, which is the thing worth pinning, and stops the formatter from
   // being able to fail the build.
   const flat = (t) => String(t || '').replace(/\s+/g, ' ');
-  ok(/psZpl\(a\.code, psLast\.price, \{ retail: psLast\.retail, categoryCode: a\.category_code, po: psObActive\(\) \}, psTpl, qty\)/.test(flat(html)),
+  ok(/psZpl\(a\.code, psLast\.price, \{ retail: psLast\.retail, categoryCode: a\.category_code, po: a\.po \}, psTpl, qty\)/.test(flat(html)),
      'the print path passes the street price, the category number, the PO, the template and the count');
+  // 🛑 `a.po`, THE SERVER'S ANSWER — never the client's idea of which buy is selected. In
+  // Phase 2 the PO is inside the CODE, so the printed text and the QR have to describe the
+  // same buy. sticker-check is what decided the code; taking the PO from anywhere else lets
+  // the two disagree, and a label whose text and barcode name different buys is worse than
+  // one with no PO at all.
+  ok(!/psZpl\([^)]*po: psObActive\(\)/.test(flat(html)),
+     '🔑 …and no label anywhere draws the PO straight from the client-side selection');
   // 🔑 AND THE REPRINT PASSES THE ROW'S OWN PO, NOT THE SELECTED ONE. The item belongs to
   // the buy it came in on; relabelling a torn sticker while another buy happens to be
   // selected would move stock between buys on the strength of a UI state. Pinned because
   // `psObActive()` is the obvious thing to write here and is wrong.
-  ok(/psZpl\(a\.code, p\.price, \{ retail: p\.retail, categoryCode: a\.category_code, po: p\.po \}, psTpl, qty\)/.test(flat(html)),
-     '🛑 a reprint draws the PO the item came in on, never the buy currently selected');
-  ok(!/psZpl\(a\.code, p\.price,[^)]*psObActive/.test(flat(html)),
-     '…and specifically not the active one');
+  ok(/psZpl\(a\.code, p\.price, \{ retail: p\.retail, categoryCode: a\.category_code, po: a\.po \}, psTpl, qty\)/.test(flat(html)),
+     'a reprint draws the PO its own re-check returned');
+  // 🔑 AND THE RE-CHECK ASKS UNDER THE ROW'S OWN BUY. This is where "the item belongs to the
+  // buy it came in on" is actually enforced now — at the question, not at the label. A torn
+  // sticker replaced while a different buy is selected must come back identical.
+  ok(/l3: p\.l3, price: p\.price, store: p\.store, po: p\.po \|\| undefined/.test(flat(html)),
+     '🛑 a reprint re-checks under the PO the row stored, never the buy currently selected');
   // 🛑 THE COUNT IS READ BEFORE THE PROBE, NOT AFTER IT. psZebraDevice is a round trip and
   // the qty box stays editable across it, so reading it late would print whatever the box
   // said when Browser Print answered rather than what was pressed. Pinned by ORDER, because
@@ -3462,9 +3490,9 @@ console.log('Price Scan');
      '…from the stored INPUTS, so a renumbered category reprints under its new number');
   ok(/!a\.printable/.test(rp || ''),
      '🛑 …and prints only what comes back printable');
-  ok(/psZpl\(a\.code, p\.price, \{ retail: p\.retail, categoryCode: a\.category_code, po: p\.po \}, psTpl, qty\)/.test(String(rp || '').replace(/\s+/g, ' ')),
-     '🛑 the label carries the code the check JUST returned, never the stored one -- and the '
-     + 'STORED street price and PO, so a reprint is the same label the shelf already has');
+  ok(/psZpl\(a\.code, p\.price, \{ retail: p\.retail, categoryCode: a\.category_code, po: a\.po \}, psTpl, qty\)/.test(String(rp || '').replace(/\s+/g, ' ')),
+     '🛑 the label carries the code AND the PO the check JUST returned, never the stored '
+     + 'ones -- with the STORED street price, so a reprint is the label the shelf already has');
   // 🔑 THE ROW'S OWN BOX, NOT A SHARED ONE. `psQty('ps-rq-' + i)` is what stops a number
   // typed against the item in your hand from applying to whichever row you tap next — the
   // bug a single #ps-qty read would have shipped, silently and only sometimes.
@@ -4331,6 +4359,10 @@ console.log('Price Scan');
       psEsc: (v) => String(v == null ? '' : v),
       psMoney: (v) => `$${Number(v).toFixed(2)}`,
       psStickerStore: () => 'BL1',
+      // Phase 2: psCreatePricePoint now sends the active buy so the item it creates carries
+      // the same code the label will. No buy selected is the ordinary case and the one this
+      // suite drives — the opportunity-buy paths are exercised in test-opportunity-buys.
+      psObActive: () => null,
       psStickerFault: () => 'fault',
       psStickerCheck: async () => { checks++; },
       WORKER_BASE: 'https://worker.test',

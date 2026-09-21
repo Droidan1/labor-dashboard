@@ -1,0 +1,54 @@
+-- migration-071: a write-off can say which opportunity buy it came out of.
+--
+-- Brian, 2026-09-21, asked whether MOS should record the buy when the scanned code carries
+-- one: "Yes — record it." Phase 2 of docs/feature-opportunity-buys.md puts the PO inside the
+-- sticker code, so by the time a code reaches MOS the buy is already in the string — this
+-- column is what stops it being thrown away at the moment it is read.
+--
+-- ── Why this has to be a column and not a later join ───────────────────────────────────
+--
+-- 🛑 THE CODE ON THE STICKER IS NOT A STABLE KEY BACK TO A BUY. mos_entries.code holds the
+-- normalised sticker, so in principle the PO could be re-parsed out of it. But the code is
+-- rewritten when an item is repriced, a buy can be reopened, and mosNormalizeCode's grammar
+-- is exactly the thing Phase 2 is changing. A write-off is a historical fact; deriving its
+-- buy from a string whose meaning moves is how the answer quietly becomes wrong a year
+-- later. Snapshot it, the same way unit_cost_cents is snapshotted at entry rather than
+-- looked up again.
+--
+-- ── Why NULL is a real value here, for the third time in this feature ──────────────────
+--
+-- 🔑 EVERY EXISTING WRITE-OFF, AND EVERY ORDINARY ONE FOREVER AFTER, HAS NO BUY. NULL means
+-- "not part of a tracked buy", which is true for 100% of the table today. Never backfill it:
+-- a write-off attributed to a buy it did not come from is worse than one attributed to
+-- nothing, because shrink numbers are read as evidence about whether a buy was any good.
+--
+-- ── Apply ──────────────────────────────────────────────────────────────────────────────
+-- Address databases by UUID; the staging one lives under [env.staging] and a bare name does
+-- not resolve. STAGING FIRST:
+--   staging:     npx wrangler d1 execute b40982c2-4009-4842-bc17-fa0977468b07 --remote -y --file=migration-071.sql
+--   production:  npx wrangler d1 execute 3fa911d7-31d6-438c-985f-7ac08c407d2d --remote -y --file=migration-071.sql
+--
+-- Confirm it landed (expects one row, `po`):
+--   npx wrangler d1 execute <uuid> --remote -y --json \
+--     --command="SELECT name FROM pragma_table_info('mos_entries') WHERE name = 'po'"
+--
+-- 🛑 NOT RE-RUNNABLE. `ALTER TABLE ADD COLUMN` takes no IF NOT EXISTS; a second run errors
+-- with `duplicate column name: po`. That error is harmless and means the column is already
+-- there — check with the pragma above rather than re-running.
+--
+-- 🔑 DEPLOY ORDER: THIS FIRST, THEN THE WORKER, THEN THE FRONTEND. Derived from which side
+-- stops being backward-compatible (CLAUDE.md rule 6). The new worker INSERTs `po` into
+-- mos_entries, so against a database without the column every mos-log call throws — that is
+-- the incompatible direction. A column the live worker never names is invisible to it, so
+-- this is safe to apply while the current worker runs.
+--
+-- 🔑 ADDITIVE ONLY. No existing row is read, rewritten or deleted.
+
+-- Which opportunity buy this write-off came out of, snapshotted at entry. NULL for every
+-- ordinary write-off, then and now.
+ALTER TABLE mos_entries ADD COLUMN po TEXT;
+
+-- "What did this buy lose to shrink" is the only question this column exists to answer, and
+-- the table's existing indexes are built for store-and-date reporting, so without this it
+-- would full-scan every write-off ever logged.
+CREATE INDEX IF NOT EXISTS idx_mos_entries_by_po ON mos_entries(po, logged_at DESC);

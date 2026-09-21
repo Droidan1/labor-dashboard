@@ -30,7 +30,8 @@ const { db, env } = makeEnv(repo);
 // 057's retail_cents and 069's qty; 070's own ALTER fails there as a duplicate and is
 // swallowed, which is the helper's documented behaviour.
 for (const m of ['migration-041.sql', 'migration-042.sql', 'migration-043.sql',
-                 'migration-056.sql', 'migration-070.sql'])
+                 'migration-056.sql', 'migration-062.sql', 'migration-070.sql',
+                 'migration-071.sql'])
   db.exec(fs.readFileSync(path.join(repo, m), 'utf8'));
 applyMigrationAlters(db, repo);
 
@@ -367,6 +368,139 @@ console.log('Opportunity buys');
      '🛑 the edit controls follow the worker\'s can_edit, not a role check in the browser');
   ok(!/currentUser\.role/.test(page),
      '…and the buys page never reads currentUser.role at all');
+}
+
+
+// ── Phase 2: the PO goes inside the code ─────────────────────────────────────
+//
+// 🔑 PHASE 1 PUT THE PO IN THE PRINTED TEXT; PHASE 2 PUTS IT IN THE CODE. That is the whole
+// difference and it is why this half is expensive: the QR changes, so the Clover item
+// changes, so every parser in the repo meets a shape it has never seen. The marker `-P` is
+// what stops a PO ever being read as a price — without it `BL-50008-99999` is $99,999.00,
+// which mosParseCode has always believed and still does.
+{
+  // The grammar itself, driven through the real worker rather than re-implemented here.
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const grab = (re, what) => {
+    const m = src.match(re);
+    ok(m, `${what} is extractable`);
+    return m ? m[0] : `function ${what}(){ return null; }`;
+  };
+  const api = new Function(
+    grab(/const OB_PO_MAX = \d+;/, 'OB_PO_MAX') + '\n' +
+    grab(/const OB_PO_RE = [^\n]+/, 'OB_PO_RE') + '\n' +
+    grab(/function obPo\(raw\) \{[\s\S]*?\n\}/, 'obPo') + '\n' +
+    grab(/const stickerPriceCode = \(price\) => \{[\s\S]*?\n\};/, 'stickerPriceCode') + '\n' +
+    grab(/const stickerCode = \(categoryCode, price, po\) => \{[\s\S]*?\n\};/, 'stickerCode') + '\n' +
+    grab(/function mosNormalizeCode\(raw\) \{[\s\S]*?\n\}/, 'mosNormalizeCode') + '\n' +
+    grab(/function mosParseCode\(code\) \{[\s\S]*?\n\}/, 'mosParseCode') + '\n' +
+    'return { stickerCode, mosParseCode, mosNormalizeCode, obPo };')();
+
+  // 🛑 EVERY EXISTING SHAPE PARSES IDENTICALLY. This is the property that matters most: a
+  // regression here moves prices on shelves that are already out there.
+  eq(api.stickerCode(50008, 2.5), 'BL-50008-2_5', 'an ordinary code is unchanged');
+  eq(api.stickerCode(50008, 10), 'BL-50008-10', '…including the round-dollar shape with no separator');
+  eq(api.mosParseCode('BL-50008-2_5')?.priceCents, 250, 'and still parses to the same price');
+  eq(api.mosParseCode('BL-50008-2_5')?.po, null, '…reporting no buy rather than omitting the field');
+  eq(api.mosParseCode('BL-10380')?.priceCents, null, 'a priceless sticker is still a sticker');
+
+  // The new shape.
+  eq(api.stickerCode(50008, 2.5, '99999'), 'BL-50008-2_5-P99999', 'a buy puts a marked PO on the end');
+  const p = api.mosParseCode('BL-50008-2_5-P99999');
+  eq(p?.itemNo, '50008', 'which parses back to its category');
+  eq(p?.priceCents, 250, '…its price');
+  eq(p?.po, '99999', '…and its buy');
+
+  // 🛑 THE MARKER IS THE POINT.
+  eq(api.mosParseCode('BL-50008-99999')?.priceCents, 9999900,
+     '🛑 an UNMARKED five-digit tail is still $99,999.00 — it always was, which is exactly '
+     + 'why the PO had to be marked rather than just appended');
+  eq(api.mosParseCode('BL-50008-P99999')?.priceCents, null,
+     '🔑 …while the MARKED one carries no price at all');
+  eq(api.mosParseCode('BL-50008-P99999')?.po, '99999', '…and names the buy');
+
+  // A PO is an identity here too, and codes are never split on dashes.
+  eq(api.stickerCode(50008, 2.5, 'ob-2026-11'), 'BL-50008-2_5-POB-2026-11', 'a PO is folded to upper case');
+  eq(api.mosParseCode('BL-50008-2_5-POB-2026-11')?.po, 'OB-2026-11',
+     '🔑 …and a PO containing hyphens round-trips, because the parser is one anchored regex '
+     + 'and never a split on the dashes');
+  eq(api.stickerCode(50008, 2.5, 'has space'), null,
+     '🛑 a PO that will not normalise REFUSES the code rather than quietly dropping it — a '
+     + 'label that looks right and belongs to no buy is worse than no label');
+  eq(api.mosNormalizeCode('bl-50008-2.5-p99999'), 'BL-50008-2_5-P99999',
+     'the normaliser folds case and the decimal spelling, PO and all');
+}
+
+// ── A scan prices into the buy, end to end ───────────────────────────────────
+{
+  await openBuy('CODE-1', SU);
+  const check = (po, over = {}) => call('/?action=sticker-check', {
+    user: MGR, method: 'POST',
+    body: { l3: 'FG BL TOYS', price: 2.5, store: 'BL1', po, ...over },
+  });
+
+  const bad = await check('NOPE-9');
+  eq(bad.status, 200, 'a check against an unknown buy still answers');
+  eq(bad.j?.printable, false, '🛑 …but refuses to print');
+  eq(bad.j?.reason, 'buy not open', '…naming the buy as the reason, not the category');
+
+  await call('/?action=ob-buy-close', { user: SU, method: 'POST', body: { po: 'CODE-1' } });
+  const shut = await check('CODE-1');
+  eq(shut.j?.printable, false, '🛑 a CLOSED buy cannot mint new codes either');
+  ok(/closed/i.test(shut.j?.detail || ''), '…and says so');
+}
+
+// ── A write-off remembers which buy it came out of ───────────────────────────
+{
+  await openBuy('MOS-1', SU, { label: 'Shrink test' });
+  const log = (code) => call('/?action=mos-log', {
+    user: MGR, method: 'POST',
+    body: { store: 'BL1', code, qty: 2, reason: 'Damaged', description: 'FG BL TOYS' },
+  });
+
+  const ob = await log('BL-50008-2_5-PMOS-1');
+  eq(ob.status, 200, 'an opportunity-buy sticker can be written off');
+  eq(ob.j?.po, 'MOS-1', '🔑 …and the write-off names the buy it came out of');
+
+  const plain = await log('BL-50008-2_5');
+  eq(plain.status, 200, 'an ordinary sticker still logs');
+  eq(plain.j?.po, null, '…naming no buy, which is the truth for every ordinary write-off');
+
+  const rows = db.prepare("SELECT po, COUNT(*) AS n FROM mos_entries GROUP BY po ORDER BY po").all();
+  const byPo = Object.fromEntries(rows.map(r => [String(r.po), Number(r.n)]));
+  eq(byPo['MOS-1'], 1, '🛑 the buy is STORED, not re-derived from the code later — the code '
+     + 'is rewritten on a reprice and the grammar itself just changed');
+  ok(byPo['null'] >= 1, '…and ordinary write-offs stay NULL');
+
+  // 🔑 AND IT IS UNLOGGABLE WITHOUT THE GRAMMAR CHANGE. Before Phase 2 both mos-lookup and
+  // mos-log answered 400 BAD_CODE for a four-segment code, so an OB sticker could not be
+  // marked out of stock at all. Pinned so a narrowing of the regex shows up here.
+  const look = await call('/?action=mos-lookup&store=BL1&code=BL-50008-2_5-PMOS-1', { user: MGR });
+  ok(look.status !== 400, '🛑 an OB code is not BAD_CODE — before Phase 2 it was, and an OB '
+     + 'item could not be written off at all');
+}
+
+// ── The sibling copy prefers an ordinary item ────────────────────────────────
+//
+// 🛑 THE SIBLING DONATES hidden, taxable AND cost TO A NEW ITEM. An opportunity buy's cost
+// is the DEAL cost for one buy, not what the category costs, and a buy's items are exactly
+// the ones plausibly left hidden once it is done. siblingRe is `^BL-<cat>-` and unanchored,
+// so an OB item matches it — copy from one and an ordinary price point carries a number
+// that was never true of it, silently, because it came from a real Clover row.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function cloverCodeInUse'),
+                       src.indexOf('// ─── Resolve or create a Clover category'));
+  ok(/isObCode/.test(fn), 'cloverCodeInUse can tell an OB code from an ordinary one');
+  ok(/obFallback/.test(fn),
+     '🔑 …and keeps an OB match only as a FALLBACK, so a category holding nothing but OB '
+     + 'items can still take a new price point rather than refusing over a cost field');
+  ok(fn.indexOf('if (isObCode(c) || isObCode(k))') < fn.indexOf('sibling = take(it);'),
+     '🛑 …with the OB test BEFORE the accept, or the first OB row in the page wins anyway');
+  for (const ret of ['sibling: sibling || obFallback']) {
+    eq((fn.match(new RegExp(ret.replace(/[|]/g, '\\|'), 'g')) || []).length, 2,
+       'every return path falls back to the OB sibling rather than returning none');
+  }
 }
 
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
