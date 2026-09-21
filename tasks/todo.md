@@ -1,3 +1,48 @@
+# Bin Dump — the row button says VIEW when that is all it does (2026-09-21)
+
+**Brian:** *"make it say VIEW instead of EDIT for view-only accounts"*, taking one of the
+options offered after establishing that Bin Dump's edit and delete already existed and worked.
+
+`bdOpenEdit` has always opened READ-ONLY without edit rights — title "Logged pallet", inputs
+`readOnly`, no Delete. The row button said **EDIT** regardless, promising something the modal
+then refused. A view-only account is precisely the one least able to tell a withheld
+permission from a broken page.
+
+`bdRenderLog` now labels it from `bdCanEdit()`, the same gate `bdOpenEdit` derives `ro` from.
+§23 pins the label AGAINST the gate rather than as a bare string, plus the two modal
+behaviours it has to agree with, so label and behaviour cannot drift apart.
+
+Verified in a real browser in both roles, not just by grep:
+
+| account | button | opens | inputs | Delete |
+|---|---|---|---|---|
+| manager | `EDIT` | Edit logged pallet | editable | shown |
+| view-only staff | `VIEW` | Logged pallet | `readOnly` | hidden |
+
+## ⚠️ A one-off failure in test-price-scan, run down rather than re-run away
+
+The first full suite run after this edit reported `test-price-scan.mjs` failed. It then passed
+three times — 799/0 in isolation and twice more in full — on a byte-identical `index.html`.
+
+The cause is in that suite, not this change: **its barcode false-positive tests are seeded by
+`Math.random()`** (lines 375–376, 476, 484, 497–498, 508), generating random noise rows and
+asserting the decoder rejects them. With no fixed seed a rare draw can trip a threshold. It is
+also timing-dependent at line 1341.
+
+And this change provably cannot reach it: every `index.html` slice in that suite is
+`indexOf`-based on `ps*` symbols rather than absolute offsets, and no `bd*` symbol appears in
+the file at all.
+
+🛑 **Recorded rather than fixed, because it is nobody\'s change and everybody\'s problem.** An
+unseeded random test fails occasionally forever and teaches people that a red suite means
+"run it again", which is the habit that hides a real failure. Seeding it is a small separate
+piece of work.
+
+**Verified.** `4995 assertions across 76 suites` green; `test-bin-dump.mjs` **283**;
+`browser-inventory-receiver.mjs` **154**. `CACHE_NAME` → `v213`. Frontend only.
+
+---
+
 # Bin Dump — log a pallet by hand (2026-09-21)
 
 **Brian:** *"Lets add the same manual entry option to the bin bump page"* — the Inventory
