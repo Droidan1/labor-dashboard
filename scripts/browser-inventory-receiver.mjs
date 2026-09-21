@@ -382,6 +382,32 @@ for (const [label, opts, wantCapture] of [
   check(cap === wantCapture, `[${label}] Inventory Receiver capture is ${JSON.stringify(wantCapture)} (got ${JSON.stringify(cap)})`);
   check(bd === wantCapture, `[${label}] Bin Dump capture is ${JSON.stringify(wantCapture)} — same rule, no phone regression`);
   check(chooser, `[${label}] a picker actually opened`);
+
+  // ── Bin Dump's typed entry ────────────────────────────────────
+  // 🛑 Checked HERE because this context is the one already watching for a file chooser,
+  // and "does not reach for the camera" is the whole feature. Begin has just proved a
+  // chooser does open, so a clean run after resetting the flag means something.
+  // 🛑 Let the chooser from bdBegin() above LAND before resetting the flag. A filechooser
+  // event is async, so resetting immediately would catch the previous click's event and
+  // report a camera this button never opened.
+  await page.waitForTimeout(700);
+  chooser = false;
+  await page.evaluate(() => window.bdCloseModal());
+  await page.click('#bd-manual');
+  await page.waitForTimeout(500);
+  check(!chooser, `[${label}] 🛑 Bin Dump's Enter Manually opens NO camera`);
+  check(await page.isVisible('#bd-modal'), `[${label}] ...it opens the form`);
+  check(!(await page.isVisible('#bd-m-shot')), `[${label}] ...with the photo block hidden`);
+  check(await page.isVisible('#bd-m-manual'), `[${label}] ...and its own instructions visible`);
+  // 🛑 'miss' paints red and badges NOT FOUND. Nothing was read, so nothing failed to read.
+  check((await page.$$('#bd-m-fields .bd-fld.miss')).length === 0,
+        `[${label}] 🛑 ...and not as seven NOT FOUND findings`);
+  check(!(await page.textContent('#bd-m-fields') || '').includes('NOT FOUND'),
+        `[${label}] ...nor badged as any`);
+  check((await page.textContent('#bd-m-retake') || '').trim() === 'Take Photo',
+        `[${label}] the camera button reads "Take Photo", not "Retake"`);
+  check((await page.textContent('#bd-m-title') || '').includes('by hand'),
+        `[${label}] the header says it was typed`);
   await ctx.close();
 }
 
