@@ -1418,15 +1418,33 @@ async function cloverCodeInUse(env, store, code, headers, opts = {}) {
   const want = String(code);
   const siblingRe = opts.siblingRe || null;
   let sibling = null;
+  // 🛑 AN OPPORTUNITY-BUY ITEM IS THE WORST POSSIBLE TEMPLATE, AND siblingRe MATCHES ONE.
+  // The sibling donates `hidden`, `taxable` and `cost` to a newly created item. Tax follows
+  // the category so it agrees either way, but the other two do not: an OB item's cost is
+  // the DEAL cost for one buy, not what that category costs, and a buy's items are exactly
+  // the ones plausibly left hidden once it is done. Copy either onto an ordinary price
+  // point and the new item carries a number that was never true of it — silently, since
+  // nothing downstream ever questions a cost that came from a real Clover row.
+  //
+  // 🔑 PREFERRED, NOT REQUIRED. Refusing an OB sibling outright would block creating a price
+  // point in a category that happens to hold only OB items, which is a normal state early in
+  // a buy. So an ordinary sibling wins if one exists anywhere in the catalogue, and an OB one
+  // is kept only as a fallback — better than refusing the create over a cost field.
+  const isObCode = (v) => /-P[A-Z0-9][A-Z0-9._\/-]*$/.test(String(v || "").toUpperCase());
+  let obFallback = null;
+  const take = (it) => ({ id: it.id, name: String(it.name || ""),
+                          taxable: !!it.defaultTaxRates, hidden: !!it.hidden,
+                          cost: Number.isFinite(Number(it.cost)) ? Number(it.cost) : null,
+                          code: String(it.code || it.sku || "") });
   const noteSibling = (rows) => {
     if (!siblingRe || sibling) return;
-    const s = rows.find(it => it && it.id &&
-      (siblingRe.test(String(it.code || "")) || siblingRe.test(String(it.sku || ""))));
-    if (s) {
-      sibling = { id: s.id, name: String(s.name || ""),
-                  taxable: !!s.defaultTaxRates, hidden: !!s.hidden,
-                  cost: Number.isFinite(Number(s.cost)) ? Number(s.cost) : null,
-                  code: String(s.code || s.sku || "") };
+    for (const it of rows) {
+      if (!it || !it.id) continue;
+      const c = String(it.code || ""), k = String(it.sku || "");
+      if (!siblingRe.test(c) && !siblingRe.test(k)) continue;
+      if (isObCode(c) || isObCode(k)) { if (!obFallback) obFallback = take(it); continue; }
+      sibling = take(it);
+      return;
     }
   };
   try {
@@ -1440,10 +1458,10 @@ async function cloverCodeInUse(env, store, code, headers, opts = {}) {
       const rows = (await r.json())?.elements || [];
       noteSibling(rows);
       const hit = rows.find(it => String(it?.code || "") === want || String(it?.sku || "") === want);
-      if (hit) return { inUse: true, existingId: hit.id, existingName: String(hit?.name || ""), sibling };
+      if (hit) return { inUse: true, existingId: hit.id, existingName: String(hit?.name || ""), sibling: sibling || obFallback };
       // A short page is the end of the catalogue, which makes "absent" a fact rather than
       // an assumption. Only here may this return false.
-      if (rows.length < 1000) return { inUse: false, sibling };
+      if (rows.length < 1000) return { inUse: false, sibling: sibling || obFallback };
     }
   } catch (e) {
     // cloverFetch awaits fetch() directly, so an unreachable Clover throws rather than
@@ -12935,10 +12953,22 @@ const stickerPriceCode = (price) => {
 // numeric would put a pantry item's price under an apparel code, and the sticker would
 // still scan — it would just ring up the wrong thing. Sticker codes come from Clover
 // item codes and from nowhere else.
-const stickerCode = (categoryCode, price) => {
+// 🔑 THE PO IS A MARKED SEGMENT, AND THE MARKER IS THE WHOLE POINT. Without the `P`,
+// `BL-50008-99999` is a valid two-segment code meaning $99,999.00 — mosParseCode has always
+// read it that way and still does. A bare fourth segment would be unambiguous only while
+// all four are present; the moment one is dropped in transcription it silently becomes a
+// price. `P` means a PO can never occupy the price slot, whatever gets lost around it.
+const stickerCode = (categoryCode, price, po) => {
   const p = stickerPriceCode(price);
   const c = String(categoryCode ?? "").trim();
-  return (!p || !/^\d+$/.test(c)) ? null : `BL-${c}-${p}`;
+  if (!p || !/^\d+$/.test(c)) return null;
+  const o = po === undefined || po === null || po === "" ? null : obPo(po);
+  // 🛑 A PO THAT WILL NOT NORMALISE IS A REFUSAL, NOT AN OMISSION. Falling back to the
+  // ordinary code would put a label on a shelf that looks right, scans right, and belongs
+  // to no buy — and nobody would ever find out, because the sticker is indistinguishable
+  // from a correct one. The caller asked for an OB code; it gets one or it gets null.
+  if (po !== undefined && po !== null && po !== "" && !o) return null;
+  return o ? `BL-${c}-${p}-P${o}` : `BL-${c}-${p}`;
 };
 
 // How many labels one press of Print may produce.
@@ -13046,9 +13076,13 @@ function mosNormalizeCode(raw) {
   //                 and since cost is looked up from the CATEGORY, a priceless sticker
   //                 still produces the number this page exists for. Only the retail
   //                 figure is unknown, and unknown is recorded as null, never as zero.
-  const m = /^BL-(\d{1,10})(?:-(\d+(?:[._]\d{1,2})?))?$/.exec(s);
+  //   the buy        an opportunity-buy sticker carries the purchase order as a MARKED
+  //                 fourth segment, `-P99999`. Marked, because an unmarked one is
+  //                 indistinguishable from a price the moment anything else is dropped.
+  const m = /^BL-(\d{1,10})(?:-(\d+(?:[._]\d{1,2})?))?(?:-P([A-Z0-9][A-Z0-9._\/-]{0,31}))?$/.exec(s);
   if (!m) return null;
-  return m[2] === undefined ? `BL-${m[1]}` : `BL-${m[1]}-${m[2].replace(".", "_")}`;
+  const head = m[2] === undefined ? `BL-${m[1]}` : `BL-${m[1]}-${m[2].replace(".", "_")}`;
+  return m[3] === undefined ? head : `${head}-P${m[3]}`;
 }
 
 // Code -> { itemNo, priceCents }. Takes the NORMALISED form.
@@ -13057,17 +13091,26 @@ function mosNormalizeCode(raw) {
 // in IEEE 754, and truncating that is a penny short on every $1.75 line — small, invisible,
 // and wrong in a column that gets summed for a whole month.
 function mosParseCode(code) {
-  const m = /^BL-(\d{1,10})(?:-(\d+(?:_\d{1,2})?))?$/.exec(String(code || ""));
+  // The marked PO segment, exactly as mosNormalizeCode accepts it. Kept in step with that
+  // function by sitting beside it — the two have always been one grammar written twice, and
+  // test-mos pins them together.
+  const m = /^BL-(\d{1,10})(?:-(\d+(?:_\d{1,2})?))?(?:-P([A-Z0-9][A-Z0-9._\/-]{0,31}))?$/
+    .exec(String(code || ""));
   if (!m) return null;
+  // 🛑 THE PO IS RETURNED EVEN WHEN THE PRICE IS NOT. A priceless OB sticker,
+  // `BL-50008-P99999`, is a real sticker: the item is identified, the buy is identified, and
+  // only the retail figure is unknown — which is recorded as null, never as zero. Reading
+  // this as $99,999 is exactly what the `P` marker exists to prevent.
+  const po = m[3] === undefined ? null : m[3];
   // 🔑 NULL PRICE AND UNPARSEABLE ARE DIFFERENT ANSWERS, and callers act on the
   // difference: null here means "this sticker carries no price", which is a valid
   // sticker; returning null for the WHOLE result means "this is not a sticker" and
   // becomes a 400. A price segment that IS present must still be a real price, so
   // `BL-50038-0` stays refused — nothing is sold for nothing.
-  if (m[2] === undefined) return { itemNo: m[1], priceCents: null };
+  if (m[2] === undefined) return { itemNo: m[1], priceCents: null, po };
   const price = Number(m[2].replace("_", "."));
   if (!Number.isFinite(price) || price <= 0) return null;
-  return { itemNo: m[1], priceCents: Math.round(price * 100) };
+  return { itemNo: m[1], priceCents: Math.round(price * 100), po };
 }
 
 // Calendar month in Eastern time, 'YYYY-MM'. Same idiom as binDumpWeekOf: format the
@@ -23162,6 +23205,38 @@ export default {
             detail: "Pick the store you are printing for — sticker numbers are per store." }),
             { headers: corsJson });
         }
+        // 🔑 ASKED BEFORE CLOVER IS. This is a local D1 read and the sweep below is a
+        // network round trip over the whole catalogue, so the cheap certain question goes
+        // first — and "that buy is closed" is a sentence someone can act on, where "this
+        // category has no sticker number" sends them to the wrong problem entirely.
+        // ── Which buy, if any ────────────────────────────────────────────────
+        //
+        // 🔑 THIS IS WHERE PHASE 2 DIFFERS FROM PHASE 1. Phase 1 put the PO in the printed
+        // TEXT only; the QR still carried the ordinary code, so nothing downstream noticed.
+        // Here the PO goes INSIDE the code, which means a different Clover item, a different
+        // QR, and a register that can finally tell two buys apart. Everything else on this
+        // endpoint is unchanged: the code is still checked for existence before anything is
+        // called printable, so an OB code that has no Clover item behind it refuses exactly
+        // as an ordinary one does.
+        let obPoWanted = null;
+        if (body?.po !== undefined && body?.po !== null && String(body.po).trim() !== "") {
+          obPoWanted = obPo(body.po);
+          if (!obPoWanted) {
+            return new Response(JSON.stringify({ ok: true, printable: false, reason: "bad po",
+              detail: "That purchase order is not one we can put in a code." }), { headers: corsJson });
+          }
+          // 🛑 AND IT MUST BE AN OPEN BUY. Otherwise a typo mints a code for a buy that does
+          // not exist — a label that scans nowhere and belongs to nothing, which is strictly
+          // worse than refusing, because it looks correct on the shelf.
+          const buy = env.DB
+            ? await env.DB.prepare(`SELECT status FROM ob_buys WHERE po = ?`).bind(obPoWanted).first()
+            : null;
+          if (!buy || buy.status !== "open") {
+            return new Response(JSON.stringify({ ok: true, printable: false, reason: "buy not open",
+              detail: buy ? `PO ${obPoWanted} is closed, so it cannot take new labels.`
+                          : `PO ${obPoWanted} is not a buy.` }), { headers: corsJson });
+          }
+        }
         const codeMap = await stickerCategoryCodes(env, store);
         if (!codeMap) {
           // 🛑 SAY WHICH QUESTION WENT UNANSWERED. Both Clover calls refuse with the
@@ -23181,7 +23256,11 @@ export default {
             detail: `No Clover item in ${merchLabel(l3)} carries a BL- code, so this category has no sticker number yet.`,
           }), { headers: corsJson });
         }
-        const code = stickerCode(catCode, price);
+        const code = stickerCode(catCode, price, obPoWanted);
+        if (!code) {
+          return new Response(JSON.stringify({ ok: true, printable: false, reason: "no code",
+            detail: "That category, price and purchase order do not make a sticker code." }), { headers: corsJson });
+        }
         const found = await stickerCodeExists(env, store, code, codeMap.codes);
         const exists = found.exists;
         if (exists === null) {
@@ -23193,6 +23272,9 @@ export default {
         }
         return new Response(JSON.stringify({
           ok: true, printable: exists, code, category_code: catCode, price_code: priceCode, store,
+          // Echoed so the client draws the PO on the label from what the SERVER decided,
+          // never from its own idea of which buy is selected.
+          po: obPoWanted,
           reason: exists ? null : "no clover item",
           detail: exists ? null
             : `No Clover item with code ${code}. Create it first, then this will print.`,
@@ -23704,7 +23786,28 @@ export default {
                   + `number yet. An admin has to create the first item in it before prices can be added.` }),
             { headers: corsJson });
         }
-        const code = stickerCode(catCode, price);
+        // 🔑 THE SAME BUY CHECK AS sticker-check, FOR THE SAME REASON. This endpoint is what
+        // puts the item in Clover, so if it built an ordinary code while the label carried an
+        // OB one, the sticker would scan to nothing at the register — the exact failure the
+        // existence check on sticker-check exists to prevent, arriving by the other door.
+        let obPoWanted = null;
+        if (body?.po !== undefined && body?.po !== null && String(body.po).trim() !== "") {
+          obPoWanted = obPo(body.po);
+          if (!obPoWanted) {
+            return new Response(JSON.stringify({ error: "That is not a purchase order", code: "BAD_PO" }),
+              { status: 400, headers: corsJson });
+          }
+          const buy = env.DB
+            ? await env.DB.prepare(`SELECT status FROM ob_buys WHERE po = ?`).bind(obPoWanted).first()
+            : null;
+          if (!buy || buy.status !== "open") {
+            return new Response(JSON.stringify({
+              error: buy ? `PO ${obPoWanted} is closed, so it cannot take new items` : `PO ${obPoWanted} is not a buy`,
+              code: "OB_NOT_OPEN", po: obPoWanted,
+            }), { status: 409, headers: corsJson });
+          }
+        }
+        const code = stickerCode(catCode, price, obPoWanted);
         if (!code) {
           return new Response(JSON.stringify({ error: "That price cannot be written as a sticker code" }),
             { status: 400, headers: corsJson });
@@ -24998,14 +25101,24 @@ export default {
         const unitCost = await mosCostCents(env, description);
         const at = new Date().toISOString();
         const res = await env.DB.prepare(
+          // 🔑 THE BUY IS SNAPSHOTTED, NOT DERIVED LATER. parsed.po comes straight off the
+          // code that was scanned, and migration-071 says why it has to be stored rather
+          // than re-parsed from mos_entries.code when someone asks: the code is rewritten on
+          // a reprice, a buy can reopen, and the grammar itself is what Phase 2 just changed.
+          // A write-off is a historical fact and keeps the answer it had at the time.
+          //
+          // NULL for every ordinary write-off, which is all of them until OB stickers reach
+          // the floor, and most of them forever after.
           `INSERT INTO mos_entries (store, code, item_no, description, qty,
-             unit_cost_cents, unit_price_cents, reason, logged_by, logged_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`
+             unit_cost_cents, unit_price_cents, reason, logged_by, logged_at, po)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)`
         ).bind(store, code, parsed.itemNo, description, qty,
-               unitCost, parsed.priceCents, reason, actorLabel(currentUser), at).run();
+               unitCost, parsed.priceCents, reason, actorLabel(currentUser), at,
+               parsed.po || null).run();
 
         return new Response(JSON.stringify({
           ok: true, id: res.meta?.last_row_id ?? null, store, code,
+          po: parsed.po || null,
           item_no: parsed.itemNo, description, description_source: source,
           qty, unit_cost_cents: unitCost, unit_price_cents: parsed.priceCents,
           reason, logged_at: at, month: mosMonthOf(at),

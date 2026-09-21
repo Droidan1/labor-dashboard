@@ -1,3 +1,135 @@
+# Opportunity buys — Phase 2, the PO goes inside the code (2026-09-21)
+
+**Brian:** *"let's do phase 2"* — of `docs/feature-opportunity-buys.md`, straight after Phase 1
+shipped and deployed. Flagged once before starting: Phase 2's standalone value is MOS-by-buy
+and correct dedup; its real purpose is to make Phase 3 possible. Brian asked, so it is built.
+
+Two decisions taken first:
+
+| question | answer | effect |
+|---|---|---|
+| record the buy on a write-off? | **yes** | `migration-071` adds `mos_entries.po` |
+| what happens to a closed buy's Clover items? | **leave them** | closing stays "stops new labels", nothing touches Clover |
+
+## What actually changes, and why it is the expensive half
+
+Phase 1 put the PO in the printed TEXT only — the QR still carried `BL-50008-2_5`, so an OB
+sticker scanned like any other and nothing downstream noticed. **Phase 2 puts the PO inside
+the code itself**, which means the QR changes, which means the Clover item changes, which
+means every parser in the repo meets a shape it has never seen.
+
+The grammar, with an explicit marker so a PO can never sit in the price slot:
+
+```
+BL-<cat>-<price>-P<po>        e.g. BL-50008-2_5-P99999
+```
+
+Verified by execution when the spec was written: every existing code shape parses
+identically under the extended regex, and `BL-50008-P99999` reads as category-plus-PO rather
+than as a $99,999 price.
+
+## 🛑 The trap that would repeat the duplicate-item incident
+
+`worker.js:23412` filters `startsWith('BL-' + cat + '-')` and then drops whatever
+`mosParseCode` refuses. Ship PO-suffixed codes without fixing that line and `existing_prices`
+goes quietly incomplete.
+
+**Corrected 2026-09-21 while starting Phase 2 — this is NOT the duplicate-item
+mechanism.** `existing_prices` appears exactly once in the repo, at its own definition, so it
+has no consumer; `siblingPrices` feeds an advisory range warning whose own comment says
+"still allowing the create". The incident came from a `filter=code=` lookup read inside
+`if (dupResp.ok)` (`worker.js:13288`), already fixed. What PO codes really break here is the
+range itself — dropped codes narrow lo/hi and flag ordinary prices as out of range. The
+sharper hazard is the SIBLING copy: an OB item can be picked as the sibling an ordinary new
+item inherits `hidden` and `cost` from, and a buy's cost is a deal cost.
+
+It must still change in the same commit that widens the grammar.
+
+The second trap is quieter: `MOS_CODE_RE` gates the camera, and a non-matching decode is
+*silently skipped*. An OB sticker printed before that regex widens does not say "bad code";
+it reads to whoever is holding it as a broken scanner.
+
+## The plan
+
+- [x] `migration-071.sql` — `mos_entries.po` + an index, since the table's indexes are built
+      for store-and-date reporting and "what did this buy lose" would full-scan
+- [x] `stickerCode(cat, price, po)` — one builder, still the only place a code is made
+- [x] `mosParseCode` / `mosNormalizeCode` — extended regex, returning the PO
+- [x] client `MOS_CODE_RE` — the same shape, or the camera silently ignores OB stickers
+- [x] **`worker.js:23412`** — stop dropping OB codes from the price range (see above)
+- [x] `sticker-check` — return the OB code when a buy is active
+- [x] `sticker-create-price-point` — create the OB item under its own code
+- [x] `mos-log` — record the PO it just parsed
+- [x] `test-mos.mjs`, `test-price-scan.mjs`, `test-opportunity-buys.mjs`
+- [x] `sw.js` + `scripts/fixtures/shell-cache.json` — a pair, always
+
+## What Phase 2 still does not do
+
+Sell-through. `payment_archive_items` keeps no item identity at all, so a sale cannot reach a
+PO until the archive carries the code — that is Phase 3, and it can only ever count from the
+day it deploys.
+
+## Review — what shipped, and the claim I had to retract
+
+**5,303 assertions across 77 suites pass**, up from 5,262. `sw.js` → v221.
+
+### The ⚠️ I had been repeating was wrong
+
+Checking it before building on it is what found it. I had written, in the spec, in two todo
+entries and in #269's body, that the sibling-price filter was *"precisely the mechanism that
+put five copies of one item in one store."* It is not:
+
+- `existing_prices` appears **exactly once in the whole repo** — at its own definition
+  (`worker.js:23784`). It has no consumer. It is a dead field.
+- `siblingPrices` feeds one advisory range warning whose own comment says *"still allowing
+  the create."*
+- The incident came from a `filter=code=` lookup read only inside `if (dupResp.ok)`
+  (`worker.js:13288`), and that is already fixed.
+- The hard guard is `cloverCodeInUse`, which matches the **exact code** and never consults a
+  price. `BL-50008-2_5-P99999 !== BL-50008-2_5`, so an ordinary price point is still created
+  correctly alongside an OB one — which is the behaviour we want and it needed no change.
+
+All three copies are corrected. The lesson is narrow and worth keeping: **a claim that an
+advisory is a safety guard survives every re-read, because nobody re-derives a ⚠️ they
+already believe.** It took a subagent contradicting it and a grep to dislodge.
+
+### The real hazard was the one next to it
+
+`siblingRe` is `^BL-<cat>-` and unanchored at the end, so an **OB item matches it and can be
+picked as the sibling** a new ordinary item inherits `hidden`, `taxable` and `cost` from.
+Tax follows the category so it agrees either way — but a buy's cost is the DEAL cost, and a
+buy's items are exactly the ones plausibly left hidden once it is done. Copy either onto an
+ordinary price point and it carries a number that was never true of it, silently, because it
+came from a real Clover row.
+
+Now an ordinary sibling wins, with an OB one kept only as a fallback so a category holding
+nothing but OB items can still take a price point rather than refusing over a cost field.
+
+### The price range self-fixed
+
+Extending `mosParseCode` was the whole fix: OB codes now parse, so their prices are included
+in the range rather than dropped. No change to the filter at all.
+
+### Three things the tests caught
+
+1. **`sticker-check` asked Clover before asking the database.** The buy check sat behind a
+   full catalogue sweep, so a closed buy reported *"this category has no sticker number"* —
+   sending someone to entirely the wrong problem. It is a local D1 read; it goes first.
+2. **A negative assertion matched my own English, for the third time.** `!/nearest|snap|round/`
+   over the handler matched the phrase "a network round trip" in a comment I had just added,
+   and failed describing a price-snapping bug that does not exist. The `decomment()` helper
+   and the rule both already existed; this was the one site that had not adopted it.
+3. **An assertion counted `printable: false` sites as a literal 6.** Phase 2 added three
+   refusals and it failed with "got 9, want 6" — which says nothing about whether any of them
+   is right. Rewritten to split the handler into its returns and require every one that names
+   a reason to also say `printable: false`.
+
+### What Phase 2 still does not do
+
+Sell-through. `payment_archive_items` keeps no item identity, so a sale cannot reach a PO
+until the archive carries the code. That is Phase 3, and it can only count from the day it
+deploys.
+
 # Opportunity buys — Phase 1, the buy exists (2026-09-21)
 
 **Brian:** *"Let's do phase 1"* — of `docs/feature-opportunity-buys.md`. Three questions asked
@@ -135,9 +267,18 @@ The spec lives in **`docs/feature-opportunity-buys.md`** (matching the house sha
 
 worker.js:23412 filters `startsWith('BL-' + cat + '-')` and then drops whatever
 `mosParseCode` refuses. Ship 4-segment codes without fixing that line and `existing_prices`
-goes quietly incomplete — which is precisely the mechanism that put five copies of one item
-in one store today. It is called out in the spec's ⚠️ section as a same-commit requirement,
-not a follow-up.
+goes quietly incomplete.
+
+**Corrected 2026-09-21 while starting Phase 2 — this is NOT the duplicate-item
+mechanism.** `existing_prices` appears exactly once in the repo, at its own definition, so it
+has no consumer; `siblingPrices` feeds an advisory range warning whose own comment says
+"still allowing the create". The incident came from a `filter=code=` lookup read inside
+`if (dupResp.ok)` (`worker.js:13288`), already fixed. What PO codes really break here is the
+range itself — dropped codes narrow lo/hi and flag ordinary prices as out of range. The
+sharper hazard is the SIBLING copy: an OB item can be picked as the sibling an ordinary new
+item inherits `hidden` and `cost` from, and a buy's cost is a deal cost.
+
+It must still change in the same commit that widens the grammar.
 
 ## Verification
 

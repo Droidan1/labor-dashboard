@@ -211,11 +211,26 @@ Approach A's price.
 
 ## ⚠️ Things to be careful about
 
-**The duplicate-item hazard is the sharp one.** `worker.js:23412` filters
-`startsWith('BL-' + cat + '-')` and then drops anything `mosParseCode` refuses. Ship
-4-segment codes without fixing that line and `existing_prices` goes quietly incomplete —
-which is the precise mechanism that put five copies of one item in one store on
-2026-09-21. Phase 2 must change that filter in the same commit that widens the grammar.
+**Corrected 2026-09-21 while starting Phase 2.** An earlier draft of this section called
+the sibling-price filter "the precise mechanism that put five copies of one item in one
+store". **That was wrong**, and checking it is what found it: `existing_prices`
+(`worker.js:23784`) appears exactly once in the whole repo — at its own definition — so it
+has no consumer at all, and `siblingPrices` feeds only an advisory range warning whose own
+comment says *"still allowing the create"*. The duplicate incident came from a different
+path entirely: a `filter=code=` lookup read only inside `if (dupResp.ok)`, documented at
+`worker.js:13288` and already fixed. The hard guard is `cloverCodeInUse`, which matches the
+**exact code** and never consults a price.
+
+What is actually true, and still worth fixing in the same commit: the filter drops whatever
+`mosParseCode` refuses, so PO-suffixed codes would silently narrow `lo`/`hi` — falsely
+flagging ordinary prices as "outside the range", and disabling the warning altogether when
+fewer than three codes survive. That is a wrong warning, not a lost guard.
+
+**The sharper hazard is the sibling copy.** `siblingRe` is `^BL-<cat>-` and unanchored at the
+end, so an OB item matches it and can be picked as the sibling a new ordinary item inherits
+`hidden`, `taxable` and `cost` from (`worker.js:23819`). An opportunity buy's cost is a deal
+cost, not the category's — copying it onto an ordinary price point puts a number on an item
+that was never true of it. The sibling should prefer a non-OB item.
 
 **A silently-skipped scan reads as broken hardware.** If OB stickers ship before
 `MOS_CODE_RE` is widened, the camera will simply keep scanning and the user will report
