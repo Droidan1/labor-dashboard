@@ -258,6 +258,62 @@ for (const scheme of ['dark', 'light']) {
   check(!!filed && filed.barcode === 'PRM-99999-1', `[${t}] ...carrying the tag that was read`);
   check((await page.textContent('#ir-det-status') || '').includes('added'),
         `[${t}] ...and the outcome is reported on the Trucks tab, not the Receive pane`);
+
+  // ── The typed path ──────────────────────────────────────────────
+  // A pallet recorded days late has no cardboard to photograph. Clicked, not called — the
+  // point is that the button is reachable without touching the camera.
+  check(await page.isVisible('#ir-det-manual'), `[${t}] Enter Manually is offered beside Add Pallet`);
+  let chooserOpened = false;
+  const onChooser = () => { chooserOpened = true; };
+  page.on('filechooser', onChooser);
+  await page.click('#ir-det-manual');
+  await page.waitForTimeout(500);
+  check(await page.isVisible('#ir-modal'), `[${t}] it opens the form`);
+  check(!chooserOpened, `[${t}] 🛑 ...WITHOUT opening the camera — that is the whole point`);
+  page.off('filechooser', onChooser);
+  check(!(await page.isVisible('#ir-m-shot')), `[${t}] the photo block is hidden — there is no photo`);
+  // 🛑 Which is exactly why the guidance needs its own element: #ir-m-read lives inside
+  // that hidden block, so without #ir-m-manual the form would open saying nothing at all.
+  check(await page.isVisible('#ir-m-manual'), `[${t}] 🛑 ...and the typed form still carries instructions`);
+  check((await page.textContent('#ir-m-manual') || '').includes('at least one'),
+        `[${t}] ...naming the rule the worker enforces`);
+  check((await page.textContent('#ir-m-retake') || '').trim() === 'Take Photo',
+        `[${t}] the camera button reads "Take Photo", not "Retake"`);
+  check((await page.inputValue('#ir-f-barcode')) === '', `[${t}] the form opens empty`);
+  // 🛑 Empty is not an ERROR here. The scan path paints a blank amber-red and captions it
+  // "not read"; on a typed entry nothing was read, so the same treatment would open the form
+  // as eight failures and bury the one line saying what is required.
+  check((await page.$$('#ir-m-fields .ir-in.miss')).length === 0,
+        `[${t}] 🛑 ...and NOT as errors — no field is painted as a failed read`);
+  check(!(await page.textContent('#ir-m-fields') || '').includes('Not read'),
+        `[${t}] ...nor captioned as one`);
+  check((await page.textContent('#ir-m-title') || '').includes('Add pallet by hand'),
+        `[${t}] the header says it was typed — there is no tag to "verify"`);
+  check((await page.textContent('#ir-m-title') || '').includes('7644'),
+        `[${t}] ...titled with the truck it will be filed against`);
+
+  const typed = await page.evaluate(async () => {
+    const seen = {};
+    const real = window.fetch;
+    window.fetch = async (u, o) => {
+      const str = String(u);
+      if (str.includes('truck-pallet-log')) {
+        seen.body = JSON.parse(o.body);
+        return new Response(JSON.stringify({ ok: true, id: 78 }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return real(u, o);
+    };
+    document.getElementById('ir-f-barcode').value = 'P-TYPED-0001';
+    document.getElementById('ir-f-units').value = '7';
+    await window.irSubmit();
+    window.fetch = real;
+    return seen.body || null;
+  });
+  check(!!typed && typed.barcode === 'P-TYPED-0001', `[${t}] what was typed is what is sent`);
+  check(!!typed && typed.truck_id === 2, `[${t}] ...filed against the truck being read back`);
+  check(!!typed && !typed.image_b64,
+        `[${t}] 🛑 ...and no image rides along, so the worker stores no R2 object`);
+
   await page.evaluate(() => window.irCloseDetail());
   await page.waitForTimeout(200);
   check(await page.isVisible('#ir-pane-trucks'), `[${t}] ...and leaves the tab it was raised from`);
