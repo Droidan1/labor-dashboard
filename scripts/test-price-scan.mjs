@@ -3880,12 +3880,31 @@ console.log('Price Scan');
   eq(clean({ fields: { price: { show: 'number' } } }).tpl.fields.price.show, undefined,
      'show is not silently accepted on other fields');
 
-  // The editor offers it, and offers only the two the worker will store.
+  // 🔑 BOTH SIDES ARE DERIVED, NEITHER IS RESTATED. This asserted the editor's options
+  // against the literal 'full,number', so adding a third value meant editing the test to
+  // say the new answer -- a test that has to be told the truth cannot catch a lie. It also
+  // sliced a fixed 400 characters after the onchange, which the third <option> overran, so
+  // it failed by matching NOTHING and reported `got ""`. Pull the accepted list out of the
+  // worker and the offered list out of the editor, and the relationship holds by itself
+  // however many values either side grows.
   const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const wsrc = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+
+  const accepted = (wsrc.match(/out\.show = \[([^\]]+)\]\.includes/) || [])[1];
+  ok(accepted, 'the worker\'s accepted show values are extractable');
+  const acceptedList = [...String(accepted).matchAll(/"(\w+)"/g)].map(m => m[1]).sort();
+
   const editor = sliceOrNull(html, '  const ST_ROWS = [', '  window.stTest = stTest;') || '';
-  const offered = [...editor.matchAll(/stSet\('code','show'[\s\S]{0,400}?<\/select>/g)]
-    .flatMap(m => [...m[0].matchAll(/<option value="(\w+)"/g)].map(o => o[1]));
-  eq(offered.sort().join(','), 'full,number', '🛑 the editor offers exactly the values the worker accepts');
+  // Bounded by the closing tag, not by a character count, so the block may grow.
+  const selectAt = editor.indexOf("stSet('code','show'");
+  const selectSrc = selectAt < 0 ? '' : editor.slice(selectAt, editor.indexOf('</select>', selectAt));
+  const offered = [...selectSrc.matchAll(/<option value="(\w+)"/g)].map(o => o[1]).sort();
+
+  ok(offered.length > 0, 'the Show select is where the test expects it');
+  eq(offered.join(','), acceptedList.join(','),
+     '🛑 the editor offers exactly the values the worker accepts');
+  ok(acceptedList.includes('number_po'),
+     '🔑 …including number_po, the opportunity-buy line');
 }
 
 // ── How many labels, and the three copies of the cap ─────────────────────────
@@ -4396,6 +4415,53 @@ console.log('Price Scan');
     ok(/firstResults.length > 1/.test(code),
        '…with more than one result meaning the narrowing was ignored');
   }
+}
+
+// ── The human line can carry the purchase order ──────────────────────────────
+//
+// 🔑 THE QR IS NEVER AFFECTED, AND THAT IS THE WHOLE CONTRACT OF THIS FIELD. Every case
+// below asserts the ^BQ still carries the full lookup key while only the printed text
+// changes — shortening what a person reads must never shorten what a scanner gets.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const body = sliceOrNull(html, '  function psZpl(', '\n  }\n');
+  const psZpl = buildOrStub('psZpl', (body || '') + '\n  }', [], [], 'psZpl');
+  const tpl = (show) => ({ fields: { code: { on: true, x: 10, y: 116, h: 20, w: 20, font: '0', show } } });
+  const CODE = 'BL-50008-2_5';
+  const qrOf = (z) => (z.match(/\^FDLA,([^\^]+)\^FS/) || [])[1];
+  const humanOf = (z) => (z.match(/\^FO10,116\^A0N,20,20\^FD([^\^]*)\^FS/) || [])[1];
+
+  // Number + PO, which is what the option exists for.
+  const withPo = psZpl(CODE, 2.5, { categoryCode: '50008', po: '99999' }, tpl('number_po'));
+  eq(humanOf(withPo), '50008-99999', '🔑 number_po prints the category number and the PO');
+  eq(qrOf(withPo), CODE, '🛑 …while the QR still carries the whole lookup key');
+
+  // 🛑 NO PO IS A NORMAL STATE, NOT A GAP. Nothing carries a purchase order until
+  // opportunity buys ship, so this is what EVERY label using this option prints today.
+  // It must be the category number — never an empty field, never "undefined", never a
+  // dangling separator, any of which is a sticker a person cannot act on.
+  const noPo = psZpl(CODE, 2.5, { categoryCode: '50008' }, tpl('number_po'));
+  eq(humanOf(noPo), '50008', '🛑 no PO falls back to the number alone');
+  eq(humanOf(psZpl(CODE, 2.5, { categoryCode: '50008', po: '' }, tpl('number_po'))), '50008',
+     '…and an empty PO is the same as none');
+  eq(humanOf(psZpl(CODE, 2.5, { po: '99999' }, tpl('number_po'))), CODE,
+     '🔑 …and with no category number either, it falls all the way back to the full code');
+  for (const z of [noPo, withPo]) {
+    ok(!/undefined|null|-\^FS/.test(z), '…no undefined, null or dangling separator reaches the printer');
+  }
+
+  // The other two are untouched by any of this.
+  eq(humanOf(psZpl(CODE, 2.5, { categoryCode: '50008', po: '99999' }, tpl('number'))), '50008',
+     '🛑 "number" ignores a PO even when one is passed');
+  eq(humanOf(psZpl(CODE, 2.5, { categoryCode: '50008', po: '99999' }, tpl('full'))), CODE,
+     '…and "full" still prints the whole code');
+
+  // 🛑 AND A DEFAULT LABEL IS STILL BYTE-IDENTICAL. psZpl's own comment pins that a null
+  // template must emit exactly what it emitted before the template existed; a new branch
+  // in the code line is exactly the kind of change that quietly moves a dot on every shelf.
+  eq(psZpl(CODE, 2.5, { categoryCode: '50008', po: '99999' }, null),
+     psZpl(CODE, 2.5, { categoryCode: '50008' }, null),
+     '🛑 a PO changes NOTHING on a default template');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
