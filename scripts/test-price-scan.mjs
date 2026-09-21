@@ -3085,8 +3085,16 @@ console.log('Price Scan');
   // arguments are passed, which is the thing worth pinning, and stops the formatter from
   // being able to fail the build.
   const flat = (t) => String(t || '').replace(/\s+/g, ' ');
-  ok(/psZpl\(a\.code, psLast\.price, \{ retail: psLast\.retail, categoryCode: a\.category_code \}, psTpl, qty\)/.test(flat(html)),
-     'the print path passes the street price, the category number, the template and the count');
+  ok(/psZpl\(a\.code, psLast\.price, \{ retail: psLast\.retail, categoryCode: a\.category_code, po: psObActive\(\) \}, psTpl, qty\)/.test(flat(html)),
+     'the print path passes the street price, the category number, the PO, the template and the count');
+  // 🔑 AND THE REPRINT PASSES THE ROW'S OWN PO, NOT THE SELECTED ONE. The item belongs to
+  // the buy it came in on; relabelling a torn sticker while another buy happens to be
+  // selected would move stock between buys on the strength of a UI state. Pinned because
+  // `psObActive()` is the obvious thing to write here and is wrong.
+  ok(/psZpl\(a\.code, p\.price, \{ retail: p\.retail, categoryCode: a\.category_code, po: p\.po \}, psTpl, qty\)/.test(flat(html)),
+     '🛑 a reprint draws the PO the item came in on, never the buy currently selected');
+  ok(!/psZpl\(a\.code, p\.price,[^)]*psObActive/.test(flat(html)),
+     '…and specifically not the active one');
   // 🛑 THE COUNT IS READ BEFORE THE PROBE, NOT AFTER IT. psZebraDevice is a round trip and
   // the qty box stays editable across it, so reading it late would print whatever the box
   // said when Browser Print answered rather than what was pressed. Pinned by ORDER, because
@@ -3454,9 +3462,9 @@ console.log('Price Scan');
      '…from the stored INPUTS, so a renumbered category reprints under its new number');
   ok(/!a\.printable/.test(rp || ''),
      '🛑 …and prints only what comes back printable');
-  ok(/psZpl\(a\.code, p\.price, \{ retail: p\.retail, categoryCode: a\.category_code \}, psTpl, qty\)/.test(String(rp || '').replace(/\s+/g, ' ')),
+  ok(/psZpl\(a\.code, p\.price, \{ retail: p\.retail, categoryCode: a\.category_code, po: p\.po \}, psTpl, qty\)/.test(String(rp || '').replace(/\s+/g, ' ')),
      '🛑 the label carries the code the check JUST returned, never the stored one -- and the '
-     + 'STORED street price, so a reprint is the same label the shelf already has');
+     + 'STORED street price and PO, so a reprint is the same label the shelf already has');
   // 🔑 THE ROW'S OWN BOX, NOT A SHARED ONE. `psQty('ps-rq-' + i)` is what stops a number
   // typed against the item in your hand from applying to whichever row you tap next — the
   // bug a single #ps-qty read would have shipped, silently and only sometimes.
