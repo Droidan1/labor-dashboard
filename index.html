@@ -23193,6 +23193,18 @@
     // tab was selected, rather than assuming Scan.
     const box = el('ps-recent');
     if (on && box) box.style.display = 'none';
+    // 🛑 AND THE RESULT PANE, WHICH THIS FUNCTION DID NOT OWN AND HAD TO. psApplyTab sets
+    // `#ps-result` to display:none for the Reprint tab — an INLINE style that survives
+    // everything — and then stands down completely while a mode is open, so nothing ever
+    // put it back. Reprint → Manual → Price it rendered the whole answer card, qty box and
+    // Print button into a hidden element: no error, no empty state, just nothing.
+    //
+    // 🔑 Both modes render into it — manual draws the answer card there and furniture's step
+    // list has always gone there too — so "a mode is open" means this is visible, full stop.
+    // Closing hands it back to psApplyTab, which is the authority while no mode is on. This
+    // is the same one-writer rule the tabs already follow; the pane was simply left out of it.
+    const res = el('ps-result');
+    if (on && res) res.style.display = '';
     if (!on) psApplyTab();
     // The blurb under the title describes barcodes, which is wrong the moment there is
     // no barcode to read.

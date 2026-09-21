@@ -2450,6 +2450,45 @@ console.log('Price Scan');
        '🛑 while MANUAL is open the tab writes nothing to the body either');
     eq(map['ps-tab-scan'].className, 'ps-tab on', '…and the bar still reflects the selection');
   }
+
+  // ── Opening a mode must UN-hide the result pane ───────────────────────
+  //
+  // 🛑 SHIPPED BROKEN AND FOUND ON THE FLOOR. psApplyTab sets #ps-result to
+  // display:none for the Reprint tab — an INLINE style, which outlives everything — and then
+  // stands down entirely while a mode is open, so nothing put it back. Reprint → Manual →
+  // Price it rendered the answer card, the qty box and the Print button into a hidden
+  // element: no error, no empty state, just nothing on screen. Furniture had it too, since
+  // its step list draws there as well; Manual only made it obvious.
+  //
+  // 🔑 Pinned as the ORDER that breaks it, not as "psChrome writes to ps-result" — the
+  // second would pass against a function that wrote 'none'.
+  {
+    const chromeSrc = sliceOrNull(html, '  const PS_MODES = {', '  async function fnOpen()');
+    ok(chromeSrc, 'psChrome is extractable');
+    const nodes = {};
+    for (const id of ['ps-barcode-mode', 'ps-result', 'ps-recent', 'ps-tabs', 'ps-mode-lbl',
+                      'ps-count', 'ps-sub', 'ps-furniture', 'ps-manual',
+                      'ps-tab-scan', 'ps-tab-reprint']) {
+      nodes[id] = { id, style: {}, className: '', textContent: '' };
+    }
+    const both = buildOrStub('psChrome + psApplyTab', `${chromeSrc}\n${src}`,
+      ['el', 'fn', 'pm', 'psStopScan', 'psRecentLoad', 'window'],
+      [(id) => nodes[id] || null, { open: false }, { open: false }, () => {}, () => {}, {}],
+      '{ psChrome, psApplyTab, psTab }');
+
+    both.psTab('reprint');
+    eq(nodes['ps-result'].style.display, 'none', 'the Reprint tab hides the result pane, as it should');
+    for (const mode of ['manual', 'furniture']) {
+      both.psTab('reprint');
+      both.psChrome(mode);
+      eq(nodes['ps-result'].style.display, '',
+         `🛑 opening ${mode} AFTER Reprint un-hides the result pane — the card renders into it`);
+    }
+    // And closing hands the pane back rather than pinning it open.
+    both.psChrome(null);
+    eq(nodes['ps-result'].style.display, 'none',
+       '…while closing returns it to whatever the selected tab wants');
+  }
 }
 
 // ── The reprint tab is offered only to whoever the list would load for ────────
