@@ -435,11 +435,14 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
   eq(j.units, 363, '...and the units on them');
   const again = await call('/?action=truck-down', { user: 'u-mgr1', method: 'POST', body: { truck_id: t1 }, env });
   eq(again.status, 409, 'a truck already down cannot be taken down twice');
-  // A closed truck takes no more pallets.
+  // A closed truck still takes a pallet from a MANAGER — Brian, 2026-09-21, because "2 short"
+  // is usually two that were never scanned. Section 35 owns that rule and both its halves;
+  // what is pinned here is only that taking it down did not make the truck inert.
   const late = await call('/?action=truck-pallet-log',
     { user: 'u-mgr1', method: 'POST', body: { truck_id: t1, barcode: 'LATE-1', ...IMG }, env });
-  eq(late.status, 409, 'and takes no more pallets');
-  eq((await json(late)).code, 'TRUCK_CLOSED', '...saying why');
+  eq(late.status, 200, 'a manager can still put a missed pallet on it');
+  eq(db.prepare('SELECT COUNT(*) AS n FROM truck_pallets WHERE truck_id = ?').get(t1).n, 3,
+     '...and it lands on that truck');
 }
 
 // ── 16. pallet_count is the CLAIM; received is COUNT(*) ────────────────────
@@ -996,6 +999,103 @@ function seedTruck(db, { store = 'BL1', bol = '7679', count = 40, closed = null 
      '🛑 the read-back is z-40, BELOW the verify form that now opens on top of it');
   ok(/irShowing\('ir-appr'\) \|\| irShowing\('ir-modal'\)\) return;/.test(html),
      '🛑 ...and Escape stops at the top layer instead of closing the truck underneath it');
+}
+
+// ── 35. A missed pallet can go on after Truck Down, by a manager ────────
+// Brian, 2026-09-21, completing the set: add, correct and remove now behave identically on a
+// truck that is down — a manager's, or nobody's. The refusal this replaces was a blanket
+// 409 TRUCK_CLOSED that applied to everyone.
+{
+  const { db, env } = env0();
+  const t = seedTruck(db, { store: 'BL1', count: 3 });
+  spy(textReply('{}'));
+  await call('/?action=truck-pallet-log', { user: 'u-staff', method: 'POST', body: { truck_id: t, ...TAG, ...IMG }, env });
+  await call('/?action=truck-down', { user: 'u-mgr1', method: 'POST', body: { truck_id: t }, env });
+  eq(env.MEDIA._store.size, 1, 'one tag photo so far');
+
+  // 🛑 The associate is refused — and the refusal costs NOTHING. This repo's rule is that
+  // the rejection precedes the R2 put, because a 4xx after the upload leaves an object with
+  // no row forever. Asserting the status alone would pass with the check moved below the put.
+  const refused = await call('/?action=truck-pallet-log',
+    { user: 'u-staff', method: 'POST', body: { truck_id: t, ...TAG_B, ...IMG }, env });
+  eq(refused.status, 403, 'an associate cannot add a pallet to a truck that is down');
+  eq((await json(refused)).code, 'NEED_MANAGER', '...naming the standing it wants');
+  eq(db.prepare('SELECT COUNT(*) AS n FROM truck_pallets WHERE truck_id = ?').get(t).n, 1,
+     '...and writes no row');
+  eq(env.MEDIA._store.size, 1,
+     '🛑 ...and no ORPHANED PHOTO — the refusal still precedes the R2 put');
+
+  // The manager can, and it is a real receipt: it lands, it counts, it is on that truck.
+  const ok200 = await call('/?action=truck-pallet-log',
+    { user: 'u-mgr1', method: 'POST', body: { truck_id: t, ...TAG_B, ...IMG }, env });
+  eq(ok200.status, 200, '✅ a manager can add the pallet that was missed');
+  eq(env.MEDIA._store.size, 2, '...and its photo is stored');
+  const row = db.prepare('SELECT truck_id AS t, barcode AS b FROM truck_pallets WHERE id = ?').get((await json(ok200)).id);
+  eq(row.t, t, '...against the truck that was named');
+  eq(row.b, TAG_B.barcode, '...with the barcode off the tag');
+
+  // 🔑 The truck does NOT reopen. Its counts move because received has always been
+  // COUNT(*); closed_at is untouched, so the dock stays free and the month never shifts.
+  const truck = db.prepare('SELECT closed_at AS c FROM trucks WHERE id = ?').get(t);
+  ok(!!truck.c, '🛑 the truck stays DOWN — adding a pallet is not reopening it');
+  const list = await json(await call('/?action=truck-list&store=BL1', { user: 'u-mgr1', env }));
+  eq(list.rows[0].received, 2, 'received recounts to 2');
+  eq(list.rows[0].pallet_count, 3, '...against a BOL claim that does not move');
+  eq(list.rows[0].units, TAG.units + TAG_B.units, '...and the units follow');
+
+  // And the dock is genuinely still free: the partial unique index only sees closed_at.
+  const fresh = await call('/?action=truck-open', { user: 'u-mgr1', method: 'POST',
+    body: { store: 'BL1', ...BOL, bol_no: '9001', ...IMG }, env });
+  eq(fresh.status, 200, '✅ a new truck can still be opened at that store');
+}
+
+// ── 36. All three closed-truck mutations answer to the same gate ────────
+// Three handlers, one rule. They were written at different times and a fourth caller will be
+// written later, so the shape is pinned at the source rather than left to three behavioural
+// tests that could each drift on their own.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const region = (from, to) => {
+    const a = src.indexOf(`=== "${from}"`);
+    const b = to ? src.indexOf(`=== "${to}"`) : src.length;
+    ok(a > 0 && (!to || b > a), `${from} is still routed`);
+    return src.slice(a, b);
+  };
+  const log = region('truck-pallet-log', 'truck-down');
+  const upd = region('truck-pallet-update', 'truck-pallet-delete');
+  for (const [name, body] of [['truck-pallet-log', log], ['truck-pallet-update', upd]]) {
+    ok(/closed_at && !isAdminSecret && !canSeeFinancials\(currentUser\)/.test(body),
+       `🔑 ${name} gates a closed truck on manager standing, from the row`);
+    ok(/"NEED_MANAGER"/.test(body), `...and answers NEED_MANAGER`);
+  }
+  // 🛑 The ordering rule, asserted positionally rather than trusted to a comment.
+  const gate = log.indexOf('closed_at && !isAdminSecret');
+  const put = log.indexOf('env.MEDIA.put(');
+  ok(gate > 0 && put > gate,
+     '🛑 the manager gate precedes the R2 put — a refusal after it orphans an object forever');
+  ok(log.indexOf('truckBarcodeMatches(') > gate,
+     '...as does the duplicate check, so neither runs for a caller who is refused outright');
+  // The blanket refusal is gone, and nothing still advertises it.
+  ok(!/TRUCK_CLOSED/.test(log),
+     'the blanket TRUCK_CLOSED refusal is gone from the log handler');
+}
+
+// ── 37. The read-back offers the add, and files it against the right truck ──
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  ok(/id="ir-det-add"[\s\S]{0,120}irBeginPallet\('detail'\)/.test(html),
+     'the read-back has an Add Pallet button that names its source');
+  ok(/el\('ir-det-add'\)\.hidden = !mayEdit;/.test(html),
+     '🔑 ...shown on the same rule as the rows\' Edit, not a second one that could disagree');
+  ok(/const onTruck = irState\.opFrom === 'detail'[\s\S]{0,120}irState\.truck;[\s\S]{0,400}truck_id: onTruck && onTruck\.id/.test(html),
+     '🛑 a new pallet is filed against the truck whose screen raised it, not the dock\'s');
+  ok(/if \(detail\) irSetDetStatus\('Reading tag…', 'ok'\);/.test(html),
+     '🛑 the read is reported on the Trucks tab — #ir-reading is on a pane that is not on screen');
+  ok(/dockTruckId === irState\.detailId\) irLoadCurrent\(\);/.test(html),
+     '🛑 ...and the dock is refreshed too when it is showing the same truck');
+  // The flag governs three operations now, and is named for none of them in particular.
+  ok(!/editFrom/.test(html) && /opFrom: null/.test(html),
+     'the source flag is opFrom — it decides an add as well as an edit');
 }
 
 console.log(`\n${assertions} passed, ${failures} failed`);

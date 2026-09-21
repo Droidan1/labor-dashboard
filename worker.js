@@ -23851,11 +23851,20 @@ export default {
         const denied = storeActionGuard(truck.store, currentUser, isAdminSecret, corsJson,
           { closedMsg: "it cannot receive a truck" });
         if (denied) return denied;
-        if (truck.closed_at) {
+        // 🔑 A PALLET THAT WAS MISSED CAN STILL GO ON, but only a manager may add it
+        // (Brian, 2026-09-21). "2 short" more often means two were never scanned than two
+        // were scanned wrong, and before this the only way to record them was to reopen the
+        // truck. Same standing as correcting or removing a pallet on a truck that is down:
+        // the review email naming what it came up short of has already gone out, so anything
+        // that moves its counts afterwards is a manager's.
+        // 🛑 STILL BEFORE THE R2 PUT, exactly where the blanket refusal stood. A rejection
+        // after the upload leaves an object with no row forever, and quietly relocating this
+        // check past the put is the easy way to reintroduce that.
+        if (truck.closed_at && !isAdminSecret && !canSeeFinancials(currentUser)) {
           return new Response(JSON.stringify({
-            error: "That truck has already been taken down. Reopen it or start a new one.",
-            code: "TRUCK_CLOSED",
-          }), { status: 409, headers: corsJson });
+            error: "That truck is already down — only a manager can add a pallet to it",
+            code: "NEED_MANAGER",
+          }), { status: 403, headers: corsJson });
         }
 
         const fields = palletTagFields(body);

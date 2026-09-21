@@ -1,3 +1,92 @@
+# Inventory Receiver — a missed pallet can go on after Truck Down (2026-09-21)
+
+**Brian:** *"add pallets to closed trucks too"* — closing the gap flagged when #256 shipped: if
+"2 short" usually means *we missed scanning two*, correcting and deleting rows never reached it.
+
+Completes the set. All three mutations now behave the same way on a truck that is down —
+**a manager's, or nobody's**:
+
+| | on the dock | once down |
+|---|---|---|
+| `truck-pallet-log` (add) | associate with the page grant | **manager** ← this change |
+| `truck-pallet-update` (correct) | associate with the page grant | manager (#256) |
+| `truck-pallet-delete` (remove) | manager | manager (always) |
+
+## Plan
+
+- [x] **Worker.** `truck-pallet-log`'s blanket `409 TRUCK_CLOSED` becomes a manager gate:
+      allowed for a manager, `403 NEED_MANAGER` otherwise, with a message that still says the
+      truck is down so the associate learns both facts at once.
+  - [x] \U0001f6d1 It stays exactly where the old refusal was — **before the R2 put**. A refusal
+        after the upload leaves an object with no row forever, which is a rule this page
+        already carries, and moving the check is the easy way to break it.
+- [x] **Frontend — an Add Pallet button in the read-back**, on the same rule as Edit.
+  - [x] `irState.editFrom` → `irState.opFrom`: it now governs an ADD as well as an edit, and
+        a field named for one of the two things it decides is how drift starts.
+  - [x] `irSubmit` targets the truck the operation belongs to, not always the dock's.
+  - [x] \U0001f6d1 `irPhoto` writes "Reading tag…" into `#ir-reading`, which lives on the Receive
+        pane and is **not on screen** when a truck is being read back. A manager would tap,
+        photograph a tag, and watch nothing happen for the seconds Claude takes to read it —
+        the dead-button failure the camera picker's own error path exists for. The read-back's
+        own status line carries it instead.
+  - [x] `irAfterSend` distinguishes added from corrected, and also refreshes the DOCK when the
+        truck being read back is the one on it, so the two screens cannot disagree.
+- [x] **Tests.** A manager adds to a truck that is down; an associate is refused and the
+      refusal writes **neither a row nor an R2 object**; §15's assertion that pinned the old
+      blanket refusal is rewritten rather than deleted; the received count recounts.
+- [x] `sw.js` CACHE_NAME + fixture; full suite; browser check in both themes.
+- [x] \U0001f6d1 Worker deployed BEFORE the PR opens — same reasoning as #256, and again it is a
+      restriction on one side (managers only) and a *permission* on the other (closed trucks
+      now accept pallets at all), so the frontend must not arrive first.
+
+## Review
+
+**Shipped.** `truck-pallet-log`'s blanket `409 TRUCK_CLOSED` is now a manager gate, and the
+read-back carries an **Add Pallet** button on the same rule as the rows' Edit. Add, correct and
+remove finally behave identically on a truck that is down.
+
+**The gate went exactly where the old refusal stood — before the R2 put.** That is the whole
+care in this diff. The rule ("refuse before the put; a 4xx after it leaves an object with no
+row forever") is one this page inherited from Bin Dump, and the tempting shape here was to
+check standing later, near the write. §36 asserts it POSITIONALLY — `indexOf` of the gate
+against `indexOf` of `env.MEDIA.put(` — rather than trusting the comment, and §35 asserts the
+associate's refusal leaves `MEDIA._store.size` unchanged. A status-only assertion would pass
+with the check moved below the put.
+
+**Two things the build surfaced.**
+
+1. 🛑 **The read would have been invisible.** `irPhoto` reports into `#ir-reading`, which
+   lives on the Receive pane — and a manager adding a missed pallet is on the Trucks tab. They
+   would have photographed a tag and watched nothing happen for the seconds the read takes:
+   the dead-button failure `irPick`'s own error path exists for. It now reports into the
+   read-back's status line.
+2. 🛑 **`irSubmit` would have filed the pallet against the wrong truck.** It read
+   `irState.truck` unconditionally — fine while the only way to scan was the dock, and wrong
+   the moment the scan is raised from a read-back of a different truck. A pallet filed against
+   whatever happens to be on the dock is a silent error: it lands, it counts, and it is on the
+   wrong BOL.
+
+**`editFrom` became `opFrom`.** It now decides an add as well as an edit and a delete, and a
+field named for one of the three things it governs is how drift starts.
+
+**A staleness fixed while here.** A correction or delete made in a read-back of the truck that
+is ALSO on the dock left the Receive tab quoting counts one pallet out of date. All three paths
+now refresh the dock as well when the ids match.
+
+**The truck does not reopen.** §35 pins that explicitly: `closed_at` is untouched, `received`
+moves because it has always been `COUNT(*)`, the month never shifts, and a new truck can still
+be opened at that store — the partial unique index only ever looked at `closed_at`.
+
+**§15's assertion was rewritten, not deleted.** It pinned "a closed truck takes no more
+pallets", which is precisely what this reverses. What it pins now is that taking a truck down
+did not make it inert.
+
+**Verified.** `4951 assertions across 76 suites` green (was 4922).
+`browser-inventory-receiver.mjs` **108** (was 100) — the add is driven through the real submit
+path and the assertion is on the `truck_id` that actually goes over the wire.
+
+---
+
 # Deployed: the closed-truck manager gate (2026-09-18)
 
 Brian's go, staging then production, and — for the first time on this feature — **before the PR
