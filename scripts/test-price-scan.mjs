@@ -4082,6 +4082,39 @@ console.log('Price Scan');
   eq(created[0].hidden, false, '…with visibility copied the same way');
   eq(made.body.store_ready, true, '🔑 the caller\'s own store is ready, so the label can print');
 
+  // 3b. ONE STORE PER REQUEST — what makes the pop-up's status live.
+  created = [];
+  const one = await post('sticker-create-price-point',
+    { l3: SNACKS, price: 4, store: 'BL1', confirm: true, stores: ['BL2'] }, 'u-mgr1');
+  eq(created.length, 1, '🔑 a narrowed request creates at exactly ONE store');
+  eq((one.body.results || []).length, 1, '…and answers for exactly that store');
+  eq(one.body.results[0].store, 'BL2', '…the one that was asked for');
+
+  // 🛑 A NARROWED LIST MAY NEVER WIDEN SCOPE. Every entry goes through stickerStore,
+  // the same validator the single-store field uses, so an unknown name is dropped rather
+  // than reaching a store nobody named.
+  created = [];
+  const bogus = await post('sticker-create-price-point',
+    { l3: SNACKS, price: 4.5, store: 'BL1', confirm: true, stores: ['BL1', 'NOPE', 'bl2'] }, 'u-mgr1');
+  eq(created.length, 2, '🛑 an unknown store name is dropped, not created at');
+  eq((bogus.body.results || []).map(r => r.store).sort().join(','), 'BL1,BL2',
+     '…and a lowercase one is normalised rather than duplicated');
+  eq((await post('sticker-create-price-point',
+       { l3: SNACKS, price: 5, store: 'BL1', confirm: true, stores: ['NOPE'] }, 'u-mgr1')).status, 400,
+     '…while a list with nothing valid in it is refused outright');
+
+  // 🔑 AND THE DEFAULT IS STILL EVERY STORE, so an older client keeps meaning "all".
+  created = [];
+  await post('sticker-create-price-point', { l3: SNACKS, price: 6, store: 'BL1', confirm: true }, 'u-mgr1');
+  eq(created.length, 6, '🔑 no `stores` still means all six');
+
+  // The preview describes the WHOLE job even when the create will be split, because the
+  // modal draws its six rows from it before any request is sent.
+  const pvNarrow = await post('sticker-create-price-point',
+    { l3: SNACKS, price: 7, store: 'BL1', stores: ['BL1'] }, 'u-mgr1');
+  eq((pvNarrow.body.stores || []).length, 6,
+     '🛑 the preview always lists every store, whatever the create is narrowed to');
+
   // 4. STAFF MAY NOT, AT ALL.
   created = [];
   eq((await post('sticker-create-price-point',
@@ -4148,14 +4181,53 @@ console.log('Price Scan');
   ok(/psCreatePricePoint\(\)/.test(chk || ''), '…as a button, on the note that refused');
 
   const cr = sliceOrNull(html, '  async function psCreatePricePoint() {', '\n  window.psCreatePricePoint');
-  ok(/await uiConfirm\(/.test(cr || ''), '🛑 nothing is created without an explicit confirm');
-  const confirmAt = String(cr).indexOf('uiConfirm(');
-  const writeAt = String(cr).indexOf('confirm: true');
-  ok(confirmAt > 0 && writeAt > confirmAt,
-     '🛑 …and the confirm comes BEFORE the call that writes — the ordering IS the guard');
-  ok(/if \(!go\)/.test(cr || ''), '…with "no" meaning nothing happens');
-  ok(/store_ready/.test(cr || ''),
+  const crCode = decomment(cr);
+
+  // 🛑 THESE USED TO PIN uiConfirm, AND THE MECHANISM CHANGED UNDER THEM. Brian asked for
+  // a pop-up with live per-store status, which uiConfirm cannot render — it draws one block
+  // of text and resolves once. The GUARANTEES did not change, so they are re-pinned against
+  // what enforces them now rather than deleted.
+  //
+  // The guard is still an ordering one: the opening call carries no `confirm`, and the only
+  // `confirm: true` in the function sits inside runStores, which nothing calls except a
+  // button's onclick.
+  ok(/await ask\(\{\}\)/.test(crCode),
+     '🛑 the dialog OPENS on a call with no confirm — showing it cannot create anything');
+  const openAt = crCode.indexOf('await ask({})');
+  const writeAt = crCode.indexOf('confirm: true');
+  ok(openAt > 0 && writeAt > openAt,
+     '🛑 …and the only write comes after it — the ordering IS the guard');
+  ok(/async function runStores\(/.test(crCode) &&
+     crCode.indexOf('confirm: true') > crCode.indexOf('async function runStores('),
+     '🛑 …with confirm:true reachable only from runStores');
+  ok(/goBtn\.onclick = \(\) => runStores\(stores\)/.test(crCode),
+     '…which only a button press starts');
+  ok(/cancelBtn\.onclick/.test(crCode) && /Nothing was created/.test(cr || ''),
+     '…while Cancel closes and writes nothing');
+
+  // 🔑 WHAT BRIAN ASKED FOR: the status has to be able to MOVE. One six-store request
+  // returns one answer, so every row would flip at once — a progress list that shows no
+  // progress. Pinned as the fan-out, because that is the thing that makes it live.
+  ok(/stores: \[s\]/.test(crCode),
+     '🔑 the create is fanned out ONE STORE PER REQUEST, so each row moves on its own answer');
+  ok(/psPpSet\(overlay, s, 'busy'/.test(crCode) &&
+     /psPpSet\(overlay, s, 'ok'/.test(crCode) &&
+     /psPpSet\(overlay, s, 'bad'/.test(crCode),
+     '…and every store reaches a visible state: in flight, added, or failed');
+  ok(/runStores\(failed\)/.test(crCode),
+     '🔑 a retry re-asks only the stores that failed, not all six again');
+
+  // Unchanged guarantee, new spelling: the caller's own store is what gates printing.
+  ok(/const mineOk = !mine \|\| done\[mine\]/.test(crCode),
      '🔑 …and printing follows only when the caller\'s OWN store got the item');
+  ok(crCode.indexOf('if (mineOk) await psStickerCheck(j)') > 0,
+     '…re-running the check that refused, so Print enables without a rescan');
+
+  // The trigger itself is no longer a footnote.
+  ok(/class="ps-btn ghost" type="button"[\s\S]{0,120}psCreatePricePoint\(\)/.test(html),
+     '🛑 the control that opens it is a full-width button, not a .ps-link footnote');
+  ok(!/class="ps-link"[^>]*onclick="psCreatePricePoint/.test(html),
+     '…and the old inline link is gone');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
