@@ -1,3 +1,94 @@
+## The repo had an ORIENT.md. I never opened it, and reported a live deploy as stalled (2026-09-21)
+
+Price Scan shipped. Brian merged #262, and asked why he could not see it on staging. I
+investigated Cloudflare — found the staging Pages project builds from a `staging` branch 128
+commits behind `main`, which is a true and useful answer — and then went further and told him
+production had not shipped either, because the Cloudflare `labor-dashboard` project's build
+for the merge commit had been *queued 7 minutes and had not started*.
+
+That was false. **Production is GitHub Pages**, it had already deployed successfully at
+15:45:00Z, and the Cloudflare project I was watching is previews. I then built a polling
+monitor, armed it, and told him I was watching his production deploy. It was watching
+something that does not serve the site.
+
+He corrected me as a question — *"What about github page? That's what the production app runs
+on right, not cloudflare"* — and he was right.
+
+### Four pieces of evidence I already had
+
+1. **`ORIENT.md`, line 31.** Eighty-four lines, repo root, named for the job:
+   > *Prod app (www.retjghub.com) — push to `main` → GitHub Pages Action
+   > (`.github/workflows/deploy-pages.yml`) runs `scripts/build.sh` and publishes (~30 s).
+   > CNAME pins the domain.*
+
+   Line 32 gives staging as the Cloudflare project. The entire question, answered, in two
+   lines I never read.
+2. **`.github/workflows/deploy-pages.yml`.** Its `name:` is literally *"Deploy production to
+   GitHub Pages"*, and its second comment line says staging stays on Cloudflare. I ran
+   `ls .github/workflows/` early in the session, saw the filename, and took it as *agreement*
+   with the guess I had already formed rather than as the file that would settle it.
+3. **`CNAME` in the repo root**, containing `www.retjghub.com`. I listed it twice. Cloudflare
+   Pages, Vercel and Netlify all configure domains out of band; a committed CNAME is a
+   GitHub Pages artifact and it names the production host.
+4. **CLAUDE.md's own wording.** *"Pages rebuilds `main` automatically, so a merged
+   `index.html` change reaches www.retjghub.com with no further step."* Correct — about
+   GitHub Pages. I read "Pages" as Cloudflare because the section a few lines above it
+   discusses "the two `Cloudflare Pages` checks", and that proximity did the damage.
+
+### Why the wrong answer felt verified
+
+This is the part worth keeping. I did not guess carelessly — I *verified thoroughly against
+the wrong system*. I pulled the deployed worker bundle and grepped it. I queried D1 for the
+column. I read both Cloudflare Pages projects' `production_branch`. I computed how long each
+build had been queued. Every one of those checks was real, and several were genuinely useful.
+None of them could detect that production was somewhere else, because none of them asked.
+
+Depth of verification is not a substitute for verifying the right thing, and it is actively
+dangerous: it produced a confident, specific, well-evidenced report that was wrong in its
+first sentence.
+
+<rules>
+1. **Read the repo's own orientation doc before reasoning about infrastructure.** `ORIENT.md`
+   is 84 lines and answers "where does production deploy from" in one. Any claim about hosts,
+   deploy paths, branches or environments starts there — not with inference from CI checks.
+2. **Which CI checks appear on a PR says what is SUBSCRIBED to the repo, never what serves
+   the domain.** Two Cloudflare Pages checks on every PR are perfectly consistent with
+   production living on GitHub Pages. They are evidence about previews.
+3. **A committed `CNAME` means GitHub Pages.** One line, repo root, names the production
+   host. Every other host configures the domain in its own dashboard.
+4. **A filename is not a file.** Reading `deploy-pages.yml` in an `ls` and treating it as
+   corroboration is the failure — it was the refutation, unopened. If a filename is relevant
+   enough to notice, it is cheap enough to open.
+5. **When a repo has two of something, establish which one is load-bearing BEFORE reporting
+   on either.** Two Pages projects, two hosts, two things called staging. Verifying hard
+   against one of them proves nothing about which one matters.
+6. **Name the system a monitor observes, and how you know it is the one that matters, before
+   arming it.** A watch pointed at the wrong system is worse than no watch: it converts
+   "I don't know" into a confident wrong answer that refreshes itself.
+7. **"The build is queued" is a claim about a build, not about a site.** Before reporting a
+   deploy as incomplete, confirm that the pipeline you are reading is the pipeline that
+   publishes the thing the user is looking at.
+</rules>
+
+### Also recorded, so the next session does not re-derive it
+
+- **Production** — www.retjghub.com, **GitHub Pages**, `.github/workflows/deploy-pages.yml`
+  on push to `main`, builds via `scripts/build.sh` (which regenerates `tailwind.css`, so the
+  stale committed copy never reaches production). Usually ~30 s; the #262 run took 7 minutes
+  and still succeeded, so a slow run is not a failed one.
+- **Staging** — Cloudflare Pages. The `labor-dashboard-staging` project's production branch
+  is **`staging`**, which was 128 commits behind `main` on this date; it also builds previews
+  from any non-`main` branch. A merge to `main` does **not** reach the staging URL.
+- **`labor-dashboard`** (the other Cloudflare Pages project) — previews. Not production.
+- **Worker** — manual `npx wrangler deploy`, no CI, prod and staging separate.
+
+🛑 **ORIENT.md line 37 documents the right way to verify a UI change — "fetch the deployed
+`index.html` and grep for your markers" — and it CANNOT be run from a Claude Code web
+session.** The egress proxy refuses `retjghub.com`, `*.pages.dev`, `github.io` and the
+Actions artifact CDN; only `api.github.com` and `api.cloudflare.com` are reachable. So from
+here the strongest available evidence is the workflow run's own `conclusion: success` plus
+the source at that commit. Say that plainly rather than implying the served page was checked.
+
 ## `head -40` showed one entry, so I replaced forty-five (2026-09-21)
 
 Writing the Price Scan plan, I ran `head -40 tasks/todo.md`, saw one complete task write-up
