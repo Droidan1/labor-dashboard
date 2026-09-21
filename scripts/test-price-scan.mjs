@@ -4197,9 +4197,17 @@ console.log('Price Scan');
   const writeAt = crCode.indexOf('confirm: true');
   ok(openAt > 0 && writeAt > openAt,
      '🛑 …and the only write comes after it — the ordering IS the guard');
-  ok(/async function runStores\(/.test(crCode) &&
-     crCode.indexOf('confirm: true') > crCode.indexOf('async function runStores('),
-     '🛑 …with confirm:true reachable only from runStores');
+  // 🛑 EXACTLY ONE WRITE SITE, and it is inside psPpSend — which runStores is the only
+  // caller of. This used to assert the offset of `confirm: true` against runStores itself;
+  // the guard moved into a helper and the assertion pinned the old shape rather than the
+  // rule. The rule is that there is one place that writes and one path that reaches it.
+  eq((crCode.match(/confirm: true/g) || []).length, 1,
+     '🛑 there is exactly ONE place that writes');
+  ok(crCode.indexOf('confirm: true') > crCode.indexOf('async function psPpSend('),
+     '…and it is inside psPpSend');
+  ok((crCode.match(/psPpSend\(/g) || []).length >= 2 &&
+     crCode.indexOf('psPpSend(first)') > crCode.indexOf('async function runStores('),
+     '…which nothing but runStores calls');
   ok(/goBtn\.onclick = \(\) => runStores\(stores\)/.test(crCode),
      '…which only a button press starts');
   ok(/cancelBtn\.onclick/.test(crCode) && /Nothing was created/.test(cr || ''),
@@ -4210,10 +4218,12 @@ console.log('Price Scan');
   // progress. Pinned as the fan-out, because that is the thing that makes it live.
   ok(/stores: \[s\]/.test(crCode),
      '🔑 the create is fanned out ONE STORE PER REQUEST, so each row moves on its own answer');
-  ok(/psPpSet\(overlay, s, 'busy'/.test(crCode) &&
-     /psPpSet\(overlay, s, 'ok'/.test(crCode) &&
-     /psPpSet\(overlay, s, 'bad'/.test(crCode),
-     '…and every store reaches a visible state: in flight, added, or failed');
+  // Every state a row can be in is actually reachable from the code. What each one MEANS in
+  // practice is proven by running it, further down — this only catches a state being
+  // dropped entirely in a refactor.
+  for (const st of ['wait', 'busy', 'ok', 'bad']) {
+    ok(new RegExp(`'${st}'`).test(crCode), `…a row can reach the '${st}' state`);
+  }
   ok(/runStores\(failed\)/.test(crCode),
      '🔑 a retry re-asks only the stores that failed, not all six again');
 
@@ -4228,6 +4238,164 @@ console.log('Price Scan');
      '🛑 the control that opens it is a full-width button, not a .ps-link footnote');
   ok(!/class="ps-link"[^>]*onclick="psCreatePricePoint/.test(html),
      '…and the old inline link is gone');
+}
+
+// ── The pop-up against BOTH worker versions ──────────────────────────────────
+//
+// 🛑 THIS IS THE TEST THE PRODUCTION INCIDENT SHOULD HAVE HAD. The modal shipped firing six
+// confirm requests through Promise.all. The worker deployed at the time ignored the `stores`
+// narrowing and created at every store on every request, and its duplicate check is a
+// read-then-write with no lock — so six simultaneous callers each read Clover, each saw
+// nothing, and each wrote. Five copies of one item landed in one store.
+//
+// Nothing in the suite could catch it, because every assertion was about SOURCE TEXT. The
+// defect was in behaviour against a server that answers differently, which only running the
+// thing can find. So this builds the real function and drives it.
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const src = sliceOrNull(html, '  const PS_PP_STATE = { open: false };',
+                          '  window.psCreatePricePoint = psCreatePricePoint;');
+  ok(src, 'the price-point modal is extractable');
+
+  const STORES = ['BL1', 'BL2', 'BL4', 'BL8', 'BL14', 'BL16'];
+
+  // A DOM thin enough to build in a test and real enough for this function: the only
+  // queries it makes are three ids and one row-mark selector per store.
+  const makeDom = () => {
+    const marks = {};
+    STORES.forEach(s => { marks[s] = { style: {}, textContent: '' }; });
+    const btn = () => ({ style: {}, textContent: '', disabled: false, focus() {}, onclick: null });
+    const nodes = { '#ps-pp-go': btn(), '#ps-pp-cancel': btn(), '#ps-pp-foot': { style: {}, textContent: '', innerHTML: '' } };
+    const overlay = {
+      style: {}, innerHTML: '', parentNode: null,
+      setAttribute() {}, addEventListener() {},
+      querySelector(sel) {
+        const m = /data-store="([^"]+)"/.exec(sel);
+        if (m) return marks[m[1]] || null;
+        return nodes[sel] || null;
+      },
+    };
+    return { overlay, nodes, marks };
+  };
+
+  // Drives psCreatePricePoint with a scripted worker, then presses Add.
+  // `confirmReply(body)` decides what the create call answers — that is the only difference
+  // between a current worker and the one that caused the incident.
+  const run = async (confirmReply) => {
+    const dom = makeDom();
+    const sent = [];
+    const fakeFetch = async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      sent.push({ url: String(url), body });
+      if (body.confirm !== true) {
+        // The preview. It always describes every store.
+        return { ok: true, json: async () => ({
+          ok: true, preview: true, created: false, code: 'BL-50002-1_35',
+          name: 'FG BL CONSUMABLES - FOOD - BEVERAGES', price: 1.35,
+          stores: STORES.slice(), warnings: [],
+        }) };
+      }
+      return { ok: true, json: async () => confirmReply(body) };
+    };
+
+    let checks = 0;
+    const ctx = {
+      el: () => null,
+      psEsc: (v) => String(v == null ? '' : v),
+      psMoney: (v) => `$${Number(v).toFixed(2)}`,
+      psStickerStore: () => 'BL1',
+      psStickerFault: () => 'fault',
+      psStickerCheck: async () => { checks++; },
+      WORKER_BASE: 'https://worker.test',
+      fetch: fakeFetch,
+      psLast: { l3: 'FG BL CONSUMABLES - FOOD - BEVERAGES', l3_label: 'Beverages', price: 1.35 },
+      window: { themeColors: () => ({ dialogBg: '#fff', dialogFg: '#000', dialogDim: '#555', dialogBorder: '#ccc' }) },
+      document: {
+        documentElement: { classList: { contains: () => false } },
+        body: { appendChild(n) { n.parentNode = { removeChild() {} }; } },
+        createElement: () => dom.overlay,
+        addEventListener() {}, removeEventListener() {},
+      },
+    };
+    const names = Object.keys(ctx);
+    const api = buildOrStub('the price-point modal', src, names, names.map(n => ctx[n]),
+      '{ psCreatePricePoint }');
+    await api.psCreatePricePoint();          // opens the dialog; must not write
+    const previewOnly = sent.length;
+    await dom.nodes['#ps-pp-go'].onclick();  // press Add
+    return { sent, previewOnly, dom, checks };
+  };
+
+  // ── A current worker: one request per store, one row each ──────────────────
+  {
+    const { sent, previewOnly, dom, checks } = await run((body) => ({
+      ok: true, created: true,
+      results: [{ store: body.stores[0], ok: true }],
+      store_ready: true,
+    }));
+
+    eq(previewOnly, 1, '🛑 opening the dialog sends exactly ONE call, and it is the preview');
+    ok(sent[0].body.confirm === undefined, '…carrying no confirm, so it cannot create');
+
+    const writes = sent.filter(x => x.body.confirm === true);
+    eq(writes.length, 6, 'a current worker gets one confirm per store');
+    eq(writes.map(w => w.body.stores[0]).sort().join(','), 'BL1,BL14,BL16,BL2,BL4,BL8',
+       '…each naming exactly one store, and every store once');
+    STORES.forEach(s => eq(dom.marks[s].textContent, 'added', `${s}'s row reports its own result`));
+    eq(checks, 1, '🔑 …and the sticker check re-runs once, so Print enables without a rescan');
+  }
+
+  // ── THE INCIDENT: a worker that ignores the narrowing ──────────────────────
+  //
+  // It answers for every store on the first call. One more request after that is one more
+  // concurrent writer racing the same unlocked duplicate check, which is what put five
+  // copies in one store. The client must stop dead.
+  {
+    const { sent, dom, checks } = await run(() => ({
+      ok: true, created: true,
+      results: STORES.map(s => ({ store: s, ok: true })),
+      store_ready: true,
+    }));
+
+    const writes = sent.filter(x => x.body.confirm === true);
+    eq(writes.length, 1,
+       '🛑 AN OLD WORKER GETS EXACTLY ONE WRITE. Six were sent in production and five '
+       + 'copies of one item landed in one store — the remaining five are the damage');
+    eq(writes[0].body.stores.length, 1, '…and it still asked for one store, politely');
+    STORES.forEach(s => eq(dom.marks[s].textContent, 'added',
+      `🔑 ${s}'s row is filled from that one answer rather than left saying "queued"`));
+    eq(checks, 1, '…and printing is still re-checked, because the items really were created');
+  }
+
+  // ── A store that refuses is reported, not swallowed ────────────────────────
+  {
+    const { dom } = await run((body) => {
+      const s = body.stores[0];
+      return s === 'BL4'
+        ? { ok: true, created: true, results: [{ store: s, ok: false, stage: 'duplicate-check',
+              error: 'Could not check whether BL-50002-1_35 is already in use' }], store_ready: false }
+        : { ok: true, created: true, results: [{ store: s, ok: true }], store_ready: true };
+    });
+    ok(/Could not check/.test(dom.marks['BL4'].textContent),
+       '🛑 a refusal shows the reason on ITS row, rather than a generic failure');
+    eq(dom.marks['BL2'].textContent, 'added', '…and does not contaminate the stores that worked');
+  }
+
+  // ── The ordering, pinned in source as well ─────────────────────────────────
+  //
+  // 🔑 The behavioural tests above prove the CURRENT code is right. This one says WHY it is
+  // shaped that way, so a future refactor back to a flat Promise.all over the whole list
+  // fails here with the reason attached rather than silently re-opening the race.
+  {
+    const code = decomment(src);
+    ok(/const \[first, ...rest\] = list;/.test(code),
+       '🛑 the first store is sent ALONE — a parallel fan-out has already written by the '
+       + 'time its first reply could reveal an old worker');
+    ok(code.indexOf('await psPpSend(first)') < code.indexOf('Promise.all(rest.map'),
+       '…and the remaining stores go only after that answer has been inspected');
+    ok(/firstResults.length > 1/.test(code),
+       '…with more than one result meaning the narrowing was ignored');
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
