@@ -1887,7 +1887,17 @@ async function fetchTransactionOrders(store, env, sinceTimestamp, untilTimestamp
   while (true) {
     let url = `https://api.clover.com/v3/merchants/${merchantId}/orders`
       + `?filter=createdTime>=${sinceTimestamp}`
-      + `&expand=payments,customers,lineItems,lineItems.discounts`
+      // 🔑 lineItems.item ADDED 2026-09-21 (Phase 3). Until then this path never asked for
+      // the item, so payment_archive_items could not have carried an identity even if it had
+      // a column for one — the field was not merely dropped on write, it was never fetched.
+      // The item-sales path has expanded it for a long time (see the aggregation fetch), so
+      // the shape is known-good; this is the same expansion on the path that PERSISTS.
+      //
+      // 🛑 IT MAKES EVERY ORDER PAYLOAD BIGGER, on the one job that must not fail. Banking
+      // runs daily for every store and a 429 here is a day that does not bank. cloverFetch
+      // already retries a rate-limited page, and the pager already treats a failed page as
+      // "not the end" rather than silently truncating — both of which matter more now.
+      + `&expand=payments,customers,lineItems,lineItems.item,lineItems.discounts`
       + `&limit=${limit}&offset=${offset}`;
     if (untilTimestamp) url += `&filter=createdTime<${untilTimestamp}`;
     const resp = await cloverFetch(url, { headers });
@@ -1959,10 +1969,20 @@ function buildOrderItems(order) {
     // different things to whoever is reading, and merging them hides the
     // discount inside an average.
     const unitCents = qty ? Math.round(netCents / qty) : Math.round(netCents);
-    const key = JSON.stringify([li.name ?? null, unitCents, refunded]);
+    // 🛑 THE CODE IS PART OF WHAT MAKES TWO LINES THE SAME LINE. Without it, two
+    // opportunity-buy items from DIFFERENT buys merge into one row — they share a name
+    // (the L3 key, which every price point in a category carries) and can share a price,
+    // so name+price cannot tell them apart. The split would be lost at the very last step,
+    // after being carried correctly all the way through the code, the item and the fetch.
+    //
+    // 🔑 AND AN ABSENT CODE STILL MERGES AS BEFORE. A line whose item Clover did not return
+    // has code null, so two such lines share a key exactly as they did before Phase 3 —
+    // which is what keeps every ordinary day byte-identical to what it used to bank.
+    const code = li.item?.code || li.item?.sku || null;
+    const key = JSON.stringify([li.name ?? null, unitCents, refunded, code]);
     const hit = merged.get(key);
     if (hit) { hit.qty += qty; hit.cents += netCents; }
-    else merged.set(key, { name: li.name || null, qty, cents: netCents, refunded });
+    else merged.set(key, { name: li.name || null, qty, cents: netCents, refunded, code });
   }
 
   const r2 = (n) => Math.round(n * 100) / 100;
@@ -1973,6 +1993,9 @@ function buildOrderItems(order) {
     // row's unit price is price / qty, which the client derives when qty > 1.
     price: Math.round(m.cents) / 100,
     refunded: m.refunded,
+    // NULL for a line Clover gave no item for, and for every row banked before Phase 3.
+    // migration-072 says why that must never be backfilled.
+    code: m.code || null,
   }));
 }
 
@@ -2302,14 +2325,14 @@ async function bankTransactionsDay(store, env, dateStr, { dry = false, force = f
     try {
       const itemStmt = env.DB.prepare(
         `INSERT OR REPLACE INTO payment_archive_items
-           (store, date, order_id, seq, name, qty, price, refunded, banked_at)
-         VALUES (?,?,?,?,?,?,?,?,?)`
+           (store, date, order_id, seq, name, qty, price, refunded, banked_at, code)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`
       );
       const binds = [];
       for (const [orderId, items] of itemsByOrder) {
         items.forEach((it, seq) => binds.push(itemStmt.bind(
           store, dateStr, orderId, seq, it.name ?? null, it.qty ?? null,
-          it.price ?? null, it.refunded ? 1 : 0, bankedAt)));
+          it.price ?? null, it.refunded ? 1 : 0, bankedAt, it.code ?? null)));
       }
       // The wipe rides in the FIRST batch, which D1 runs as one transaction, so
       // the day is never left with its old items gone and no replacement.
@@ -23487,10 +23510,53 @@ export default {
             GROUP BY store, code, price_cents
             ORDER BY l3, price_cents, store`
         ).bind(po).all();
+        // ── What sold, and from when we can even tell ────────────────────────
+        //
+        // 🛑 "ZERO SOLD" AND "NOT TRACKED" ARE DIFFERENT ANSWERS. Every archived row banked
+        // before migration-072 has code NULL and always will — it cannot be backfilled,
+        // because buildOrderItems MERGED lines on (name, price, refunded) before storing
+        // them, so two items in one category at one price became one row and no re-fetch
+        // can split them. Printing 0 for a period we cannot see would be a lie the page
+        // tells confidently, so the boundary travels with the answer and the client says
+        // "not tracked" for anything before it.
+        //
+        // The boundary is derived from the data rather than hardcoded to a deploy date:
+        // the earliest archived date carrying ANY code is the day attribution begins.
+        const tracked = await env.DB.prepare(
+          `SELECT MIN(date) AS from_date FROM payment_archive_items WHERE code IS NOT NULL`
+        ).first();
+        // 🔑 REFUNDS ARE COUNTED SEPARATELY, NEVER NETTED SILENTLY. A refunded line is not
+        // a sale that did not happen; it is a sale that came back, and a buy where half the
+        // units returned is a different story from one that sold half as many. Clover gives
+        // no line references on /refunds either, so this is the honest grain available.
+        const sold = await env.DB.prepare(
+          `SELECT store, code,
+                  SUM(CASE WHEN refunded = 0 THEN qty ELSE 0 END) AS sold_units,
+                  SUM(CASE WHEN refunded = 1 THEN qty ELSE 0 END) AS refunded_units
+             FROM payment_archive_items
+            WHERE code IS NOT NULL
+              AND code IN (SELECT DISTINCT code FROM sticker_prints WHERE po = ?)
+            GROUP BY store, code`
+        ).bind(po).all();
+        const soldBy = new Map();
+        for (const r of (sold?.results || [])) {
+          soldBy.set(`${r.store}\u0000${r.code}`, {
+            sold: Number(r.sold_units) || 0,
+            refunded: Number(r.refunded_units) || 0,
+          });
+        }
+        const totalSold = [...soldBy.values()].reduce((a, b) => a + b.sold, 0);
+        const totalRefunded = [...soldBy.values()].reduce((a, b) => a + b.refunded, 0);
+
         return new Response(JSON.stringify({
           ok: true,
           can_edit: obMayEdit(currentUser, isAdminSecret),
           buy: obBuyRow(buy),
+          // NULL until the first day is banked under Phase 3's worker. The client reads a
+          // null here as "nothing is attributable yet", not as "nothing sold".
+          tracked_from: (tracked && tracked.from_date) || null,
+          sold: totalSold,
+          refunded_units: totalRefunded,
           lines: (lines?.results || []).map(r => ({
             store: r.store, l3: r.l3, code: r.code, title: r.title || "",
             price: (Number(r.price_cents) || 0) / 100,
@@ -23501,6 +23567,8 @@ export default {
             labels: Number(r.labels) || 0,
             presses: Number(r.presses) || 0,
             first_print: r.first_print, last_print: r.last_print,
+            sold: (soldBy.get(`${r.store}\u0000${r.code}`) || {}).sold || 0,
+            refunded_units: (soldBy.get(`${r.store}\u0000${r.code}`) || {}).refunded || 0,
           })),
         }), { headers: corsJson });
       } catch (e) {

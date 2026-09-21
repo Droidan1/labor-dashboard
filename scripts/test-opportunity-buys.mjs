@@ -31,7 +31,7 @@ const { db, env } = makeEnv(repo);
 // swallowed, which is the helper's documented behaviour.
 for (const m of ['migration-041.sql', 'migration-042.sql', 'migration-043.sql',
                  'migration-056.sql', 'migration-062.sql', 'migration-070.sql',
-                 'migration-071.sql'])
+                 'migration-071.sql', 'migration-064.sql', 'migration-072.sql'])
   db.exec(fs.readFileSync(path.join(repo, m), 'utf8'));
 applyMigrationAlters(db, repo);
 
@@ -501,6 +501,127 @@ console.log('Opportunity buys');
     eq((fn.match(new RegExp(ret.replace(/[|]/g, '\\|'), 'g')) || []).length, 2,
        'every return path falls back to the OB sibling rather than returning none');
   }
+}
+
+
+// ── Phase 3: a sold line remembers which item it was ─────────────────────────
+//
+// 🛑 THE MERGE KEY IS WHERE THE WHOLE CHAIN WOULD BE LOST. The PO is carried correctly
+// through the code, the Clover item and the fetch — and then buildOrderItems merges lines on
+// (name, price, refunded) before storing them. Two opportunity-buy items from DIFFERENT buys
+// share a name (the L3 key, which every price point in a category carries) and can share a
+// price, so without the code in that key they collapse into one archive row at the very last
+// step. Nothing downstream could tell, and it could never be repaired afterwards.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const body = src.slice(src.indexOf('function buildOrderItems(order) {'),
+                         src.indexOf('// orderId → items, for a whole day of orders.'));
+  ok(body.length > 400, 'buildOrderItems is where the test expects it');
+  const buildOrderItems = new Function(body + '\nreturn buildOrderItems;')();
+
+  const line = (name, price, code, extra = {}) => ({
+    name, price, ...(code === undefined ? {} : { item: { code } }), ...extra,
+  });
+  const order = (...lines) => ({ lineItems: { elements: lines } });
+
+  // 🛑 THE CASE THAT MOTIVATES THE WHOLE CHANGE.
+  const twoBuys = buildOrderItems(order(
+    line('FG BL TOYS', 250, 'BL-50008-2_5-P99999'),
+    line('FG BL TOYS', 250, 'BL-50008-2_5-P88888'),
+  ));
+  eq(twoBuys.length, 2,
+     '🛑 TWO BUYS AT ONE PRICE IN ONE CATEGORY STAY TWO LINES — same name, same price, and '
+     + 'only the code tells them apart');
+  eq(twoBuys.map(l => l.code).sort().join(','), 'BL-50008-2_5-P88888,BL-50008-2_5-P99999',
+     '…each carrying its own buy');
+
+  // 🔑 AND AN ORDINARY DAY IS UNCHANGED. Identical lines with no item still merge exactly as
+  // they did before Phase 3 — which is what keeps every non-OB receipt byte-identical.
+  const noItem = buildOrderItems(order(
+    line('FG BL TOYS', 250, undefined),
+    line('FG BL TOYS', 250, undefined),
+    line('FG BL TOYS', 250, undefined),
+  ));
+  eq(noItem.length, 1, '🔑 three identical lines with no item still merge into one');
+  eq(noItem[0].qty, 3, '…as 3 units');
+  eq(noItem[0].code, null, '…with a null code, never undefined, never a string "undefined"');
+
+  // The same item twice is still one line — the code makes lines distinguishable, not unique.
+  const sameItem = buildOrderItems(order(
+    line('FG BL TOYS', 250, 'BL-50008-2_5-P99999'),
+    line('FG BL TOYS', 250, 'BL-50008-2_5-P99999'),
+  ));
+  eq(sameItem.length, 1, 'the SAME item twice still merges');
+  eq(sameItem[0].qty, 2, '…as 2 units');
+
+  // A refunded line was already its own row and stays one.
+  const refunded = buildOrderItems(order(
+    line('FG BL TOYS', 250, 'BL-50008-2_5-P99999'),
+    line('FG BL TOYS', 250, 'BL-50008-2_5-P99999', { refunded: true }),
+  ));
+  eq(refunded.length, 2, 'a refunded line is still separate from a sold one');
+
+  // sku is the fallback, because create-clover-item writes the same string to BOTH.
+  eq(buildOrderItems(order({ name: 'X', price: 100, item: { sku: 'BL-1-1' } }))[0].code, 'BL-1-1',
+     '🔑 sku falls back for code — this app writes the same string to both fields');
+
+  // 🛑 AND THE FETCH ACTUALLY ASKS FOR THE ITEM. Without the expansion every code above is
+  // null in production and the whole phase is inert while every test here still passes.
+  ok(/expand=payments,customers,lineItems,lineItems\.item,lineItems\.discounts/.test(src),
+     '🛑 the BANKING fetch expands lineItems.item — without it there is nothing to store '
+     + 'and this suite would pass against a feature that does nothing');
+}
+
+// ── Sell-through, and the boundary it must never print through ───────────────
+{
+  await openBuy('SELL-1', SU, { label: 'Sold test', units: 100 });
+  await call('/?action=sticker-printed', {
+    user: MGR, method: 'POST',
+    body: { store: 'BL1', l3: 'FG BL TOYS', price: 2.5, code: 'BL-50008-2_5-PSELL-1', po: 'SELL-1', qty: 20 },
+  });
+
+  // Nothing banked yet: the archive has no coded rows at all.
+  const cold = await call('/?action=ob-buy-detail&po=SELL-1', { user: MGR });
+  eq(cold.j?.tracked_from, null,
+     '🛑 WITH NO CODED ROW ANYWHERE, THE ANSWER IS "we cannot tell" — not "nothing sold". '
+     + 'Every row banked before Phase 3 is category-grain and can never be repaired');
+  eq(cold.j?.sold, 0, '…and the total is 0, which the client must not render as a fact');
+
+  // Now bank some sales under that code, plus one refund and one unrelated sale.
+  const ins = db.prepare(`INSERT INTO payment_archive_items
+    (store, date, order_id, seq, name, qty, price, refunded, banked_at, code)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  ins.run('BL1', '2026-09-21', 'o1', 0, 'FG BL TOYS', 6, 15.0, 0, 't', 'BL-50008-2_5-PSELL-1');
+  ins.run('BL1', '2026-09-22', 'o2', 0, 'FG BL TOYS', 3, 7.5, 0, 't', 'BL-50008-2_5-PSELL-1');
+  ins.run('BL1', '2026-09-22', 'o3', 0, 'FG BL TOYS', 2, 5.0, 1, 't', 'BL-50008-2_5-PSELL-1');
+  ins.run('BL1', '2026-09-22', 'o4', 0, 'FG BL TOYS', 9, 22.5, 0, 't', 'BL-50008-2_5-P99999');
+  // And an OLD row from before the column existed, which must not count for anything.
+  ins.run('BL1', '2026-01-05', 'o0', 0, 'FG BL TOYS', 50, 125.0, 0, 't', null);
+
+  const hot = await call('/?action=ob-buy-detail&po=SELL-1', { user: MGR });
+  eq(hot.j?.sold, 9, '🔑 6 + 3 sold — the refunded line is NOT netted into it silently');
+  eq(hot.j?.refunded_units, 2, '…and the 2 returned units are reported on their own');
+  eq(hot.j?.tracked_from, '2026-09-21',
+     '🛑 the boundary is the earliest CODED date, derived from the data rather than a '
+     + 'hardcoded deploy date — and it ignores the 2026-01-05 row, which has no code');
+  const line = (hot.j?.lines || []).find(l => l.code === 'BL-50008-2_5-PSELL-1');
+  eq(line?.sold, 9, 'the line carries its own sold count');
+  eq(line?.labels, 20, '…alongside the labels printed for it');
+  ok(!(hot.j?.lines || []).some(l => l.sold === 9 && l.code === 'BL-50008-2_5-P99999'),
+     '🔑 another buy\'s sales at the same category and price are NOT counted here');
+}
+
+// ── The client never prints 0 where it cannot see ────────────────────────────
+{
+  const html = fs.readFileSync(path.join(repo, 'index.html'), 'utf8');
+  const fn = html.slice(html.indexOf('function obSoldCell(n)'), html.indexOf('function obRenderDetail'));
+  ok(/not tracked/.test(fn),
+     '🛑 the Sold cell says "not tracked" when no date is attributable — printing 0 for a '
+     + 'period the archive cannot see is a lie the page would tell confidently');
+  ok(/obTracked/.test(fn), '…gated on the boundary the worker sends, not on a local guess');
+  ok(/obTracked = j\.tracked_from/.test(html), 'and the boundary is taken from the response');
+  ok(html.indexOf('obTracked = j.tracked_from') < html.indexOf('obRenderDetail(Object.assign'),
+     '🔑 …and set BEFORE the render, which reads it for every cell');
 }
 
 console.log(`\n${assertions - failures} passed, ${failures} failed`);
