@@ -11266,6 +11266,50 @@ function manifestIdentType(v) {
   return "vendor_sku";
 }
 
+// ─── A manifest description, as a product NAME ───────────────────────────────────
+//
+// A buy sheet's description is what the identity lookup spends two searches trying to
+// build — STEP 1 of merch-scan says a barcode must be resolved to "a brand, product and
+// size" first, and "DOWNY LIQUID FABRIC SOFTENER 26OZ" is exactly that. So it is used as
+// the item's name. What it is NOT is clean: 12 of the 82 lines in production end in a
+// best-by date, and two of those read "BB 2/11/202725" and "BB 3/31/202736", where the
+// date ran into the next figure on the vendor's row.
+//
+// 🛑 A BARE TWO-PART `12/15` IS NOT A DATE AND MUST SURVIVE. This repo reads "12/15ct" as
+// twelve boxes of fifteen — retailPackSize(..., { vendor: true }) — and stripping it would
+// silently change what a line says it contains. Only a THREE-part date, or one standing
+// behind a best-by marker, is treated as a date.
+//
+// 🔑 PACK PARENTHETICALS ARE KEPT. "(45 PK)" reads as noise in a search query but it is
+// real information that retailPackSize uses, and this function's output is also what gets
+// cached as the item's name. Losing it to tidy a query would lose it everywhere.
+const OB_NAME_TAILS = [
+  // A marker and a full date behind it. `\d{2,6}` for the year, for the two rows above.
+  /\s*[,;.]?\s*\b(?:bb|b\/b|exp|expiry|expires?|best\s*(?:by|before))\b[\s.:\-\u2013]*\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,6}\s*$/i,
+  // The same marker with a month and year only — "BB 05/2027".
+  /\s*[,;.]?\s*\b(?:bb|b\/b|exp|expiry|expires?|best\s*(?:by|before))\b[\s.:\-\u2013]*\d{1,2}[\/\-.]\d{2,6}\s*$/i,
+  // A three-part date at the very end with no marker at all — one real row ends
+  // "SHIPPER DISPLAY 1/3/27". Three parts, never two.
+  /\s+\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\s*$/,
+];
+// Below this, whatever is left is not a name — a stray code, a unit, an empty cell. Returns
+// null rather than a short string, so the caller falls back to knowing nothing instead of
+// searching for "OZ" and caching the result as an item's identity.
+const OB_NAME_MIN = 6;
+function obSheetName(raw) {
+  let t = String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  // Applied repeatedly: a row can carry a marker AND a bare date.
+  for (let pass = 0; pass < 3; pass++) {
+    const before = t;
+    for (const re of OB_NAME_TAILS) t = t.replace(re, "");
+    t = t.trim();
+    if (t === before) break;
+  }
+  t = t.replace(/[\s,;:\-\u2013]+$/, "").trim();
+  return t.length >= OB_NAME_MIN ? t : null;
+}
+
 // Guess a vendor's columns from their headers, so the FIRST manifest maps itself and the
 // human only corrects it. The saved template then handles every one after.
 // Ordered most-specific first, and matched by CONTAINS rather than anchored: real vendor
@@ -25889,7 +25933,45 @@ export default {
         ]);
 
         // ── what it is ────────────────────────────────────────────────────────
-        let title = cached?.title || desc || null;
+        //
+        // 🔑 THE SHEET IS AWAITED HERE, BEFORE THE NAME IS DECIDED, and that ordering is
+        // the whole fix. It used to be awaited after the price ladder — far too late to
+        // stop the identity lookup, which is the expensive thing the sheet makes
+        // unnecessary. The query was already fired further up, alongside the cache read,
+        // so nothing is serialised that was not already in flight.
+        const ob = obSheet ? await obSheet : null;
+        const obMatched = !!(ob && ob.row_no !== null && ob.row_no !== undefined);
+
+        // 🛑 A BARCODE NOBODY CAN NAME COSTS TWO SEARCHES AND LEARNS NOTHING, EVERY TIME.
+        // The lookup spends one search per spelling merchIdForms produces, fails, and then
+        // the cache write — guarded on `(title || l3 || retail !== null)` — does not fire,
+        // because a lookup that found nothing satisfies none of those. So the next scan of
+        // that item repeats it, and the one after that. Closeout goods are
+        // disproportionately unindexed, which is to say an opportunity buy is made almost
+        // entirely of the items this happens to.
+        //
+        // And it is not only the searches. Pricing is skipped outright when identity
+        // failed (`&& !unknownCode`) and classification needs a title (`(!l3 && title)`),
+        // so one missing name also removes the street price, the category, the cost and
+        // the margin. The screen shows a number with nothing behind it.
+        //
+        // The sheet already holds what STEP 1 is trying to construct — it says so itself:
+        // resolve the barcode to "a brand, product and size" first. "DOWNY LIQUID FABRIC
+        // SOFTENER 26OZ" IS that. So it goes in the slot a TYPED description already
+        // occupies, which is why this is one term and not a new mechanism.
+        //
+        // 🔑 ORDER: a resolved name beats the sheet, the person at the keyboard beats both.
+        // `cached?.title` is a name something actually looked up; `desc` is a human typing
+        // what is in their hand. The sheet is a vendor's spreadsheet — better than nothing,
+        // and the weakest of the three.
+        const sheetName = obMatched ? obSheetName(ob.sheet_description) : null;
+        let title = cached?.title || desc || sheetName || null;
+        // Where that name came from, so the cache can refuse to let a spreadsheet overwrite
+        // something that was actually resolved. NULL on every row written before
+        // migration-074 — those are all lookups, which is what the reader treats NULL as.
+        let titleSource = cached?.title
+          ? (cached.title_source || "lookup")
+          : desc ? "lookup" : sheetName ? "manifest" : null;
         let l3 = cached?.l3 ?? null;
         let l3Source = cached?.l3_source ?? null;
         let looked = false;
@@ -25984,7 +26066,15 @@ export default {
             missFlags.push(...(r.decided.flags || []));
             // A search that resolved a real product NAME is worth as much as the price —
             // it is what makes the next scan of this UPC instant.
-            if (!title && r.decided.title) title = r.decided.title;
+            //
+            // 🔑 IT ALSO BEATS A NAME READ OFF A SHEET. A vendor's abbreviation got us far
+            // enough to run this search; the product the search actually identified is the
+            // better name, and taking it is what stops the spreadsheet's wording becoming
+            // this item's permanent identity.
+            if (r.decided.title && (!title || titleSource === "manifest")) {
+              title = r.decided.title;
+              titleSource = "lookup";
+            }
           } else if (r?.skipped) {
             missFlags.push(r.skipped === "budget" ? "not looked up" : String(r.skipped));
           }
@@ -26020,8 +26110,8 @@ export default {
         });
 
         // ── What the buy's sheet says ──────────────────────────────────────────
-        const ob = obSheet ? await obSheet : null;
-        const obMatched = !!(ob && ob.row_no !== null && ob.row_no !== undefined);
+        // `ob` and `obMatched` were resolved much earlier, before the name was decided —
+        // the sheet has to be in hand before the identity lookup, not after the ladder.
         const obPrice = obMatched && ob.ob_price !== null && ob.ob_price !== undefined
           ? Number(ob.ob_price) : null;
         if (scanPo) {
@@ -26069,10 +26159,27 @@ export default {
             // now preserve the same evidence about the same fact.
             `INSERT INTO item_cache (identifier, identifier_type, title, brand, size, l2, l3, l3_source,
                retail_price, retail_source, retail_confidence, retail_basis, retail_in_stock,
-               retail_url, fetched_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               retail_url, fetched_at, updated_at, title_source)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(identifier, identifier_type) DO UPDATE SET
-               title = COALESCE(excluded.title, item_cache.title),
+               -- 🛑 A SPREADSHEET NEVER OVERWRITES A RESOLVED NAME. Once item_cache.title
+               -- is set, the identity lookup's own guard (no title, no lookup) is satisfied
+               -- forever, so that barcode is never resolved again — a name is a permanent
+               -- decision, and a vendor's abbreviation must not be able to replace one
+               -- something actually identified. Same shape as the l3 rule two lines down,
+               -- which protects a human's category from a model's.
+               -- NULL title_source means a row written before migration-074; those are all
+               -- lookups, so it is read as 'lookup' rather than as unknown.
+               title = CASE WHEN excluded.title_source = 'manifest'
+                             AND item_cache.title IS NOT NULL
+                             AND COALESCE(item_cache.title_source, 'lookup') <> 'manifest'
+                            THEN item_cache.title
+                            ELSE COALESCE(excluded.title, item_cache.title) END,
+               title_source = CASE WHEN excluded.title_source = 'manifest'
+                                    AND item_cache.title IS NOT NULL
+                                    AND COALESCE(item_cache.title_source, 'lookup') <> 'manifest'
+                                   THEN item_cache.title_source
+                                   ELSE COALESCE(excluded.title_source, item_cache.title_source) END,
                brand = COALESCE(excluded.brand, item_cache.brand),
                size = COALESCE(excluded.size, item_cache.size),
                l2 = COALESCE(excluded.l2, item_cache.l2),
@@ -26092,9 +26199,11 @@ export default {
           // 🔑 undefined is not bindable — sqlite takes null, and a `?.` on a missing cache
           // row yields undefined, not null. Coerced at the boundary rather than trusting
           // every expression above to have produced the right kind of empty.
+          // 17 columns, 17 placeholders, 17 bound values. Counted: an arity that drifts by
+          // one binds every later column to the wrong field and nothing throws.
           ).bind(...[identifier, identType, title, brand, size, l2, l3, l3Source,
                      retail, retailSource, retailConf, retailBasis, retailInStock, retailUrl,
-                     retailObserved ? now : null, now]
+                     retailObserved ? now : null, now, titleSource]
                     .map(v => v === undefined ? null : v)).run();
         }
 
@@ -26105,7 +26214,11 @@ export default {
           // never to replace a resolved product title, which would make the same item read
           // differently depending on whether a buy was selected. The description is in the
           // `manifest` block either way, so the screen can always show both.
-          title: title || (obMatched ? ob.sheet_description : null) || null,
+          title,
+          // 🔑 WHERE THE NAME CAME FROM, because "we identified this" and "a vendor's
+          // spreadsheet called it this" are different claims and the screen should not make
+          // the weaker one look like the stronger. NULL on a scan that has no name at all.
+          title_source: title ? (titleSource || "lookup") : null,
           brand, size,
           l2, l3, l3_label: l3 ? merchLabel(l3) : null, l2_label: l2 ? merchLabel(l2) : null,
           l3_source: l3Source,

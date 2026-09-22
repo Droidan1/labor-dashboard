@@ -1,3 +1,161 @@
+# The identity lookup on an OB scan (2026-09-22)
+
+**Brian:** *"What's the identity lookup fix for OB scans?"* → *"build it"*
+
+## The waste, measured
+
+A PO scan of an item no public source can name spends **two searches** (one per barcode
+spelling, `merchIdForms` → `retailSearch`), fails, and **caches nothing** — the cache write
+is guarded on `(title || l3 || retail !== null)` and a lookup that found nothing satisfies
+none of them. So the next scan of that item repeats it. Forever.
+
+🛑 **And it is wider than the searches, which is what I missed when I first flagged it.**
+Every downstream step is gated on having a name:
+
+| step | guard | today, unnameable barcode |
+|---|---|---|
+| identity | `if (identifier && !title)` | 2 searches, fails |
+| pricing | `if (… && !unknownCode)` | **skipped entirely** |
+| classification | `(!l3 && title)` | **skipped** → no L3 → no cost → no GP% |
+| cache write | `(title \|\| l3 \|\| retail !== null)` | **never fires** → next scan repeats it |
+
+So it is not "two wasted searches". It is: spends money, learns nothing, shows no street
+price and no margin, and forgets.
+
+## The sheet already holds what the lookup is trying to build
+
+STEP 1 exists because *"a barcode alone is not searchable for a price — resolve it to a
+brand, product and size first, and price THAT"*. A manifest description **is** that
+resolution. Sampled from production's 82 lines:
+
+```
+DOWNY LIQUID FABRIC SOFTENER 26OZ
+CASCADE TOTAL CLEAN SHINE 103CT
+MARVEL: TITAN HERO TECH - 12" CAPTAIN AMERICA W/SOUND
+```
+
+All 82 are ≥ 15 characters. 54 carry real UPCs.
+
+And the mechanism is already there — a **typed** description does exactly this:
+
+```js
+let title = cached?.title || desc || null;
+```
+
+A manifest description is a typed description nobody had to type. It goes in that slot,
+after `desc`, so a manager's own words still win.
+
+## 🛑 The junk, counted rather than guessed
+
+12 of 82 carry a date marker, and the shapes rule out a naive regex:
+
+```
+EXP - 2/14/2027          ← prefix with a dash
+BB 05/2027               ← month/year only
+BB 2/11/202725           ← the date ran into another number
+BB 3/31/202736           ← again
+... SHIPPER DISPLAY 1/3/27   ← NO prefix at all
+```
+
+🛑 **A bare trailing `\d+/\d+` MUST NOT be stripped.** This repo reads `12/15ct` as twelve
+boxes of fifteen (`retailPackSize(..., { vendor: true })`), and that notation is two parts
+with a unit suffix. Only a **three-part** date, or one behind a BB/EXP prefix, is a date.
+
+Pack parentheticals — `(45 PK)`, `(4 PK)` — are **kept**. They are real information that
+`retailPackSize` reads.
+
+## 🔑 The risk the provenance column exists to hold
+
+Once `item_cache.title` is set, `if (identifier && !title)` is satisfied **permanently** —
+a junk name would become that item's identity on every future scan, PO or not. Two
+consumers, so the column is not another `load_id` sitting unread for months:
+
+1. **The overwrite guard.** A manifest-derived title must never replace a looked-up one.
+   Exactly mirrors the `l3_source = 'manual'` CASE already in that same INSERT.
+2. **The answer says so.** The scan reports `title_source`, and Price Scan says the name
+   came off the buy's sheet rather than implying it was identified.
+
+## The plan
+
+- [x] `migration-074.sql` — `item_cache.title_source TEXT` (`lookup | manifest | manual`)
+- [x] `obSheetName()` — the trimmer, with the five real shapes above as its test cases
+- [x] `merch-scan` uses it: identity skipped, pricing and classification now RUN
+- [x] The cache write guards `title` on provenance and records `title_source`
+- [x] The scan response carries `title_source`; Price Scan says where the name came from
+- [x] Tests: the trimmer against all 12 real strings, `12/15ct` left alone, the overwrite
+      guard, and the search count actually dropping
+- [x] `sw.js` + `scripts/fixtures/shell-cache.json`
+
+## Deploy order
+
+Migration → worker → frontend. The new worker writes `title_source`, so against a database
+without it every scan that learns anything throws.
+
+## Review — built and tested; nothing deployed
+
+**5,580 source assertions across 80 suites pass. 118 browser assertions pass.**
+`migration-074.sql`, ~90 lines of `worker.js`, ~15 of `index.html`,
+`scripts/test-migration-074.mjs` (11 new), 65 new assertions in `scripts/test-ob-manifest.mjs`
+(128 → 193), `sw.js` v224 → v225.
+
+### The numbers, measured rather than asserted
+
+| | searches | what they bought |
+|---|---|---|
+| before, no PO | **2** | nothing — identity fails, pricing is then skipped, cache never written |
+| after, with the PO | **1** | a product-name search that can actually match, and is cached |
+| after, once a price is found | **0** | nothing left to look up, ever |
+
+The suite prints and compares these rather than hardcoding them, because the honest claim is
+*strictly cheaper*, not *free*. The remaining search on an item with no street price is the
+price lookup retrying — pre-existing behaviour for any such item, unchanged by this, and it
+goes to zero as soon as a price lands. Saying "free" would have been the easy sentence and
+the wrong one.
+
+### Corrected while building
+
+The plan said the fix saves two searches. It does, but that was the smaller half: **pricing
+and classification are both gated on having a name too**, so an unnameable barcode also lost
+its street price, its category, its cost and its margin. One missing name was removing half
+the answer, not just wasting a call.
+
+### The trim, against the real strings
+
+All 12 date-carrying descriptions in production are in the suite verbatim, including the two
+where the date ran into the next figure (`BB 2/11/202725`, `BB 3/31/202736`) and the one with
+no marker at all (`SHIPPER DISPLAY 1/3/27`). 🛑 `12/15ct` — twelve boxes of fifteen, which
+`retailPackSize` reads — is asserted **unchanged**, which is why only a three-part date or
+one behind a marker is treated as a date. Pack parentheticals are kept: `(45 PK)` reads as
+query noise but it is real information, and this output is also what gets cached.
+
+### The guard that earns the column
+
+Once `item_cache.title` is set the identity lookup never runs for that barcode again, so a
+name is permanent. `title_source` makes a spreadsheet unable to overwrite a resolved name —
+same shape as the `l3_source = 'manual'` rule already in that INSERT — and the assertion runs
+twice, because the `ON CONFLICT` branch is a different code path from the insert and only a
+second scan exercises it. Both readers ship in this change; no repeat of `load_id` sitting
+declared and unread for eleven months.
+
+### Found in passing, NOT fixed here
+
+`npm test` was red on arrival — `test-daily-auction-column.mjs`, failing identically with my
+change stashed. `buildWeeklyTable` decides `isToday` from the **viewer's device timezone** and
+`isFuture` from **Eastern**, eight lines apart, so a row can be neither and lose its live
+sales. It is real, it is ~12 sites across the dashboard's core rendering, and it belongs in
+its own change — folded into this PR it would be invisible. Filed as a separate task. The
+suite passes under `TZ=America/New_York`; it only fails on a UTC runner between 20:00 and
+midnight Eastern, which is why it has never been seen. No workflow runs `npm test`.
+
+### Deploy order
+
+Migration → worker → frontend. The new worker names `title_source` in the item_cache upsert,
+which runs on **every** scan that learns anything — so against a database without the column
+Price Scan breaks for every user, not one endpoint.
+
+🛑 **Nothing is deployed.** The migration needs an explicit go-ahead.
+
+
 # Opportunity buys — a CSV manifest per PO (2026-09-21)
 
 **Brian:** *"in the Open a buy card add a feature for admin to upload a CSV manifest with

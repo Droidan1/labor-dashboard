@@ -1,0 +1,81 @@
+-- migration-074: a cached name remembers where it came from.
+--
+-- Brian, 2026-09-22: "What's the identity lookup fix for OB scans?" → "build it".
+--
+-- ── What is being fixed ────────────────────────────────────────────────────────────────
+--
+-- A scan of a barcode no public source can name spends two searches (one per spelling that
+-- merchIdForms produces), fails, and caches NOTHING — the cache write is guarded on
+-- `(title || l3 || retail !== null)` and a lookup that found nothing satisfies none of
+-- them. So the next scan repeats it, forever. Closeout goods are disproportionately
+-- unindexed, which is to say an opportunity buy is made almost entirely of the items this
+-- happens to.
+--
+-- 🛑 AND IT IS NOT JUST THE SEARCHES. Every later step is gated on having a name: pricing
+-- is skipped outright when identity failed, classification is skipped without a title, so
+-- there is no L3, therefore no category cost, therefore no margin on the screen. One
+-- missing name silently removes half the answer.
+--
+-- The buy's manifest already carries the thing the lookup is trying to construct — the
+-- STEP 1 comment says a barcode must be resolved to "a brand, product and size" first, and
+-- "DOWNY LIQUID FABRIC SOFTENER 26OZ" is exactly that. So the sheet's description becomes
+-- the item's name, and the failing lookup is not run at all.
+--
+-- ── Why that needs a column and not just a variable ────────────────────────────────────
+--
+-- 🛑 ONCE item_cache.title IS SET, `if (identifier && !title)` IS SATISFIED FOREVER. The
+-- identity lookup never runs for that barcode again, on any scan, with or without a PO. A
+-- name taken off a spreadsheet is therefore a permanent decision made from a vendor's
+-- typing, and 12 of the 82 lines in production end in a best-by date — one of them
+-- "BB 2/11/202725", where the date ran into the next number on the row.
+--
+-- The trimmer handles those. This column handles the ones it will not catch: it records
+-- that a name was READ OFF A SHEET rather than RESOLVED, which is a different kind of
+-- claim, and two things read it:
+--
+--   1. THE OVERWRITE GUARD. A manifest title must never replace a looked-up one. The same
+--      INSERT already does this for categories — `l3_source = 'manual'` protects a human's
+--      category from a model's — and this is that rule, for names.
+--   2. THE ANSWER SAYS SO. merch-scan returns it and Price Scan prints "named from the
+--      buy's manifest", so nobody reads a vendor's abbreviation as a confirmed product.
+--
+-- 🔑 A COLUMN NOTHING READS IS A COLUMN THAT ROTS. `manifests.load_id` sat declared and
+-- unread from migration-043 until migration-073 — eleven months. This one ships with both
+-- of its readers in the same deploy.
+--
+-- ── Vocabulary ─────────────────────────────────────────────────────────────────────────
+--
+--   NULL       — written before this existed, or by a path that does not say. Treated as
+--                'lookup', because that is what every pre-existing row actually is.
+--   'lookup'   — retailIdentify resolved it, or a price lookup decided the title.
+--   'manifest' — read off an opportunity buy's sheet. Never overwrites 'lookup'.
+--   'manual'   — a person typed it. Reserved; no writer yet, and deliberately named now so
+--                the eventual one does not invent a third spelling of the same idea.
+--
+-- ── Apply ──────────────────────────────────────────────────────────────────────────────
+-- Address databases by UUID; the staging one lives under [env.staging] and a bare name does
+-- not resolve. STAGING FIRST:
+--   staging:     npx wrangler d1 execute b40982c2-4009-4842-bc17-fa0977468b07 --remote -y --file=migration-074.sql
+--   production:  npx wrangler d1 execute 3fa911d7-31d6-438c-985f-7ac08c407d2d --remote -y --file=migration-074.sql
+--
+-- Confirm it landed (expects one row, `title_source`):
+--   npx wrangler d1 execute <uuid> --remote -y --json \
+--     --command="SELECT name FROM pragma_table_info('item_cache') WHERE name = 'title_source'"
+--
+-- 🛑 NOT RE-RUNNABLE. `ALTER TABLE ADD COLUMN` takes no IF NOT EXISTS; a second run errors
+-- `duplicate column name: title_source`. Harmless, and means it is already there — check
+-- with the pragma rather than re-running.
+--
+-- 🔑 DEPLOY ORDER: THIS FIRST, THEN THE WORKER, THEN THE FRONTEND (CLAUDE.md rule 6). The
+-- new worker names title_source in the item_cache upsert, which runs on EVERY scan that
+-- learns anything — so against a database without the column the Price Scan screen breaks
+-- for every user, not one endpoint. A column the live worker never names is invisible to
+-- it, so applying this while the current worker runs is safe.
+--
+-- 🔑 ADDITIVE ONLY. No existing row is read, rewritten or deleted. Every cached item keeps
+-- the name it has; NULL reads as 'lookup', which is what those names are.
+
+-- Where this item's name came from: 'lookup' | 'manifest' | 'manual'. NULL on every row
+-- cached before this shipped — those were all resolved by a lookup, so NULL reads as
+-- 'lookup' and must never be treated as "unknown provenance, safe to overwrite".
+ALTER TABLE item_cache ADD COLUMN title_source TEXT;

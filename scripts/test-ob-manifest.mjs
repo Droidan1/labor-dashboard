@@ -38,18 +38,27 @@ const { db, env } = makeEnv(repo);
 // that makes "one live manifest per PO" a database fact has to come from the file itself.
 for (const m of ['migration-041.sql', 'migration-042.sql', 'migration-043.sql',
                  'migration-056.sql', 'migration-064.sql', 'migration-070.sql',
-                 'migration-072.sql', 'migration-073.sql'])
+                 'migration-072.sql', 'migration-073.sql', 'migration-074.sql'])
   db.exec(fs.readFileSync(path.join(repo, m), 'utf8'));
 applyMigrationAlters(db, repo);
 
 // No scan in this suite may reach the network: every barcode below is either on a sheet or
 // deliberately unknown, and a real lookup would make the result depend on the internet.
 let searchCalls = 0;
+// Mutable, so a block can make a lookup SUCCEED. Most of this suite wants every lookup to
+// come back empty — the point is that the sheet answers regardless — but the identity-fix
+// block has to drive the arc to its end, and "the search stops happening once a price is
+// found" cannot be shown with a stub that never finds one.
+let searchResults = [];
+let snippetPrices = [];
 globalThis.fetch = async (u) => {
   const url = String(u);
-  if (url.startsWith('https://api.search.tinyfish.ai')) { searchCalls++; return new Response(JSON.stringify({ results: [] }), { status: 200 }); }
+  if (url.startsWith('https://api.search.tinyfish.ai')) { searchCalls++; return new Response(JSON.stringify({ results: searchResults }), { status: 200 }); }
   if (url.startsWith('https://api.fetch.tinyfish.ai')) return new Response(JSON.stringify({ results: [] }), { status: 200 });
-  if (url.includes('api.anthropic.com')) return new Response(JSON.stringify({ content: [{ type: 'text', text: '{"rows":[],"items":[],"prices":[]}' }] }), { status: 200 });
+  if (url.includes('api.anthropic.com')) {
+    return new Response(JSON.stringify({ content: [{ type: 'text',
+      text: JSON.stringify({ rows: [], items: [], prices: snippetPrices }) }] }), { status: 200 });
+  }
   throw new Error('unexpected egress: ' + url.slice(0, 70));
 };
 env.ANTHROPIC_API_KEY = 'sk-test';
@@ -367,6 +376,194 @@ console.log('OB manifest');
   eq(r.body.price, 1.0, '🔑 …and the price holds with every lookup coming back empty');
   eq(r.body.retail, null, '…because the sheet, not a lookup, is what answered');
 }
+// ── 💰 The sheet's name replaces a lookup that never worked ──────────────────
+{
+  // A UPC-A nobody has scanned before. Built rather than picked, so the check digit is
+  // right — merch-scan refuses a barcode that does not check out, and a hand-typed
+  // constant that happens to be invalid would fail this block for the wrong reason.
+  const upcA = (eleven) => {
+    let sum = 0;
+    for (let i = 0; i < 11; i++) sum += (i % 2 === 0 ? 3 : 1) * Number(eleven[i]);
+    return eleven + String((10 - (sum % 10)) % 10);
+  };
+  const FRESH = upcA('99887766554');
+  ok(/^\d{12}$/.test(FRESH), `built a valid 12-digit UPC to scan (${FRESH})`);
+
+  await openBuy('OB-NAME');
+  const up = await upload({ load_id: 'OB-NAME', filename: 'names.csv', csv: [
+    'UPC,Description,Qty,Our Price,Street Price',
+    // Carries a best-by date, so this also proves the trim reaches the scan.
+    `${FRESH},PEDIGREE DRY DOG FOOD GRILLED STEAK & VEGETABLE 14 LB. BAG BB 2/10/2027,6,7.50,12.99`,
+  ].join('\n') });
+  eq(up.status, 200, 'a sheet naming one fresh item uploads');
+
+  // 1. WITHOUT a PO: nothing can name it, so the lookup runs and finds nothing.
+  const before = searchCalls;
+  const blind = await scan({ identifier: FRESH });
+  const blindCost = searchCalls - before;
+  ok(blindCost > 0, `💰 an unnameable barcode costs ${blindCost} search(es) with no PO`);
+  eq(blind.body.title, null, '…and still cannot be named');
+  ok((blind.body.flags || []).includes('barcode not recognised'),
+     '…so the scan reports the barcode as unrecognised');
+
+  // 2. WITH the PO: the sheet names it, so there is nothing to look up.
+  const b2 = searchCalls;
+  const named = await scan({ identifier: FRESH, po: 'OB-NAME' });
+  // 🔑 STRICTLY CHEAPER, AND THE REMAINING SPEND IS THE USEFUL ONE. Without a PO this
+  // barcode costs two searches on a query that provably cannot work — identity, once per
+  // spelling — and pricing is then skipped outright, so it buys nothing at all. With the
+  // sheet's name, identity does not run and that budget goes to a product-name search
+  // that can actually match.
+  const namedCost = searchCalls - b2;
+  ok(namedCost < blindCost,
+     `💰 🔑 the same barcode against its buy costs LESS (${namedCost} vs ${blindCost})`);
+  eq(named.body.title, 'PEDIGREE DRY DOG FOOD GRILLED STEAK & VEGETABLE 14 LB. BAG',
+     '🔑 …because the sheet names it — with the best-by date trimmed off');
+  eq(named.body.title_source, 'manifest',
+     '🔑 …and the answer says the name came off a sheet, not out of a lookup');
+  ok(!(named.body.flags || []).includes('barcode not recognised'),
+     '🛑 …so it is no longer reported as an unrecognised barcode');
+  eq(named.body.price, 7.5, '…and the sheet still prices it');
+
+  // 3. It is REMEMBERED, which is the half that stops the bleeding.
+  const row = db.prepare(
+    `SELECT title, title_source FROM item_cache WHERE identifier = ?`).get(FRESH);
+  ok(!!row, '🔑 the scan now caches something — before this it cached nothing at all');
+  eq(row.title_source, 'manifest', '…recorded as sheet-derived');
+  const b3 = searchCalls;
+  const later = await scan({ identifier: FRESH });
+  // 🛑 NOT ZERO YET, AND SAYING SO MATTERS. The identity lookup is gone for good, but this
+  // stub never returns a price, so the PRICE lookup retries — which is pre-existing
+  // behaviour for any item with no retail, unchanged by this and not this change's to fix.
+  // What IS now true is that the wasted half is gone.
+  const laterCost = searchCalls - b3;
+  ok(laterCost < blindCost,
+     `💰 …and a LATER scan with no PO is cheaper too (${laterCost} vs ${blindCost})`);
+  ok(!(later.body.flags || []).includes('barcode not recognised'),
+     '🔑 …because the identity lookup never runs for this barcode again');
+  eq(later.body.title, row.title, '…and still knows what it is');
+  eq(later.body.title_source, 'manifest', '…and still says where that came from');
+
+  // 4. And once a price IS found, the arc ends: nothing left to look up, ever.
+  //    This is what the remaining search was FOR — it could not have worked off a bare
+  //    barcode, which is why the old path skipped it and learned nothing.
+  searchResults = [{ position: 1, url: 'https://www.walmart.com/ip/ped', title: row.title, snippet: '$12.99' }];
+  snippetPrices = [{ url: 'https://www.walmart.com/ip/ped', price: 12.99, title: row.title, pack: 1, in_stock: true, sold_by: 'Walmart.com' }];
+  await scan({ identifier: FRESH });
+  const b4 = searchCalls;
+  const settled = await scan({ identifier: FRESH });
+  eq(searchCalls - b4, 0, '💰 🔑 …and once a street price is found, the item costs NOTHING for good');
+  ok(settled.body.retail !== null,
+     '🔑 …a street price this item could never have got off a bare barcode');
+  searchResults = []; snippetPrices = [];
+}
+
+// ── 🛑 A spreadsheet never overwrites a name something actually resolved ─────
+{
+  const upcA = (eleven) => {
+    let sum = 0;
+    for (let i = 0; i < 11; i++) sum += (i % 2 === 0 ? 3 : 1) * Number(eleven[i]);
+    return eleven + String((10 - (sum % 10)) % 10);
+  };
+  const KNOWN = upcA('11223344556');
+
+  // Already resolved by a real lookup, the way any scanned item ends up.
+  db.prepare(`INSERT INTO item_cache (identifier, identifier_type, title, title_source, updated_at)
+              VALUES (?, 'upc', 'Pedigree Adult Dry Dog Food, Grilled Steak & Vegetable, 14 lb',
+                      'lookup', '2026-09-01T00:00:00Z')`).run(KNOWN);
+
+  await openBuy('OB-CLOBBER');
+  await upload({ load_id: 'OB-CLOBBER', csv: [
+    'UPC,Description,Qty,Our Price,Street Price',
+    `${KNOWN},PED DRY DOG 14LB STK/VEG,6,7.50,12.99`,
+  ].join('\n') });
+
+  const r = await scan({ identifier: KNOWN, po: 'OB-CLOBBER' });
+  eq(r.status, 200, 'an item we already resolved scans against its buy');
+  eq(r.body.title, 'Pedigree Adult Dry Dog Food, Grilled Steak & Vegetable, 14 lb',
+     '🔑 the RESOLVED name wins — the sheet does not rename a product we identified');
+  eq(r.body.title_source, 'lookup', '…and the answer still says so');
+
+  const after = db.prepare(
+    `SELECT title, title_source FROM item_cache WHERE identifier = ?`).get(KNOWN);
+  eq(after.title, 'Pedigree Adult Dry Dog Food, Grilled Steak & Vegetable, 14 lb',
+     '🛑 …and the cache was not clobbered, which would have been PERMANENT');
+  eq(after.title_source, 'lookup', '…provenance intact');
+
+  // 🛑 The guard has to survive the round trip, not just the first write — the ON CONFLICT
+  // branch is a different code path from the INSERT and only a second scan exercises it.
+  await scan({ identifier: KNOWN, po: 'OB-CLOBBER' });
+  const twice = db.prepare(
+    `SELECT title, title_source FROM item_cache WHERE identifier = ?`).get(KNOWN);
+  eq(twice.title, after.title, '…still intact after a second scan, which is the UPDATE path');
+  eq(twice.title_source, 'lookup', '…and so is its provenance');
+}
+
+// ── The identity lookup, and the name the sheet already holds ────────────────
+//
+// 🛑 WHAT THIS IS ACTUALLY FIXING IS NOT "TWO WASTED SEARCHES". A barcode no public source
+// can name costs two searches (one per spelling merchIdForms produces), fails, and then
+// EVERY later step falls over, because each is gated on having a name:
+//
+//   pricing        `if (… && !unknownCode)`  → skipped outright
+//   classification `(!l3 && title)`          → skipped → no L3 → no cost → no margin
+//   cache write    `(title || l3 || retail)` → never fires → the next scan repeats it all
+//
+// Closeout goods are disproportionately unindexed, which is to say an opportunity buy is
+// made almost entirely of the items this happens to.
+{
+  const src = fs.readFileSync(path.join(repo, 'worker.js'), 'utf8');
+  const a = src.indexOf('const OB_NAME_TAILS = [');
+  const b = src.indexOf('\n// Guess a vendor\'s columns', a);
+  ok(a > 0 && b > a, 'obSheetName is still in worker.js');
+  let name = () => 'DID NOT SLICE';
+  try { name = new Function(src.slice(a, b) + '\n; return obSheetName;')(); }
+  catch (e) { ok(false, 'obSheetName builds: ' + e.message); }
+
+  // 🔑 THE TWELVE REAL STRINGS, verbatim out of production's 82 manifest lines. Two of
+  // them have a date that ran into the next figure on the vendor's row, and one carries a
+  // date with no marker in front of it at all.
+  const REAL = [
+    ['DR.BALES DRY CAT FOOD CHICKEN FLAVOR 14oz. EXP - 2/14/2027', 'a marker behind a dash'],
+    ['POOCHIE CHICKEN ON A BONE DOG TREAT 12 CT 8.4oz. EXP 4/29/2027', 'EXP and a full date'],
+    ['PEDIGREE TWISTY CHEWS DOG TREATS MEDIUM CHICKEN & BEEF FLAVOR 9.17 OZ. (4 PK) BB 2/11/202725', '🔑 a year with junk glued on'],
+    ['TEMPTATIONS BIRTHDAY LOBSTER & BEEF FLAVOR CRUNCHY & SOFT CAT TREATS 6.3 OZ BB 05/2027', 'a month and year only'],
+    ['TEMPTATIONS JUMBO STUFF SAVORY SALMON FLAVOR CAT TREATS 5.3OZ BB 3/31/2027', 'BB and a full date'],
+    ['TEMPTATIONS JUMBO STUFF TUNA FLAVOR CAT TREATS 5.3OZ BB 3/31/202736', '🔑 junk glued on again'],
+    ['TEMPTATIONS MEATY MIXUPS SALMON AND TUNA CRUNCHY AND SOFT CAT TREATS FOR ADULT CATS 4.12 OZ POUCH BB 3/22/2027', 'a long one'],
+    ['GREENIES OCCUPY TWISTS NATURAL DOG TREATS PETITE SIZE CHICKEN FLAVOR 8.75 OZ. (22 PK) BB 2/4/2027', 'a single-digit day'],
+    ['GREENIES PILL POCKETS SOFT CAT TREATS CHICKEN FLAVOR 1.6 OZ. (45 PK) BB 2/11/2027', 'a pack parenthetical before it'],
+    ['PEDIGREE DRY DOG FOOD WITH MARROBITES PIECES GRILLED STEAK & VEGETABLE FLAVOR 14 LB. BAG BB 2/10/2027', 'a weight before it'],
+    ['TEMPTATIONS TENDER FILLS FESTIVE FEAST ROASTED CHICKEN FLAVOR CAT TREATS, 11.6 OZ. BB 2/28/2027', 'a comma in the name'],
+    ['SOUR PATCH SWEDISH FISH 1.8 LB BAG SHIPPER DISPLAY 1/3/27', '🛑 a date with NO marker'],
+  ];
+  for (const [raw, why] of REAL) {
+    const out = name(raw);
+    ok(out && !/\b(?:bb|exp|best\s*by)\b/i.test(out) && !/\d[\/\-.]\d+[\/\-.]\d/.test(out),
+       `the date comes off: ${why} → ${JSON.stringify(out)}`);
+    ok(out && out.length > 20, `…and what is left is still a product name (${why})`);
+  }
+
+  // 🛑 THE ONE THAT MUST NOT BE TOUCHED. This repo reads "12/15ct" as twelve boxes of
+  // fifteen — retailPackSize(..., { vendor: true }) — so a rule that strips a bare
+  // two-part number would silently change what a line says it contains.
+  for (const keep of [
+    'KIND BARS 12/15ct VARIETY PACK',
+    'MARVEL: TITAN HERO TECH - 12" CAPTAIN AMERICA W/SOUND',
+    'DOWNY LIQUID FABRIC SOFTENER 26OZ',
+    'CIF FLOOR CLEAN OCEAN 1L',
+  ]) eq(name(keep), keep, `🛑 left exactly alone: ${JSON.stringify(keep)}`);
+
+  // Pack counts are information, not noise — retailPackSize reads them.
+  ok(/\(45 PK\)/.test(name('GREENIES PILL POCKETS SOFT CAT TREATS CHICKEN FLAVOR 1.6 OZ. (45 PK) BB 2/11/2027')),
+     '🔑 the pack count survives the trim — it is real information, not query noise');
+
+  // Below a name's worth of characters there is nothing to search for, and caching the
+  // result as an item's identity would be worse than knowing nothing.
+  for (const thin of ['', '   ', 'OZ', 'ASST', 'BB 3/31/2027', null, undefined])
+    eq(name(thin), null, `too thin to be a name: ${JSON.stringify(thin)}`);
+}
+
 // ── The screen, from the shipped index.html ──────────────────────────────────
 //
 // 🔑 psManifestStrip is LIFTED AND RUN, not grepped. A grep proves a word is present; the
@@ -424,6 +621,17 @@ console.log('OB manifest');
   ok(/sheet reads 0085239098745/.test(M({ sheet_identifier: '0085239098745' })),
      'a barcode the sheet spells differently is shown, so the mismatch is visible');
   ok(/listed 3 times/.test(M({ duplicates: 3 })), 'a UPC listed twice on one sheet is never resolved quietly');
+
+  // 🔑 The sheet's wording is printed ONCE. When nothing else could name the item, that
+  // wording becomes the item's name overhead — repeating it in the strip reads as two
+  // different facts about one item.
+  const withName = (t, d) => strip({ identifier: '085239098745', title: t, manifest: {
+    po: 'OB-1', has_manifest: true, matched: true, price: 1, description: d, qty: 6,
+    street_price: null, sheet_identifier: '085239098745', row_no: 1, duplicates: 0, lines: 4 } });
+  ok(/PED DRY DOG 14LB/.test(withName('Pedigree Adult Dry Dog Food', 'PED DRY DOG 14LB')),
+     "the sheet's wording is shown when it differs from the item's name");
+  ok(!/·\s*PED DRY DOG 14LB/.test(withName('PED DRY DOG 14LB', 'PED DRY DOG 14LB')),
+     '🔑 …and is NOT repeated when it already IS the name');
 }
 
 // ── The scan names its buy, and the buy survives a bad sheet ─────────────────
@@ -432,6 +640,16 @@ console.log('OB manifest');
   // A negative assertion over a region containing English tests the English: the comment
   // explaining that nothing rolls the buy back contains the words it looks for.
   const decomment = (t) => t.replace(/^\s*\/\/.*$/gm, '');
+
+  // The identity line has to distinguish a resolved product name from a vendor's wording.
+  // 🛑 Bounded on the NEXT declaration, not on the innerHTML assignment: the identity line
+  // lives INSIDE that template, so an anchor there slices away the very thing being looked
+  // for and the assertion fails against correct code. That trap has cost this repo three
+  // debugging rounds; the end anchor is the first thing that is definitely after psRender.
+  const render = decomment(html.slice(html.indexOf('  function psRender(j) {'),
+                                      html.indexOf('  let psSticker = null;')));
+  ok(/title_source === 'manifest'/.test(render),
+     "🔑 the screen says when a name came off the buy's sheet rather than a lookup");
 
   const psScan = decomment(html.slice(html.indexOf('  async function psScan() {'),
                                       html.indexOf('  function psRender(j) {')));
