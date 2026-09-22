@@ -1,3 +1,78 @@
+# The rest of the contrast failures (2026-09-22)
+
+**Brian:** *"fix the rest of the contrast ones too"*
+
+**Result: 0 failing text nodes across all 32 page sections, in both themes**, measured
+through `navigateToPage` so every page is initialised.
+
+## Where they were, and why a class sweep could not reach them
+
+| kind | n | fix |
+|---|---|---|
+| `text-white` on the brand green fill | 39 | ink → `#06210f`; **the green is untouched** |
+| red as text (`red-400/500/600`, `op-bad`) | 53 | → `text-opl-bad dark:text-[#f87171]` |
+| green as text (`[#3BB54A]`, `green-600`) | 16 | → `text-accent-green`, which already has a light override |
+| inverted grey pairs, bare `gray-600` | 6 | → the `inkDim` pair |
+| **CSS rules** — landing pills/tiles, eBay pill, `.mc-lvl`, manifest empty state | 7 rules | light overrides beside the existing rule |
+| **inline styles set from JS** — LIVE pill ×3, pace %, budget delta ×3 | 7 sites | a variable the theme re-points |
+
+The last two rows are the point: **a `class="…"` sweep sees none of them.** Roughly a
+third of the remaining failures lived in `<style>` rules and JS-built strings.
+
+🔑 `text-accent-green` needed no new colour at all — `index.html:150` has carried
+`html:not(.dark) .text-accent-green { color:#166534 }` all along. Reaching for the
+existing utility beat inventing a pair.
+
+## 🛑 I "fixed" 120 tokens that were never broken
+
+My static analyser mapped `text-opl-inkDimmer` to `#9c9484` and reported 66 failures.
+It is wrong: **`index.html:217` already remaps both inkDimmer utilities to inkDim's
+value**, and that block's comment explains it deliberately excludes `.mc-lvl` because
+the badge's BORDER carries the meaning. I rewrote 120 tokens to `inkDim`, which changed
+no rendered colour and would have orphaned a deliberate rule and its reasoning.
+
+Caught it by reading the CSS I was about to make dead. Reverted — `git checkout HEAD --
+index.html` and re-applied only the four real categories.
+
+<rules>
+A static contrast pass that resolves a utility to its token value is guessing. The
+cascade can remap that utility, and in this file it does — twice. Reconcile every static
+finding against the RENDERED colour before acting: the rendered survey never once
+flagged `text-opl-inkDimmer`, and that disagreement was the signal.
+</rules>
+
+## The one that needed a root cause, not a colour
+
+`.a11y-lab > span` measured 3.99:1 in dark. The colour was right (`op-inkDim`); the
+GROUND was wrong. Composited it came to `rgb(31,57,59)` — accent-green at .10 (the
+selected option) over **`dark:bg-gray-800`**, a pre-V1 Tailwind grey. On `op-panel` the
+same composite is 4.90:1. So the fix was to put that card on the panel token, not to
+invent a brighter grey. One more surface on the design system, no new colour.
+
+(Ten other cards still use `bg-white dark:bg-gray-800`. None of them fail, so none were
+touched.)
+
+## `.mc-lvl` — the one place I went against DESIGN.md
+
+§4.8 prescribes `inkDimmer` for the level badge, and `index.html:214` deliberately keeps
+it out of the global remap. Its **border** still carries the meaning and is untouched.
+Its **text** read 2.87:1 light / 2.71:1 dark, so that moved to `inkDim`. Recorded here
+because it is a deliberate divergence from the spec, not an oversight.
+
+## DESIGN.md
+
+§4.8 now documents that **an inline style cannot carry a `dark:` override**, gives the
+`--v1-good/bad/warn` variables for the JS-written colours, and states the split: **text
+takes the variable, fills keep the brand hex** — the pill dot, the pace bar and the
+sparkline should read as the brand, and are not held to 4.5:1.
+
+## Verified
+
+- [x] Survey through the real router: **0 failures, 32 page sections, both themes**.
+- [x] `npm test` 5586 assertions / 80 suites; `browser-inventory-nav.mjs` 72 checks.
+- [x] Looked at Content in both themes: the green primary button reads clearly with dark
+      ink and the brand green is unchanged.
+
 # The .ct-tab contrast finding was mine, and it was wrong (2026-09-22)
 
 **Brian:** *"fix the ct-tab one too"* — the 1.10:1 black-on-dark I reported on #276.

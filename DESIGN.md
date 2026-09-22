@@ -553,6 +553,23 @@ panel can still fail on the tinted chip it actually lives in. Measure the colour
 against the *composited* background — the wash over the bar over the panel — not
 against the panel.
 
+**An inline style cannot carry a `dark:` override**, and several of these colours
+are written into one — the LIVE pill, the pace percentage and the budget delta all
+set `style="color:…"` from JS. A Tailwind utility can be remapped per theme in a
+rule (`html:not(.dark) .text-accent-green { color:#166534 }`, near the top of
+index.html); an inline value cannot. Those read a variable the theme re-points:
+
+```css
+:root     { --v1-good:#166534; --v1-bad:#c0392b; --v1-warn:#92400e; }
+html.dark { --v1-good:#22c55e; --v1-bad:#f87171; --v1-warn:#f59e0b; }
+```
+
+**Text takes the variable; fills keep the brand hex.** The pill's dot, the pace bar
+and the sparkline are not text and are not held to 4.5:1 — they should read as the
+brand. The same split applies to a solid accent button: the fill stays
+`accent-green`, and the label is `#06210f` (7.48:1), never white, which is 2.66:1
+on the brand green and 2.28:1 on `accent-green`.
+
 ---
 
 ## 5. Interaction patterns (reusable)
